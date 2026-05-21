@@ -15,6 +15,50 @@ export interface AuditLogs {
     updated: string
 }
 
+export interface CalendarCalendars {
+    id: string
+    org: string
+    name: string
+    description: string
+    color: 'blue' | 'green' | 'red' | 'teal' | 'purple' | 'orange' | 'tomato' | 'flamingo' | 'tangerine' | 'banana' | 'sage' | 'basil' | 'peacock' | 'blueberry' | 'lavender' | 'grape' | 'graphite'
+    created: string
+    updated: string
+    subscription_url: string
+    subscription_last_sync: string
+    subscription_error: string
+}
+
+export interface CalendarEvents {
+    id: string
+    calendar: string
+    created_by: string
+    title: string
+    description: string
+    location: string
+    start: string
+    end: string
+    all_day: boolean
+    recurrence: string
+    guests: any
+    reminder: number
+    busy_status: 'busy' | 'free'
+    visibility: 'default' | 'public' | 'private'
+    created: string
+    updated: string
+    ical_uid: string
+    recurrence_until: string
+}
+
+export interface CalendarMembers {
+    id: string
+    calendar: string
+    user_org: string
+    role: 'owner' | 'editor' | 'viewer'
+    created: string
+    updated: string
+    color: 'blue' | 'green' | 'red' | 'teal' | 'purple' | 'orange' | 'tomato' | 'flamingo' | 'tangerine' | 'banana' | 'sage' | 'basil' | 'peacock' | 'blueberry' | 'lavender' | 'grape' | 'graphite'
+}
+
 export interface Contacts {
     id: string
     email: string
@@ -40,6 +84,22 @@ export interface DemoLeads {
     user_agent: string
     ip: string
     created: string
+}
+
+export interface DriveItems {
+    id: string
+    org: string
+    name: string
+    is_folder: boolean
+    mime_type: string
+    created_by: string
+    size: number
+    file: string
+    description: string
+    created: string
+    updated: string
+    parent: string
+    thumbnail: string
 }
 
 export interface InviteTokens {
@@ -234,6 +294,28 @@ export type Schema = {
             actor?: Users
         }
     }
+    calendar_calendars: {
+        type: CalendarCalendars
+        relations: {
+            org: Orgs
+            // calendar_events_via_calendar?: CalendarEvents[]
+            // calendar_members_via_calendar?: CalendarMembers[]
+        }
+    }
+    calendar_events: {
+        type: CalendarEvents
+        relations: {
+            calendar: CalendarCalendars
+            created_by: UserOrg
+        }
+    }
+    calendar_members: {
+        type: CalendarMembers
+        relations: {
+            calendar: CalendarCalendars
+            user_org: UserOrg
+        }
+    }
     contacts: {
         type: Contacts
         relations: {
@@ -289,6 +371,7 @@ export type Schema = {
         type: Orgs
         relations: {
             // audit_logs_via_org?: AuditLogs[]
+            // calendar_calendars_via_org?: CalendarCalendars[]
             // invite_tokens_via_org?: InviteTokens[]
             // labels_via_org?: Labels[]
             // notifications_via_org?: Notifications[]
@@ -324,6 +407,8 @@ export type Schema = {
     user_org: {
         type: UserOrg
         relations: {
+            // calendar_events_via_created_by?: CalendarEvents[]
+            // calendar_members_via_user_org?: CalendarMembers[]
             // contacts_via_owner?: Contacts[]
             // label_assignments_via_user_org?: LabelAssignments[]
             // labels_via_user_org?: Labels[]
