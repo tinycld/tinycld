@@ -7,62 +7,84 @@ on:
     branches: [main]
 
 env:
-  # @tinycld/drive owns the comment_mentions migration that the core
-  # notify hook + TS store reference. Without drive linked, the schema
-  # regen below produces a pbSchema.ts missing comment_mentions and
-  # the typecheck fails on core's own store registration.
-  DRIVE_REPO: tinycld/drive
-  DRIVE_REF: main
+  TEST_USER_LOGIN: user@tinycld.org
+  TEST_USER_PW: TestUser1234!
+  ADMIN_USER_LOGIN: admin@tinycld.org
+  ADMIN_USER_PW: AdminPass1234!
 
 jobs:
   checks:
-    name: Lint, Typecheck & Unit Tests
+    name: Lint, Typecheck, Unit (all members)
     runs-on: ubuntu-latest
     steps:
-      # Workspace layout: the app shell and feature members are siblings under
-      # a shared workspace root. Check the shell out at <root>/tinycld and drive
-      # at <root>/drive, write a workspace-root package.json, then a single root
-      # `npm install` links all members (replaces the old packages:link step).
       - uses: actions/checkout@v5
         with:
-          path: tinycld
+          repository: tinycld/workspace
+          ref: main
+          path: ws
       - uses: actions/checkout@v5
         with:
-          repository: ${{ env.DRIVE_REPO }}
-          ref: ${{ env.DRIVE_REF }}
-          path: drive
+          path: ws/app
       - uses: actions/setup-node@v5
         with:
-          node-version-file: tinycld/.node-version
+          node-version-file: ws/.node-version
           cache: npm
-          cache-dependency-path: tinycld/package-lock.json
+          cache-dependency-path: ws/package-lock.json
       - uses: actions/setup-go@v6
         with:
-          go-version-file: tinycld/server/go.mod
-          cache-dependency-path: tinycld/server/go.sum
-      - name: Write workspace root manifest
-        run: |
-          cat > package.json <<'JSON'
-          {
-            "name": "tinycld-workspace",
-            "version": "0.0.0",
-            "private": true,
-            "workspaces": ["tinycld", "tinycld/packages/@tinycld/core", "drive"]
-          }
-          JSON
-          echo 'legacy-peer-deps=true' > .npmrc
-      - name: Install workspace
+          go-version-file: ws/.go-version
+      # app's CI runs --all, so it needs EVERY member present (app is the PR
+      # checkout / app+core always-cloned; --with pulls each feature).
+      - name: Assemble workspace (all members)
+        working-directory: ws
+        run: >
+          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
+          --with contacts --with mail --with calendar --with drive
+          --with calc --with text --with google-takeout-import
+      - name: Install (workspace root)
+        working-directory: ws
         run: npm install
-      - name: Generate PB schema types
-        working-directory: tinycld
-        run: |
-          cd server && go build -o tinycld .
-          ./tinycld --dev serve &
-          sleep 3
-          kill %1 2>/dev/null || true
-      - name: Lint + typecheck
-        working-directory: tinycld
-        run: npm run checks
-      - name: Unit tests
-        working-directory: tinycld
-        run: npm run test:unit
+      - name: Lint
+        working-directory: ws/app
+        run: npm run lint
+      - name: Typecheck + unit (all members)
+        working-directory: ws/app
+        run: npx tinycld-pkg check --all
+
+  go:
+    name: Go build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: tinycld/workspace
+          ref: main
+          path: ws
+      - uses: actions/checkout@v5
+        with:
+          path: ws/app
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: ws/.node-version
+          cache: npm
+          cache-dependency-path: ws/package-lock.json
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ws/.go-version
+      # All feature server packages must be present so go.work + the Go build
+      # see every tinycld.org/packages/* module.
+      - name: Assemble workspace (all members)
+        working-directory: ws
+        run: >
+          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
+          --with contacts --with mail --with calendar --with drive
+          --with calc --with text --with google-takeout-import
+      - name: Install (workspace root)
+        working-directory: ws
+        run: npm install
+      - name: Go build
+        working-directory: ws/app/server
+        run: go build -o tinycld .
+      - name: Go test
+        working-directory: ws/app/server
+        run: go test -tags no_ui ./...
