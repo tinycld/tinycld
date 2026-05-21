@@ -19,20 +19,6 @@
             "!**/pb_test_data",
             "!types",
             "!lib/generated",
-            "!packages/@tinycld/core/types/pbSchema.ts",
-            "!packages/@tinycld/core/types/pbZodSchema.ts",
-            "!packages/*/server",
-            "!packages/*/server/**/*",
-            "!packages/@*/*/server",
-            "!packages/@*/*/server/**/*",
-            "!packages/*/pb-migrations",
-            "!packages/*/pb-migrations/**/*",
-            "!packages/@*/*/pb-migrations",
-            "!packages/@*/*/pb-migrations/**/*",
-            "!packages/*/node_modules",
-            "!packages/*/node_modules/**/*",
-            "!packages/@*/*/node_modules",
-            "!packages/@*/*/node_modules/**/*",
             "!node_modules",
             "!node_modules/**/*",
             "!app/a/\\[orgSlug\\]/calendar",
@@ -44,7 +30,29 @@
             "!.expo",
             "!.one",
             "!.claude",
-            "!ideas"
+            "!ideas",
+            "!**/core/types/pbSchema.ts",
+            "!**/core/types/pbZodSchema.ts",
+            "!**/server",
+            "!**/server/**/*",
+            "!**/pb-migrations",
+            "!**/pb-migrations/**/*",
+            "!**/pb-hooks",
+            "!**/pb-hooks/**/*",
+            "!**/node_modules",
+            "!**/node_modules/**/*",
+            "!**/.claude",
+            "!**/.claude/**/*",
+            "!**/.worktrees",
+            "!**/.worktrees/**/*",
+            "!**/.superpowers",
+            "!**/.superpowers/**/*",
+            "!**/dist",
+            "!**/dist/**/*",
+            "!**/test-results",
+            "!**/test-results/**/*",
+            "!**/webview-editor/build",
+            "!**/webview-editor/build/**/*"
         ]
     },
     "formatter": {
@@ -100,7 +108,13 @@
     },
     "overrides": [
         {
-            "includes": ["scripts/**/*", "tests/**/*", "**/*.test.ts", "**/*.test.tsx"],
+            "includes": [
+                "**/scripts/**/*",
+                "**/tests/**/*",
+                "**/*.test.ts",
+                "**/*.test.tsx",
+                "**/package-scripts/**/*"
+            ],
             "linter": {
                 "rules": {
                     "suspicious": {
