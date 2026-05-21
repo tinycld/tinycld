@@ -50,3 +50,6 @@ test-results/
 
 expo-env.d.ts
 # @end expo-cli
+
+# Superpowers plan/spec archives — plans don't belong in repos
+docs/superpowers/

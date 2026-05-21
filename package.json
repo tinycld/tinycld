@@ -12,5 +12,13 @@
         "./types/*": "./types/*",
         "./file-viewer/*": "./file-viewer/*",
         "./Providers": "./components/Providers.tsx"
+    },
+    "scripts": {
+        "typecheck": "tinycld-pkg typecheck",
+        "test": "tinycld-pkg test",
+        "check": "tinycld-pkg check"
+    },
+    "devDependencies": {
+        "@tinycld/package-scripts": "*"
     }
 }
