@@ -433,6 +433,20 @@ export interface Settings {
     updated: string
 }
 
+export interface TextComments {
+    id: string
+    drive_item: string
+    comment_id: string
+    quoted_text: string
+    body: string
+    resolved_at: string
+    author: string
+    author_name: string
+    created: string
+    updated: string
+    parent_comment: string
+}
+
 export interface UserOrg {
     id: string
     org: string
@@ -560,6 +574,7 @@ export type Schema = {
             // drive_items_via_parent?: DriveItems[]
             // drive_share_links_via_item?: DriveShareLinks[]
             // drive_shares_via_item?: DriveShares[]
+            // text_comments_via_drive_item?: TextComments[]
         }
     }
     drive_share_links: {
@@ -725,6 +740,15 @@ export type Schema = {
             org: Orgs
         }
     }
+    text_comments: {
+        type: TextComments
+        relations: {
+            drive_item: DriveItems
+            author: UserOrg
+            parent_comment?: TextComments
+            // text_comments_via_parent_comment?: TextComments[]
+        }
+    }
     user_org: {
         type: UserOrg
         relations: {
@@ -745,6 +769,7 @@ export type Schema = {
             // mail_mailbox_members_via_user_org?: MailMailboxMembers[]
             // mail_thread_state_via_user_org?: MailThreadState[]
             // org_pkg_access_via_user_org?: OrgPkgAccess[]
+            // text_comments_via_author?: TextComments[]
             org: Orgs
             user: Users
             created_by?: Users

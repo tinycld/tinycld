@@ -437,6 +437,20 @@ export const settingsSchema = z.object({
     updated: z.string().regex(DATETIME_REGEX).optional(),
 })
 
+export const textCommentsSchema = z.object({
+    id: z.string().regex(/^[a-z0-9]+$/).length(15).optional(),
+    drive_item: z.string().regex(/^[a-z0-9]+$/).length(15),
+    comment_id: z.string().min(1).max(64),
+    quoted_text: z.string().max(280).optional(),
+    body: z.string().min(1).max(4000),
+    resolved_at: z.string().regex(DATETIME_REGEX).optional(),
+    author: z.string().regex(/^[a-z0-9]+$/).length(15),
+    author_name: z.string().min(1).max(200),
+    created: z.string().regex(DATETIME_REGEX).optional(),
+    updated: z.string().regex(DATETIME_REGEX).optional(),
+    parent_comment: z.string().regex(/^[a-z0-9]+$/).length(15).optional(),
+})
+
 export const userOrgSchema = z.object({
     id: z.string().regex(/^[a-z0-9]+$/).length(15).optional(),
     org: z.string().regex(/^[a-z0-9]+$/).length(15),
