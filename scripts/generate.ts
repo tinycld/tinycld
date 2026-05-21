@@ -269,7 +269,7 @@ async function main() {
     emitGoWiring(features)
     fs.writeFileSync(
         path.join(SERVER_DIR, 'bundled-packages.json'),
-        buildBundledPackages(features.map(f => ({ slug: f.manifest.slug, manifest: f.manifest })))
+        buildBundledPackages(features.map(f => ({ manifest: f.manifest })))
     )
 
     console.log(`Generated config for ${features.length} feature package(s).`)

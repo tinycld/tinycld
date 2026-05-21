@@ -1,5 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import type { PackageManifest } from './load-manifest'
 
 export interface ServerPkg {
     slug: string
@@ -47,15 +48,7 @@ export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
 }
 
 interface BundledPkgInput {
-    slug: string
-    manifest: {
-        name: string
-        slug: string
-        version: string
-        description?: string
-        nav?: { icon?: string; order?: number }
-        server?: unknown
-    }
+    manifest: PackageManifest
 }
 
 // Emit server/bundled-packages.json — consumed by core's Go

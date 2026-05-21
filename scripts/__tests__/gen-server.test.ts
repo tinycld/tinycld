@@ -95,19 +95,17 @@ describe('buildBundledPackages', () => {
     it('maps manifests to the Go pkg_seed shape', () => {
         const json = buildBundledPackages([
             {
-                slug: 'mail',
                 manifest: {
                     name: 'Mail',
                     slug: 'mail',
                     version: '0.1.0',
                     description: 'Email',
-                    nav: { icon: 'mail', order: 10 },
+                    nav: { label: 'Mail', icon: 'mail', order: 10 },
                     server: { package: 'server', module: 'tinycld.org/packages/mail' },
                 },
             },
             {
-                slug: 'calc',
-                manifest: { name: 'Calc', slug: 'calc', version: '0.2.0' },
+                manifest: { name: 'Calc', slug: 'calc', version: '0.2.0', description: '' },
             },
         ])
         const parsed = JSON.parse(json)
