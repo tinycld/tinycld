@@ -1,8 +1,8 @@
 import { eq, or } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
-import { packageRegistry } from './static-registry'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useMemo } from 'react'
+import { packageRegistry } from './static-registry'
 import type { PackageManifest } from './types'
 
 type PackageEntry = PackageManifest & { packageName: string }

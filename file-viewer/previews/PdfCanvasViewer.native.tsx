@@ -26,7 +26,10 @@ export function PdfCanvasViewer({ url }: { url: string }) {
                 style={pdfStyle}
                 trustAllCerts={false}
                 onError={err => {
-                    captureException('PdfCanvasViewer', err instanceof Error ? err : new Error(String(err)))
+                    captureException(
+                        'PdfCanvasViewer',
+                        err instanceof Error ? err : new Error(String(err))
+                    )
                     setErrored(true)
                 }}
             />

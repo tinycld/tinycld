@@ -142,16 +142,18 @@ function PaletteOverlay({ children }: { children: ReactNode }) {
     // somewhere to fire. The card itself is positioned within.
     return (
         <View
-            style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                alignItems: 'center',
-                paddingTop: PALETTE_TOP_OFFSET_PX,
-                zIndex: 1000,
-            } as object}
+            style={
+                {
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    alignItems: 'center',
+                    paddingTop: PALETTE_TOP_OFFSET_PX,
+                    zIndex: 1000,
+                } as object
+            }
             pointerEvents="box-none"
         >
             {children}
@@ -177,12 +179,14 @@ function PaletteCard({ children }: { children: ReactNode }) {
     return (
         <View
             {...(cardDomProps as Record<string, unknown>)}
-            style={{
-                width: PALETTE_WIDTH_PX,
-                maxWidth: '90%',
-                maxHeight: '60vh',
-                ...animationStyle,
-            } as object}
+            style={
+                {
+                    width: PALETTE_WIDTH_PX,
+                    maxWidth: '90%',
+                    maxHeight: '60vh',
+                    ...animationStyle,
+                } as object
+            }
             className="rounded-xl border border-border bg-background shadow-lg overflow-hidden"
         >
             {children}

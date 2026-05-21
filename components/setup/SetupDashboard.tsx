@@ -1,6 +1,6 @@
-import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
 import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import { captureException } from '@tinycld/core/lib/errors'
+import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
 import { pb as appPb } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Divider } from '@tinycld/core/ui/divider'
