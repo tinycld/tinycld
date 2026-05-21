@@ -40,8 +40,16 @@ jobs:
             cache_scope: arm64
 
     steps:
-      - name: Checkout
+      - name: Checkout workspace meta-repo
         uses: actions/checkout@v5
+        with:
+          repository: tinycld/workspace
+          ref: main
+          path: ws
+      - name: Checkout app into the member slot
+        uses: actions/checkout@v5
+        with:
+          path: ws/app
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -57,11 +65,23 @@ jobs:
         id: image
         run: echo "name=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/tinycld" >> "$GITHUB_OUTPUT"
 
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: ws/.node-version
+      - name: Assemble workspace members (all features, for the bundled image)
+        working-directory: ws
+        run: >
+          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
+          --with contacts --with mail --with calendar --with drive
+          --with calc --with text --with google-takeout-import
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ws
+          file: ws/app/Dockerfile
           platforms: ${{ matrix.platform }}
           # Cache scoped per-platform so the two jobs don't trample each
           # other's layers. Cache hit speeds repeat builds dramatically.
@@ -70,12 +90,6 @@ jobs:
           # Push by digest only — no tag yet. The merge job picks up these
           # digests and stitches them into a single multi-arch manifest.
           outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
-          # Bake the default feature packages into every public image so a
-          # docs-following operator gets the full feature set out of the
-          # box. TODO: pin each entry to a tagged ref once the sibling
-          # repos start cutting versioned tags.
-          build-args: |
-            LINKED_PACKAGES=https://github.com/tinycld/mail.git https://github.com/tinycld/calendar.git https://github.com/tinycld/contacts.git https://github.com/tinycld/drive.git https://github.com/tinycld/calc.git https://github.com/tinycld/text.git https://github.com/tinycld/google-takeout-import.git
 
       - name: Export digest
         run: |
