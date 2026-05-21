@@ -1,4 +1,4 @@
-# TinyCld
+# TinyCld — app shell
 
 <p align="center">
     <img src=".github/hero.jpeg" alt="TinyCld — self-hosted Workspace alternative with mail, calendar, and drive on a plug-in package SDK" />
@@ -8,14 +8,19 @@ A self-hosted workspace alternative — Expo Router on the front, PocketBase on 
 back, every feature shipped as a separately-installable package. See
 [tinycld.org](https://tinycld.org) for the full story.
 
-This repo is the runnable app shell. It bundles `@tinycld/core` (the shared TypeScript + Go
-library) directly at `packages/@tinycld/core/` along with branding, Expo native projects,
-deployment configs, and the package generator. It's the entrypoint for `npm run dev` and
+This repo (`@tinycld/app`, member name `app`) is the runnable **app shell**: branding,
+Expo native projects, deployment configs, the package generator, and all the heavy
+runtime dependencies. It is the entrypoint for `npm run dev` and
 `docker pull ghcr.io/tinycld/tinycld`.
+
+`@tinycld/core` (the shared TypeScript + Go library) is **no longer bundled here** — it
+is its own repo ([tinycld/core](https://github.com/tinycld/core)), cloned as a sibling
+workspace member. Feature packages are siblings too. The whole tree is one npm workspace:
 
 ```
 ~/code/tinycld/
-    tinycld/                 # this repo — the app shell (bundles @tinycld/core)
+    app/                     # this repo — the app shell (member "app")
+    core/                    # @tinycld/core (shared lib; its own repo)
     mail/                    # @tinycld/mail (feature package)
     calendar/                # @tinycld/calendar
     contacts/                # @tinycld/contacts
@@ -25,19 +30,28 @@ deployment configs, and the package generator. It's the entrypoint for `npm run 
     google-takeout-import/   # @tinycld/google-takeout-import
 ```
 
-Feature siblings import core as `@tinycld/core/*` (and `tinycld.org/core` for Go); each
-sibling's tsconfig `paths` and Go go.mod `replace` directive resolves those names onto
-this repo's bundled core.
+Everything imports core as `@tinycld/core/*` (and `tinycld.org/core` for Go); resolution
+is by the npm `node_modules/@tinycld/core` symlink (Metro), tsconfig `paths` (typecheck),
+vitest aliases (tests), and a Go `replace` directive (server).
 
 ## Quick start
 
 ```sh
-git clone https://github.com/tinycld/tinycld.git ~/code/tinycld/tinycld
-cd ~/code/tinycld/tinycld
-npm install
-npm run packages:install git@github.com:tinycld/mail.git    # add features as needed
+# Clone the app shell + core + any feature siblings under one workspace root.
+git clone git@github.com:tinycld/app.git   ~/code/tinycld/app
+git clone git@github.com:tinycld/core.git  ~/code/tinycld/core
+git clone git@github.com:tinycld/mail.git  ~/code/tinycld/mail   # features as needed
+
+# Install at the WORKSPACE ROOT (one level up from this repo), never inside a member.
+cd ~/code/tinycld
+npm install        # links members + runs the generator (postinstall)
+
+cd app
 npm run dev
 ```
+
+The workspace root needs a `package.json` whose `workspaces` array lists the members;
+`npm install` there creates the `node_modules/@tinycld/*` symlinks and runs the generator.
 
 `npm run dev` runs three processes in parallel: an HTTP proxy on the user-facing port
 7100, the Go PocketBase server on 7101, and the Expo bundler on 7102. The proxy routes
@@ -45,9 +59,7 @@ npm run dev
 
 If `assets/localhost.pem` + `assets/localhost-key.pem` are present, the proxy serves
 TLS — visit `https://localhost:7100`. Otherwise it's plain HTTP at `http://localhost:7100`.
-Generate the certs once with [mkcert](https://github.com/FiloSottile/mkcert):
-
-SSL is needed for developing on iOS simulator.  Trust the certs by dropping onto the Settings app.
+SSL is needed for developing on the iOS simulator; trust the certs via the Settings app.
 
 ```sh
 brew install mkcert     # macOS — see mkcert docs for other platforms
@@ -63,42 +75,52 @@ npm run ssl:generate
   shortcuts, Sentry creds, review-mode flags.
 - **`lib/configure-core.ts`** — side-effect-only module imported first by `_layout.tsx` so
   `configureCore` runs before any other `@tinycld/core/*` import.
-- **`lib/generated/`** — package-registry/collections/sidebars/providers/settings/seeds.
-  Generator output. Gitignored.
-- **`packages/@tinycld/core/`** — bundled shared library (`tinycld/core/{lib,ui,components,types}/`,
-  `server/coreserver/...`, migrations). No separate git repo.
-- **`packages/@tinycld/{mail,calendar,…}`** — symlinks to feature sibling repos. Metro and
-  vitest scan this tree.
-- **`scripts/generate-packages.ts`** — the generator. Reads `tinycld.packages.ts` + each
-  feature package's `manifest.ts`, writes route re-exports, the registry, Go server wiring,
-  and PocketBase migration symlinks. Honors `TINYCLD_APP_ROOT`, `TINYCLD_GENERATED_DIR`,
-  `TINYCLD_APP_DIR`, `TINYCLD_SERVER_DIR`, `TINYCLD_CORE_IMPORT_ALIAS`.
-- **`server/main.go`** — ~50 lines: load env, init Sentry, build `coreserver.Options`, call
+- **`tinycld.config.ts`** — generated source of truth for installed packages (a typed
+  `definePackageEntry` array). Core derives stores/sidebars/providers/registry/seeds from it
+  at runtime. Gitignored.
+- **`tinycld.seeds.ts`** — generated Node-only seed list, kept out of the app bundle. Gitignored.
+- **`lib/generated/`** — generator output: `tinycld-config.ts` shim, `package-help.ts`,
+  `uniwind-sources.css`. Gitignored.
+- **`scripts/generate.ts` + `scripts/gen-*.ts`** — the lean generator. Walks the workspace
+  members with a `manifest.ts` (via `../tinycld.packages.ts`), writes route re-exports,
+  `tinycld.config.ts`/`tinycld.seeds.ts`, help, uniwind sources, PocketBase migration/hook
+  symlinks, and the Go server wiring. Runs on `postinstall`.
+- **`scripts/dev.ts`** — the dev launcher (proxy + PB + Expo).
+- **`server/main.go`** — load env, init Sentry, build `coreserver.Options`, call
   `coreserver.Register(app, opts)`. Module `tinycld.org/app` with
-  `replace tinycld.org/core => ../packages/@tinycld/core/server`.
-- **`server/pb_migrations/`** — landing dir for symlinks. Generator populates from core's
-  `server/pb_migrations/` plus each linked feature package's `pb-migrations/`.
+  `replace tinycld.org/core => ../../core/server`.
+- **`server/pb_migrations/`, `server/pb_hooks/`** — landing dirs for symlinks the generator
+  populates from core's `server/` plus each linked feature package.
 - **`Dockerfile`, `docker-compose.yml`, `eas.json`** — deployment.
 
-## Adding / removing feature packagesq
+## Adding / removing feature packages
+
+There is no `packages:link`/`packages:install` step — linking is the npm workspace install.
+Clone a feature as a sibling, add it to the workspace-root `package.json` `workspaces` list,
+then install at the root:
 
 ```sh
-npm run packages:install <git-url>     # clone + link + regenerate
-npm run packages:link <package-name>   # link an already-cloned sibling
-npm run packages:unlink <package-name> # remove a link
+git clone git@github.com:tinycld/<pkg>.git ~/code/tinycld/<pkg>
+cd ~/code/tinycld && npm install        # links it + regenerates
 ```
 
-After any change, `npm run packages:generate` (also runs as `postinstall` and at the start of `npm run dev`).
+Remove one by deleting its sibling clone (or its workspace-list entry) and re-running
+`npm install`. The set of linked packages = the set of installed workspace members.
 
 ## Working in this repo
 
 ```sh
-npm install                      # also runs packages:generate via postinstall hook
-npm run checks                   # biome + tsc
-npm run test:unit                # vitest
-npm run test:e2e                 # playwright
+cd ~/code/tinycld && npm install   # at the workspace root (postinstall runs the generator)
+cd app
+npm run checks                     # biome + tsc
+npm run test:unit                  # vitest (this member)
+npm run test:e2e                   # playwright (this member)
 cd server && go build -o tinycld . && ./tinycld --help
 ```
+
+Per-member checks run via the `tinycld-pkg` CLI (`@tinycld/package-scripts`): from any
+member dir, `npx tinycld-pkg check` typechecks + unit-tests just that member;
+`tinycld-pkg check --all` runs every member (app, core, and each feature sibling).
 
 ## Code style
 
@@ -119,10 +141,10 @@ The image bakes the Go binary, Expo web export, PocketBase server, and the
 [google-takeout-import](https://github.com/tinycld/google-takeout-import)
 packages into one container.
 [text](https://github.com/tinycld/text) and [calc](https://github.com/tinycld/calc)
-are available but not bundled by default — link them locally with
-`npm run packages:install <git-url>` to include them in your own image build.
+are available but not bundled by default — clone them as siblings and re-install to
+include them in your own image build.
 Healthchecks and Let's Encrypt-friendly cert handling are baked in. Dokku one-liner deploys
-work via `app.json` + the `Procfile` analog in `Dockerfile`.
+work via `app.json` + the `Dockerfile`.
 
 ## License
 

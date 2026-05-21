@@ -1,64 +1,20 @@
+// Unit test setup for the new workspace.
+// react-native and @react-native-async-storage/async-storage are aliased
+// to CJS stubs in vitest.config.ts before any module loading occurs.
+// Add vi.mock() calls here for modules that cannot be handled by resolve.alias.
 import { vi } from 'vitest'
 
-process.env.EXPO_PUBLIC_ENV ??= 'test'
-
-// tinycld.config.ts is the runtime source of truth, but loading the real one
-// pulls every linked package's collections/screens (and their un-mockable RN
-// surface) into the test graph. Shim it to an empty config so unit tests stay
-// light; tests that need specific packages can override per-file. Mirrors how
-// the old generated package-* modules were shimmed.
+// Mock the generated config to empty. This is REQUIRED to break an import
+// cycle: the real tinycld.config.ts imports each package's provider, some of
+// which (calc, text) eagerly import @tinycld/core/file-viewer components that
+// import @tinycld/core/lib/pocketbase, whose module-eval calls
+// buildPackageStores(tinycldConfig) — back into the still-initializing config
+// ("entries is not iterable"). Tests that exercise the derivation helpers build
+// their own entries inline, so an empty real config is harmless. (Mirrors the
+// production core unit-setup.)
 vi.mock('@tinycld/app-generated/tinycld-config', () => ({
     tinycldConfig: [],
 }))
-
-vi.mock('@sentry/react-native', () => ({
-    init: vi.fn(),
-    captureException: vi.fn(),
-    withScope: vi.fn(),
+vi.mock('@tinycld/app-generated/package-help', () => ({
+    packageHelp: [],
 }))
-
-// React Native's entry uses Flow syntax Vite/Rollup can't parse. Substitute
-// the tiny surface our shortcut-layer tests touch.
-vi.mock('react-native', () => ({
-    Platform: { OS: 'web' },
-    Dimensions: {
-        get: () => ({ width: 1024, height: 768 }),
-        addEventListener: () => ({ remove: () => {} }),
-    },
-}))
-
-vi.mock('expo-router', () => ({
-    router: { replace: vi.fn(), push: vi.fn(), back: vi.fn() },
-    Slot: () => null,
-    Redirect: () => null,
-    usePathname: () => '/',
-    useLocalSearchParams: () => ({}),
-}))
-
-// @react-native-async-storage/async-storage requires the RN module bridge and
-// is pulled in transitively by `~/lib/store`. Substitute a minimal in-memory
-// shim so tests can exercise the Zustand registry without RN.
-vi.mock('@react-native-async-storage/async-storage', () => {
-    const store = new Map<string, string>()
-    const api = {
-        getItem: async (key: string) => store.get(key) ?? null,
-        setItem: async (key: string, value: string) => {
-            store.set(key, value)
-        },
-        removeItem: async (key: string) => {
-            store.delete(key)
-        },
-        clear: async () => {
-            store.clear()
-        },
-        getAllKeys: async () => Array.from(store.keys()),
-        multiGet: async (keys: string[]) => keys.map(k => [k, store.get(k) ?? null]),
-        multiSet: async (pairs: [string, string][]) => {
-            for (const [k, v] of pairs) store.set(k, v)
-        },
-        multiRemove: async (keys: string[]) => {
-            for (const k of keys) store.delete(k)
-        },
-    }
-    return { default: api, ...api }
-})

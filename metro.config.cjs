@@ -4,15 +4,17 @@ const { withUniwindConfig } = require('uniwind/metro')
 
 const config = getDefaultConfig(__dirname)
 
-// Workspace lives one level up; watch it so Metro bundles member source that
-// resolves through node_modules/@tinycld/* symlinks.
+// The workspace root is one level up (app/.. ). Watch it so Metro bundles
+// member source (core/, the feature siblings) reached through the
+// node_modules/@tinycld/* symlinks AND resolves their deps from the
+// workspace-root node_modules (members have no node_modules of their own).
 const workspaceRoot = path.resolve(__dirname, '..')
 config.watchFolders = [workspaceRoot]
 
 // `@tinycld/app-generated/*` — package-generator output written to
-// lib/generated/. A build-time contract (NOT a symlink artifact): core imports
-// these by name and the app supplies the files. Metro doesn't read tsconfig
-// paths, so alias here. (Phase 3 keeps a generated subset; this stays.)
+// lib/generated/. This is a build-time contract (not a symlink artifact):
+// @tinycld/core imports these virtual modules by name and the app supplies
+// the concrete files. Metro doesn't read tsconfig paths, so alias here.
 const APP_GENERATED_DIR = path.join(__dirname, 'lib', 'generated')
 const originalResolveRequest = config.resolver.resolveRequest
 config.resolver.resolveRequest = (context, moduleName, platform) => {

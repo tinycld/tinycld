@@ -291,7 +291,7 @@ function withPrefix(prefix: string, color: string) {
 }
 
 function buildPbSync() {
-    const buildResult = spawn('go', ['build', '-o', 'tinycld', '.'], {
+    const buildResult = spawn('go', ['build', '-o', 'app', '.'], {
         cwd: path.join(ROOT, 'server'),
         stdio: 'inherit',
     })
@@ -309,8 +309,8 @@ function spawnPbBinary(pbPort: number, publicUrl: string, dataDir: string | null
     const onPbErr = withPrefix('pb', '\x1b[31m') // red
     const args = ['--dev', '--http', `127.0.0.1:${pbPort}`]
     if (dataDir) args.push('--dir', dataDir)
-    args.push('--typesDir', path.join(ROOT, 'packages', '@tinycld/core', 'types'), 'serve')
-    const child = spawn(path.join(ROOT, 'server', 'tinycld'), args, {
+    args.push('--typesDir', path.join(ROOT, '..', 'core', 'types'), 'serve')
+    const child = spawn(path.join(ROOT, 'server', 'app'), args, {
         cwd: ROOT,
         stdio: ['inherit', 'pipe', 'pipe'],
         // PB's first-run installer prints a /setup URL using the address
@@ -507,7 +507,7 @@ async function main() {
     // packages:generate also runs each linked package's one-shot build
     // script (e.g. text's webview-editor bundle), so the artifacts are
     // already on disk by the time Expo starts bundling.
-    const gen = spawn('npx', ['tsx', 'scripts/generate-packages.ts'], {
+    const gen = spawn('npx', ['tsx', 'scripts/generate.ts'], {
         cwd: ROOT,
         stdio: 'inherit',
     })

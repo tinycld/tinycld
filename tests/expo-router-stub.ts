@@ -1,18 +1,7 @@
-// Test-only stub for expo-router. The real package's CJS entry
-// (build/index.js) does `require("./global")` at module top, which
-// Node's CJS resolver can't satisfy when the calling file is reached
-// through a sibling-symlink path (Vite SSR's preserveSymlinks=false
-// means imports under packages/@tinycld/<sibling>/... resolve via the
-// sibling's real filesystem location, where node_modules don't reach
-// expo-router).
-//
-// Tests that need to load a real screen, hook, or side-effect module
-// from a sibling package import this stub instead. It surfaces the
-// minimal API actually used at module-top by sibling source — the
-// `router` object plus a few component shells. Tests that care about
-// hook behavior should still mock those hooks individually with
-// vi.mock; this stub only exists so the module graph can finish
-// loading.
+// Test-only stub for expo-router. The real package's CJS entry (build/index.js)
+// follows source maps to src/exports.ts which contains JSX that Vite's SSR
+// node environment cannot parse. This stub provides the minimal API used at
+// module-top by package source files so the module graph can finish loading.
 
 import { vi } from 'vitest'
 

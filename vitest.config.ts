@@ -1,132 +1,90 @@
-import fs from 'node:fs'
 import path from 'node:path'
 import { defineConfig } from 'vitest/config'
 
-// Locate a dependency's installed directory regardless of where npm hoisted it:
-// the app shell's node_modules OR the workspace-root node_modules one level up
-// (in CI the workspace root is the parent of the app shell, so deps hoist
-// there). A direct filesystem probe avoids Node's exports-map restrictions on
-// ./package.json (ERR_PACKAGE_PATH_NOT_EXPORTED for e.g. react). Falls back to
-// the app-shell path so the alias string is always defined.
-const pkgDir = (pkg: string): string => {
-    for (const root of [
-        path.resolve(__dirname, 'node_modules'),
-        path.resolve(__dirname, '..', 'node_modules'),
-    ]) {
-        const candidate = path.join(root, pkg)
-        if (fs.existsSync(candidate)) return candidate
-    }
-    return path.resolve(__dirname, 'node_modules', pkg)
-}
+// The app shell owns the canonical vitest config. Package-scoped runs point the
+// `include` glob (or a positional filter) at one package's tests/, but always
+// resolve through these aliases so cross-package `@tinycld/core/*` imports and
+// the `~/*` package-source alias work identically everywhere.
+const APP_DIR = __dirname
+const CORE_DIR = path.resolve(APP_DIR, '..', 'core')
 
 export default defineConfig({
     resolve: {
         alias: [
-            // --- dedup pins (Vite SSR resolver differs from Metro; keep until
-            //     a test proves the workspace dedupes these on its own) ---
-            {
-                find: /^react$/,
-                replacement: path.join(pkgDir('react'), 'index.js'),
-            },
-            {
-                find: /^react\/jsx-runtime$/,
-                replacement: path.join(pkgDir('react'), 'jsx-runtime.js'),
-            },
-            {
-                find: /^react\/jsx-dev-runtime$/,
-                replacement: path.join(pkgDir('react'), 'jsx-dev-runtime.js'),
-            },
-            // yjs/y-protocols use instanceof checks; a duplicate copy reached
-            // through a member symlink breaks nested Y.Map.set ("Unexpected
-            // content type"). Pin to the single install.
-            { find: /^yjs$/, replacement: pkgDir('yjs') },
-            {
-                find: /^y-protocols\/(.+)$/,
-                replacement: `${pkgDir('y-protocols')}/$1`,
-            },
-            // hyperformula's ESM build has broken relative imports under Vite
-            // SSR; pin to the self-consistent commonjs entry.
-            {
-                find: /^hyperformula$/,
-                replacement: path.join(pkgDir('hyperformula'), 'commonjs/index.js'),
-            },
-            // --- @tinycld/core path remaps. Unlike Metro, Vite's exports-map
-            //     resolution does NOT do directory-index fallback, so
-            //     `@tinycld/core/lib/notify` (a dir → lib/notify/index.ts) fails
-            //     to load through the exports wildcard. Remap straight to the
-            //     bundled core path, which Vite resolves with its own extension
-            //     + index probing. (Metro handles this natively — see Spike 1.)
-            {
-                find: /^@tinycld\/core\/Providers$/,
-                replacement: path.resolve(
-                    __dirname,
-                    'packages/@tinycld/core/components/Providers.tsx'
-                ),
-            },
-            {
-                find: /^@tinycld\/core$/,
-                replacement: path.resolve(__dirname, 'packages/@tinycld/core/index.ts'),
-            },
-            {
-                find: /^@tinycld\/core\/(.+)$/,
-                replacement: path.resolve(__dirname, 'packages/@tinycld/core/$1'),
-            },
-            // --- @tinycld/app-generated/* build-time contract (Phase 3 keeps a
-            //     subset of generated files; Vitest doesn't read tsconfig paths) ---
+            // @tinycld/core/* — Vite's exports resolution lacks Metro's
+            // directory-index fallback, so remap straight to the core dir.
+            { find: /^@tinycld\/core$/, replacement: path.join(CORE_DIR, 'index.ts') },
+            { find: /^@tinycld\/core\/(.+)$/, replacement: `${CORE_DIR}/$1` },
+            // @tinycld/app-generated/* — build-time contract written to app/lib/generated.
             {
                 find: /^@tinycld\/app-generated\/(.+)$/,
-                replacement: path.resolve(__dirname, 'lib/generated/$1'),
+                replacement: path.join(APP_DIR, 'lib', 'generated', '$1'),
             },
-            // `~/*` → app shell root (unchanged from the pre-workspace config).
-            { find: /^~\/(.+)$/, replacement: path.resolve(__dirname, '$1') },
-            // --- test doubles (unrelated to linking) ---
-            // expo-clipboard transitively pulls in expo-modules-core, whose
-            // module-load-time side effects don't survive a bare Node test env.
+            // react-native's entry uses Flow syntax (`import typeof`) and CJS
+            // internals that Vite/Rollup cannot parse. Redirect to a CJS stub
+            // that exposes the minimal surface unit tests touch transitively.
             {
-                find: /^expo-clipboard$/,
-                replacement: path.resolve(__dirname, 'tests/expo-clipboard-stub.ts'),
+                find: /^react-native$/,
+                replacement: path.join(APP_DIR, 'tests', 'react-native-stub.cjs'),
             },
-            // expo-router's CJS entry does `require("./global")` at module top,
-            // which Node can't resolve when reached through a member symlink.
+            // @react-native-async-storage/async-storage requires the RN native
+            // bridge; redirect to an in-memory stub so unit tests run without it.
+            {
+                find: /^@react-native-async-storage\/async-storage$/,
+                replacement: path.join(APP_DIR, 'tests', 'async-storage-stub.cjs'),
+            },
+            // @sentry/react-native transitively requires react-native/Libraries/Promise
+            // via CJS require (bypasses Vite aliases). Stub out the whole package.
+            {
+                find: /^@sentry\/react-native$/,
+                replacement: path.join(APP_DIR, 'tests', 'sentry-stub.cjs'),
+            },
+            // expo-router's CJS entry follows source maps to src/exports.ts which
+            // contains JSX that Vite's node environment cannot parse. Use a minimal
+            // stub that exposes the API surface used by package unit tests.
             {
                 find: /^expo-router$/,
-                replacement: path.resolve(__dirname, 'tests/expo-router-stub.ts'),
+                replacement: path.join(APP_DIR, 'tests', 'expo-router-stub.ts'),
             },
-            // lucide-react-native pulls in react-native-svg (TS source, not
-            // transformed in node_modules under Vitest); a CJS Proxy stub
-            // yields a harmless component for any named icon import.
+            // lucide-react-native v1.16+ individual icon .mjs files contain
+            // Flow-style `typeof` syntax that Vite cannot parse. Stub the whole
+            // package so unit tests that transitively import icons don't crash.
             {
                 find: /^lucide-react-native$/,
-                replacement: path.resolve(__dirname, 'tests/lucide-react-native-stub.cjs'),
+                replacement: path.join(APP_DIR, 'tests', 'lucide-react-native-stub.cjs'),
             },
+            // uniwind's react-native condition resolves to TypeScript source files
+            // that import react-native internals (Dimensions, Platform, etc.) which
+            // Vite's node environment cannot parse. Stub out the minimal hook surface
+            // used by unit-test import chains (useThemeColor → useCSSVariable).
+            {
+                find: /^uniwind$/,
+                replacement: path.join(APP_DIR, 'tests', 'uniwind-stub.cjs'),
+            },
+            // react-native-reanimated initializes TurboModules at import time which
+            // crashes in a Node test environment. Stub the animation primitives used
+            // by UI components in the import chain (core/ui/modal → Animated).
+            {
+                find: /^react-native-reanimated$/,
+                replacement: path.join(APP_DIR, 'tests', 'react-native-reanimated-stub.cjs'),
+            },
+            // expo-clipboard transitively pulls in expo-modules-core, whose load-time
+            // side effects (global __DEV__, native TurboModules) crash in Node. The
+            // workspace-root stub provides an in-memory implementation for tests.
+            {
+                find: /^expo-clipboard$/,
+                replacement: path.join(APP_DIR, '..', 'tests', 'expo-clipboard-stub.ts'),
+            },
+            // ~/* — package source. Resolved relative to the package's own dir
+            // at invocation time via the test root, so we map it dynamically below.
         ],
     },
     test: {
         environment: 'node',
-        include: [
-            'tests/**/*.test.ts',
-            'tests/**/*.test.tsx',
-            // generator + script tests
-            'scripts/**/*.test.ts',
-            // app shell's bundled core
-            'packages/@tinycld/core/**/__tests__/**/*.test.ts',
-            'packages/@tinycld/core/**/__tests__/**/*.test.tsx',
-            'packages/@tinycld/core/**/*.test.ts',
-            'packages/@tinycld/core/**/*.test.tsx',
-            // feature members (siblings) — one level up from the app shell
-            '../contacts/tests/**/*.test.{ts,tsx}',
-            '../mail/tests/**/*.test.{ts,tsx}',
-            '../calendar/tests/**/*.test.{ts,tsx}',
-            '../drive/tests/**/*.test.{ts,tsx}',
-            '../calc/tests/**/*.test.{ts,tsx}',
-            '../text/tests/**/*.test.{ts,tsx}',
-            '../google-takeout-import/tests/**/*.test.{ts,tsx}',
-        ],
-        exclude: [
-            '../google-takeout-import/tests/worker-bridge.test.ts',
-            'packages/@tinycld/core/ideas/**',
-            'node_modules/**',
-        ],
-        setupFiles: ['tests/unit-setup.ts'],
+        include: ['tests/**/*.test.{ts,tsx}'],
+        // The app shell has no tests/ of its own yet; self-mode `npm test`
+        // (tinycld-pkg test from app/) must not fail on an empty match.
+        passWithNoTests: true,
+        setupFiles: [path.join(APP_DIR, 'tests', 'unit-setup.ts')],
     },
 })

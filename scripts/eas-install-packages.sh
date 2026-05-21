@@ -16,14 +16,20 @@ set -euo pipefail
 
 REPO_BASE="${TINYCLD_PACKAGES_REPO_BASE:-https://github.com/tinycld}"
 
+# Standalone members cloned as siblings of the app shell. core is a member too
+# (it is no longer bundled inside the shell); feature packages follow.
 PACKAGES=(
+    core
     mail
     contacts
     calendar
     drive
+    calc
+    text
+    google-takeout-import
 )
 
-# The app shell is at <workspace>/tinycld; siblings live at <workspace>/<pkg>.
+# The app shell is at <workspace>/app; siblings live at <workspace>/<pkg>.
 SHELL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE_ROOT="$(cd "${SHELL_DIR}/.." && pwd)"
 
@@ -47,8 +53,8 @@ if [ ! -f "${WORKSPACE_ROOT}/package.json" ]; then
     "version": "0.0.0",
     "private": true,
     "workspaces": [
-        "tinycld",
-        "tinycld/packages/@tinycld/core",
+        "app",
+        "core",
         "contacts",
         "mail",
         "calendar",
@@ -62,11 +68,15 @@ JSON
     echo 'legacy-peer-deps=true' > "${WORKSPACE_ROOT}/.npmrc"
 fi
 
-# Verify each package landed as a sibling dir with a manifest. Without this
-# guard a failed clone could let the build ship without feature routes.
+# Verify each package landed as a sibling dir. Feature packages carry a
+# manifest.ts; core does not (it is the shared lib, not a feature) — check its
+# package.json instead. Without this guard a failed clone could let the build
+# ship without feature routes.
 missing=()
 for pkg in "${PACKAGES[@]}"; do
-    if [ ! -f "${WORKSPACE_ROOT}/${pkg}/manifest.ts" ]; then
+    marker="manifest.ts"
+    [ "${pkg}" = "core" ] && marker="package.json"
+    if [ ! -f "${WORKSPACE_ROOT}/${pkg}/${marker}" ]; then
         missing+=("@tinycld/${pkg}")
     fi
 done

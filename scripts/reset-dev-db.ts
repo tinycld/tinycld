@@ -88,7 +88,7 @@ const parsedUrl = new URL(PB_URL)
 const PB_HOST = parsedUrl.hostname
 const PB_PORT = parseInt(parsedUrl.port || '8090', 10)
 const PB_DATA_DIR = path.join(process.cwd(), CONFIG.dataDir)
-const PB_BINARY = path.join(process.cwd(), 'server/tinycld')
+const PB_BINARY = path.join(process.cwd(), 'server/app')
 
 async function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms))
@@ -146,7 +146,7 @@ function buildPocketBase(): void {
     }
 
     log('Building PocketBase...')
-    const result = spawnSync('go', ['build', '-o', 'tinycld', '.'], {
+    const result = spawnSync('go', ['build', '-o', 'app', '.'], {
         cwd: path.join(process.cwd(), 'server'),
         stdio: 'inherit',
     })

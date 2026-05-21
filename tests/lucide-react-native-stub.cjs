@@ -1,73 +1,95 @@
-// Test-only stub for `lucide-react-native`. The real bundle pulls
-// in `react-native-svg`, whose source uses TypeScript syntax that
-// Vitest's transformer doesn't apply to node_modules. We don't
-// render icons in unit tests anyway — assertions about icon
-// rendering belong in Playwright.
+// Vitest stub for lucide-react-native.
+// Lucide's ESM bundle (v1.16+) loads individual icon .mjs files that contain
+// Flow-style `typeof` syntax Vite/Rollup cannot parse. Returning a generic
+// React component avoids the parse error while keeping the import shape valid
+// for unit tests that don't assert icon rendering.
 //
-// Implemented as CJS (.cjs) so we can use a Proxy on module.exports.
-// Any named-icon import (ExternalLink, AlertTriangle, …) yields the
-// same harmless component stub. Tests that genuinely need a real
-// icon should reach for vi.mock locally; this stub only exists so
-// the module graph can finish loading from sibling source under
-// packages/@tinycld/<sibling>/... where the real bundle would crash.
-//
-// Vitest's ES↔CJS interop reads named exports from Object.keys() on
-// the CJS module.exports, so the Proxy's `get` trap alone isn't
-// enough — ESM `import { Heading1 } from '...'` requires Heading1 to
-// appear as an own property. We pre-populate the dictionary with
-// every Lucide identifier referenced from the codebase so static
-// imports resolve to the Stub function; the Proxy handles any
-// additional dynamic lookups (a defensive fallback).
+// The stub uses a Proxy so unknown icons resolve to the Icon function at runtime
+// via get-trap. However, Vite's ESM interop for CJS modules uses property
+// enumeration (not the get trap) to bind named imports — a Proxy with an empty
+// target {} produces no enumerable properties, so named imports resolve to
+// undefined in tests that check the value directly. We work around this by
+// seeding the Proxy target with every icon name that any test file checks by
+// value (not just renders as JSX). Add new names here when a test directly
+// asserts the icon reference is non-null.
+'use strict'
 
-const Stub = () => null
+const React = require('react')
 
-// Lucide icon names referenced by import statements anywhere in the
-// codebase. Add new names here when a new icon is imported. The list
-// is overinclusive on purpose: a missing entry would surface as an
-// `undefined` named import in tests that try to render the icon,
-// which is harder to diagnose than an unused name.
-const NAMES = [
-    'AlertCircle', 'AlertTriangle', 'AlignCenter', 'AlignJustify', 'AlignLeft', 'AlignRight',
-    'Archive', 'ArrowDown', 'ArrowDownToLine', 'ArrowLeft', 'ArrowRight', 'ArrowUp',
-    'AtSign', 'Bell', 'BellOff', 'Bold', 'Book', 'BookOpen', 'Bot', 'Box', 'Calendar',
-    'Camera', 'Check', 'CheckCircle', 'CheckSquare', 'ChevronDown', 'ChevronLeft',
-    'ChevronRight', 'ChevronUp', 'Circle', 'Clipboard', 'Clock', 'Cloud', 'CloudOff',
-    'Code', 'Code2', 'Columns', 'Copy', 'CornerDownLeft', 'Cpu', 'CreditCard', 'Crop',
-    'Database', 'Download', 'Edit', 'Edit2', 'Edit3', 'ExternalLink', 'Eye', 'EyeOff',
-    'File', 'FileText', 'Files', 'Filter', 'Flag', 'Folder', 'FolderOpen', 'Forward',
-    'Globe', 'GraduationCap', 'Grid', 'HardDrive', 'Hash', 'Headphones', 'Heading1',
-    'Heading2', 'Heading3', 'Heading4', 'Heading5', 'Heading6', 'HelpCircle', 'Highlighter',
-    'Home', 'Image', 'Inbox', 'Info', 'Italic', 'Key', 'Keyboard', 'Languages', 'Layout',
-    'Link', 'Link2', 'List', 'ListChecks', 'ListOrdered', 'Loader', 'Lock', 'LogIn',
-    'LogOut', 'Mail', 'MailOpen', 'Map', 'Maximize', 'Maximize2', 'MenuIcon', 'Menu',
-    'MessageCircle', 'MessageSquare', 'Mic', 'MicOff', 'Minimize', 'Minimize2', 'Minus',
-    'MonitorSmartphone', 'MoreHorizontal', 'MoreVertical', 'Move', 'Music', 'Package',
-    'Palette', 'Paperclip', 'Pause', 'Pencil', 'Phone', 'PieChart', 'Pin', 'PinOff',
-    'Play', 'Plus', 'PlusCircle', 'Pointer', 'Power', 'Printer', 'Quote', 'RefreshCcw',
-    'RefreshCw', 'Replace', 'ReplaceAll', 'Reply', 'ReplyAll', 'RotateCcw', 'Save', 'Search', 'Send', 'Server',
-    'Settings', 'Settings2', 'Share', 'Share2', 'Shield', 'ShieldCheck', 'Shuffle',
-    'Sidebar', 'Slack', 'SlidersHorizontal', 'Smartphone', 'Smile', 'Sparkles',
-    'Speaker', 'Square', 'Star', 'Strikethrough', 'Subscript', 'Sun', 'Superscript',
-    'Table', 'Tag', 'Terminal', 'TestTube', 'Trash', 'Trash2', 'TrendingDown',
-    'TrendingUp', 'Triangle', 'Type', 'Underline', 'Undo', 'Unlock', 'Upload',
-    'User', 'UserCheck', 'UserPlus', 'Users', 'Video', 'VideoOff', 'Volume', 'Volume2',
-    'VolumeX', 'Wifi', 'WifiOff', 'WrapText', 'X', 'XCircle', 'XSquare', 'Zap',
-    'ZoomIn', 'ZoomOut',
-]
-
-const exports = { default: Stub }
-for (const name of NAMES) {
-    exports[name] = Stub
+function Icon({ children, ...props }) {
+    return null
 }
-exports.__esModule = true
 
-module.exports = new Proxy(exports, {
+// Seed target with all icon names that unit tests reference by value (not just render).
+// The Proxy's get-trap still handles any unknown name so JSX rendering always works.
+const knownIcons = {
+    // lucide-react-native named exports used by slash-menu-icon-lookup.ts and similar
+    Code2: Icon,
+    Heading1: Icon,
+    Heading2: Icon,
+    Heading3: Icon,
+    Image: Icon,
+    List: Icon,
+    ListOrdered: Icon,
+    Minus: Icon,
+    Quote: Icon,
+    Table: Icon,
+    // Additional icons imported by text components
+    AlertCircle: Icon,
+    AlertTriangle: Icon,
+    AlignJustify: Icon,
+    Ban: Icon,
+    Check: Icon,
+    ChevronDown: Icon,
+    ChevronUp: Icon,
+    CloudOff: Icon,
+    ExternalLink: Icon,
+    FilePlus2: Icon,
+    FileSpreadsheet: Icon,
+    FileText: Icon,
+    LayoutTemplate: Icon,
+    Mail: Icon,
+    MessageSquare: Icon,
+    MessageSquarePlus: Icon,
+    Replace: Icon,
+    ReplaceAll: Icon,
+    RotateCcw: Icon,
+    Rows3: Icon,
+    ScrollText: Icon,
+    Upload: Icon,
+    WrapText: Icon,
+    X: Icon,
+    // calc and other package icons
+    FilePlus: Icon,
+    Plus: Icon,
+    // drive icons (if any are value-checked)
+    FolderOpen: Icon,
+    Folder: Icon,
+    File: Icon,
+}
+
+const handler = {
     get(target, prop) {
-        if (typeof prop === 'symbol') return Reflect.get(target, prop)
-        if (prop in target) return target[prop]
-        // Unknown icon name: return the Stub anyway so dynamic
-        // lookups don't crash. Static `import { Foo }` will already
-        // have been resolved against `target` above.
-        return Stub
+        if (prop === '__esModule') return true
+        if (prop === 'default') return Icon
+        if (prop === 'LucideProvider') {
+            return function LucideProvider({ children }) {
+                return children
+            }
+        }
+        if (prop === 'useLucideContext') {
+            return function useLucideContext() {
+                return { size: 24, color: 'currentColor', strokeWidth: 2, absoluteStrokeWidth: false }
+            }
+        }
+        if (prop === 'createLucideIcon') {
+            return function createLucideIcon(_name, _iconNode) {
+                return Icon
+            }
+        }
+        // Any named icon export (ChevronDown, Plus, etc.)
+        return Icon
     },
-})
+}
+
+module.exports = new Proxy(knownIcons, handler)

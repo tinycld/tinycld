@@ -1,4 +1,5 @@
 #!/usr/bin/env -S npx tsx
+
 /**
  * Database Seed Script
  *
@@ -29,8 +30,8 @@
  *   --help                 Show this help message
  */
 
+import { deriveSeeds } from '@tinycld/core/lib/packages/derive-seeds'
 import PocketBase from 'pocketbase'
-import { deriveSeeds } from '../packages/@tinycld/core/lib/packages/derive-seeds'
 import { tinycldSeeds } from '../tinycld.seeds'
 
 function log(...args: unknown[]) {
@@ -74,7 +75,7 @@ const TEST_DEFAULTS = {
 }
 
 // These mirror the singleton constants in
-// packages/@tinycld/core/server/coreserver/demo_start.go. Keep in sync.
+// core/server/coreserver/demo_start.go. Keep in sync.
 // REVIEW_DEMO_EMAIL overrides userEmail at runtime; if you set it to
 // something other than demo@tinycld.org you must also patch demo_start.go's
 // demoUserEmail constant or the demo-token flow won't find the user.
