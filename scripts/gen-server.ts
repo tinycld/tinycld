@@ -46,6 +46,33 @@ export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
     return ['go 1.25.0', '', 'use (', '    .', `    ${coreRelPath}`, ...uses, ')', ''].join('\n')
 }
 
+interface BundledPkgInput {
+    slug: string
+    manifest: {
+        name: string
+        slug: string
+        version: string
+        description?: string
+        nav?: { icon?: string; order?: number }
+        server?: unknown
+    }
+}
+
+// Emit server/bundled-packages.json — consumed by core's Go
+// coreserver.SyncBundledPackages at boot to seed the pkg_registry collection.
+export function buildBundledPackages(features: BundledPkgInput[]): string {
+    const rows = features.map(f => ({
+        name: f.manifest.name,
+        slug: f.manifest.slug,
+        version: f.manifest.version,
+        icon: f.manifest.nav?.icon ?? '',
+        description: f.manifest.description ?? '',
+        hasServer: !!f.manifest.server,
+        navOrder: f.manifest.nav?.order ?? 0,
+    }))
+    return `${JSON.stringify(rows, null, 2)}\n`
+}
+
 // Replace (or create) a symlink at linkPath → target. Idempotent and safe
 // under concurrent generator runs: if another process recreates the link
 // between our unlink and create (EEXIST), we accept it when it already points

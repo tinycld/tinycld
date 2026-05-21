@@ -6,7 +6,13 @@ import { type BuildPkg, runPackageBuilds } from './gen-build'
 import { buildConfigSource, buildSeedsSource, type ConfigPkg } from './gen-config'
 import { buildHelpSource, type HelpGroupInput, parseFrontmatter } from './gen-help'
 import { emitPublicRoutes, emitRoutes } from './gen-routes'
-import { buildGoWork, buildPackageExtensionsGo, replaceSymlink, type ServerPkg } from './gen-server'
+import {
+    buildBundledPackages,
+    buildGoWork,
+    buildPackageExtensionsGo,
+    replaceSymlink,
+    type ServerPkg,
+} from './gen-server'
 import { buildUniwindSources, type UniwindSource } from './gen-uniwind'
 import { loadManifest, type PackageManifest } from './load-manifest'
 import {
@@ -261,6 +267,10 @@ async function main() {
 
     symlinkServerArtifacts(features)
     emitGoWiring(features)
+    fs.writeFileSync(
+        path.join(SERVER_DIR, 'bundled-packages.json'),
+        buildBundledPackages(features.map(f => ({ slug: f.manifest.slug, manifest: f.manifest })))
+    )
 
     console.log(`Generated config for ${features.length} feature package(s).`)
 }

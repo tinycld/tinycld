@@ -57,9 +57,14 @@ describe('generate.ts (smoke, real workspace)', () => {
             'tinycldSeeds'
         )
 
-        // the @tinycld/app-generated/tinycld-config re-export shim (core imports through it)
+        // the @tinycld/app-generated/tinycld-config re-export shim (core imports through it).
+        // Named re-exports (not `export *`) are required: a wildcard leaves
+        // tinycldConfig undefined under vitest's ESM transform while the
+        // pocketbase import cycle resolves. See generate.ts for the rationale.
         const shim = path.join(APP_DIR, 'lib', 'generated', 'tinycld-config.ts')
         expect(fs.existsSync(shim)).toBe(true)
-        expect(fs.readFileSync(shim, 'utf8')).toContain("export * from '../../tinycld.config'")
+        const shimSrc = fs.readFileSync(shim, 'utf8')
+        expect(shimSrc).toContain("export { tinycldConfig } from '../../tinycld.config'")
+        expect(shimSrc).toContain("export type { MergedPackageSchema } from '../../tinycld.config'")
     })
 })

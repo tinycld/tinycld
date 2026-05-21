@@ -3,6 +3,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+    buildBundledPackages,
     buildGoWork,
     buildPackageExtensionsGo,
     replaceSymlink,
@@ -87,5 +88,48 @@ describe('replaceSymlink', () => {
         } finally {
             fs.rmSync(tmp, { recursive: true, force: true })
         }
+    })
+})
+
+describe('buildBundledPackages', () => {
+    it('maps manifests to the Go pkg_seed shape', () => {
+        const json = buildBundledPackages([
+            {
+                slug: 'mail',
+                manifest: {
+                    name: 'Mail',
+                    slug: 'mail',
+                    version: '0.1.0',
+                    description: 'Email',
+                    nav: { icon: 'mail', order: 10 },
+                    server: { package: 'server', module: 'tinycld.org/packages/mail' },
+                },
+            },
+            {
+                slug: 'calc',
+                manifest: { name: 'Calc', slug: 'calc', version: '0.2.0' },
+            },
+        ])
+        const parsed = JSON.parse(json)
+        expect(parsed).toEqual([
+            {
+                name: 'Mail',
+                slug: 'mail',
+                version: '0.1.0',
+                icon: 'mail',
+                description: 'Email',
+                hasServer: true,
+                navOrder: 10,
+            },
+            {
+                name: 'Calc',
+                slug: 'calc',
+                version: '0.2.0',
+                icon: '',
+                description: '',
+                hasServer: false,
+                navOrder: 0,
+            },
+        ])
     })
 })
