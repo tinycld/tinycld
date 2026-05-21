@@ -102,6 +102,13 @@ export type RegisterReturnOf<E> = E extends {
 
 export type MergeSchemas<Entries extends readonly unknown[]> = Schema &
     UnionToIntersection<SchemaOf<Entries[number]>>
-export type PackageStoresReturn<Entries extends readonly unknown[]> = UnionToIntersection<
-    RegisterReturnOf<Entries[number]>
->
+// Empty-tuple guard: a lean shell (zero feature packages) has
+// `tinycldConfig = [] as const` (type `readonly []`). Without this branch,
+// `(readonly [])[number]` is `never`, `RegisterReturnOf<never>` is `never`, and
+// `UnionToIntersection<never>` collapses to `unknown` — which is NOT spreadable,
+// so `{ ...buildPackageStores(...) }` in pocketbase.ts fails to typecheck. The
+// empty config contributes no stores, so the correct result is an empty (but
+// spreadable) object type.
+export type PackageStoresReturn<Entries extends readonly unknown[]> = Entries extends readonly []
+    ? Record<string, never>
+    : UnionToIntersection<RegisterReturnOf<Entries[number]>>
