@@ -310,6 +310,14 @@ function spawnPbBinary(pbPort: number, publicUrl: string, dataDir: string | null
     const args = ['--dev', '--http', `127.0.0.1:${pbPort}`]
     if (dataDir) args.push('--dir', dataDir)
     args.push('--typesDir', path.join(ROOT, '..', 'core', 'types'), 'serve')
+    // The mail package's IMAP server defaults to :1143 in dev. The Playwright
+    // IMAP suite (app/tests/e2e/imap-helpers.ts) connects on :1193 — a port
+    // distinct from the normal dev one so an e2e run never collides with a
+    // developer's running dev IMAP listener. Only the test invocation passes a
+    // dedicated --pb-data-dir, so key the override off that: point the test
+    // server's IMAP listener at :1193 where the helper expects it. Without this
+    // the mail-imap specs fail with ECONNREFUSED 127.0.0.1:1193.
+    const testEnv = dataDir ? { IMAP_ADDR: ':1193' } : {}
     const child = spawn(path.join(ROOT, 'server', 'app'), args, {
         cwd: ROOT,
         stdio: ['inherit', 'pipe', 'pipe'],
@@ -317,7 +325,7 @@ function spawnPbBinary(pbPort: number, publicUrl: string, dataDir: string | null
         // it bound to. Override with the public proxy URL so the printed
         // URL points where the user actually browses, not at PB's
         // internal port.
-        env: { ...process.env, TINYCLD_PUBLIC_URL: publicUrl },
+        env: { ...process.env, TINYCLD_PUBLIC_URL: publicUrl, ...testEnv },
     })
     child.stdout?.on('data', onPbOut)
     child.stderr?.on('data', onPbErr)
