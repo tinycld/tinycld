@@ -1,5 +1,6 @@
 import { Menu } from '@tinycld/core/ui/menu'
 import { Pressable, Text } from 'react-native'
+import { useMenuBarScope } from './MenuBarScopeContext'
 import { menuBarRegistryId, useOpenMenuBarId } from './menubar-store'
 import { useOpenMenuStore } from './open-menu-store'
 
@@ -17,12 +18,13 @@ interface MenuBarTriggerProps {
 // when a non-menubar menu — e.g. a toolbar color picker — is open,
 // since the user is interacting with a different control.
 export function MenuBarTrigger({ label, menuId }: MenuBarTriggerProps) {
-    const openMenuBarId = useOpenMenuBarId()
+    const scope = useMenuBarScope()
+    const openMenuBarId = useOpenMenuBarId(scope)
     const open = useOpenMenuStore(s => s.open)
 
     const handleHoverIn = () => {
         if (openMenuBarId != null && openMenuBarId !== menuId) {
-            open(menuBarRegistryId(menuId))
+            open(menuBarRegistryId(menuId, scope))
         }
     }
 

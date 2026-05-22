@@ -2,6 +2,7 @@ import { Menu } from '@tinycld/core/ui/menu'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
 import { MenuBarTrigger } from './MenuBarTrigger'
+import { useMenuBarScope } from './MenuBarScopeContext'
 import { menuBarRegistryId, useIsMenuBarOpen } from './menubar-store'
 import { useOpenMenuStore } from './open-menu-store'
 
@@ -30,10 +31,11 @@ interface MenuBarMenuProps {
 // handler can recognise clicks that should NOT close (e.g. clicking
 // a Menu.Item or a Menu.SubTrigger inside the popover).
 export function MenuBarMenu({ menuId, label, children }: MenuBarMenuProps) {
-    const isOpen = useIsMenuBarOpen(menuId)
+    const scope = useMenuBarScope()
+    const isOpen = useIsMenuBarOpen(menuId, scope)
     const open = useOpenMenuStore(s => s.open)
     const close = useOpenMenuStore(s => s.close)
-    const registryId = menuBarRegistryId(menuId)
+    const registryId = menuBarRegistryId(menuId, scope)
 
     return (
         <Menu isOpen={isOpen} onOpenChange={next => (next ? open(registryId) : close())}>
