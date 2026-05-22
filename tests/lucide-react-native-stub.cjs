@@ -34,6 +34,7 @@ const knownIcons = {
     Minus: Icon,
     Quote: Icon,
     Table: Icon,
+    Type: Icon,
     // Additional icons imported by text components
     AlertCircle: Icon,
     AlertTriangle: Icon,
