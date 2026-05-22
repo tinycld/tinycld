@@ -383,8 +383,22 @@ const PB_PREFIXES = [
     '/.well-known/webdav',
 ]
 
+// Metro serves lazily-imported package chunks (React.lazy / dynamic import)
+// from a URL derived from the module's path, e.g. a lazy
+// `import('@tinycld/drive/sidebar')` is fetched as
+// `/drive/tinycld/drive/sidebar.bundle?platform=web&...`. That path starts with
+// `/drive`, which would otherwise route to PB's WebDAV handler (→ "Authentication
+// required") and crash the lazy load. Metro bundle/source-map requests are
+// unambiguously Expo's regardless of prefix, so they must never go to PB. A
+// real WebDAV/CalDAV/CardDAV request never targets a `.bundle`/`.map` path.
+function isMetroAssetPath(pathname: string): boolean {
+    return pathname.endsWith('.bundle') || pathname.endsWith('.map')
+}
+
 function isPbPath(url: string): boolean {
-    return PB_PREFIXES.some(prefix => url === prefix || url.startsWith(`${prefix}/`))
+    const pathname = url.split('?', 1)[0]
+    if (isMetroAssetPath(pathname)) return false
+    return PB_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
 }
 
 function startProxy(opts: { proxyPort: number; pbPort: number; expoPort: number; ssl: boolean }) {
