@@ -221,6 +221,23 @@ const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProp
     ref
 ) {
     useDrawerEscape(props.isOpen, props.onClose)
+
+    // Don't mount the gluestack Modal at all while closed. GlueStack's exit
+    // handshake runs through RN Animated with useNativeDriver:true, whose
+    // start() callback never fires under react-native-web, so `exited` never
+    // flips true and the Overlay's portal layer (a full-viewport absoluteFill
+    // at z-9999) lingers in the DOM after onClose() — silently intercepting
+    // every click in the content area behind it (Playwright sees the target as
+    // unhittable; users can't click anything until a reload). Callers keep the
+    // Drawer permanently mounted and just toggle `isOpen` (PivotSidePanel,
+    // HelpDrawer, drive DetailPanel), so the Overlay can never unmount on its
+    // own. Gating the whole tree on isOpen guarantees the overlay is gone the
+    // moment the drawer closes — mirroring how PromptDialog/ConfirmDialog
+    // (which return null when closed) avoid the same leak. The enter slide
+    // still animates on mount; the exit slide is dropped (it was already a
+    // broken no-op on web).
+    if (!props.isOpen) return null
+
     return (
         <UIDrawer
             ref={ref}
