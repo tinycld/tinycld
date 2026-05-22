@@ -1,5 +1,6 @@
 'use client'
 import { createModal as createDrawer } from '@gluestack-ui/core/modal/creator'
+import { ExitAnimationContext } from '@gluestack-ui/core/overlay/creator'
 import type { VariantProps } from '@gluestack-ui/utils/nativewind-utils'
 import { tva, useStyleContext, withStyleContext } from '@gluestack-ui/utils/nativewind-utils'
 import React from 'react'
@@ -25,6 +26,26 @@ const RootComponent = withStyleContext(View, SCOPE)
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable)
 const AnimatedView = Animated.createAnimatedComponent(View)
 
+// GlueStack's OverlayAnimatePresence drives its exit handshake via the
+// react-native `Animated` API with useNativeDriver:true, whose start() callback
+// never fires under react-native-web. That leaves the overlay's outer container
+// mounted (display:flex) and the drawer node in the DOM AFTER onClose() runs and
+// isOpen flips false — so the backdrop keeps intercepting clicks even though the
+// drawer is "closed". This shim renders children as-is (our enter/exit
+// animations live on Backdrop/Content via Reanimated props) and flips `exited`
+// in the ExitAnimationContext whenever children go null, letting the Overlay
+// unmount immediately on close. Same fix as core/ui/modal.
+const AnimatePresenceShim = React.forwardRef<unknown, { children?: React.ReactNode }>(
+    function AnimatePresenceShim({ children }, _ref) {
+        const { setExited } = React.useContext(ExitAnimationContext)
+        const isPresent = children != null
+        React.useEffect(() => {
+            setExited(!isPresent)
+        }, [isPresent, setExited])
+        return <>{children}</>
+    }
+)
+
 const UIDrawer = createDrawer({
     Root: RootComponent,
     Backdrop: AnimatedPressable,
@@ -33,6 +54,8 @@ const UIDrawer = createDrawer({
     CloseButton: Pressable,
     Footer: View,
     Header: View,
+    // biome-ignore lint/suspicious/noExplicitAny: GlueStack AnimatePresence type is too narrow
+    AnimatePresence: AnimatePresenceShim as any,
 })
 
 const drawerStyle = tva({
@@ -169,10 +192,35 @@ type IDrawerFooterProps = React.ComponentProps<typeof UIDrawer.Footer> &
 type IDrawerCloseButtonProps = React.ComponentProps<typeof UIDrawer.CloseButton> &
     VariantProps<typeof drawerCloseButtonStyle> & { className?: string }
 
+// Close the drawer on Escape while it's open. Bound directly to a
+// document-level keydown listener in the CAPTURE phase (web only) rather than
+// the app shortcut system: react-native-web's TextInput swallows Escape on its
+// own internal handler, so the window-level (bubble-phase) shortcut matcher
+// never sees it when focus is inside the drawer's inputs — capture-phase on
+// document fires first. This mirrors HelpSearchPalette / FindReplaceBar, the
+// overlays whose Escape-to-close is verified by e2e. Without this the only way
+// to dismiss a drawer is the close button or backdrop click — an a11y gap.
+function useDrawerEscape(isOpen: boolean | undefined, onClose?: () => void) {
+    React.useEffect(() => {
+        if (!isOpen || !onClose) return
+        if (typeof document === 'undefined') return
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                e.preventDefault()
+                e.stopPropagation()
+                onClose()
+            }
+        }
+        document.addEventListener('keydown', onKeyDown, true)
+        return () => document.removeEventListener('keydown', onKeyDown, true)
+    }, [isOpen, onClose])
+}
+
 const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProps>(function Drawer(
     { className, size = 'md', anchor = 'left', ...props },
     ref
 ) {
+    useDrawerEscape(props.isOpen, props.onClose)
     return (
         <UIDrawer
             ref={ref}
