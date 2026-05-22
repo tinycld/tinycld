@@ -49,6 +49,10 @@ export interface EditorToolbarState {
     // disabling. Undefined when the editor isn't mounted yet.
     canIndent?: boolean
     canOutdent?: boolean
+    // True when the paragraph at the caret carries the dropCap attr.
+    // Drives the Format-menu "Drop cap" toggle's checkmark. Optional
+    // because non-document editors don't broadcast it.
+    isDropCapActive?: boolean
     // Active font size at the caret in integer CSS pixels, or null
     // when no fontSize attr is set (document default). Drives the
     // font-size dropdown's displayed value. The toolbar shows
@@ -156,6 +160,11 @@ export interface EditorCommands {
     // [0, MAX_INDENT_LEVEL] and no-op outside that range.
     indentBlock?(): void
     outdentBlock?(): void
+    // Toggle the dropCap attr on the paragraph at the caret. When on,
+    // the paragraph's first letter is enlarged + floated (CSS) and the
+    // body wraps around it. Round-trips to <w:framePr w:dropCap> on the
+    // OOXML side (a two-paragraph Word construct).
+    toggleDropCap?(): void
     // Inline font size + family. setFontSize takes the integer CSS
     // pixel value (e.g. 14, 16, 24) and applies a textStyle mark with
     // fontSize=<px>; unsetFontSize clears the attr from the mark.

@@ -84,6 +84,7 @@ export function buildWebViewEditorCommands(bridge: WebViewCommandBridge): Editor
         unsetTextAlign: () => sendFormatMessage(bridge, 'unset-text-align', null),
         indentBlock: () => sendFormatMessage(bridge, 'indent-block', null),
         outdentBlock: () => sendFormatMessage(bridge, 'outdent-block', null),
+        toggleDropCap: () => sendFormatMessage(bridge, 'toggle-drop-cap', null),
         setFontSize: (px: number) => sendFormatMessage(bridge, 'set-font-size', px),
         unsetFontSize: () => sendFormatMessage(bridge, 'unset-font-size', null),
         setFontFamily: (family: string) => sendFormatMessage(bridge, 'set-font-family', family),

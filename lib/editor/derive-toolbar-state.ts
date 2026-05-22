@@ -53,6 +53,10 @@ export function deriveToolbarState(bridgeState: Record<string, unknown>): Editor
         currentAlign: asAlign(bridgeState.currentAlign),
         canIndent: typeof bridgeState.canIndent === 'boolean' ? bridgeState.canIndent : false,
         canOutdent: typeof bridgeState.canOutdent === 'boolean' ? bridgeState.canOutdent : false,
+        isDropCapActive:
+            typeof bridgeState.isDropCapActive === 'boolean'
+                ? bridgeState.isDropCapActive
+                : false,
         currentFontSize:
             typeof bridgeState.currentFontSize === 'number' ? bridgeState.currentFontSize : null,
         currentFontFamily:
