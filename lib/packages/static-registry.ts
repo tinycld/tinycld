@@ -22,8 +22,7 @@ export function toStaticRegistry(entries: readonly EntryLike[]): RegistryEntry[]
         ...e.manifest,
         packageName: e.manifest.packageName ?? `@tinycld/${e.manifest.slug}`,
         sidebar:
-            e.manifest.sidebar ??
-            (e.sidebar != null ? { component: e.manifest.slug } : undefined),
+            e.manifest.sidebar ?? (e.sidebar != null ? { component: e.manifest.slug } : undefined),
     }))
 }
 
