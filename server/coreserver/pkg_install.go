@@ -52,8 +52,8 @@ type completeData struct {
 // ---------- global state ----------
 
 var (
-	installMu   sync.Mutex
-	currentJob  *installJob
+	installMu  sync.Mutex
+	currentJob *installJob
 )
 
 // ---------- registration ----------
@@ -269,11 +269,11 @@ func handleStatus(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	}
 
 	return re.JSON(http.StatusOK, map[string]any{
-		"id":        record.Id,
-		"action":    record.GetString("action"),
-		"status":    record.GetString("status"),
-		"error":     record.GetString("error"),
-		"startedAt": record.GetString("started_at"),
+		"id":          record.Id,
+		"action":      record.GetString("action"),
+		"status":      record.GetString("status"),
+		"error":       record.GetString("error"),
+		"startedAt":   record.GetString("started_at"),
 		"completedAt": record.GetString("completed_at"),
 	})
 }
@@ -288,10 +288,16 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		close(job.Done)
 	}()
 
-	// Resolve paths
-	serverDir := resolveServerDir()
-	rootDir := filepath.Dir(serverDir)
-	packagesDir := filepath.Join(rootDir, "packages")
+	// Resolve paths for the standalone-workspace layout. In the runtime image
+	// the binary lives at <appDir>/tinycld, so resolveServerDir() == appDir
+	// (/app): it holds pb_data/, scripts/ (the generator), the app rebuild
+	// files, dist/, releases/, and release-staging/. The Go source + go.work
+	// live one level deeper at <appDir>/server (goSrcDir). The npm workspace
+	// root is one level UP at filepath.Dir(appDir) (/): it holds package.json,
+	// node_modules, tinycld.packages.ts, and the feature members at <wsRoot>/<slug>.
+	appDir := resolveServerDir()
+	goSrcDir := filepath.Join(appDir, "server")
+	wsRoot := filepath.Dir(appDir)
 
 	// Create install log record
 	logRecord := createInstallLog(app, job, "install")
@@ -331,7 +337,7 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	packOut, err := runCmd(rootDir, "npm", "pack", job.NpmPkg, "--pack-destination", tmpDir)
+	packOut, err := runCmd(wsRoot, "npm", "pack", job.NpmPkg, "--pack-destination", tmpDir)
 	if err != nil {
 		fail("npm pack", fmt.Errorf("%v: %s", err, packOut))
 		return
@@ -376,8 +382,9 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	}
 	emitProgress(job, "Manifest valid", 35, "All validation checks passed")
 
-	// Step 5: Copy to packages/<slug>/ (40%)
-	pkgDest := filepath.Join(packagesDir, manifest.Slug)
+	// Step 5: Copy package source to <wsRoot>/<slug>/ (40%). Feature packages
+	// are top-level workspace members, not entries under a packages/ dir.
+	pkgDest := filepath.Join(wsRoot, manifest.Slug)
 	emitProgress(job, "Installing files", 38, "Copying to "+pkgDest)
 	if err := copyDir(extractDir, pkgDest); err != nil {
 		fail("copy", err)
@@ -389,74 +396,81 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	})
 	emitProgress(job, "Files installed", 40, "Package files copied")
 
-	// Step 6: Write installed-packages.json (45%)
-	emitProgress(job, "Updating registry", 43, "Writing installed-packages.json")
-	installedPath := filepath.Join(rootDir, "installed-packages.json")
-	prevInstalled, _ := os.ReadFile(installedPath)
-	if err := addInstalledPackage(installedPath, job.NpmPkg, manifest.Slug); err != nil {
-		fail("write installed-packages.json", err)
+	// Step 6: Add the member to the workspace package.json workspaces[] (45%).
+	// npm only creates the node_modules/@tinycld/<name> symlink for declared
+	// members; the generator discovers packages by scanning member dirs, but
+	// metro/vitest resolution needs the symlink. There is no longer an
+	// installed-packages.json — present members ARE the installed set.
+	emitProgress(job, "Updating workspace", 43, "Adding member to package.json")
+	wsPkgPath := filepath.Join(wsRoot, "package.json")
+	prevWsPkg, readErr := os.ReadFile(wsPkgPath)
+	if readErr != nil {
+		fail("read workspace package.json", readErr)
+		return
+	}
+	if err := addWorkspaceMember(wsPkgPath, manifest.Slug); err != nil {
+		fail("update workspace package.json", err)
 		return
 	}
 	rollbackStack = append(rollbackStack, func() {
-		if prevInstalled != nil {
-			os.WriteFile(installedPath, prevInstalled, 0o644)
-		} else {
-			os.Remove(installedPath)
-		}
-		log.Printf("pkg_install: rollback — restored installed-packages.json")
+		os.WriteFile(wsPkgPath, prevWsPkg, 0o644)
+		log.Printf("pkg_install: rollback — restored workspace package.json")
 	})
-	emitProgress(job, "Registry updated", 45, "installed-packages.json written")
+	emitProgress(job, "Workspace updated", 45, "Member added to workspaces[]")
 
-	// Step 7: npm install (55%)
+	// Step 7: npm install at the workspace root (55%).
 	emitProgress(job, "Installing dependencies", 50, "Running npm install")
-	npmOut, err := runCmd(rootDir, "npm", "install")
+	npmOut, err := runCmd(wsRoot, "npm", "install")
 	if err != nil {
 		fail("npm install", fmt.Errorf("%v: %s", err, npmOut))
 		return
 	}
 	emitProgress(job, "Dependencies installed", 55, "npm install complete")
 
-	// Step 8: Regenerate wiring (65%)
+	// Step 8: Regenerate wiring (65%). The generator lives at app/scripts/generate.ts
+	// and runs from the app dir.
 	emitProgress(job, "Generating wiring", 60, "Running package generation script")
-	genOut, err := runCmd(rootDir, "npx", "tsx", "scripts/generate-packages.ts")
+	genOut, err := runCmd(appDir, "npx", "tsx", "scripts/generate.ts")
 	if err != nil {
 		fail("generate", fmt.Errorf("%v: %s", err, genOut))
 		return
 	}
 	rollbackStack = append(rollbackStack, func() {
-		// Re-run generation without the failed package
-		runCmd(rootDir, "npx", "tsx", "scripts/generate-packages.ts")
+		// Re-run generation after the member was removed above
+		runCmd(appDir, "npx", "tsx", "scripts/generate.ts")
 		log.Printf("pkg_install: rollback — re-ran generation")
 	})
 	emitProgress(job, "Wiring generated", 65, "Package wiring regenerated")
 
-	// Go package steps (Phase 3): build new binary, backup DB, swap
+	// Go package steps (Phase 3): build new binary, backup DB, swap. The Go
+	// toolchain runs in goSrcDir (<appDir>/server, where go.work lives); the
+	// new/live binary and pb_data are in appDir.
 	if manifest.HasServer {
 		emitProgress(job, "Updating Go modules", 67, "Running go mod tidy")
-		tidyOut, tidyErr := runCmd(serverDir, "go", "mod", "tidy")
+		tidyOut, tidyErr := runCmd(goSrcDir, "go", "mod", "tidy")
 		if tidyErr != nil {
 			fail("go mod tidy", fmt.Errorf("%v: %s", tidyErr, tidyOut))
 			return
 		}
 
 		emitProgress(job, "Building server", 70, "Compiling new server binary")
-		if buildErr := buildNewBinary(serverDir); buildErr != nil {
+		if buildErr := buildNewBinary(goSrcDir, appDir); buildErr != nil {
 			fail("go build", buildErr)
 			return
 		}
 		rollbackStack = append(rollbackStack, func() {
-			os.Remove(filepath.Join(serverDir, "tinycld.new"))
+			os.Remove(filepath.Join(appDir, "tinycld.new"))
 			log.Printf("pkg_install: rollback — removed tinycld.new")
 		})
 
 		emitProgress(job, "Validating binary", 73, "Running binary health check")
-		if valErr := validateBinary(filepath.Join(serverDir, "tinycld.new")); valErr != nil {
+		if valErr := validateBinary(filepath.Join(appDir, "tinycld.new")); valErr != nil {
 			fail("validate binary", valErr)
 			return
 		}
 
 		emitProgress(job, "Backing up database", 75, "Creating SQLite backup")
-		dbRollback, dbErr := backupDatabase(serverDir)
+		dbRollback, dbErr := backupDatabase(appDir)
 		if dbErr != nil {
 			fail("database backup", dbErr)
 			return
@@ -468,7 +482,7 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		})
 
 		emitProgress(job, "Swapping binary", 77, "Installing new server binary")
-		binRollback, binErr := swapBinary(serverDir)
+		binRollback, binErr := swapBinary(appDir)
 		if binErr != nil {
 			fail("binary swap", binErr)
 			return
@@ -484,50 +498,38 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	emitProgress(job, "Running migrations", 80, "Applying database migrations")
 	migrateBin := resolveServerBinary()
 	if manifest.HasServer {
-		migrateBin = filepath.Join(serverDir, binaryName)
+		migrateBin = filepath.Join(appDir, binaryName)
 	}
-	migrateOut, err := runCmd(serverDir, migrateBin, "migrate")
+	migrateOut, err := runCmd(appDir, migrateBin, "migrate")
 	if err != nil {
 		fail("migrate", fmt.Errorf("%v: %s", err, migrateOut))
 		return
 	}
 	emitProgress(job, "Migrations applied", 83, "Database migrations complete")
 
-	// Rebuild web bundle
+	// Rebuild web bundle. expo export runs from the app dir and writes to
+	// <appDir>/dist.
 	emitProgress(job, "Building web app", 85, "Running expo export")
-	buildOut, err := runCmd(rootDir, "npx", "expo", "export", "--platform", "web")
+	buildOut, err := runCmd(appDir, "npx", "expo", "export", "--platform", "web")
 	if err != nil {
 		fail("build", fmt.Errorf("%v: %s", err, buildOut))
 		return
 	}
 	emitProgress(job, "Web app built", 88, "Web bundle rebuilt")
 
-	// Copy dist to public
-	emitProgress(job, "Deploying assets", 90, "Copying build output to public/")
-	publicDir := filepath.Join(rootDir, "public")
-	distDir := filepath.Join(rootDir, "dist", "client")
-
-	// Backup current public
-	publicBackup := filepath.Join(tmpDir, "public-backup")
-	copyDir(publicDir, publicBackup)
-	rollbackStack = append(rollbackStack, func() {
-		os.RemoveAll(publicDir)
-		copyDir(publicBackup, publicDir)
-		log.Printf("pkg_install: rollback — restored public/")
-	})
-
-	if err := copyDir(distDir, publicDir); err != nil {
-		fail("deploy", err)
+	// Stage the new bundle as a release for the entrypoint to promote on the
+	// post-restart boot (see stageRelease + entrypoint.sh promote_release).
+	emitProgress(job, "Staging release", 90, "Preparing web bundle for promotion")
+	stageDest, err := stageRelease(appDir)
+	if err != nil {
+		fail("stage release", err)
 		return
 	}
-
-	// Rename index.html to app.html for SPA fallback
-	indexPath := filepath.Join(publicDir, "index.html")
-	appPath := filepath.Join(publicDir, "app.html")
-	if _, statErr := os.Stat(indexPath); statErr == nil {
-		os.Rename(indexPath, appPath)
-	}
-	emitProgress(job, "Assets deployed", 92, "Public assets updated")
+	rollbackStack = append(rollbackStack, func() {
+		os.RemoveAll(stageDest)
+		log.Printf("pkg_install: rollback — removed staged release %s", filepath.Base(stageDest))
+	})
+	emitProgress(job, "Release staged", 92, "Web bundle staged for next boot")
 
 	// Update pkg_registry
 	emitProgress(job, "Updating database", 95, "Updating package registry")
@@ -546,7 +548,7 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 
 	// Allow SSE events to flush to clients before process exit
 	time.Sleep(2 * time.Second)
-	requestRestart(serverDir)
+	requestRestart(appDir)
 }
 
 // ---------- uninstall pipeline ----------
@@ -559,9 +561,8 @@ func runUninstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		close(job.Done)
 	}()
 
-	serverDir := resolveServerDir()
-	rootDir := filepath.Dir(serverDir)
-	packagesDir := filepath.Join(rootDir, "packages")
+	appDir := resolveServerDir()
+	wsRoot := filepath.Dir(appDir)
 
 	logRecord := createInstallLog(app, job, "uninstall")
 
@@ -589,57 +590,62 @@ func runUninstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		return
 	}
 
-	// Step 2: Remove package directory
+	// Step 2: Remove the package's workspace-member directory at <wsRoot>/<slug>.
 	emitProgress(job, "Removing files", 25, "Removing package directory")
-	pkgDir := filepath.Join(packagesDir, job.Slug)
+	pkgDir := filepath.Join(wsRoot, job.Slug)
 	if err := os.RemoveAll(pkgDir); err != nil {
 		fail("remove", err)
 		return
 	}
 	emitProgress(job, "Files removed", 30, "Package directory removed")
 
-	// Step 3: Update installed-packages.json
-	emitProgress(job, "Updating registry", 40, "Updating installed-packages.json")
-	installedPath := filepath.Join(rootDir, "installed-packages.json")
-	if err := removeInstalledPackage(installedPath, job.Slug); err != nil {
-		fail("write installed-packages.json", err)
+	// Step 3: Drop the member from the workspace package.json workspaces[].
+	emitProgress(job, "Updating workspace", 38, "Removing member from package.json")
+	wsPkgPath := filepath.Join(wsRoot, "package.json")
+	if err := removeWorkspaceMember(wsPkgPath, job.Slug); err != nil {
+		fail("update workspace package.json", err)
 		return
 	}
-	emitProgress(job, "Registry updated", 45, "installed-packages.json updated")
+	emitProgress(job, "Workspace updated", 42, "Member removed from workspaces[]")
 
-	// Step 4: Regenerate wiring
-	emitProgress(job, "Regenerating wiring", 55, "Running package generation script")
-	genOut, err := runCmd(rootDir, "npx", "tsx", "scripts/generate-packages.ts")
+	// Step 4: npm install at the workspace root to clean the now-orphaned
+	// node_modules/@tinycld/<slug> symlink before the rebuild. Without this the
+	// dangling symlink can break expo export's module resolution.
+	emitProgress(job, "Updating dependencies", 48, "Running npm install")
+	npmOut, err := runCmd(wsRoot, "npm", "install")
+	if err != nil {
+		fail("npm install", fmt.Errorf("%v: %s", err, npmOut))
+		return
+	}
+	emitProgress(job, "Dependencies updated", 52, "npm install complete")
+
+	// Step 5: Regenerate wiring (generator lives at app/scripts/generate.ts).
+	emitProgress(job, "Regenerating wiring", 58, "Running package generation script")
+	genOut, err := runCmd(appDir, "npx", "tsx", "scripts/generate.ts")
 	if err != nil {
 		fail("generate", fmt.Errorf("%v: %s", err, genOut))
 		return
 	}
 	emitProgress(job, "Wiring regenerated", 65, "Package wiring regenerated")
 
-	// Step 5: Rebuild web bundle
+	// Step 6: Rebuild web bundle (expo export from the app dir → <appDir>/dist).
 	emitProgress(job, "Building web app", 75, "Running expo export")
-	buildOut, err := runCmd(rootDir, "npx", "expo", "export", "--platform", "web")
+	buildOut, err := runCmd(appDir, "npx", "expo", "export", "--platform", "web")
 	if err != nil {
 		fail("build", fmt.Errorf("%v: %s", err, buildOut))
 		return
 	}
 	emitProgress(job, "Web app built", 85, "Web bundle rebuilt")
 
-	// Step 6: Deploy and update
-	emitProgress(job, "Deploying assets", 88, "Copying build output to public/")
-	publicDir := filepath.Join(rootDir, "public")
-	distDir := filepath.Join(rootDir, "dist", "client")
-	if err := copyDir(distDir, publicDir); err != nil {
-		fail("deploy", err)
+	// Step 7: Stage the rebuilt bundle as a release for the entrypoint to
+	// promote on the post-restart boot (same contract as install).
+	emitProgress(job, "Staging release", 88, "Preparing web bundle for promotion")
+	if _, err := stageRelease(appDir); err != nil {
+		fail("stage release", err)
 		return
 	}
-	indexPath := filepath.Join(publicDir, "index.html")
-	appPath := filepath.Join(publicDir, "app.html")
-	if _, statErr := os.Stat(indexPath); statErr == nil {
-		os.Rename(indexPath, appPath)
-	}
 
-	// Step 7: Update pkg_registry to disabled
+	// Step 8: Update pkg_registry to disabled
 	emitProgress(job, "Updating database", 93, "Marking package as disabled")
 	record.Set("status", "disabled")
 	if err := app.Save(record); err != nil {
@@ -654,7 +660,7 @@ func runUninstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 
 	// Allow SSE events to flush to clients before process exit
 	time.Sleep(2 * time.Second)
-	requestRestart(serverDir)
+	requestRestart(appDir)
 }
 
 // ---------- SSE helpers ----------
@@ -740,76 +746,117 @@ func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg
 	}
 }
 
-// ---------- installed-packages.json helpers ----------
+// ---------- release staging ----------
 
-type installedPkgEntry struct {
-	NpmPackage  string `json:"npmPackage"`
-	Slug        string `json:"slug"`
-	InstalledAt string `json:"installedAt"`
-}
+// stageRelease moves the freshly-built <appDir>/dist into
+// <appDir>/release-staging/<id>/ with a release-id.txt and index.html renamed
+// to app.html, matching the layout entrypoint.sh's promote_release expects. The
+// entrypoint promotes the staged release (merging assets into releases/_static/
+// and pointing releases/current at it) on the next boot — which the install /
+// uninstall pipelines trigger via requestRestart. Returns the staged dir.
+func stageRelease(appDir string) (string, error) {
+	releaseID := fmt.Sprintf("install-%d", time.Now().UnixMilli())
+	distDir := filepath.Join(appDir, "dist")
+	stagingDir := filepath.Join(appDir, "release-staging")
+	stageDest := filepath.Join(stagingDir, releaseID)
 
-func readInstalledPackages(path string) ([]installedPkgEntry, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
+	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
+		return "", err
+	}
+	// Prefer a rename (atomic, same filesystem); fall back to copy across
+	// devices or when the destination can't be renamed into.
+	if err := os.Rename(distDir, stageDest); err != nil {
+		if cpErr := copyDir(distDir, stageDest); cpErr != nil {
+			return "", fmt.Errorf("move dist failed: %v; copy fallback failed: %w", err, cpErr)
 		}
-		return nil, err
+		os.RemoveAll(distDir)
 	}
-	var entries []installedPkgEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil, err
+
+	if err := os.WriteFile(filepath.Join(stageDest, "release-id.txt"), []byte(releaseID), 0o644); err != nil {
+		return "", err
 	}
-	return entries, nil
+	stagedIndex := filepath.Join(stageDest, "index.html")
+	stagedApp := filepath.Join(stageDest, "app.html")
+	if _, statErr := os.Stat(stagedIndex); statErr == nil {
+		if err := os.Rename(stagedIndex, stagedApp); err != nil {
+			return "", fmt.Errorf("rename index.html → app.html: %w", err)
+		}
+	}
+	return stageDest, nil
 }
 
-func writeInstalledPackages(path string, entries []installedPkgEntry) error {
-	data, err := json.MarshalIndent(entries, "", "  ")
+// ---------- workspace package.json helpers ----------
+
+// addWorkspaceMember adds slug to the workspaces[] array of the workspace-root
+// package.json if absent. npm only creates the node_modules/@tinycld/<name>
+// symlink for declared members. Idempotent. Preserves the file's other keys and
+// the canonical 4-space indentation.
+func addWorkspaceMember(pkgPath, slug string) error {
+	pkg, err := readWorkspacePkg(pkgPath)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
-}
-
-func addInstalledPackage(path, npmPkg, slug string) error {
-	entries, err := readInstalledPackages(path)
-	if err != nil {
-		return err
-	}
-
-	// Dedup
-	for _, e := range entries {
-		if e.Slug == slug {
+	members := toStringSlice(pkg["workspaces"])
+	for _, m := range members {
+		if m == slug {
 			return nil
 		}
 	}
-
-	entries = append(entries, installedPkgEntry{
-		NpmPackage:  npmPkg,
-		Slug:        slug,
-		InstalledAt: time.Now().UTC().Format(time.RFC3339),
-	})
-
-	return writeInstalledPackages(path, entries)
+	pkg["workspaces"] = append(members, slug)
+	return writeWorkspacePkg(pkgPath, pkg)
 }
 
-func removeInstalledPackage(path, slug string) error {
-	entries, err := readInstalledPackages(path)
+// removeWorkspaceMember removes slug from the workspaces[] array. Idempotent.
+func removeWorkspaceMember(pkgPath, slug string) error {
+	pkg, err := readWorkspacePkg(pkgPath)
 	if err != nil {
 		return err
 	}
-
-	var filtered []installedPkgEntry
-	for _, e := range entries {
-		if e.Slug != slug {
-			filtered = append(filtered, e)
+	members := toStringSlice(pkg["workspaces"])
+	filtered := make([]string, 0, len(members))
+	for _, m := range members {
+		if m != slug {
+			filtered = append(filtered, m)
 		}
 	}
+	pkg["workspaces"] = filtered
+	return writeWorkspacePkg(pkgPath, pkg)
+}
 
-	if len(filtered) == 0 {
-		return os.Remove(path)
+func readWorkspacePkg(pkgPath string) (map[string]any, error) {
+	data, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return nil, err
 	}
-	return writeInstalledPackages(path, filtered)
+	var pkg map[string]any
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", pkgPath, err)
+	}
+	return pkg, nil
+}
+
+func writeWorkspacePkg(pkgPath string, pkg map[string]any) error {
+	data, err := json.MarshalIndent(pkg, "", "    ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(pkgPath, append(data, '\n'), 0o644)
+}
+
+// toStringSlice coerces a decoded JSON array (which json.Unmarshal yields as
+// []any) into []string, dropping non-string entries.
+func toStringSlice(v any) []string {
+	raw, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, e := range raw {
+		if s, ok := e.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // ---------- pkg_registry helpers ----------
@@ -908,4 +955,3 @@ func resolveServerBinary() string {
 	}
 	return ex
 }
-

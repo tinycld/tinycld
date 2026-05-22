@@ -18,16 +18,21 @@ func checkGoBuildPrereqs() error {
 	return nil
 }
 
-// buildNewBinary compiles a new server binary at serverDir/tinycld.new.
-func buildNewBinary(serverDir string) error {
-	cmd := exec.Command("go", "build", "-o", "tinycld.new", ".")
-	cmd.Dir = serverDir
+// buildNewBinary compiles a new server binary at outDir/tinycld.new. The
+// compile runs in goSrcDir (where go.work + the app's main package live) but
+// the output lands in outDir so it sits next to the live binary ready for
+// swapBinary. In the standalone-workspace image goSrcDir is <appDir>/server
+// and outDir is <appDir>.
+func buildNewBinary(goSrcDir, outDir string) error {
+	outPath := filepath.Join(outDir, "tinycld.new")
+	cmd := exec.Command("go", "build", "-o", outPath, ".")
+	cmd.Dir = goSrcDir
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("go build failed: %v\n%s", err, out)
 	}
-	log.Printf("pkg_go_build: built tinycld.new in %s", serverDir)
+	log.Printf("pkg_go_build: built tinycld.new in %s (compiled from %s)", outDir, goSrcDir)
 	return nil
 }
 
