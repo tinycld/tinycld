@@ -351,14 +351,13 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		fail("untar", fmt.Errorf("no .tgz file found after npm pack"))
 		return
 	}
-	extractDir := filepath.Join(tmpDir, "extracted")
 	_, err = runCmd(tmpDir, "tar", "xzf", tgzFiles[0], "-C", tmpDir)
 	if err != nil {
 		fail("untar", err)
 		return
 	}
-	// npm pack extracts to a "package" subdirectory
-	extractDir = filepath.Join(tmpDir, "package")
+	// npm pack always extracts into a subdirectory named "package"
+	extractDir := filepath.Join(tmpDir, "package")
 	if _, statErr := os.Stat(extractDir); statErr != nil {
 		fail("untar", fmt.Errorf("extracted package directory not found"))
 		return

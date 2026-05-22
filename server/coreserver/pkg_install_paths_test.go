@@ -115,6 +115,28 @@ func TestRemoveWorkspaceMemberAbsentIsNoop(t *testing.T) {
 	}
 }
 
+// TestAddWorkspaceMemberNoWorkspacesKey verifies that addWorkspaceMember creates
+// the workspaces array from scratch when the key is absent from package.json.
+// toStringSlice(nil) must return nil and append(nil, slug) must produce [slug].
+func TestAddWorkspaceMemberNoWorkspacesKey(t *testing.T) {
+	dir := t.TempDir()
+	// Write a package.json with no workspaces field at all.
+	pkg := map[string]any{"name": "@tinycld/workspace", "private": true}
+	data, _ := json.MarshalIndent(pkg, "", "    ")
+	path := filepath.Join(dir, "package.json")
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := addWorkspaceMember(path, "contacts"); err != nil {
+		t.Fatalf("addWorkspaceMember: %v", err)
+	}
+	got := readWorkspacesArray(t, path)
+	if len(got) != 1 || got[0] != "contacts" {
+		t.Fatalf("expected [contacts], got %v", got)
+	}
+}
+
 func TestStageReleaseLayout(t *testing.T) {
 	appDir := t.TempDir()
 	// Simulate an expo export output at <appDir>/dist.

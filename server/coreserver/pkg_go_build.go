@@ -48,9 +48,9 @@ func validateBinary(binaryPath string) error {
 
 // backupDatabase creates a consistent SQLite backup using VACUUM INTO.
 // Returns a rollback function that restores the backup.
-func backupDatabase(serverDir string) (rollbackFn func() error, err error) {
-	dbPath := filepath.Join(serverDir, "pb_data", "data.db")
-	backupPath := filepath.Join(serverDir, "pb_data", "data.db.backup")
+func backupDatabase(appDir string) (rollbackFn func() error, err error) {
+	dbPath := filepath.Join(appDir, "pb_data", "data.db")
+	backupPath := filepath.Join(appDir, "pb_data", "data.db.backup")
 
 	// Use sqlite3 VACUUM INTO for a consistent snapshot
 	cmd := exec.Command("sqlite3", dbPath, fmt.Sprintf("VACUUM INTO '%s';", backupPath))
@@ -80,10 +80,10 @@ func backupDatabase(serverDir string) (rollbackFn func() error, err error) {
 // `binaryName` (set via Options.BinaryName at Register time) to locate
 // the binary; the new and previous copies have `.new` and `.prev`
 // suffixes.
-func swapBinary(serverDir string) (rollbackFn func() error, err error) {
-	currentPath := filepath.Join(serverDir, binaryName)
-	prevPath := filepath.Join(serverDir, binaryName+".prev")
-	newPath := filepath.Join(serverDir, binaryName+".new")
+func swapBinary(appDir string) (rollbackFn func() error, err error) {
+	currentPath := filepath.Join(appDir, binaryName)
+	prevPath := filepath.Join(appDir, binaryName+".prev")
+	newPath := filepath.Join(appDir, binaryName+".new")
 
 	// <binary> → <binary>.prev
 	if err := os.Rename(currentPath, prevPath); err != nil {
@@ -101,7 +101,7 @@ func swapBinary(serverDir string) (rollbackFn func() error, err error) {
 
 	rollbackFn = func() error {
 		log.Printf("pkg_go_build: rolling back binary swap")
-		failedPath := filepath.Join(serverDir, "tinycld.failed")
+		failedPath := filepath.Join(appDir, "tinycld.failed")
 		os.Rename(currentPath, failedPath)
 		return os.Rename(prevPath, currentPath)
 	}
