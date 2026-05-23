@@ -1,8 +1,8 @@
 import { Menu } from '@tinycld/core/ui/menu'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
-import { MenuBarTrigger } from './MenuBarTrigger'
 import { useMenuBarScope } from './MenuBarScopeContext'
+import { MenuBarTrigger } from './MenuBarTrigger'
 import { menuBarRegistryId, useIsMenuBarOpen } from './menubar-store'
 import { useOpenMenuStore } from './open-menu-store'
 
