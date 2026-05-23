@@ -17,7 +17,7 @@ import (
 // production sets DEMO_RESET_ENABLED=1 in the container; dev environments
 // leave it unset so the job is dormant on developer machines.
 const (
-	defaultDemoResetSchedule = "0 4 * * *"   // 04:00 server time, daily
+	defaultDemoResetSchedule = "0 4 * * *" // 04:00 server time, daily
 	demoResetJobID           = "demoReset"
 	demoResetTimeout         = 15 * time.Minute
 )
@@ -61,9 +61,10 @@ func RegisterDemoReset(app *pocketbase.PocketBase) {
 
 	// Capture the bound address once the server is serving. With autocert
 	// (CertManager non-nil) we cannot reach the listener by IP because the
-	// cert is issued for the configured domains; use the first SERVE_ON_DOMAINS
-	// entry over HTTPS instead. Without autocert PB binds a plain HTTP
-	// listener (default 127.0.0.1:7090) that we can hit directly.
+	// cert is issued for the configured domains; use the first serve domain
+	// (PRIMARY_DOMAIN, passed first by the entrypoint) over HTTPS instead.
+	// Without autocert PB binds a plain HTTP listener (default 127.0.0.1:7090)
+	// that we can hit directly.
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		url := deriveResetURL(e)
 		resetURLMu.Lock()
