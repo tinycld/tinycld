@@ -1,14 +1,14 @@
 # Build pipeline assumes the build context is the ASSEMBLED WORKSPACE ROOT:
 #
 #   <context>/                 # the npm workspace root (@tinycld/workspace)
-#       package.json           # workspaces: [app, core, package-scripts, <features>]
+#       package.json           # workspaces: [app, app/package-scripts, core, <features>]
 #       package-lock.json
 #       .npmrc
 #       tinycld.packages.ts    # member enumeration used by the generator
-#       package-scripts/       # the tinycld-pkg CLI (a workspace member)
 #       tests/                 # shared unit-test stubs
 #       core/                  # @tinycld/core — shared lib + Go module tinycld.org/core
 #       app/                   # @tinycld/app — this shell (generator lives here)
+#           package-scripts/   # the tinycld-pkg CLI (a workspace member, nested in app)
 #       contacts/ mail/ ...    # feature members (each its own sibling repo)
 #
 # There is NO bundled `packages/@tinycld/core` and NO `generate-packages.ts`.
@@ -32,10 +32,11 @@ FROM node:22-bookworm-slim AS web-builder
 
 WORKDIR /ws
 
-# Root manifests + the tooling member + shared test stubs. Copied first so the
-# subsequent member COPYs are the only thing that changes between most builds.
+# Root manifests + shared test stubs. Copied first so the subsequent member
+# COPYs are the only thing that changes between most builds. package-scripts (the
+# tinycld-pkg CLI) now lives inside the app member (app/package-scripts), so it
+# arrives with the `COPY app/ ./app/` below — no separate root COPY.
 COPY package.json package-lock.json .npmrc tinycld.packages.ts ./
-COPY package-scripts/ ./package-scripts/
 COPY tests/ ./tests/
 
 # Workspace members. core + app first (most likely to change last), then the
@@ -249,8 +250,11 @@ COPY --from=web-builder /ws/app/server/pb_migrations ./pb_migrations
 # at the sibling members copied below.
 COPY --from=web-builder /ws/package.json /ws/package-lock.json /ws/.npmrc /
 COPY --from=web-builder /ws/tinycld.packages.ts /tinycld.packages.ts
-COPY --from=web-builder /ws/package-scripts /package-scripts
 COPY --from=web-builder /ws/node_modules /node_modules
+# package-scripts (the tinycld-pkg CLI) now lives inside the app member, so the
+# node_modules/@tinycld/package-scripts symlink resolves to ../../app/package-scripts
+# (i.e. /app/package-scripts at runtime, WORKDIR /app). Land it there.
+COPY --from=web-builder /ws/app/package-scripts ./package-scripts
 
 # Sibling members. seed-db.ts (run by the reset-demo cron) imports
 # ../tinycld.seeds → each @tinycld/<feature>/seed, resolved through the
@@ -319,7 +323,7 @@ RUN chmod +x ./entrypoint.sh
 # security.capability xattr along with ownership), so setcap'ing first then
 # chown'ing would silently wipe the cap.
 RUN chown -R tinycld:tinycld /app \
-    && chown -R tinycld:tinycld /node_modules /core /contacts /mail /calendar /drive /calc /text /google-takeout-import /package-scripts \
+    && chown -R tinycld:tinycld /node_modules /core /contacts /mail /calendar /drive /calc /text /google-takeout-import \
     && chown tinycld:tinycld /package.json /package-lock.json /.npmrc /tinycld.packages.ts
 
 # Grant cap_net_bind_service so the non-root user can bind :80/:443 when
