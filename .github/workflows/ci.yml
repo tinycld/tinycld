@@ -17,30 +17,29 @@ jobs:
     name: Lint, Typecheck, Unit (all members)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          repository: tinycld/workspace
-          ref: main
-          path: ws
+      # app (this repo) is the triggering checkout. bootstrap GENERATES the
+      # workspace root into ws/ and clones the other members around ws/app.
       - uses: actions/checkout@v5
         with:
           path: ws/app
+      # app carries its own .node-version; read it from the checkout (no
+      # dependency on bootstrap having generated ws/.node-version yet). No npm
+      # cache: there is no committed lockfile (npm install resolves fresh).
       - uses: actions/setup-node@v5
         with:
-          node-version-file: ws/.node-version
-          cache: npm
-          cache-dependency-path: ws/package-lock.json
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: ws/.go-version
-      # app's CI runs --all, so it needs EVERY member present (app is the PR
-      # checkout / app+core always-cloned; --with pulls each feature).
-      - name: Assemble workspace (all members)
+          node-version-file: ws/app/.node-version
+      # app's CI runs --all, so it needs EVERY member present. bootstrap
+      # generates the root + clones core + each feature; app is already present.
+      - name: Assemble workspace (generate root + all members)
         working-directory: ws
         run: >
           TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
           --with contacts --with mail --with calendar --with drive
           --with calc --with text --with google-takeout-import
+      # Go toolchain after assembly: .go-version is bootstrap-generated into ws/.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ws/.go-version
       - name: Install (workspace root)
         working-directory: ws
         run: npm install
@@ -55,30 +54,26 @@ jobs:
     name: Go build & test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          repository: tinycld/workspace
-          ref: main
-          path: ws
+      # app (this repo) is the triggering checkout; bootstrap generates the root
+      # and clones the rest around ws/app.
       - uses: actions/checkout@v5
         with:
           path: ws/app
       - uses: actions/setup-node@v5
         with:
-          node-version-file: ws/.node-version
-          cache: npm
-          cache-dependency-path: ws/package-lock.json
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: ws/.go-version
+          node-version-file: ws/app/.node-version
       # All feature server packages must be present so go.work + the Go build
       # see every tinycld.org/packages/* module.
-      - name: Assemble workspace (all members)
+      - name: Assemble workspace (generate root + all members)
         working-directory: ws
         run: >
           TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
           --with contacts --with mail --with calendar --with drive
           --with calc --with text --with google-takeout-import
+      # Go toolchain after assembly: .go-version is bootstrap-generated into ws/.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ws/.go-version
       - name: Install (workspace root)
         working-directory: ws
         run: npm install

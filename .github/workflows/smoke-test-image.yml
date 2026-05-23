@@ -6,11 +6,15 @@ name: Smoke-test docker image
 # shows up on the Packages tab. Same path a docs-following operator
 # takes — guards the install instructions against regressions.
 
-# Manual trigger only. The docker-publish workflow that used to chain into this
-# via workflow_run now lives in the tinycld/workspace repo (the release anchor),
-# and workflow_run only fires for same-repo workflows — so run this by hand after
-# a publish (or wire a repository_dispatch from the workspace build later).
+# Chains off the docker-publish workflow (now in THIS repo — app is the release
+# anchor), which uploads a fresh image to GHCR. workflow_run fires only for
+# same-repo workflows, so this now triggers automatically after a publish; the
+# "Pick image ref" step below derives the tag from the upstream run. Still
+# manually dispatchable for ad-hoc testing of any image_ref.
 on:
+  workflow_run:
+    workflows: ['Build and publish Docker image']
+    types: [completed]
   workflow_dispatch:
     inputs:
       image_ref:
@@ -22,6 +26,9 @@ jobs:
   smoke:
     name: Run install smoke test
     runs-on: ubuntu-latest
+    # workflow_run fires on completion regardless of outcome; only smoke-test a
+    # successful publish. Manual dispatch always runs.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: read
       packages: read
