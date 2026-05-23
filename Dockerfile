@@ -197,7 +197,18 @@ RUN CGO_ENABLED=1 GOOS=linux go build -o tinycld .
 FROM debian:trixie-slim AS runtime
 
 ENV SENTRY_DSN=""
-ENV SERVE_ON_DOMAINS=""
+# Domain / TLS config consumed by entrypoint.sh:
+#   PRIMARY_DOMAIN      canonical domain (cert primary SAN + user-facing URLs)
+#   ADDITIONAL_DOMAINS  comma-separated extra cert domains
+#   AUTOCERT_ENABLED    true/false — provision Let's Encrypt + bind :80/:443
+#   PUBLIC_SCHEME       http|https for the user-facing URL in reverse-proxy mode
+#                       (default https; ignored when autocert is on)
+# Autocert turns on only when AUTOCERT_ENABLED=true AND PRIMARY_DOMAIN is set;
+# otherwise the server runs plain HTTP on :7090 (reverse-proxy / local-demo).
+ENV PRIMARY_DOMAIN=""
+ENV ADDITIONAL_DOMAINS=""
+ENV AUTOCERT_ENABLED=""
+ENV PUBLIC_SCHEME=""
 ENV FZ_VERSION="1.25.1"
 
 # Install runtime dependencies + Node for runtime tasks. Cron jobs in bin/
@@ -328,8 +339,8 @@ RUN chown -R tinycld:tinycld /app \
     && chown tinycld:tinycld /package.json /package-lock.json /.npmrc /tinycld.packages.ts
 
 # Grant cap_net_bind_service so the non-root user can bind :80/:443 when
-# autocert is on (SERVE_ON_DOMAINS set). The plain-HTTP path defaults to the
-# unprivileged :7090 and needs no special permissions.
+# autocert is on (AUTOCERT_ENABLED=true with PRIMARY_DOMAIN set). The plain-HTTP
+# path defaults to the unprivileged :7090 and needs no special permissions.
 #
 # Caveat: the in-app package installer rebuilds the binary with `go build` and
 # os.Renames it into place. The new binary has no caps. On autocert hosts that
@@ -337,9 +348,9 @@ RUN chown -R tinycld:tinycld /app \
 # ships setcap for this) or restart from the original image. Plain HTTP is fine.
 RUN setcap 'cap_net_bind_service=+ep' ./tinycld
 
-# 7090: plain HTTP (default, when SERVE_ON_DOMAINS is unset)
-# 80:   autocert HTTP-01 challenge + plain-HTTP redirect (when SERVE_ON_DOMAINS is set)
-# 443:  autocert HTTPS (when SERVE_ON_DOMAINS is set)
+# 7090: plain HTTP (default, when autocert is off)
+# 80:   autocert HTTP-01 challenge + plain-HTTP redirect (when autocert is on)
+# 443:  autocert HTTPS (when autocert is on)
 # 993:  IMAPS (implicit TLS)
 # 465:  SMTPS (implicit TLS)
 EXPOSE 7090 80 443 993 465
@@ -350,9 +361,12 @@ USER tinycld
 # cap_net_bind_service file capability lets it bind :80/:443 when autocert is
 # enabled; the plain-HTTP default of :7090 is unprivileged.
 #
-# When SERVE_ON_DOMAINS is set (space-separated), serve with autocert on those
-# domains (binds :80 + :443 directly, terminates TLS in-process):
-#   dokku config:set myapp SERVE_ON_DOMAINS="tinycld.com tinycld.org www.tinycld.org"
+# Set AUTOCERT_ENABLED=true with PRIMARY_DOMAIN (and optional comma-separated
+# ADDITIONAL_DOMAINS) to serve with autocert (binds :80 + :443 directly,
+# terminates TLS in-process):
+#   dokku config:set myapp AUTOCERT_ENABLED=true PRIMARY_DOMAIN=tinycld.org \
+#     ADDITIONAL_DOMAINS="tinycld.com,www.tinycld.org"
 # Otherwise serve plain HTTP on :7090 (override with HTTP_ADDR), expecting an
-# upstream reverse proxy or compose port mapping to route to it.
+# upstream reverse proxy or compose port mapping to route to it. PRIMARY_DOMAIN
+# still feeds the user-facing setup URL in plain-HTTP/proxy mode.
 ENTRYPOINT ["./entrypoint.sh"]

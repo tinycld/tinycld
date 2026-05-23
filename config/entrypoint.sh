@@ -120,60 +120,114 @@ promote_release() {
 
 promote_release
 
-# Build serve arguments.
+# Build serve arguments from three env vars:
 #
-# Mode 1 — Autocert HTTPS (when SERVE_ON_DOMAINS is set): PocketBase binds
+#   PRIMARY_DOMAIN     the canonical domain (first cert SAN; also feeds the
+#                      user-facing setup URL via TINYCLD_PUBLIC_URL below).
+#   ADDITIONAL_DOMAINS comma-separated extra domains added to the cert request.
+#   AUTOCERT_ENABLED   true/false — whether to provision Let's Encrypt certs
+#                      and bind :80/:443 directly.
+#
+# Mode 1 — Autocert HTTPS (AUTOCERT_ENABLED=true AND PRIMARY_DOMAIN set):
+#   pass the domains as positional args to PocketBase's `serve`, which binds
 #   :80 (HTTP-01 challenge + redirect) and :443 (HTTPS) directly. These are
-#   privileged ports; the binary has `cap_net_bind_service` set at build
-#   time so the unprivileged runtime user can still bind them.
+#   privileged ports; the binary has `cap_net_bind_service` set at build time
+#   so the unprivileged runtime user can still bind them. PRIMARY_DOMAIN is
+#   passed first so the cert's primary SAN and DomainArgs()[0] (used for the
+#   demo-reset URL) are the canonical domain.
 #
-# Mode 2 — Plain HTTP (when SERVE_ON_DOMAINS is unset): bind an unprivileged
-#   port (:7090 by default) and let an upstream reverse proxy or Docker
-#   port-mapping handle TLS termination and ingress routing. Override with
-#   HTTP_ADDR for a custom bind (e.g. dev sidecar on a different port).
-#
-# Strip surrounding whitespace and treat the result as unset if empty —
-# users frequently leave `SERVE_ON_DOMAINS:` set to "" or "   " in compose
-# YAML to "disable" autocert, and a whitespace-only value would otherwise
-# fall into the autocert branch and fail.
-DOMAINS_TRIMMED=$(printf '%s' "${SERVE_ON_DOMAINS:-}" | awk '{$1=$1};1')
-if [ -n "$DOMAINS_TRIMMED" ]; then
-    # Sanity-check each token looks like a domain. Requires at least one
-    # dot (rules out "yes", "true", "lolnope" and other shell-truthy-but-
-    # bogus values), no leading/trailing dot or hyphen, and only domain-
-    # legal characters. Catches misconfigurations before PocketBase
-    # autocert fails them at a less-obvious layer.
-    for dom in $DOMAINS_TRIMMED; do
-        case "$dom" in
-            *[!A-Za-z0-9.-]*|.*|*.|-*|*-)
-                echo "[entrypoint] ERROR: SERVE_ON_DOMAINS contains invalid token: '$dom'" >&2
-                echo "[entrypoint] Expected a space-separated list of domain names (e.g. 'tinycld.example.com www.tinycld.example.com')." >&2
-                echo "[entrypoint] Leave SERVE_ON_DOMAINS empty/unset to serve plain HTTP on :7090." >&2
-                exit 1
-                ;;
-        esac
-        case "$dom" in
-            *.*) ;;
-            *)
-                echo "[entrypoint] ERROR: SERVE_ON_DOMAINS token has no dot, doesn't look like a domain: '$dom'" >&2
-                echo "[entrypoint] Expected a space-separated list of domain names (e.g. 'tinycld.example.com www.tinycld.example.com')." >&2
-                echo "[entrypoint] Leave SERVE_ON_DOMAINS empty/unset to serve plain HTTP on :7090." >&2
-                exit 1
-                ;;
-        esac
+# Mode 2 — Plain HTTP (autocert off, or enabled without a PRIMARY_DOMAIN):
+#   bind an unprivileged port (:7090 by default) and let an upstream reverse
+#   proxy or Docker port-mapping handle TLS termination and ingress routing.
+#   Override the bind with HTTP_ADDR (e.g. a dev sidecar on a different port).
+
+# Trim surrounding whitespace; a value of "" or "   " counts as unset (users
+# frequently leave `PRIMARY_DOMAIN:` blank in compose YAML to disable autocert).
+PRIMARY_DOMAIN=$(printf '%s' "${PRIMARY_DOMAIN:-}" | awk '{$1=$1};1')
+
+# Normalize AUTOCERT_ENABLED to a strict 1/0 (accepts true/TRUE/yes/1).
+case "$(printf '%s' "${AUTOCERT_ENABLED:-}" | tr '[:upper:]' '[:lower:]' | awk '{$1=$1};1')" in
+    1|true|yes|on) AUTOCERT_ON=1 ;;
+    *)             AUTOCERT_ON=0 ;;
+esac
+
+# validate_domain: reject shell-truthy-but-bogus values (no dot, illegal
+# characters, leading/trailing dot or hyphen) before PocketBase autocert fails
+# them at a less-obvious layer.
+validate_domain() {
+    case "$1" in
+        *[!A-Za-z0-9.-]*|.*|*.|-*|*-)
+            echo "[entrypoint] ERROR: invalid domain token: '$1'" >&2
+            echo "[entrypoint] Domains must be hostnames like 'tinycld.example.com'." >&2
+            exit 1
+            ;;
+    esac
+    case "$1" in
+        *.*) ;;
+        *)
+            echo "[entrypoint] ERROR: domain token has no dot, doesn't look like a domain: '$1'" >&2
+            echo "[entrypoint] Domains must be hostnames like 'tinycld.example.com'." >&2
+            exit 1
+            ;;
+    esac
+}
+
+if [ "$AUTOCERT_ON" = "1" ] && [ -n "$PRIMARY_DOMAIN" ]; then
+    validate_domain "$PRIMARY_DOMAIN"
+
+    # PRIMARY_DOMAIN first, then each ADDITIONAL_DOMAINS entry (comma-separated;
+    # surrounding whitespace per entry is tolerated). Build a space-separated
+    # positional list for `serve`.
+    set -- "$PRIMARY_DOMAIN"
+    OLD_IFS=$IFS
+    IFS=','
+    for dom in ${ADDITIONAL_DOMAINS:-}; do
+        IFS=$OLD_IFS
+        dom=$(printf '%s' "$dom" | awk '{$1=$1};1')
+        [ -z "$dom" ] && { IFS=','; continue; }
+        validate_domain "$dom"
+        set -- "$@" "$dom"
+        IFS=','
     done
-    echo "[entrypoint] Running with autocert HTTPS on: $DOMAINS_TRIMMED"
-    # shellcheck disable=SC2086 # intentional word-split on the domain list
-    set -- $DOMAINS_TRIMMED --http --https
+    IFS=$OLD_IFS
+
+    echo "[entrypoint] Running with autocert HTTPS on: $*"
+    set -- "$@" --http --https
+
+    # Setup URL (and any other user-facing URL) should use the canonical
+    # HTTPS domain, not PB's bind address. Only set if the operator hasn't
+    # pinned TINYCLD_PUBLIC_URL explicitly.
+    export TINYCLD_PUBLIC_URL="${TINYCLD_PUBLIC_URL:-https://$PRIMARY_DOMAIN}"
 else
+    if [ "$AUTOCERT_ON" = "1" ] && [ -z "$PRIMARY_DOMAIN" ]; then
+        echo "[entrypoint] AUTOCERT_ENABLED is set but PRIMARY_DOMAIN is empty; falling back to plain HTTP" >&2
+    fi
     HTTP_ADDR="${HTTP_ADDR:-0.0.0.0:7090}"
-    echo "[entrypoint] No SERVE_ON_DOMAINS set; serving plain HTTP on $HTTP_ADDR (map a host port to this with -p / compose ports)"
+    echo "[entrypoint] Serving plain HTTP on $HTTP_ADDR (map a host port to this with -p / compose ports)"
     set -- "--http=$HTTP_ADDR"
+
+    # Behind a reverse proxy on PRIMARY_DOMAIN, the public URL is still that
+    # domain, but the container can't tell whether the proxy terminates TLS.
+    # Default the scheme to https (the common production case) and let operators
+    # override with PUBLIC_SCHEME=http for a plain-HTTP proxy, or pin the whole
+    # URL via TINYCLD_PUBLIC_URL. Derived here so the printed setup URL is right.
+    if [ -n "$PRIMARY_DOMAIN" ]; then
+        validate_domain "$PRIMARY_DOMAIN"
+        PUBLIC_SCHEME=$(printf '%s' "${PUBLIC_SCHEME:-https}" | tr '[:upper:]' '[:lower:]' | awk '{$1=$1};1')
+        case "$PUBLIC_SCHEME" in
+            http|https) ;;
+            *)
+                echo "[entrypoint] WARN: PUBLIC_SCHEME='$PUBLIC_SCHEME' is not http/https; defaulting to https" >&2
+                PUBLIC_SCHEME=https
+                ;;
+        esac
+        export TINYCLD_PUBLIC_URL="${TINYCLD_PUBLIC_URL:-$PUBLIC_SCHEME://$PRIMARY_DOMAIN}"
+    fi
 fi
 
 # Restart loop: exit code 75 signals a package install restart request.
-# Serve args are in $@ (positional params) so a multi-word
-# SERVE_ON_DOMAINS list survives without re-splitting.
+# Serve args are in $@ (positional params) so a multi-domain list survives
+# without re-splitting.
 while true; do
     ./tinycld serve "$@"
     EXIT_CODE=$?

@@ -72,7 +72,7 @@ jobs:
         run: |
           set -eu
           docker rm -f tinycld-smoke 2>/dev/null || true
-          # Plain-HTTP mode (no SERVE_ON_DOMAINS): the container binds
+          # Plain-HTTP mode (AUTOCERT_ENABLED unset): the container binds
           # :7090. The Playwright config below talks to localhost:7090.
           docker run -d --name tinycld-smoke -p 7090:7090 ${{ steps.imgref.outputs.image }}
 
