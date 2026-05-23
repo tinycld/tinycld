@@ -1,7 +1,8 @@
 #!/bin/sh
 # Delete release directories under /app/releases/ older than 7 days,
-# never deleting the one /app/releases/current points at. Run by the
-# Dokku cron declared in config/dokku.app.json.
+# never deleting the one /app/releases/current points at. Scheduled by the
+# deploy platform (e.g. a host cron invoking this inside the app container);
+# the image itself carries no scheduler config.
 #
 # Only directories matching the release-id format (YYYY-MM-DD-HHMMSS-<sha>)
 # are considered — siblings like _static/ (the cross-release asset pool)

@@ -310,12 +310,7 @@ COPY --from=web-builder /ws/app/server/bundled-packages.json ./bundled-packages.
 # pbSchema.ts / pbZodSchema.ts at boot. Create it so the write succeeds.
 RUN mkdir -p /app/pb_data /core/types
 
-# Runtime-only bin scripts. The full bin/ directory in the app member includes
-# dev helpers (debug-ios-boot, server) we deliberately don't ship.
-COPY app/bin/prune-releases.sh ./bin/prune-releases.sh
-RUN chmod +x ./bin/*.sh
 
-COPY app/config/dokku.app.json ./app.json
 COPY app/config/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
