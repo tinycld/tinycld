@@ -52,6 +52,12 @@ COPY calc/ ./calc/
 COPY text/ ./text/
 COPY google-takeout-import/ ./google-takeout-import/
 
+# expo-env.d.ts is an Expo-generated, gitignored type shim (a single triple-slash
+# reference to expo/types). Because it's gitignored it isn't in the build
+# context, so ensure it exists for the runtime COPY below (the in-app installer
+# re-runs the generator + a web rebuild, which needs Expo's ambient types).
+RUN [ -f app/expo-env.d.ts ] || printf '/// <reference types="expo/types" />\n' > app/expo-env.d.ts
+
 # Install the whole workspace at the root. npm links every member under
 # node_modules/@tinycld/<name> and then runs the workspace-root `postinstall`
 # (`cd app && npm run packages:generate && npm run assets:copy-pdfjs`), which
