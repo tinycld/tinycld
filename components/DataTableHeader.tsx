@@ -63,6 +63,8 @@ export function DataTableHeader<F extends string = string>({
                         <Pressable
                             key={col.label || `col-${i}`}
                             onPress={() => col.sortField && onSort(col.sortField)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Sort by ${col.label}`}
                             style={{ flex: col.flex, width: col.width }}
                             className="flex-row items-center gap-1"
                         >
