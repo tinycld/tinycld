@@ -15,6 +15,7 @@ import (
 
 	"tinycld.org/core/notify"
 	"tinycld.org/core/realtime"
+	"tinycld.org/core/sharelink"
 )
 
 // Options configure the core server's registered plugins, flags, and wiring.
@@ -112,6 +113,23 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 
 	notify.Register(app)
 	notify.RegisterCommentMentionHooks(app)
+	// Teach the realtime broker how to verify anonymous share-session
+	// tokens so calc/text editable share links can open a WS without a
+	// PB account. Adapts sharelink.VerifySession to the broker's
+	// ShareClaims shape (the broker stays decoupled from drive's feature).
+	realtime.SetShareSessionResolver(func(a core.App, token string) (realtime.ShareClaims, error) {
+		claims, err := sharelink.VerifySession(a, token)
+		if err != nil {
+			return realtime.ShareClaims{}, err
+		}
+		return realtime.ShareClaims{
+			ShareToken:  claims.ShareToken,
+			AnonID:      claims.AnonID,
+			DisplayName: claims.DisplayName,
+			Role:        claims.Role,
+			ItemID:      claims.ItemID,
+		}, nil
+	})
 	realtime.Register(app, realtime.Options{})
 	RegisterInviteEndpoint(app)
 	RegisterInviteLinkEndpoints(app)

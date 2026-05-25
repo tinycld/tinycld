@@ -45,6 +45,34 @@ var (
 	processBroker   *Broker
 )
 
+// ShareSessionResolver verifies a signed share-session token and returns
+// the visitor's claims. Injected at startup (SetShareSessionResolver)
+// rather than importing sharelink here, so the realtime package stays a
+// generic broker with no knowledge of drive's share-link feature.
+type ShareSessionResolver func(app core.App, sessionToken string) (ShareClaims, error)
+
+var shareSessionResolver ShareSessionResolver = func(core.App, string) (ShareClaims, error) {
+	// Default: anonymous share sessions are unsupported until the app
+	// wires a resolver. Returning an error makes every anonymous WS
+	// attempt fail closed.
+	return ShareClaims{}, errShareSessionUnsupported
+}
+
+var errShareSessionUnsupported = errInternal("share sessions not configured")
+
+type errInternal string
+
+func (e errInternal) Error() string { return string(e) }
+
+// SetShareSessionResolver wires the function used to verify anonymous
+// share-session tokens on WS upgrade. Called once at startup by the app
+// composition layer with sharelink.VerifySession adapted to ShareClaims.
+func SetShareSessionResolver(fn ShareSessionResolver) {
+	if fn != nil {
+		shareSessionResolver = fn
+	}
+}
+
 func sharedBroker() *Broker {
 	processBrokerMu.Lock()
 	defer processBrokerMu.Unlock()
@@ -102,9 +130,6 @@ func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {
 			}
 		}
 	}
-	if re.Auth == nil {
-		return re.UnauthorizedError("Authentication required", nil)
-	}
 
 	kind := re.Request.PathValue("roomKind")
 	roomID := re.Request.PathValue("roomID")
@@ -112,12 +137,33 @@ func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {
 		return re.BadRequestError("roomKind and roomID required", nil)
 	}
 
-	authFn, err := authorizeFor(kind)
+	opts2, err := optionsFor(kind)
 	if err != nil {
 		return re.NotFoundError(err.Error(), nil)
 	}
-	if err := authFn(re.Auth, roomID); err != nil {
-		return re.ForbiddenError("Not authorized for this room", err)
+
+	var (
+		authID      string
+		displayName string
+		shareRole   string
+	)
+
+	if re.Auth != nil {
+		// Authenticated PB user path.
+		if err := opts2.Authorize(re.Auth, roomID); err != nil {
+			return re.ForbiddenError("Not authorized for this room", err)
+		}
+		authID = re.Auth.Id
+	} else {
+		// Anonymous share-session path. Only kinds that registered
+		// AuthorizeShare accept these; everyone else rejects.
+		claims, shareErr := resolveShareConnect(re, opts2, kind, roomID)
+		if shareErr != nil {
+			return shareErr
+		}
+		authID = claims.AnonID
+		displayName = claims.DisplayName
+		shareRole = claims.Role
 	}
 
 	conn, err := websocket.Accept(re.Response, re.Request, &websocket.AcceptOptions{
@@ -131,8 +177,42 @@ func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {
 	// Once Accept succeeds, PocketBase's response writer has been
 	// hijacked and we own the connection. Any error from here on is
 	// reported via WS close codes, not HTTP.
-	go runConnection(broker, opts, kind, roomID, re.Auth.Id, conn)
+	go runConnection(broker, opts, connIdentity{
+		kind:        kind,
+		roomID:      roomID,
+		authID:      authID,
+		displayName: displayName,
+		shareRole:   shareRole,
+	}, conn)
 	return nil
+}
+
+// resolveShareConnect handles the anonymous share-session branch of the
+// WS upgrade: verify the ?share_session token, confirm the kind opted
+// into anonymous visitors, confirm the session is for THIS room (item),
+// and run the kind's ShareAuthorizeFn. Returns the verified claims or an
+// HTTP error to reject the upgrade.
+func resolveShareConnect(re *core.RequestEvent, opts RoomKindOptions, kind, roomID string) (ShareClaims, error) {
+	if opts.AuthorizeShare == nil {
+		return ShareClaims{}, re.UnauthorizedError("Authentication required", nil)
+	}
+	sessionToken := re.Request.URL.Query().Get("share_session")
+	if sessionToken == "" {
+		return ShareClaims{}, re.UnauthorizedError("Authentication required", nil)
+	}
+	claims, err := shareSessionResolver(re.App, sessionToken)
+	if err != nil {
+		return ShareClaims{}, re.ForbiddenError("invalid share session", err)
+	}
+	// The room id for calc/text is the drive_item id; the session must be
+	// bound to the same item.
+	if claims.ItemID != roomID {
+		return ShareClaims{}, re.ForbiddenError("share session does not match room", nil)
+	}
+	if err := opts.AuthorizeShare(claims, roomID); err != nil {
+		return ShareClaims{}, re.ForbiddenError("Not authorized for this room", err)
+	}
+	return claims, nil
 }
 
 // shouldSkipOriginCheck reports whether the WebSocket-upgrade handshake
@@ -157,6 +237,17 @@ func shouldSkipOriginCheck(origin string) bool {
 	return origin == "" || origin == "null"
 }
 
+// connIdentity bundles the per-connection identity resolved by
+// handleConnect (authenticated user or anonymous share-session visitor)
+// so runConnection can stamp it onto the Client.
+type connIdentity struct {
+	kind        string
+	roomID      string
+	authID      string
+	displayName string
+	shareRole   string
+}
+
 // runConnection serves one WebSocket connection: assigns a server-side
 // UUID, joins the room, sends MsgAssignID as the first frame, then
 // runs read/write loops until the connection closes. Inbound frames
@@ -164,14 +255,23 @@ func shouldSkipOriginCheck(origin string) bool {
 // connection. On exit it broadcasts a leave frame keyed by the
 // assigned UUID and removes the client.
 //
-// authID is the PocketBase user record id from the authenticated WS
-// upgrade. Stored on the Client so OnConnect handlers (ServerHelloFn)
-// can build per-user hello payloads (e.g. role-based read-only flags).
-func runConnection(broker *Broker, opts Options, kind, roomID, authID string, conn *websocket.Conn) {
+// The identity carries authID (PB user id or anon id) plus, for
+// anonymous share-session visitors, the display name + share role.
+// Stored on the Client so OnConnect handlers (ServerHelloFn) can build
+// per-user hello payloads (e.g. role-based read-only flags) and seed
+// presence for anons.
+func runConnection(broker *Broker, opts Options, ident connIdentity, conn *websocket.Conn) {
+	kind := ident.kind
+	roomID := ident.roomID
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	client := &Client{joinedAt: time.Now(), authID: authID}
+	client := &Client{
+		joinedAt:    time.Now(),
+		authID:      ident.authID,
+		displayName: ident.displayName,
+		shareRole:   ident.shareRole,
+	}
 	if _, err := rand.Read(client.id[:]); err != nil {
 		// crypto/rand failure is essentially impossible on supported
 		// platforms; bail rather than admit an unidentifiable client.

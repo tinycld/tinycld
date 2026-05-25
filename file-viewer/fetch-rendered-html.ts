@@ -165,6 +165,45 @@ function fetchShapingKey(opts: UseRenderedHtmlOptions | undefined): string {
 // Print consumers should use the imperative fetchRenderedHtml directly
 // — they're one-shot from a button click and don't need the cache
 // machinery.
+// resolvePublicEndpoint maps a mime to the package's PUBLIC share-render
+// endpoint, which is gated by a share-session token instead of a PB auth
+// token. Mirrors resolveEndpoint but targets the /share-render/{token}
+// routes registered in calc/text.
+function resolvePublicEndpoint(mimeType: string): string | null {
+    if (mimeType === DOCX_MIME) return '/api/text/share-render'
+    if (mimeType === XLSX_MIME) return '/api/calc/share-render'
+    return null
+}
+
+// usePublicRenderedHtml fetches a document's rendered HTML on the
+// anonymous public share page. Unlike useRenderedHtml it carries NO PB
+// auth token — authorization is the share-session token in the URL path.
+// The server forces image embed mode for this route, so the sandboxed
+// iframe needs no per-image auth.
+export function usePublicRenderedHtml(sessionToken: string, mimeType: string, enabled = true) {
+    const base = resolvePublicEndpoint(mimeType)
+    return useQuery<RenderedHtml>({
+        queryKey: ['public-rendered-html', sessionToken, mimeType],
+        queryFn: async () => {
+            if (!base) throw new Error(`unsupported mime type "${mimeType}"`)
+            const url = `${pb.baseURL.replace(/\/$/, '')}${base}/${sessionToken}`
+            const response = await fetch(url, {
+                method: 'GET',
+                headers: { Accept: 'text/html' },
+            })
+            if (!response.ok) {
+                throw new Error(`render failed: HTTP ${response.status}`)
+            }
+            const html = await response.text()
+            const etag = response.headers.get('ETag') ?? undefined
+            return { html, etag }
+        },
+        enabled: enabled && !!sessionToken && !!base,
+        staleTime: 60_000,
+        retry: false,
+    })
+}
+
 export function useRenderedHtml(
     source: FilePreviewSource | undefined,
     opts?: UseRenderedHtmlOptions

@@ -45,6 +45,13 @@ export interface UseRealtimeRoomOptions {
     // works for any schema where the consumer's bootstrap creates at
     // least one top-level Y.Map / Y.Array.
     isEmpty?: (doc: Y.Doc) => boolean
+
+    // shareSession, when set, authorizes the connection as an anonymous
+    // share-link visitor (no PB auth). The token is attached as
+    // ?share_session=; the server's handleConnect verifies it and runs
+    // the room kind's AuthorizeShare. When unset, the PB auth token is
+    // used as before.
+    shareSession?: string
 }
 
 export interface RealtimeRoomHandle {
@@ -89,6 +96,7 @@ export function useRealtimeRoom({
     initialAwareness,
     onFirstJoinerBootstrap,
     isEmpty = defaultIsEmpty,
+    shareSession,
 }: UseRealtimeRoomOptions): RealtimeRoomHandle | null {
     const [isReady, setIsReady] = useState(false)
     const [isConnected, setIsConnected] = useState(false)
@@ -106,7 +114,7 @@ export function useRealtimeRoom({
     useEffect(() => {
         if (!roomKind || !roomID) return
 
-        const wsURL = buildRealtimeURL(roomKind, roomID)
+        const wsURL = buildRealtimeURL(roomKind, roomID, shareSession)
 
         const doc = new Y.Doc()
         const awareness = new Awareness(doc)
@@ -247,14 +255,18 @@ function defaultIsEmpty(doc: Y.Doc): boolean {
 // (from the EXPO_PUBLIC_ENV → serverShortcuts mapping in coreConfig).
 // Using it here keeps the realtime WS pointed at the same server as
 // every other API call, on every platform.
-function buildRealtimeURL(roomKind: string, roomID: string): string {
+function buildRealtimeURL(roomKind: string, roomID: string, shareSession?: string): string {
     const httpURL = `${PB_SERVER_ADDR}/api/realtime/${encodeURIComponent(roomKind)}/${encodeURIComponent(roomID)}`
     const wsURL = httpURL.replace(/^http/i, 'ws')
     // Browsers can't set custom headers on a WebSocket upgrade, so we
-    // attach the PB auth token as a query param. The server's
-    // handleConnect reads it via FindAuthRecordByToken when re.Auth
-    // hasn't already been populated. React Native's WebSocket has the
-    // same limitation, so the same token-in-query approach works.
+    // attach the credential as a query param. The server's handleConnect
+    // reads ?token= via FindAuthRecordByToken (authenticated user) or
+    // ?share_session= via the share-session resolver (anonymous link
+    // visitor). React Native's WebSocket has the same header limitation,
+    // so the same query approach works on every platform.
+    if (shareSession) {
+        return `${wsURL}?share_session=${encodeURIComponent(shareSession)}`
+    }
     const token = pb.authStore.token
     const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
     return `${wsURL}${tokenQuery}`

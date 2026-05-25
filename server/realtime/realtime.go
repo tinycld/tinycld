@@ -159,12 +159,25 @@ type Client struct {
 	room     *Room
 	joinedAt time.Time
 
-	// authID is the PocketBase user record id from the authenticated
-	// WS upgrade. Empty in tests that bypass the production
-	// handleConnect path. Consumers reach for this in OnConnect /
-	// ServerHelloFn when the per-connection hello payload depends on
-	// the user's identity (e.g. role-based read-only flags).
+	// authID is the connection's identity for room-kind logic. For an
+	// authenticated PB user it's the user record id; for an anonymous
+	// share-session visitor it's the anon id. Empty in tests that bypass
+	// the production handleConnect path. Consumers reach for this in
+	// OnConnect / ServerHelloFn when the per-connection hello payload
+	// depends on the user's identity (e.g. role-based read-only flags).
 	authID string
+
+	// displayName is the human-facing name for this connection, set for
+	// anonymous share-session visitors ("Anon <Animal>"). Empty for
+	// authenticated users — their name is resolved from their record
+	// elsewhere. Consumers use it to seed presence/awareness for anons.
+	displayName string
+
+	// shareRole is the share-link role ("editor", ...) for an anonymous
+	// share-session visitor; empty for authenticated users. Lets a
+	// kind's OnConnect decide read-only state for anons without re-
+	// resolving a drive_shares row (which an anon doesn't have).
+	shareRole string
 
 	// send buffers frames the broker has decided this client should
 	// receive. The transport reader pulls from this channel and writes
@@ -177,10 +190,23 @@ type Client struct {
 // frame is the canonical identity at runtime.
 func (c *Client) IDBytes() [clientIDLen]byte { return c.id }
 
-// AuthID returns the PocketBase user record id associated with this
-// connection. Empty for test clients constructed without going through
-// the production handleConnect path.
+// AuthID returns the identity associated with this connection (PB user
+// record id, or anon id for share-session visitors). Empty for test
+// clients constructed without going through the production handleConnect
+// path.
 func (c *Client) AuthID() string { return c.authID }
+
+// DisplayName returns the human-facing name for an anonymous share-
+// session visitor ("Anon <Animal>"), or empty for authenticated users.
+func (c *Client) DisplayName() string { return c.displayName }
+
+// ShareRole returns the share-link role for an anonymous share-session
+// visitor (e.g. "editor"), or empty for authenticated users.
+func (c *Client) ShareRole() string { return c.shareRole }
+
+// IsAnonymous reports whether this connection is an anonymous share-
+// session visitor rather than an authenticated PB user.
+func (c *Client) IsAnonymous() bool { return c.displayName != "" }
 
 // NewClientForTest constructs a Client suitable for passing to a
 // ServerHelloFn or similar callback in consumer-package tests. Only

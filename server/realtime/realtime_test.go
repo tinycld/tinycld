@@ -69,7 +69,7 @@ func startTestServer(t *testing.T, broker *Broker, authFn AuthorizeFn) dialOpts 
 			IdleTimeout:   defaultIdleTimeout,
 			MaxFrameBytes: defaultMaxFrameBytes,
 			PingInterval:  defaultPingInterval,
-		}, kind, roomID, "", conn)
+		}, connIdentity{kind: kind, roomID: roomID}, conn)
 	})
 
 	srv := httptest.NewServer(mux)

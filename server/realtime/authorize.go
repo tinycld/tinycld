@@ -16,6 +16,27 @@ import (
 // what kind of room they are gating.
 type AuthorizeFn func(auth *core.Record, roomID string) error
 
+// ShareClaims is the identity of an anonymous share-link visitor at WS
+// connect time, resolved by the transport from a signed share-session
+// token. Passed to a room kind's ShareAuthorizeFn so the kind can decide
+// whether the visitor may join (and with what rights). Kept as a plain
+// struct here so the realtime package doesn't import sharelink's types
+// directly — the transport populates it from the verified session.
+type ShareClaims struct {
+	ShareToken  string
+	AnonID      string
+	DisplayName string
+	Role        string
+	ItemID      string
+}
+
+// ShareAuthorizeFn decides whether an anonymous share-session visitor
+// may join the room. Return nil to allow; non-nil rejects the upgrade.
+// A room kind only supports anonymous visitors if it registers one of
+// these — kinds that don't (calendar, mail, …) simply leave it nil and
+// anonymous connection attempts are rejected before reaching them.
+type ShareAuthorizeFn func(claims ShareClaims, roomID string) error
+
 // DefaultMaxUpdateBytes is the per-MsgDocUpdate size cap when a room
 // kind does not specify MaxUpdateBytes. Sized to comfortably hold a
 // typical Yjs update (sub-KiB) plus any one-time bulk update from a
@@ -28,8 +49,17 @@ const DefaultMaxUpdateBytes = 256 * 1024
 // Authorize is required; the rest are optional and lit up only by room
 // kinds that need server-side document mirroring (sheets is the first).
 type RoomKindOptions struct {
-	// Authorize gates inbound WebSocket connections. Required.
+	// Authorize gates inbound WebSocket connections for authenticated
+	// PocketBase users. Required.
 	Authorize AuthorizeFn
+
+	// AuthorizeShare, if non-nil, gates inbound connections from
+	// anonymous share-session visitors (no PB auth). The transport only
+	// attempts this path when the request carries a valid share session
+	// and the kind registered this handler; otherwise anonymous attempts
+	// are rejected. Optional — only kinds that intentionally support
+	// public editable links (calc, text) set it.
+	AuthorizeShare ShareAuthorizeFn
 
 	// RuntimeProvider, if non-nil, is asked to mint a server-side
 	// DocHandle every time a new room of this kind is created. The

@@ -33,10 +33,21 @@ function buildHtml(html: string, css: string): string {
     return `${ENVELOPE_PREFIX}${css}${ENVELOPE_MID}${html}${RESIZE_SCRIPT}${ENVELOPE_SUFFIX}`
 }
 
+export type CommentAnchorMode = 'calc_cell' | 'text_range'
+
+export type CommentAnchor =
+    | { kind: 'calc_cell'; col: string; row: string; quoted: string }
+    | { kind: 'text_range'; start: number; end: number; quoted: string }
+
 export interface HtmlSurfaceProps {
     html: string
     css: string
     ariaLabel?: string
+    // Comment anchoring is a web-first v1 capability; the native WebView
+    // variant accepts these props for type parity but renders read-only
+    // (no anchor interaction) for now.
+    commentMode?: CommentAnchorMode
+    onAnchor?: (anchor: CommentAnchor) => void
 }
 
 // HtmlSurface (native) renders the same envelope as the web variant
