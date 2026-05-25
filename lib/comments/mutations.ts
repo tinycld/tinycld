@@ -1,9 +1,20 @@
 import type { Transaction } from '@tanstack/react-db'
 import { newRecordId } from 'pbtsdb/core'
-import { useAuth } from '../auth'
 import { useMutation } from '../mutations'
-import { useCurrentRole } from '../use-current-role'
 import { parseMentions } from './mentions'
+
+export interface CommentAuthorIdentity {
+    userOrgId: string
+    displayName: string
+    email: string
+}
+
+// Resolve the author columns for a new comment row. author is the
+// user_org id; author_name is snapshotted (name → email → 'Anonymous')
+// so a later-removed user still renders a recognizable label.
+export function resolveAuthorFields(id: CommentAuthorIdentity): { author: string; author_name: string } {
+    return { author: id.userOrgId, author_name: id.displayName || id.email || 'Anonymous' }
+}
 
 type AnyTransaction = Transaction<Record<string, unknown>>
 
@@ -75,6 +86,8 @@ export interface MakeCommentMutationsArgs<
         },
         args: AddArgs | ReplyArgsT
     ) => Insertable
+    // Author identity for new comment rows; supplied by the caller (member or guest).
+    identity: CommentAuthorIdentity
     // Optional: when present, add/reply also insert one
     // comment_mentions row per deduped `[[@user_org_id]]` in the body.
     mentions?: CommentMentionsConfig
@@ -90,14 +103,8 @@ export function useBaseCommentMutations<
     AddArgs extends BaseAddArgs = BaseAddArgs,
     ReplyArgsT extends BaseReplyArgs = BaseReplyArgs,
 >(args: MakeCommentMutationsArgs<Insertable, AddArgs, ReplyArgsT>) {
-    const { insertRow, updateRow, deleteRow, buildInsert, mentions } = args
-    const { user } = useAuth()
-    const { userOrgId } = useCurrentRole()
-
-    // author_name is required (max 200) by the migration. An empty
-    // user.name would otherwise produce a silent PB validation error —
-    // post under a recognizable label rather than reject outright.
-    const authorName = user.name || user.email || 'Anonymous'
+    const { insertRow, updateRow, deleteRow, buildInsert, mentions, identity } = args
+    const { author, author_name } = resolveAuthorFields(identity)
 
     // Build the comment_mentions inserts for a freshly-inserted comment
     // row. One row per deduped `[[@user_org_id]]` token in the body,
@@ -112,7 +119,7 @@ export function useBaseCommentMutations<
         const parsed = parseMentions(body)
         const out: AnyTransaction[] = []
         for (const m of parsed) {
-            if (m.userOrgId === userOrgId) continue
+            if (m.userOrgId === identity.userOrgId) continue
             out.push(
                 mentions.insertMention({
                     id: newRecordId(),
@@ -137,8 +144,8 @@ export function useBaseCommentMutations<
                         parent_comment: '',
                         body: a.body,
                         resolved_at: '',
-                        author: userOrgId,
-                        author_name: authorName,
+                        author,
+                        author_name,
                     },
                     a
                 )
@@ -160,8 +167,8 @@ export function useBaseCommentMutations<
                         parent_comment: a.parentId,
                         body: a.body,
                         resolved_at: '',
-                        author: userOrgId,
-                        author_name: authorName,
+                        author,
+                        author_name,
                     },
                     a
                 )
