@@ -1,7 +1,7 @@
 import { Menu } from '@tinycld/core/ui/menu'
 import type { ReactNode } from 'react'
 import { View } from 'react-native'
-import { useMenuBarScope } from './MenuBarScopeContext'
+import { useMenuBarAllMenusDisabled, useMenuBarScope } from './MenuBarScopeContext'
 import { MenuBarTrigger } from './MenuBarTrigger'
 import { menuBarRegistryId, useIsMenuBarOpen } from './menubar-store'
 import { useOpenMenuStore } from './open-menu-store'
@@ -10,6 +10,10 @@ interface MenuBarMenuProps {
     menuId: string
     label: string
     children: ReactNode
+    /** When true, the trigger renders greyed-out and clicking/hovering
+     *  does not open the menu. Children are still wired up but never
+     *  mount the popover. */
+    isDisabled?: boolean
 }
 
 // MenuBarMenu binds one top-level menu to the shared open-menu
@@ -30,16 +34,26 @@ interface MenuBarMenuProps {
 // portaled subtree as "part of a tinycld menu", so the document
 // handler can recognise clicks that should NOT close (e.g. clicking
 // a Menu.Item or a Menu.SubTrigger inside the popover).
-export function MenuBarMenu({ menuId, label, children }: MenuBarMenuProps) {
+export function MenuBarMenu({ menuId, label, children, isDisabled }: MenuBarMenuProps) {
     const scope = useMenuBarScope()
-    const isOpen = useIsMenuBarOpen(menuId, scope)
+    const allDisabled = useMenuBarAllMenusDisabled()
+    // Per-menu prop overrides context when explicit, otherwise inherit
+    // the "all menus disabled" flag set on the parent <MenuBar>.
+    const effectiveDisabled = isDisabled ?? allDisabled
+    const isOpen = useIsMenuBarOpen(menuId, scope) && !effectiveDisabled
     const open = useOpenMenuStore(s => s.open)
     const close = useOpenMenuStore(s => s.close)
     const registryId = menuBarRegistryId(menuId, scope)
 
     return (
-        <Menu isOpen={isOpen} onOpenChange={next => (next ? open(registryId) : close())}>
-            <MenuBarTrigger label={label} menuId={menuId} />
+        <Menu
+            isOpen={isOpen}
+            onOpenChange={next => {
+                if (effectiveDisabled) return
+                next ? open(registryId) : close()
+            }}
+        >
+            <MenuBarTrigger label={label} menuId={menuId} isDisabled={effectiveDisabled} />
             <Menu.Portal>
                 <Menu.Content placement="bottom" align="start">
                     <View

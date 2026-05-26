@@ -14,3 +14,13 @@ export const MenuBarScopeContext = createContext<string>('')
 export function useMenuBarScope(): string {
     return useContext(MenuBarScopeContext)
 }
+
+// When a <MenuBar> is rendered with `allMenusDisabled`, every MenuBarMenu
+// inside it picks up the flag via this context and renders its trigger
+// greyed-out + non-opening. Used by read-only share viewers (anon links)
+// so per-menu files (FileMenu, EditMenu, …) don't need to thread a prop.
+export const MenuBarAllMenusDisabledContext = createContext<boolean>(false)
+
+export function useMenuBarAllMenusDisabled(): boolean {
+    return useContext(MenuBarAllMenusDisabledContext)
+}
