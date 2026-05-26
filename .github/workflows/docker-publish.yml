@@ -76,30 +76,44 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version-file: ws/app/.node-version
-      # bootstrap GENERATES the workspace root into ws/ (manifest + scaffolding)
-      # and clones core + every feature member. app is already present (checked
-      # out above), so bootstrap records it and skips the clone. Members build
-      # from HEAD of main; pin per-member with `--with <name>@<ref>` when
-      # reproducible images are needed.
-      - name: Assemble workspace (generate root + clone members)
+      # Assemble the workspace from the pinned release recipe attached to
+      # the app's GitHub Release. release.ts uploads manifest.json (sibling
+      # name → repo + tag + sha) and package-lock.json as assets when it
+      # cuts an app release. We download both, clone each sibling at its
+      # pinned sha, let bootstrap write the workspace scaffolding (members
+      # are already present so it skips cloning), and drop the pinned
+      # lockfile into ws/. The resulting workspace is byte-identical to
+      # what the release author built locally — rebuilding the same tag
+      # produces the same image six months from now.
+      - name: Assemble workspace from pinned release manifest
         working-directory: ws
-        run: >
-          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
-          --with contacts --with mail --with calendar --with drive --with calc --with text --with google-takeout-import
-
-      # bootstrap writes package.json but not package-lock.json; the
-      # Dockerfile's `npm ci` requires one. Generate it here against the
-      # just-cloned sibling HEADs without installing node_modules (the
-      # Dockerfile re-runs the real install inside the image).
-      #
-      # --ignore-scripts is required: the workspace root's postinstall
-      # invokes `tsx scripts/generate.ts`, but with --package-lock-only
-      # there's no node_modules/.bin/tsx to call. The Dockerfile's
-      # `npm ci` (without --ignore-scripts) fires postinstall properly
-      # once node_modules is real.
-      - name: Generate package-lock.json
-        working-directory: ws
-        run: npm install --package-lock-only --ignore-scripts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-$(git -C app describe --tags --exact-match)}"
+          echo "Downloading release assets for ${TAG}…"
+          mkdir -p .release-assets
+          gh release download "${TAG}" -R "${GITHUB_REPOSITORY}" \
+            -p manifest.json -p package-lock.json \
+            --dir .release-assets
+          MANIFEST=".release-assets/manifest.json"
+          LOCKFILE=".release-assets/package-lock.json"
+          echo "Manifest contents:"
+          cat "${MANIFEST}"
+          jq -r '.members[] | "\(.name)\t\(.repo)\t\(.sha)"' "$MANIFEST" | while IFS=$'\t' read -r name repo sha; do
+            echo "Cloning ${repo} @ ${sha} → ${name}"
+            git clone --quiet "https://github.com/${repo}.git" "${name}"
+            git -C "${name}" fetch --quiet origin "${sha}"
+            git -C "${name}" checkout --quiet "${sha}"
+          done
+          # bootstrap sees every member already cloned and just writes the
+          # workspace-root scaffolding (package.json + .npmrc + tinycld.packages.ts).
+          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling \
+            --with contacts --with mail --with calendar --with drive \
+            --with calc --with text --with google-takeout-import
+          # Drop the pinned lockfile into the workspace root so npm ci uses it.
+          cp "${LOCKFILE}" package-lock.json
 
       - name: Build and push by digest
         id: build
