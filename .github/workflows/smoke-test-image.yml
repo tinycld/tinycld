@@ -107,24 +107,39 @@ jobs:
           # Mask in subsequent log output even though it's a one-time bootstrap.
           echo "::add-mask::${token}"
 
+      # The post-cutover app repo has no package-lock.json (the lockfile
+      # lives only at the workspace root, which isn't checked in) and the
+      # full devDependencies include unpublished @tinycld/* siblings that
+      # would 404 against npm. The smoke spec only imports @playwright/test,
+      # so install it standalone in a sibling temp dir and run the spec
+      # by absolute path. PW_VER tracks app's own @playwright/test pin so
+      # smoke runs against the same major as the rest of the suite.
       - name: Set up Node
         uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
-          cache: npm
 
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
+      - name: Install Playwright (standalone)
+        id: pw
+        run: |
+          set -eu
+          PW_VER=$(node -e "console.log(require('./package.json').devDependencies['@playwright/test'].replace(/^[\^~>=<]+/, ''))")
+          echo "Installing @playwright/test@${PW_VER}"
+          PW_ROOT=$(mktemp -d)
+          (cd "${PW_ROOT}" && npm init -y >/dev/null && npm install --no-save --no-package-lock --ignore-scripts "@playwright/test@${PW_VER}")
+          echo "root=${PW_ROOT}" >> "$GITHUB_OUTPUT"
 
       - name: Install Playwright Chromium
+        working-directory: ${{ steps.pw.outputs.root }}
         run: npx playwright install --with-deps chromium
 
       - name: Run install smoke spec
+        working-directory: ${{ steps.pw.outputs.root }}
         env:
           PW_BASE_URL: http://localhost:7090
           PW_SETUP_TOKEN: ${{ steps.token.outputs.token }}
           CI: 'true'
-        run: npx playwright test --config tests/install/playwright.config.ts
+        run: npx playwright test --config ${{ github.workspace }}/tests/install/playwright.config.ts
 
       - name: Capture container logs on failure
         if: failure()
