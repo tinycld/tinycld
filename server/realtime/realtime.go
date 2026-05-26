@@ -235,3 +235,11 @@ func (c *Client) SetReadOnly(ro bool) { c.readOnly = ro }
 func NewClientForTest(authID string) *Client {
 	return &Client{authID: authID}
 }
+
+// NewAnonClientForTest constructs an anonymous share-session Client for
+// use in consumer-package tests. Sets displayName (which makes
+// IsAnonymous() return true) and shareRole. Production code must not
+// call this.
+func NewAnonClientForTest(shareRole, displayName string) *Client {
+	return &Client{shareRole: shareRole, displayName: displayName}
+}
