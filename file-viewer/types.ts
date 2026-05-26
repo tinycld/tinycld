@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react-native'
 import type { ComponentType } from 'react'
+import type { EditorMount } from '@tinycld/core/lib/editor/editor-mount'
 
 /**
  * The minimal metadata core's file viewer needs in order to display, fetch, and
@@ -58,6 +59,15 @@ export interface PublicPreviewConfig {
     isEmpty: (html: string) => boolean
     /** Anchor kind comments use for this document type on the preview. */
     anchorKind: 'calc_cell' | 'text_range'
+}
+
+/**
+ * A package-registered full editor mounted from a prebuilt EditorMount.
+ * Used by the anonymous share route to render the real calc/text editor
+ * (read-only for anon viewers) without importing calc/text directly.
+ */
+export interface ShareEditorEntry {
+    component: ComponentType<{ mount: EditorMount }>
 }
 
 /**

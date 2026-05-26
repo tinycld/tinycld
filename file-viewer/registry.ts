@@ -1,4 +1,4 @@
-import type { PreviewRegistryEntry, PublicPreviewConfig } from './types'
+import type { PreviewRegistryEntry, PublicPreviewConfig, ShareEditorEntry } from './types'
 
 const registry = new Map<string, PreviewRegistryEntry>()
 
@@ -34,8 +34,23 @@ export function getPublicPreviewConfig(mimeType: string): PublicPreviewConfig | 
     return publicPreviewRegistry.get(mimeType)
 }
 
+// Share-editor registry: maps a document mime to a full editor component
+// the anonymous share route mounts from a prebuilt EditorMount. Packages
+// register their real editor here so the drive share page can render it
+// without a cross-module import (same decoupling as the preview registry).
+const shareEditorRegistry = new Map<string, ShareEditorEntry>()
+
+export function registerShareEditor(mimeType: string, entry: ShareEditorEntry) {
+    shareEditorRegistry.set(mimeType, entry)
+}
+
+export function getShareEditor(mimeType: string): ShareEditorEntry | undefined {
+    return shareEditorRegistry.get(mimeType)
+}
+
 /** Test-only: drop all registrations. */
 export function __resetRegistryForTests() {
     registry.clear()
     publicPreviewRegistry.clear()
+    shareEditorRegistry.clear()
 }
