@@ -26,6 +26,10 @@ jobs:
   smoke:
     name: Run install smoke test
     runs-on: ubuntu-latest
+    # Hard cap: the spec itself is ~30s on a working container. Anything
+    # past 10 minutes is wedged — fail loudly instead of burning runner
+    # minutes silently. Previous runs hung for 50+ min producing no output.
+    timeout-minutes: 10
     # workflow_run fires on completion regardless of outcome; only smoke-test a
     # successful publish. Manual dispatch always runs.
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
@@ -126,12 +130,21 @@ jobs:
           PW_VER=$(node -e "console.log(require('./package.json').devDependencies['@playwright/test'].replace(/^[\^~>=<]+/, ''))")
           echo "Installing @playwright/test@${PW_VER}"
           PW_ROOT=$(mktemp -d)
-          (cd "${PW_ROOT}" && npm init -y >/dev/null && npm install --no-save --no-package-lock --ignore-scripts "@playwright/test@${PW_VER}")
+          cd "${PW_ROOT}"
+          npm init -y >/dev/null
+          # Record the install in package.json (drop --no-save) and produce
+          # a local lockfile (drop --no-package-lock) so the resolution is
+          # explicit. Then check the binary actually landed before we move
+          # on — a silent install + missing binary would hang the next step.
+          npm install --ignore-scripts "@playwright/test@${PW_VER}"
+          ls -la node_modules/.bin/playwright
           echo "root=${PW_ROOT}" >> "$GITHUB_OUTPUT"
 
       - name: Install Playwright Chromium
         working-directory: ${{ steps.pw.outputs.root }}
-        run: npx playwright install --with-deps chromium
+        # Invoke the binary by absolute path — never rely on npx's resolver
+        # for the playwright lookup; it has surprised us before.
+        run: ./node_modules/.bin/playwright install --with-deps chromium
 
       - name: Run install smoke spec
         working-directory: ${{ steps.pw.outputs.root }}
@@ -139,7 +152,10 @@ jobs:
           PW_BASE_URL: http://localhost:7090
           PW_SETUP_TOKEN: ${{ steps.token.outputs.token }}
           CI: 'true'
-        run: npx playwright test --config ${{ github.workspace }}/tests/install/playwright.config.ts
+          # Surface activity if anything hangs — list reporter alone went
+          # 51 minutes silent on a wedged worker last run.
+          DEBUG: pw:api,pw:browser*
+        run: ./node_modules/.bin/playwright test --config ${{ github.workspace }}/tests/install/playwright.config.ts --reporter=list
 
       - name: Capture container logs on failure
         if: failure()
