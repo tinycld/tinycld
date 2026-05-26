@@ -701,3 +701,24 @@ func TestWritePredicateRejectsReadOnlyWrites(t *testing.T) {
 		t.Fatalf("observer expected editor's DOC_UPDATE, got type=0x%02x payload=%q", mt, p)
 	}
 }
+
+// TestClientReadOnlyAccessor verifies the ReadOnly/SetReadOnly pair on Client.
+// The broker's WritePredicate calls ReadOnly() on every inbound MsgDocUpdate;
+// SetReadOnly is called once by OnConnect. Both must be pure field accesses
+// (no DB) so the hot path stays cheap.
+func TestClientReadOnlyAccessor(t *testing.T) {
+	c := NewClientForTest("someuser")
+	if c.ReadOnly() {
+		t.Fatal("ReadOnly() should default to false")
+	}
+
+	c.SetReadOnly(true)
+	if !c.ReadOnly() {
+		t.Fatal("ReadOnly() should return true after SetReadOnly(true)")
+	}
+
+	c.SetReadOnly(false)
+	if c.ReadOnly() {
+		t.Fatal("ReadOnly() should return false after SetReadOnly(false)")
+	}
+}

@@ -179,6 +179,15 @@ type Client struct {
 	// resolving a drive_shares row (which an anon doesn't have).
 	shareRole string
 
+	// readOnly caches the connection's write authorization, resolved once
+	// by the room kind's OnConnect handler (which has DB access) rather
+	// than re-querying on every inbound frame. The broker's WritePredicate
+	// reads this in the hot route path, so it must be a pure field access.
+	// Defaults false; OnConnect calls SetReadOnly to set the real value
+	// before the first MsgDocUpdate can arrive (OnConnect runs during the
+	// connection handshake, before the read loop processes frames).
+	readOnly bool
+
 	// send buffers frames the broker has decided this client should
 	// receive. The transport reader pulls from this channel and writes
 	// to the WebSocket. Buffer size is bounded so a slow client does
@@ -207,6 +216,17 @@ func (c *Client) ShareRole() string { return c.shareRole }
 // IsAnonymous reports whether this connection is an anonymous share-
 // session visitor rather than an authenticated PB user.
 func (c *Client) IsAnonymous() bool { return c.displayName != "" }
+
+// ReadOnly reports whether this connection is barred from writing,
+// as resolved by the room kind's OnConnect handler. The broker's
+// WritePredicate consults this on every inbound MsgDocUpdate; it is a
+// pure field read (no DB) so the hot path stays cheap.
+func (c *Client) ReadOnly() bool { return c.readOnly }
+
+// SetReadOnly records the connection's write authorization. Intended to
+// be called once from a room kind's OnConnect (ServerHelloFn) handler,
+// which runs during the handshake before any frame is routed.
+func (c *Client) SetReadOnly(ro bool) { c.readOnly = ro }
 
 // NewClientForTest constructs a Client suitable for passing to a
 // ServerHelloFn or similar callback in consumer-package tests. Only
