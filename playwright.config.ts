@@ -8,6 +8,13 @@ import { defineConfig, devices } from '@playwright/test'
 // through the node_modules symlink, so @playwright/test resolves against the
 // app shell's install.
 const PORT = Number(process.env.E2E_PORT ?? 7200)
+// Outbound mail is gated to LogSender during e2e (the PB --dev flag flips
+// delivery off). Pointing TINYCLD_EMAIL_LOG at the same tmp/emails.log file
+// the globalSetup truncates lets tests assert on emails without scraping
+// stdout. The Go LogSender appends one JSONL record per send to this path.
+// app/scripts/dev.ts spawns PB inheriting process.env, so PB and the test
+// process both see the same path resolved from this file's directory.
+const EMAIL_LOG_PATH = path.join(import.meta.dirname, 'tmp', 'emails.log')
 
 export default defineConfig({
     testMatch: '**/*.spec.ts',
@@ -23,6 +30,17 @@ export default defineConfig({
         url: `http://localhost:${PORT}/api/health`,
         reuseExistingServer: !process.env.CI,
         timeout: 240_000,
+        // Inherits the launching shell (process.env is the default), but
+        // we explicitly export the email log path so PB (spawned by dev.ts)
+        // writes JSONL records there for tests to assert on. Filter out
+        // undefined values from process.env to satisfy Playwright's strict
+        // `{[key: string]: string}` env type.
+        env: Object.fromEntries(
+            Object.entries(process.env)
+                .filter(([, v]) => v !== undefined)
+                .map(([k, v]) => [k, v as string])
+                .concat([['TINYCLD_EMAIL_LOG', EMAIL_LOG_PATH]])
+        ),
     },
     // Absolute path: per-package configs spread this config, and Playwright
     // resolves a relative globalSetup against the INHERITING config's dir —
