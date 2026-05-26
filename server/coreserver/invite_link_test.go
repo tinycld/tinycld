@@ -213,26 +213,30 @@ func TestInviteLink_Send_DeliversToAltEmailNotAccountEmail(t *testing.T) {
 }
 
 func TestInviteLink_Send_400OnInvalidEmail(t *testing.T) {
-	app := setupInviteTestApp(t)
-	RegisterInviteLinkEndpoints(app)
-
-	owner := mustCreateUser(t, app, "owner@test.local", false)
-	target := mustCreateUser(t, app, "pending@example.com", false)
-	org := mustCreateOrg(t, app)
-	newMembership(t, app, owner, org, "owner", "")
-	uo := newMembership(t, app, target, org, "member", owner.Id)
-	if _, err := mintInviteToken(app, target, org, "member"); err != nil {
-		t.Fatal(err)
-	}
-
-	authToken, err := tokenForUser(app, owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	// Each case gets its own app: ApiScenario.Test re-triggers OnServe,
+	// which re-registers PocketBase's built-in routes and panics on the
+	// duplicate pattern under PB v0.38.1 if a single app is reused across
+	// scenarios. A fresh app per sub-test keeps route registration to once.
 	cases := []string{`{"email":""}`, `{"email":"not-an-email"}`, `{}`}
 	for _, body := range cases {
 		t.Run(body, func(t *testing.T) {
+			app := setupInviteTestApp(t)
+			RegisterInviteLinkEndpoints(app)
+
+			owner := mustCreateUser(t, app, "owner@test.local", false)
+			target := mustCreateUser(t, app, "pending@example.com", false)
+			org := mustCreateOrg(t, app)
+			newMembership(t, app, owner, org, "owner", "")
+			uo := newMembership(t, app, target, org, "member", owner.Id)
+			if _, err := mintInviteToken(app, target, org, "member"); err != nil {
+				t.Fatal(err)
+			}
+
+			authToken, err := tokenForUser(app, owner)
+			if err != nil {
+				t.Fatal(err)
+			}
+
 			scenario := &tests.ApiScenario{
 				Name:                  "POST send 400 on invalid email: " + body,
 				Method:                http.MethodPost,

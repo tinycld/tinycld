@@ -128,17 +128,34 @@ func TestDemoStartCreatesUserAndOrg(t *testing.T) {
 func TestDemoStartIsIdempotent(t *testing.T) {
 	app := setupDemoStartTestApp(t)
 
-	for i := 0; i < 3; i++ {
-		scenario := &tests.ApiScenario{
-			Name:                  "repeat call returns auth without duplication",
-			Method:                http.MethodPost,
-			URL:                   "/api/demo/start",
-			ExpectedStatus:        http.StatusOK,
-			ExpectedContent:       []string{`"token":`, `"record":`},
-			TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
-			DisableTestAppCleanup: true,
+	// One pass through the HTTP endpoint proves the route returns a valid
+	// auth response (token + record).
+	scenario := &tests.ApiScenario{
+		Name:                  "first call returns auth",
+		Method:                http.MethodPost,
+		URL:                   "/api/demo/start",
+		ExpectedStatus:        http.StatusOK,
+		ExpectedContent:       []string{`"token":`, `"record":`},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}
+	scenario.Test(t)
+
+	// Idempotency is a property of the ensure* logic against the DB, not of
+	// the HTTP routing. Exercise it by invoking that logic directly twice
+	// more on the same app/DB. (Re-running ApiScenario.Test on a shared app
+	// re-triggers OnServe, which re-registers PocketBase's built-in routes
+	// and panics on the duplicate pattern under PB v0.38.1.)
+	for i := 0; i < 2; i++ {
+		if err := app.RunInTransaction(func(txApp core.App) error {
+			u, err := ensureDemoUser(txApp)
+			if err != nil {
+				return err
+			}
+			return ensureDemoOrgMembership(txApp, u)
+		}); err != nil {
+			t.Fatalf("repeat ensureDemo (iteration %d): %v", i, err)
 		}
-		scenario.Test(t)
 	}
 
 	users, err := app.FindRecordsByFilter(
