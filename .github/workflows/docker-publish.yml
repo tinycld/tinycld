@@ -87,6 +87,14 @@ jobs:
           TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
           --with contacts --with mail --with calendar --with drive --with calc --with text --with google-takeout-import
 
+      # bootstrap writes package.json but not package-lock.json; the
+      # Dockerfile's `npm ci` requires one. Generate it here against the
+      # just-cloned sibling HEADs without installing node_modules (the
+      # Dockerfile re-runs the real install inside the image).
+      - name: Generate package-lock.json
+        working-directory: ws
+        run: npm install --package-lock-only
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v6
