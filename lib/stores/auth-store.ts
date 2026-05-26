@@ -1,10 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { captureException } from '@tinycld/core/lib/errors'
 import {
-    PB_SERVER_ADDR,
     authStoreReady,
     fetchAndSeedUserOrg,
     getUserFromAuthStore,
+    PB_SERVER_ADDR,
     pb,
     preloadStores,
     seedUserOrg,
@@ -186,14 +186,11 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
 
     requestShareOtp: async (token, email) => {
         try {
-            const res = await fetch(
-                `${PB_SERVER_ADDR}/api/drive/share-link/${token}/otp-request`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email }),
-                }
-            )
+            const res = await fetch(`${PB_SERVER_ADDR}/api/drive/share-link/${token}/otp-request`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email }),
+            })
             if (res.ok) {
                 const data = (await res.json()) as { ok: true; otp_id: string }
                 return { otpId: data.otp_id, error: null }
@@ -213,14 +210,11 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
 
     verifyShareOtp: async (token, email, code, otpId) => {
         try {
-            const res = await fetch(
-                `${PB_SERVER_ADDR}/api/drive/share-link/${token}/otp-verify`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, code, otp_id: otpId }),
-                }
-            )
+            const res = await fetch(`${PB_SERVER_ADDR}/api/drive/share-link/${token}/otp-verify`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, code, otp_id: otpId }),
+            })
             if (!res.ok) {
                 let errorMsg: string
                 try {

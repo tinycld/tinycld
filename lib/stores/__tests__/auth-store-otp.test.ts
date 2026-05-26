@@ -46,7 +46,10 @@ vi.mock('@tinycld/core/lib/store', () => ({
             state = { ...state, ...patch }
         }
         const get = () => state
-        const methods = (fn as (set: typeof set, get: typeof get) => Record<string, unknown>)(set, get)
+        const methods = (fn as (set: typeof set, get: typeof get) => Record<string, unknown>)(
+            set,
+            get
+        )
         state = { ...state, ...methods }
         const store = (selector: (s: typeof state) => unknown) => selector(state)
         store.getState = () => state
@@ -58,8 +61,16 @@ vi.mock('@tinycld/core/lib/store', () => ({
 }))
 
 describe('auth-store OTP methods', () => {
-    let requestShareOtp: (token: string, email: string) => Promise<{ otpId: string | null; error: string | null }>
-    let verifyShareOtp: (token: string, email: string, code: string, otpId: string) => Promise<{ user: unknown; error: string | null }>
+    let requestShareOtp: (
+        token: string,
+        email: string
+    ) => Promise<{ otpId: string | null; error: string | null }>
+    let verifyShareOtp: (
+        token: string,
+        email: string,
+        code: string,
+        otpId: string
+    ) => Promise<{ user: unknown; error: string | null }>
 
     beforeEach(async () => {
         vi.resetModules()
@@ -174,7 +185,12 @@ describe('auth-store OTP methods', () => {
                 },
             })
 
-            const result = await verifyShareOtp('share_tok', 'guest@example.com', '123456', 'otp_abc')
+            const result = await verifyShareOtp(
+                'share_tok',
+                'guest@example.com',
+                '123456',
+                'otp_abc'
+            )
 
             // pb.authStore.save called with token + record (no clear)
             expect(mockAuthStoreSave).toHaveBeenCalledWith('auth_tok_xyz', fakeRecord)
@@ -201,7 +217,12 @@ describe('auth-store OTP methods', () => {
                 })
             )
 
-            const result = await verifyShareOtp('share_tok', 'guest@example.com', 'badcode', 'otp_abc')
+            const result = await verifyShareOtp(
+                'share_tok',
+                'guest@example.com',
+                'badcode',
+                'otp_abc'
+            )
             expect(result).toEqual({ user: null, error: 'invalid or expired code' })
             expect(mockAuthStoreSave).not.toHaveBeenCalled()
         })

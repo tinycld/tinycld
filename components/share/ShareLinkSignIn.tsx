@@ -1,6 +1,6 @@
+import { useAuthStore } from '@tinycld/core/lib/stores/auth-store'
 import { useState } from 'react'
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native'
-import { useAuthStore } from '@tinycld/core/lib/stores/auth-store'
 
 export interface ShareLinkSignInProps {
     /** The share link token (the public token from /share/[token]). */
@@ -77,13 +77,21 @@ export function ShareLinkSignIn({ token, role, onSuccess }: ShareLinkSignInProps
                     editable={!submitting}
                     className="border border-border rounded-md px-3 py-2 text-foreground"
                 />
-                {error && <Text className="text-red-600" style={{ fontSize: 13 }}>{error}</Text>}
+                {error && (
+                    <Text className="text-red-600" style={{ fontSize: 13 }}>
+                        {error}
+                    </Text>
+                )}
                 <Pressable
                     onPress={submitEmail}
                     disabled={submitting || !email.trim()}
                     className="bg-primary px-4 py-2 rounded-md items-center"
                 >
-                    {submitting ? <ActivityIndicator /> : <Text className="text-primary-foreground">Send code</Text>}
+                    {submitting ? (
+                        <ActivityIndicator />
+                    ) : (
+                        <Text className="text-primary-foreground">Send code</Text>
+                    )}
                 </Pressable>
             </View>
         )
@@ -106,16 +114,34 @@ export function ShareLinkSignIn({ token, role, onSuccess }: ShareLinkSignInProps
                 className="border border-border rounded-md px-3 py-2 text-foreground text-center"
                 style={{ fontSize: 18, letterSpacing: 4 }}
             />
-            {error && <Text className="text-red-600" style={{ fontSize: 13 }}>{error}</Text>}
+            {error && (
+                <Text className="text-red-600" style={{ fontSize: 13 }}>
+                    {error}
+                </Text>
+            )}
             <Pressable
                 onPress={submitCode}
                 disabled={submitting || !code.trim()}
                 className="bg-primary px-4 py-2 rounded-md items-center"
             >
-                {submitting ? <ActivityIndicator /> : <Text className="text-primary-foreground">Verify</Text>}
+                {submitting ? (
+                    <ActivityIndicator />
+                ) : (
+                    <Text className="text-primary-foreground">Verify</Text>
+                )}
             </Pressable>
-            <Pressable onPress={() => { setStep('email'); setCode(''); setError(null) }} disabled={submitting}>
-                <Text className="text-muted-foreground" style={{ fontSize: 13, textAlign: 'center' }}>
+            <Pressable
+                onPress={() => {
+                    setStep('email')
+                    setCode('')
+                    setError(null)
+                }}
+                disabled={submitting}
+            >
+                <Text
+                    className="text-muted-foreground"
+                    style={{ fontSize: 13, textAlign: 'center' }}
+                >
                     Use a different email
                 </Text>
             </Pressable>

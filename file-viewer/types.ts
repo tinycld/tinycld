@@ -1,6 +1,6 @@
+import type { EditorMount } from '@tinycld/core/lib/editor/editor-mount'
 import type { LucideIcon } from 'lucide-react-native'
 import type { ComponentType } from 'react'
-import type { EditorMount } from '@tinycld/core/lib/editor/editor-mount'
 
 /**
  * The minimal metadata core's file viewer needs in order to display, fetch, and
