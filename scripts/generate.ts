@@ -9,6 +9,7 @@ import { emitPublicRoutes, emitRoutes } from './gen-routes'
 import {
     buildBundledPackages,
     buildGoWork,
+    buildMemberGoWork,
     buildPackageExtensionsGo,
     replaceSymlink,
     type ServerPkg,
@@ -180,7 +181,8 @@ function linkDirContents(srcDir: string, destDir: string) {
 
 // --- 7. server: Go wiring (package_extensions.go + go.work) ------------
 function emitGoWiring(features: Feature[]) {
-    const serverPkgs: ServerPkg[] = features.filter(hasServerPackage).map(f => ({
+    const serverFeatures = features.filter(hasServerPackage)
+    const serverPkgs: ServerPkg[] = serverFeatures.map(f => ({
         slug: f.manifest.slug,
         module: f.manifest.server!.module!,
         serverRelPath: path.relative(SERVER_DIR, path.join(f.dir, f.manifest.server!.package!)),
@@ -189,12 +191,26 @@ function emitGoWiring(features: Feature[]) {
         path.join(SERVER_DIR, 'package_extensions.go'),
         buildPackageExtensionsGo(serverPkgs)
     )
-    const coreServerRel = path.relative(SERVER_DIR, path.join(memberDir('@tinycld/core'), 'server'))
+    const coreServerDir = path.join(memberDir('@tinycld/core'), 'server')
+    const coreServerRel = path.relative(SERVER_DIR, coreServerDir)
     const goWork = path.join(SERVER_DIR, 'go.work')
     if (serverPkgs.length > 0) {
         fs.writeFileSync(goWork, buildGoWork(coreServerRel, serverPkgs))
     } else if (fs.existsSync(goWork)) {
         fs.unlinkSync(goWork)
+    }
+
+    // Per-member go.work so each server module resolves tinycld.org/core when
+    // built on its own (the app build above is unaffected — it runs from
+    // app/server with its own go.work). core itself has nothing to wire.
+    for (const f of serverFeatures) {
+        if (f.manifest.slug === 'core') continue
+        const memberServerDir = path.join(f.dir, f.manifest.server!.package!)
+        const coreRelFromMember = path.relative(memberServerDir, coreServerDir)
+        fs.writeFileSync(
+            path.join(memberServerDir, 'go.work'),
+            buildMemberGoWork(coreRelFromMember)
+        )
     }
 }
 

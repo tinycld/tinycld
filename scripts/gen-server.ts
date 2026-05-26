@@ -47,6 +47,31 @@ export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
     return ['go 1.25.0', '', 'use (', '    .', `    ${coreRelPath}`, ...uses, ')', ''].join('\n')
 }
 
+// A member server module (drive, calc, …) imports tinycld.org/core/* but pins
+// it as require v0.0.0 — core is resolved only through a go.work, never
+// downloaded. The app server gets one (buildGoWork); a member built on its own
+// (e.g. `go build ./...` / `go test` from <member>/server) has nothing to
+// resolve core, so the v0.0.0 require hits the proxy and fails with
+// "unrecognized import path tinycld.org/core" / "missing go.sum entry".
+//
+// Emit a per-member go.work that replaces core with the local copy. The replace
+// (not just a `use`) is required: Go resolves the v0.0.0 require during graph
+// load before applying `use` substitution, so a bare `use` still triggers the
+// proxy lookup. Living in go.work, the replace only affects the member's own
+// standalone build — the assembled app build runs from app/server with its own
+// go.work and is unaffected. It's gitignored in each member repo so it never
+// ships into the assembled workspace.
+export function buildMemberGoWork(coreRelPath: string): string {
+    return [
+        'go 1.25.0',
+        '',
+        'use .',
+        '',
+        `replace tinycld.org/core => ${coreRelPath}`,
+        '',
+    ].join('\n')
+}
+
 interface BundledPkgInput {
     manifest: PackageManifest
 }
