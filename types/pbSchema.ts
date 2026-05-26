@@ -128,7 +128,7 @@ export interface DriveItemVersions {
     file: string
     size: number
     mime_type: string
-    source: 'upload' | 'system'
+    source: 'upload' | 'system' | 'user'
     label: string
     created_by: string
     created: string

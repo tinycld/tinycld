@@ -132,7 +132,7 @@ export const driveItemVersionsSchema = z.object({
     file: z.string().optional(),
     size: z.number().optional(),
     mime_type: z.string().max(255).optional(),
-    source: z.enum(["upload", "system"]),
+    source: z.enum(["upload", "system", "user"]),
     label: z.string().max(500).optional(),
     created_by: z.string().regex(/^[a-z0-9]+$/).length(15),
     created: z.string().regex(DATETIME_REGEX).optional(),
