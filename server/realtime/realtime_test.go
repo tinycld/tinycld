@@ -21,20 +21,19 @@ type dialOpts struct {
 	url    string // ws://host/api/realtime/test/
 }
 
-// startTestServer mounts a minimal HTTP handler that drives runConnection
-// directly. It bypasses the production handleConnect's PocketBase auth
-// dependency: tests inject their own "user id" via the X-Test-User
-// header, and the AuthorizeFn signature receives nil for *core.Record.
-// This is fine because tests' handlers only care about roomID anyway —
-// they're verifying broker behavior, not auth integration.
+// startTestServerForKind mounts a minimal HTTP handler that drives
+// runConnection directly, registering the given kind with the given opts.
+// It bypasses the production handleConnect's PocketBase auth dependency:
+// tests inject their own "user id" via the X-Test-User header, and the
+// AuthorizeFn signature receives nil for *core.Record. X-Test-Role threads
+// a share role into the connection's connIdentity so per-connection write
+// gating can be exercised.
 //
 // Each call resets the registry first so prior tests don't leak.
-func startTestServer(t *testing.T, broker *Broker, authFn AuthorizeFn) dialOpts {
+func startTestServerForKind(t *testing.T, broker *Broker, kind string, kindOpts RoomKindOptions) dialOpts {
 	t.Helper()
 	resetRegistry()
-	if authFn != nil {
-		RegisterRoomKind("test", authFn)
-	}
+	RegisterRoomKindWith(kind, kindOpts)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/realtime/", func(w http.ResponseWriter, r *http.Request) {
@@ -43,9 +42,9 @@ func startTestServer(t *testing.T, broker *Broker, authFn AuthorizeFn) dialOpts 
 			http.Error(w, "bad path", http.StatusBadRequest)
 			return
 		}
-		kind, roomID := parts[0], parts[1]
+		k, roomID := parts[0], parts[1]
 
-		fn, err := authorizeFor(kind)
+		fn, err := authorizeFor(k)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
@@ -69,13 +68,21 @@ func startTestServer(t *testing.T, broker *Broker, authFn AuthorizeFn) dialOpts 
 			IdleTimeout:   defaultIdleTimeout,
 			MaxFrameBytes: defaultMaxFrameBytes,
 			PingInterval:  defaultPingInterval,
-		}, connIdentity{kind: kind, roomID: roomID}, conn)
+		}, connIdentity{kind: k, roomID: roomID, authID: r.Header.Get("X-Test-User"), shareRole: r.Header.Get("X-Test-Role")}, conn)
 	})
 
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
-	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/realtime/test/"
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/realtime/" + kind + "/"
 	return dialOpts{server: srv, url: url}
+}
+
+// startTestServer mounts a minimal HTTP handler for the "test" room kind
+// using only an AuthorizeFn. Thin wrapper around startTestServerForKind
+// that preserves the prior behavior for all existing callers.
+func startTestServer(t *testing.T, broker *Broker, authFn AuthorizeFn) dialOpts {
+	t.Helper()
+	return startTestServerForKind(t, broker, "test", RoomKindOptions{Authorize: authFn})
 }
 
 // testClient bundles a connection with its server-assigned ID. The
@@ -84,6 +91,36 @@ func startTestServer(t *testing.T, broker *Broker, authFn AuthorizeFn) dialOpts 
 type testClient struct {
 	conn *websocket.Conn
 	id   [clientIDLen]byte
+}
+
+// dialClientWithRole opens a WS as a user carrying a share role (threaded
+// into the connection's shareRole via the X-Test-Role header), then
+// consumes the MsgAssignID frame. Used to exercise per-connection write
+// gating.
+func dialClientWithRole(t *testing.T, opts dialOpts, roomID, userID, role string) *testClient {
+	t.Helper()
+	hdr := http.Header{}
+	hdr.Set("X-Test-User", userID)
+	hdr.Set("X-Test-Role", role)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, opts.url+roomID, &websocket.DialOptions{HTTPHeader: hdr})
+	if err != nil {
+		t.Fatalf("dial failed: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close(websocket.StatusNormalClosure, "test done") })
+	readCtx, rcancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer rcancel()
+	typ, data, err := conn.Read(readCtx)
+	if err != nil {
+		t.Fatalf("read assign frame failed: %v", err)
+	}
+	if typ != websocket.MessageBinary || len(data) < frameOverhead || MessageType(data[clientIDLen]) != MsgAssignID {
+		t.Fatalf("expected MsgAssignID assign frame")
+	}
+	tc := &testClient{conn: conn}
+	copy(tc.id[:], data[:clientIDLen])
+	return tc
 }
 
 // dialClient opens a WS to the given room as the given user, then
@@ -596,5 +633,71 @@ func TestRoomRouteAwarenessNotJournaled(t *testing.T) {
 	defer j.mu.Unlock()
 	if len(j.appends) != 0 {
 		t.Fatalf("appends = %d; want 0 (awareness frames must not reach journal)", len(j.appends))
+	}
+}
+
+// TestWritePredicateRejectsReadOnlyWrites: a connection whose WritePredicate
+// returns false (e.g. a read-only share-link viewer) must NOT have its
+// MsgDocUpdate fanned out; an allowed connection's update must be.
+func TestWritePredicateRejectsReadOnlyWrites(t *testing.T) {
+	broker := NewBroker()
+	// Editor role may write; anything else may not.
+	opts := startTestServerForKind(t, broker, "test", RoomKindOptions{
+		Authorize: allowAllAuth,
+		WritePredicate: func(c *Client, _ string) bool {
+			return c.ShareRole() == "editor"
+		},
+	})
+
+	// Two separate rooms let us verify both halves of the predicate
+	// independently without reusing a connection after a timeout read.
+	// coder/websocket closes the underlying conn when a Read ctx times
+	// out, so we isolate the negative check (room1) from the positive
+	// check (room2).
+
+	// --- Negative check: viewer's write is dropped ---
+	// viewer (no write right) and editor1 both join room1. We route a
+	// viewer MsgDocUpdate through the broker directly (no WS read/write
+	// for the assertion) by looking up the Room and checking the send
+	// channel of a manually-constructed Client added to the room.
+	viewerClient := dialClientWithRole(t, opts, "room1", "vw", "viewer")
+	time.Sleep(50 * time.Millisecond)
+
+	// Add a raw Client to room1 so we can inspect its send channel.
+	room1 := broker.lookupRoomForTest("test", "room1")
+	if room1 == nil {
+		t.Fatal("room1 not found after viewer join")
+	}
+	spy := &Client{joinedAt: time.Now()}
+	room1.add(spy)
+	t.Cleanup(func() {
+		room1.mu.Lock()
+		delete(room1.members, spy)
+		room1.mu.Unlock()
+		close(spy.send)
+	})
+
+	writeFrame(t, viewerClient, MsgDocUpdate, []byte("viewer-edit"))
+	// Give the server goroutine time to route (or drop) the frame.
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case f := <-spy.send:
+		if MessageType(f[clientIDLen]) == MsgDocUpdate {
+			t.Fatalf("spy received a MsgDocUpdate from a read-only viewer; write gate failed")
+		}
+		// Some other frame (e.g. awareness) — not a leaked write.
+	default:
+		// No frame delivered to spy — correct.
+	}
+
+	// --- Positive check: editor's write fans out ---
+	editor := dialClientWithRole(t, opts, "room2", "ed", "editor")
+	observer := dialClient(t, opts, "room2", "obs")
+	time.Sleep(50 * time.Millisecond)
+
+	writeFrame(t, editor, MsgDocUpdate, []byte("editor-edit"))
+	mt, p := readFrame(t, observer, 1*time.Second)
+	if mt != MsgDocUpdate || !bytes.Equal(p, []byte("editor-edit")) {
+		t.Fatalf("observer expected editor's DOC_UPDATE, got type=0x%02x payload=%q", mt, p)
 	}
 }

@@ -159,6 +159,16 @@ func (r *Room) route(from *Client, frame []byte) {
 	msgType := MessageType(frame[clientIDLen])
 	switch msgType {
 	case MsgDocUpdate:
+		// Server-side write gate: drop mutations from connections the
+		// room kind deems read-only. Without this, "read-only" is only a
+		// client-side UI flag a crafted client could ignore. Silent drop
+		// (not a connection close) so a benign client with a stale flag
+		// isn't disconnected.
+		if r.opts.WritePredicate != nil && !r.opts.WritePredicate(from, r.key.id) {
+			slog.Warn("realtime: dropped MsgDocUpdate from read-only connection",
+				"kind", r.key.kind, "roomID", r.key.id, "authID", from.authID)
+			return
+		}
 		payload := frame[frameOverhead:]
 		limit := r.opts.MaxUpdateBytes
 		if limit == 0 {

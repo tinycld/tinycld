@@ -61,6 +61,16 @@ type RoomKindOptions struct {
 	// public editable links (calc, text) set it.
 	AuthorizeShare ShareAuthorizeFn
 
+	// WritePredicate, if non-nil, gates inbound document mutations
+	// (MsgDocUpdate) per connection. Return true to allow the write,
+	// false to silently drop the frame. Nil means all writes are
+	// allowed (the prior behavior). Room kinds that admit read-only
+	// connections (e.g. anonymous share-link viewers) use this to make
+	// read-only SERVER-enforced rather than client-side only: the broker
+	// has no other write filter, so without this a read-only client that
+	// ignores its UI gate could still POST mutations.
+	WritePredicate func(c *Client, roomID string) bool
+
 	// RuntimeProvider, if non-nil, is asked to mint a server-side
 	// DocHandle every time a new room of this kind is created. The
 	// broker then applies every inbound MsgDocUpdate to the handle
