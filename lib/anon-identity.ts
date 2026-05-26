@@ -76,6 +76,23 @@ async function mintShareSession(token: string): Promise<ShareSession> {
 // useShareSession mints/resumes an anonymous share session for a public
 // link token. `enabled` lets callers pause until they know the visitor is
 // anonymous (logged-in org members take a different path entirely).
+//
+// retryOnMount=false is critical when the share endpoint returns 410
+// (revoked or expired). ShareTokenPage flips between FullScreenSpinner
+// and <ShareView/> based on `visitor.role` (which depends on
+// sessionLoading). ShareView has its own useShareSession observer that
+// remounts on each flip. React Query's default `retryOnMount: true`
+// means: if the query is in `error` state and a new observer mounts,
+// re-fire the queryFn (because errored queries have no data, hence
+// they're treated as "needs initial load"). That single behavior turns
+// the mount/unmount cycle into a tight refetch loop — fetch errors →
+// flip → remount → refetch → error → flip → ... — saturating the
+// public 60/min rate limiter and preventing the expired-link UI from
+// rendering. `retry: false` alone is NOT enough (it suppresses retries
+// of the SAME fetch attempt, not refetches from new mounts).
+// `refetchOnMount: false` is also distinct (it covers the
+// already-have-data case). The flag we want here is `retryOnMount:
+// false`, so a failed mint stays failed until the page reloads.
 export function useShareSession(token: string, enabled = true) {
     return useQuery<ShareSession>({
         queryKey: ['share-session', token],
@@ -86,5 +103,6 @@ export function useShareSession(token: string, enabled = true) {
         // hit an expired token mid-action.
         staleTime: 6 * 60 * 60 * 1000,
         retry: false,
+        retryOnMount: false,
     })
 }
