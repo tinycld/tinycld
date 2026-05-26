@@ -11,7 +11,7 @@ and the runtime package-derivation modules under `lib/packages/`
 `static-registry`) which the app consumes from the generated
 `tinycld.config.ts`. The Go side (`server/`, module `tinycld.org/core`) provides
 `coreserver` plus subsystems (notify, push, mailer, audit, textextract,
-thumbnails) and core's PocketBase migrations.
+thumbnails, render, realtime, sharelink) and core's PocketBase migrations.
 
 ## Layout
 
@@ -40,12 +40,13 @@ Consumers import core through the `@tinycld/core/*` subpaths declared in
 
 The Go side is module `tinycld.org/core` (`server/`), exporting `coreserver`
 plus subsystems (`notify`, `push`, `mailer`, `audit`, `textextract`,
-`thumbnails`) and core's PocketBase migrations under `server/pb_migrations/`.
+`thumbnails`, `render`, `realtime`, `sharelink`) and core's PocketBase
+migrations under `server/pb_migrations/`.
 
 ## Development
 
 Core is typechecked + unit-tested as a workspace member — there is no separate
-build. From the **workspace root** (`~/code/tinycld/new/`):
+build. From the **workspace root** (`~/code/tinycld/`):
 
 ```sh
 npm install          # links members + runs the app generator (postinstall)
