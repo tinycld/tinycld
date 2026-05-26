@@ -155,22 +155,6 @@ export const driveItemsSchema = z.object({
     thumbnail: z.string().optional(),
 })
 
-export const drivePreviewCommentsSchema = z.object({
-    id: z.string().regex(/^[a-z0-9]+$/).length(15).optional(),
-    drive_item: z.string().regex(/^[a-z0-9]+$/).length(15),
-    anchor_kind: z.enum(["calc_cell", "text_range"]),
-    anchor: z.unknown().optional(),
-    quoted_text: z.string().max(280).optional(),
-    body: z.string().min(1).max(4000),
-    resolved_at: z.string().regex(DATETIME_REGEX).optional(),
-    author_user_org: z.string().regex(/^[a-z0-9]+$/).length(15).optional(),
-    author_anon_id: z.string().max(64).optional(),
-    author_name: z.string().min(1).max(200),
-    created: z.string().regex(DATETIME_REGEX).optional(),
-    updated: z.string().regex(DATETIME_REGEX).optional(),
-    parent_comment: z.string().regex(/^[a-z0-9]+$/).length(15).optional(),
-})
-
 export const driveShareLinksSchema = z.object({
     id: z.string().regex(/^[a-z0-9]+$/).length(15).optional(),
     item: z.string().regex(/^[a-z0-9]+$/).length(15),

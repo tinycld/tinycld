@@ -151,22 +151,6 @@ export interface DriveItems {
     thumbnail: string
 }
 
-export interface DrivePreviewComments {
-    id: string
-    drive_item: string
-    anchor_kind: 'calc_cell' | 'text_range'
-    anchor: any
-    quoted_text: string
-    body: string
-    resolved_at: string
-    author_user_org: string
-    author_anon_id: string
-    author_name: string
-    created: string
-    updated: string
-    parent_comment: string
-}
-
 export interface DriveShareLinks {
     id: string
     item: string
@@ -588,19 +572,9 @@ export type Schema = {
             created_by: UserOrg
             parent?: DriveItems
             // drive_items_via_parent?: DriveItems[]
-            // drive_preview_comments_via_drive_item?: DrivePreviewComments[]
             // drive_share_links_via_item?: DriveShareLinks[]
             // drive_shares_via_item?: DriveShares[]
             // text_comments_via_drive_item?: TextComments[]
-        }
-    }
-    drive_preview_comments: {
-        type: DrivePreviewComments
-        relations: {
-            drive_item: DriveItems
-            author_user_org?: UserOrg
-            parent_comment?: DrivePreviewComments
-            // drive_preview_comments_via_parent_comment?: DrivePreviewComments[]
         }
     }
     drive_share_links: {
@@ -786,7 +760,6 @@ export type Schema = {
             // drive_item_state_via_user_org?: DriveItemState[]
             // drive_item_versions_via_created_by?: DriveItemVersions[]
             // drive_items_via_created_by?: DriveItems[]
-            // drive_preview_comments_via_author_user_org?: DrivePreviewComments[]
             // drive_share_links_via_created_by?: DriveShareLinks[]
             // drive_shares_via_user_org?: DriveShares[]
             // drive_shares_via_created_by?: DriveShares[]
