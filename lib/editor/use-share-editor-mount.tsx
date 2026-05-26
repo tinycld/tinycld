@@ -1,24 +1,11 @@
 // core/lib/editor/use-share-editor-mount.tsx
 
 import { useAuth } from '@tinycld/core/lib/auth'
+import { colorForUser } from '@tinycld/core/lib/util/color'
 import { useMemo } from 'react'
 import { type ShareSession, useShareSession } from '../anon-identity'
 import type { EditorCapabilities, EditorMount, EditorRole } from './editor-mount'
 import { useShareLinkVisitorRole } from './use-share-visitor-role'
-
-// colorForAnon produces a deterministic HSL color from an id string.
-// Mirrors calc's colorForUser (same hash → hsl(hue, 70%, 45%)) —
-// duplicated here intentionally to avoid cross-package coupling. The same
-// algorithm is used for both anon (anonId) and guest (userId) identities
-// so the color is stable for a given visitor across all surfaces.
-function colorForAnon(id: string): string {
-    let h = 0
-    for (let i = 0; i < id.length; i++) {
-        h = (h * 31 + id.charCodeAt(i)) >>> 0
-    }
-    const hue = h % 360
-    return `hsl(${hue}, 70%, 45%)`
-}
 
 // buildAnonMount constructs an EditorMount from a resolved ShareSession.
 // All anon mounts are read-only in this phase; editable anon + anon
@@ -48,7 +35,7 @@ export function buildAnonMount(session: ShareSession): EditorMount {
             kind: 'anon',
             // No userId / userOrgId for anonymous visitors.
             displayName: session.displayName,
-            color: colorForAnon(session.anonId),
+            color: colorForUser(session.anonId),
         },
         role: session.role,
         capabilities,
@@ -127,7 +114,7 @@ export function buildGuestMount({
             // who later return as anons keep the same color and vice
             // versa). Using the userId means the color persists across
             // sign-in/sign-out within a share link surface.
-            color: colorForAnon(userId),
+            color: colorForUser(userId),
         },
         role,
         capabilities: capabilitiesForGuest(role),
