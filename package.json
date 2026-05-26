@@ -39,8 +39,8 @@
     "dependencies": {
         "@10play/tentap-editor": "^1.0.1",
         "@expo/html-elements": "^0.12.5",
-        "@gluestack-ui/core": "^5.0.0-alpha.0",
-        "@gluestack-ui/utils": "^5.0.1-alpha.0",
+        "@gluestack-ui/core": ">=5.0.5-alpha.0 <6.0.0-0",
+        "@gluestack-ui/utils": ">=5.0.5-alpha.0 <6.0.0-0",
         "@gorhom/bottom-sheet": "^5.2.9",
         "@hookform/resolvers": "^5.2.2",
         "@legendapp/motion": "^2.5.3",
