@@ -1,25 +1,27 @@
 name: Build and publish Docker image
 
-# Lives in the tinycld/app repo — the release ANCHOR. A `v*` tag or a published
-# Release on THIS repo triggers a multi-arch build:
+# Lives in the tinycld/app repo — the release ANCHOR. A published Release
+# on THIS repo triggers a multi-arch build:
 #   - app (this repo) is checked out at the triggering tag into ws/app,
-#   - `bootstrap --tooling` GENERATES the workspace root (package.json,
-#     tinycld.packages.ts, vitest.config.ts, tests/, .node-version/.go-version)
-#     into ws/ and clones core + every feature member alongside it. bootstrap
-#     skips re-cloning app because ws/app already exists (the pinned checkout).
-# There is NO workspace meta-repo: bootstrap is the source of root scaffolding.
+#   - the release's manifest.json + package-lock.json assets are downloaded,
+#   - each sibling listed in the manifest is cloned at its pinned SHA,
+#   - bootstrap --tooling writes the workspace-root scaffolding (members
+#     are already present, so it doesn't re-clone them),
+#   - the pinned package-lock.json is dropped into ws/ for npm ci.
+#
+# Trigger is `release: published` only — NOT `push: tags`. The release
+# event fires after release.ts uploads the manifest + lockfile assets;
+# triggering on tag push would race ahead and fail to download the assets
+# before they exist (the release create + asset upload happen client-side
+# after the tag is pushed).
 on:
   release:
     types: [published]
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
-# Cancel any in-flight build for the same ref. The release event for a tag
-# fires alongside the tag-push event, and without this the same image would
-# build twice in parallel, fighting for the same buildx cache and runner
-# pool. We let the release event win (it's the one that moves :latest).
+# Cancel any in-flight build for the same ref so a re-publish or a
+# manual workflow_dispatch supersedes an earlier run rather than
+# fighting it for the buildx cache.
 concurrency:
   group: docker-publish-${{ github.ref }}
   cancel-in-progress: true
