@@ -1,5 +1,5 @@
 // core/lib/editor/editor-mount.tsx
-import { createContext, useContext, type ReactNode } from 'react'
+import { createContext, type ReactNode, useContext } from 'react'
 
 export type EditorRole = 'viewer' | 'commentor' | 'editor'
 
@@ -34,7 +34,13 @@ export interface EditorMount {
 
 const EditorMountContext = createContext<EditorMount | null>(null)
 
-export function EditorMountProvider({ value, children }: { value: EditorMount; children: ReactNode }) {
+export function EditorMountProvider({
+    value,
+    children,
+}: {
+    value: EditorMount
+    children: ReactNode
+}) {
     return <EditorMountContext.Provider value={value}>{children}</EditorMountContext.Provider>
 }
 

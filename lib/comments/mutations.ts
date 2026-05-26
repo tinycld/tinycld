@@ -12,7 +12,10 @@ export interface CommentAuthorIdentity {
 // Resolve the author columns for a new comment row. author is the
 // user_org id; author_name is snapshotted (name → email → 'Anonymous')
 // so a later-removed user still renders a recognizable label.
-export function resolveAuthorFields(id: CommentAuthorIdentity): { author: string; author_name: string } {
+export function resolveAuthorFields(id: CommentAuthorIdentity): {
+    author: string
+    author_name: string
+} {
     return { author: id.userOrgId, author_name: id.displayName || id.email || 'Anonymous' }
 }
 

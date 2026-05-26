@@ -1,5 +1,4 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { ShareSession } from '@tinycld/core/lib/anon-identity'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { pb } from '@tinycld/core/lib/pocketbase'
 

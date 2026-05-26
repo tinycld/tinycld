@@ -1,9 +1,9 @@
 // core/lib/editor/__tests__/editor-mount.test.tsx
 // @vitest-environment happy-dom
 import { render } from '@testing-library/react'
-import { expect, test } from 'vitest'
 import { Text } from 'react-native'
-import { EditorMountProvider, useEditorMount, type EditorMount } from '../editor-mount'
+import { expect, test } from 'vitest'
+import { type EditorMount, EditorMountProvider, useEditorMount } from '../editor-mount'
 
 const sample: EditorMount = {
     itemId: 'it1',
