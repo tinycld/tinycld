@@ -17,6 +17,12 @@
 // dev proxy at the user-facing port handles /api and /_ same-origin. No
 // EXPO_PUBLIC_ENV plumbing or build-time URL injection — everything works
 // off the page's own origin.
+//
+// PB Go sources are watched via the same Watchman daemon Metro uses. On
+// any .go change under core/server/ or <sibling>/server/ we rebuild the
+// PB binary and restart the child. A failed build keeps the running PB
+// alive (so you can fix the typo and save again without a broken state).
+// Disable with --no-pb-watch.
 
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -24,6 +30,8 @@ import * as http from 'node:http'
 import * as https from 'node:https'
 import * as net from 'node:net'
 import * as path from 'node:path'
+// fb-watchman has no published @types package; declare the surface we use.
+import watchman from 'fb-watchman'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const CERT_PATH = path.join(ROOT, 'assets', 'localhost.pem')
@@ -83,6 +91,7 @@ function resolveUseSsl(): boolean {
 // returns 503 for any request targeted at Expo until you start one
 // yourself, so the app keeps working as soon as you do.
 const skipExpo = process.argv.includes('--no-expo')
+const skipPbWatch = process.argv.includes('--no-pb-watch')
 
 const useSsl = resolveUseSsl()
 
@@ -304,6 +313,108 @@ function buildPbSync() {
     })
 }
 
+// Quiet rebuild used by the file watcher — stdio: 'pipe' so we can prefix
+// the lines and resolve(false) on non-zero rather than rejecting. Returns
+// true iff the build succeeded; false leaves the old binary in place.
+function rebuildPb(): Promise<boolean> {
+    const onOut = withPrefix('go', '\x1b[34m') // blue
+    const onErr = withPrefix('go', '\x1b[31m')
+    const child = spawn('go', ['build', '-o', 'app', '.'], {
+        cwd: path.join(ROOT, 'server'),
+        stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    child.stdout?.on('data', onOut)
+    child.stderr?.on('data', onErr)
+    return new Promise(resolve => {
+        child.on('exit', code => resolve(code === 0))
+        child.on('error', err => {
+            onErr(`spawn error: ${err.message}\n`)
+            resolve(false)
+        })
+    })
+}
+
+// Watchman subscription. Watches the workspace root (one up from app/) for
+// any .go change under <pkg>/server/. The .watchmanconfig at the workspace
+// root already excludes node_modules, .git, pb_data, etc., so the subscription
+// only fires on real source edits. Returns a disposer.
+function startPbWatcher(opts: {
+    onChange: (changedFiles: string[]) => void
+    onLog: (msg: string) => void
+}): () => void {
+    const workspaceRoot = path.resolve(ROOT, '..')
+    const client = new watchman.Client()
+    const subName = `tinycld-dev-pb-${process.pid}`
+    let disposed = false
+
+    const dispose = () => {
+        if (disposed) return
+        disposed = true
+        try {
+            client.command(['unsubscribe', workspaceRoot, subName], () => {
+                client.end()
+            })
+        } catch {
+            client.end()
+        }
+    }
+
+    client.capabilityCheck({ optional: [], required: ['relative_root'] }, capErr => {
+        if (disposed) return
+        if (capErr) {
+            opts.onLog(`watchman capability check failed: ${capErr.message}`)
+            client.end()
+            return
+        }
+        client.command(['watch-project', workspaceRoot], (watchErr, watchResp) => {
+            if (disposed) return
+            if (watchErr) {
+                opts.onLog(`watch-project failed: ${watchErr.message}`)
+                client.end()
+                return
+            }
+            const resp = watchResp as { watch: string; relative_path?: string }
+            const sub = {
+                expression: [
+                    'allof',
+                    ['type', 'f'],
+                    ['suffix', 'go'],
+                    // Any package-owned server source: core/server/**.go and
+                    // <sibling>/server/**.go. Exclude app/server/** because
+                    // those .go files (package_extensions.go, go.work) are
+                    // generator output — rebuilding on them would loop.
+                    ['match', '**/server/**', 'wholename'],
+                    ['not', ['match', 'app/server/**', 'wholename']],
+                ],
+                fields: ['name', 'exists'],
+                ...(resp.relative_path ? { relative_root: resp.relative_path } : {}),
+            }
+            client.command(['subscribe', resp.watch, subName, sub], subErr => {
+                if (disposed) return
+                if (subErr) {
+                    opts.onLog(`subscribe failed: ${subErr.message}`)
+                    client.end()
+                }
+            })
+        })
+    })
+
+    client.on('subscription', resp => {
+        if (resp.subscription !== subName) return
+        // is_fresh_instance is the initial snapshot — not a real change.
+        if (resp.is_fresh_instance) return
+        const files = (resp.files ?? []).map(f => f.name)
+        if (files.length === 0) return
+        opts.onChange(files)
+    })
+
+    client.on('error', err => {
+        opts.onLog(`watchman error: ${err.message}`)
+    })
+
+    return dispose
+}
+
 function spawnPbBinary(pbPort: number, publicUrl: string, dataDir: string | null): ChildProcess {
     const onPbOut = withPrefix('pb', '\x1b[36m') // cyan
     const onPbErr = withPrefix('pb', '\x1b[31m') // red
@@ -335,15 +446,18 @@ function spawnPbBinary(pbPort: number, publicUrl: string, dataDir: string | null
 function spawnExpo(expoPort: number, onReady: () => void): ChildProcess {
     const onOut = withPrefix('expo', '\x1b[35m') // magenta
     const onErr = withPrefix('expo', '\x1b[31m')
-    // CI=1 forces Expo's non-interactive log stream (no curses-style TUI)
-    // so its bundle/error messages land on stdout. Without it, Expo CLI
-    // detects the non-TTY child stdio and falls back to a quiet mode that
-    // suppresses everything except its initial banner — even errors stay
-    // hidden, which makes debugging native bundler crashes impossible.
+    // Stdio is piped so we can prefix Expo's output with [expo]. That
+    // already makes Expo treat the run as non-interactive (isTTY=false),
+    // which turns off the TUI and gives us plain log lines on stdout.
+    //
+    // Do NOT set CI=1 here. @expo/cli's instantiateMetro.js gates Metro's
+    // file watcher on `env.CI` — CI=true makes Metro log
+    // "Metro is running in CI mode, reloads are disabled" and skips
+    // watching entirely, which breaks HMR.
     const child = spawn('npx', ['expo', 'start', '--clear', '--port', String(expoPort)], {
         cwd: ROOT,
         stdio: ['inherit', 'pipe', 'pipe'],
-        env: { ...process.env, CI: '1' },
+        env: { ...process.env },
     })
     // Expo prints "Logs for your project will appear …" once the dev server
     // is fully up. We use that as the signal to print the banner so it lands
@@ -553,7 +667,13 @@ async function main() {
 
     const publicUrl = `${useSsl ? 'https' : 'http'}://localhost:${block.proxy}`
     const pbDataDir = resolvePbDataDir()
-    const pb = spawnPbBinary(block.pb, publicUrl, pbDataDir)
+
+    // The PB child is swapped out on rebuild; hold a mutable ref so the
+    // watcher + shutdown handler always target the current process.
+    const pbRef: { current: ChildProcess; restarting: boolean } = {
+        current: spawnPbBinary(block.pb, publicUrl, pbDataDir),
+        restarting: false,
+    }
     // With --no-expo we never spawn the Expo child; the user runs it in
     // a separate terminal so they get its TTY-bound logs + shortcuts.
     // The proxy still routes non-PB paths to block.expo, so once their
@@ -596,12 +716,14 @@ async function main() {
     }
 
     let shuttingDown = false
+    let disposeWatcher: (() => void) | null = null
     const shutdown = (signal: NodeJS.Signals) => {
         if (shuttingDown) return
         shuttingDown = true
         process.stdout.write(`\nshutting down (${signal})\n`)
+        disposeWatcher?.()
         server.close()
-        pb.kill('SIGTERM')
+        pbRef.current.kill('SIGTERM')
         expo?.kill('SIGTERM')
         // give children a moment, then exit
         ;(
@@ -616,15 +738,95 @@ async function main() {
 
     // If either child dies on its own, tear down the others. With
     // --no-expo we don't own the Expo process, so its lifetime is the
-    // user's concern — we only watch pb here.
-    pb.on('exit', code => {
-        process.stdout.write(`pb exited (${code}); shutting down\n`)
-        shutdown('SIGTERM')
-    })
+    // user's concern — we only watch pb here. Planned restarts (triggered
+    // by the watcher) flip pbRef.restarting so this handler ignores them.
+    const attachPbExitHandler = (child: ChildProcess) => {
+        child.on('exit', code => {
+            if (pbRef.restarting && child === pbRef.current) return
+            process.stdout.write(`pb exited (${code}); shutting down\n`)
+            shutdown('SIGTERM')
+        })
+    }
+    attachPbExitHandler(pbRef.current)
     expo?.on('exit', code => {
+        if (shuttingDown) return
         process.stdout.write(`expo exited (${code}); shutting down\n`)
         shutdown('SIGTERM')
     })
+
+    if (!skipPbWatch) {
+        const watcherLog = withPrefix('pb-watch', '\x1b[34m')
+        let pending: NodeJS.Timeout | null = null
+        let inFlight = false
+        let queued = false
+
+        const doRestart = async () => {
+            if (inFlight) {
+                queued = true
+                return
+            }
+            inFlight = true
+            try {
+                watcherLog('rebuilding…\n')
+                const t0 = Date.now()
+                const ok = await rebuildPb()
+                const dt = Date.now() - t0
+                if (!ok) {
+                    watcherLog(
+                        `build failed after ${dt}ms — keeping running pb (fix and save again)\n`
+                    )
+                    return
+                }
+                watcherLog(`rebuilt in ${dt}ms, restarting pb\n`)
+                pbRef.restarting = true
+                pbRef.current.kill('SIGTERM')
+                // Wait for the port to actually free up before respawning;
+                // otherwise the new PB races the old one and EADDRINUSE.
+                if (!(await waitForPortFree(block.pb, 5_000))) {
+                    watcherLog(`pb did not release :${block.pb}, sending SIGKILL\n`)
+                    pbRef.current.kill('SIGKILL')
+                    if (!(await waitForPortFree(block.pb, 2_000))) {
+                        watcherLog(`pb still holding :${block.pb}; giving up this restart\n`)
+                        pbRef.restarting = false
+                        return
+                    }
+                }
+                pbRef.current = spawnPbBinary(block.pb, publicUrl, pbDataDir)
+                attachPbExitHandler(pbRef.current)
+                pbRef.restarting = false
+                try {
+                    await waitForUpstream(block.pb, 'pb', 30_000)
+                    watcherLog('pb back up\n')
+                } catch (err) {
+                    watcherLog(
+                        `pb failed to accept connections: ${err instanceof Error ? err.message : String(err)}\n`
+                    )
+                }
+            } finally {
+                inFlight = false
+                if (queued) {
+                    queued = false
+                    void doRestart()
+                }
+            }
+        }
+
+        disposeWatcher = startPbWatcher({
+            onChange: files => {
+                // Debounce: bursty saves (formatter, git checkout) collapse
+                // to one rebuild. 300ms is short enough to feel instant.
+                watcherLog(
+                    `changed: ${files.slice(0, 3).join(', ')}${files.length > 3 ? ` (+${files.length - 3} more)` : ''}\n`
+                )
+                if (pending) clearTimeout(pending)
+                pending = setTimeout(() => {
+                    pending = null
+                    void doRestart()
+                }, 300)
+            },
+            onLog: msg => watcherLog(`${msg}\n`),
+        })
+    }
 }
 
 void main().catch(err => {
