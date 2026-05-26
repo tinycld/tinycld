@@ -91,9 +91,15 @@ jobs:
       # Dockerfile's `npm ci` requires one. Generate it here against the
       # just-cloned sibling HEADs without installing node_modules (the
       # Dockerfile re-runs the real install inside the image).
+      #
+      # --ignore-scripts is required: the workspace root's postinstall
+      # invokes `tsx scripts/generate.ts`, but with --package-lock-only
+      # there's no node_modules/.bin/tsx to call. The Dockerfile's
+      # `npm ci` (without --ignore-scripts) fires postinstall properly
+      # once node_modules is real.
       - name: Generate package-lock.json
         working-directory: ws
-        run: npm install --package-lock-only
+        run: npm install --package-lock-only --ignore-scripts
 
       - name: Build and push by digest
         id: build
