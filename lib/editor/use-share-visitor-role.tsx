@@ -96,6 +96,7 @@ export function useShareLinkVisitorRole(token: string): ShareVisitorRoleResult {
                 shareRole = row.role
                 break
             default:
+                // biome-ignore lint/suspicious/noConsole: intentional anomaly log — surfaces upstream data-integrity bug, no logger module in core.
                 console.warn(
                     `useShareLinkVisitorRole: unexpected drive_shares.role=${JSON.stringify(row.role)} on a guest user_org (item ${session?.itemId}); coercing to 'commentor'`
                 )
