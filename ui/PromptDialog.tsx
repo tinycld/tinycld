@@ -1,8 +1,8 @@
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
-import { useEffect, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { useEffect, useRef, useState } from 'react'
+import { Pressable, Text, type TextInput, View } from 'react-native'
 
 export type PromptDialogProps = {
     isOpen: boolean
@@ -34,10 +34,21 @@ export function PromptDialog({
     isSubmitting = false,
 }: PromptDialogProps) {
     const [value, setValue] = useState(defaultValue)
+    const inputRef = useRef<TextInput>(null)
 
     useEffect(() => {
         if (isOpen) setValue(defaultValue)
     }, [isOpen, defaultValue])
+
+    // GlueStack's overlay installs its own focus trap after mount and the
+    // ModalContent enters with a ZoomIn animation, so the input's `autoFocus`
+    // prop alone gets clobbered. Imperatively focus on the next frame, once
+    // the trap has settled and the content has painted.
+    useEffect(() => {
+        if (!isOpen) return
+        const raf = requestAnimationFrame(() => inputRef.current?.focus())
+        return () => cancelAnimationFrame(raf)
+    }, [isOpen])
 
     if (!isOpen) return null
 
@@ -62,6 +73,7 @@ export function PromptDialog({
                     style={{ paddingVertical: 10 }}
                 >
                     <PlainInput
+                        ref={inputRef}
                         value={value}
                         onChangeText={setValue}
                         placeholder={placeholder}
