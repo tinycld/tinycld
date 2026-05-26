@@ -113,7 +113,7 @@ Remove one by deleting its sibling clone (or its workspace-list entry) and re-ru
 cd ~/code/tinycld && npm install   # at the workspace root (postinstall runs the generator)
 cd app
 npm run checks                     # biome + tsc
-npm run test:unit                  # vitest (this member)
+npm run test                       # vitest (this member)
 npm run test:e2e                   # playwright (this member)
 cd server && go build -o tinycld . && ./tinycld --help
 ```
