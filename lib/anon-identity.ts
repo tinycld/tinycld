@@ -27,6 +27,7 @@ export interface ShareSession {
     name: string
     mimeType: string
     orgName: string
+    orgSlug: string
 }
 
 interface SessionResponse {
@@ -38,6 +39,7 @@ interface SessionResponse {
     name: string
     mime_type: string
     org_name: string
+    org_slug: string
 }
 
 // mintShareSession calls the public session endpoint, sending the cached
@@ -67,6 +69,7 @@ async function mintShareSession(token: string): Promise<ShareSession> {
         name: data.name,
         mimeType: data.mime_type,
         orgName: data.org_name,
+        orgSlug: data.org_slug,
     }
 }
 
