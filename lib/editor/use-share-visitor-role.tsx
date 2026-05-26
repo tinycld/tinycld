@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import type { DriveShares, UserOrg } from '@tinycld/core/types/pbSchema'
-import { useShareSession } from '../anon-identity'
+import { type ShareSession, useShareSession } from '../anon-identity'
 
 // Visitor-role classification used by both the share route (to decide
 // whether to redirect a signed-in user to the workspace) and the share-
@@ -82,11 +82,30 @@ export function useShareLinkVisitorRole(token: string): ShareVisitorRoleResult {
     const row = lookupQuery.data
     const userOrg = row?.expand?.user_org
     if (row && userOrg?.role === 'guest') {
+        // Guest provisioning (drive endpoints_share_otp.go) only ever writes
+        // drive_shares.role = 'commentor' or 'editor'. An 'owner' (or any other
+        // unexpected role) on a guest's drive_shares row indicates a
+        // data-integrity violation upstream; downgrade to commentor (the
+        // least-privilege share role) and log so the anomaly surfaces rather
+        // than being silently coerced into editor capabilities.
+        let shareRole: ShareSession['role']
+        switch (row.role) {
+            case 'editor':
+            case 'commentor':
+            case 'viewer':
+                shareRole = row.role
+                break
+            default:
+                console.warn(
+                    `useShareLinkVisitorRole: unexpected drive_shares.role=${JSON.stringify(row.role)} on a guest user_org (item ${session?.itemId}); coercing to 'commentor'`
+                )
+                shareRole = 'commentor'
+        }
         return {
             role: 'guest',
             isLoading: false,
             userOrgId: userOrg.id,
-            shareRole: row.role === 'owner' ? 'editor' : row.role,
+            shareRole,
         }
     }
     if (row) {
