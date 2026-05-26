@@ -42,26 +42,6 @@ export interface PreviewRegistryEntry {
 }
 
 /**
- * Thin per-mime config a package registers so core can render that
- * document type's server-emitted HTML on the anonymous public share
- * page. Core owns the fetch + iframe; the package supplies only its CSS
- * surface and an empty-state predicate. Deliberately carries no
- * component, so calc/text never enter drive's frontend import graph.
- */
-export interface PublicPreviewConfig {
-    /** CSS surface for the rendered fragment (same as the authed preview). */
-    css: string
-    /**
-     * Returns true when the fragment has no real content (server emits an
-     * empty wrapper for missing/empty files). Lets core show a friendly
-     * "empty" state instead of a blank iframe.
-     */
-    isEmpty: (html: string) => boolean
-    /** Anchor kind comments use for this document type on the preview. */
-    anchorKind: 'calc_cell' | 'text_range'
-}
-
-/**
  * A package-registered full editor mounted from a prebuilt EditorMount.
  * Used by the anonymous share route to render the real calc/text editor
  * (read-only for anon viewers) without importing calc/text directly.
