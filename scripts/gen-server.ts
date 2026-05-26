@@ -62,14 +62,9 @@ export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
 // go.work and is unaffected. It's gitignored in each member repo so it never
 // ships into the assembled workspace.
 export function buildMemberGoWork(coreRelPath: string): string {
-    return [
-        'go 1.25.0',
-        '',
-        'use .',
-        '',
-        `replace tinycld.org/core => ${coreRelPath}`,
-        '',
-    ].join('\n')
+    return ['go 1.25.0', '', 'use .', '', `replace tinycld.org/core => ${coreRelPath}`, ''].join(
+        '\n'
+    )
 }
 
 interface BundledPkgInput {
