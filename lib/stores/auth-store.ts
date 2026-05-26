@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { captureException } from '@tinycld/core/lib/errors'
 import {
+    PB_SERVER_ADDR,
     authStoreReady,
     fetchAndSeedUserOrg,
     getUserFromAuthStore,
@@ -49,6 +50,16 @@ async function clearPrimaryOrgStorage(): Promise<void> {
     }
 }
 
+type RequestOtpResult = {
+    otpId: string | null
+    error: string | null
+}
+
+type VerifyOtpResult = {
+    user: AuthenticatedUser | null
+    error: string | null
+}
+
 interface AuthStoreState {
     user: AuthenticatedUser | null
     hasHydrated: boolean
@@ -57,6 +68,13 @@ interface AuthStoreState {
     login: (identifier: string, password: string) => Promise<LoginResult>
     logout: () => void
     refreshUser: () => Promise<void>
+    requestShareOtp: (token: string, email: string) => Promise<RequestOtpResult>
+    verifyShareOtp: (
+        token: string,
+        email: string,
+        code: string,
+        otpId: string
+    ) => Promise<VerifyOtpResult>
 }
 
 export const useAuthStore = create<AuthStoreState>()((set, get) => ({
@@ -164,5 +182,99 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
             return
         }
         set({ user: currentUser })
+    },
+
+    requestShareOtp: async (token, email) => {
+        try {
+            const res = await fetch(
+                `${PB_SERVER_ADDR}/api/drive/share-link/${token}/otp-request`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email }),
+                }
+            )
+            if (res.ok) {
+                const data = (await res.json()) as { ok: true; otp_id: string }
+                return { otpId: data.otp_id, error: null }
+            }
+            let errorMsg: string
+            try {
+                const body = (await res.json()) as { error?: string }
+                errorMsg = body.error ?? res.statusText
+            } catch {
+                errorMsg = res.statusText
+            }
+            return { otpId: null, error: errorMsg }
+        } catch {
+            return { otpId: null, error: 'network error' }
+        }
+    },
+
+    verifyShareOtp: async (token, email, code, otpId) => {
+        try {
+            const res = await fetch(
+                `${PB_SERVER_ADDR}/api/drive/share-link/${token}/otp-verify`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, code, otp_id: otpId }),
+                }
+            )
+            if (!res.ok) {
+                let errorMsg: string
+                try {
+                    const body = (await res.json()) as { error?: string }
+                    errorMsg = body.error ?? res.statusText
+                } catch {
+                    errorMsg = res.statusText
+                }
+                return { user: null, error: errorMsg }
+            }
+
+            const data = (await res.json()) as { token: string; record: Users }
+            // Save into pb.authStore WITHOUT clearing first — clearing would log out
+            // an already-signed-in member who happens to be opening a share link.
+            pb.authStore.save(data.token, data.record as never)
+
+            // Expand user_org_via_user.org to get the primary org slug for the guest.
+            const expanded = await pb.collection('users').getOne<
+                Users & {
+                    expand?: {
+                        user_org_via_user?: UserOrgExpanded[]
+                    }
+                }
+            >(data.record.id, { expand: 'user_org_via_user.org' })
+
+            const userOrgs = expanded.expand?.user_org_via_user ?? []
+            const firstUserOrgWithSlug = userOrgs.find(uo => uo.expand?.org?.slug)
+
+            if (!firstUserOrgWithSlug?.expand?.org) {
+                return { user: null, error: 'No organization associated with this account' }
+            }
+
+            const primaryOrgSlug = firstUserOrgWithSlug.expand.org.slug
+
+            const authenticatedUser: AuthenticatedUser = {
+                id: data.record.id,
+                name: data.record.name,
+                email: data.record.email,
+                primaryOrgSlug,
+                isDemo: false,
+                isBetaTester: false,
+            }
+
+            const { expand: _, ...userOrgRecord } = firstUserOrgWithSlug
+            await seedUserOrg(data.record, firstUserOrgWithSlug.expand.org, userOrgRecord)
+
+            await savePrimaryOrgToStorage(primaryOrgSlug)
+            set({ user: authenticatedUser })
+            await preloadStores()
+
+            return { user: authenticatedUser, error: null }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to verify code'
+            return { user: null, error: message }
+        }
     },
 }))
