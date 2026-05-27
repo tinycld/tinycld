@@ -2,6 +2,7 @@ import { DragHandle } from '@tinycld/core/components/DragHandle'
 import { AboutSection } from '@tinycld/core/components/settings/AboutSection'
 import { DeleteAccountSection } from '@tinycld/core/components/settings/DeleteAccountSection'
 import { DisconnectServerSection } from '@tinycld/core/components/settings/DisconnectServerSection'
+import { LeaveOrgSection } from '@tinycld/core/components/settings/leave-org/LeaveOrgSection'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { COLOR_THEMES, type ColorThemeSlug } from '@tinycld/core/lib/color-themes'
@@ -70,6 +71,7 @@ export default function PersonalSettings() {
                     <NavigationSection />
                     <DisconnectServerSection />
                     <AboutSection />
+                    <LeaveOrgSection />
                     <DeleteAccountSection />
                 </View>
             </ScrollView>
