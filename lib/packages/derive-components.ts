@@ -9,7 +9,9 @@ interface ProviderProps {
     children: ReactNode
 }
 type SidebarComp = ComponentType<SidebarProps> | LazyExoticComponent<ComponentType<SidebarProps>>
-type ProviderComp = ComponentType<ProviderProps>
+type ProviderComp =
+    | ComponentType<ProviderProps>
+    | LazyExoticComponent<ComponentType<ProviderProps>>
 
 type ComponentEntryLike = {
     manifest: { slug: string }
