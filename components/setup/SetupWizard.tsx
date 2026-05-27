@@ -164,6 +164,7 @@ export function SetupWizard({ token }: SetupWizardProps) {
                 <Pressable
                     onPress={onSubmit}
                     disabled={isSubmitting}
+                    accessibilityRole="button"
                     className={`px-4 py-3 rounded-lg items-center bg-primary ${isSubmitting ? 'opacity-60' : 'opacity-100'}`}
                 >
                     <Text className="font-semibold text-primary-foreground">

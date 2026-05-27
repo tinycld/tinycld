@@ -117,6 +117,8 @@ function TabButton({
     return (
         <Pressable
             onPress={onPress}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isActive }}
             className="pb-2"
             style={{
                 borderBottomWidth: 2,
@@ -209,6 +211,7 @@ function OrganizationsTab({ isVisible, pb }: { isVisible: boolean; pb: PocketBas
                 </Text>
                 <Pressable
                     onPress={() => setShowCreateForm(v => !v)}
+                    accessibilityRole="button"
                     className="px-3 py-2 rounded-lg self-start bg-primary"
                 >
                     <Text
@@ -776,6 +779,7 @@ function CreateOrgSection({
                 <Pressable
                     onPress={onSubmit}
                     disabled={isCreating}
+                    accessibilityRole="button"
                     className={`px-3 py-2 rounded-lg self-start bg-primary ${isCreating ? 'opacity-60' : 'opacity-100'}`}
                 >
                     <Text

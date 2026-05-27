@@ -71,6 +71,7 @@ export function SuperuserLoginForm({ login, error, isLoading }: SuperuserLoginFo
             <Pressable
                 onPress={onSubmit}
                 disabled={isLoading}
+                accessibilityRole="button"
                 className={`px-4 py-3 rounded-lg items-center bg-primary ${isLoading ? 'opacity-60' : 'opacity-100'}`}
             >
                 <Text className="font-semibold text-primary-foreground">
