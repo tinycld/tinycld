@@ -56,11 +56,21 @@ test.describe('first-run install', () => {
 
         await expect(page.getByText('Welcome to TinyCld')).toBeVisible()
 
+        // The wizard form has five required fields. Application Name and
+        // App URL were added after this spec was first written; without
+        // them the submit handler short-circuits on validation and the
+        // 'Create Account & Continue' click resolves into nothing.
+        await page
+            .getByRole('textbox', { name: 'Application Name', exact: true })
+            .fill('Smoke TinyCld')
         await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
         await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
         await page
             .getByRole('textbox', { name: 'Confirm Password', exact: true })
             .fill(SUPERUSER_PASSWORD)
+        await page
+            .getByRole('textbox', { name: 'App URL', exact: true })
+            .fill('http://localhost:7090')
 
         await page.getByRole('button', { name: 'Create Account & Continue' }).click()
 
