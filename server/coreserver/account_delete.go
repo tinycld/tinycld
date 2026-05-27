@@ -9,14 +9,22 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/userorg"
 )
 
+// accountDeleteRequest is the per-call payload. plans is keyed by user_org
+// record ID and lets the client send one Plan per org the user is in. A
+// missing entry defaults to {mode: "reassign"} with no successor, which
+// triggers the server's auto-pick (oldest owner). Sole-member orgs ignore
+// the plan and force ModeDeleteOrg server-side.
 type accountDeleteRequest struct {
-	Email string `json:"email"`
+	Email string                  `json:"email"`
+	Plans map[string]userorg.Plan `json:"plans"`
 }
 
-const deletedEmailDomain = "@deleted.tinycld.org"
-
+// RegisterAccountDelete wires POST /api/account/delete onto the app. This
+// endpoint is the multi-org orchestrator on top of userorg.LeaveOrg —
+// account-level delete is just "leave every org I'm in, then anonymize."
 func RegisterAccountDelete(app *pocketbase.PocketBase) {
 	registerAccountDeleteCore(app)
 }
@@ -47,79 +55,52 @@ func handleAccountDelete(app core.App, re *core.RequestEvent) error {
 		return re.BadRequestError("email confirmation does not match", nil)
 	}
 
-	if err := app.RunInTransaction(func(txApp core.App) error {
-		// 1. Remove this user's user_org rows so they disappear from org member
-		//    lists and access-rules that key on user_org no longer match.
-		memberships, err := txApp.FindRecordsByFilter(
-			"user_org",
-			"user = {:uid}",
-			"-created",
-			0, 0,
-			map[string]any{"uid": authRecord.Id},
-		)
-		if err != nil {
-			return fmt.Errorf("load user_org rows: %w", err)
-		}
-		for _, m := range memberships {
-			if err := txApp.Delete(m); err != nil {
-				return fmt.Errorf("delete user_org %s: %w", m.Id, err)
-			}
-		}
+	memberships, err := app.FindRecordsByFilter(
+		"user_org",
+		"user = {:uid}",
+		"-created",
+		0, 0,
+		map[string]any{"uid": authRecord.Id},
+	)
+	if err != nil {
+		return re.InternalServerError("load memberships", err)
+	}
 
-		// 2. Remove this user from every orgs.users multi-relation (if that
-		//    field exists — it is an optional relation added by the schema).
-		orgsCollection, collErr := txApp.FindCollectionByNameOrId("orgs")
-		if collErr == nil && orgsCollection.Fields.GetByName("users") != nil {
-			ownedOrgs, err := txApp.FindRecordsByFilter(
-				"orgs",
-				"users ~ {:uid}",
-				"-created",
-				0, 0,
-				map[string]any{"uid": authRecord.Id},
+	// Per-org loop. Each LeaveOrg is its own transaction — a failure on
+	// org 3 of 5 leaves the first two completed and the user un-anonymized,
+	// so retrying the call picks up where it left off.
+	for _, m := range memberships {
+		plan, ok := req.Plans[m.Id]
+		if !ok {
+			// No plan supplied: default to reassign with auto-picked
+			// successor. Sole-member orgs are force-overridden by the
+			// server to ModeDeleteOrg.
+			plan = userorg.Plan{Mode: userorg.ModeReassign}
+		}
+		if _, err := userorg.LeaveOrgAs(app, m.Id, plan, true, authRecord.Id); err != nil {
+			return re.InternalServerError(
+				fmt.Sprintf("leave org %s failed", m.GetString("org")), err,
 			)
-			if err != nil {
-				return fmt.Errorf("load owning orgs: %w", err)
-			}
-			for _, org := range ownedOrgs {
-				users := org.GetStringSlice("users")
-				kept := make([]string, 0, len(users))
-				for _, u := range users {
-					if u != authRecord.Id {
-						kept = append(kept, u)
-					}
-				}
-				org.Set("users", kept)
-				if err := txApp.Save(org); err != nil {
-					return fmt.Errorf("update org %s users: %w", org.Id, err)
-				}
-			}
 		}
+	}
 
-		// 3. Overwrite PII on the user record and invalidate the session.
-		sentinelEmail := fmt.Sprintf("deleted-%s%s", authRecord.Id, deletedEmailDomain)
-		randomPwd, err := randomHex(32)
-		if err != nil {
-			return fmt.Errorf("generate random password: %w", err)
+	// Anonymization happens inside the final LeaveOrg call (the one that
+	// removed the user's last user_org). If the user had zero orgs to start
+	// with, the loop above ran zero times and we still need to anonymize.
+	if len(memberships) == 0 {
+		if err := userorg.AnonymizeUser(app, authRecord.Id); err != nil {
+			return re.InternalServerError("anonymize", err)
 		}
-
-		authRecord.SetEmail(sentinelEmail)
-		authRecord.Set("name", "Deleted user")
-		authRecord.Set("avatar", "")
-		authRecord.SetVerified(false)
-		authRecord.SetPassword(randomPwd)
-		authRecord.RefreshTokenKey()
-
-		if err := txApp.Save(authRecord); err != nil {
-			return fmt.Errorf("save anonymized user: %w", err)
-		}
-		return nil
-	}); err != nil {
-		return re.InternalServerError("account delete failed", err)
 	}
 
 	return re.NoContent(204)
 }
 
+// randomHex returns N random bytes encoded as hex. Lives here as the
+// coreserver-package-local helper; demo_start.go is the actual caller. The
+// userorg package has its own copy for the anonymize-user path. Both are
+// trivial enough that a shared util would be more friction than the
+// duplication is worth — if a third package needs it, lift to tools/.
 func randomHex(nBytes int) (string, error) {
 	buf := make([]byte, nBytes)
 	if _, err := rand.Read(buf); err != nil {
