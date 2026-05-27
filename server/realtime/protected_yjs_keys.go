@@ -7,6 +7,7 @@ package realtime
 //
 // Adding a new protected key requires a coordinated change across:
 //   - this list
+//   - the TypeScript mirror in text's suggestion-types.ts
 //   - the text package's editor schema (must not include these keys
 //     in any user-driven transaction)
 //   - the docx translator's custom XML mapping

@@ -10,10 +10,16 @@ func TestProtectedYjsRootKeys(t *testing.T) {
 		"clientFirstSeen": true,
 		"editEvents":      true,
 	}
-	if len(ProtectedYjsRootKeys) != len(expected) {
-		t.Fatalf("expected %d protected keys, got %d", len(expected), len(ProtectedYjsRootKeys))
-	}
+	seen := map[string]int{}
 	for _, k := range ProtectedYjsRootKeys {
+		seen[k]++
+	}
+	for k := range expected {
+		if seen[k] != 1 {
+			t.Errorf("key %q appeared %d times, want exactly 1", k, seen[k])
+		}
+	}
+	for k := range seen {
 		if !expected[k] {
 			t.Errorf("unexpected protected key %q", k)
 		}
