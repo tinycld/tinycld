@@ -1,10 +1,5 @@
 import { packageProviders } from '@tinycld/core/lib/packages/derive-components'
-import {
-    type ComponentType,
-    type LazyExoticComponent,
-    type ReactNode,
-    Suspense,
-} from 'react'
+import { type ComponentType, type LazyExoticComponent, type ReactNode, Suspense } from 'react'
 
 type ProviderComp =
     | ComponentType<{ children: ReactNode }>
