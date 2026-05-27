@@ -104,6 +104,21 @@ type RoomKindOptions struct {
 	// state through OnDocUpdate's roomID-only signature.
 	OnDocUpdateSeq func(roomID string, seq int64)
 
+	// UpdateContentValidator, if non-nil, is invoked synchronously with
+	// the raw bytes of each inbound MsgDocUpdate after WritePredicate
+	// allows the frame but before the broker journals or applies it.
+	// Returning a non-nil error drops the frame: it is not journaled,
+	// not applied to the server-side mirror, and not fanned out. The
+	// sender's local Y.Doc retains the rejected edit, so a subsequent
+	// update from the same client will re-propagate the underlying
+	// changes (modulo whatever the validator was rejecting).
+	//
+	// Use this to enforce *content-level* invariants the broker itself
+	// cannot know about — e.g. "clients may not write to the doc's
+	// server-stamped authorship maps". Cheap content-only checks; not
+	// for anything that touches the journal or filesystem.
+	UpdateContentValidator func(roomID string, update []byte) error
+
 	// OnEmpty, if non-nil, is invoked synchronously when the last
 	// client of a room disconnects, before the room's DocHandle is
 	// closed. A consumer that needs to flush state to durable

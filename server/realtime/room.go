@@ -182,6 +182,21 @@ func (r *Room) route(from *Client, frame []byte) {
 			)
 			return
 		}
+		// Content-level reject: the kind's validator inspects the
+		// update bytes and may refuse based on what's being modified
+		// (vs. WritePredicate, which only sees the connection). Runs
+		// before journal append so a rejected frame leaves no durable
+		// trace; the sender's local Y.Doc retains the edit and a
+		// subsequent update will re-propagate.
+		if r.opts.UpdateContentValidator != nil {
+			if err := r.opts.UpdateContentValidator(r.key.id, payload); err != nil {
+				slog.Debug(
+					"realtime: update rejected by content validator",
+					"kind", r.key.kind, "roomID", r.key.id, "err", err,
+				)
+				return
+			}
+		}
 		// appendedSeq holds the seq that was minted and durably
 		// appended for THIS frame, captured at append-time. It stays
 		// 0 when no append occurred (Journal nil, serverDoc nil, or
