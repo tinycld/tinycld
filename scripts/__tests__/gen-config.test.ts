@@ -67,7 +67,11 @@ describe('buildConfigSource', () => {
         expect(src).toContain('as googleTakeoutImportRegister')
     })
 
-    it('emits provider import + entry for hasProvider packages', () => {
+    it('emits a lazy provider entry for hasProvider packages', () => {
+        // Providers are emitted lazily (matching sidebar/settings) so the
+        // generated config doesn't pull every package's provider module —
+        // and its transitive screen tree — into pocketbase.ts's eager import
+        // graph, which used to form a require cycle.
         const withProvider: ConfigPkg = {
             packageName: '@tinycld/drive',
             slug: 'drive',
@@ -80,8 +84,9 @@ describe('buildConfigSource', () => {
             manifest: { name: 'Drive', slug: 'drive', version: '0.1.0', description: 'd' },
         }
         const src = buildConfigSource([withProvider])
-        expect(src).toContain("import driveProvider from '@tinycld/drive/provider'")
-        expect(src).toContain('provider: driveProvider,')
+        expect(src).toContain("import { lazy } from 'react'")
+        expect(src).not.toContain("from '@tinycld/drive/provider'")
+        expect(src).toContain("provider: lazy(() => import('@tinycld/drive/provider')),")
     })
 
     it('joins multiple package schemas into the MergedPackageSchema intersection', () => {
