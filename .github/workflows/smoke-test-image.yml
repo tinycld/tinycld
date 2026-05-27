@@ -146,16 +146,28 @@ jobs:
         # for the playwright lookup; it has surprised us before.
         run: ./node_modules/.bin/playwright install --with-deps chromium
 
+      # Diagnostic: confirm playwright can load the config + discover the
+      # spec at all. Test execution can hang on a browser context; --list
+      # only loads the config and enumerates specs, so a hang here vs a
+      # hang in the next step tells us which side is broken.
+      - name: List discovered specs (diagnostic)
+        working-directory: ${{ steps.pw.outputs.root }}
+        timeout-minutes: 1
+        run: ./node_modules/.bin/playwright test --config ${{ github.workspace }}/tests/install/playwright.config.ts --list
+
       - name: Run install smoke spec
         working-directory: ${{ steps.pw.outputs.root }}
+        timeout-minutes: 5
         env:
           PW_BASE_URL: http://localhost:7090
           PW_SETUP_TOKEN: ${{ steps.token.outputs.token }}
           CI: 'true'
-          # Surface activity if anything hangs — list reporter alone went
-          # 51 minutes silent on a wedged worker last run.
-          DEBUG: pw:api,pw:browser*
-        run: ./node_modules/.bin/playwright test --config ${{ github.workspace }}/tests/install/playwright.config.ts --reporter=list
+          # Surface activity if anything hangs.
+          DEBUG: 'pw:api,pw:browser*,pw:protocol'
+          # Force unbuffered stdio so DEBUG output reaches the runner log
+          # in real time instead of pooling for a flush that never comes.
+          FORCE_COLOR: '0'
+        run: ./node_modules/.bin/playwright test --config ${{ github.workspace }}/tests/install/playwright.config.ts --reporter=line 2>&1
 
       - name: Capture container logs on failure
         if: failure()
