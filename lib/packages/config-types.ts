@@ -54,7 +54,10 @@ export interface PackageEntry<S extends SchemaDeclaration, R> {
         | ComponentType<PackageSidebarProps>
         | LazyExoticComponent<ComponentType<PackageSidebarProps>>
         | null
-    provider?: ComponentType<PackageProviderProps> | null
+    provider?:
+        | ComponentType<PackageProviderProps>
+        | LazyExoticComponent<ComponentType<PackageProviderProps>>
+        | null
     settings?: PackageSettingsPanel[]
     seed?: (pb: PocketBase, ctx: SeedContext) => Promise<void>
 }

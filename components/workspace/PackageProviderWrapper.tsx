@@ -1,13 +1,23 @@
 import { packageProviders } from '@tinycld/core/lib/packages/derive-components'
-import type { ComponentType, ReactNode } from 'react'
+import {
+    type ComponentType,
+    type LazyExoticComponent,
+    type ReactNode,
+    Suspense,
+} from 'react'
 
-const stableProviderChain: ComponentType<{ children: ReactNode }>[] = Object.values(
-    packageProviders
-).filter((p): p is ComponentType<{ children: ReactNode }> => p != null)
+type ProviderComp =
+    | ComponentType<{ children: ReactNode }>
+    | LazyExoticComponent<ComponentType<{ children: ReactNode }>>
+
+const stableProviderChain: ProviderComp[] = Object.values(packageProviders).filter(
+    (p): p is ProviderComp => p != null
+)
 
 export function PackageProviderWrapper({ children }: { children: ReactNode }) {
-    return stableProviderChain.reduceRight<ReactNode>(
-        (acc, Provider) => <Provider key={Provider.displayName || Provider.name}>{acc}</Provider>,
+    const chain = stableProviderChain.reduceRight<ReactNode>(
+        (acc, Provider, i) => <Provider key={i}>{acc}</Provider>,
         children
     )
+    return <Suspense fallback={null}>{chain}</Suspense>
 }
