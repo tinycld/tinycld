@@ -123,7 +123,14 @@ jobs:
         with:
           node-version-file: .node-version
 
-      - name: Install Playwright (standalone)
+      # Build a self-contained Playwright sandbox in a temp dir:
+      #   - @playwright/test installed locally (matching app's pinned version)
+      #   - the spec + config copied in (NOT referenced by absolute path back
+      #     into the repo checkout — that would let Playwright's TS loader
+      #     walk up to app/tsconfig.json, which `extends 'expo/tsconfig.base'`
+      #     and hangs when @expo isn't installed in the sandbox)
+      #   - a minimal tsconfig.json so the loader stops walking immediately.
+      - name: Build standalone Playwright sandbox
         id: pw
         run: |
           set -eu
@@ -132,28 +139,29 @@ jobs:
           PW_ROOT=$(mktemp -d)
           cd "${PW_ROOT}"
           npm init -y >/dev/null
-          # Record the install in package.json (drop --no-save) and produce
-          # a local lockfile (drop --no-package-lock) so the resolution is
-          # explicit. Then check the binary actually landed before we move
-          # on — a silent install + missing binary would hang the next step.
           npm install --ignore-scripts "@playwright/test@${PW_VER}"
           ls -la node_modules/.bin/playwright
+          # Self-contained tsconfig so playwright's TS loader doesn't walk
+          # up to the (unreachable, expo-extending) app/tsconfig.json.
+          cat > tsconfig.json <<'TSCFG'
+          { "compilerOptions": { "target": "es2022", "module": "commonjs", "moduleResolution": "node", "esModuleInterop": true, "strict": false, "skipLibCheck": true } }
+          TSCFG
+          # Copy the spec + config in. The config's testDir: '.' then resolves
+          # to PW_ROOT, matching the local spec layout.
+          cp ${{ github.workspace }}/tests/install/playwright.config.ts .
+          cp ${{ github.workspace }}/tests/install/setup-and-packages.spec.ts .
+          ls -la
           echo "root=${PW_ROOT}" >> "$GITHUB_OUTPUT"
 
       - name: Install Playwright Chromium
         working-directory: ${{ steps.pw.outputs.root }}
-        # Invoke the binary by absolute path — never rely on npx's resolver
-        # for the playwright lookup; it has surprised us before.
         run: ./node_modules/.bin/playwright install --with-deps chromium
 
-      # Diagnostic: confirm playwright can load the config + discover the
-      # spec at all. Test execution can hang on a browser context; --list
-      # only loads the config and enumerates specs, so a hang here vs a
-      # hang in the next step tells us which side is broken.
+      # Diagnostic — should print "Total: 3 tests in 1 file" in ~1s.
       - name: List discovered specs (diagnostic)
         working-directory: ${{ steps.pw.outputs.root }}
         timeout-minutes: 1
-        run: ./node_modules/.bin/playwright test --config ${{ github.workspace }}/tests/install/playwright.config.ts --list
+        run: ./node_modules/.bin/playwright test --list
 
       - name: Run install smoke spec
         working-directory: ${{ steps.pw.outputs.root }}
@@ -162,12 +170,9 @@ jobs:
           PW_BASE_URL: http://localhost:7090
           PW_SETUP_TOKEN: ${{ steps.token.outputs.token }}
           CI: 'true'
-          # Surface activity if anything hangs.
-          DEBUG: 'pw:api,pw:browser*,pw:protocol'
-          # Force unbuffered stdio so DEBUG output reaches the runner log
-          # in real time instead of pooling for a flush that never comes.
+          DEBUG: 'pw:api,pw:browser*'
           FORCE_COLOR: '0'
-        run: ./node_modules/.bin/playwright test --config ${{ github.workspace }}/tests/install/playwright.config.ts --reporter=line 2>&1
+        run: ./node_modules/.bin/playwright test --reporter=line
 
       - name: Capture container logs on failure
         if: failure()
