@@ -16,6 +16,7 @@ import (
 	"tinycld.org/core/notify"
 	"tinycld.org/core/realtime"
 	"tinycld.org/core/sharelink"
+	"tinycld.org/core/userorg"
 )
 
 // Options configure the core server's registered plugins, flags, and wiring.
@@ -139,6 +140,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	RegisterPackageInstallEndpoints(app)
 	RegisterSetupBootstrap(app)
 	RegisterAccountDelete(app)
+	userorg.Register(app)
 	RegisterDemoStart(app)
 	RegisterDemoLead(app)
 	RegisterDemoReset(app)

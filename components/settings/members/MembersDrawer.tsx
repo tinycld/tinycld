@@ -1,3 +1,4 @@
+import { LeaveOrgFlow } from '@tinycld/core/components/settings/leave-org/LeaveOrgFlow'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
@@ -117,12 +118,12 @@ function ViewMember({
         }),
     })
 
-    const removeMember = useMutation({
-        mutationFn: mutation(function* () {
-            yield userOrgCollection.delete(member.userOrgId)
-        }),
-        onSuccess: onClose,
-    })
+    // Removing a member previously did a raw user_org delete, which 500'd
+    // any time the member owned records that the schema marked
+    // required+cascadeDelete:false (calendar_events.created_by, drive_items,
+    // etc.). Route through LeaveOrgFlow so the admin gets a reassign/delete
+    // choice for the member's content before the user_org goes away.
+    const [removeOpen, setRemoveOpen] = useState(false)
 
     // is_demo lives on the users record. Migration 1810000000 relaxes
     // users.updateRule to allow shared-org members to attempt an update;
@@ -251,11 +252,22 @@ function ViewMember({
                 <DrawerFooter>
                     <RemoveSection
                         name={displayName}
-                        onRemove={() => removeMember.mutate()}
-                        isPending={removeMember.isPending}
+                        onRemove={() => setRemoveOpen(true)}
+                        isPending={false}
                     />
                 </DrawerFooter>
             )}
+            <LeaveOrgFlow
+                isVisible={removeOpen}
+                onClose={() => setRemoveOpen(false)}
+                onSuccess={() => {
+                    setRemoveOpen(false)
+                    onClose()
+                }}
+                userOrgId={member.userOrgId}
+                mode="admin"
+                targetDisplayName={displayName}
+            />
         </>
     )
 }
