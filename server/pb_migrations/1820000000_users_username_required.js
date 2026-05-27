@@ -22,8 +22,8 @@ migrate(
                     id: 'users_username',
                     name: 'username',
                     required: true,
-                    pattern: '^[a-z0-9][a-z0-9_-]{2,31}$',
-                    min: 3,
+                    pattern: '^[a-z0-9][a-z0-9_-]{0,31}$',
+                    min: 1,
                     max: 32,
                 })
             )
@@ -52,13 +52,14 @@ migrate(
             if (u) taken.add(u)
         }
         // Mirror coreserver/usernames.go::DeriveUsername: strip non-username
-        // chars, lowercase, fall back to "user" if too short. Collision
-        // resolution below handles the resulting duplicates.
+        // chars, lowercase, fall back to "user" only when the cleaned prefix
+        // is empty. Single-character prefixes are valid usernames now.
+        // Collision resolution below handles the resulting duplicates.
         const derive = email => {
             const at = email.indexOf('@')
             const prefix = (at >= 0 ? email.slice(0, at) : email).toLowerCase()
             const cleaned = prefix.replace(NON, '')
-            return cleaned.length >= 3 ? cleaned : 'user'
+            return cleaned.length >= 1 ? cleaned : 'user'
         }
         for (const r of rows) {
             if (r.get('username')) continue

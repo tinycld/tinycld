@@ -15,8 +15,8 @@ describe('deriveUsername', () => {
         ['dots.and+plus@x.com', 'dotsandplus'],
         ['under_score-dash@x.com', 'under_score-dash'],
         ['noemail', 'noemail'],
-        ['ab@x.com', 'user'],
-        ['a@x.com', 'user'],
+        ['ab@x.com', 'ab'],
+        ['a@x.com', 'a'],
     ])('deriveUsername(%j) === %j', (input, expected) => {
         expect(deriveUsername(input)).toBe(expected)
     })

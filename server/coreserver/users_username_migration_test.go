@@ -20,8 +20,8 @@ func TestDeriveUsername(t *testing.T) {
 		{"dots.and+plus@x.com", "dotsandplus"},
 		{"under_score-dash@x.com", "under_score-dash"},
 		{"noemail", "noemail"},
-		{"ab@x.com", "user"}, // 2-char prefix is too short; falls back
-		{"a@x.com", "user"},  // 1-char prefix is too short; falls back
+		{"ab@x.com", "ab"}, // 2-char prefix is preserved
+		{"a@x.com", "a"},   // 1-char prefix is preserved
 	}
 	for _, tc := range cases {
 		got := DeriveUsername(tc.input)
@@ -32,8 +32,11 @@ func TestDeriveUsername(t *testing.T) {
 }
 
 func TestIsValidUsername(t *testing.T) {
-	valid := []string{"abc", "foo", "foo123", "a1b", "foo-bar", "foo_bar", "abc"}
-	invalid := []string{"ab", "a", "", "FOO", "foo@bar", "foo bar", "foo!", "-foo"}
+	// Length floor relaxed to 1; single-char emails like "a@x.com" must be
+	// representable as usernames. Character set and start-with-alphanumeric
+	// rule are unchanged.
+	valid := []string{"a", "ab", "abc", "foo", "foo123", "a1b", "foo-bar", "foo_bar"}
+	invalid := []string{"", "FOO", "foo@bar", "foo bar", "foo!", "-foo", "_foo"}
 	for _, s := range valid {
 		if !IsValidUsername(s) {
 			t.Errorf("IsValidUsername(%q) = false, want true", s)
