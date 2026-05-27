@@ -19,9 +19,19 @@ import { expect, type Page, test } from '@playwright/test'
 const SETUP_TOKEN = process.env.PW_SETUP_TOKEN
 
 // Adjust this list when the public-CI default LINKED_PACKAGES set changes.
-// The names match `bundled-packages.json::name` (capitalized labels), which
-// is what PackageManager renders on the dashboard.
-const EXPECTED_BUNDLED = ['Mail', 'Calendar', 'Contacts', 'Drive', 'Google Takeout Import']
+// The names match `app/server/bundled-packages.json::name` (capitalized
+// labels), which is what PackageManager renders on the dashboard. Calc +
+// Text were added to the default bundle alongside drive's share-dialog
+// work; keep this in sync with that JSON.
+const EXPECTED_BUNDLED = [
+    'Calc',
+    'Calendar',
+    'Contacts',
+    'Drive',
+    'Google Takeout Import',
+    'Mail',
+    'Text',
+]
 
 const SUPERUSER_EMAIL = 'smoke@example.com'
 const SUPERUSER_PASSWORD = 'SmokeTest1234!'
