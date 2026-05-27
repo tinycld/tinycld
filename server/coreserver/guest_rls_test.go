@@ -99,6 +99,7 @@ func setupGuestRLSApp(t *testing.T) *guestRLSEnv {
 		t.Fatal(err)
 	}
 	users.Fields.Add(&core.BoolField{Name: "is_demo"})
+	relaxUsernameMinLength(users)
 	if err := app.Save(users); err != nil {
 		t.Fatal(err)
 	}

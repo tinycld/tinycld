@@ -13,11 +13,10 @@ import (
 var nonUsernameChar = regexp.MustCompile(`[^a-z0-9_-]`)
 
 // DeriveUsername turns an email (or arbitrary string) into a candidate
-// username. Empty or too-short prefixes fall back to "user" — collision
-// resolution then disambiguates ("user", "user2", "user3"). We don't pad
-// short prefixes because the padding has no relationship to the original
-// email and would mislead readers (a@x.com and b@y.com would both derive to
-// 3-char placeholders).
+// username. Only a wholly-empty cleaned prefix falls back to "user" —
+// single-character emails like "a@x.com" are valid usernames now, so we
+// preserve them as-is. Collision resolution then disambiguates ("user",
+// "user2", "user3").
 func DeriveUsername(email string) string {
 	prefix := email
 	if at := strings.IndexByte(email, '@'); at >= 0 {
@@ -25,16 +24,16 @@ func DeriveUsername(email string) string {
 	}
 	prefix = strings.ToLower(prefix)
 	prefix = nonUsernameChar.ReplaceAllString(prefix, "")
-	if len(prefix) < 3 {
+	if len(prefix) == 0 {
 		return "user"
 	}
 	return prefix
 }
 
-var usernameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{2,31}$`)
+var usernameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 // IsValidUsername enforces the rules the front-end also validates: lowercase
-// alphanumeric with dash or underscore, 3..32 chars, must start with
+// alphanumeric with dash or underscore, 1..32 chars, must start with
 // alphanumeric.
 func IsValidUsername(s string) bool { return usernameRE.MatchString(s) }
 

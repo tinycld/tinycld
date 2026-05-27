@@ -431,8 +431,8 @@ const inviteSchema = z.object({
     username: z
         .string()
         .regex(
-            /^[a-z0-9][a-z0-9_-]{2,31}$/,
-            'Use 3-32 chars: lowercase letters, digits, dash or underscore'
+            /^[a-z0-9][a-z0-9_-]{0,31}$/,
+            'Use 1-32 chars: lowercase letters, digits, dash or underscore'
         ),
     email: z.string().email('Enter a valid email address').or(z.literal('')).optional(),
     role: z.enum(['admin', 'member', 'guest']),

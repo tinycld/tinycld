@@ -29,6 +29,11 @@ func setupGuardTestApp(t *testing.T) *tests.TestApp {
 		t.Fatalf("find users: %v", err)
 	}
 	users.Fields.Add(&core.BoolField{Name: "is_demo"})
+	// PB's bundled test fixture ships the default users collection with a
+	// 3-char minimum username; our production migration relaxes it to 1.
+	// Mirror that here so derived usernames from short email prefixes
+	// (e.g. "ma@test.local" → "ma") validate the same way they do in prod.
+	relaxUsernameMinLength(users)
 	if err := app.Save(users); err != nil {
 		t.Fatalf("save users: %v", err)
 	}
