@@ -253,6 +253,9 @@ func (r *Room) route(from *Client, frame []byte) {
 		if r.opts.OnDocUpdate != nil {
 			r.opts.OnDocUpdate(r.key.id)
 		}
+		if r.opts.OnDocUpdateContent != nil {
+			r.opts.OnDocUpdateContent(r.key.id, from, payload)
+		}
 		if r.opts.OnDocUpdateSeq != nil && appendedSeq > 0 {
 			r.opts.OnDocUpdateSeq(r.key.id, appendedSeq)
 		}

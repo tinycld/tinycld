@@ -141,7 +141,7 @@ func startTestServerWithOpts(t *testing.T, broker *Broker, opts RoomKindOptions)
 			IdleTimeout:   defaultIdleTimeout,
 			MaxFrameBytes: defaultMaxFrameBytes,
 			PingInterval:  defaultPingInterval,
-		}, connIdentity{kind: kind, roomID: roomID}, conn)
+		}, connIdentity{kind: kind, roomID: roomID, authID: r.Header.Get("X-Test-User")}, conn)
 	})
 
 	srv := httptest.NewServer(mux)
@@ -240,6 +240,62 @@ func TestOnDocUpdateFiresOnlyForDocUpdates(t *testing.T) {
 
 	if got := fired.Load(); got != 1 {
 		t.Fatalf("OnDocUpdate fired %d times; expected exactly 1 (doc-update only)", got)
+	}
+}
+
+// TestOnDocUpdateContentFiresAfterApply: the new hook fires after each
+// MsgDocUpdate has been journaled / applied / fanned out, with the raw
+// inbound payload and the originating Client. Phase 3a consumers (text)
+// use it to extract Yjs clientIDs from the payload and stamp authorship
+// without paying for a full doc walk.
+func TestOnDocUpdateContentFiresAfterApply(t *testing.T) {
+	broker := NewBroker()
+	rt := newStubRuntime()
+	var (
+		mu          sync.Mutex
+		seenRoomID  string
+		seenAuthID  string
+		seenPayload []byte
+		calls       int
+	)
+	opts := startTestServerWithOpts(t, broker, RoomKindOptions{
+		RuntimeProvider: rt,
+		OnDocUpdateContent: func(roomID string, from *Client, payload []byte) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls++
+			seenRoomID = roomID
+			if from != nil {
+				seenAuthID = from.AuthID()
+			}
+			seenPayload = append([]byte(nil), payload...)
+		},
+	})
+
+	a := dialClient(t, opts, "content-hook-room", "alice")
+	_ = dialClient(t, opts, "content-hook-room", "bob")
+	time.Sleep(50 * time.Millisecond)
+
+	payload := []byte("update-bytes")
+	writeFrame(t, a, MsgDocUpdate, payload)
+	// Non-doc frames must NOT trigger the hook.
+	writeFrame(t, a, MsgAwarenessUpdate, []byte("aware-1"))
+	writeFrame(t, a, MsgSyncRequest, []byte("sync-1"))
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("OnDocUpdateContent fired %d times; expected exactly 1 (doc-update only)", calls)
+	}
+	if seenRoomID != "content-hook-room" {
+		t.Errorf("seenRoomID = %q, want %q", seenRoomID, "content-hook-room")
+	}
+	if seenAuthID != "alice" {
+		t.Errorf("seenAuthID = %q, want %q", seenAuthID, "alice")
+	}
+	if !bytes.Equal(seenPayload, payload) {
+		t.Errorf("seenPayload = %x, want %x", seenPayload, payload)
 	}
 }
 

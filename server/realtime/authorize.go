@@ -45,6 +45,12 @@ type ShareAuthorizeFn func(claims ShareClaims, roomID string) error
 // rejected — images should flow through a separate upload path.
 const DefaultMaxUpdateBytes = 256 * 1024
 
+// OnDocUpdateContentFn is the callback fired after each accepted
+// MsgDocUpdate has been folded into the server-side mirror and fanned
+// out. The signature is exposed as a named type so consumer packages
+// can implement and inject it without struct-literal coupling.
+type OnDocUpdateContentFn func(roomID string, from *Client, payload []byte)
+
 // RoomKindOptions bundles everything a room kind plugs into the broker.
 // Authorize is required; the rest are optional and lit up only by room
 // kinds that need server-side document mirroring (sheets is the first).
@@ -97,6 +103,17 @@ type RoomKindOptions struct {
 	// timer). Anything blocking belongs in a goroutine the callback
 	// schedules.
 	OnDocUpdate func(roomID string)
+
+	// OnDocUpdateContent, if non-nil, is invoked synchronously after
+	// OnDocUpdate but before OnDocUpdateSeq, with the originating
+	// connection and the raw inbound payload. Lets consumers inspect
+	// the bytes (e.g. to extract Yjs clientIDs) and the sender's
+	// identity (AuthID, ShareRole, IsAnonymous) without paying for a
+	// full doc walk.
+	//
+	// Runs on the broker's route-path goroutine; must be cheap.
+	// Anything blocking belongs in a goroutine the callback schedules.
+	OnDocUpdateContent OnDocUpdateContentFn
 
 	// OnDocUpdateSeq, if non-nil, fires after OnDocUpdate with the
 	// per-room seq that was just journaled. Lets the SaveCoordinator
