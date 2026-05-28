@@ -97,6 +97,19 @@ export interface UseWebViewEditorOptions {
     // Each call replaces any prior handler — the value is read through
     // a ref, so the consumer doesn't have to memoize it.
     onFindReplaceMessage?: (message: EditorMessage) => void
+
+    // Subscribe to off-protocol {kind, payload} messages emitted by the
+    // WebView's suggestion list bridge. Unlike the namespace-based
+    // channels above, the Phase 2c suggestion bridge posts a flat
+    // envelope ({kind: 'suggestion.changed', payload}) so the receiver
+    // can route by kind string into the NativeSuggestionBridge's
+    // processIncomingMessage(kind, payload) without going through the
+    // EditorMessage type. Today the only kind is 'suggestion.changed';
+    // additional kinds (e.g. 'suggestion.list-reply') can be added
+    // without expanding the EditorMessageNamespace union.
+    //
+    // The callback identity is read through a ref.
+    onSuggestionMessage?: (kind: string, payload: unknown) => void
 }
 
 // Shared TenTap-customSource wrapper. Encapsulates:
@@ -121,6 +134,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         onScroll,
         onCommentMessage,
         onFindReplaceMessage,
+        onSuggestionMessage,
     } = options
 
     // Pin onUiMessage behind a ref so the consumer can pass an
@@ -151,6 +165,13 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // through this hook.
     const onFindReplaceMessageRef = useRef(onFindReplaceMessage)
     onFindReplaceMessageRef.current = onFindReplaceMessage
+
+    // Same ref-backed pattern for the off-protocol suggestion-bridge
+    // messages. The handler is keyed on parsed.kind (not namespace) so
+    // the WebView's list-bridge can keep its simpler {kind, payload}
+    // shape from Phase 2c Task 12.
+    const onSuggestionMessageRef = useRef(onSuggestionMessage)
+    onSuggestionMessageRef.current = onSuggestionMessage
 
     const liveBridge = useEditorBridge({
         initialContent,
@@ -285,6 +306,17 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             }
             if (parsed.namespace === 'find-replace') {
                 onFindReplaceMessageRef.current?.(parsed)
+                return
+            }
+            // Off-protocol {kind, payload} envelope used by the
+            // suggestion list bridge. Falls through the namespace
+            // checks above because the bridge intentionally keeps the
+            // simpler shape — there's no requestId correlation or
+            // other namespace-grade machinery needed for the one-way
+            // snapshot push.
+            const kind = (parsed as { kind?: unknown }).kind
+            if (typeof kind === 'string' && kind === 'suggestion.changed') {
+                onSuggestionMessageRef.current?.(kind, (parsed as { payload?: unknown }).payload)
                 return
             }
             // other namespaces ignored
