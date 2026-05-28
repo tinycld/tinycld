@@ -243,3 +243,29 @@ func NewClientForTest(authID string) *Client {
 func NewAnonClientForTest(shareRole, displayName string) *Client {
 	return &Client{shareRole: shareRole, displayName: displayName}
 }
+
+// RouteFrameForTest drives a single wire frame through the broker's
+// route() pipeline as if it had arrived over the WebSocket transport,
+// using whatever options the kind has registered. Joins `from` into
+// (kind, roomID) — creating the room if needed, applying the same
+// RuntimeProvider / Journal / OnRoomCreate / etc. bootstrap as a real
+// connection — then routes the frame.
+//
+// Returns the Room so consumer test packages can call PublishServerSlot
+// or other exported Room methods. Production code must not call this —
+// real connections always flow through handleConnect.
+//
+// Intended use: consumer packages that wire their own RoomKindOptions
+// (e.g. text's Register) use this to verify the full broker route()
+// path — not just the validator function in isolation — applies the
+// kind's hooks correctly. Pairs with NewClientForTest /
+// NewAnonClientForTest for constructing the `from` argument.
+func (b *Broker) RouteFrameForTest(kind, roomID string, from *Client, frame []byte) *Room {
+	b.join(kind, roomID, from)
+	room := b.lookupRoomForTest(kind, roomID)
+	if room == nil {
+		return nil
+	}
+	room.route(from, frame)
+	return room
+}
