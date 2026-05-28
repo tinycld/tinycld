@@ -137,6 +137,8 @@ export const driveItemVersionsSchema = z.object({
     created_by: z.string().regex(/^[a-z0-9]+$/).length(15),
     created: z.string().regex(DATETIME_REGEX).optional(),
     updated: z.string().regex(DATETIME_REGEX).optional(),
+    yjs_state: z.string().optional(),
+    version_metadata: z.unknown().optional(),
 })
 
 export const driveItemsSchema = z.object({

@@ -133,6 +133,8 @@ export interface DriveItemVersions {
     created_by: string
     created: string
     updated: string
+    yjs_state: string
+    version_metadata: any
 }
 
 export interface DriveItems {
