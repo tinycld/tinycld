@@ -263,3 +263,15 @@ func LookupForTest(kind string) AuthorizeFn {
 	}
 	return nil
 }
+
+// LookupOptionsForTest returns the full RoomKindOptions registered for
+// kind, and whether a registration exists. Exported for consumer test
+// packages that need to verify wiring of fields beyond Authorize (e.g.
+// the text package asserts UpdateContentValidator is wired). Production
+// code must not call this — use the unexported optionsFor.
+func LookupOptionsForTest(kind string) (RoomKindOptions, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	opts, ok := registry[kind]
+	return opts, ok
+}
