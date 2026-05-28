@@ -41,3 +41,16 @@ export function captureExceptionToSentry(
         Sentry.captureException(error)
     })
 }
+
+export function captureMessageToSentry(
+    context: string,
+    message: string,
+    extra?: Record<string, unknown>
+): void {
+    if (!initialized) return
+    Sentry.withScope(scope => {
+        scope.setTag('context', context)
+        if (extra) scope.setExtras(scrubPII(extra))
+        Sentry.captureMessage(message)
+    })
+}

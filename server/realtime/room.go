@@ -182,6 +182,22 @@ func (r *Room) route(from *Client, frame []byte) {
 			)
 			return
 		}
+		// Content-level reject: the kind's validator inspects the
+		// decoded update structure and refuses frames that mutate
+		// protected Y.Doc roots (see ProtectedYjsRootKeys). Runs after
+		// the size + write-permission gates so the cheap checks fire
+		// first. A non-nil error drops the frame silently — the
+		// sender's local Y.Doc retains the edit, but it never reaches
+		// the journal, the server mirror, or any peer.
+		if r.opts.UpdateContentValidator != nil {
+			if err := r.opts.UpdateContentValidator(r.key.id, payload); err != nil {
+				slog.Warn(
+					"realtime: UpdateContentValidator rejected MsgDocUpdate; dropping",
+					"kind", r.key.kind, "roomID", r.key.id, "err", err,
+				)
+				return
+			}
+		}
 		// appendedSeq holds the seq that was minted and durably
 		// appended for THIS frame, captured at append-time. It stays
 		// 0 when no append occurred (Journal nil, serverDoc nil, or

@@ -149,6 +149,35 @@ type RoomKindOptions struct {
 	// kinds with no server mirror or journal — it is a wire-level frame
 	// limit, not a storage limit specific to the WAL.
 	MaxUpdateBytes int
+
+	// UpdateContentValidator, if non-nil, inspects every inbound
+	// MsgDocUpdate's payload before it is journaled, applied to the
+	// server-side mirror, or fanned out. A non-nil return drops the
+	// frame entirely (logged, no journal append, no apply, no fan-out).
+	//
+	// Used by room kinds that need a content-level reject — for
+	// example, the text kind rejects updates that mutate server-stamped
+	// authorship Y.Doc roots (see ProtectedYjsRootKeys). The hook runs
+	// after the size cap and the WritePredicate gate, before the
+	// journal-first ordering.
+	UpdateContentValidator func(roomID string, update []byte) error
+}
+
+// ProtectedYjsRootKeys lists Y.Doc root keys that no client is ever
+// allowed to mutate directly — they hold server-stamped metadata
+// (authorship maps, edit-event logs) and the server re-stamps them on
+// each accepted mutation. Room kinds that store this kind of metadata
+// install an UpdateContentValidator that probes inbound updates against
+// these keys and rejects writes to any of them.
+//
+// The list is shared between the validator and the in-WebView editor's
+// authoritative copy (see text package). Adding a key here is a server
+// rule change; the editor side mirrors it from
+// tinycld/text/webview-editor/source/suggestions/suggestion-types.ts.
+var ProtectedYjsRootKeys = []string{
+	"clientAuthors",
+	"clientFirstSeen",
+	"editEvents",
 }
 
 // ErrUnknownRoomKind is returned when a client connects to a room kind
@@ -235,6 +264,18 @@ func unregisterRoomKindForTest(kind string) {
 // from external _test.go files in consumer packages. Production code
 // must not call this.
 func ResetRegistryForTest() { resetRegistry() }
+
+// LookupOptionsForTest returns the full RoomKindOptions registered for
+// kind plus a bool indicating whether it was registered. Used by
+// consumer packages' tests to assert their Register wiring landed the
+// right hooks (e.g. text asserts UpdateContentValidator was set).
+// Production code must not call this.
+func LookupOptionsForTest(kind string) (RoomKindOptions, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	opts, ok := registry[kind]
+	return opts, ok
+}
 
 // LookupForTest returns the AuthorizeFn registered for kind, or nil if
 // no plugin has registered. Exported for use in consumer test packages

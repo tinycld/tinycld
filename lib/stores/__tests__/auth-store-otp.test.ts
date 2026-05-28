@@ -58,6 +58,12 @@ vi.mock('@tinycld/core/lib/store', () => ({
         }
         return store
     },
+    // workspace-store wraps its factory in persist(...) — the mocked persist is
+    // a pass-through that hands the factory back so the create() above can run
+    // it unchanged. The asyncStorage export is referenced too; a no-op stub
+    // satisfies the import without engaging any storage.
+    persist: <T>(fn: T) => fn,
+    asyncStorage: undefined,
 }))
 
 describe('auth-store OTP methods', () => {

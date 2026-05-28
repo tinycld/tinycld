@@ -151,6 +151,28 @@ func (b *Broker) lookupRoomForTest(kind, id string) *Room {
 	return b.rooms[roomKey{kind, id}]
 }
 
+// RouteFrameForTest drives a single wire frame through the broker's
+// route path for a given (kind, id). If no room exists yet it is
+// constructed via the kind's registered RoomKindOptions — mirroring the
+// production join path — then route() is called with the frame.
+//
+// Intended for consumer-package tests that need to exercise the full
+// route()-side behavior (WritePredicate, UpdateContentValidator,
+// journal append, server-doc apply, fan-out) without standing up the
+// WebSocket transport. Production code must not call this.
+func (b *Broker) RouteFrameForTest(kind, id string, c *Client, frame []byte) {
+	b.mu.Lock()
+	key := roomKey{kind, id}
+	room, ok := b.rooms[key]
+	if !ok {
+		opts, _ := optionsFor(kind)
+		room = newRoom(b, key, opts)
+		b.rooms[key] = room
+	}
+	b.mu.Unlock()
+	room.route(c, frame)
+}
+
 // Client is one connected WebSocket. The transport-specific read/write
 // loop lives in register.go and calls into Client to forward frames into
 // the broker; the broker pushes frames out via Client.send.

@@ -90,6 +90,7 @@ export type EditorMessageNamespace =
     | 'core'
     | 'find-replace'
     | 'format'
+    | 'suggestion'
     | 'ui'
 
 export interface EditorMessage<TPayload = unknown> {

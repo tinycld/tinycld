@@ -97,6 +97,15 @@ export interface UseWebViewEditorOptions {
     // Each call replaces any prior handler — the value is read through
     // a ref, so the consumer doesn't have to memoize it.
     onFindReplaceMessage?: (message: EditorMessage) => void
+
+    // Subscribe to messages with the 'suggestion' namespace from the
+    // WebView. The text package's native suggestion bridge accumulates
+    // the WebView's pushed snapshots (anchored/orphaned suggestion
+    // ranges) and exposes them to ReviewDrawer.
+    //
+    // Each call replaces any prior handler — the value is read through
+    // a ref, so the consumer doesn't have to memoize it.
+    onSuggestionMessage?: (kind: string, payload: unknown) => void
 }
 
 // Shared TenTap-customSource wrapper. Encapsulates:
@@ -121,6 +130,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         onScroll,
         onCommentMessage,
         onFindReplaceMessage,
+        onSuggestionMessage,
     } = options
 
     // Pin onUiMessage behind a ref so the consumer can pass an
@@ -151,6 +161,9 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // through this hook.
     const onFindReplaceMessageRef = useRef(onFindReplaceMessage)
     onFindReplaceMessageRef.current = onFindReplaceMessage
+
+    const onSuggestionMessageRef = useRef(onSuggestionMessage)
+    onSuggestionMessageRef.current = onSuggestionMessage
 
     const liveBridge = useEditorBridge({
         initialContent,
@@ -285,6 +298,10 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             }
             if (parsed.namespace === 'find-replace') {
                 onFindReplaceMessageRef.current?.(parsed)
+                return
+            }
+            if (parsed.namespace === 'suggestion') {
+                onSuggestionMessageRef.current?.(parsed.type, parsed.payload)
                 return
             }
             // other namespaces ignored
