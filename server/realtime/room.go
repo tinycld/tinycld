@@ -499,3 +499,59 @@ func (r *Room) PublishServerSlot(payload []byte) {
 	// every member receives the frame.
 	r.fanOut(nil, frame)
 }
+
+// PublishDocUpdate broadcasts a server-originated Yjs update to every
+// member of the room and journals it (so it survives restart-replay).
+// The frame uses serverSlotID as its sender prefix and MsgDocUpdate as
+// its type, so clients integrate it into their Y.Doc the same way they
+// integrate any other update.
+//
+// Skips:
+//   - UpdateContentValidator — the validator's purpose is to reject
+//     client writes to protected roots; the server is the writer here.
+//   - WritePredicate — server-originated updates are never read-only.
+//   - The server-side serverDoc.ApplyUpdate — the caller has already
+//     mutated the doc to produce these bytes (the bytes ARE the delta
+//     of that mutation); re-applying would be a no-op via Yjs's
+//     idempotency, but skipping saves the cycle.
+//
+// Journal append happens BEFORE fan-out, mirroring the inbound
+// MsgDocUpdate path: if Append fails we log and DROP the broadcast so
+// the in-memory and durable views stay consistent. Same fail-fast
+// contract as the inbound branch.
+//
+// Used by consumers (text Phase 3a) that need to write authorship /
+// activity metadata into the live Y.Doc and have peers converge to
+// the same state.
+func (r *Room) PublishDocUpdate(payload []byte) {
+	if len(payload) == 0 {
+		return
+	}
+	if r.opts.Journal != nil {
+		r.mu.Lock()
+		r.nextSeq++
+		seq := r.nextSeq
+		r.mu.Unlock()
+		if err := r.opts.Journal.Append(r.key.kind, r.key.id, seq, payload); err != nil {
+			slog.Warn(
+				"realtime: PublishDocUpdate journal append failed; dropping",
+				"kind", r.key.kind, "roomID", r.key.id, "seq", seq, "err", err,
+			)
+			// Roll back the seq so the next attempt reuses it —
+			// matches the inbound MsgDocUpdate rollback pattern.
+			r.mu.Lock()
+			if r.nextSeq == seq {
+				r.nextSeq--
+			}
+			r.mu.Unlock()
+			return
+		}
+	}
+	frame := make([]byte, frameOverhead+len(payload))
+	copy(frame[:clientIDLen], serverSlotID[:])
+	frame[clientIDLen] = byte(MsgDocUpdate)
+	copy(frame[frameOverhead:], payload)
+	// fanOut(nil, frame) — passing nil as `from` excludes nobody;
+	// every member receives the frame.
+	r.fanOut(nil, frame)
+}

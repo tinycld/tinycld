@@ -468,3 +468,63 @@ func TestNewDocFailureFallsBackToPureRelay(t *testing.T) {
 		t.Fatalf("OnDocUpdate fired %d times; expected 1 (hook fires regardless of mirror state)", got)
 	}
 }
+
+// TestPublishDocUpdateBroadcastsAndJournals: the new server-originated
+// publish path delivers a MsgDocUpdate frame to every member of the room
+// and journals the payload so authorship state survives restart-replay.
+// The validator that would otherwise reject the same bytes from a client
+// must NOT fire — server writes bypass it by design.
+func TestPublishDocUpdateBroadcastsAndJournals(t *testing.T) {
+	broker := NewBroker()
+	rt := newStubRuntime()
+	j := &recordingJournal{}
+	opts := startTestServerWithOpts(t, broker, RoomKindOptions{
+		RuntimeProvider: rt,
+		Journal:         j,
+		// A protected-root validator that WOULD reject this payload if
+		// it came in on the client path. PublishDocUpdate must bypass
+		// it; otherwise the test fails because the recipient never
+		// sees the frame.
+		UpdateContentValidator: func(_ string, p []byte) error {
+			if bytes.Contains(p, []byte("would-be-rejected-from-client")) {
+				return errors.New("rejected")
+			}
+			return nil
+		},
+	})
+
+	a := dialClient(t, opts, "room-y", "alice")
+	_ = dialClient(t, opts, "room-y", "bob")
+	room := waitForRoomMembers(t, broker, "test", "room-y", 2, 1*time.Second)
+
+	payload := []byte("would-be-rejected-from-client")
+	room.PublishDocUpdate(payload)
+
+	// Recipient receives the frame as MsgDocUpdate with the payload intact.
+	gotType, gotPayload := readFrame(t, a, 1*time.Second)
+	if gotType != MsgDocUpdate {
+		t.Errorf("recipient got msgType 0x%02x, want MsgDocUpdate", gotType)
+	}
+	if !bytes.Equal(gotPayload, payload) {
+		t.Errorf("recipient got %q, want %q", gotPayload, payload)
+	}
+
+	// Journal recorded the payload exactly once under the right (kind, id).
+	j.mu.Lock()
+	appends := append([]recordedAppend(nil), j.appends...)
+	j.mu.Unlock()
+	if len(appends) != 1 {
+		t.Fatalf("journal recorded %d appends; want 1", len(appends))
+	}
+	got := appends[0]
+	if got.kind != "test" || got.id != "room-y" {
+		t.Errorf("journal append kind/id = %s/%s; want test/room-y", got.kind, got.id)
+	}
+	if !bytes.Equal(got.payload, payload) {
+		t.Errorf("journal payload = %q, want %q", got.payload, payload)
+	}
+	if got.seq <= 0 {
+		t.Errorf("journal seq = %d; want > 0", got.seq)
+	}
+}
+
