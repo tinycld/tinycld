@@ -203,13 +203,29 @@ function emitGoWiring(features: Feature[]) {
     // Per-member go.work so each server module resolves tinycld.org/core when
     // built on its own (the app build above is unaffected — it runs from
     // app/server with its own go.work). core itself has nothing to wire.
+    //
+    // Also emit `replace` lines for any manifest.dependencies whose server
+    // package is present in this workspace — text depends on drive for the
+    // VersionHook registry, calc could depend on drive similarly, etc.
+    // Without these replaces, `go test` from inside a member with cross-
+    // package server imports hits the proxy with v0.0.0 and errors.
     for (const f of serverFeatures) {
         if (f.manifest.slug === 'core') continue
         const memberServerDir = path.join(f.dir, f.manifest.server!.package!)
         const coreRelFromMember = path.relative(memberServerDir, coreServerDir)
+        const extraReplaces: { module: string; relPath: string }[] = []
+        for (const depSlug of f.manifest.dependencies ?? []) {
+            const dep = serverFeatures.find(d => d.manifest.slug === depSlug)
+            if (!dep || !dep.manifest.server?.package || !dep.manifest.server?.module) continue
+            const depServerDir = path.join(dep.dir, dep.manifest.server.package)
+            extraReplaces.push({
+                module: dep.manifest.server.module,
+                relPath: path.relative(memberServerDir, depServerDir),
+            })
+        }
         fs.writeFileSync(
             path.join(memberServerDir, 'go.work'),
-            buildMemberGoWork(coreRelFromMember)
+            buildMemberGoWork(coreRelFromMember, extraReplaces)
         )
     }
 }
