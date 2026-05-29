@@ -66,7 +66,10 @@ export interface MemberGoReplace {
     relPath: string
 }
 
-export function buildMemberGoWork(coreRelPath: string, extraReplaces: MemberGoReplace[] = []): string {
+export function buildMemberGoWork(
+    coreRelPath: string,
+    extraReplaces: MemberGoReplace[] = []
+): string {
     const lines = ['go 1.25.0', '', 'use .', '', `replace tinycld.org/core => ${coreRelPath}`]
     for (const r of extraReplaces) {
         lines.push(`replace ${r.module} => ${r.relPath}`)

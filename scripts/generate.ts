@@ -216,7 +216,7 @@ function emitGoWiring(features: Feature[]) {
         const extraReplaces: { module: string; relPath: string }[] = []
         for (const depSlug of f.manifest.dependencies ?? []) {
             const dep = serverFeatures.find(d => d.manifest.slug === depSlug)
-            if (!dep || !dep.manifest.server?.package || !dep.manifest.server?.module) continue
+            if (!dep?.manifest.server?.package || !dep.manifest.server?.module) continue
             const depServerDir = path.join(dep.dir, dep.manifest.server.package)
             extraReplaces.push({
                 module: dep.manifest.server.module,
