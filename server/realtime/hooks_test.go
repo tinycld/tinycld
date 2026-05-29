@@ -528,3 +528,35 @@ func TestPublishDocUpdateBroadcastsAndJournals(t *testing.T) {
 	}
 }
 
+// TestPublishDocUpdateBypassesInboundValidator pins the validator-bypass
+// behavior so a future refactor can't silently re-introduce the call and
+// break Phase 3a's authorship writes (the validator exists to reject
+// CLIENT writes to protected roots; the server is the writer here).
+func TestPublishDocUpdateBypassesInboundValidator(t *testing.T) {
+	broker := NewBroker()
+	rt := newStubRuntime()
+	j := &recordingJournal{}
+	var validatorCalls atomic.Int32
+	opts := startTestServerWithOpts(t, broker, RoomKindOptions{
+		RuntimeProvider: rt,
+		Journal:         j,
+		UpdateContentValidator: func(string, []byte) error {
+			validatorCalls.Add(1)
+			return errors.New("would reject")
+		},
+	})
+
+	a := dialClient(t, opts, "room-z", "alice")
+	_ = dialClient(t, opts, "room-z", "bob")
+	room := waitForRoomMembers(t, broker, "test", "room-z", 2, 1*time.Second)
+
+	room.PublishDocUpdate([]byte("server-update"))
+
+	gotType, _ := readFrame(t, a, 1*time.Second)
+	if gotType != MsgDocUpdate {
+		t.Fatalf("recipient never saw the published frame; got msgType 0x%02x", gotType)
+	}
+	if got := validatorCalls.Load(); got != 0 {
+		t.Errorf("validator called %d time(s) on PublishDocUpdate path; want 0", got)
+	}
+}
