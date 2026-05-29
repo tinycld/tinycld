@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"sync"
 )
@@ -523,9 +524,13 @@ func (r *Room) PublishServerSlot(payload []byte) {
 // Used by consumers (text Phase 3a) that need to write authorship /
 // activity metadata into the live Y.Doc and have peers converge to
 // the same state.
-func (r *Room) PublishDocUpdate(payload []byte) {
+//
+// Returns nil on success or empty payload; returns wrapped journal-
+// append error so the caller can react to broadcast failures (e.g.
+// avoid marking state as "committed" when it wasn't).
+func (r *Room) PublishDocUpdate(payload []byte) error {
 	if len(payload) == 0 {
-		return
+		return nil
 	}
 	if r.opts.Journal != nil {
 		r.mu.Lock()
@@ -533,10 +538,6 @@ func (r *Room) PublishDocUpdate(payload []byte) {
 		seq := r.nextSeq
 		r.mu.Unlock()
 		if err := r.opts.Journal.Append(r.key.kind, r.key.id, seq, payload); err != nil {
-			slog.Warn(
-				"realtime: PublishDocUpdate journal append failed; dropping",
-				"kind", r.key.kind, "roomID", r.key.id, "seq", seq, "err", err,
-			)
 			// Roll back the seq so the next attempt reuses it —
 			// matches the inbound MsgDocUpdate rollback pattern.
 			r.mu.Lock()
@@ -544,7 +545,11 @@ func (r *Room) PublishDocUpdate(payload []byte) {
 				r.nextSeq--
 			}
 			r.mu.Unlock()
-			return
+			slog.Warn(
+				"realtime: PublishDocUpdate journal append failed; dropping",
+				"kind", r.key.kind, "roomID", r.key.id, "seq", seq, "err", err,
+			)
+			return fmt.Errorf("realtime: PublishDocUpdate journal append failed: %w", err)
 		}
 	}
 	frame := make([]byte, frameOverhead+len(payload))
@@ -554,4 +559,5 @@ func (r *Room) PublishDocUpdate(payload []byte) {
 	// fanOut(nil, frame) — passing nil as `from` excludes nobody;
 	// every member receives the frame.
 	r.fanOut(nil, frame)
+	return nil
 }
