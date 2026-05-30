@@ -6,7 +6,7 @@ import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
-import { Link } from 'expo-router'
+import { type Href, Link } from 'expo-router'
 import { Building2, HelpCircle, type LucideIcon, Settings } from 'lucide-react-native'
 import { Pressable, View } from 'react-native'
 import { getIcon } from './package-icon-map'
@@ -107,6 +107,14 @@ function PackageRailItem({
     textColor: string
 }) {
     const orgHref = useOrgHref()
+    const lastHref = useWorkspaceStore(s => s.lastPackageHref[slug])
+    // lastHref is a fully-formed pathname captured at runtime when a
+    // file screen mounted (e.g. /a/acme/calc/abc123). Expo Router's
+    // typed-routes can't statically verify a runtime-built string, so we
+    // cast through Href. orgHref(slug as never) handles the same gap on
+    // the fallback path — slug is a string at compile time, the typed
+    // Href union expects a literal route, hence `as never`.
+    const href: Href = lastHref ? (lastHref as Href) : orgHref(slug as never)
 
     return (
         <View className="relative w-11 h-11 items-center justify-center">
@@ -116,7 +124,7 @@ function PackageRailItem({
                     style={{ backgroundColor: activeColor, left: -10 }}
                 />
             )}
-            <Link href={orgHref(slug as never)} asChild>
+            <Link href={href} asChild>
                 <Pressable
                     testID={`nav-${slug}`}
                     className="w-11 h-11 rounded-xl justify-center items-center"

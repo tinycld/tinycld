@@ -10,7 +10,7 @@ interface WorkspaceStoreState {
     // last deep-link the user opened (e.g. a calc file path) so the
     // sidebar/rail can re-link straight back to that file the next
     // time the package is reopened. Persisted across reloads.
-    lastPackageHrefs: Record<string, string>
+    lastPackageHref: Record<string, string>
     toggleSidebar: () => void
     setSidebarOpen: (open: boolean) => void
     toggleDrawer: () => void
@@ -30,7 +30,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()(
             isMoreOpen: false,
             isNotificationsOpen: false,
             activePkgSlug: null,
-            lastPackageHrefs: {},
+            lastPackageHref: {},
 
             toggleSidebar: () => set(s => ({ isSidebarOpen: !s.isSidebarOpen })),
             setSidebarOpen: open => set({ isSidebarOpen: open }),
@@ -40,13 +40,13 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()(
             setNotificationsOpen: open => set({ isNotificationsOpen: open }),
             setActivePkgSlug: slug => set({ activePkgSlug: slug }),
             setLastPackageHref: (slug, href) =>
-                set(s => ({ lastPackageHrefs: { ...s.lastPackageHrefs, [slug]: href } })),
+                set(s => ({ lastPackageHref: { ...s.lastPackageHref, [slug]: href } })),
             clearLastPackageHref: slug =>
                 set(s => {
-                    if (!(slug in s.lastPackageHrefs)) return s
-                    const next = { ...s.lastPackageHrefs }
+                    if (!(slug in s.lastPackageHref)) return s
+                    const next = { ...s.lastPackageHref }
                     delete next[slug]
-                    return { lastPackageHrefs: next }
+                    return { lastPackageHref: next }
                 }),
         }),
         {
@@ -54,7 +54,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()(
             storage: asyncStorage,
             partialize: s => ({
                 isSidebarOpen: s.isSidebarOpen,
-                lastPackageHrefs: s.lastPackageHrefs,
+                lastPackageHref: s.lastPackageHref,
             }),
         }
     )

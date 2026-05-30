@@ -226,15 +226,16 @@ func (r *Room) route(from *Client, frame []byte) {
 			return
 		}
 		// Content-level reject: the kind's validator inspects the
-		// update bytes and may refuse based on what's being modified
-		// (vs. WritePredicate, which only sees the connection). Runs
-		// before journal append so a rejected frame leaves no durable
-		// trace; the sender's local Y.Doc retains the edit and a
-		// subsequent update will re-propagate.
+		// decoded update structure and refuses frames that mutate
+		// protected Y.Doc roots (see ProtectedYjsRootKeys). Runs after
+		// the size + write-permission gates so the cheap checks fire
+		// first. A non-nil error drops the frame silently — the
+		// sender's local Y.Doc retains the edit, but it never reaches
+		// the journal, the server mirror, or any peer.
 		if r.opts.UpdateContentValidator != nil {
 			if err := r.opts.UpdateContentValidator(r.key.id, payload); err != nil {
-				slog.Debug(
-					"realtime: update rejected by content validator",
+				slog.Warn(
+					"realtime: UpdateContentValidator rejected MsgDocUpdate; dropping",
 					"kind", r.key.kind, "roomID", r.key.id, "err", err,
 				)
 				return

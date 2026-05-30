@@ -183,6 +183,23 @@ type RoomKindOptions struct {
 	MaxUpdateBytes int
 }
 
+// ProtectedYjsRootKeys lists Y.Doc root keys that no client is ever
+// allowed to mutate directly — they hold server-stamped metadata
+// (authorship maps, edit-event logs) and the server re-stamps them on
+// each accepted mutation. Room kinds that store this kind of metadata
+// install an UpdateContentValidator that probes inbound updates against
+// these keys and rejects writes to any of them.
+//
+// The list is shared between the validator and the in-WebView editor's
+// authoritative copy (see text package). Adding a key here is a server
+// rule change; the editor side mirrors it from
+// tinycld/text/webview-editor/source/suggestions/suggestion-types.ts.
+var ProtectedYjsRootKeys = []string{
+	"clientAuthors",
+	"clientFirstSeen",
+	"editEvents",
+}
+
 // ErrUnknownRoomKind is returned when a client connects to a room kind
 // nobody has registered. The transport layer converts this to an HTTP
 // 4xx response on the WebSocket upgrade.
@@ -268,6 +285,18 @@ func unregisterRoomKindForTest(kind string) {
 // must not call this.
 func ResetRegistryForTest() { resetRegistry() }
 
+// LookupOptionsForTest returns the full RoomKindOptions registered for
+// kind plus a bool indicating whether it was registered. Used by
+// consumer packages' tests to assert their Register wiring landed the
+// right hooks (e.g. text asserts UpdateContentValidator was set).
+// Production code must not call this.
+func LookupOptionsForTest(kind string) (RoomKindOptions, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	opts, ok := registry[kind]
+	return opts, ok
+}
+
 // LookupForTest returns the AuthorizeFn registered for kind, or nil if
 // no plugin has registered. Exported for use in consumer test packages
 // that want to exercise a registered handler directly. Production code
@@ -281,14 +310,3 @@ func LookupForTest(kind string) AuthorizeFn {
 	return nil
 }
 
-// LookupOptionsForTest returns the full RoomKindOptions registered for
-// kind, and whether a registration exists. Exported for consumer test
-// packages that need to verify wiring of fields beyond Authorize (e.g.
-// the text package asserts UpdateContentValidator is wired). Production
-// code must not call this — use the unexported optionsFor.
-func LookupOptionsForTest(kind string) (RoomKindOptions, bool) {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	opts, ok := registry[kind]
-	return opts, ok
-}

@@ -10,6 +10,7 @@ import {
     seedUserOrg,
 } from '@tinycld/core/lib/pocketbase'
 import { create } from '@tinycld/core/lib/store'
+import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import type { UserSession } from '@tinycld/core/lib/types'
 import type { Orgs, UserOrg, Users } from '@tinycld/core/types/pbSchema'
 
@@ -170,6 +171,10 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         pb.realtime.unsubscribe()
         pb.authStore.clear()
         clearPrimaryOrgStorage()
+        // Wipe per-device rail deep-links so a second user signing in on
+        // the same device doesn't inherit the previous user's last-opened
+        // file references.
+        useWorkspaceStore.setState({ lastPackageHref: {} })
         set({ user: null })
     },
 
