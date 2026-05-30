@@ -18,9 +18,19 @@ const EMAIL_LOG_PATH = path.join(import.meta.dirname, 'tmp', 'emails.log')
 
 export default defineConfig({
     testMatch: '**/*.spec.ts',
+    // Per-failure artifacts: trace, screenshot, video. retain-on-failure
+    // skips writing for passing tests (saves disk + upload size on green
+    // runs) while keeping a complete record for any failure. Traces let
+    // us replay the run in Playwright's trace viewer; screenshots +
+    // videos surface the final visual state without needing the trace
+    // tooling. CI uploads these as artifacts via the workflow's
+    // upload-artifact step.
     use: {
         ...devices['Desktop Chrome'],
         baseURL: `http://localhost:${PORT}`,
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        video: 'retain-on-failure',
     },
     webServer: {
         command: 'npm run expo:test',

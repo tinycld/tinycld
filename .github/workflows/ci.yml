@@ -14,7 +14,7 @@ env:
 
 jobs:
   checks:
-    name: Lint, Typecheck, Unit (all members)
+    name: Lint, Typecheck, Unit (app)
     runs-on: ubuntu-latest
     steps:
       # app (this repo) is the triggering checkout. bootstrap GENERATES the
@@ -28,8 +28,11 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version-file: ws/app/.node-version
-      # app's CI runs --all, so it needs EVERY member present. bootstrap
-      # generates the root + clones core + each feature; app is already present.
+      # bootstrap clones every feature so `npm install` can resolve app's
+      # `@tinycld/contacts` workspace dep (and the lint sweep below covers
+      # every member's tree). The TS typecheck below is scoped to app only —
+      # feature siblings run their own typecheck CI against their own changes,
+      # so app PRs shouldn't be gated on cross-package type drift.
       - name: Assemble workspace (generate root + all members)
         working-directory: ws
         run: >
@@ -46,9 +49,9 @@ jobs:
       - name: Lint
         working-directory: ws/app
         run: npm run lint
-      - name: Typecheck + unit (all members)
+      - name: Typecheck + unit (app)
         working-directory: ws/app
-        run: npx tinycld-pkg check --all
+        run: npx tinycld-pkg check
 
   go:
     name: Go build & test
