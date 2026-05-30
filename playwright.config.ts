@@ -39,7 +39,15 @@ export default defineConfig({
             Object.entries(process.env)
                 .filter(([, v]) => v !== undefined)
                 .map(([k, v]) => [k, v as string])
-                .concat([['TINYCLD_EMAIL_LOG', EMAIL_LOG_PATH]])
+                .concat([
+                    ['TINYCLD_EMAIL_LOG', EMAIL_LOG_PATH],
+                    // Shrink the @tinycld/text edit-event debounce window
+                    // from 60s to 1s for e2e so the Activity tab populates
+                    // within a single test budget. Production leaves this
+                    // unset and runs at the default. Read by the Go side
+                    // in text/server/edit_event_buffer.go:configureWindowFromEnv.
+                    ['TINYCLD_EDIT_EVENT_WINDOW_MS', '1000'],
+                ])
         ),
     },
     // Absolute path: per-package configs spread this config, and Playwright

@@ -52,6 +52,7 @@ const knownIcons = {
     Mail: Icon,
     MessageSquare: Icon,
     MessageSquarePlus: Icon,
+    Pencil: Icon,
     Replace: Icon,
     ReplaceAll: Icon,
     RotateCcw: Icon,
