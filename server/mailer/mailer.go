@@ -56,9 +56,25 @@ type SendRequest struct {
 }
 
 // SendResult is the response from a successful send.
+//
+// FailedRecipients carries per-recipient permanent failures from providers that
+// surface them at submit time (notably the self-hosted SMTP provider, which
+// sees 5xx responses inline during the SMTP conversation). For providers where
+// bounces are only known asynchronously via webhook (e.g. Postmark), this slice
+// is always empty and the bounce webhook continues to drive delivery_status.
+// Callers that store messages locally should mark delivery_status='bounced'
+// when this slice contains every original recipient.
 type SendResult struct {
-	ProviderMessageID string `json:"provider_message_id"`
-	MessageID         string `json:"message_id"`
+	ProviderMessageID string             `json:"provider_message_id"`
+	MessageID         string             `json:"message_id"`
+	FailedRecipients  []RecipientFailure `json:"failed_recipients,omitempty"`
+}
+
+// RecipientFailure is a single recipient that the provider couldn't deliver
+// to at submit time. Reason includes the SMTP code+message when available.
+type RecipientFailure struct {
+	Email  string `json:"email"`
+	Reason string `json:"reason"`
 }
 
 // Message is a simplified email for transactional sends (notifications, invites, etc.).
