@@ -108,12 +108,23 @@ func handleCommentMention(app core.App, mention *core.Record) {
 		return
 	}
 
-	// Build the deep-link. The `?thread=<id>` query param is read by
-	// the document screen's useCommentsLifecycle hook to open the
-	// drawer focused on the mentioned thread.
+	// Build the deep-link. For an anchored comment, the `?thread=<id>`
+	// query param is read by the document screen's useCommentsLifecycle
+	// hook to open the drawer focused on the mentioned thread. For a
+	// suggestion-reply mention (carries a non-empty `suggestion_id`),
+	// the deep-link uses `?focusSuggestion=<id>` instead so the
+	// document screen's useFocusSuggestionParam hook opens the review
+	// drawer focused on the matching suggestion row rather than the
+	// comments drawer.
 	threadID := commentThreadID(comment)
+	suggestionID := comment.GetString("suggestion_id")
 	appURL := strings.TrimRight(app.Settings().Meta.AppURL, "/")
-	url := fmt.Sprintf("%s/a/%s/%s/%s?thread=%s", appURL, orgSlug, packageSlug, driveItemID, threadID)
+	var url string
+	if suggestionID != "" {
+		url = fmt.Sprintf("%s/a/%s/%s/%s?focusSuggestion=%s", appURL, orgSlug, packageSlug, driveItemID, suggestionID)
+	} else {
+		url = fmt.Sprintf("%s/a/%s/%s/%s?thread=%s", appURL, orgSlug, packageSlug, driveItemID, threadID)
+	}
 
 	authorName := comment.GetString("author_name")
 	if authorName == "" {
@@ -136,6 +147,7 @@ func handleCommentMention(app core.App, mention *core.Record) {
 			"commentRecord":     comment.Id,
 			"driveItem":         driveItemID,
 			"threadId":          threadID,
+			"suggestionId":      suggestionID,
 		},
 	})
 }

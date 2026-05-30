@@ -447,8 +447,8 @@ export interface TextComments {
     created: string
     updated: string
     parent_comment: string
-    suggestion_id?: string
-    archived_at?: string
+    suggestion_id: string
+    archived_at: string
 }
 
 export interface UserOrg {
