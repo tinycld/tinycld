@@ -151,28 +151,6 @@ func (b *Broker) lookupRoomForTest(kind, id string) *Room {
 	return b.rooms[roomKey{kind, id}]
 }
 
-// RouteFrameForTest drives a single wire frame through the broker's
-// route path for a given (kind, id). If no room exists yet it is
-// constructed via the kind's registered RoomKindOptions — mirroring the
-// production join path — then route() is called with the frame.
-//
-// Intended for consumer-package tests that need to exercise the full
-// route()-side behavior (WritePredicate, UpdateContentValidator,
-// journal append, server-doc apply, fan-out) without standing up the
-// WebSocket transport. Production code must not call this.
-func (b *Broker) RouteFrameForTest(kind, id string, c *Client, frame []byte) {
-	b.mu.Lock()
-	key := roomKey{kind, id}
-	room, ok := b.rooms[key]
-	if !ok {
-		opts, _ := optionsFor(kind)
-		room = newRoom(b, key, opts)
-		b.rooms[key] = room
-	}
-	b.mu.Unlock()
-	room.route(c, frame)
-}
-
 // Client is one connected WebSocket. The transport-specific read/write
 // loop lives in register.go and calls into Client to forward frames into
 // the broker; the broker pushes frames out via Client.send.
@@ -264,4 +242,42 @@ func NewClientForTest(authID string) *Client {
 // call this.
 func NewAnonClientForTest(shareRole, displayName string) *Client {
 	return &Client{shareRole: shareRole, displayName: displayName}
+}
+
+// RouteFrameForTest drives a single wire frame through the broker's
+// route() pipeline as if it had arrived over the WebSocket transport,
+// using whatever options the kind has registered. Joins `from` into
+// (kind, roomID) — creating the room if needed, applying the same
+// RuntimeProvider / Journal / OnRoomCreate / etc. bootstrap as a real
+// connection — then routes the frame.
+//
+// Returns the Room so consumer test packages can call PublishServerSlot
+// or other exported Room methods. Production code must not call this —
+// real connections always flow through handleConnect.
+//
+// Intended use: consumer packages that wire their own RoomKindOptions
+// (e.g. text's Register) use this to verify the full broker route()
+// path — not just the validator function in isolation — applies the
+// kind's hooks correctly. Pairs with NewClientForTest /
+// NewAnonClientForTest for constructing the `from` argument.
+func (b *Broker) RouteFrameForTest(kind, roomID string, from *Client, frame []byte) *Room {
+	b.join(kind, roomID, from)
+	room := b.lookupRoomForTest(kind, roomID)
+	if room == nil {
+		return nil
+	}
+	room.route(from, frame)
+	return room
+}
+
+// JoinForTest joins `c` into (kind, roomID) without sending a frame —
+// the same bootstrap path RouteFrameForTest takes, just without the
+// route step. Consumer packages need this to seed multi-client rooms
+// with audience members BEFORE driving the first frame, so hooks that
+// inspect membership (e.g. text's HasOtherWriter gate on buffer.Note)
+// see the audience as already present. Production code must not call
+// this — real connections always flow through handleConnect.
+func (b *Broker) JoinForTest(kind, roomID string, c *Client) *Room {
+	b.join(kind, roomID, c)
+	return b.lookupRoomForTest(kind, roomID)
 }

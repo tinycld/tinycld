@@ -141,7 +141,7 @@ func startTestServerWithOpts(t *testing.T, broker *Broker, opts RoomKindOptions)
 			IdleTimeout:   defaultIdleTimeout,
 			MaxFrameBytes: defaultMaxFrameBytes,
 			PingInterval:  defaultPingInterval,
-		}, connIdentity{kind: kind, roomID: roomID}, conn)
+		}, connIdentity{kind: kind, roomID: roomID, authID: r.Header.Get("X-Test-User")}, conn)
 	})
 
 	srv := httptest.NewServer(mux)
@@ -240,6 +240,62 @@ func TestOnDocUpdateFiresOnlyForDocUpdates(t *testing.T) {
 
 	if got := fired.Load(); got != 1 {
 		t.Fatalf("OnDocUpdate fired %d times; expected exactly 1 (doc-update only)", got)
+	}
+}
+
+// TestOnDocUpdateContentFiresAfterApply: the new hook fires after each
+// MsgDocUpdate has been journaled / applied / fanned out, with the raw
+// inbound payload and the originating Client. Phase 3a consumers (text)
+// use it to extract Yjs clientIDs from the payload and stamp authorship
+// without paying for a full doc walk.
+func TestOnDocUpdateContentFiresAfterApply(t *testing.T) {
+	broker := NewBroker()
+	rt := newStubRuntime()
+	var (
+		mu          sync.Mutex
+		seenRoomID  string
+		seenAuthID  string
+		seenPayload []byte
+		calls       int
+	)
+	opts := startTestServerWithOpts(t, broker, RoomKindOptions{
+		RuntimeProvider: rt,
+		OnDocUpdateContent: func(roomID string, from *Client, payload []byte) {
+			mu.Lock()
+			defer mu.Unlock()
+			calls++
+			seenRoomID = roomID
+			if from != nil {
+				seenAuthID = from.AuthID()
+			}
+			seenPayload = append([]byte(nil), payload...)
+		},
+	})
+
+	a := dialClient(t, opts, "content-hook-room", "alice")
+	_ = dialClient(t, opts, "content-hook-room", "bob")
+	time.Sleep(50 * time.Millisecond)
+
+	payload := []byte("update-bytes")
+	writeFrame(t, a, MsgDocUpdate, payload)
+	// Non-doc frames must NOT trigger the hook.
+	writeFrame(t, a, MsgAwarenessUpdate, []byte("aware-1"))
+	writeFrame(t, a, MsgSyncRequest, []byte("sync-1"))
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("OnDocUpdateContent fired %d times; expected exactly 1 (doc-update only)", calls)
+	}
+	if seenRoomID != "content-hook-room" {
+		t.Errorf("seenRoomID = %q, want %q", seenRoomID, "content-hook-room")
+	}
+	if seenAuthID != "alice" {
+		t.Errorf("seenAuthID = %q, want %q", seenAuthID, "alice")
+	}
+	if !bytes.Equal(seenPayload, payload) {
+		t.Errorf("seenPayload = %x, want %x", seenPayload, payload)
 	}
 }
 
@@ -410,5 +466,147 @@ func TestNewDocFailureFallsBackToPureRelay(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if got := docUpdates.Load(); got != 1 {
 		t.Fatalf("OnDocUpdate fired %d times; expected 1 (hook fires regardless of mirror state)", got)
+	}
+}
+
+// TestPublishDocUpdateBroadcastsAndJournals: the new server-originated
+// publish path delivers a MsgDocUpdate frame to every member of the room
+// and journals the payload so authorship state survives restart-replay.
+// The validator that would otherwise reject the same bytes from a client
+// must NOT fire — server writes bypass it by design.
+func TestPublishDocUpdateBroadcastsAndJournals(t *testing.T) {
+	broker := NewBroker()
+	rt := newStubRuntime()
+	j := &recordingJournal{}
+	opts := startTestServerWithOpts(t, broker, RoomKindOptions{
+		RuntimeProvider: rt,
+		Journal:         j,
+		// A protected-root validator that WOULD reject this payload if
+		// it came in on the client path. PublishDocUpdate must bypass
+		// it; otherwise the test fails because the recipient never
+		// sees the frame.
+		UpdateContentValidator: func(_ string, p []byte) error {
+			if bytes.Contains(p, []byte("would-be-rejected-from-client")) {
+				return errors.New("rejected")
+			}
+			return nil
+		},
+	})
+
+	a := dialClient(t, opts, "room-y", "alice")
+	_ = dialClient(t, opts, "room-y", "bob")
+	room := waitForRoomMembers(t, broker, "test", "room-y", 2, 1*time.Second)
+
+	payload := []byte("would-be-rejected-from-client")
+	if err := room.PublishDocUpdate(payload); err != nil {
+		t.Fatalf("PublishDocUpdate returned err = %v; want nil", err)
+	}
+
+	// Recipient receives the frame as MsgDocUpdate with the payload intact.
+	gotType, gotPayload := readFrame(t, a, 1*time.Second)
+	if gotType != MsgDocUpdate {
+		t.Errorf("recipient got msgType 0x%02x, want MsgDocUpdate", gotType)
+	}
+	if !bytes.Equal(gotPayload, payload) {
+		t.Errorf("recipient got %q, want %q", gotPayload, payload)
+	}
+
+	// Journal recorded the payload exactly once under the right (kind, id).
+	j.mu.Lock()
+	appends := append([]recordedAppend(nil), j.appends...)
+	j.mu.Unlock()
+	if len(appends) != 1 {
+		t.Fatalf("journal recorded %d appends; want 1", len(appends))
+	}
+	got := appends[0]
+	if got.kind != "test" || got.id != "room-y" {
+		t.Errorf("journal append kind/id = %s/%s; want test/room-y", got.kind, got.id)
+	}
+	if !bytes.Equal(got.payload, payload) {
+		t.Errorf("journal payload = %q, want %q", got.payload, payload)
+	}
+	if got.seq <= 0 {
+		t.Errorf("journal seq = %d; want > 0", got.seq)
+	}
+}
+
+// TestPublishDocUpdateBypassesInboundValidator pins the validator-bypass
+// behavior so a future refactor can't silently re-introduce the call and
+// break Phase 3a's authorship writes (the validator exists to reject
+// CLIENT writes to protected roots; the server is the writer here).
+func TestPublishDocUpdateBypassesInboundValidator(t *testing.T) {
+	broker := NewBroker()
+	rt := newStubRuntime()
+	j := &recordingJournal{}
+	var validatorCalls atomic.Int32
+	opts := startTestServerWithOpts(t, broker, RoomKindOptions{
+		RuntimeProvider: rt,
+		Journal:         j,
+		UpdateContentValidator: func(string, []byte) error {
+			validatorCalls.Add(1)
+			return errors.New("would reject")
+		},
+	})
+
+	a := dialClient(t, opts, "room-z", "alice")
+	_ = dialClient(t, opts, "room-z", "bob")
+	room := waitForRoomMembers(t, broker, "test", "room-z", 2, 1*time.Second)
+
+	if err := room.PublishDocUpdate([]byte("server-update")); err != nil {
+		t.Fatalf("PublishDocUpdate returned err = %v; want nil", err)
+	}
+
+	gotType, _ := readFrame(t, a, 1*time.Second)
+	if gotType != MsgDocUpdate {
+		t.Fatalf("recipient never saw the published frame; got msgType 0x%02x", gotType)
+	}
+	if got := validatorCalls.Load(); got != 0 {
+		t.Errorf("validator called %d time(s) on PublishDocUpdate path; want 0", got)
+	}
+}
+
+// TestPublishDocUpdate_ReturnsErrorOnJournalFailure pins the new error
+// return: when the configured journal's Append fails, PublishDocUpdate
+// must wrap and return that error so callers (text's stamper) can react
+// — e.g. by NOT marking authorship clientIDs as stamped when the
+// authorship entries were never journaled. The failed-journal path
+// must also NOT fan out to recipients, and the inbound-content
+// validator must remain unused (the bypass is preserved even on the
+// failure path; we never enter the validate phase for server writes).
+func TestPublishDocUpdate_ReturnsErrorOnJournalFailure(t *testing.T) {
+	broker := NewBroker()
+	rt := newStubRuntime()
+	j := &recordingJournal{fail: errors.New("synthetic journal failure")}
+	var validatorCalls atomic.Int32
+	opts := startTestServerWithOpts(t, broker, RoomKindOptions{
+		RuntimeProvider: rt,
+		Journal:         j,
+		UpdateContentValidator: func(string, []byte) error {
+			validatorCalls.Add(1)
+			return nil
+		},
+	})
+
+	a := dialClient(t, opts, "room-fail", "alice")
+	_ = dialClient(t, opts, "room-fail", "bob")
+	room := waitForRoomMembers(t, broker, "test", "room-fail", 2, 1*time.Second)
+
+	err := room.PublishDocUpdate([]byte("server-update-that-cannot-journal"))
+	if err == nil {
+		t.Fatalf("PublishDocUpdate returned nil; want wrapped journal error")
+	}
+	if !errors.Is(err, j.fail) {
+		t.Errorf("PublishDocUpdate err = %v; want wrap of %v", err, j.fail)
+	}
+
+	// The failed-journal path must NOT fan out — the recipient should
+	// observe no frame.
+	expectNoFrame(t, a.conn, 200*time.Millisecond,
+		"recipient must not receive a fanned-out frame after journal failure")
+
+	// Server-write path bypasses UpdateContentValidator on both success
+	// and failure branches — verify it stayed unused here.
+	if got := validatorCalls.Load(); got != 0 {
+		t.Errorf("validator called %d time(s) on failed PublishDocUpdate; want 0", got)
 	}
 }

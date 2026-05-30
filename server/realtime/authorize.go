@@ -45,6 +45,12 @@ type ShareAuthorizeFn func(claims ShareClaims, roomID string) error
 // rejected — images should flow through a separate upload path.
 const DefaultMaxUpdateBytes = 256 * 1024
 
+// OnDocUpdateContentFn is the callback fired after each accepted
+// MsgDocUpdate has been folded into the server-side mirror and fanned
+// out. The signature is exposed as a named type so consumer packages
+// can implement and inject it without struct-literal coupling.
+type OnDocUpdateContentFn func(roomID string, from *Client, payload []byte)
+
 // RoomKindOptions bundles everything a room kind plugs into the broker.
 // Authorize is required; the rest are optional and lit up only by room
 // kinds that need server-side document mirroring (sheets is the first).
@@ -98,11 +104,37 @@ type RoomKindOptions struct {
 	// schedules.
 	OnDocUpdate func(roomID string)
 
+	// OnDocUpdateContent, if non-nil, is invoked synchronously after
+	// OnDocUpdate but before OnDocUpdateSeq, with the originating
+	// connection and the raw inbound payload. Lets consumers inspect
+	// the bytes (e.g. to extract Yjs clientIDs) and the sender's
+	// identity (AuthID, ShareRole, IsAnonymous) without paying for a
+	// full doc walk.
+	//
+	// Runs on the broker's route-path goroutine; must be cheap.
+	// Anything blocking belongs in a goroutine the callback schedules.
+	OnDocUpdateContent OnDocUpdateContentFn
+
 	// OnDocUpdateSeq, if non-nil, fires after OnDocUpdate with the
 	// per-room seq that was just journaled. Lets the SaveCoordinator
 	// (or future consumers) track WAL high-water without threading
 	// state through OnDocUpdate's roomID-only signature.
 	OnDocUpdateSeq func(roomID string, seq int64)
+
+	// UpdateContentValidator, if non-nil, is invoked synchronously with
+	// the raw bytes of each inbound MsgDocUpdate after WritePredicate
+	// allows the frame but before the broker journals or applies it.
+	// Returning a non-nil error drops the frame: it is not journaled,
+	// not applied to the server-side mirror, and not fanned out. The
+	// sender's local Y.Doc retains the rejected edit, so a subsequent
+	// update from the same client will re-propagate the underlying
+	// changes (modulo whatever the validator was rejecting).
+	//
+	// Use this to enforce *content-level* invariants the broker itself
+	// cannot know about — e.g. "clients may not write to the doc's
+	// server-stamped authorship maps". Cheap content-only checks; not
+	// for anything that touches the journal or filesystem.
+	UpdateContentValidator func(roomID string, update []byte) error
 
 	// OnEmpty, if non-nil, is invoked synchronously when the last
 	// client of a room disconnects, before the room's DocHandle is
@@ -149,18 +181,6 @@ type RoomKindOptions struct {
 	// kinds with no server mirror or journal — it is a wire-level frame
 	// limit, not a storage limit specific to the WAL.
 	MaxUpdateBytes int
-
-	// UpdateContentValidator, if non-nil, inspects every inbound
-	// MsgDocUpdate's payload before it is journaled, applied to the
-	// server-side mirror, or fanned out. A non-nil return drops the
-	// frame entirely (logged, no journal append, no apply, no fan-out).
-	//
-	// Used by room kinds that need a content-level reject — for
-	// example, the text kind rejects updates that mutate server-stamped
-	// authorship Y.Doc roots (see ProtectedYjsRootKeys). The hook runs
-	// after the size cap and the WritePredicate gate, before the
-	// journal-first ordering.
-	UpdateContentValidator func(roomID string, update []byte) error
 }
 
 // ProtectedYjsRootKeys lists Y.Doc root keys that no client is ever
@@ -289,3 +309,4 @@ func LookupForTest(kind string) AuthorizeFn {
 	}
 	return nil
 }
+

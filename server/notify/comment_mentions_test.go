@@ -81,6 +81,8 @@ func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 		Name: "author", Required: true, CollectionId: userOrg.Id, MaxSelect: 1,
 	})
 	textComments.Fields.Add(&core.TextField{Name: "author_name"})
+	textComments.Fields.Add(&core.TextField{Name: "suggestion_id"})
+	textComments.Fields.Add(&core.TextField{Name: "archived_at"})
 	if err := app.Save(textComments); err != nil {
 		t.Fatal(err)
 	}
@@ -327,6 +329,48 @@ func TestCommentMention_ReplyDeepLinksToRootThread(t *testing.T) {
 	wantURL := "https://app.test.local/a/acme/text/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q (reply should deep-link to root)", got, wantURL)
+	}
+}
+
+func TestCommentMention_SuggestionReplyDeepLinksWithFocusSuggestionParam(t *testing.T) {
+	f := seedMentionFixture(t)
+
+	// Create a suggestion-reply row: text_comments with suggestion_id set.
+	// The notify hook should detect the suggestion_id and emit a
+	// ?focusSuggestion=<id> URL instead of ?thread=<thread>, so the
+	// recipient lands on the focused suggestion row in the review drawer.
+	tcCol, _ := f.app.FindCollectionByNameOrId("text_comments")
+	suggestionReply := core.NewRecord(tcCol)
+	suggestionReply.Set("drive_item", f.driveItem.Id)
+	suggestionReply.Set("comment_id", "synth_xyz")
+	suggestionReply.Set("parent_comment", "")
+	suggestionReply.Set("body", "ping [[@"+f.mentionUO.Id+"]]")
+	suggestionReply.Set("author", f.authorUO.Id)
+	suggestionReply.Set("author_name", "Alice")
+	suggestionReply.Set("suggestion_id", "sug_abc123")
+	if err := f.app.Save(suggestionReply); err != nil {
+		t.Fatal(err)
+	}
+
+	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
+	mention := core.NewRecord(cmCol)
+	mention.Set("comment_collection", "text_comments")
+	mention.Set("comment_record", suggestionReply.Id)
+	mention.Set("drive_item", f.driveItem.Id)
+	mention.Set("mentioned_user_org", f.mentionUO.Id)
+	if err := f.app.Save(mention); err != nil {
+		t.Fatal(err)
+	}
+
+	runHookSync(t, f.app, mention)
+
+	n := findLatestNotification(t, f.app, f.mentionUser.Id)
+	if n == nil {
+		t.Fatal("expected notification, got none")
+	}
+	wantURL := "https://app.test.local/a/acme/text/" + f.driveItem.Id + "?focusSuggestion=sug_abc123"
+	if got := n.GetString("url"); got != wantURL {
+		t.Errorf("url = %q, want %q (suggestion reply should deep-link with focusSuggestion param)", got, wantURL)
 	}
 }
 

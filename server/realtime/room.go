@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"sync"
 )
@@ -149,6 +150,48 @@ func (r *Room) isEmpty() bool {
 	return len(r.members) == 0
 }
 
+// HasWriter reports whether any current member of the room is
+// authorized to write (i.e. `ReadOnly()` returns false). Used by
+// downstream consumers — text's editEvent buffer in particular — to
+// suppress per-frame audience-only producer work when the only
+// connected peers are read-only viewers.
+//
+// Holds r.mu for the membership read. The ReadOnly flag itself is a
+// pure-read accessor on Client (set once by OnConnect) and safe to
+// call under the room mutex.
+func (r *Room) HasWriter() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for c := range r.members {
+		if !c.ReadOnly() {
+			return true
+		}
+	}
+	return false
+}
+
+// HasOtherWriter reports whether any current member of the room OTHER
+// THAN `excluding` is authorized to write. Used by audience-only
+// producer paths to skip work when the only writer in the room is the
+// sender themselves — solo author edits don't need to journal
+// activity-feed events for nobody else to read.
+//
+// Pass the sender of the inbound frame as `excluding`. A nil
+// `excluding` behaves like HasWriter.
+func (r *Room) HasOtherWriter(excluding *Client) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for c := range r.members {
+		if c == excluding {
+			continue
+		}
+		if !c.ReadOnly() {
+			return true
+		}
+	}
+	return false
+}
+
 // route handles a single frame the transport layer just read off `from`'s
 // WebSocket. The frame is the full wire bytes (clientID || msgType || payload).
 // The broker decides who else should receive it.
@@ -253,6 +296,9 @@ func (r *Room) route(from *Client, frame []byte) {
 		r.fanOut(from, frame)
 		if r.opts.OnDocUpdate != nil {
 			r.opts.OnDocUpdate(r.key.id)
+		}
+		if r.opts.OnDocUpdateContent != nil {
+			r.opts.OnDocUpdateContent(r.key.id, from, payload)
 		}
 		if r.opts.OnDocUpdateSeq != nil && appendedSeq > 0 {
 			r.opts.OnDocUpdateSeq(r.key.id, appendedSeq)
@@ -496,4 +542,65 @@ func (r *Room) PublishServerSlot(payload []byte) {
 	// fanOut(nil, frame) — passing nil as `from` excludes nobody;
 	// every member receives the frame.
 	r.fanOut(nil, frame)
+}
+
+// PublishDocUpdate broadcasts a server-originated Yjs update to every
+// member of the room and journals it (so it survives restart-replay).
+// The frame uses serverSlotID as its sender prefix and MsgDocUpdate as
+// its type, so clients integrate it into their Y.Doc the same way they
+// integrate any other update.
+//
+// Skips:
+//   - UpdateContentValidator — the validator's purpose is to reject
+//     client writes to protected roots; the server is the writer here.
+//   - WritePredicate — server-originated updates are never read-only.
+//   - The server-side serverDoc.ApplyUpdate — the caller has already
+//     mutated the doc to produce these bytes (the bytes ARE the delta
+//     of that mutation); re-applying would be a no-op via Yjs's
+//     idempotency, but skipping saves the cycle.
+//
+// Journal append happens BEFORE fan-out, mirroring the inbound
+// MsgDocUpdate path: if Append fails we log and DROP the broadcast so
+// the in-memory and durable views stay consistent. Same fail-fast
+// contract as the inbound branch.
+//
+// Used by consumers (text Phase 3a) that need to write authorship /
+// activity metadata into the live Y.Doc and have peers converge to
+// the same state.
+//
+// Returns nil on success or empty payload; returns wrapped journal-
+// append error so the caller can react to broadcast failures (e.g.
+// avoid marking state as "committed" when it wasn't).
+func (r *Room) PublishDocUpdate(payload []byte) error {
+	if len(payload) == 0 {
+		return nil
+	}
+	if r.opts.Journal != nil {
+		r.mu.Lock()
+		r.nextSeq++
+		seq := r.nextSeq
+		r.mu.Unlock()
+		if err := r.opts.Journal.Append(r.key.kind, r.key.id, seq, payload); err != nil {
+			// Roll back the seq so the next attempt reuses it —
+			// matches the inbound MsgDocUpdate rollback pattern.
+			r.mu.Lock()
+			if r.nextSeq == seq {
+				r.nextSeq--
+			}
+			r.mu.Unlock()
+			slog.Warn(
+				"realtime: PublishDocUpdate journal append failed; dropping",
+				"kind", r.key.kind, "roomID", r.key.id, "seq", seq, "err", err,
+			)
+			return fmt.Errorf("realtime: PublishDocUpdate journal append failed: %w", err)
+		}
+	}
+	frame := make([]byte, frameOverhead+len(payload))
+	copy(frame[:clientIDLen], serverSlotID[:])
+	frame[clientIDLen] = byte(MsgDocUpdate)
+	copy(frame[frameOverhead:], payload)
+	// fanOut(nil, frame) — passing nil as `from` excludes nobody;
+	// every member receives the frame.
+	r.fanOut(nil, frame)
+	return nil
 }

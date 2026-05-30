@@ -137,6 +137,8 @@ export const driveItemVersionsSchema = z.object({
     created_by: z.string().regex(/^[a-z0-9]+$/).length(15),
     created: z.string().regex(DATETIME_REGEX).optional(),
     updated: z.string().regex(DATETIME_REGEX).optional(),
+    yjs_state: z.string().optional(),
+    version_metadata: z.unknown().optional(),
 })
 
 export const driveItemsSchema = z.object({
@@ -449,6 +451,8 @@ export const textCommentsSchema = z.object({
     created: z.string().regex(DATETIME_REGEX).optional(),
     updated: z.string().regex(DATETIME_REGEX).optional(),
     parent_comment: z.string().regex(/^[a-z0-9]+$/).length(15).optional(),
+    suggestion_id: z.string().max(64).optional(),
+    archived_at: z.string().regex(DATETIME_REGEX).optional(),
 })
 
 export const userOrgSchema = z.object({

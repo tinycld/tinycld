@@ -722,3 +722,94 @@ func TestClientReadOnlyAccessor(t *testing.T) {
 		t.Fatal("ReadOnly() should return false after SetReadOnly(false)")
 	}
 }
+
+// TestUpdateContentValidatorRejectsUpdate verifies that a non-nil
+// UpdateContentValidator can drop an inbound MsgDocUpdate based on its
+// payload contents: the rejected frame must not reach the journal, must
+// not be applied to the server-side mirror, and must not fan out to
+// other peers. An accepted update flows through normally.
+func TestUpdateContentValidatorRejectsUpdate(t *testing.T) {
+	j := &recordingJournal{}
+	validator := func(_ string, update []byte) error {
+		if bytes.Contains(update, []byte("REJECT")) {
+			return errors.New("validator rejected update")
+		}
+		return nil
+	}
+
+	kind := "test-kind-content-validator"
+	RegisterRoomKindWith(kind, RoomKindOptions{
+		Authorize:              allowAllAuth,
+		RuntimeProvider:        stubDocRuntime{},
+		Journal:                j,
+		UpdateContentValidator: validator,
+	})
+	t.Cleanup(func() { unregisterRoomKindForTest(kind) })
+
+	b := NewBroker()
+	c1 := &Client{joinedAt: time.Now()}
+	c2 := &Client{joinedAt: time.Now()}
+	b.join(kind, "room-1", c1)
+	b.join(kind, "room-1", c2)
+
+	room := b.lookupRoomForTest(kind, "room-1")
+	if room == nil {
+		t.Fatalf("room not created")
+	}
+	sh := room.serverDoc.(*stubHandle)
+
+	// --- Rejected update: contains the marker; must be dropped entirely. ---
+	rejected := []byte("REJECT-update-payload")
+	rejectedFrame := make([]byte, frameOverhead+len(rejected))
+	rejectedFrame[clientIDLen] = byte(MsgDocUpdate)
+	copy(rejectedFrame[frameOverhead:], rejected)
+	room.route(c1, rejectedFrame)
+
+	// No journal append, no server apply, no fan-out.
+	j.mu.Lock()
+	if len(j.appends) != 0 {
+		t.Fatalf("rejected frame journaled: appends=%d; want 0", len(j.appends))
+	}
+	j.mu.Unlock()
+	sh.mu.Lock()
+	if sh.applied != 0 {
+		t.Fatalf("rejected frame applied to server doc: applied=%d; want 0", sh.applied)
+	}
+	sh.mu.Unlock()
+	select {
+	case <-c2.send:
+		t.Fatalf("rejected frame fanned out to peer")
+	case <-time.After(20 * time.Millisecond):
+		// no frame — correct
+	}
+
+	// --- Accepted update: doesn't contain the marker; flows through. ---
+	accepted := []byte("normal-update-payload")
+	acceptedFrame := make([]byte, frameOverhead+len(accepted))
+	acceptedFrame[clientIDLen] = byte(MsgDocUpdate)
+	copy(acceptedFrame[frameOverhead:], accepted)
+	room.route(c1, acceptedFrame)
+
+	j.mu.Lock()
+	appends := append([]recordedAppend(nil), j.appends...)
+	j.mu.Unlock()
+	if len(appends) != 1 {
+		t.Fatalf("appends after accepted update = %d; want 1", len(appends))
+	}
+	if string(appends[0].payload) != string(accepted) {
+		t.Fatalf("appended payload = %q; want %q", appends[0].payload, accepted)
+	}
+	sh.mu.Lock()
+	if sh.applied != 1 {
+		t.Fatalf("server-doc applied = %d; want 1", sh.applied)
+	}
+	sh.mu.Unlock()
+	select {
+	case fanned := <-c2.send:
+		if string(fanned[frameOverhead:]) != string(accepted) {
+			t.Fatalf("peer received wrong payload: %q", fanned[frameOverhead:])
+		}
+	case <-time.After(50 * time.Millisecond):
+		t.Fatalf("accepted update was not fanned out to peer")
+	}
+}

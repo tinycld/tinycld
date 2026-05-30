@@ -133,6 +133,8 @@ export interface DriveItemVersions {
     created_by: string
     created: string
     updated: string
+    yjs_state: string
+    version_metadata: any
 }
 
 export interface DriveItems {
@@ -445,6 +447,8 @@ export interface TextComments {
     created: string
     updated: string
     parent_comment: string
+    suggestion_id: string
+    archived_at: string
 }
 
 export interface UserOrg {

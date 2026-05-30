@@ -6,6 +6,10 @@ interface WorkspaceStoreState {
     isMoreOpen: boolean
     isNotificationsOpen: boolean
     activePkgSlug: string | null
+    // Per-package "last visited href" map. Packages may persist the
+    // last deep-link the user opened (e.g. a calc file path) so the
+    // sidebar/rail can re-link straight back to that file the next
+    // time the package is reopened. Persisted across reloads.
     lastPackageHref: Record<string, string>
     toggleSidebar: () => void
     setSidebarOpen: (open: boolean) => void
@@ -39,6 +43,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()(
                 set(s => ({ lastPackageHref: { ...s.lastPackageHref, [slug]: href } })),
             clearLastPackageHref: slug =>
                 set(s => {
+                    if (!(slug in s.lastPackageHref)) return s
                     const next = { ...s.lastPackageHref }
                     delete next[slug]
                     return { lastPackageHref: next }
