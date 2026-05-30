@@ -22,6 +22,16 @@ var (
 
 func RegisterSetupBootstrap(app *pocketbase.PocketBase) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		// Sync AppURL from TINYCLD_PUBLIC_URL on every boot so all server-side
+		// URL builders (email links, share URLs, webhook URLs) use the correct
+		// public address instead of PocketBase's bind address default.
+		if publicURL := strings.TrimRight(os.Getenv("TINYCLD_PUBLIC_URL"), "/"); publicURL != "" {
+			app.Settings().Meta.AppURL = publicURL
+			if err := app.Save(app.Settings()); err != nil {
+				log.Printf("setup bootstrap: failed to persist AppURL from TINYCLD_PUBLIC_URL: %v", err)
+			}
+		}
+
 		// Replace PB's default installer with our own setup URL
 		e.InstallerFunc = func(_ core.App, _ *core.Record, baseURL string) error {
 			token, err := generateToken(32)
