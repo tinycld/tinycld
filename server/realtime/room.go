@@ -150,6 +150,48 @@ func (r *Room) isEmpty() bool {
 	return len(r.members) == 0
 }
 
+// HasWriter reports whether any current member of the room is
+// authorized to write (i.e. `ReadOnly()` returns false). Used by
+// downstream consumers — text's editEvent buffer in particular — to
+// suppress per-frame audience-only producer work when the only
+// connected peers are read-only viewers.
+//
+// Holds r.mu for the membership read. The ReadOnly flag itself is a
+// pure-read accessor on Client (set once by OnConnect) and safe to
+// call under the room mutex.
+func (r *Room) HasWriter() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for c := range r.members {
+		if !c.ReadOnly() {
+			return true
+		}
+	}
+	return false
+}
+
+// HasOtherWriter reports whether any current member of the room OTHER
+// THAN `excluding` is authorized to write. Used by audience-only
+// producer paths to skip work when the only writer in the room is the
+// sender themselves — solo author edits don't need to journal
+// activity-feed events for nobody else to read.
+//
+// Pass the sender of the inbound frame as `excluding`. A nil
+// `excluding` behaves like HasWriter.
+func (r *Room) HasOtherWriter(excluding *Client) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for c := range r.members {
+		if c == excluding {
+			continue
+		}
+		if !c.ReadOnly() {
+			return true
+		}
+	}
+	return false
+}
+
 // route handles a single frame the transport layer just read off `from`'s
 // WebSocket. The frame is the full wire bytes (clientID || msgType || payload).
 // The broker decides who else should receive it.

@@ -269,3 +269,15 @@ func (b *Broker) RouteFrameForTest(kind, roomID string, from *Client, frame []by
 	room.route(from, frame)
 	return room
 }
+
+// JoinForTest joins `c` into (kind, roomID) without sending a frame —
+// the same bootstrap path RouteFrameForTest takes, just without the
+// route step. Consumer packages need this to seed multi-client rooms
+// with audience members BEFORE driving the first frame, so hooks that
+// inspect membership (e.g. text's HasOtherWriter gate on buffer.Note)
+// see the audience as already present. Production code must not call
+// this — real connections always flow through handleConnect.
+func (b *Broker) JoinForTest(kind, roomID string, c *Client) *Room {
+	b.join(kind, roomID, c)
+	return b.lookupRoomForTest(kind, roomID)
+}
