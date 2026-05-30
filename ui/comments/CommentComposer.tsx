@@ -76,9 +76,10 @@ export function CommentComposer(props: CommentComposerProps) {
             // Enter on a hardware keyboard would always submit; for
             // the typical native chat case (mobile keyboard with a
             // dedicated "send" button) that's a feature, not a bug.
-            const webEvent = (
-                e.nativeEvent as unknown as { shiftKey?: boolean; preventDefault?: () => void }
-            )
+            const webEvent = e.nativeEvent as unknown as {
+                shiftKey?: boolean
+                preventDefault?: () => void
+            }
             if (key === 'Enter' && !webEvent.shiftKey) {
                 webEvent.preventDefault?.()
                 onSubmit()
