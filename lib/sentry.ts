@@ -83,4 +83,3 @@ export function captureExceptionToSentry(
         Sentry.captureException(error)
     })
 }
-
