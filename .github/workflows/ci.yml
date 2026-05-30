@@ -37,12 +37,11 @@ jobs:
         with:
           go-version-file: ws/.go-version
       # 3. Clone app + core (the PR's PACKAGE — core itself — is already
-      #    checked out into its slot; bootstrap --tooling skips dirs
-      #    that already exist). Core only needs app + itself to typecheck
-      #    + unit-test.
+      #    checked out into its slot; bootstrap skips dirs that already
+      #    exist). Core only needs app + itself to typecheck + unit-test.
       - name: Assemble workspace (app + core)
         working-directory: ws
-        run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
+        run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
       - name: Install (workspace root)
         working-directory: ws
         run: npm install
@@ -72,7 +71,7 @@ jobs:
           go-version-file: ws/.go-version
       - name: Assemble workspace (app + core)
         working-directory: ws
-        run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
+        run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
       - name: Install (workspace root)
         working-directory: ws
         run: npm install

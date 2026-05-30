@@ -42,10 +42,12 @@ const guestRLSUserOrgRule = `@request.auth.id != "" && (` +
 	` || user = @request.auth.id)`
 
 // guestRLSUsersRule is users' tightened list/view rule. A user U is visible
-// to a caller who has a NON-GUEST membership in an org U also belongs to.
-const guestRLSUsersRule = `@request.auth.id != "" && ` +
-	`user_org_via_user.org.user_org_via_org.user ?= @request.auth.id && ` +
-	`user_org_via_user.org.user_org_via_org.role ?!= "guest"`
+// to a caller who has a NON-GUEST membership in an org U also belongs to,
+// OR when U is the caller themselves (auth-refresh + self-fetch).
+const guestRLSUsersRule = `@request.auth.id != "" && (` +
+	`(user_org_via_user.org.user_org_via_org.user ?= @request.auth.id && ` +
+	`user_org_via_user.org.user_org_via_org.role ?!= "guest")` +
+	` || id = @request.auth.id)`
 
 // guestRLSOrgsMemberRule is the non-guest-member predicate for orgs.
 const guestRLSOrgsMemberRule = `user_org_via_org.user ?= @request.auth.id && ` +
@@ -321,25 +323,29 @@ func TestGuestRLS_UserOrg_MemberSeesRoster(t *testing.T) {
 
 // ============================ users ============================
 
-func TestGuestRLS_Users_GuestSeesNoOtherMembers(t *testing.T) {
+func TestGuestRLS_Users_GuestSeesOnlySelf(t *testing.T) {
 	env := setupGuestRLSApp(t)
 	setListView(t, env.app, "users", guestRLSUsersRule)
 
-	// Guest must not enumerate members. The guest is not a non-guest member of
-	// any org, so the rule matches nothing for them -> totalItems:0.
-	runListScenario(t, env.app, "users", env.guestToken, []string{`"totalItems":0`})
+	// Guest must not enumerate members. With the `|| id = @request.auth.id`
+	// carve-out the guest sees their own row (needed for the PB SDK's
+	// authRefresh after pb.authStore.save) but no one else's.
+	runListScenario(t, env.app, "users", env.guestToken, []string{`"totalItems":1`})
 }
 
 func TestGuestRLS_Users_GuestCannotSeeMemberEmail(t *testing.T) {
 	env := setupGuestRLSApp(t)
 	setListView(t, env.app, "users", guestRLSUsersRule)
 
+	// The roster-leak property: the guest sees themselves (totalItems:1) but
+	// no other member's email. The `|| id = @request.auth.id` self-carve-out
+	// does not widen what the guest can see about anyone else.
 	scenario := &tests.ApiScenario{
 		Method:                http.MethodGet,
 		URL:                   "/api/collections/users/records",
 		Headers:               map[string]string{"Authorization": env.guestToken},
 		ExpectedStatus:        http.StatusOK,
-		ExpectedContent:       []string{`"totalItems":0`},
+		ExpectedContent:       []string{`"totalItems":1`, "guest@test.local"},
 		NotExpectedContent:    []string{"member@test.local"},
 		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
 		DisableTestAppCleanup: true,
@@ -396,8 +402,21 @@ func TestGuestRLS_Users_GuestStillBlockedWithMultipleMembers(t *testing.T) {
 	addSecondMember(t, env)
 	setListView(t, env.app, "users", guestRLSUsersRule)
 
-	// Even with two non-guest members in the shared org, the guest sees no one.
-	runListScenario(t, env.app, "users", env.guestToken, []string{`"totalItems":0`})
+	// Even with two non-guest members in the shared org, the guest sees only
+	// themselves — neither member's row leaks. The same-relation-path-prefix
+	// pin still applies to the non-guest disjunct; the new self-carve-out
+	// matches only the guest's own id.
+	scenario := &tests.ApiScenario{
+		Method:                http.MethodGet,
+		URL:                   "/api/collections/users/records",
+		Headers:               map[string]string{"Authorization": env.guestToken},
+		ExpectedStatus:        http.StatusOK,
+		ExpectedContent:       []string{`"totalItems":1`, "guest@test.local"},
+		NotExpectedContent:    []string{"member@test.local", "member2@test.local"},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
+		DisableTestAppCleanup: true,
+	}
+	scenario.Test(t)
 }
 
 func TestGuestRLS_UserOrg_CrossOrgIsolation(t *testing.T) {
