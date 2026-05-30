@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PACKAGE: core
+  TEST_USER_LOGIN: user@tinycld.org
+  TEST_USER_PW: TestUser1234!
+  ADMIN_USER_LOGIN: admin@tinycld.org
+  ADMIN_USER_PW: AdminPass1234!
+
+jobs:
+  check:
+    name: Typecheck & Unit
+    runs-on: ubuntu-latest
+    steps:
+      # 1. The workspace meta-repo becomes the job root.
+      - uses: actions/checkout@v5
+        with:
+          repository: tinycld/workspace
+          ref: main
+          path: ws
+      # 2. This PR's code, checked out into the member slot.
+      - uses: actions/checkout@v5
+        with:
+          path: ws/${{ env.PACKAGE }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: ws/.node-version
+          cache: npm
+          cache-dependency-path: ws/package-lock.json
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ws/.go-version
+      # 3. Clone app + core (the PR's PACKAGE — core itself — is already
+      #    checked out into its slot; bootstrap --tooling skips dirs
+      #    that already exist). Core only needs app + itself to typecheck
+      #    + unit-test.
+      - name: Assemble workspace (app + core)
+        working-directory: ws
+        run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
+      - name: Install (workspace root)
+        working-directory: ws
+        run: npm install
+      - name: Typecheck + unit
+        working-directory: ws/${{ env.PACKAGE }}
+        run: npx tinycld-pkg check
+
+  go:
+    name: Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: tinycld/workspace
+          ref: main
+          path: ws
+      - uses: actions/checkout@v5
+        with:
+          path: ws/${{ env.PACKAGE }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: ws/.node-version
+          cache: npm
+          cache-dependency-path: ws/package-lock.json
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ws/.go-version
+      - name: Assemble workspace (app + core)
+        working-directory: ws
+        run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
+      - name: Install (workspace root)
+        working-directory: ws
+        run: npm install
+      # Core's Go module is tinycld.org/core at core/server/. The
+      # full ./... runs every subpackage's tests including notify,
+      # realtime, render, sharelink, textextract, userorg, versionhooks.
+      - name: Go tests
+        working-directory: ws/${{ env.PACKAGE }}/server
+        run: go test -count=1 ./...
