@@ -19,7 +19,7 @@ const topics: HelpTopic[] = [
         title: 'Sharing content',
         summary: 'Generating share links',
         tags: ['share', 'links'],
-        body: 'Share tokens live under /share/<token> and are revocable.',
+        body: 'Share tokens live outside the org-scoped tree and are revocable.',
     },
     {
         id: 'mail:compose',

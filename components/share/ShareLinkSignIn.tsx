@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native'
 
 export interface ShareLinkSignInProps {
-    /** The share link token (the public token from /share/[token]). */
+    /** The opaque share token from the package's public route (e.g. /p/<slug>/share/<token>). */
     token: string
     /** The share role — affects copy ("comment" vs "edit"). */
     role: 'commentor' | 'editor'
