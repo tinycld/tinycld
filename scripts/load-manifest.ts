@@ -16,6 +16,13 @@ export interface PackageManifest {
     sidebar?: { component: string }
     provider?: { component: string }
     settings?: { slug: string; component: string; label: string }[]
+    slots?: string[]
+    sidebarContributions?: {
+        target: string
+        slot: string
+        component: string
+        order?: number
+    }[]
     seed?: { script: string }
     tests?: { directory: string }
     build?: { script: string }

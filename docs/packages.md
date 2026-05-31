@@ -268,7 +268,9 @@ export default manifest
 | `hooks.directory` | PocketBase JS hooks symlinked into `server/pb_hooks/`. |
 | `collections` | `register` + `types` export subpaths; wires pbtsdb collections and the schema type. |
 | `sidebar` / `provider` | A package may contribute a sidebar component **or** a context provider that wraps app children. |
-| `settings[]` | Personal Settings panel contributions (`slug`, `label`, `component`). |
+| `settings[]` | Personal Settings panel contributions (`slug`, `label`, `component`). See [Extension points](#extension-points-settings-panels-and-sidebar-slots) below. |
+| `slots[]` | Names of sidebar slots this package exposes for *other* packages to render into. Free-form strings; duplicates within one manifest are a generator error. Render with `<SidebarSlot target="<this-slug>" slot="<name>" />` from `@tinycld/core/components/sidebar-primitives`. |
+| `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order? }` is generator-validated. |
 | `help.directory` | `<id>.md` topics surfaced in the in-app help hub. |
 | `seed.script` | Dev sample-data function. |
 | `server` | Go server extension: `package` is the subdir, `module` is its Go module path. |
@@ -442,7 +444,7 @@ stays tracked).
 
 The **single source of truth** for what's installed — a typed array, one entry
 per linked package, each built by
-`definePackageEntry<PkgSchema>()({ manifest, registerCollections, sidebar, provider, settings })`.
+`definePackageEntry<PkgSchema>()({ manifest, registerCollections, sidebar, provider, settings, sidebarContributions })`.
 It also emits `MergedPackageSchema` as a **literal** intersection of every
 package's `{Pkg}Schema` (`CalcSchema & ContactsSchema & …`); `pocketbase.ts`
 forms `type MergedSchema = Schema & MergedPackageSchema` from it. (It must be a
@@ -501,7 +503,7 @@ which replaces a file the old generator used to write:
 |---|---|---|
 | `derive-stores.ts` | `buildPackageStores` | `package-collections.ts`'s `packageStores` |
 | `static-registry.ts` | `packageRegistry`, `toStaticRegistry` | `package-registry.ts` |
-| `derive-components.ts` | `deriveSidebars` / `deriveProviders` / `deriveSettings` + the `packageSidebars` / `packageProviders` / `packageSettings` consts | `package-sidebars.ts`, `package-providers.ts`, `package-settings.ts` |
+| `derive-components.ts` | `deriveSidebars` / `deriveProviders` / `deriveSettings` / `deriveSidebarContributions` + the `packageSidebars` / `packageProviders` / `packageSettings` / `packageSidebarContributions` consts | `package-sidebars.ts`, `package-providers.ts`, `package-settings.ts`, (new) `package-sidebar-contributions.ts` |
 | `derive-seeds.ts` | `deriveSeeds` (ports the `dependencies` topo-sort) | `package-seeds.ts` |
 
 `usePackages()` still merges the static set (`packageRegistry`) with
@@ -512,6 +514,77 @@ runtime-installed DB packages, exactly as before.
 The generator fails fast on:
 
 - **Duplicate `nav.shortcut`** letters across packages.
+- **Duplicate slot names** within one package's `manifest.slots`.
+- **`sidebarContributions` targeting an unknown slot** on a present host package — the error lists the host's actual `slots` array so you can spot the typo immediately.
+
+It warns (but does not fail) when:
+
+- A `sidebarContributions` entry's `target` is not a present member. The contribution silently goes inactive — normal for a partial checkout — and wakes up automatically when the target is installed.
+
+### Extension points: settings panels and sidebar slots
+
+The generator threads two manifest-declared extension points through the same lazy-import pipeline. Both share the same lifecycle: **manifest field → `gen-config.ts` emits a `lazy(() => import(...))` entry → runtime derivation in `core/lib/packages/derive-components.ts` → host UI calls a React helper that consumes the registry → component loads under `<Suspense>` on first render.**
+
+**Settings panels** (`manifest.settings: [{ slug, label, component }]`):
+
+```ts
+// app/tinycld.config.ts (emitted)
+definePackageEntry<MailSchema>()({
+    manifest: { /* ... */ },
+    settings: [
+        { slug: 'provider', label: 'Provider',
+          Component: lazy(() => import('@tinycld/mail/settings/provider')) },
+    ],
+})
+
+// derive-components.ts
+export const packageSettings = deriveSettings(tinycldConfig)
+// → PackageSettingsGroup[] grouped by package
+
+// app/app/a/[orgSlug]/settings/index.tsx
+packageSettings.map(group => group.panels.map(panel => /* render link */))
+// app/app/a/[orgSlug]/settings/[...section].tsx
+// looks up the matching panel by [pkgSlug, panelSlug] and renders panel.Component
+```
+
+The `component` subpath must resolve through the package's `package.json` `exports` wildcard (e.g. `"./settings/*": "./tinycld/mail/settings/*.tsx"`). The component must default-export — the generator imports by default name. The `slug` must be unique across **all** installed packages, not just within one manifest.
+
+**Sidebar slots** (`manifest.slots: ['sidebar.<name>']` on the host + `manifest.sidebarContributions: [{ target, slot, component, order? }]` on the contributor):
+
+```ts
+// Host: calendar/manifest.ts
+slots: ['sidebar.after-calendars']
+
+// Host: calendar/tinycld/calendar/sidebar.tsx
+import { SidebarSlot } from '@tinycld/core/components/sidebar-primitives'
+<SidebarSlot target="calendar" slot="sidebar.after-calendars" />
+
+// Contributor: calendar-slots/manifest.ts
+sidebarContributions: [
+    { target: 'calendar', slot: 'sidebar.after-calendars',
+      component: 'sidebar-contributions/booking-pages' },
+]
+
+// app/tinycld.config.ts (emitted for the contributor)
+sidebarContributions: [
+    { target: 'calendar', slot: 'sidebar.after-calendars', order: 0,
+      Component: lazy(() => import('@tinycld/calendar-slots/sidebar-contributions/booking-pages')) },
+]
+
+// derive-components.ts
+export const packageSidebarContributions = deriveSidebarContributions(tinycldConfig)
+// → Record<targetSlug, Record<slotName, SidebarContributionEntry[]>> (sorted)
+
+// core/components/sidebar-primitives/SidebarSlot.tsx
+const entries = packageSidebarContributions[target]?.[slot] ?? []
+// renders each entry's Component under <Suspense fallback={null}>
+```
+
+The contributor must add an `exports` wildcard matching the `component` subpath (e.g. `"./sidebar-contributions/*": "./tinycld/calendar-slots/sidebar-contributions/*.tsx"`). The component is a regular React component — `<SidebarSlot>` renders contributions back-to-back with no wrapper, so the contributor owns its own heading, items, and structure. Ordering: ascending `order` (default 0), ties broken by contributor slug.
+
+The host can also declare slots and never render them: the generator will allow that, but no contribution targeting that slot will appear — typically a sign the host's sidebar JSX is out of sync with its manifest.
+
+For author-facing prose, link readers to the website pages: [Settings](https://tinycld.org/docs/anatomy/settings) and [Sidebar slots](https://tinycld.org/docs/anatomy/sidebar-slots).
 
 ---
 
