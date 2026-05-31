@@ -64,6 +64,11 @@ export interface PackageManifest {
         directory: string
     }
 
+    repository?: {
+        url: string
+        issueTemplate?: string
+    }
+
     /**
      * Subpath (relative to the package root, resolved through the package's
      * exports map) to a TS module exporting a default async function. The

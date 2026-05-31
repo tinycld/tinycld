@@ -48,6 +48,7 @@ export function usePackages(): PackageEntry[] {
                 seed: manifest.seed,
                 tests: manifest.tests,
                 server: manifest.server,
+                repository: manifest.repository,
                 dependencies: manifest.dependencies,
                 packageName: record.npm_package ?? manifest.slug,
             })

@@ -2,6 +2,7 @@ import { Pressable, Text, View } from 'react-native'
 import { useHelpStore } from '../../lib/help/store'
 import type { HelpTopic } from '../../lib/help/types'
 import { useHelpGroupForPackage } from '../../lib/help/use-help-topics'
+import { ReportIssueRow } from './ReportIssueRow'
 
 interface Props {
     pkgSlug: string
@@ -14,9 +15,14 @@ export function PackageTopicList({ pkgSlug }: Props) {
 
     if (topics.length === 0) {
         return (
-            <Text className="text-sm text-muted-foreground px-4">
-                No topics in this package yet.
-            </Text>
+            <View>
+                <Text className="text-sm text-muted-foreground px-4">
+                    No topics in this package yet.
+                </Text>
+                <View className="mt-3">
+                    <ReportIssueRow pkgSlug={pkgSlug} />
+                </View>
+            </View>
         )
     }
 
@@ -30,6 +36,9 @@ export function PackageTopicList({ pkgSlug }: Props) {
                     onPress={() => navigateToTopic(topic.id)}
                 />
             ))}
+            <View className="border-t border-border">
+                <ReportIssueRow pkgSlug={pkgSlug} />
+            </View>
         </View>
     )
 }
