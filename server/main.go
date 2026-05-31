@@ -57,6 +57,12 @@ func main() {
 		RegisterExtras: registerPackageExtensions,
 	})
 
+	// `export-types` regenerates pbSchema.ts + pbZodSchema.ts and exits.
+	// Wired here (not inside coreserver.Register) so each app opts in —
+	// the subcommand assumes an installed app with its own pb_data and
+	// migrations dir, which not every coreserver consumer has.
+	app.RootCmd.AddCommand(coreserver.NewExportTypesCommand(app, coreserver.DefaultTypesDir(), ""))
+
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
 	}

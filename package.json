@@ -5,7 +5,7 @@
     "type": "module",
     "main": "expo-router/entry",
     "scripts": {
-        "packages:generate": "tsx scripts/generate.ts",
+        "packages:generate": "tsx scripts/generate.ts && tsx scripts/export-types.ts",
         "assets:copy-pdfjs": "tsx scripts/copy-pdfjs-assets.ts",
         "dev": "tsx scripts/dev.ts",
         "db:reset": "tsx scripts/reset-dev-db.ts",

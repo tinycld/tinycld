@@ -27,10 +27,34 @@
 # tinycld.org/app at app/server/ with `replace tinycld.org/core => ../../core/server`
 # and a generated go.work wiring each feature's ../../node_modules/@tinycld/<x>/server.
 
+# Pre-builder: compiles the standalone `export-types` Go binary used by the
+# workspace postinstall (see app/scripts/export-types.ts). The binary
+# regenerates core/types/pbSchema.ts + pbZodSchema.ts from migrations so the
+# subsequent `expo export` can typecheck every package's collections.ts /
+# types.ts. It imports only core/coreserver — pure Go, no CGO, no feature-
+# server dependency chain (mupdf, goheif, dav1d), so we don't drag a C
+# toolchain into the lean web-builder Node stage just to write two TS files.
+#
+# Sources copied: core/server only (the binary's full dependency closure).
+# The go-builder stage below builds the real CGO_ENABLED Linux runtime binary
+# from the full workspace; this stage is throwaway, ~50 lines of Go work.
+FROM golang:1.25-trixie AS types-binary-builder
+WORKDIR /src
+COPY core/server/ ./core/server/
+WORKDIR /src/core/server
+RUN CGO_ENABLED=0 go build -o /out/export-types ./cmd/export-types/
+
 # Node stage: install the workspace (runs the generator), build the web app.
 FROM node:22-bookworm-slim AS web-builder
 
 WORKDIR /ws
+
+# The pre-built export-types binary. app/scripts/export-types.ts reads
+# TINYCLD_EXPORT_TYPES_BIN and invokes the binary directly when set,
+# skipping the `go run` toolchain dependency that would otherwise force a
+# Go install in this Node-only stage.
+COPY --from=types-binary-builder /out/export-types /usr/local/bin/export-types
+ENV TINYCLD_EXPORT_TYPES_BIN=/usr/local/bin/export-types
 
 # Root manifests + shared test stubs. Copied first so the subsequent member
 # COPYs are the only thing that changes between most builds. package-scripts (the
