@@ -1,6 +1,6 @@
 {
     "expo": {
-        "name": "TinyCldSpike",
+        "name": "TinyCld",
         "slug": "tinycld-spike",
         "scheme": "tinycldspike",
         "platforms": ["ios", "android", "web"],

@@ -10,8 +10,10 @@ import { WorkspaceLayout } from '@tinycld/core/components/workspace/WorkspaceLay
 import { useAuth } from '@tinycld/core/lib/auth'
 import { useHelpSearchShortcut } from '@tinycld/core/lib/help/use-help-search-shortcut'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
+import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { OrgSlugProvider } from '@tinycld/core/lib/use-org-slug'
 import { useGlobalSearchParams, usePathname } from 'expo-router'
+import Head from 'expo-router/head'
 import { useEffect } from 'react'
 
 export default function OrgLayout() {
@@ -43,6 +45,7 @@ function OrgLayoutInner() {
 
     return (
         <>
+            <OrgTitle />
             <ActivePkgSync />
             <ImportNotifier />
             <NotifyContextSync />
@@ -52,6 +55,16 @@ function OrgLayoutInner() {
             <HelpDrawer />
             <HelpSearchPalette />
         </>
+    )
+}
+
+function OrgTitle() {
+    const { org } = useOrgInfo()
+    const title = org ? `TinyCld – ${org.name}` : "TinyCld";
+    return (
+        <Head>
+            <title>{title}</title>
+        </Head>
     )
 }
 
