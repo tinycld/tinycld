@@ -46,6 +46,13 @@ export default defineConfig({
                 find: /^expo-router$/,
                 replacement: path.join(APP_DIR, 'tests', 'expo-router-stub.ts'),
             },
+            // expo-router/head re-exports react-helmet-async whose CJS entry
+            // contains JSX that Vite cannot parse. Unit tests don't observe
+            // document.title side-effects; stub Head to a no-op renderer.
+            {
+                find: /^expo-router\/head$/,
+                replacement: path.join(APP_DIR, 'tests', 'expo-router-head-stub.ts'),
+            },
             // lucide-react-native v1.16+ individual icon .mjs files contain
             // Flow-style `typeof` syntax that Vite cannot parse. Stub the whole
             // package so unit tests that transitively import icons don't crash.
