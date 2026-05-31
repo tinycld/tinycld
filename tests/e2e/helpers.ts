@@ -40,28 +40,22 @@ export async function login(page: Page) {
 // chunk downloads cleanly without contention, and the page never tears
 // down + remounts.
 //
-// `waitFor` gates the helper on a Locator that proves the package's
-// screen has rendered before returning.
-//
-// Default (omitted): waits for the sidebar to mount via the
-// `package-sidebar-mounted` testID PackageSidebar.tsx emits inside
-// its Suspense boundary. This is the common case — most packages
-// contribute a sidebar (mail, contacts, calendar, drive), and the
-// lazy sidebar chunk unsuspending is what tests need to wait on.
-//
-// Packages WITHOUT a sidebar (text, calc, the shortcut-stub fixture)
-// must pass an explicit Locator since the default testID will never
-// appear. Same applies when the test needs to gate on a specific
-// screen element instead of just the sidebar shell:
+// Returns once the URL has changed. Callers that need to wait for a
+// specific element (sidebar mount, an inbox row, a button) can pass
+// an opt-in `waitFor` Locator and the helper forwards it to
+// `locator.waitFor({ state: 'visible' })`. Examples:
 //
 //     await navigateToPackage(page, 'mail', {
 //         waitFor: page.getByRole('button', { name: 'Compose' }),
 //     })
+//     await navigateToPackage(page, 'drive', {
+//         waitFor: page.getByTestId('package-sidebar-mounted'),
+//     })
 //
-// Accepts any Playwright `Locator` (`page.getByRole(...)`,
-// `page.getByTestId(...)`, `page.getByText(...).first()`, …) and
-// forwards to the same `locator.waitFor({ state: 'visible' })`
-// callers would write by hand.
+// No default wait — layouts vary (MobileLayout in core doesn't
+// render PackageSidebar, packages like text/calc don't contribute
+// one), so there's no universal post-navigation signal. The caller
+// knows which UI it's about to interact with; let it gate on that.
 //
 // `pkg` is the lowercase slug (mail, calendar, drive, ...).
 export async function navigateToPackage(page: Page, pkg: string, options?: { waitFor?: Locator }) {
@@ -75,8 +69,9 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     await railLink.waitFor({ state: 'visible' })
     await railLink.click()
     await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/${pkg}(/|$|\\?)`))
-    const target = options?.waitFor ?? page.getByTestId('package-sidebar-mounted')
-    await target.waitFor({ state: 'visible' })
+    if (options?.waitFor) {
+        await options.waitFor.waitFor({ state: 'visible' })
+    }
 }
 
 export async function clickSidebarItem(page: Page, label: string) {
