@@ -21,6 +21,7 @@ export interface PackageManifest {
     build?: { script: string }
     server?: { package: string; module: string }
     help?: { directory: string }
+    repository?: { url: string; issueTemplate?: string }
     dependencies?: string[]
 }
 

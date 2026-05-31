@@ -1,4 +1,5 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
+import { ReportIssueRow } from '@tinycld/core/components/help/ReportIssueRow'
 import { useHelpGroupForPackage } from '@tinycld/core/lib/help/use-help-topics'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -56,6 +57,9 @@ export default function PackageHelpIndex() {
                             <ChevronRight size={18} color={mutedColor} />
                         </Pressable>
                     ))}
+                </View>
+                <View className="mt-4 rounded-xl border overflow-hidden bg-surface-secondary border-border">
+                    <ReportIssueRow pkgSlug={group.pkgSlug} />
                 </View>
             </View>
         </ScrollView>

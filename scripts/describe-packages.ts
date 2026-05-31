@@ -29,6 +29,7 @@ export function manifestToConfigPkg(packageName: string, manifest: PackageManife
             ...(manifest.nav ? { nav: manifest.nav } : {}),
             ...(manifest.routes ? { routes: manifest.routes } : {}),
             ...(manifest.publicRoutes ? { publicRoutes: manifest.publicRoutes } : {}),
+            ...(manifest.repository ? { repository: manifest.repository } : {}),
             ...(manifest.dependencies ? { dependencies: manifest.dependencies } : {}),
         },
     }
