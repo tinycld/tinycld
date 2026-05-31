@@ -2,8 +2,21 @@
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { pb } from '@tinycld/core/lib/pocketbase'
-import type { DriveShares, UserOrg } from '@tinycld/core/types/pbSchema'
+import type { UserOrg } from '@tinycld/core/types/pbSchema'
 import { type ShareSession, useShareSession } from '../anon-identity'
+
+// drive_shares is owned by @tinycld/drive — its row shape isn't part of
+// pbSchema in an app assembled without drive (e.g. core's standalone CI).
+// Declare the minimal local shape this hook needs; the runtime collection
+// is provided by drive's migrations, and the API contract is stable
+// enough that this local copy doesn't drift in practice. Mirrors the
+// pattern used by google-takeout-import for its mail-collection types.
+interface DriveSharesRow {
+    id: string
+    item: string
+    user_org: string
+    role: 'owner' | 'editor' | 'commentor' | 'viewer'
+}
 
 // Visitor-role classification used by both the share route (to decide
 // whether to redirect a signed-in user to the workspace) and the share-
@@ -31,7 +44,7 @@ interface ShareVisitorRoleResult {
     shareRole?: 'viewer' | 'commentor' | 'editor'
 }
 
-interface DriveShareWithUserOrg extends DriveShares {
+interface DriveShareWithUserOrg extends DriveSharesRow {
     expand?: { user_org?: UserOrg }
 }
 
