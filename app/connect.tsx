@@ -1,4 +1,5 @@
 import { ConnectIllustration } from '@tinycld/core/components/connect/ConnectIllustration'
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
 import {
     normalizeAddress,
@@ -97,6 +98,7 @@ export default function Connect() {
 
     return (
         <SafeAreaView className="flex-1 bg-background" edges={['top', 'bottom']}>
+            <DocumentTitle title="Connect" includeOrg={false} />
             <ScrollView
                 contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28, paddingBottom: 32 }}
                 showsVerticalScrollIndicator={false}

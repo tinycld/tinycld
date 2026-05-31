@@ -1,5 +1,6 @@
 import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import { captureException } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
@@ -18,6 +19,7 @@ export default function OrgPackageSettings() {
     if (!isAdmin) {
         return (
             <View className="flex-1 p-5 items-center justify-center bg-background">
+                <DocumentTitle pkg="Settings" title="Packages" />
                 <Text className="text-muted-foreground text-base">
                     Only admins can manage packages.
                 </Text>
@@ -27,6 +29,7 @@ export default function OrgPackageSettings() {
 
     return (
         <ScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }}>
+            <DocumentTitle pkg="Settings" title="Packages" />
             <View className="p-5 max-w-[600px] w-full gap-4">
                 <Text className="text-foreground text-[22px] font-bold">Packages</Text>
                 <Text className="text-muted-foreground text-sm">

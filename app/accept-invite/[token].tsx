@@ -1,3 +1,4 @@
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
@@ -72,6 +73,7 @@ export default function AcceptInvite() {
 
     return (
         <View className="flex-1 items-center justify-center p-5 bg-background">
+            <DocumentTitle title="Accept invite" includeOrg={false} />
             {loadState.status === 'loading' && <LoadingCard />}
             {loadState.status === 'invalid' && <InvalidCard message={loadState.message} />}
             {loadState.status === 'ready' && <AcceptForm token={token} info={loadState.info} />}

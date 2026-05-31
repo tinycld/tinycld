@@ -1,3 +1,4 @@
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { useHelpGroupForPackage } from '@tinycld/core/lib/help/use-help-topics'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -15,6 +16,7 @@ export default function PackageHelpIndex() {
     if (!group) {
         return (
             <View className="flex-1 bg-background p-5">
+                <DocumentTitle pkg="Help" />
                 <Text className="text-foreground text-2xl font-bold mb-2">Help not available</Text>
                 <Text className="text-muted-foreground text-sm">
                     No help topics are installed for "{pkg}".
@@ -25,6 +27,7 @@ export default function PackageHelpIndex() {
 
     return (
         <ScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }}>
+            <DocumentTitle pkg="Help" title={group.packageName} />
             <View className="p-5 max-w-[720px] w-full">
                 <Text className="mb-4 text-foreground text-[28px] font-bold">
                     {group.packageName} help

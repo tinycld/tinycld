@@ -1,3 +1,4 @@
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { LabelManagerPanel } from '@tinycld/core/components/LabelManagerDialog'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -12,6 +13,7 @@ export default function LabelsSettings() {
 
     return (
         <View className="flex-1 bg-background">
+            <DocumentTitle pkg="Settings" title="Labels" />
             <View className="flex-row gap-3 items-center p-5 pb-0">
                 <Pressable onPress={navigateBack}>
                     <ArrowLeft size={24} color={fgColor} />

@@ -1,4 +1,5 @@
 import { and, eq } from '@tanstack/db'
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -49,6 +50,7 @@ export default function AuditLogSettings() {
     if (!isAdmin) {
         return (
             <View className="flex-1 p-5 items-center justify-center bg-background">
+                <DocumentTitle pkg="Settings" title="Audit log" />
                 <Text className="text-muted-foreground text-base">
                     Only admins can view audit logs.
                 </Text>
@@ -58,6 +60,7 @@ export default function AuditLogSettings() {
 
     return (
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="bg-background">
+            <DocumentTitle pkg="Settings" title="Audit log" />
             <View className="flex-1 p-5 max-w-[700px]">
                 <View className="flex-row gap-3 items-center mb-5">
                     <Pressable onPress={navigateBack}>

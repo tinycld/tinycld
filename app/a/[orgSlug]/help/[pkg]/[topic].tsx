@@ -1,3 +1,4 @@
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { HelpTopicView } from '@tinycld/core/components/help/HelpTopicView'
 import type { HelpTopicId } from '@tinycld/core/lib/help/types'
 import { useHelpTopic } from '@tinycld/core/lib/help/use-help-topics'
@@ -12,6 +13,7 @@ export default function HelpTopicPermalink() {
     if (!helpTopic) {
         return (
             <View className="flex-1 bg-background p-5">
+                <DocumentTitle pkg="Help" />
                 <Text className="text-foreground text-2xl font-bold mb-2">Topic not found</Text>
                 <Text className="text-muted-foreground text-sm">
                     The help topic "{id}" is not installed.
@@ -22,6 +24,7 @@ export default function HelpTopicPermalink() {
 
     return (
         <ScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }}>
+            <DocumentTitle pkg="Help" title={helpTopic.title} />
             <View className="p-5 max-w-[720px] w-full">
                 <HelpTopicView topic={helpTopic} />
             </View>

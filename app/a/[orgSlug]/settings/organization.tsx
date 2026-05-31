@@ -1,5 +1,6 @@
 import { eq } from '@tanstack/db'
 import { useQuery, useQueryClient, useMutation as useRawMutation } from '@tanstack/react-query'
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { formatBytes } from '@tinycld/core/lib/format-utils'
@@ -106,6 +107,7 @@ export default function OrganizationSettings() {
     if (!isAdmin) {
         return (
             <View className="flex-1 p-5 items-center justify-center bg-background">
+                <DocumentTitle pkg="Settings" title="Organization" />
                 <Text className="text-muted-foreground" style={{ fontSize: 16 }}>
                     Only admins can manage organization settings.
                 </Text>
@@ -115,6 +117,7 @@ export default function OrganizationSettings() {
 
     return (
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="bg-background">
+            <DocumentTitle pkg="Settings" title="Organization" />
             <View className="flex-1 p-5 max-w-[600px]">
                 <View className="flex-row justify-between items-center mb-5">
                     <View className="flex-row gap-3 items-center">

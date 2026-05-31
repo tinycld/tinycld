@@ -1,3 +1,4 @@
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { searchHelpTopics } from '@tinycld/core/lib/help/search'
 import type { HelpTopicId } from '@tinycld/core/lib/help/types'
 import { useHelpGroups, useHelpTopics } from '@tinycld/core/lib/help/use-help-topics'
@@ -35,6 +36,7 @@ export default function HelpHub() {
 
     return (
         <ScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }}>
+            <DocumentTitle pkg="Help" />
             <View className="p-5 max-w-[720px] w-full">
                 <Text className="mb-4 text-foreground text-[28px] font-bold">Help</Text>
 

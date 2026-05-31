@@ -1,4 +1,5 @@
 import { ConnectIllustration } from '@tinycld/core/components/connect/ConnectIllustration'
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
 import {
     normalizeAddress,
@@ -86,6 +87,7 @@ export default function ConnectWeb() {
                 padding: 32,
             }}
         >
+            <DocumentTitle title="Connect" includeOrg={false} />
             <View
                 className="w-full rounded-[20px] bg-surface border border-border overflow-hidden flex-row flex-wrap"
                 style={{ maxWidth: 880 }}

@@ -1,4 +1,5 @@
 import { eq } from '@tanstack/db'
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { MemberAvatar } from '@tinycld/core/components/settings/members/MemberAvatar'
 import {
     PendingBadge,
@@ -122,6 +123,7 @@ export default function MembersSettings() {
     if (!isAdmin) {
         return (
             <View className="flex-1 items-center justify-center p-5 bg-background">
+                <DocumentTitle pkg="Settings" title="Members" />
                 <View
                     className="items-center gap-3 rounded-xl bg-surface-secondary border border-border"
                     style={{
@@ -155,6 +157,7 @@ export default function MembersSettings() {
 
     return (
         <>
+            <DocumentTitle pkg="Settings" title="Members" />
             <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="bg-background">
                 <View className="flex-1 gap-6 p-5" style={{ maxWidth: 820 }}>
                     <View className="flex-row items-center gap-3">

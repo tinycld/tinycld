@@ -1,5 +1,6 @@
 import { DemoFollowUpModal } from '@tinycld/core/components/DemoFollowUpModal'
 import { DemoIntroModal } from '@tinycld/core/components/DemoIntroModal'
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { HelpDrawer } from '@tinycld/core/components/help/HelpDrawer'
 import { HelpSearchPalette } from '@tinycld/core/components/help/HelpSearchPalette'
 import { NotifyContextSync } from '@tinycld/core/components/NotifyContextSync'
@@ -13,7 +14,6 @@ import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { OrgSlugProvider } from '@tinycld/core/lib/use-org-slug'
 import { useGlobalSearchParams, usePathname } from 'expo-router'
-import Head from 'expo-router/head'
 import { useEffect } from 'react'
 
 export default function OrgLayout() {
@@ -29,6 +29,7 @@ export default function OrgLayout() {
 function OrgLayoutInner() {
     const auth = useAuth({ throwIfAnon: false })
     const isReady = !auth.isInitializing && auth.isLoggedIn
+    const { org } = useOrgInfo()
     // Bind ⌘/ globally so the help palette is reachable from any
     // org-scoped screen — not just package detail screens. The hook
     // is a no-op on native.
@@ -45,7 +46,7 @@ function OrgLayoutInner() {
 
     return (
         <>
-            <OrgTitle />
+            <DocumentTitle title={org?.name} includeOrg={false} />
             <ActivePkgSync />
             <ImportNotifier />
             <NotifyContextSync />
@@ -55,16 +56,6 @@ function OrgLayoutInner() {
             <HelpDrawer />
             <HelpSearchPalette />
         </>
-    )
-}
-
-function OrgTitle() {
-    const { org } = useOrgInfo()
-    const title = org ? `TinyCld – ${org.name}` : 'TinyCld'
-    return (
-        <Head>
-            <title>{title}</title>
-        </Head>
     )
 }
 

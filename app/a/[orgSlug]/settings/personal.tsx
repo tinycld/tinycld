@@ -1,3 +1,4 @@
+import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { DragHandle } from '@tinycld/core/components/DragHandle'
 import { AboutSection } from '@tinycld/core/components/settings/AboutSection'
 import { DeleteAccountSection } from '@tinycld/core/components/settings/DeleteAccountSection'
@@ -54,6 +55,7 @@ export default function PersonalSettings() {
 
     return (
         <GestureHandlerRootView className="flex-1">
+            <DocumentTitle pkg="Settings" title="Personal" />
             <ScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }}>
                 <View className="p-5 max-w-[600px] gap-6">
                     <View className="flex-row gap-3 items-center">
