@@ -17,6 +17,13 @@ const PORT = Number(process.env.E2E_PORT ?? 7200)
 const EMAIL_LOG_PATH = path.join(import.meta.dirname, 'tmp', 'emails.log')
 
 export default defineConfig({
+    // Scoped to tests/e2e/ specifically. The tests/install/ tree has
+    // its own playwright.config.ts and is invoked separately by the
+    // docker smoke-test workflow — leaving testDir at the playwright
+    // default (this file's dir) would pull both into the same run, and
+    // the install spec's EXPECTED_BUNDLED assertions would trip when
+    // run against the regular expo:test webServer.
+    testDir: path.join(import.meta.dirname, 'tests', 'e2e'),
     testMatch: '**/*.spec.ts',
     // Per-failure artifacts: trace, screenshot, video. retain-on-failure
     // skips writing for passing tests (saves disk + upload size on green

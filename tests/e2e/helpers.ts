@@ -28,9 +28,36 @@ export async function login(page: Page) {
     await page.waitForURL(/\/a\//, { timeout: 15_000 })
 }
 
+// Navigate to a package's org-scoped route via the rail link in the app
+// shell. We click the rail link rather than calling page.goto() because
+// goto is a hard browser navigation that cancels every in-flight fetch,
+// including any lazy chunk the previous route had already started
+// loading. On CI that cancellation triggers a 5+ second retry/recompile
+// cycle inside Metro, and the package's screen chunk (lazy() in
+// tinycld.config.ts) doesn't settle until after the test's first
+// assertion has already timed out. Clicking does SPA navigation through
+// expo-router: previously-loaded chunks stay loaded, the new package's
+// chunk downloads cleanly without contention, and the page never tears
+// down + remounts.
+//
+// Returns after the URL change is observed. Callers that need to wait
+// for a specific page element (e.g. a sidebar entry, an inbox row, a
+// button) MUST assert on it explicitly — this helper deliberately
+// doesn't wait on package-internal UI so it works for any package,
+// including ones with no sidebar.
+//
+// `pkg` is the lowercase slug (mail, calendar, drive, ...).
 export async function navigateToPackage(page: Page, pkg: string) {
-    await page.goto(`/a/${ORG_SLUG}/${pkg}`)
-    await page.waitForLoadState('domcontentloaded')
+    // Match by URL prefix rather than exact href: some packages (calc,
+    // text, …) rewrite their rail link to deep-link the user's last
+    // visited file (e.g. /a/<org>/calc/<id>), so the rail anchor no
+    // longer matches the bare /a/<org>/<pkg> URL. Prefix match keeps
+    // this working regardless of whether the rail item is bare or
+    // deep-linked.
+    const railLink = page.locator(`a[href^="/a/${ORG_SLUG}/${pkg}"]`).first()
+    await railLink.waitFor({ state: 'visible' })
+    await railLink.click()
+    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/${pkg}(/|$|\\?)`))
 }
 
 export async function clickSidebarItem(page: Page, label: string) {

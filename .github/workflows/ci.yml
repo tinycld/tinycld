@@ -18,7 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # app (this repo) is the triggering checkout. bootstrap GENERATES the
-      # workspace root into ws/ and clones the other members around ws/app.
+      # workspace root into ws/ and clones core as the only sibling app
+      # genuinely depends on — no `--with <feature>` flags. App PRs only
+      # check app's own code; cross-package integration drift surfaces on
+      # the downstream feature PR's CI.
       - uses: actions/checkout@v5
         with:
           path: ws/app
@@ -28,19 +31,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version-file: ws/app/.node-version
-      # bootstrap clones every feature so `npm install` can resolve app's
-      # `@tinycld/contacts` workspace dep. The check below is scoped to app
-      # only — feature siblings run their own CI against their own changes,
-      # so app PRs shouldn't be gated on cross-package type drift or
-      # cross-package lint debt. This matches the discipline: each repo's
-      # PRs check that repo's code; integration drift surfaces at merge
-      # time via per-repo CI on the downstream PR.
-      - name: Assemble workspace (generate root + all members)
+      - name: Assemble workspace (app + core)
         working-directory: ws
-        run: >
-          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
-          --with contacts --with mail --with calendar --with drive
-          --with calc --with text --with google-takeout-import
+        run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
       # Go toolchain after assembly: .go-version is bootstrap-generated into ws/.
       - uses: actions/setup-go@v6
         with:
@@ -48,13 +41,6 @@ jobs:
       - name: Install (workspace root)
         working-directory: ws
         run: npm install
-      # tinycld-pkg check runs lint + typecheck + unit, scoped to the app
-      # member. Replaces the previous separate `npm run lint` (ecosystem-wide
-      # biome sweep) + `tinycld-pkg check` pair. The ecosystem sweep was
-      # accidentally making every app PR depend on every sibling's lint
-      # cleanliness — a single feature repo's biome regression would block
-      # unrelated app PRs. With this change, app PRs check app's own code
-      # and each feature repo catches its own lint issues on its own PRs.
       - name: Check (lint + typecheck + unit)
         working-directory: ws/app
         run: npx tinycld-pkg check
@@ -63,32 +49,95 @@ jobs:
     name: Go build & test
     runs-on: ubuntu-latest
     steps:
-      # app (this repo) is the triggering checkout; bootstrap generates the root
-      # and clones the rest around ws/app.
+      # Same minimal assembly as the checks job — app+core only. The
+      # generator emits a package_extensions.go and go.work that import
+      # only the features present in the workspace, so without `--with
+      # <feature>` flags, app's Go build embeds zero feature servers and
+      # builds cleanly. Feature PRs verify their own Go modules on their
+      # own CI; integration is tested at release time.
       - uses: actions/checkout@v5
         with:
           path: ws/app
       - uses: actions/setup-node@v5
         with:
           node-version-file: ws/app/.node-version
-      # All feature server packages must be present so go.work + the Go build
-      # see every tinycld.org/packages/* module.
-      - name: Assemble workspace (generate root + all members)
+      - name: Assemble workspace (app + core)
         working-directory: ws
-        run: >
-          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
-          --with contacts --with mail --with calendar --with drive
-          --with calc --with text --with google-takeout-import
-      # Go toolchain after assembly: .go-version is bootstrap-generated into ws/.
+        run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
       - uses: actions/setup-go@v6
         with:
           go-version-file: ws/.go-version
       - name: Install (workspace root)
         working-directory: ws
         run: npm install
+      # go mod download populates go.sum entries the committed go.sum is
+      # missing — specifically the `/go.mod h1:` hashes for transitive
+      # deps resolved through go.work's `use ../../core/server`. Without
+      # this, go build errors on "missing go.sum entry for go.mod file"
+      # the first time a sibling module is reached.
+      - name: Go mod download
+        working-directory: ws/app/server
+        run: go mod download
       - name: Go build
         working-directory: ws/app/server
         run: go build -o tinycld .
       - name: Go test
         working-directory: ws/app/server
         run: go test -tags no_ui ./...
+
+  e2e:
+    name: E2E (app shell)
+    runs-on: ubuntu-latest
+    steps:
+      # app+core assembled by bootstrap as usual, then we scaffold a tiny
+      # shortcut-stub package locally so the keyboard-shortcut tests have
+      # a real package contributing nav.shortcut + a routable URL. The
+      # stub keeps app's e2e fully self-contained (no dependency on any
+      # real feature package) — the same pattern drive/ uses for its
+      # share-stub scaffolder. See tests/scripts/scaffold-shortcut-stub.ts
+      # for what the stub provides.
+      - uses: actions/checkout@v5
+        with:
+          path: ws/app
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: ws/app/.node-version
+      - name: Assemble workspace (app + core)
+        working-directory: ws
+        run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ws/.go-version
+      - name: Install (workspace root)
+        working-directory: ws
+        run: npm install
+      # go mod download before E2E so the webServer (which builds PB
+      # via npm run expo:test → reset-dev-db) doesn't fail on a missing
+      # go.sum entry. Same fix as the Go job above; both need it
+      # because the committed go.sum lacks the `/go.mod h1:` hashes for
+      # transitive deps resolved through go.work's `use ../../core/server`.
+      - name: Go mod download
+        working-directory: ws/app/server
+        run: go mod download
+      - name: Scaffold shortcut-stub package
+        working-directory: ws
+        run: npx tsx app/tests/scripts/scaffold-shortcut-stub.ts
+      - name: Install Playwright browsers
+        working-directory: ws/app
+        run: npx playwright install --with-deps chromium
+      - name: E2E
+        working-directory: ws/app
+        run: npx tinycld-pkg test:e2e
+      # Capture Playwright's per-failure artifacts (trace, screenshot,
+      # video, error-context.md) so a CI failure can be diagnosed
+      # without a re-run. `if: failure()` skips the upload on green
+      # runs to save bandwidth + retention.
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            ws/app/test-results/
+            ws/app/playwright-report/
+          retention-days: 14
