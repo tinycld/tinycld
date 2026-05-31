@@ -3,6 +3,11 @@
  *
  * 1. Truncates tmp/emails.log so each test run sees a clean mail log.
  * 2. Warms the Expo web bundle before any test runs.
+ * 3. (Opt-in via TINYCLD_WARM_PACKAGES env var) warms per-package lazy
+ *    chunks for each named package by actually navigating a real
+ *    browser into them. Each chunk is compiled on first dynamic import;
+ *    the per-package E2E workflows pay that cost once here upfront so
+ *    the per-test budget doesn't race the compile.
  *
  * The DB reset+seed is NOT done here — it's part of the webServer command
  * (`npm run expo:test` chains `reset-dev-db.ts` before `dev.ts`). Doing it
@@ -26,6 +31,7 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { chromium } from '@playwright/test'
 
 const PROJECT_ROOT = path.resolve(import.meta.dirname, '..')
 export const TMP_DIR = path.join(PROJECT_ROOT, 'tmp')
@@ -37,6 +43,19 @@ const BASE_URL = `http://localhost:${PORT}`
 // bundle and only returns 200 with real JS once that compile finishes — the
 // exact "web app is serveable" signal /api/health doesn't give us.
 const ENTRY_BUNDLE = `${BASE_URL}/node_modules/expo-router/entry.bundle?platform=web&dev=true&hot=false&lazy=true&transform.engine=hermes&transform.routerRoot=app&unstable_transformProfile=hermes-stable`
+
+// Comma-separated list of package slugs whose lazy screen chunks should be
+// pre-warmed before tests start. Set in CI for per-package workflows;
+// unset for app's own E2E (which doesn't navigate into feature packages).
+// Example: TINYCLD_WARM_PACKAGES=mail,calendar,drive
+const WARM_PACKAGES = (process.env.TINYCLD_WARM_PACKAGES ?? '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+
+const ORG_SLUG = 'test-org'
+const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
+const TEST_USER_PASSWORD = process.env.TEST_USER_PW || 'TestUser1234!'
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -71,8 +90,60 @@ async function warmWebBundle() {
     )
 }
 
+// Pre-warm per-package lazy chunks by actually navigating a real browser
+// to /a/<org>/<pkg>. Metro compiles each chunk on first dynamic import;
+// once it's cached in the dev server, subsequent test workers hit a warm
+// cache and the package-sidebar-mounted testID appears in <5s instead of
+// >60s — turning a per-spec race into a deterministic one-time cost.
+//
+// Opt-in via TINYCLD_WARM_PACKAGES env var. App's own E2E workflow
+// doesn't set it (app's tests never navigate into feature packages);
+// per-package E2E workflows set it to their own slug, e.g.
+// TINYCLD_WARM_PACKAGES=mail.
+async function warmPackageChunks() {
+    if (WARM_PACKAGES.length === 0) return
+    console.log(`[global-setup] warming package chunks: ${WARM_PACKAGES.join(', ')}`)
+    const browser = await chromium.launch()
+    try {
+        const context = await browser.newContext({ baseURL: BASE_URL })
+        const page = await context.newPage()
+        // Log in once so the navigation actually mounts the org layout
+        // (the redirect-to-login path doesn't load any package screens).
+        await page.goto('/')
+        await page.getByTestId('identifier').fill(TEST_USER_EMAIL)
+        await page.getByPlaceholder('Password').fill(TEST_USER_PASSWORD)
+        await page.getByText('Sign in', { exact: true }).last().click()
+        await page.waitForURL(/\/a\//, { timeout: 30_000 })
+        for (const pkg of WARM_PACKAGES) {
+            const t0 = Date.now()
+            await page.goto(`/a/${ORG_SLUG}/${pkg}`)
+            // Wait for the package's screen to actually mount. Long
+            // timeout — the first chunk compile is the slow path and
+            // we're explicitly absorbing it here. Skip the wait
+            // silently on a timeout; the per-test budget will still
+            // catch any genuinely-broken package.
+            try {
+                await page.getByTestId('package-sidebar-mounted').waitFor({
+                    state: 'visible',
+                    timeout: 120_000,
+                })
+            } catch (err) {
+                console.warn(
+                    `[global-setup] ${pkg} chunk warm: sidebar testID didn't appear in 120s (${String(err)}); continuing`
+                )
+                continue
+            }
+            const t1 = Date.now()
+            console.log(`[global-setup] ${pkg} chunk warm (${t1 - t0}ms)`)
+        }
+    } finally {
+        await browser.close()
+    }
+}
+
 export default async function globalSetup() {
     fs.mkdirSync(TMP_DIR, { recursive: true })
     fs.writeFileSync(EMAIL_LOG_PATH, '')
     await warmWebBundle()
+    await warmPackageChunks()
 }
