@@ -47,6 +47,28 @@ export interface PackageManifest {
         label: string
     }[]
 
+    /**
+     * Names of sidebar slots this package exposes. Other packages target these
+     * names from their `sidebarContributions`. Each name must be unique within
+     * the manifest; the generator errors on duplicates and on contributions
+     * targeting an unknown slot.
+     */
+    slots?: string[]
+
+    /**
+     * UI contributions this package injects into another package's sidebar
+     * slot. `target` is the host package slug; `slot` is one of the names the
+     * host declares in its own `slots` array; `component` is a package-exports
+     * subpath (e.g. `'sidebar-contributions/booking-pages'`) resolved through
+     * the same lazy-import path used for `sidebar` and `settings`.
+     */
+    sidebarContributions?: {
+        target: string
+        slot: string
+        component: string
+        order?: number
+    }[]
+
     seed?: {
         script: string
     }

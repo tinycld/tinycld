@@ -38,6 +38,17 @@ Consumers import core through the `@tinycld/core/*` subpaths declared in
 | `@tinycld/core/file-viewer/*` | file preview/icon helpers |
 | `@tinycld/core/Providers` | the top-level `Providers` component |
 
+### Sidebar primitives
+
+`@tinycld/core/components/sidebar-primitives` exports the building blocks every feature package uses to compose its sidebar:
+
+- `SidebarNav` — scrollable outer container.
+- `SidebarActionButton` — primary action at the top (e.g. "Compose", "+ Create").
+- `SidebarItem` — clickable row with icon/label/optional color dot.
+- `SidebarHeading` — section title with optional action button.
+- `SidebarDivider` — visual separator between groups.
+- `SidebarSlot` — extension point. A host package renders `<SidebarSlot target="<own-slug>" slot="<name>" />` at the insertion point; other packages target that `(target, slot)` pair via `sidebarContributions` in their manifest. Contributions are wired statically by the generator and rendered under `<Suspense>`. See [Sidebar slots](https://tinycld.org/docs/anatomy/sidebar-slots).
+
 The Go side is module `tinycld.org/core` (`server/`), exporting `coreserver`
 plus subsystems (`notify`, `push`, `mailer`, `audit`, `textextract`,
 `thumbnails`, `render`, `realtime`, `sharelink`) and core's PocketBase

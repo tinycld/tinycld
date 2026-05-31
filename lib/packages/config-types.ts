@@ -23,6 +23,12 @@ export interface PackageSettingsPanel {
     label: string
     Component: ComponentType | LazyExoticComponent<ComponentType>
 }
+export interface SidebarContribution {
+    target: string
+    slot: string
+    order: number
+    Component: ComponentType | LazyExoticComponent<ComponentType>
+}
 export interface SeedContext {
     user: { id: string; email: string; name: string }
     org: { id: string }
@@ -59,6 +65,7 @@ export interface PackageEntry<S extends SchemaDeclaration, R> {
         | LazyExoticComponent<ComponentType<PackageProviderProps>>
         | null
     settings?: PackageSettingsPanel[]
+    sidebarContributions?: SidebarContribution[]
     seed?: (pb: PocketBase, ctx: SeedContext) => Promise<void>
 }
 
@@ -79,6 +86,7 @@ export function definePackageEntry<S extends SchemaDeclaration>() {
         sidebar?: PackageEntry<S, R>['sidebar']
         provider?: PackageEntry<S, R>['provider']
         settings?: PackageEntry<S, R>['settings']
+        sidebarContributions?: PackageEntry<S, R>['sidebarContributions']
         seed?: PackageEntry<S, R>['seed']
     }): PackageEntry<S, R> => entry as unknown as PackageEntry<S, R>
 }
