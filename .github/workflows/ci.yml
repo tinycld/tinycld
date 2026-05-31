@@ -119,6 +119,13 @@ jobs:
       - name: Go mod download
         working-directory: ws/app/server
         run: go mod download
+      # Composite action: installs watchman so Metro doesn't fall back to
+      # the fs.watch polling that has correlated with a blank-page-after-
+      # reload flake under Playwright multi-worker load. Lives in this
+      # repo and is also consumed by sibling repos via
+      # `tinycld/app/.github/actions/configure-test-env@main`.
+      - name: Configure test env
+        uses: ./ws/app/.github/actions/configure-test-env
       - name: Scaffold shortcut-stub package
         working-directory: ws
         run: npx tsx app/tests/scripts/scaffold-shortcut-stub.ts

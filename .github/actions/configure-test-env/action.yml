@@ -1,0 +1,37 @@
+name: 'Configure tinycld test environment'
+description: >-
+  System-level setup that every tinycld e2e job needs before booting
+  the dev server. Today: installs watchman so Metro's file watcher
+  doesn't fall back to polling. Extensible — append steps here when
+  another OS-level prerequisite emerges (fontconfig caches, kernel
+  inotify limits, additional binaries, etc.). Filesystem and env-var
+  setup that depends on the assembled workspace lives in playwright's
+  globalSetup, not here.
+
+runs:
+  using: 'composite'
+  steps:
+    # Metro warns "Watchman was not found in PATH" without this and
+    # falls back to fs.watch polling. Under Playwright multi-worker
+    # e2e load that's been correlated with Metro going silent for
+    # 70+s on `page.reload()`-triggered bundle re-fetches, surfacing
+    # as a blank-page-after-reload flake. See drive#13 for the trace
+    # evidence (post-reload entry.bundle request status=-1 after 70s
+    # of WebServer silence).
+    #
+    # Watchman ships only as rpm or Linux zip via GitHub releases.
+    # Pin to a known-working tag rather than `latest` so a future
+    # release that drops or restructures the zip can't silently
+    # break CI. The zip bundles libgflags/libglog/libsnappy, so the
+    # binary resolves at runtime via ldconfig.
+    - name: Install watchman
+      shell: bash
+      run: |
+        curl -fsSL -o /tmp/watchman.zip https://github.com/facebook/watchman/releases/download/v2026.05.11.00/watchman-v2026.05.11.00-linux.zip
+        unzip -q /tmp/watchman.zip -d /tmp/watchman
+        sudo mv /tmp/watchman/watchman-v2026.05.11.00-linux/bin/* /usr/local/bin/
+        sudo mv /tmp/watchman/watchman-v2026.05.11.00-linux/lib/* /usr/local/lib/
+        sudo ldconfig
+        sudo mkdir -p /usr/local/var/run/watchman
+        sudo chmod 2777 /usr/local/var/run/watchman
+        watchman --version
