@@ -262,7 +262,7 @@ export default manifest
 |---|---|
 | `name` / `slug` / `version` / `description` | Required identifiers. `slug` is the URL segment and collection-name prefix. |
 | `routes.directory` | Each file becomes an org-scoped route under `app/a/[orgSlug]/<slug>/`. |
-| `publicRoutes.directory` | Each file becomes a public top-level route under `app/<path>` (e.g. drive's `/share/[token]`). Conflicts across packages fail the build. |
+| `publicRoutes.directory` | Each file becomes a public route under `app/p/<slug>/<path>` (e.g. drive's `/p/drive/share/[token]`). The `/p/<slug>/` namespacing prevents path collisions across packages. |
 | `nav` | Adds a nav-rail entry. `shortcut` registers a `t <letter>` jump and must be unique (validated at generate time). |
 | `migrations.directory` | `*.js` migrations symlinked into `server/pb_migrations/`. |
 | `hooks.directory` | PocketBase JS hooks symlinked into `server/pb_hooks/`. |
@@ -433,8 +433,10 @@ files on disk, so these can't be derived at runtime:
 export { default } from '@tinycld/contacts/screens/index'
 ```
 
-`publicRoutes` work the same way but land at the top level `app/<path>`, with
-cross-package conflict detection.
+`publicRoutes` work the same way but land under `app/p/<slug>/<path>` — the
+per-slug namespace means two packages never collide on the same public path,
+and the entire `app/p/*/` tree is gitignored (the hand-written `app/p/_layout.tsx`
+stays tracked).
 
 ### B. `tinycld.config.ts` (via `scripts/generate-config.ts`)
 
@@ -510,7 +512,6 @@ runtime-installed DB packages, exactly as before.
 The generator fails fast on:
 
 - **Duplicate `nav.shortcut`** letters across packages.
-- **Public route conflicts** (two packages declaring the same `app/<path>`).
 
 ---
 

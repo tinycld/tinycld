@@ -40,7 +40,10 @@ server/pb_test_data/
 /app/a/\[orgSlug\]/*/
 !/app/a/\[orgSlug\]/settings/
 !/app/a/\[orgSlug\]/help/
-/app/share/\[token\].tsx
+# Public package routes — one subtree per package with publicRoutes in its
+# manifest. Fully generator-owned; the hand-written _layout.tsx sits one level
+# up at app/p/_layout.tsx and stays tracked.
+/app/p/*/
 /lib/generated/
 /tinycld.config.ts
 /tinycld.seeds.ts

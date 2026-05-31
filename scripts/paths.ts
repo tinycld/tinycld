@@ -9,6 +9,7 @@ export const APP_DIR = process.env.TINYCLD_APP_DIR
 export const WS_ROOT = path.resolve(APP_DIR, '..')
 export const GENERATED_DIR = path.join(APP_DIR, 'lib', 'generated')
 export const ROUTES_BASE = path.join(APP_DIR, 'app', 'a', '[orgSlug]')
+export const PUBLIC_ROUTES_BASE = path.join(APP_DIR, 'app', 'p')
 export const SERVER_DIR = path.join(APP_DIR, 'server')
 export const MIGRATIONS_DIR = path.join(SERVER_DIR, 'pb_migrations')
 export const HOOKS_DIR = path.join(SERVER_DIR, 'pb_hooks')

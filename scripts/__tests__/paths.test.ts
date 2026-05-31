@@ -1,6 +1,13 @@
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { APP_DIR, GENERATED_DIR, ROUTES_BASE, SERVER_DIR, WS_ROOT } from '../paths'
+import {
+    APP_DIR,
+    GENERATED_DIR,
+    PUBLIC_ROUTES_BASE,
+    ROUTES_BASE,
+    SERVER_DIR,
+    WS_ROOT,
+} from '../paths'
 
 describe('generator paths', () => {
     it('APP_DIR is the app member dir', () => {
@@ -14,6 +21,9 @@ describe('generator paths', () => {
     })
     it('ROUTES_BASE is app/app/a/[orgSlug]', () => {
         expect(ROUTES_BASE).toBe(path.join(APP_DIR, 'app', 'a', '[orgSlug]'))
+    })
+    it('PUBLIC_ROUTES_BASE is app/app/p', () => {
+        expect(PUBLIC_ROUTES_BASE).toBe(path.join(APP_DIR, 'app', 'p'))
     })
     it('SERVER_DIR is app/server', () => {
         expect(SERVER_DIR).toBe(path.join(APP_DIR, 'server'))

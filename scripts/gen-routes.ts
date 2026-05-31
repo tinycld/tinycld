@@ -46,20 +46,24 @@ export function emitRoutes(opts: EmitRoutesOpts): string[] {
 
 export interface EmitPublicRoutesOpts {
     packageName: string
+    slug: string
     packageDir: string
     routesDir: string // relative to packageDir
     importSubpath: string // e.g. 'public-screens'
-    appDir: string // app/app
+    publicRoutesBase: string // app/app/p
 }
 
 export function emitPublicRoutes(opts: EmitPublicRoutesOpts): string[] {
     const sourceDir = path.join(opts.packageDir, opts.routesDir)
     const files = walkFiles(sourceDir).filter(f => ROUTE_EXTS.has(path.extname(f)))
+    const pkgRouteDir = path.join(opts.publicRoutesBase, opts.slug)
+    fs.mkdirSync(pkgRouteDir, { recursive: true })
+
     const written: string[] = []
     for (const file of files) {
         const withoutExt = file.replace(/\.[^.]+$/, '')
         const importPath = `${opts.packageName}/${opts.importSubpath}/${withoutExt}`
-        const outFile = path.join(opts.appDir, file)
+        const outFile = path.join(pkgRouteDir, file)
         fs.mkdirSync(path.dirname(outFile), { recursive: true })
         fs.writeFileSync(outFile, `export { default } from '${importPath}'\n`)
         written.push(outFile)

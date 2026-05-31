@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { emitRoutes } from '../gen-routes'
+import { emitPublicRoutes, emitRoutes } from '../gen-routes'
 
 describe('emitRoutes', () => {
     let tmp: string
@@ -37,5 +37,41 @@ describe('emitRoutes', () => {
             "export { default } from '@tinycld/contacts/screens/[id]'\n"
         )
         expect(written).toHaveLength(2)
+    })
+})
+
+describe('emitPublicRoutes', () => {
+    let tmp: string
+    let pkgDir: string
+    let publicRoutesBase: string
+    beforeEach(() => {
+        tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tcld-public-routes-'))
+        pkgDir = path.join(tmp, 'drive')
+        fs.mkdirSync(path.join(pkgDir, 'tinycld', 'drive', 'public-screens', 'share'), {
+            recursive: true,
+        })
+        fs.writeFileSync(
+            path.join(pkgDir, 'tinycld', 'drive', 'public-screens', 'share', '[token].tsx'),
+            ''
+        )
+        publicRoutesBase = path.join(tmp, 'app', 'p')
+    })
+    afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }))
+
+    it('emits re-exports under publicRoutesBase/<slug>/, preserving nested paths', () => {
+        const written = emitPublicRoutes({
+            packageName: '@tinycld/drive',
+            slug: 'drive',
+            packageDir: pkgDir,
+            routesDir: 'tinycld/drive/public-screens',
+            importSubpath: 'public-screens',
+            publicRoutesBase,
+        })
+        const tokenFile = path.join(publicRoutesBase, 'drive', 'share', '[token].tsx')
+        expect(fs.existsSync(tokenFile)).toBe(true)
+        expect(fs.readFileSync(tokenFile, 'utf8')).toBe(
+            "export { default } from '@tinycld/drive/public-screens/share/[token]'\n"
+        )
+        expect(written).toEqual([tokenFile])
     })
 })

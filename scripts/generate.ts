@@ -22,6 +22,7 @@ import {
     HOOKS_DIR,
     MIGRATIONS_DIR,
     memberDir,
+    PUBLIC_ROUTES_BASE,
     ROUTES_BASE,
     SERVER_DIR,
     WS_ROOT,
@@ -38,11 +39,33 @@ function resolveExportDir(packageDir: string, subpath: string): string | null {
     return exp.replace(/^\.\//, '').replace(/\/\*\.[^.]+$/, '')
 }
 
+// Slugs come from trusted manifests, but any code path that joins a slug into
+// a path before rmSync gets this guard as defense-in-depth against a hostile
+// or typo'd manifest escaping the intended base dir.
+function assertSafeSlug(slug: string) {
+    if (slug.includes('/') || slug.includes('..') || path.isAbsolute(slug)) {
+        throw new Error(`[generate] invalid package slug '${slug}' — refusing to clean`)
+    }
+}
+
 function cleanDir(dir: string) {
-    // Safety: only ever rm -rf a routes dir under app/a/. Guards against a
-    // misconfigured APP_DIR turning this into a destructive rm of the wrong tree.
-    if (!dir.includes(path.join('app', 'a')) && !dir.includes(path.join('app', 'server'))) {
-        throw new Error(`cleanDir refused: ${dir} is not under app/a/ or app/server/`)
+    // Safety: only ever rm -rf inside APP_DIR, and only under app/a/, app/p/,
+    // or server/. Resolve first so a relative dir or one with '..' segments
+    // can't smuggle the check, then require the resolved path to start with
+    // APP_DIR and live under one of the allowed subtrees by path segment
+    // (not substring — substring matches like .../app/personal/foo).
+    const resolved = path.resolve(dir)
+    const appPrefix = APP_DIR + path.sep
+    if (!resolved.startsWith(appPrefix)) {
+        throw new Error(`cleanDir refused: ${dir} is not under APP_DIR`)
+    }
+    const relSegments = path.relative(APP_DIR, resolved).split(path.sep)
+    const allowedRoots = [['app', 'a'], ['app', 'p'], ['server']]
+    const underAllowedRoot = allowedRoots.some(root =>
+        root.every((seg, i) => relSegments[i] === seg)
+    )
+    if (!underAllowedRoot) {
+        throw new Error(`cleanDir refused: ${dir} is not under app/a/, app/p/, or app/server/`)
     }
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true })
     fs.mkdirSync(dir, { recursive: true })
@@ -59,21 +82,16 @@ type Feature = { name: string; dir: string; manifest: PackageManifest }
 // if packages get unlinked frequently.
 function emitFeatureRoutes(features: Feature[]) {
     fs.mkdirSync(ROUTES_BASE, { recursive: true })
-    const appAppDir = path.join(APP_DIR, 'app')
+    fs.mkdirSync(PUBLIC_ROUTES_BASE, { recursive: true })
     for (const f of features) {
         if (f.manifest.routes?.directory) emitOrgRoutes(f)
-        if (f.manifest.publicRoutes?.directory) emitFeaturePublicRoutes(f, appAppDir)
+        if (f.manifest.publicRoutes?.directory) emitFeaturePublicRoutes(f)
     }
 }
 
 function emitOrgRoutes(f: Feature) {
     const slug = f.manifest.slug
-    // Guard: slug must be a plain segment (no traversal) so the rmSync below
-    // can't escape ROUTES_BASE. Slugs come from trusted manifests, but this
-    // matches cleanDir's defensive posture for a destructive op.
-    if (slug.includes('/') || slug.includes('..') || path.isAbsolute(slug)) {
-        throw new Error(`[generate] invalid package slug '${slug}' — refusing to clean`)
-    }
+    assertSafeSlug(slug)
     const slugDir = path.join(ROUTES_BASE, slug)
     if (fs.existsSync(slugDir)) fs.rmSync(slugDir, { recursive: true, force: true })
     const routesDir = resolveExportDir(f.dir, f.manifest.routes!.directory)
@@ -93,7 +111,11 @@ function emitOrgRoutes(f: Feature) {
     })
 }
 
-function emitFeaturePublicRoutes(f: Feature, appAppDir: string) {
+function emitFeaturePublicRoutes(f: Feature) {
+    const slug = f.manifest.slug
+    assertSafeSlug(slug)
+    const slugDir = path.join(PUBLIC_ROUTES_BASE, slug)
+    if (fs.existsSync(slugDir)) fs.rmSync(slugDir, { recursive: true, force: true })
     const pubDir = resolveExportDir(f.dir, f.manifest.publicRoutes!.directory)
     if (!pubDir) {
         console.warn(
@@ -103,10 +125,11 @@ function emitFeaturePublicRoutes(f: Feature, appAppDir: string) {
     }
     emitPublicRoutes({
         packageName: f.name,
+        slug,
         packageDir: f.dir,
         routesDir: pubDir,
         importSubpath: f.manifest.publicRoutes!.directory,
-        appDir: appAppDir,
+        publicRoutesBase: PUBLIC_ROUTES_BASE,
     })
 }
 
