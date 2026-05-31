@@ -38,11 +38,12 @@ export function deriveProviders(
 export interface PackageSettingsGroup {
     packageName: string
     pkgSlug: string
+    icon: string | undefined
     panels: PackageSettingsPanel[]
 }
 
 type SettingsEntryLike = {
-    manifest: { name: string; slug: string }
+    manifest: { name: string; slug: string; nav?: { icon?: string } }
     settings?: PackageSettingsPanel[]
 }
 
@@ -51,7 +52,12 @@ export function deriveSettings(entries: readonly SettingsEntryLike[]): PackageSe
     const out: PackageSettingsGroup[] = []
     for (const e of entries) {
         if (e.settings && e.settings.length > 0) {
-            out.push({ packageName: e.manifest.name, pkgSlug: e.manifest.slug, panels: e.settings })
+            out.push({
+                packageName: e.manifest.name,
+                pkgSlug: e.manifest.slug,
+                icon: e.manifest.nav?.icon,
+                panels: e.settings,
+            })
         }
     }
     return out

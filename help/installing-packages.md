@@ -39,3 +39,18 @@ npm run packages:unlink <package-name>
 ```
 
 Removing a package hides its UI and stops registering its collections, but **does not delete data** — relinking the package restores everything.
+
+## Customizing the nav icon
+
+A package's nav-rail icon comes from `manifest.ts`:
+
+```ts
+nav: {
+    label: 'My Package',
+    icon: 'cloud-rain',
+}
+```
+
+The value is any kebab-case icon name from [lucide.dev/icons](https://lucide.dev/icons) — copy it straight from the URL slug. The generator picks up the name on `npm install`, bundles just that icon, and the rail renders it everywhere. No edits to `@tinycld/core` are required to ship a new package with a new icon.
+
+If the name doesn't match a real lucide icon, the generator fails loudly at install time with a "did you mean…?" hint. If an icon name slips through (for example, on a runtime-installed package whose manifest wasn't present when the app was last bundled), the rail falls back to a `?` placeholder until a rebuild includes it.

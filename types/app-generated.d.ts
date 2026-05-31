@@ -13,9 +13,14 @@
  * NOTE: the old generated package-{registry,collections,providers,sidebars,
  * settings,seeds} modules were removed — their values are now runtime
  * singletons in core/lib/packages/{static-registry,derive-components} and the
- * config array in @tinycld/app-generated/tinycld-config. Only package-help
- * remains a generated module that core imports by name.
+ * config array in @tinycld/app-generated/tinycld-config.
  */
+declare module '@tinycld/app-generated/package-icons' {
+    import type { LucideIcon } from 'lucide-react-native'
+
+    export const packageIcons: Record<string, LucideIcon>
+}
+
 declare module '@tinycld/app-generated/package-help' {
     export interface HelpTopicEntry {
         id: string

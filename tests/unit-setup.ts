@@ -38,10 +38,13 @@ vi.mock('@tinycld/app-generated/tinycld-config', () => ({
     tinycldConfig: [],
 }))
 // collections/registry/sidebars/providers/settings/seeds are now DERIVED from
-// the (empty) tinycldConfig above — no separate mocks needed. package-help is
-// the one remaining generated module core imports.
+// the (empty) tinycldConfig above — no separate mocks needed. The remaining
+// generated modules core imports are shimmed below.
 vi.mock('@tinycld/app-generated/package-help', () => ({
     packageHelp: [],
+}))
+vi.mock('@tinycld/app-generated/package-icons', () => ({
+    packageIcons: {},
 }))
 
 // @react-native-async-storage/async-storage requires the RN module bridge and
