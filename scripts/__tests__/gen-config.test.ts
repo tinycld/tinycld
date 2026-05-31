@@ -10,6 +10,8 @@ const contacts: ConfigPkg = {
     hasProvider: false,
     hasSeed: true,
     settings: [],
+    slots: [],
+    sidebarContributions: [],
     manifest: { name: 'Contacts', slug: 'contacts', version: '0.1.0', description: 'd' },
 }
 const takeout: ConfigPkg = {
@@ -21,6 +23,8 @@ const takeout: ConfigPkg = {
     hasProvider: false,
     hasSeed: false,
     settings: [{ slug: 'google-takeout', label: 'Import', component: 'settings/takeout' }],
+    slots: [],
+    sidebarContributions: [],
     manifest: {
         name: 'Takeout',
         slug: 'google-takeout-import',
@@ -81,6 +85,8 @@ describe('buildConfigSource', () => {
             hasProvider: true,
             hasSeed: false,
             settings: [],
+            slots: [],
+            sidebarContributions: [],
             manifest: { name: 'Drive', slug: 'drive', version: '0.1.0', description: 'd' },
         }
         const src = buildConfigSource([withProvider])
@@ -99,6 +105,8 @@ describe('buildConfigSource', () => {
             hasProvider: false,
             hasSeed: false,
             settings: [],
+            slots: [],
+            sidebarContributions: [],
             manifest: { name: 'Mail', slug: 'mail', version: '0.1.0', description: 'd' },
         }
         const src = buildConfigSource([contacts, mail])
@@ -108,6 +116,41 @@ describe('buildConfigSource', () => {
     it('throws when hasRegister is true but schemaType is empty', () => {
         const bad: ConfigPkg = { ...contacts, schemaType: '' }
         expect(() => buildConfigSource([bad])).toThrow(/schemaType is empty/)
+    })
+
+    it('emits sidebarContributions as a lazy-loaded array with order', () => {
+        const slotsPkg: ConfigPkg = {
+            ...contacts,
+            packageName: '@tinycld/calendar-slots',
+            slug: 'calendar-slots',
+            schemaType: '',
+            hasRegister: false,
+            hasSidebar: false,
+            hasSeed: false,
+            sidebarContributions: [
+                {
+                    target: 'calendar',
+                    slot: 'sidebar.after-calendars',
+                    component: 'sidebar-contributions/booking-pages',
+                    order: 0,
+                },
+            ],
+            manifest: {
+                name: 'Calendar Slots',
+                slug: 'calendar-slots',
+                version: '0.1.0',
+                description: 'd',
+            },
+        }
+        const src = buildConfigSource([slotsPkg])
+        expect(src).toContain("import { lazy } from 'react'")
+        expect(src).toContain('sidebarContributions: [')
+        expect(src).toContain('target: "calendar"')
+        expect(src).toContain('slot: "sidebar.after-calendars"')
+        expect(src).toContain('order: 0')
+        expect(src).toContain(
+            "Component: lazy(() => import('@tinycld/calendar-slots/sidebar-contributions/booking-pages'))"
+        )
     })
 })
 
