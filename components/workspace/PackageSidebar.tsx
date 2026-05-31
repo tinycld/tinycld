@@ -37,7 +37,24 @@ export function PackageSidebar({ width }: PackageSidebarProps) {
             <View style={{ width, flex: 1, minHeight: 0 }}>
                 {SidebarComponent ? (
                     <Suspense fallback={<SkeletonSidebar width={width} />}>
-                        <SidebarComponent isCollapsed={false} />
+                        {/*
+                            testID="package-sidebar-mounted" is the
+                            stable signal e2e helpers use to know the
+                            lazy-loaded sidebar chunk has actually
+                            rendered (not just the Suspense skeleton).
+                            It lives INSIDE the Suspense boundary so
+                            the testID only attaches once Suspense
+                            unsuspends — i.e. when the real sidebar
+                            component is mounted. Don't move it
+                            outside the boundary or the gate becomes
+                            a no-op.
+                        */}
+                        <View
+                            testID="package-sidebar-mounted"
+                            style={{ width, flex: 1, minHeight: 0 }}
+                        >
+                            <SidebarComponent isCollapsed={false} />
+                        </View>
                     </Suspense>
                 ) : null}
             </View>
