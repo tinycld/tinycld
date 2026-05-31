@@ -21,10 +21,13 @@ const STUB_SHORTCUT = 'k'
 test.describe('Keyboard shortcuts', () => {
     test.beforeEach(async ({ page }) => {
         await login(page)
-        await navigateToPackage(page, STUB_SLUG)
-        // Wait for the rail's stub entry to render so the shortcut
-        // provider has mounted and tinykeys has bound its listeners
-        // before we start typing.
+        // The stub has no sidebar, so pass an explicit waitFor — the
+        // helper's default sidebar gate would hang. Waiting on the
+        // landing text also confirms the stub's lazy chunk has
+        // mounted before we start typing shortcuts.
+        await navigateToPackage(page, STUB_SLUG, {
+            waitFor: page.getByText('Shortcut stub landing', { exact: true }),
+        })
         await expect(page.getByRole('link', { name: STUB_NAV_LABEL, exact: true })).toBeVisible({
             timeout: 10_000,
         })

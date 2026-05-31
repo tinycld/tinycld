@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 
 export const ORG_SLUG = 'test-org'
 export const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
@@ -40,14 +40,31 @@ export async function login(page: Page) {
 // chunk downloads cleanly without contention, and the page never tears
 // down + remounts.
 //
-// Returns after the URL change is observed. Callers that need to wait
-// for a specific page element (e.g. a sidebar entry, an inbox row, a
-// button) MUST assert on it explicitly — this helper deliberately
-// doesn't wait on package-internal UI so it works for any package,
-// including ones with no sidebar.
+// `waitFor` gates the helper on a Locator that proves the package's
+// screen has rendered before returning.
+//
+// Default (omitted): waits for the sidebar to mount via the
+// `package-sidebar-mounted` testID PackageSidebar.tsx emits inside
+// its Suspense boundary. This is the common case — most packages
+// contribute a sidebar (mail, contacts, calendar, drive), and the
+// lazy sidebar chunk unsuspending is what tests need to wait on.
+//
+// Packages WITHOUT a sidebar (text, calc, the shortcut-stub fixture)
+// must pass an explicit Locator since the default testID will never
+// appear. Same applies when the test needs to gate on a specific
+// screen element instead of just the sidebar shell:
+//
+//     await navigateToPackage(page, 'mail', {
+//         waitFor: page.getByRole('button', { name: 'Compose' }),
+//     })
+//
+// Accepts any Playwright `Locator` (`page.getByRole(...)`,
+// `page.getByTestId(...)`, `page.getByText(...).first()`, …) and
+// forwards to the same `locator.waitFor({ state: 'visible' })`
+// callers would write by hand.
 //
 // `pkg` is the lowercase slug (mail, calendar, drive, ...).
-export async function navigateToPackage(page: Page, pkg: string) {
+export async function navigateToPackage(page: Page, pkg: string, options?: { waitFor?: Locator }) {
     // Match by URL prefix rather than exact href: some packages (calc,
     // text, …) rewrite their rail link to deep-link the user's last
     // visited file (e.g. /a/<org>/calc/<id>), so the rail anchor no
@@ -58,6 +75,8 @@ export async function navigateToPackage(page: Page, pkg: string) {
     await railLink.waitFor({ state: 'visible' })
     await railLink.click()
     await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/${pkg}(/|$|\\?)`))
+    const target = options?.waitFor ?? page.getByTestId('package-sidebar-mounted')
+    await target.waitFor({ state: 'visible' })
 }
 
 export async function clickSidebarItem(page: Page, label: string) {
