@@ -99,10 +99,12 @@ function patchManifest(stubDir: string): void {
     routes: { directory: 'screens' },
     nav: {
         label: '${STUB_NAV_LABEL}',
-        // Any lucide icon name in core's package-icon-map.ts works;
-        // 'users' is a safe pick that doesn't collide with the
-        // shortcut letter and ships in every workspace.
-        icon: 'users',
+        // Any kebab-case lucide icon name from https://lucide.dev/icons
+        // works — the generator bundles it on \`npm install\`. We pick
+        // 'cloud-rain' deliberately: no first-party package uses it, so
+        // the rail rendering this glyph in e2e is positive evidence that
+        // manifest-driven icon bundling is working end-to-end.
+        icon: 'cloud-rain',
         // High order so the stub sorts below real features in the rail
         // — keeps the visible rail layout stable when both run together.
         order: 999,

@@ -70,7 +70,7 @@ function AdminSettings({ isVisible }: { isVisible: boolean }) {
             </SettingsGroup>
 
             {packageSettings.map(group => {
-                const Icon = getIcon(group.pkgSlug)
+                const Icon = getIcon(group.icon ?? '')
                 return (
                     <SettingsGroup key={group.pkgSlug} label={group.packageName}>
                         {group.panels.map(panel => (

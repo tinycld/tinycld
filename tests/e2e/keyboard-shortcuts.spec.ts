@@ -63,4 +63,29 @@ test.describe('Keyboard shortcuts', () => {
         await page.keyboard.press(STUB_SHORTCUT, { delay: 50 })
         await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/${STUB_SLUG}`), { timeout: 10_000 })
     })
+
+    test('rail renders the manifest-declared icon (cloud-rain), not the fallback', async ({
+        page,
+    }) => {
+        // shortcut-stub declares nav.icon: 'cloud-rain'. That name is NOT
+        // in the legacy hand-curated icon map, so this assertion only passes
+        // when manifest-driven icon bundling is wired up end-to-end. If a
+        // future change reintroduces hand-curation, the rail will render
+        // the CircleHelp ("?" / circle-question-mark) fallback and this
+        // breaks loudly.
+        //
+        // lucide-react-native renders icons as inline SVG with one <path>
+        // per glyph segment. We assert on a distinctive path fragment from
+        // cloud-rain.mjs ("M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242")
+        // and confirm the same path is absent from any fallback render.
+        const navItem = page.getByTestId(`nav-${STUB_SLUG}`)
+        await expect(navItem).toBeVisible()
+        const svg = navItem.locator('svg').first()
+        await expect(svg).toBeVisible()
+        const paths = await svg
+            .locator('path')
+            .evaluateAll(els => els.map(el => el.getAttribute('d') ?? ''))
+        const cloudRainSignature = 'M4 14.899A7 7 0 1 1 15.71 8'
+        expect(paths.some(d => d.startsWith(cloudRainSignature))).toBe(true)
+    })
 })
