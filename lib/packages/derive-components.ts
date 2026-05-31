@@ -1,6 +1,6 @@
 import { tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import type { ComponentType, LazyExoticComponent, ReactNode } from 'react'
-import type { PackageSettingsPanel } from './config-types'
+import type { PackageSettingsPanel, SidebarContribution } from './config-types'
 
 interface SidebarProps {
     isCollapsed: boolean
@@ -57,6 +57,58 @@ export function deriveSettings(entries: readonly SettingsEntryLike[]): PackageSe
     return out
 }
 
+export interface SidebarContributionEntry {
+    contributorSlug: string
+    order: number
+    Component: ComponentType | LazyExoticComponent<ComponentType>
+}
+
+type ContributionEntryLike = {
+    manifest: { slug: string }
+    sidebarContributions?: SidebarContribution[]
+}
+
+/**
+ * target slug → slot name → sorted contributions.
+ * Stable sort: ascending by `order`, ties broken by contributor slug.
+ */
+export function deriveSidebarContributions(
+    entries: readonly ContributionEntryLike[]
+): Record<string, Record<string, SidebarContributionEntry[]>> {
+    const out: Record<string, Record<string, SidebarContributionEntry[]>> = {}
+    for (const e of entries) {
+        const contributions = e.sidebarContributions
+        if (!contributions || contributions.length === 0) continue
+        for (const c of contributions) {
+            let bySlot = out[c.target]
+            if (!bySlot) {
+                bySlot = {}
+                out[c.target] = bySlot
+            }
+            let list = bySlot[c.slot]
+            if (!list) {
+                list = []
+                bySlot[c.slot] = list
+            }
+            list.push({
+                contributorSlug: e.manifest.slug,
+                order: c.order,
+                Component: c.Component,
+            })
+        }
+    }
+    for (const target of Object.keys(out)) {
+        for (const slot of Object.keys(out[target])) {
+            out[target][slot].sort((a, b) => {
+                if (a.order !== b.order) return a.order - b.order
+                return a.contributorSlug.localeCompare(b.contributorSlug)
+            })
+        }
+    }
+    return out
+}
+
 export const packageSidebars = deriveSidebars(tinycldConfig)
 export const packageProviders = deriveProviders(tinycldConfig)
 export const packageSettings = deriveSettings(tinycldConfig)
+export const packageSidebarContributions = deriveSidebarContributions(tinycldConfig)
