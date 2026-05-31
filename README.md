@@ -34,24 +34,27 @@ Everything imports core as `@tinycld/core/*` (and `tinycld.org/core` for Go); re
 is by the npm `node_modules/@tinycld/core` symlink (Metro), tsconfig `paths` (typecheck),
 vitest aliases (tests), and a Go `replace` directive (server).
 
-## Quick start
+## Getting a working tree
+
+This repo is one member of a workspace, not a standalone clone target. Let
+`@tinycld/bootstrap` assemble the workspace root, the app shell, and `@tinycld/core`
+together — it writes the workspace coordination files (`package.json`,
+`tinycld.packages.ts`, shared test stubs) from embedded templates and clones each
+member as a sibling directory:
 
 ```sh
-# Clone the app shell + core + any feature siblings under one workspace root.
-git clone git@github.com:tinycld/app.git   ~/code/tinycld/app
-git clone git@github.com:tinycld/core.git  ~/code/tinycld/core
-git clone git@github.com:tinycld/mail.git  ~/code/tinycld/mail   # features as needed
-
-# Install at the WORKSPACE ROOT (one level up from this repo), never inside a member.
-cd ~/code/tinycld
+mkdir ~/code/tinycld && cd ~/code/tinycld
+npx @tinycld/bootstrap@latest --assemble-only --with mail --with contacts
 npm install        # links members + runs the generator (postinstall)
-
-cd app
-npm run dev
+cd app && npm run dev
 ```
 
-The workspace root needs a `package.json` whose `workspaces` array lists the members;
-`npm install` there creates the `node_modules/@tinycld/*` symlinks and runs the generator.
+Full guide: <https://tinycld.org/docs/getting-started>.
+
+To add another feature to an existing workspace, either re-run
+`npx @tinycld/bootstrap@latest --assemble-only --with <slug>` (skips dirs that
+already exist) or `git clone` the sibling repo by hand into the workspace root,
+then `npm install` again.
 
 `npm run dev` runs three processes in parallel: an HTTP proxy on the user-facing port
 7100, the Go PocketBase server on 7101, and the Expo bundler on 7102. The proxy routes
@@ -96,16 +99,28 @@ npm run ssl:generate
 ## Adding / removing feature packages
 
 There is no `packages:link`/`packages:install` step — linking is the npm workspace install.
-Clone a feature as a sibling, add it to the workspace-root `package.json` `workspaces` list,
-then install at the root:
+The workspace-root `package.json` already lists every known first-party feature, so adding
+one is just cloning the sibling and re-installing. The fastest path is bootstrap:
 
 ```sh
-git clone git@github.com:tinycld/<pkg>.git ~/code/tinycld/<pkg>
-cd ~/code/tinycld && npm install        # links it + regenerates
+cd ~/code/tinycld
+npx @tinycld/bootstrap@latest --assemble-only --with <slug>
+npm install        # links it + regenerates
 ```
 
-Remove one by deleting its sibling clone (or its workspace-list entry) and re-running
-`npm install`. The set of linked packages = the set of installed workspace members.
+Or by hand:
+
+```sh
+cd ~/code/tinycld
+git clone git@github.com:tinycld/<slug>.git <slug>
+npm install        # links it + regenerates
+```
+
+For a third-party package, also add its directory name to the `workspaces` array in
+the workspace-root `package.json` before installing.
+
+Remove one by deleting its sibling clone and re-running `npm install`. The set of
+linked packages = the set of installed workspace members.
 
 ## Working in this repo
 
