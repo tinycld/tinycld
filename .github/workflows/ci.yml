@@ -29,14 +29,16 @@ jobs:
         with:
           node-version-file: ws/app/.node-version
       # bootstrap clones every feature so `npm install` can resolve app's
-      # `@tinycld/contacts` workspace dep (and the lint sweep below covers
-      # every member's tree). The TS typecheck below is scoped to app only —
-      # feature siblings run their own typecheck CI against their own changes,
-      # so app PRs shouldn't be gated on cross-package type drift.
+      # `@tinycld/contacts` workspace dep. The check below is scoped to app
+      # only — feature siblings run their own CI against their own changes,
+      # so app PRs shouldn't be gated on cross-package type drift or
+      # cross-package lint debt. This matches the discipline: each repo's
+      # PRs check that repo's code; integration drift surfaces at merge
+      # time via per-repo CI on the downstream PR.
       - name: Assemble workspace (generate root + all members)
         working-directory: ws
         run: >
-          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
+          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
           --with contacts --with mail --with calendar --with drive
           --with calc --with text --with google-takeout-import
       # Go toolchain after assembly: .go-version is bootstrap-generated into ws/.
@@ -46,10 +48,14 @@ jobs:
       - name: Install (workspace root)
         working-directory: ws
         run: npm install
-      - name: Lint
-        working-directory: ws/app
-        run: npm run lint
-      - name: Typecheck + unit (app)
+      # tinycld-pkg check runs lint + typecheck + unit, scoped to the app
+      # member. Replaces the previous separate `npm run lint` (ecosystem-wide
+      # biome sweep) + `tinycld-pkg check` pair. The ecosystem sweep was
+      # accidentally making every app PR depend on every sibling's lint
+      # cleanliness — a single feature repo's biome regression would block
+      # unrelated app PRs. With this change, app PRs check app's own code
+      # and each feature repo catches its own lint issues on its own PRs.
+      - name: Check (lint + typecheck + unit)
         working-directory: ws/app
         run: npx tinycld-pkg check
 
@@ -70,7 +76,7 @@ jobs:
       - name: Assemble workspace (generate root + all members)
         working-directory: ws
         run: >
-          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling
+          TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
           --with contacts --with mail --with calendar --with drive
           --with calc --with text --with google-takeout-import
       # Go toolchain after assembly: .go-version is bootstrap-generated into ws/.

@@ -1,6 +1,11 @@
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { buildCheckCommands, buildTestCommand, buildTypecheckCommand } from '../src/runners'
+import {
+    buildCheckCommands,
+    buildLintCommand,
+    buildTestCommand,
+    buildTypecheckCommand,
+} from '../src/runners'
 
 const appDir = '/ws/app'
 const featurePkg = { dir: '/ws/contacts', name: '@tinycld/contacts', kind: 'feature' as const }
@@ -27,9 +32,21 @@ describe('buildTestCommand', () => {
     })
 })
 
+describe('buildLintCommand', () => {
+    it('runs biome from the app dir, scoped to the package dir', () => {
+        // biome MUST run from app/ so it picks up app/biome.json — the
+        // single ecosystem config. Running from pkg.dir falls back to
+        // biome's defaults and produces different (stricter) output.
+        const cmd = buildLintCommand(featurePkg, appDir)
+        expect(cmd.bin).toBe('biome')
+        expect(cmd.args).toEqual(['check', '/ws/contacts'])
+        expect(cmd.cwd).toBe(appDir)
+    })
+})
+
 describe('buildCheckCommands', () => {
-    it('is typecheck then test (NOT e2e)', () => {
+    it('is lint then typecheck then test (NOT e2e)', () => {
         const cmds = buildCheckCommands(featurePkg, appDir)
-        expect(cmds.map(c => c.bin)).toEqual(['tsc', 'vitest'])
+        expect(cmds.map(c => c.bin)).toEqual(['biome', 'tsc', 'vitest'])
     })
 })
