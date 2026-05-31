@@ -5,6 +5,7 @@ import { manifestToConfigPkg } from './describe-packages'
 import { type BuildPkg, runPackageBuilds } from './gen-build'
 import { buildConfigSource, buildSeedsSource, type ConfigPkg } from './gen-config'
 import { buildHelpSource, type HelpGroupInput, parseFrontmatter } from './gen-help'
+import { buildPackageIconsSource } from './gen-icons'
 import { emitPublicRoutes, emitRoutes } from './gen-routes'
 import {
     buildBundledPackages,
@@ -293,6 +294,11 @@ async function main() {
 
     emitFeatureRoutes(features)
     emitHelp(features)
+
+    fs.writeFileSync(
+        path.join(GENERATED_DIR, 'package-icons.ts'),
+        buildPackageIconsSource(features.map(f => ({ name: f.name, manifest: f.manifest })))
+    )
 
     // --- 5. uniwind-sources.css (core + features, real paths) --------------
     const uniwindSources: UniwindSource[] = [
