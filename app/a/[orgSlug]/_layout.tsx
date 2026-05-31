@@ -60,7 +60,7 @@ function OrgLayoutInner() {
 
 function OrgTitle() {
     const { org } = useOrgInfo()
-    const title = org ? `TinyCld – ${org.name}` : "TinyCld";
+    const title = org ? `TinyCld – ${org.name}` : 'TinyCld'
     return (
         <Head>
             <title>{title}</title>
