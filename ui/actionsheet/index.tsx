@@ -64,7 +64,12 @@ export const UIActionsheet = createActionsheet({
 const actionsheetStyle = tva({ base: 'w-full h-full web:pointer-events-none' })
 
 const actionsheetContentStyle = tva({
-    base: 'items-center rounded-t-lg p-4 bg-background web:pointer-events-auto web:select-none border-t border-border dark:border-border/10 max-h-[80vh] pb-safe',
+    // z-[250] keeps the sheet above the mobile tab bar (z-10) and other chrome.
+    // Gluestack's overlay only sets a high z-index on web; without an explicit
+    // one the sheet renders behind the bottom navigation on native, and on web
+    // it shares the bar's stacking tier. Matches the app's top-overlay tier
+    // (FirstRunModal / DemoFollowUpModal use z-[250]).
+    base: 'z-[250] items-center rounded-t-lg p-4 bg-background web:pointer-events-auto web:select-none border-t border-border dark:border-border/10 max-h-[80vh] pb-safe',
 })
 
 const actionsheetItemStyle = tva({
@@ -98,7 +103,10 @@ const actionsheetDragIndicatorWrapperStyle = tva({
 })
 
 const actionsheetBackdropStyle = tva({
-    base: 'absolute left-0 top-0 right-0 bottom-0 bg-[#000]/50 web:cursor-default web:pointer-events-auto',
+    // Sits just under the content (z-[250]) but above the tab bar (z-10) so the
+    // dimmed backdrop also covers the bottom navigation rather than letting it
+    // poke through beneath the sheet.
+    base: 'z-[249] absolute left-0 top-0 right-0 bottom-0 bg-[#000]/50 web:cursor-default web:pointer-events-auto',
 })
 
 const actionsheetScrollViewStyle = tva({
