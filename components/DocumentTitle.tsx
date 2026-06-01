@@ -1,4 +1,5 @@
 import Head from 'expo-router/head'
+import { Platform } from 'react-native'
 import { getCoreConfigOptional } from '../lib/core-config'
 import { useOrgInfo } from '../lib/use-org-info'
 
@@ -67,6 +68,7 @@ export function DocumentTitle({
     }
 
     const text = segments.length > 0 ? `${brand}: ${segments.join(' — ')}` : brand
+    if (Platform.OS !== 'web') return null
     return (
         <Head>
             <title>{text}</title>
