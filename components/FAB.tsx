@@ -9,6 +9,10 @@ interface FABProps {
     isVisible: boolean
     size?: number
     iconSize?: number
+    // Which bottom corner the button anchors to. Defaults to 'right' (the
+    // conventional FAB placement); calendar anchors 'left' so it doesn't sit
+    // over the right-hand event columns of the day/week grid.
+    side?: 'left' | 'right'
 }
 
 export function FAB({
@@ -18,6 +22,7 @@ export function FAB({
     isVisible,
     size = 56,
     iconSize = 22,
+    side = 'right',
 }: FABProps) {
     const primaryFg = useThemeColor('primary-foreground')
 
@@ -28,7 +33,7 @@ export function FAB({
             className="absolute items-center justify-center bg-primary"
             style={{
                 bottom: 80,
-                right: 16,
+                ...(side === 'left' ? { left: 16 } : { right: 16 }),
                 width: size,
                 height: size,
                 borderRadius: size / 2,
