@@ -3,6 +3,7 @@ package realtime
 import (
 	"encoding/base64"
 	"fmt"
+	"sync"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -30,6 +31,16 @@ const JournalCollection = "realtime_doc_updates"
 // locking.
 type PocketBaseJournal struct {
 	app core.App
+
+	// colOnce guards the one-time resolution of the journal collection.
+	// Append is on the hot path (one call per accepted Yjs update, i.e.
+	// roughly per keystroke across every live room), and the collection
+	// schema is immutable at runtime, so we resolve it once and reuse the
+	// cached *core.Collection instead of issuing a `SELECT _collections`
+	// lookup on every append.
+	colOnce sync.Once
+	col     *core.Collection
+	colErr  error
 }
 
 // NewPocketBaseJournal returns a journal backed by the realtime_doc_updates
@@ -39,11 +50,24 @@ func NewPocketBaseJournal(app core.App) *PocketBaseJournal {
 	return &PocketBaseJournal{app: app}
 }
 
+// collection returns the journal collection, resolving it from the app
+// exactly once and caching the result. Subsequent calls reuse the cached
+// handle, so the per-update Append no longer issues a `SELECT _collections`
+// lookup. A resolution failure is cached too — if the collection is
+// missing at first use it is missing for the lifetime of this journal,
+// and re-querying would not recover it.
+func (j *PocketBaseJournal) collection() (*core.Collection, error) {
+	j.colOnce.Do(func() {
+		j.col, j.colErr = j.app.FindCollectionByNameOrId(JournalCollection)
+	})
+	return j.col, j.colErr
+}
+
 // Append persists a single update row. The caller hands a pre-minted
 // seq that is strictly monotonic per (kind, id); a duplicate seq
 // triggers the collection's unique index and returns an error.
 func (j *PocketBaseJournal) Append(kind, id string, seq int64, update []byte) error {
-	col, err := j.app.FindCollectionByNameOrId(JournalCollection)
+	col, err := j.collection()
 	if err != nil {
 		return fmt.Errorf("realtime journal: load collection: %w", err)
 	}
