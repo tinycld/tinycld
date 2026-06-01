@@ -670,9 +670,8 @@ async function main() {
 
     // The PB child is swapped out on rebuild; hold a mutable ref so the
     // watcher + shutdown handler always target the current process.
-    const pbRef: { current: ChildProcess; restarting: boolean } = {
+    const pbRef: { current: ChildProcess } = {
         current: spawnPbBinary(block.pb, publicUrl, pbDataDir),
-        restarting: false,
     }
     // With --no-expo we never spawn the Expo child; the user runs it in
     // a separate terminal so they get its TTY-bound logs + shortcuts.
@@ -717,12 +716,18 @@ async function main() {
 
     let shuttingDown = false
     let disposeWatcher: (() => void) | null = null
+    // Tags the exact PB child we kill deliberately (planned restart or
+    // shutdown) so its asynchronously-delivered 'exit' isn't misread as a
+    // crash. See attachPbExitHandler below for why a per-child tag beats
+    // gating on the mutable pbRef.
+    const intentionallyKilled = new WeakSet<ChildProcess>()
     const shutdown = (signal: NodeJS.Signals) => {
         if (shuttingDown) return
         shuttingDown = true
         process.stdout.write(`\nshutting down (${signal})\n`)
         disposeWatcher?.()
         server.close()
+        intentionallyKilled.add(pbRef.current)
         pbRef.current.kill('SIGTERM')
         expo?.kill('SIGTERM')
         // give children a moment, then exit
@@ -738,11 +743,20 @@ async function main() {
 
     // If either child dies on its own, tear down the others. With
     // --no-expo we don't own the Expo process, so its lifetime is the
-    // user's concern — we only watch pb here. Planned restarts (triggered
-    // by the watcher) flip pbRef.restarting so this handler ignores them.
+    // user's concern — we only watch pb here.
+    //
+    // Planned restarts (triggered by the watcher) and shutdown both kill PB
+    // deliberately; we must not treat those exits as crashes. We can't gate
+    // on pbRef.current because the old child's 'exit' is delivered
+    // asynchronously — by the time the OS reports it, the watcher has
+    // already reassigned pbRef.current to the freshly-spawned child, so a
+    // `child === pbRef.current` guard would misfire. Instead the killer tags
+    // the exact child in intentionallyKilled the instant it signals it; this
+    // handler (closed over that child) reads the tag with no dependency on
+    // later mutations of pbRef.
     const attachPbExitHandler = (child: ChildProcess) => {
         child.on('exit', code => {
-            if (pbRef.restarting && child === pbRef.current) return
+            if (intentionallyKilled.has(child)) return
             process.stdout.write(`pb exited (${code}); shutting down\n`)
             shutdown('SIGTERM')
         })
@@ -778,22 +792,21 @@ async function main() {
                     return
                 }
                 watcherLog(`rebuilt in ${dt}ms, restarting pb\n`)
-                pbRef.restarting = true
-                pbRef.current.kill('SIGTERM')
+                const old = pbRef.current
+                intentionallyKilled.add(old)
+                old.kill('SIGTERM')
                 // Wait for the port to actually free up before respawning;
                 // otherwise the new PB races the old one and EADDRINUSE.
                 if (!(await waitForPortFree(block.pb, 5_000))) {
                     watcherLog(`pb did not release :${block.pb}, sending SIGKILL\n`)
-                    pbRef.current.kill('SIGKILL')
+                    old.kill('SIGKILL')
                     if (!(await waitForPortFree(block.pb, 2_000))) {
                         watcherLog(`pb still holding :${block.pb}; giving up this restart\n`)
-                        pbRef.restarting = false
                         return
                     }
                 }
                 pbRef.current = spawnPbBinary(block.pb, publicUrl, pbDataDir)
                 attachPbExitHandler(pbRef.current)
-                pbRef.restarting = false
                 try {
                     await waitForUpstream(block.pb, 'pb', 30_000)
                     watcherLog('pb back up\n')
