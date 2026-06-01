@@ -4,7 +4,7 @@ import { ExitAnimationContext } from '@gluestack-ui/core/overlay/creator'
 import type { VariantProps } from '@gluestack-ui/utils/nativewind-utils'
 import { tva, useStyleContext, withStyleContext } from '@gluestack-ui/utils/nativewind-utils'
 import React from 'react'
-import { Pressable, ScrollView, View } from 'react-native'
+import { Platform, Pressable, ScrollView, View } from 'react-native'
 import Animated, {
     Easing,
     FadeIn,
@@ -203,7 +203,11 @@ type IDrawerCloseButtonProps = React.ComponentProps<typeof UIDrawer.CloseButton>
 function useDrawerEscape(isOpen: boolean | undefined, onClose?: () => void) {
     React.useEffect(() => {
         if (!isOpen || !onClose) return
-        if (typeof document === 'undefined') return
+        // Web-only: this is keyboard a11y for the browser. On native, React
+        // Native polyfills a partial `document` global that is defined but lacks
+        // addEventListener, so a `typeof document === 'undefined'` check passes
+        // through and then crashes on the call. Guard on the platform instead.
+        if (Platform.OS !== 'web') return
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 e.preventDefault()
