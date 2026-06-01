@@ -73,7 +73,12 @@ function LabelRow({
                         style={{ backgroundColor: editColor }}
                     />
                     <TextInput
-                        className="flex-1 text-sm p-2 border border-border rounded-md bg-background text-foreground"
+                        // min-w-0 lets the input shrink within the flex row. On
+                        // web a raw TextInput keeps its intrinsic <input> width
+                        // (RN flex children default to flex-shrink:0), so without
+                        // this it overflows the fixed-width modal instead of
+                        // fitting beside the swatch and action buttons.
+                        className="flex-1 min-w-0 text-sm p-2 border border-border rounded-md bg-background text-foreground"
                         value={editName}
                         onChangeText={v => setValue('name', v)}
                         placeholder="Label name"
@@ -204,7 +209,12 @@ function CreateLabelRow({ onCreated }: { onCreated: () => void }) {
             <View className="flex-row items-center px-3 py-2 gap-2">
                 <View className="w-3.5 h-3.5 rounded-full" style={{ backgroundColor: color }} />
                 <TextInput
-                    className="flex-1 text-sm p-2 border border-border rounded-md bg-background text-foreground"
+                    // min-w-0 lets the input shrink within the flex row. On web
+                    // a raw TextInput keeps its intrinsic <input> width (RN flex
+                    // children default to flex-shrink:0), so without this it
+                    // overflows the fixed-width modal instead of fitting beside
+                    // the swatch and action buttons.
+                    className="flex-1 min-w-0 text-sm p-2 border border-border rounded-md bg-background text-foreground"
                     value={name}
                     onChangeText={v => setValue('name', v)}
                     placeholder="Label name"
