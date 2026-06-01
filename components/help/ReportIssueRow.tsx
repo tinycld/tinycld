@@ -1,9 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import Constants from 'expo-constants'
 import { Bug, ChevronRight } from 'lucide-react-native'
-import { Platform, Pressable, Text, View } from 'react-native'
-import { getCoreConfigOptional } from '../../lib/core-config'
-import { openPackageIssue } from '../../lib/help/report-issue'
+import { Pressable, Text, View } from 'react-native'
+import { useReportIssue } from '../../lib/help/use-report-issue'
 import { usePackage } from '../../lib/packages/use-packages'
 
 interface Props {
@@ -13,9 +11,9 @@ interface Props {
 
 export function ReportIssueRow({ pkgSlug, isLast = true }: Props) {
     const pkg = usePackage(pkgSlug)
+    const reportIssue = useReportIssue(pkgSlug)
     const mutedColor = useThemeColor('muted-foreground')
-    const repoUrl = pkg?.repository?.url
-    if (!pkg || !repoUrl) return null
+    if (!pkg || !reportIssue) return null
 
     const borderClass = isLast ? '' : 'border-b border-border'
 
@@ -23,18 +21,7 @@ export function ReportIssueRow({ pkgSlug, isLast = true }: Props) {
         <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Report an issue with ${pkg.name}`}
-            onPress={() =>
-                openPackageIssue({
-                    repoUrl,
-                    issueTemplate: pkg.repository?.issueTemplate,
-                    pkgName: pkg.name,
-                    pkgSlug: pkg.slug,
-                    pkgVersion: pkg.version,
-                    appVersion: Constants.expoConfig?.version ?? 'unknown',
-                    commit: (getCoreConfigOptional()?.release ?? 'dev').slice(0, 7),
-                    platform: Platform.OS,
-                })
-            }
+            onPress={reportIssue}
             className={`flex-row items-center px-4 py-3.5 ${borderClass} hover:bg-surface-secondary`}
             style={({ pressed }) => [pressed && { opacity: 0.7 }]}
         >
