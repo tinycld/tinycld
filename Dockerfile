@@ -329,7 +329,7 @@ COPY --from=web-builder /ws/google-takeout-import /google-takeout-import
 #     the generator + a web rebuild at runtime.
 COPY --from=web-builder /ws/app/tinycld.config.ts /ws/app/tinycld.seeds.ts ./
 COPY --from=web-builder /ws/app/package.json /ws/app/tsconfig.json /ws/app/tsconfig.package-base.json ./
-COPY --from=web-builder /ws/app/metro.config.cjs /ws/app/babel.config.cjs /ws/app/react-native.config.cjs ./
+COPY --from=web-builder /ws/app/metro.config.cjs /ws/app/babel.config.cjs ./
 COPY --from=web-builder /ws/app/app.json /ws/app/global.css /ws/app/uniwind-types.d.ts /ws/app/expo-env.d.ts ./
 COPY --from=web-builder /ws/app/scripts ./scripts
 COPY --from=web-builder /ws/app/lib ./lib
