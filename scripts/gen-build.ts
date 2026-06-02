@@ -49,11 +49,21 @@ export interface BuildPkg {
 export function runPackageBuilds(wsRoot: string, builds: BuildPkg[]): void {
     if (builds.length === 0) return
     const tsx = tsxBinary(wsRoot)
+    // Package build scripts (e.g. text's webview-editor bundler) point esbuild
+    // at the app shell's node_modules to resolve the deps they bundle (@tiptap,
+    // yjs, react, …). Pass the app dir explicitly so they don't fall back to a
+    // guessed relative path — under pnpm those deps are scoped to app/node_modules
+    // (not flat-hoisted to the workspace root), so the path must be exact.
+    const appDir = path.join(wsRoot, 'app')
     for (const b of builds) {
         const scriptPath = resolveBuildScriptPath(b.packageDir, b.script)
         console.log(
             `[generate] running build for ${b.packageName}: ${path.relative(wsRoot, scriptPath)}`
         )
-        execFileSync(tsx, [scriptPath], { cwd: b.packageDir, stdio: 'inherit' })
+        execFileSync(tsx, [scriptPath], {
+            cwd: b.packageDir,
+            stdio: 'inherit',
+            env: { ...process.env, TINYCLD_APP_ROOT: appDir },
+        })
     }
 }

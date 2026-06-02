@@ -19,6 +19,8 @@
             "!**/pb_test_data",
             "!types",
             "!lib/generated",
+            "!scripts/eas-workspace-files",
+            "!scripts/eas-workspace-files/**/*",
             "!node_modules",
             "!node_modules/**/*",
             "!app/a/\\[orgSlug\\]/calendar",

@@ -36,7 +36,7 @@ export function buildTypecheckCommand(
 // (which flag a much wider set of files and produce different output).
 //
 // Why this lives in `check` (and gates every package's per-PR CI):
-// before this, biome only ran via `npm run lint` (the workspace-wide
+// before this, biome only ran via `pnpm run lint` (the workspace-wide
 // sweep) on app's CI. That meant feature packages could merge code
 // with lint regressions, and the issue would only surface later on
 // the next app PR — by which time the offending change had landed in

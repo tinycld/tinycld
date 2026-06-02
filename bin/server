@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "Generating package wiring..."
-npm run packages:generate
+pnpm run packages:generate
 
 cd server
 

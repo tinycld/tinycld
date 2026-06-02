@@ -9,8 +9,8 @@ import { login, navigateToPackage, ORG_SLUG } from './helpers'
 // any real feature package.
 //
 // To run locally, scaffold the stub first:
-//     npx tsx tests/scripts/scaffold-shortcut-stub.ts
-//     cd app && npx tinycld-pkg test:e2e -- --grep "Keyboard shortcuts"
+//     pnpm exec tsx tests/scripts/scaffold-shortcut-stub.ts
+//     cd app && pnpm exec tinycld-pkg test:e2e -- --grep "Keyboard shortcuts"
 //
 // CI runs the scaffold step as part of the e2e job.
 

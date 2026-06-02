@@ -10,7 +10,7 @@
  *    the per-test budget doesn't race the compile.
  *
  * The DB reset+seed is NOT done here — it's part of the webServer command
- * (`npm run expo:test` chains `reset-dev-db.ts` before `dev.ts`). Doing it
+ * (`pnpm run expo:test` chains `reset-dev-db.ts` before `dev.ts`). Doing it
  * in globalSetup raced with webServer startup: Playwright spawns webServer
  * in parallel with globalSetup, so dev.ts's PB would open server/pb_test_data
  * while reset-dev-db.ts was still deleting and reseeding it — yielding a

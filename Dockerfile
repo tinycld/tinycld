@@ -1,10 +1,12 @@
 # Build pipeline assumes the build context is the ASSEMBLED WORKSPACE ROOT:
 #
-#   <context>/                 # the npm workspace root (@tinycld/workspace)
-#       package.json           # workspaces: [app, app/package-scripts, core, <features>]
-#       package-lock.json
-#       .npmrc
+#   <context>/                 # the pnpm workspace root (@tinycld/workspace)
+#       package.json           # packageManager: pnpm@<ver>; tsx devDep; postinstall
+#       pnpm-workspace.yaml     # member list + pnpm settings (nodeLinker: hoisted)
+#       pnpm-lock.yaml          # pinned lockfile (from the release asset)
+#       .npmrc                 # minimal (pnpm settings live in pnpm-workspace.yaml)
 #       tinycld.packages.ts    # member enumeration used by the generator
+#       scripts/link-members.ts # links members into node_modules/@tinycld/ (postinstall)
 #       tests/                 # shared unit-test stubs
 #       core/                  # @tinycld/core — shared lib + Go module tinycld.org/core
 #       app/                   # @tinycld/app — this shell (generator lives here)
@@ -19,8 +21,9 @@
 #
 #   docker build -f app/Dockerfile -t tinycld <workspace-root>
 #
-# `npm ci` at the root links every member under node_modules/@tinycld/<name>
-# and runs the generator on postinstall, which materializes app/lib/generated/,
+# `pnpm install --frozen-lockfile` at the root installs the pinned graph; the
+# postinstall runs link-members (linking every member under
+# node_modules/@tinycld/<name>) then the generator, which materializes app/lib/generated/,
 # app/tinycld.config.ts, app/tinycld.seeds.ts, route re-exports under
 # app/app/a/[orgSlug]/<slug>/, app/server/{package_extensions.go,go.work,
 # pb_migrations/,pb_hooks/,bundled-packages.json}, etc. The Go app module is
@@ -60,12 +63,13 @@ ENV TINYCLD_EXPORT_TYPES_BIN=/usr/local/bin/export-types
 # COPYs are the only thing that changes between most builds. package-scripts (the
 # tinycld-pkg CLI) now lives inside the app member (app/package-scripts), so it
 # arrives with the `COPY app/ ./app/` below — no separate root COPY.
-COPY package.json package-lock.json .npmrc tinycld.packages.ts ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tinycld.packages.ts ./
+COPY scripts/ ./scripts/
 COPY tests/ ./tests/
 
 # Workspace members. core + app first (most likely to change last), then the
 # feature members. Each is a real directory in the assembled context — no
-# symlinks, no per-member node_modules (npm ci recreates the workspace links).
+# symlinks, no per-member node_modules (pnpm install recreates the workspace links).
 COPY core/ ./core/
 COPY app/ ./app/
 COPY contacts/ ./contacts/
@@ -82,13 +86,15 @@ COPY google-takeout-import/ ./google-takeout-import/
 # re-runs the generator + a web rebuild, which needs Expo's ambient types).
 RUN [ -f app/expo-env.d.ts ] || printf '/// <reference types="expo/types" />\n' > app/expo-env.d.ts
 
-# Install the whole workspace at the root. npm links every member under
-# node_modules/@tinycld/<name> and then runs the workspace-root `postinstall`
-# (`cd app && npm run packages:generate && npm run assets:copy-pdfjs`), which
-# is the generator. All members are present by now, so the generator resolves
-# every package. Do NOT pass --ignore-scripts: postinstall IS the generation
-# step we depend on for the Go wiring, route re-exports, and lib/generated/.
-RUN npm ci
+# Install the whole workspace at the root. The postinstall runs link-members
+# (linking every member under node_modules/@tinycld/<name>) and then the
+# generator (`cd app && pnpm run packages:generate && pnpm run assets:copy-pdfjs`).
+# All members are present by now, so the generator resolves every package. Do
+# NOT pass --ignore-scripts: the postinstall IS the generation step we depend on
+# for the Go wiring, route re-exports, and lib/generated/. corepack enable picks
+# the pnpm version pinned in package.json; --frozen-lockfile enforces the pinned
+# pnpm-lock.yaml for a reproducible image.
+RUN corepack enable && pnpm install --frozen-lockfile
 
 # Resolve the migration/hook symlinks the generator wrote under
 # app/server/{pb_migrations,pb_hooks} into real files. They point at member
@@ -236,7 +242,7 @@ ENV PUBLIC_SCHEME=""
 ENV FZ_VERSION="1.25.1"
 
 # Install runtime dependencies + Node for runtime tasks. Cron jobs in bin/
-# invoke `npx tsx scripts/<x>.ts` (reset-demo, seed-db), so Node must be on
+# invoke `pnpm exec tsx scripts/<x>.ts` (reset-demo, seed-db), so Node must be on
 # PATH. libcap2-bin (setcap) is needed at image build time below; we keep it
 # available so operators on autocert who use the in-app package installer can
 # manually re-apply the cap to a freshly-rebuilt binary.
@@ -285,12 +291,14 @@ COPY --from=web-builder /ws/app/server/pb_migrations ./pb_migrations
 
 # Workspace-root files for the runtime scripts + in-app package-install
 # pipeline. These live at the workspace ROOT in the new layout: the root
-# package.json/lock/.npmrc, the hoisted node_modules (with the @tinycld/<x>
-# member symlinks), and tinycld.packages.ts. They sit one directory above the
-# app tree so the symlinks (node_modules/@tinycld/<x> → ../../<x>) still point
-# at the sibling members copied below.
-COPY --from=web-builder /ws/package.json /ws/package-lock.json /ws/.npmrc /
+# package.json / pnpm-lock.yaml / pnpm-workspace.yaml / .npmrc, the hoisted
+# node_modules (with the @tinycld/<x> member symlinks), tinycld.packages.ts, and
+# scripts/link-members.ts (the in-app installer's postinstall re-runs it). They
+# sit one directory above the app tree so the symlinks (node_modules/@tinycld/<x>
+# → ../../<x>) still point at the sibling members copied below.
+COPY --from=web-builder /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /
 COPY --from=web-builder /ws/tinycld.packages.ts /tinycld.packages.ts
+COPY --from=web-builder /ws/scripts /scripts
 COPY --from=web-builder /ws/node_modules /node_modules
 # package-scripts (the tinycld-pkg CLI) now lives inside the app member, so the
 # node_modules/@tinycld/package-scripts symlink resolves to ../../app/package-scripts
@@ -360,7 +368,8 @@ RUN chmod +x ./entrypoint.sh
 # chown'ing would silently wipe the cap.
 RUN chown -R tinycld:tinycld /app \
     && chown -R tinycld:tinycld /node_modules /core /contacts /mail /calendar /drive /calc /text /google-takeout-import \
-    && chown tinycld:tinycld /package.json /package-lock.json /.npmrc /tinycld.packages.ts
+    && chown tinycld:tinycld /package.json /pnpm-lock.yaml /pnpm-workspace.yaml /.npmrc /tinycld.packages.ts \
+    && chown -R tinycld:tinycld /scripts
 
 # Grant cap_net_bind_service so the non-root user can bind :80/:443 when
 # autocert is on (AUTOCERT_ENABLED=true with PRIMARY_DOMAIN set). The plain-HTTP

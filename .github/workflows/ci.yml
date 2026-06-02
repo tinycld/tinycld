@@ -26,8 +26,9 @@ jobs:
         with:
           path: ws/app
       # app carries its own .node-version; read it from the checkout (no
-      # dependency on bootstrap having generated ws/.node-version yet). No npm
-      # cache: there is no committed lockfile (npm install resolves fresh).
+      # dependency on bootstrap having generated ws/.node-version yet). No
+      # package-manager cache: no committed lockfile (pnpm resolves fresh;
+      # corepack enable selects the pnpm pinned in the workspace package.json).
       - uses: actions/setup-node@v5
         with:
           node-version-file: ws/app/.node-version
@@ -40,10 +41,10 @@ jobs:
           go-version-file: ws/.go-version
       - name: Install (workspace root)
         working-directory: ws
-        run: npm install
+        run: corepack enable && pnpm install --no-frozen-lockfile
       - name: Check (lint + typecheck + unit)
         working-directory: ws/app
-        run: npx tinycld-pkg check
+        run: pnpm exec tinycld-pkg check
 
   go:
     name: Go build & test
@@ -69,7 +70,7 @@ jobs:
           go-version-file: ws/.go-version
       - name: Install (workspace root)
         working-directory: ws
-        run: npm install
+        run: corepack enable && pnpm install --no-frozen-lockfile
       # go mod download populates go.sum entries the committed go.sum is
       # missing — specifically the `/go.mod h1:` hashes for transitive
       # deps resolved through go.work's `use ../../core/server`. Without
@@ -110,9 +111,9 @@ jobs:
           go-version-file: ws/.go-version
       - name: Install (workspace root)
         working-directory: ws
-        run: npm install
+        run: corepack enable && pnpm install --no-frozen-lockfile
       # go mod download before E2E so the webServer (which builds PB
-      # via npm run expo:test → reset-dev-db) doesn't fail on a missing
+      # via pnpm run expo:test → reset-dev-db) doesn't fail on a missing
       # go.sum entry. Same fix as the Go job above; both need it
       # because the committed go.sum lacks the `/go.mod h1:` hashes for
       # transitive deps resolved through go.work's `use ../../core/server`.
@@ -128,13 +129,13 @@ jobs:
         uses: ./ws/app/.github/actions/configure-test-env
       - name: Scaffold shortcut-stub package
         working-directory: ws
-        run: npx tsx app/tests/scripts/scaffold-shortcut-stub.ts
+        run: pnpm exec tsx app/tests/scripts/scaffold-shortcut-stub.ts
       - name: Install Playwright browsers
         working-directory: ws/app
-        run: npx playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium
       - name: E2E
         working-directory: ws/app
-        run: npx tinycld-pkg test:e2e
+        run: pnpm exec tinycld-pkg test:e2e
       # Capture Playwright's per-failure artifacts (trace, screenshot,
       # video, error-context.md) so a CI failure can be diagnosed
       # without a re-run. `if: failure()` skips the upload on green

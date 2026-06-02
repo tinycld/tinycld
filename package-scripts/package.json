@@ -4,9 +4,9 @@
     "private": true,
     "type": "module",
     "bin": {
-        "tinycld-pkg": "src/cli.ts"
+        "tinycld-pkg": "bin/tinycld-pkg.mjs"
     },
-    "peerDependencies": {
-        "tsx": "*"
+    "dependencies": {
+        "tsx": "^4.21.0"
     }
 }

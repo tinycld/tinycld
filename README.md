@@ -10,7 +10,7 @@ back, every feature shipped as a separately-installable package. See
 
 This repo (`@tinycld/app`, member name `app`) is the runnable **app shell**: branding,
 Expo native projects, deployment configs, the package generator, and all the heavy
-runtime dependencies. It is the entrypoint for `npm run dev` and
+runtime dependencies. It is the entrypoint for `pnpm run dev` and
 `docker pull ghcr.io/tinycld/tinycld`.
 
 `@tinycld/core` (the shared TypeScript + Go library) is **no longer bundled here** — it
@@ -45,8 +45,8 @@ member as a sibling directory:
 ```sh
 mkdir ~/code/tinycld && cd ~/code/tinycld
 npx @tinycld/bootstrap@latest --assemble-only --with mail --with contacts
-npm install        # links members + runs the generator (postinstall)
-cd app && npm run dev
+pnpm install        # links members + runs the generator (postinstall)
+cd app && pnpm run dev
 ```
 
 Full guide: <https://tinycld.org/docs/getting-started>.
@@ -54,9 +54,9 @@ Full guide: <https://tinycld.org/docs/getting-started>.
 To add another feature to an existing workspace, either re-run
 `npx @tinycld/bootstrap@latest --assemble-only --with <slug>` (skips dirs that
 already exist) or `git clone` the sibling repo by hand into the workspace root,
-then `npm install` again.
+then `pnpm install` again.
 
-`npm run dev` runs three processes in parallel: an HTTP proxy on the user-facing port
+`pnpm run dev` runs three processes in parallel: an HTTP proxy on the user-facing port
 7100, the Go PocketBase server on 7101, and the Expo bundler on 7102. The proxy routes
 `/api` and `/_` to PB and everything else to Expo, so the app talks to PB same-origin.
 
@@ -67,7 +67,7 @@ SSL is needed for developing on the iOS simulator; trust the certs via the Setti
 ```sh
 brew install mkcert     # macOS — see mkcert docs for other platforms
 mkcert -install         # one-time, installs the local CA in your trust store
-npm run ssl:generate
+pnpm run ssl:generate
 ```
 
 ## What's where
@@ -105,7 +105,7 @@ one is just cloning the sibling and re-installing. The fastest path is bootstrap
 ```sh
 cd ~/code/tinycld
 npx @tinycld/bootstrap@latest --assemble-only --with <slug>
-npm install        # links it + regenerates
+pnpm install        # links it + regenerates
 ```
 
 Or by hand:
@@ -113,28 +113,28 @@ Or by hand:
 ```sh
 cd ~/code/tinycld
 git clone git@github.com:tinycld/<slug>.git <slug>
-npm install        # links it + regenerates
+pnpm install        # links it + regenerates
 ```
 
 For a third-party package, also add its directory name to the `workspaces` array in
 the workspace-root `package.json` before installing.
 
-Remove one by deleting its sibling clone and re-running `npm install`. The set of
+Remove one by deleting its sibling clone and re-running `pnpm install`. The set of
 linked packages = the set of installed workspace members.
 
 ## Working in this repo
 
 ```sh
-cd ~/code/tinycld && npm install   # at the workspace root (postinstall runs the generator)
+cd ~/code/tinycld && pnpm install   # at the workspace root (postinstall runs the generator)
 cd app
-npm run checks                     # biome + tsc
-npm run test                       # vitest (this member)
-npm run test:e2e                   # playwright (this member)
+pnpm run checks                     # biome + tsc
+pnpm run test                       # vitest (this member)
+pnpm run test:e2e                   # playwright (this member)
 cd server && go build -o tinycld . && ./tinycld --help
 ```
 
 Per-member checks run via the `tinycld-pkg` CLI (`@tinycld/package-scripts`): from any
-member dir, `npx tinycld-pkg check` typechecks + unit-tests just that member;
+member dir, `pnpm exec tinycld-pkg check` typechecks + unit-tests just that member;
 `tinycld-pkg check --all` runs every member (app, core, and each feature sibling).
 
 ## Code style
