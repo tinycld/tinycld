@@ -328,7 +328,13 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		emitProgress(job, "Security warning", 8, "Package is not in @tinycld/ scope — proceed with caution")
 	}
 
-	// Step 2: npm pack (20%)
+	// Step 2: download the published package tarball (20%). This uses `npm pack
+	// <spec>` deliberately — it's a registry-download operation (fetch a
+	// published tarball by name/version), NOT a workspace install. pnpm has no
+	// equivalent that takes a remote spec (`pnpm pack` only packs the local
+	// package), so npm is the right tool here even though the workspace installs
+	// with pnpm. The actual install (relinking the workspace) happens in step 7
+	// via `pnpm install`.
 	emitProgress(job, "Downloading package", 15, "Running npm pack "+job.NpmPkg)
 	tmpDir, err := os.MkdirTemp("", "tinycld-pkg-*")
 	if err != nil {
@@ -417,14 +423,16 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	})
 	emitProgress(job, "Workspace updated", 45, "Member added to workspaces[]")
 
-	// Step 7: npm install at the workspace root (55%).
-	emitProgress(job, "Installing dependencies", 50, "Running npm install")
-	npmOut, err := runCmd(wsRoot, "npm", "install")
+	// Step 7: pnpm install at the workspace root (55%). The workspace is a pnpm
+	// workspace; pnpm discovers the new member from pnpm-workspace.yaml (updated
+	// above) and the postinstall (link-members + generator) wires it in.
+	emitProgress(job, "Installing dependencies", 50, "Running pnpm install")
+	npmOut, err := runCmd(wsRoot, "pnpm", "install", "--no-frozen-lockfile")
 	if err != nil {
-		fail("npm install", fmt.Errorf("%v: %s", err, npmOut))
+		fail("pnpm install", fmt.Errorf("%v: %s", err, npmOut))
 		return
 	}
-	emitProgress(job, "Dependencies installed", 55, "npm install complete")
+	emitProgress(job, "Dependencies installed", 55, "pnpm install complete")
 
 	// Step 8: Regenerate wiring (65%). The generator lives at app/scripts/generate.ts
 	// and runs from the app dir.
@@ -607,16 +615,16 @@ func runUninstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	}
 	emitProgress(job, "Workspace updated", 42, "Member removed from workspaces[]")
 
-	// Step 4: npm install at the workspace root to clean the now-orphaned
+	// Step 4: pnpm install at the workspace root to clean the now-orphaned
 	// node_modules/@tinycld/<slug> symlink before the rebuild. Without this the
 	// dangling symlink can break expo export's module resolution.
-	emitProgress(job, "Updating dependencies", 48, "Running npm install")
-	npmOut, err := runCmd(wsRoot, "npm", "install")
+	emitProgress(job, "Updating dependencies", 48, "Running pnpm install")
+	npmOut, err := runCmd(wsRoot, "pnpm", "install", "--no-frozen-lockfile")
 	if err != nil {
-		fail("npm install", fmt.Errorf("%v: %s", err, npmOut))
+		fail("pnpm install", fmt.Errorf("%v: %s", err, npmOut))
 		return
 	}
-	emitProgress(job, "Dependencies updated", 52, "npm install complete")
+	emitProgress(job, "Dependencies updated", 52, "pnpm install complete")
 
 	// Step 5: Regenerate wiring (generator lives at app/scripts/generate.ts).
 	emitProgress(job, "Regenerating wiring", 58, "Running package generation script")
@@ -790,22 +798,34 @@ func stageRelease(appDir string) (string, error) {
 // package.json if absent. npm only creates the node_modules/@tinycld/<name>
 // symlink for declared members. Idempotent. Preserves the file's other keys and
 // the canonical 4-space indentation.
+// addWorkspaceMember registers slug as a workspace member. pnpm reads members
+// from pnpm-workspace.yaml (the authoritative list), so that's updated; the
+// package.json workspaces[] array is also kept in sync as a tooling hint.
+// Idempotent.
 func addWorkspaceMember(pkgPath, slug string) error {
 	pkg, err := readWorkspacePkg(pkgPath)
 	if err != nil {
 		return err
 	}
 	members := toStringSlice(pkg["workspaces"])
+	present := false
 	for _, m := range members {
 		if m == slug {
-			return nil
+			present = true
+			break
 		}
 	}
-	pkg["workspaces"] = append(members, slug)
-	return writeWorkspacePkg(pkgPath, pkg)
+	if !present {
+		pkg["workspaces"] = append(members, slug)
+		if err := writeWorkspacePkg(pkgPath, pkg); err != nil {
+			return err
+		}
+	}
+	return addPnpmWorkspaceMember(filepath.Join(filepath.Dir(pkgPath), "pnpm-workspace.yaml"), slug)
 }
 
-// removeWorkspaceMember removes slug from the workspaces[] array. Idempotent.
+// removeWorkspaceMember unregisters slug from both pnpm-workspace.yaml and the
+// package.json workspaces[] hint. Idempotent.
 func removeWorkspaceMember(pkgPath, slug string) error {
 	pkg, err := readWorkspacePkg(pkgPath)
 	if err != nil {
@@ -819,7 +839,76 @@ func removeWorkspaceMember(pkgPath, slug string) error {
 		}
 	}
 	pkg["workspaces"] = filtered
-	return writeWorkspacePkg(pkgPath, pkg)
+	if err := writeWorkspacePkg(pkgPath, pkg); err != nil {
+		return err
+	}
+	return removePnpmWorkspaceMember(filepath.Join(filepath.Dir(pkgPath), "pnpm-workspace.yaml"), slug)
+}
+
+// addPnpmWorkspaceMember inserts `  - <slug>` into the `packages:` block of
+// pnpm-workspace.yaml if absent. The file is hand-maintained YAML (written by
+// bootstrap); we do a targeted line edit rather than a full parse/serialize so
+// comments and key order are preserved. A missing file is a no-op (a real
+// pnpm workspace always has one; absence means nothing to update).
+func addPnpmWorkspaceMember(yamlPath, slug string) error {
+	data, err := os.ReadFile(yamlPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	pkgIdx := -1
+	for i, l := range lines {
+		if strings.TrimRight(l, " \t") == "packages:" {
+			pkgIdx = i
+			break
+		}
+	}
+	if pkgIdx == -1 {
+		return fmt.Errorf("no packages: block in %s", yamlPath)
+	}
+	// Already a member, or find the last entry in the block.
+	entry := "  - " + slug
+	lastEntry := pkgIdx
+	for i := pkgIdx + 1; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(lines[i], "  -") {
+			if trimmed == "- "+slug {
+				return nil // already present
+			}
+			lastEntry = i
+		} else if len(lines[i]) > 0 && lines[i][0] != ' ' && trimmed != "" {
+			break // next top-level key ends the block
+		}
+	}
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, lines[:lastEntry+1]...)
+	out = append(out, entry)
+	out = append(out, lines[lastEntry+1:]...)
+	return os.WriteFile(yamlPath, []byte(strings.Join(out, "\n")), 0o644)
+}
+
+// removePnpmWorkspaceMember deletes the `  - <slug>` line from pnpm-workspace.yaml's
+// packages: block if present. Missing file is a no-op. Idempotent.
+func removePnpmWorkspaceMember(yamlPath, slug string) error {
+	data, err := os.ReadFile(yamlPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if strings.TrimSpace(l) == "- "+slug {
+			continue
+		}
+		out = append(out, l)
+	}
+	return os.WriteFile(yamlPath, []byte(strings.Join(out, "\n")), 0o644)
 }
 
 func readWorkspacePkg(pkgPath string) (map[string]any, error) {

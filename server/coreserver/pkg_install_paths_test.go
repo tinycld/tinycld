@@ -15,7 +15,7 @@ func writeWsManifest(t *testing.T, dir string, workspaces []string) string {
 		"name":       "@tinycld/workspace",
 		"private":    true,
 		"workspaces": workspaces,
-		"scripts":    map[string]any{"postinstall": "cd app && npm run packages:generate"},
+		"scripts":    map[string]any{"postinstall": "cd app && pnpm run packages:generate"},
 	}
 	data, err := json.MarshalIndent(pkg, "", "    ")
 	if err != nil {

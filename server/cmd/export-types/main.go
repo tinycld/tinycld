@@ -2,7 +2,7 @@
 // PocketBase migration set and exits.
 //
 // This is the standalone binary the workspace build uses (via
-// app/scripts/export-types.ts → invoked by `npm install`'s postinstall).
+// app/scripts/export-types.ts → invoked by `pnpm install`'s postinstall).
 // Pure Go, no CGO, imports only core/coreserver — so it builds quickly
 // inside the lean web-builder Docker stage without dragging in the
 // feature-server CGO dependency chain (mupdf, goheif, …) that the full

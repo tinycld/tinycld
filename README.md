@@ -60,7 +60,7 @@ Core is typechecked + unit-tested as a workspace member — there is no separate
 build. From the **workspace root** (`~/code/tinycld/`):
 
 ```sh
-npm install          # links members + runs the app generator (postinstall)
+pnpm install          # links members + runs the app generator (postinstall)
 npx vitest run       # runs core's unit tests as part of the suite
 ```
 
