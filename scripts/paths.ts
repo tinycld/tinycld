@@ -1,3 +1,4 @@
+import * as fs from 'node:fs'
 import * as path from 'node:path'
 
 // All generator paths derive from the app member dir (the dir containing this
@@ -14,8 +15,43 @@ export const SERVER_DIR = path.join(APP_DIR, 'server')
 export const MIGRATIONS_DIR = path.join(SERVER_DIR, 'pb_migrations')
 export const HOOKS_DIR = path.join(SERVER_DIR, 'pb_hooks')
 
-// Resolve a workspace member's on-disk directory by package name via the
-// workspace-root node_modules symlink (where members are linked in this layout).
+// Resolve a workspace member's on-disk directory by its package.json name.
+//
+// Members are flat sibling dirs under the workspace root (core, mail, calc, …),
+// but a dir name need not equal the package name (@tinycld/google-takeout-import
+// lives in google-takeout-import/). We can't go through node_modules/@tinycld/*:
+// npm symlinks every member there, but pnpm only links members that something
+// actually depends on — feature siblings (which nothing depends on) are absent.
+// So scan the workspace root for the sibling whose package.json name matches,
+// which is package-manager-agnostic. Indexed once per process.
+let memberDirIndex: Map<string, string> | null = null
+
+function buildMemberDirIndex(): Map<string, string> {
+    const index = new Map<string, string>()
+    for (const entry of fs.readdirSync(WS_ROOT)) {
+        const dir = path.join(WS_ROOT, entry)
+        const pkgJsonPath = path.join(dir, 'package.json')
+        let name: unknown
+        try {
+            if (!fs.statSync(dir).isDirectory()) continue
+            name = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')).name
+        } catch {
+            continue // not a dir, or no/unreadable package.json
+        }
+        if (typeof name === 'string' && name.length > 0 && !index.has(name)) {
+            index.set(name, dir)
+        }
+    }
+    return index
+}
+
 export function memberDir(packageName: string): string {
-    return path.join(WS_ROOT, 'node_modules', packageName)
+    if (!memberDirIndex) memberDirIndex = buildMemberDirIndex()
+    const dir = memberDirIndex.get(packageName)
+    if (!dir) {
+        throw new Error(
+            `memberDir: no workspace member named "${packageName}" found under ${WS_ROOT}`
+        )
+    }
+    return dir
 }

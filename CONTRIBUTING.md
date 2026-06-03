@@ -11,8 +11,10 @@ ecosystem is an npm workspace rooted at `~/code/tinycld/`; the app shell, core,
 and every feature package (`@tinycld/contacts`, `@tinycld/mail`,
 `@tinycld/calendar`, `@tinycld/drive`, `@tinycld/calc`, `@tinycld/text`,
 `@tinycld/google-takeout-import`) are workspace members at the same level.
-`npm install` at the workspace root creates `node_modules/@tinycld/<name>`
-symlinks for every present member.
+`pnpm install` at the workspace root runs the postinstall, whose
+`link-members` step creates `node_modules/@tinycld/<name>` symlinks for every
+present member (pnpm only links depended-on members itself, so link-members
+covers the feature siblings nothing depends on).
 
 The Go side of core is module `tinycld.org/core` (at `core/server/`), exporting
 `coreserver` (registration orchestrator) plus subsystems `notify`, `push`,
@@ -27,10 +29,10 @@ is gitignored at the workspace root. The package generator (`scripts/generate.ts
 walks `getPackages()` and wires installed members into the routes, registry, Go
 server, and PocketBase migrations.
 
-Validate changes from inside the member you touched: `npx tinycld-pkg check`
+Validate changes from inside the member you touched: `pnpm exec tinycld-pkg check`
 (biome + tsc + vitest, scoped to that member). For an ecosystem-wide sweep,
-run from `app/`: `npm run pkg:check` (every member) or `npm run checks`
-(biome + app typecheck). The Go side runs `npm run test:server`, which uses
+run from `app/`: `pnpm run pkg:check` (every member) or `pnpm run checks`
+(biome + app typecheck). The Go side runs `pnpm run test:server`, which uses
 the `no_ui` build tag so PocketBase's admin UI routes are skipped during tests
 (PB v0.37+ panics on duplicate route registration when an `OnServe` handler
 binds a fixed pattern across multiple test scenarios that share an app). The
@@ -48,8 +50,8 @@ available in production.
 - Comments: Only add comments that explain "why", not "what". Avoid trivial comments like `// Delete users` before `deleteFrom('user')` or `// Create profile` before `insertInto('profile')`. If the code is self-explanatory, no comment is needed.
 - Testing: Write unit tests for new features. Only mock using helpers in tests/unit.helpers.tsx as needed, do not mock out any of our own components or actions.
 - Run quality checks after any changes:
-   - From inside the member: `npx tinycld-pkg check` (biome + tsc + vitest, scoped)
-   - From `app/` for an ecosystem-wide sweep: `npm run checks` (biome + tsc) and `npm run pkg:test:unit` (vitest across all members)
+   - From inside the member: `pnpm exec tinycld-pkg check` (biome + tsc + vitest, scoped)
+   - From `app/` for an ecosystem-wide sweep: `pnpm run checks` (biome + tsc) and `pnpm run pkg:test:unit` (vitest across all members)
 - Embrace Type Inference: Do not over-specify types, allow TypeScript to infer types whenever possible.
   - DO NOT USE `any` to pass type checks, even with biome ignore comments.
 - Biome enforces 4-space indentation, single quotes, ES5 trailing commas, and no superfluous semicolons.
@@ -142,16 +144,16 @@ available in production.
 - The logger shows timestamps and colors in development mode
 
 ## Scripts Reference
-- `npm run dev` starts Expo + PocketBase together (generator runs first).
-- `npm run typecheck` runs `tinycld-pkg typecheck` (tsc for this member).
-- `npm run checks` runs lint and typechecks (ecosystem-wide biome + app tsc).
-- `npm run lint` (or `npm run lint:fix`) runs Biome over the app and every present sibling. Biome lives only in the app shell; `app/biome.json` is the single config for the app **and** every member. Sibling repos do not ship their own `biome.json` or `lint`/`checks` scripts — `npm run lint` walks the sibling dirs at their real workspace-root filesystem paths.
-- `npm run pkg:check`, `npm run pkg:test:unit`, `npm run pkg:test:e2e` run the corresponding `tinycld-pkg` command across every present member.
-- `npm run test:e2e` and `npm run test:server` cover the Playwright suite and supporting services.
+- `pnpm run dev` starts Expo + PocketBase together (generator runs first).
+- `pnpm run typecheck` runs `tinycld-pkg typecheck` (tsc for this member).
+- `pnpm run checks` runs lint and typechecks (ecosystem-wide biome + app tsc).
+- `pnpm run lint` (or `pnpm run lint:fix`) runs Biome over the app and every present sibling. Biome lives only in the app shell; `app/biome.json` is the single config for the app **and** every member. Sibling repos do not ship their own `biome.json` or `lint`/`checks` scripts — `pnpm run lint` walks the sibling dirs at their real workspace-root filesystem paths.
+- `pnpm run pkg:check`, `pnpm run pkg:test:unit`, `pnpm run pkg:test:e2e` run the corresponding `tinycld-pkg` command across every present member.
+- `pnpm run test:e2e` and `pnpm run test:server` cover the Playwright suite and supporting services.
    - never start or kill servers when running Playwright. It will manage it's own service and test data. If you see network errors or other issues, stop and ask for advice
-- `npm run test:e2e <test file>` will run a single test.  This will also start the dev server for testing.
-- `npm run export:web` runs `expo export --platform web` for production web builds.
-- `npm run export:ios` and `npm run export:android` produce platform-specific exports (used by the docker/EAS build pipelines, not for local launch).
+- `pnpm run test:e2e <test file>` will run a single test.  This will also start the dev server for testing.
+- `pnpm run export:web` runs `expo export --platform web` for production web builds.
+- `pnpm run export:ios` and `pnpm run export:android` produce platform-specific exports (used by the docker/EAS build pipelines, not for local launch).
 
 ## PocketBase Notes
 - Local data lives in `server/pb_data/`; reset via `tests/pb-test-server` scripts when fixtures fall out of sync.
@@ -183,9 +185,9 @@ available in production.
 - Use `useOrgInfo()` or `useOrgSlug()` to get the current org — `useOrgSlug()` reads from context on web
 
 ## Package System
-- Feature packages live in **sibling git repos** at `~/code/tinycld/{contacts,mail,calendar,drive,calc,text,google-takeout-import}/` and are **npm workspace members** of a workspace root at `~/code/tinycld/`. `@tinycld/core` is its own sibling repo at `~/code/tinycld/core/` (also a workspace member). The npm install creates `node_modules/@tinycld/<name>` symlinks for every member; there is no hand-rolled link step.
-- `tinycld.packages.ts::getPackages()` enumerates the workspace member siblings that carry a `manifest.ts`, plus bundled core — that set is the source of truth. To add a feature package, clone it as a sibling of the app shell and run `npm install` at the **workspace root** (`~/code/tinycld/`). There is no `packages:link`/`packages:install` — the workspace install does the linking.
-- `npm run packages:generate` (runs as the workspace-root `postinstall`, and before `dev`) wires linked feature packages into the app. It is now a **thin** step — most wiring moved to runtime imports. It:
+- Feature packages live in **sibling git repos** at `~/code/tinycld/{contacts,mail,calendar,drive,calc,text,google-takeout-import}/` and are **pnpm workspace members** (listed in `pnpm-workspace.yaml`) of a workspace root at `~/code/tinycld/`. `@tinycld/core` is its own sibling repo at `~/code/tinycld/core/` (also a workspace member). The postinstall's `link-members` step creates `node_modules/@tinycld/<name>` symlinks for every member; pnpm itself only links depended-on members, so this covers the rest.
+- `tinycld.packages.ts::getPackages()` enumerates the workspace member siblings that carry a `manifest.ts`, plus bundled core — that set is the source of truth. To add a feature package, clone it as a sibling of the app shell, add it to `pnpm-workspace.yaml`'s `packages:` list, and run `pnpm install` at the **workspace root** (`~/code/tinycld/`). There is no `packages:link`/`packages:install` — the workspace install does the linking.
+- `pnpm run packages:generate` (runs as the workspace-root `postinstall`, and before `dev`) wires linked feature packages into the app. It is now a **thin** step — most wiring moved to runtime imports. It:
   - Re-exports package screens into `app/a/[orgSlug]/{slug}/` (org-scoped routes) and public routes into `app/<path>` (Expo Router needs files on disk).
   - Writes `tinycld.config.ts` (the installed-package source of truth — a typed `definePackageEntry` array) and `tinycld.seeds.ts` (Node-only seed list, kept out of the app bundle).
   - Writes `lib/generated/package-help.ts` (frontmatter-parsed help topics) and `lib/generated/uniwind-sources.css` (Tailwind `@source` roots).
@@ -196,10 +198,10 @@ available in production.
 - The type system is fully integrated — package `types.ts` exports a `{PascalSlug}Schema` type. `generate-config.ts` composes these into `MergedPackageSchema` (a literal intersection), which `pocketbase.ts` intersects with core's `Schema` so `useStore('packageCollection')` is strongly typed end-to-end. (The literal intersection — not a `typeof tinycldConfig` derivation — avoids a circular type reference through `coreStores`.)
 - Package screens run in the app's bundle context and can import from the host app using `~/` and from core using `@tinycld/core/...`.
 - `lib/generated/`, `app/a/[orgSlug]/*/`, and `app/p/*/` are gitignored; `app/a/[orgSlug]/_layout.tsx`, `app/a/[orgSlug]/settings/*`, and `app/p/_layout.tsx` are hand-written app files (force-add to git).
-- **Install at the workspace root (`~/code/tinycld/`), not inside a sibling.** Members declare framework deps as `peerDependencies` with no own `dependencies`; the workspace install hoists shared deps so every member resolves a single copy of `react`, `react-native`, `pbtsdb`, etc. A stray `npm install` inside a sibling would create a duplicate `node_modules` there and reintroduce "Type X is not assignable to type X" errors — keep siblings free of their own `node_modules`/lockfile. (Note: npm does not hoist the heavy deps to the workspace root because the app shell is their only direct consumer; they live in `tinycld/node_modules`, and Metro/Vitest resolve members through there.)
+- **Install at the workspace root (`~/code/tinycld/`), not inside a sibling.** Members declare framework deps as `peerDependencies` with no own `dependencies`; pnpm's `nodeLinker: hoisted` flattens shared deps into the workspace-root `node_modules/` so every member resolves a single copy of `react`, `react-native`, `pbtsdb`, etc. (an npm-like flat tree). A stray `pnpm install` (or any other PM) inside a sibling would create a duplicate `node_modules` there and reintroduce "Type X is not assignable to type X" errors — keep siblings free of their own `node_modules`/lockfile. Metro watches the workspace root and Vitest aliases resolve members through that hoisted root install.
 - Metro bundler resolves workspace members via a `watchFolders` entry for the workspace root in `metro.config.cjs`. The 388-line custom resolver is gone — npm's `node_modules/@tinycld/*` symlinks + Metro's default resolver handle member subpaths (`.ts`/`.tsx`/dir-index) with no singleton pins. Vitest still needs `@tinycld/core/*` path aliases because Vite's exports resolution lacks Metro's directory-index fallback.
-- **Tailwind/Uniwind class scanning across linked packages is wired up by the generator.** Tailwind v4's scanner respects `.gitignore`, and the symlinks (and `node_modules` installs) for linked packages live inside gitignored paths. Without help, any utility class used **only** inside a linked package (e.g. `mr-3`, `bg-green-500`) silently produces no CSS rule — the className lands on the DOM element but has no styles. The generator writes one absolute `@source "<package-real-path>";` line per linked package into `lib/generated/uniwind-sources.css`, which `global.css` imports. The file regenerates on every `packages:link` / `packages:unlink`, so newly-linked packages (siblings, `node_modules`-installed third-party, or arbitrary checkouts) work automatically. Diagnose missing styles by checking `document.styleSheets` in DevTools for a `.your-class { ... }` rule; if missing, run `npm run packages:generate` and inspect `lib/generated/uniwind-sources.css`.
-- Sibling-package tests run inside each sibling via its own `npx tinycld-pkg test` / `tinycld-pkg test:e2e` (each sibling has a `vitest.config.ts` and optional `playwright.config.ts` that merge with the canonical configs in `app/`). From `app/` you can run them across every present member with `npm run pkg:test:unit` / `npm run pkg:test:e2e`.
+- **Tailwind/Uniwind class scanning across linked packages is wired up by the generator.** Tailwind v4's scanner respects `.gitignore`, and the symlinks (and `node_modules` installs) for linked packages live inside gitignored paths. Without help, any utility class used **only** inside a linked package (e.g. `mr-3`, `bg-green-500`) silently produces no CSS rule — the className lands on the DOM element but has no styles. The generator writes one absolute `@source "<package-real-path>";` line per linked package into `lib/generated/uniwind-sources.css`, which `global.css` imports. The file regenerates on every `packages:link` / `packages:unlink`, so newly-linked packages (siblings, `node_modules`-installed third-party, or arbitrary checkouts) work automatically. Diagnose missing styles by checking `document.styleSheets` in DevTools for a `.your-class { ... }` rule; if missing, run `pnpm run packages:generate` and inspect `lib/generated/uniwind-sources.css`.
+- Sibling-package tests run inside each sibling via its own `pnpm exec tinycld-pkg test` / `tinycld-pkg test:e2e` (each sibling has a `vitest.config.ts` and optional `playwright.config.ts` that merge with the canonical configs in `app/`). From `app/` you can run them across every present member with `pnpm run pkg:test:unit` / `pnpm run pkg:test:e2e`.
 - Runtime hooks: `usePackages()` and `usePackage(slug)` from `@tinycld/core/lib/packages/use-packages`.
 - Full documentation: `docs/packages.md` (in this repo, or in core's docs subtree).
 

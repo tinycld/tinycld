@@ -24,7 +24,8 @@
             "autoIncrement": true,
             "channel": "production",
             "env": {
-                "EXPO_PUBLIC_ENV": "production"
+                "EXPO_PUBLIC_ENV": "production",
+                "NODE_OPTIONS": "--max-old-space-size=8192"
             }
         }
     },

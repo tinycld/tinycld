@@ -1,4 +1,4 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env -S pnpm exec tsx
 /**
  * Core server API smoke test
  *
@@ -7,7 +7,7 @@
  * calendar) live in their own repos so a core-only checkout stays green.
  *
  * Usage:
- *   npx tsx scripts/test-server-api.ts [--email <email>] [--password <pw>] [--url <url>]
+ *   pnpm exec tsx scripts/test-server-api.ts [--email <email>] [--password <pw>] [--url <url>]
  */
 
 try {
@@ -43,7 +43,7 @@ function parseArgs(): Config {
                 break
             case '--help':
                 console.log(
-                    'Usage: npx tsx scripts/test-server-api.ts [--email <email>] [--password <pw>] [--url <url>]'
+                    'Usage: pnpm exec tsx scripts/test-server-api.ts [--email <email>] [--password <pw>] [--url <url>]'
                 )
                 console.log('  Or set SMOKE_TEST_USER and SMOKE_TEST_PW in .env')
                 process.exit(0)

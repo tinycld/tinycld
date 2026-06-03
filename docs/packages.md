@@ -32,13 +32,12 @@ Features are not built into the app — they are **independent sibling git
 repos** that get *linked* into a single **app shell** at build time. The app
 shell (`tinycld/`) is the only runnable artifact; it ties everything together.
 
-The monorepo root (`~/code/tinycld/`) is an **npm workspace**. Its root
-`package.json` lists the workspace members — the app shell (`tinycld`), bundled
-core (`tinycld/packages/@tinycld/core`), and every feature sibling (`contacts`,
-`mail`, `calendar`, `drive`, `calc`, `text`, `google-takeout-import`). A root
-`.npmrc` sets `legacy-peer-deps=true`. Linking is **`npm install` at the
-workspace root** — npm materializes the `node_modules/@tinycld/*` symlinks that
-make each member resolvable by its package name.
+The monorepo root (`~/code/tinycld/`) is a **pnpm workspace**. `pnpm-workspace.yaml`
+lists the workspace members and pnpm settings — most importantly `nodeLinker: hoisted`
+(an npm-like flat `node_modules`) and `strictPeerDependencies: false`. Linking is
+**`pnpm install` at the workspace root**; the postinstall's `link-members` step
+materializes the `node_modules/@tinycld/*` symlinks that make each member resolvable
+by its package name (pnpm only links depended-on members itself).
 
 Three kinds of code live in the ecosystem:
 
@@ -53,11 +52,11 @@ contains `manifest.ts`.** Core has no manifest, which is exactly why it is
 treated as a library, not a feature.
 
 ```
-~/code/tinycld/                       # npm workspace root (package.json + .npmrc)
+~/code/tinycld/                       # pnpm workspace root (package.json + pnpm-workspace.yaml)
     node_modules/
         @tinycld/
-            core     -> ../../tinycld/packages/@tinycld/core  # npm workspace symlink
-            mail     -> ../../mail                            # npm workspace symlink
+            core     -> ../../tinycld/packages/@tinycld/core  # pnpm workspace symlink
+            mail     -> ../../mail                            # pnpm workspace symlink
             contacts -> ../../contacts
             ...
     tinycld/                          # app shell (the only runnable thing)
@@ -76,15 +75,16 @@ There is **no hand-curated package list.** `tinycld.packages.ts::getPackages()`
 enumerates the workspace member siblings that contain a `manifest.ts`, plus the
 bundled `@tinycld/core`. **The set of workspace members present = the set of
 linked packages.** A fresh clone has only the bundled `@tinycld/core` subtree;
-developers clone the siblings they want and re-run `npm install`.
+developers clone the siblings they want and re-run `pnpm install`.
 
-> **npm-hoisting reality.** npm does **not** hoist the heavy framework deps to
-> the workspace-root `node_modules`. Feature siblings declare React / React
-> Native / Expo / pbtsdb / `@tanstack/*` as `peerDependencies` and carry no
-> `dependencies` of their own, so the app shell is the only direct consumer and
-> those libraries land in **`tinycld/node_modules`**. Members resolve them
-> through there. Node's bare resolver can't reach them from a sibling's own
-> cwd, but Metro and Vitest are configured to (see
+> **pnpm-hoisting reality.** With `nodeLinker: hoisted`, pnpm flattens the heavy
+> framework deps into the **workspace-root `node_modules`** (an npm-like flat
+> tree). Feature siblings declare React / React Native / Expo / pbtsdb /
+> `@tanstack/*` as `peerDependencies` and carry no `dependencies` of their own,
+> so they resolve those libraries by walking up to the root install. `@tinycld/core`
+> declares the full framework peer set so pnpm auto-installs those into
+> `core/node_modules/` and it typechecks standalone. Metro watches the workspace
+> root and Vitest aliases resolve the same way (see
 > [Bundler & test resolution](#bundler--test-resolution)).
 
 ---
@@ -154,9 +154,9 @@ Three rules enforced here:
   matches both `index` and `[id]`.
 - **`peerDependencies` only, no `dependencies`** — siblings carry no runtime
   deps of their own (even heavy ones like `hyperformula`/`yjs` in calc are
-  peers). Because the app shell is the only direct consumer of those peers,
-  npm resolves them in the **app shell's** `node_modules` (`tinycld/node_modules`)
-  rather than hoisting them to the workspace root. Always run `npm install` at
+  peers). pnpm's `nodeLinker: hoisted` flattens those peers into the
+  **workspace-root** `node_modules` (a flat npm-like tree), so siblings resolve
+  a single copy by walking up. Always run `pnpm install` at
   the **workspace root** (`~/code/tinycld/`), never inside an individual
   sibling — a per-sibling install would materialize a duplicate `react` /
   `react-native` / `pbtsdb` / `yjs`, and TypeScript would then see two copies
@@ -375,7 +375,7 @@ sorts them at run time.
 
 ## Linking a package
 
-Linking is plain **npm workspace resolution** — there are no bespoke
+Linking is plain **pnpm workspace resolution** — there are no bespoke
 `packages:link` / `packages:install` / `packages:unlink` scripts anymore (they,
 and `scripts/link-package.ts` / `scripts/install-package.ts`, were deleted). To
 add a feature package:
@@ -385,12 +385,12 @@ add a feature package:
 cd ~/code/tinycld
 git clone <git-url> contacts            # → ~/code/tinycld/contacts
 
-# 2. Run npm install at the WORKSPACE ROOT (not inside the sibling).
+# 2. Run pnpm install at the WORKSPACE ROOT (not inside the sibling).
 cd ~/code/tinycld
-npm install
+pnpm install
 ```
 
-What `npm install` does:
+What `pnpm install` does:
 
 1. Reads the workspace-root `package.json` `workspaces` list and the sibling's
    own `package.json` for its **canonical name** (`@tinycld/contacts`).
@@ -402,7 +402,7 @@ What `npm install` does:
    wiring — see [The generator](#the-generator)).
 
 To **remove** a feature package, delete its sibling clone (or its entry from
-the workspace list) and re-run `npm install` at the root.
+the workspace list) and re-run `pnpm install` at the root.
 
 `getPackages()` now enumerates the workspace members that contain a
 `manifest.ts` (plus bundled core). The set of cloned-and-installed members is
@@ -473,7 +473,7 @@ would silently produce no CSS rule. The generator writes one absolute
 `@source "<real-path>";` line per package; `global.css` does
 `@import './lib/generated/uniwind-sources.css';`. Diagnose missing styles by
 checking `document.styleSheets` in DevTools for a `.your-class { ... }` rule;
-if absent, re-run `npm run packages:generate`.
+if absent, re-run `pnpm run packages:generate`.
 
 ### F. PocketBase migrations & hooks → `server/pb_migrations/`, `server/pb_hooks/`
 
@@ -590,7 +590,7 @@ For author-facing prose, link readers to the website pages: [Settings](https://t
 
 ## Bundler & test resolution
 
-The npm workspace does the heavy lifting now — a single copy of each shared
+The pnpm workspace does the heavy lifting now — a single copy of each shared
 library is hoisted (singletons like `zustand`/`yjs` resolve to one copy through
 the workspace), and the `node_modules/@tinycld/*` symlinks make every member
 resolvable by name. The bundler and test configs are correspondingly much
@@ -631,7 +631,7 @@ etc.), with `testDir` pointing at that member's `tests/`. Run one package's
 specs with:
 
 ```sh
-npm run test:e2e --project=@tinycld/mail
+pnpm run test:e2e --project=@tinycld/mail
 ```
 
 Playwright **owns the server lifecycle** — it resets the DB and starts
@@ -706,7 +706,7 @@ match.
 
 ### Test build tag
 
-`npm run test:go` builds with the `no_ui` tag so PocketBase's admin UI route
+`pnpm run test:go` builds with the `no_ui` tag so PocketBase's admin UI route
 registration is skipped during tests (PB v0.37+ panics on duplicate route
 registration across test scenarios that share an app). The shipped binary is
 built **without** `no_ui`, so the admin UI ships in production.
@@ -742,15 +742,15 @@ orders seed execution.
 ```sh
 # Clone the feature siblings you want next to the app shell, then:
 cd ~/code/tinycld                   # workspace root
-npm install                         # links members + runs the generator
+pnpm install                         # links members + runs the generator
 
 cd ~/code/tinycld/tinycld           # other commands run from the app shell
-npm run dev                         # packages:generate, then Expo + PocketBase
-npm run checks                      # biome + tsc (lints app + all linked siblings)
-npm run test:unit                   # vitest (includes sibling tests)
-npm run test:e2e                    # playwright (all linked siblings)
-npm run test:e2e --project=@tinycld/mail   # a single package's e2e specs
-npm run test:go                     # Go tests (no_ui build tag)
+pnpm run dev                         # packages:generate, then Expo + PocketBase
+pnpm run checks                      # biome + tsc (lints app + all linked siblings)
+pnpm run test:unit                   # vitest (includes sibling tests)
+pnpm run test:e2e                    # playwright (all linked siblings)
+pnpm run test:e2e --project=@tinycld/mail   # a single package's e2e specs
+pnpm run test:go                     # Go tests (no_ui build tag)
 ```
 
 Where changes go:
@@ -770,7 +770,7 @@ on every `packages:generate`:
 - `tinycld/server/pb_migrations/` (symlinks), `server/package_extensions.go`,
   `server/go.work`, `server/bundled-packages.json`
 
-(The npm workspace symlinks under `node_modules/@tinycld/` are also local-only
+(The pnpm workspace symlinks under `node_modules/@tinycld/` are also local-only
 state, owned by npm — never `git add` them. The app-owned files
 `app/a/[orgSlug]/_layout.tsx` and `app/a/[orgSlug]/settings/*` are force-added
 to git despite living under a gitignored tree.)

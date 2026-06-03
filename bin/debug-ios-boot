@@ -10,7 +10,7 @@ WAIT_SECS="${1:-90}"
 echo "Starting ios:simulator, capturing to $LOGFILE (waiting ${WAIT_SECS}s)..."
 > "$LOGFILE"
 
-npm run ios:simulator > "$LOGFILE" 2>&1 &
+pnpm run ios:simulator > "$LOGFILE" 2>&1 &
 EXPO_PID=$!
 echo "Expo PID: $EXPO_PID"
 

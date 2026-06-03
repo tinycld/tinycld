@@ -3,11 +3,11 @@ name: Build and publish Docker image
 # Lives in the tinycld/app repo — the release ANCHOR. A published Release
 # on THIS repo triggers a multi-arch build:
 #   - app (this repo) is checked out at the triggering tag into ws/app,
-#   - the release's manifest.json + package-lock.json assets are downloaded,
+#   - the release's manifest.json + pnpm-lock.yaml assets are downloaded,
 #   - each sibling listed in the manifest is cloned at its pinned SHA,
 #   - bootstrap --tooling writes the workspace-root scaffolding (members
 #     are already present, so it doesn't re-clone them),
-#   - the pinned package-lock.json is dropped into ws/ for npm ci.
+#   - the pinned pnpm-lock.yaml is dropped into ws/ for `pnpm install --frozen-lockfile`.
 #
 # Trigger is `release: published` only — NOT `push: tags`. The release
 # event fires after release.ts uploads the manifest + lockfile assets;
@@ -80,7 +80,7 @@ jobs:
           node-version-file: ws/app/.node-version
       # Assemble the workspace from the pinned release recipe attached to
       # the app's GitHub Release. release.ts uploads manifest.json (sibling
-      # name → repo + tag + sha) and package-lock.json as assets when it
+      # name → repo + tag + sha) and pnpm-lock.yaml as assets when it
       # cuts an app release. We download both, clone each sibling at its
       # pinned sha, let bootstrap write the workspace scaffolding (members
       # are already present so it skips cloning), and drop the pinned
@@ -97,10 +97,10 @@ jobs:
           echo "Downloading release assets for ${TAG}…"
           mkdir -p .release-assets
           gh release download "${TAG}" -R "${GITHUB_REPOSITORY}" \
-            -p manifest.json -p package-lock.json \
+            -p manifest.json -p pnpm-lock.yaml \
             --dir .release-assets
           MANIFEST=".release-assets/manifest.json"
-          LOCKFILE=".release-assets/package-lock.json"
+          LOCKFILE=".release-assets/pnpm-lock.yaml"
           echo "Manifest contents:"
           cat "${MANIFEST}"
           jq -r '.members[] | "\(.name)\t\(.repo)\t\(.sha)"' "$MANIFEST" | while IFS=$'\t' read -r name repo sha; do
@@ -110,12 +110,14 @@ jobs:
             git -C "${name}" checkout --quiet "${sha}"
           done
           # bootstrap sees every member already cloned and just writes the
-          # workspace-root scaffolding (package.json + .npmrc + tinycld.packages.ts).
+          # workspace-root scaffolding (package.json + pnpm-workspace.yaml +
+          # .npmrc + tinycld.packages.ts + scripts/link-members.ts).
           TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --tooling \
             --with contacts --with mail --with calendar --with drive \
             --with calc --with text --with google-takeout-import
-          # Drop the pinned lockfile into the workspace root so npm ci uses it.
-          cp "${LOCKFILE}" package-lock.json
+          # Drop the pinned lockfile into the workspace root so the Dockerfile's
+          # `pnpm install --frozen-lockfile` reproduces the exact dependency set.
+          cp "${LOCKFILE}" pnpm-lock.yaml
 
       - name: Build and push by digest
         id: build

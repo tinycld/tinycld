@@ -1,10 +1,16 @@
 {
     "expo": {
         "name": "TinyCld",
-        "slug": "tinycld-spike",
-        "scheme": "tinycldspike",
+        "slug": "tinycld",
+        "version": "1.13.7",
+        "scheme": "tinycld",
         "platforms": ["ios", "android", "web"],
         "userInterfaceStyle": "automatic",
+        "runtimeVersion": { "policy": "appVersion" },
+        "updates": {
+            "url": "https://u.expo.dev/ac921362-6d8a-49a4-b0a5-d5867617bc4d",
+            "fallbackToCacheTimeout": 0
+        },
         "plugins": [
             [
                 "expo-router",
@@ -18,10 +24,17 @@
             [
                 "expo-image-picker",
                 {
-                    "photosPermission": "Allow TinyCld to access your photos so you can upload them."
+                    "photosPermission": "Allow TinyCld to access your photos so you can upload them to Drive."
                 }
             ],
-            "expo-sharing"
+            "expo-sharing",
+            [
+                "@sentry/react-native/expo",
+                {
+                    "organization": "argosity",
+                    "project": "tinycld"
+                }
+            ]
         ],
         "icon": "./assets/app-icon.png",
         "splash": {
@@ -29,12 +42,31 @@
             "resizeMode": "contain",
             "backgroundColor": "#445E82"
         },
+        "ios": {
+            "bundleIdentifier": "org.tinycld.app",
+            "buildNumber": "1",
+            "supportsTablet": true,
+            "infoPlist": {
+                "ITSAppUsesNonExemptEncryption": false,
+                "NSPhotoLibraryAddUsageDescription": "Allow TinyCld to save downloaded images to your Photos library."
+            }
+        },
+        "android": {
+            "package": "org.tinycld.app"
+        },
         "web": {
             "bundler": "metro",
             "output": "single"
         },
         "experiments": {
-            "typedRoutes": false
-        }
+            "typedRoutes": true
+        },
+        "extra": {
+            "router": {},
+            "eas": {
+                "projectId": "ac921362-6d8a-49a4-b0a5-d5867617bc4d"
+            }
+        },
+        "owner": "nathanstitt"
     }
 }
