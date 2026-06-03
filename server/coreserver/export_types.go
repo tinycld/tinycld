@@ -37,7 +37,7 @@ type ExportTypesOptions struct {
 //
 // Why a shared library: the build pipeline uses a small standalone
 // binary that imports only coreserver (no feature-server CGO deps),
-// keeping the `npm install`-time toolchain lean. The full app binary
+// keeping the `pnpm install`-time toolchain lean. The full app binary
 // also exposes the same operation as a `tinycld export-types`
 // subcommand for ad-hoc dev runs. Both paths MUST produce byte-
 // identical output, so they share this single function.
@@ -110,7 +110,7 @@ func ExportTypes(app *pocketbase.PocketBase, opts ExportTypesOptions) error {
 // binary would have used (the dev DB), which is occasionally useful
 // for inspecting what the live boot-time hook would emit.
 //
-// Build pipeline note: `npm install`'s postinstall does NOT call this
+// Build pipeline note: `pnpm install`'s postinstall does NOT call this
 // subcommand. It calls the standalone `core/server/cmd/export-types`
 // binary (CGO-free, no feature-server imports) so it can run inside
 // the lean web-builder Docker stage. This subcommand exists for
