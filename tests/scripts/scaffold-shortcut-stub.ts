@@ -189,7 +189,10 @@ function ensureMember(wsRoot: string): void {
     // scaffold path needs a second install to wire the symlink; subsequent
     // runs are no-ops. corepack enable selects the pinned pnpm.
     spawnSync('corepack', ['enable'], { cwd: wsRoot, stdio: 'inherit' })
-    const r = spawnSync('pnpm', ['install', '--no-frozen-lockfile'], { cwd: wsRoot, stdio: 'inherit' })
+    const r = spawnSync('pnpm', ['install', '--no-frozen-lockfile'], {
+        cwd: wsRoot,
+        stdio: 'inherit',
+    })
     if (r.status !== 0) {
         throw new Error(
             'pnpm install (post-member-add) failed; the shortcut-stub symlink under node_modules may be missing'
@@ -203,7 +206,7 @@ function ensureMember(wsRoot: string): void {
 function ensurePnpmMember(yamlPath: string): boolean {
     const yaml = readFileSync(yamlPath, 'utf8')
     const lines = yaml.split('\n')
-    const pkgIdx = lines.findIndex((l) => /^packages:\s*$/.test(l))
+    const pkgIdx = lines.findIndex(l => /^packages:\s*$/.test(l))
     if (pkgIdx === -1) throw new Error(`no packages: block in ${yamlPath}`)
     let lastEntry = pkgIdx
     for (let i = pkgIdx + 1; i < lines.length; i++) {
