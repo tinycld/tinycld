@@ -247,7 +247,7 @@ ENV FZ_VERSION="1.25.1"
 # available so operators on autocert who use the in-app package installer can
 # manually re-apply the cap to a freshly-rebuilt binary.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl gnupg \
+    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl gnupg gosu \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get autoremove -y \
@@ -388,10 +388,19 @@ RUN setcap 'cap_net_bind_service=+ep' ./tinycld
 # 465:  SMTPS (implicit TLS)
 EXPOSE 7090 80 443 993 465
 
-USER tinycld
+# The container starts as root so the entrypoint can fix ownership of the
+# bind-mounted data dirs (/app/pb_data, /app/types) before the server runs.
+# When a host bind-mount target doesn't exist yet, Docker creates it owned by
+# root; the unprivileged tinycld user then can't open the SQLite DB ("unable to
+# open database file (14)") and the container crash-loops. entrypoint.sh
+# chown's those dirs to tinycld and drops to uid 1000 via gosu for the server
+# itself, so nothing privileged actually runs the application. See the
+# fix_data_dir_ownership() function in entrypoint.sh.
+USER root
 
-# Container runs entirely as uid 1000 (tinycld). The binary's
-# cap_net_bind_service file capability lets it bind :80/:443 when autocert is
+# The server process still runs as uid 1000 (tinycld) — the entrypoint drops
+# privileges with gosu before exec'ing it. The binary's cap_net_bind_service
+# file capability lets that unprivileged process bind :80/:443 when autocert is
 # enabled; the plain-HTTP default of :7090 is unprivileged.
 #
 # Set AUTOCERT_ENABLED=true with PRIMARY_DOMAIN (and optional comma-separated
