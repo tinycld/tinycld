@@ -6,12 +6,16 @@ import type { FilePreviewSource } from './types'
 // PocketBase serves files behind the parent record's viewRule. Browsers carry
 // the auth implicitly via the SDK's request pipeline, but native HTTP fetches
 // (react-native-pdf, expo-file-system, …) need an explicit `?token=` query
-// param. The token comes from `pb.files.getToken()`, lives ~2 minutes, and is
-// per-user — so it's safe to share across previews. We cache it via React
-// Query with a stale time well under the server-side expiry, and key off a
-// constant so concurrent consumers (50 list thumbnails + an open preview)
-// dedupe to a single network request.
-const FILE_TOKEN_STALE_MS = 90_000
+// param. The token comes from `pb.files.getToken()` and is per-user — so it's
+// safe to share across previews. We cache it via React Query with a stale time
+// well under the server-side expiry, and key off a constant so concurrent
+// consumers (50 list thumbnails + an open preview) dedupe to a single request.
+//
+// The users-collection fileToken duration is 1h (see the pb-migration). Caching
+// the token for 55min keeps the `?token=` URL stable for the same span, so the
+// browser's URL-keyed HTTP cache actually hits on thumbnails/previews (it busts
+// on every token rotation), while still refreshing comfortably before expiry.
+const FILE_TOKEN_STALE_MS = 55 * 60_000
 const FILE_TOKEN_QUERY_KEY = ['pb-files-token'] as const
 
 export function useFileToken() {
