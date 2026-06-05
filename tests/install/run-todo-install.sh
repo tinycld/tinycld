@@ -19,6 +19,8 @@ WS_ROOT="$(cd "${APP_DIR}/.." && pwd)"
 CONTAINER=tinycld-todo-test
 BASE_URL="${PW_BASE_URL:-http://localhost:7090}"
 LOG_DIR="${SCRIPT_DIR}/todo-install-logs"
+LIVE_LOG="${LOG_DIR}/container.live.log"
+TAIL_PID=""
 
 # IMAGE defaults to a local build tag; if the caller sets IMAGE we skip the build.
 BUILD_IMAGE=1
@@ -29,18 +31,39 @@ else
 fi
 
 cleanup() {
+    # Stop the live log tail first so it doesn't dangle.
+    if [ -n "${TAIL_PID}" ]; then
+        kill "${TAIL_PID}" >/dev/null 2>&1 || true
+    fi
     if [ "${KEEP:-}" = "1" ]; then
         echo "[runner] KEEP=1 — leaving container ${CONTAINER} up"
+        echo "[runner] live container log: ${LIVE_LOG}"
         return
     fi
     docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
+# Start streaming the container's stdout/stderr to a file in the background so
+# the full install trace (npm pack / pnpm / go build / expo, now echoed to the
+# server's stdout) is captured LIVE — even if the test later hangs. A final
+# dump_logs still snapshots the complete log on failure.
+start_live_log() {
+    mkdir -p "${LOG_DIR}"
+    : > "${LIVE_LOG}"
+    docker logs -f "${CONTAINER}" >> "${LIVE_LOG}" 2>&1 &
+    TAIL_PID=$!
+    echo "[runner] streaming container logs → ${LIVE_LOG} (pid ${TAIL_PID})"
+}
+
 dump_logs() {
     mkdir -p "${LOG_DIR}"
     docker logs "${CONTAINER}" > "${LOG_DIR}/container.log" 2>&1 || true
     echo "[runner] container logs → ${LOG_DIR}/container.log"
+    echo "[runner] (live trace also at ${LIVE_LOG})"
+    echo "[runner] --- last 40 lines of container log ---"
+    tail -40 "${LOG_DIR}/container.log" || true
+    echo "[runner] --- end container log tail ---"
 }
 
 wait_healthy() {
@@ -92,6 +115,10 @@ fi
 docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
 docker run -d --name "${CONTAINER}" -p 7090:7090 "${IMAGE}"
 
+# 2a. Begin streaming container logs to a file immediately, so we capture the
+# full install trace live even if a later step hangs.
+start_live_log
+
 # 3. Wait for first-boot health.
 wait_healthy "first boot"
 
@@ -129,14 +156,17 @@ echo "[runner] running bootstrap + install"
     PW_BASE_URL="${BASE_URL}" \
     PW_TODO_SETUP_TOKEN="${TOKEN}" \
     CI=true FORCE_COLOR=0 \
-    ./node_modules/.bin/playwright test --reporter=line \
+    ./node_modules/.bin/playwright test --reporter=line,list \
         -g 'bootstrap|install @tinycld/todo'
 ) || { echo "[runner] install phase failed"; dump_logs; exit 1; }
 
 # 7. The install requested a restart. Wait for the container to come back.
+# The restart kills the `docker logs -f` stream, so re-attach it after the
+# container is healthy again to keep capturing the post-restart boot trace.
 echo "[runner] waiting for post-install restart"
 wait_unhealthy "restart down"   # observe the old server exit first
 wait_healthy "post-restart"     # then wait for the new binary to come up
+start_live_log                  # re-attach the live log to the restarted container
 
 # 8. Run the post-restart verification test.
 echo "[runner] running post-restart verification"
@@ -144,7 +174,7 @@ echo "[runner] running post-restart verification"
     cd "${PW_ROOT}"
     PW_BASE_URL="${BASE_URL}" \
     CI=true FORCE_COLOR=0 \
-    ./node_modules/.bin/playwright test --reporter=line \
+    ./node_modules/.bin/playwright test --reporter=line,list \
         -g 'after restart'
 ) || { echo "[runner] post-restart phase failed"; dump_logs; exit 1; }
 
