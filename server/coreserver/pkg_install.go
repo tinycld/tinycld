@@ -678,6 +678,7 @@ func emitProgress(job *installJob, step string, progress int, message string) {
 	job.Step = step
 	job.Progress = progress
 	job.LogLines = append(job.LogLines, fmt.Sprintf("[%d%%] %s: %s", progress, step, message))
+	log.Printf("[pkg_install] [%s] [%d%%] %s: %s", job.ID, progress, step, message)
 
 	evt := sseEvent{
 		Event: "progress",
@@ -698,6 +699,12 @@ func emitProgress(job *installJob, step string, progress int, message string) {
 func emitComplete(job *installJob, status string, errMsg string) {
 	job.mu.Lock()
 	defer job.mu.Unlock()
+
+	if errMsg != "" {
+		log.Printf("[pkg_install] [%s] COMPLETE status=%s error=%s", job.ID, status, errMsg)
+	} else {
+		log.Printf("[pkg_install] [%s] COMPLETE status=%s", job.ID, status)
+	}
 
 	evt := sseEvent{
 		Event: "complete",
@@ -1008,10 +1015,22 @@ func getBundledSlugs(app core.App) map[string]bool {
 
 // ---------- utility helpers ----------
 
+// runCmd runs a command, capturing its combined output to return to the
+// caller (which surfaces it via SSE + the install-log record) AND echoing
+// the command line and its output to the server's stdout so `docker logs`
+// shows the full install trace — including the real npm/pnpm/go/expo errors
+// that would otherwise be buried in the SSE stream / DB record only.
 func runCmd(dir string, name string, args ...string) (string, error) {
+	log.Printf("[pkg_install] $ (cd %s && %s %s)", dir, name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
+	if s := strings.TrimRight(string(out), "\n"); s != "" {
+		log.Printf("[pkg_install] output of %s:\n%s", name, s)
+	}
+	if err != nil {
+		log.Printf("[pkg_install] %s FAILED: %v", name, err)
+	}
 	return string(out), err
 }
 
