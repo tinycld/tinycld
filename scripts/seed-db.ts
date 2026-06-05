@@ -33,6 +33,7 @@
 import { deriveSeeds } from '@tinycld/core/lib/packages/derive-seeds'
 import PocketBase from 'pocketbase'
 import { tinycldSeeds } from '../tinycld.seeds'
+import { printBox } from './print-box'
 
 function log(...args: unknown[]) {
     process.stdout.write(`[seed] ${args.join(' ')}\n`)
@@ -59,17 +60,30 @@ interface SeedConfig {
     userUsername: string
     userName: string
     userPassword: string
+    // True when the password came from an explicit source (--user-pw, or the
+    // TEST_USER_PW / REVIEW_DEMO_PASSWORD env vars) rather than being left
+    // unset. When false and we're creating a brand-new user, we mint a random
+    // password instead of falling back to a shared literal — see seedForUser.
+    userPasswordExplicit: boolean
     isDemo: boolean
     orgSlug: string
     orgName: string
     seedSecondOrg: boolean
 }
 
+// What seedForUser resolved for the app user, so the caller can print an
+// accurate login summary. `password` is null when the user already existed and
+// we left their credential untouched (we can't know it).
+interface SeedLoginResult {
+    created: boolean
+    userEmail: string
+    password: string | null
+}
+
 const TEST_DEFAULTS = {
     userEmail: process.env.TEST_USER_LOGIN || 'user@tinycld.org',
     userUsername: process.env.TEST_USER_USERNAME || 'tester',
     userName: 'Test User',
-    userPassword: process.env.TEST_USER_PW || 'TestUser1234!',
     orgSlug: 'test-org',
     orgName: 'Test Organization',
 }
@@ -104,7 +118,12 @@ function parseArgs(): SeedConfig {
 
     let url = 'http://127.0.0.1:7100'
     let adminEmail = process.env.ADMIN_USER_LOGIN || 'admin@tinycld.org'
-    let adminPassword = process.env.ADMIN_USER_PW || 'AdminPass1234!'
+    // No hardcoded fallback — this script authenticates as an EXISTING superuser,
+    // so a baked-in default would (a) ship a known admin password and (b) only
+    // ever work against an admin created with that same default. Require it via
+    // --admin-pw or ADMIN_USER_PW. reset-dev-db.ts passes the (possibly random)
+    // password it created the superuser with; CI sets ADMIN_USER_PW.
+    let adminPassword = process.env.ADMIN_USER_PW || ''
 
     if (args.includes('--help')) process.exit(0)
 
@@ -155,7 +174,23 @@ function parseArgs(): SeedConfig {
         }
     }
 
+    if (!adminPassword) {
+        logError('Superuser password required: pass --admin-pw <pw> or set ADMIN_USER_PW.')
+        process.exit(1)
+    }
+
     const defaults = mode === 'demo' ? DEMO_DEFAULTS : TEST_DEFAULTS
+
+    // An explicit password comes from --user-pw, or from the mode's env var
+    // (TEST_USER_PW in test mode — set by CI — or REVIEW_DEMO_PASSWORD in demo
+    // mode for App Review). When none is set, userPassword is '' and seedForUser
+    // mints a random one on create rather than reusing a shared literal.
+    const envPassword =
+        mode === 'test'
+            ? (process.env.TEST_USER_PW ?? '')
+            : (process.env.REVIEW_DEMO_PASSWORD ?? '')
+    const userPassword = overrides.userPassword ?? envPassword
+
     return {
         url,
         adminEmail,
@@ -164,11 +199,8 @@ function parseArgs(): SeedConfig {
         userEmail: overrides.userEmail ?? defaults.userEmail,
         userUsername: overrides.userUsername ?? defaults.userUsername,
         userName: overrides.userName ?? defaults.userName,
-        userPassword:
-            overrides.userPassword ??
-            (mode === 'test'
-                ? TEST_DEFAULTS.userPassword
-                : (process.env.REVIEW_DEMO_PASSWORD ?? '')),
+        userPassword,
+        userPasswordExplicit: userPassword !== '',
         isDemo: mode === 'demo',
         orgSlug: overrides.orgSlug ?? defaults.orgSlug,
         orgName: overrides.orgName ?? defaults.orgName,
@@ -178,6 +210,15 @@ function parseArgs(): SeedConfig {
 
 function htmlBlob(html: string) {
     return new File([html], 'body.html', { type: 'text/html' })
+}
+
+// A random password that satisfies PocketBase's auth rules (>=8 chars, mixed
+// case + digit + symbol). Used when seeding a brand-new local user with no
+// explicit password configured, so each fresh checkout gets a unique
+// credential that's printed once rather than a shared literal.
+function generatePassword(): string {
+    const rand = () => Math.random().toString(36).slice(2, 10)
+    return `Dev${rand()}${rand()}!`
 }
 
 // PocketBase's `getFirstListItem` rejects with a 404 ClientResponseError when
@@ -458,7 +499,7 @@ async function seedSecondOrg(pb: PocketBase, ctx: OrgSeedContext) {
  *
  * Exported so reset-demo.ts can re-seed without shelling out.
  */
-export async function seedForUser(pb: PocketBase, config: SeedConfig) {
+export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<SeedLoginResult> {
     // Find first; only branch into create when the lookup specifically returns
     // nothing. Catching around the update too would mask a real failure (e.g.
     // a server-side guard rejecting the write) and silently fall through to a
@@ -474,9 +515,18 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig) {
     }
 
     let user: { id: string }
+    const login: SeedLoginResult = {
+        created: !existingUser,
+        userEmail: config.userEmail,
+        password: null,
+    }
     if (existingUser) {
         user = existingUser
         log('Found existing user:', config.userUsername)
+        // A pre-existing non-demo user keeps whatever password it already has;
+        // we don't know (and won't reset) it. If a password was passed
+        // explicitly the caller knows it, so report that; otherwise null.
+        if (config.userPasswordExplicit) login.password = config.userPassword
         if (config.isDemo) {
             // The singleton demo account is shared across all anonymous
             // visitors. Any field a previous visitor edited (name via direct
@@ -488,9 +538,9 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig) {
             // passed) we set that stable password so App Review can sign in
             // directly. Otherwise reroll to a random value — the normal
             // /api/demo/start token flow doesn't need a known password.
-            const newPassword =
-                config.userPassword ||
-                `Demo${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}!`
+            const newPassword = config.userPasswordExplicit
+                ? config.userPassword
+                : generatePassword()
             await pb.collection('users').update(user.id, {
                 is_demo: true,
                 email: config.userEmail,
@@ -498,17 +548,17 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig) {
                 password: newPassword,
                 passwordConfirm: newPassword,
             })
+            login.password = newPassword
         }
     } else {
         log('Creating user:', config.userUsername)
-        // Auth collections require *some* password. In demo mode the user
-        // normally signs in via /api/demo/start tokens, not credentials, so
-        // a random password is fine — but if REVIEW_DEMO_PASSWORD was set
-        // (or --user-pw was passed), config.userPassword is non-empty and we
-        // use that so App Review can sign in directly.
-        const password =
-            config.userPassword ||
-            `Demo${Math.random().toString(36).slice(2, 10)}${Math.random().toString(36).slice(2, 10)}!`
+        // Auth collections require *some* password. When one was provided
+        // explicitly (--user-pw, or the TEST_USER_PW / REVIEW_DEMO_PASSWORD env
+        // vars — CI sets TEST_USER_PW so e2e logins keep working) we use it.
+        // Otherwise mint a random one and surface it in the login summary so a
+        // fresh local checkout has a unique, discoverable credential.
+        const password = config.userPasswordExplicit ? config.userPassword : generatePassword()
+        login.password = password
         user = await pb.collection('users').create({
             username: config.userUsername,
             email: config.userEmail,
@@ -609,6 +659,8 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig) {
             userOrg: userOrg2,
         })
     }
+
+    return login
 }
 
 export async function authSuperuser(config: {
@@ -623,12 +675,46 @@ export async function authSuperuser(config: {
     return pb
 }
 
+// The URL a developer actually opens in the browser. The PB connection URL
+// often binds 127.0.0.1; localhost reads better and is what the docs use. When
+// a caller (reset-dev-db.ts) fronts PB with a proxy on a different port, it
+// passes the real browse URL via $TINYCLD_BROWSE_URL so the printed links point
+// where the user browses rather than at PB's internal port.
+function browseUrl(pbUrl: string): string {
+    const override = process.env.TINYCLD_BROWSE_URL
+    if (override) return override.replace(/\/$/, '')
+    return pbUrl.replace('127.0.0.1', 'localhost').replace(/\/$/, '')
+}
+
+function printLoginSummary(config: SeedConfig, login: SeedLoginResult): void {
+    const url = browseUrl(config.url)
+    const appPassword =
+        login.password ?? '(unchanged — use the password from when this user was created)'
+
+    printBox([
+        'Seed complete — log in with:',
+        '',
+        'App  (sign in to TinyCld)',
+        `  ${url}`,
+        `  user:     ${login.userEmail}`,
+        `  password: ${appPassword}`,
+        '',
+        'Superuser  (PocketBase /_/ dashboard, and /setup to manage orgs & packages)',
+        `  ${url}/setup`,
+        `  user:     ${config.adminEmail}`,
+        `  password: ${config.adminPassword}`,
+        '',
+        `Org:  ${config.orgSlug}`,
+    ])
+}
+
 async function main() {
     const config = parseArgs()
     log(`Mode: ${config.mode} (user=${config.userEmail}, org=${config.orgSlug})`)
     const pb = await authSuperuser(config)
-    await seedForUser(pb, config)
+    const login = await seedForUser(pb, config)
     log('Seeding complete!')
+    printLoginSummary(config, login)
     process.exit(0)
 }
 

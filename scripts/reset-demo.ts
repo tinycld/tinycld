@@ -53,7 +53,10 @@ function parseArgs() {
 
     let url = 'http://127.0.0.1:7100'
     let adminEmail = process.env.ADMIN_USER_LOGIN || 'admin@tinycld.org'
-    let adminPassword = process.env.ADMIN_USER_PW || 'AdminPass1234!'
+    // No hardcoded fallback — this authenticates as an existing superuser, so a
+    // baked-in default would ship a known admin password and only work against
+    // an admin created with it. Require --admin-pw or ADMIN_USER_PW.
+    let adminPassword = process.env.ADMIN_USER_PW || ''
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i]
@@ -73,6 +76,11 @@ function parseArgs() {
                     process.exit(1)
                 }
         }
+    }
+
+    if (!adminPassword) {
+        logError('Superuser password required: pass --admin-pw <pw> or set ADMIN_USER_PW.')
+        process.exit(1)
     }
 
     return { url, adminEmail, adminPassword }
@@ -117,6 +125,7 @@ async function main() {
         // back to a random password (the normal /api/demo/start flow doesn't
         // need a known password).
         userPassword: process.env.REVIEW_DEMO_PASSWORD ?? '',
+        userPasswordExplicit: (process.env.REVIEW_DEMO_PASSWORD ?? '') !== '',
         isDemo: true,
         orgSlug: DEMO_ORG_SLUG,
         orgName: DEMO_ORG_NAME,
