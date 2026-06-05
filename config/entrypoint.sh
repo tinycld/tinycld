@@ -3,7 +3,60 @@ set -e
 
 HEALTH_PORT=19876
 
+# The application runs as this unprivileged user (uid/gid baked into the image
+# as 1000:1000; see Dockerfile). The container itself starts as root only long
+# enough to fix bind-mount ownership, then drops to RUN_AS via gosu.
+RUN_AS=tinycld
+
 echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
+
+# Ensure the bind-mounted data directories are writable by the runtime user.
+#
+# When a host bind-mount target (./pb_data, ./types in docker-compose.yml)
+# doesn't exist yet, the Docker daemon creates it owned by root:root. The
+# unprivileged tinycld user then can't open the SQLite database — PocketBase
+# fails with "unable to open database file (14)" and the container crash-loops.
+# Reported in https://github.com/tinycld/app/issues/26.
+#
+# We run this as root (the container's start user) and chown the dirs to the
+# runtime user before dropping privileges. Only runs when we're actually root;
+# if an operator overrode the start user to non-root they're responsible for
+# host-side ownership (and the chown would fail anyway), so we skip silently.
+fix_data_dir_ownership() {
+    [ "$(id -u)" = "0" ] || return 0
+
+    for dir in /app/pb_data /app/types; do
+        mkdir -p "$dir"
+        # Skip the (potentially large) recursive chown when the top-level dir is
+        # already owned correctly — the steady state after first run, so normal
+        # restarts pay nothing. A fresh root-owned mount triggers the fix-up.
+        owner=$(stat -c '%u:%g' "$dir" 2>/dev/null || echo '')
+        if [ "$owner" != "1000:1000" ]; then
+            echo "[entrypoint] fixing ownership of $dir (was '$owner') -> $RUN_AS"
+            chown -R "$RUN_AS:$RUN_AS" "$dir"
+        fi
+    done
+}
+
+# Run a tinycld subcommand as the unprivileged runtime user.
+#
+# When the container starts as root we drop privileges with gosu, which preserves
+# the binary's cap_net_bind_service file capability (needed to bind :80/:443
+# under autocert). If we're already non-root — e.g. an operator pinned USER to
+# something else — run the binary directly.
+#
+# This deliberately does NOT exec: the serve loop below inspects the exit code
+# (75 = in-app package-install restart) and the health check runs a copy in the
+# background, so control must return here.
+run_tinycld() {
+    if [ "$(id -u)" = "0" ]; then
+        gosu "$RUN_AS" ./tinycld "$@"
+    else
+        ./tinycld "$@"
+    fi
+}
+
+fix_data_dir_ownership
 
 # Promote the staged release to /app/releases/. Runs on every container
 # start; idempotent.
@@ -229,14 +282,14 @@ fi
 # Serve args are in $@ (positional params) so a multi-domain list survives
 # without re-splitting.
 while true; do
-    ./tinycld serve "$@"
+    run_tinycld serve "$@"
     EXIT_CODE=$?
 
     if [ $EXIT_CODE -eq 75 ]; then
         echo "[entrypoint] Restart requested (exit code 75)"
 
         # Health check: start new binary on a temp port, verify /api/health responds
-        ./tinycld serve --http=127.0.0.1:${HEALTH_PORT} &
+        run_tinycld serve --http=127.0.0.1:${HEALTH_PORT} &
         HEALTH_PID=$!
 
         HEALTHY=false
