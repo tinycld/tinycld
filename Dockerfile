@@ -378,10 +378,19 @@ RUN chmod +x ./entrypoint.sh
 # runtime scripts and in-app installer write under the workspace root
 # (node_modules, generated files).
 #
+# The workspace root is `/` itself (the binary is at /app/tinycld, so the
+# installer's wsRoot = filepath.Dir(/app) = /). Installing a NEW package copies
+# its source to /<slug> (e.g. /todo) and edits /pnpm-workspace.yaml — both
+# require the unprivileged tinycld user to write directly in /. Chown `/` itself
+# (non-recursive, so system dirs like /usr,/bin stay root) so member-dir
+# creation and workspace-file edits succeed; without it `cp … /todo/` fails with
+# "Permission denied" at the install pipeline's copy step.
+#
 # Must run BEFORE setcap below — chown strips file capabilities (it resets the
 # security.capability xattr along with ownership), so setcap'ing first then
 # chown'ing would silently wipe the cap.
-RUN chown -R tinycld:tinycld /app \
+RUN chown tinycld:tinycld / \
+    && chown -R tinycld:tinycld /app \
     && chown -R tinycld:tinycld /node_modules /core /contacts /mail /calendar /drive /calc /text /google-takeout-import \
     && chown tinycld:tinycld /package.json /pnpm-lock.yaml /pnpm-workspace.yaml /.npmrc /tinycld.packages.ts \
     && chown -R tinycld:tinycld /scripts
