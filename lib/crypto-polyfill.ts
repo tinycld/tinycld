@@ -1,14 +1,11 @@
 import 'react-native-get-random-values'
+import { uuidFromRandomValues } from '@tinycld/core/lib/uuid'
 
+// react-native-get-random-values installs getRandomValues but not randomUUID,
+// and Hermes has no built-in crypto.randomUUID. Install a self-contained,
+// getRandomValues-based UUID so callers can rely on the standard Web Crypto API
+// on every platform. See lib/uuid.ts for why we avoid expo-crypto's delegating
+// web implementation here.
 if (typeof crypto !== 'undefined' && !crypto.randomUUID) {
-    crypto.randomUUID = () => {
-        const bytes = new Uint8Array(16)
-        crypto.getRandomValues(bytes)
-        bytes[6] = (bytes[6] & 0x0f) | 0x40
-        bytes[8] = (bytes[8] & 0x3f) | 0x80
-        const hex = Array.from(bytes).map(b => b.toString(16).padStart(2, '0'))
-        return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}` as ReturnType<
-            Crypto['randomUUID']
-        >
-    }
+    crypto.randomUUID = uuidFromRandomValues as Crypto['randomUUID']
 }
