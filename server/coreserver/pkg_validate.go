@@ -40,6 +40,27 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 var npmPackagePattern = regexp.MustCompile(`^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$`)
 var goModulePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+(/[a-z0-9][a-z0-9_-]*)+$`)
 
+// gitSpecPattern matches the git/URL forms `npm pack` understands natively:
+// host shorthand (github:owner/repo, gitlab:…, bitbucket:…), bare
+// owner/repo shorthand, and git+https / git+ssh / https URLs (optionally
+// .git-suffixed). Anchored, so the whole string must match — no trailing
+// junk that could smuggle a second argument.
+var gitSpecPattern = regexp.MustCompile(
+	`^(` +
+		`(github|gitlab|bitbucket):[\w.-]+/[\w.-]+` + // host:owner/repo
+		`|[\w.-]+/[\w.-]+` + // owner/repo shorthand
+		`|git\+https://[\w./@:-]+` + // git+https URL
+		`|git\+ssh://[\w./@:-]+` + // git+ssh URL
+		`|https://[\w./@:-]+` + // https URL (incl. .git)
+		`)$`,
+)
+
+// shellUnsafePattern flags any character that has no business in a package
+// spec. exec.Command uses no shell so these can't *execute*, but rejecting
+// them keeps the surface tight and stops a leading dash from being parsed
+// as an npm flag.
+var shellUnsafePattern = regexp.MustCompile(`[\s;&|$<>` + "`" + `(){}\[\]'"\\]`)
+
 // parseManifestViaNode safely parses a manifest.ts by shelling out to Node.
 // It avoids eval() / new Function() — instead uses a targeted regex extraction.
 func parseManifestViaNode(packageDir string) (*parsedManifest, error) {
@@ -162,18 +183,29 @@ func validateManifest(m *parsedManifest, allowServer bool, bundledSlugs map[stri
 	return nil
 }
 
-// validateNpmPackageName checks that a string looks like a valid npm package name.
-func validateNpmPackageName(name string) error {
-	if name == "" {
-		return fmt.Errorf("npm package name is required")
+// validatePackageSpec checks that a string is a safe spec to hand to
+// `npm pack`: either a bare npm package name or one of the git/URL forms
+// npm pack understands natively. Rejects empty input, leading dashes
+// (flag injection), and any shell-metacharacter / whitespace.
+func validatePackageSpec(spec string) error {
+	if spec == "" {
+		return fmt.Errorf("package spec is required")
 	}
-	if !npmPackagePattern.MatchString(name) {
-		return fmt.Errorf("invalid npm package name: %s", name)
+	if strings.HasPrefix(spec, "-") {
+		return fmt.Errorf("invalid package spec (leading dash): %s", spec)
 	}
-	return nil
+	if shellUnsafePattern.MatchString(spec) {
+		return fmt.Errorf("invalid package spec (unsafe characters): %s", spec)
+	}
+	if npmPackagePattern.MatchString(spec) || gitSpecPattern.MatchString(spec) {
+		return nil
+	}
+	return fmt.Errorf("invalid package spec: %s", spec)
 }
 
-// isTrustedScope returns true if the package name starts with @tinycld/
-func isTrustedScope(npmPackage string) bool {
-	return strings.HasPrefix(npmPackage, "@tinycld/")
+// isTrustedScope returns true only for bare @tinycld/* npm names. Any git
+// spec is third-party by definition and therefore untrusted, which makes
+// the install pipeline emit its "proceed with caution" warning.
+func isTrustedScope(spec string) bool {
+	return npmPackagePattern.MatchString(spec) && strings.HasPrefix(spec, "@tinycld/")
 }

@@ -124,7 +124,7 @@ func handleInstall(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		return re.BadRequestError("Invalid request body", err)
 	}
 
-	if err := validateNpmPackageName(body.NpmPackage); err != nil {
+	if err := validatePackageSpec(body.NpmPackage); err != nil {
 		return re.BadRequestError(err.Error(), nil)
 	}
 
@@ -320,7 +320,7 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 
 	// Step 1: Validate npm package name (5%)
 	emitProgress(job, "Validating package name", 5, "Checking "+job.NpmPkg)
-	if err := validateNpmPackageName(job.NpmPkg); err != nil {
+	if err := validatePackageSpec(job.NpmPkg); err != nil {
 		fail("validate", err)
 		return
 	}
