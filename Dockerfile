@@ -248,13 +248,26 @@ ENV FZ_VERSION="1.25.1"
 # manually re-apply the cap to a freshly-rebuilt binary. git is required by the
 # in-app package installer: `npm pack <git-spec>` (e.g. github:owner/repo) clones
 # the repo via git, so without it git-spec installs fail with `spawn git ENOENT`.
+# gcc is required to install a package that ships a Go server: the installer's
+# checkGoBuildPrereqs() gate needs both `go` (from the copied toolchain) and a C
+# compiler on PATH, and the server binary is built with CGO_ENABLED=1 (it links
+# libmupdf via go-fitz). Without gcc, server packages are rejected at manifest
+# validation ("requires Phase 3 support"). libmupdf-dev (already listed) supplies
+# the cgo link target.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl git gnupg gosu \
+    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl git gcc gnupg gosu \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Enable corepack so `pnpm` is on PATH for the in-app package installer, which
+# runs `pnpm install` at the workspace root (step 7 of the install pipeline).
+# corepack shims pnpm to the version pinned in the root package.json
+# `packageManager` field. Node ships corepack; the runtime image just activates
+# it (the build stages do the same via `corepack enable`).
+RUN corepack enable
 
 # Copy Go toolchain from build stage (needed for the in-app package installer's
 # runtime Go-package rebuilds).
