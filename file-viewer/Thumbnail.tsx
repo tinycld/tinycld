@@ -1,5 +1,6 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Image, View } from 'react-native'
+import { Image } from 'expo-image'
+import { View } from 'react-native'
 import { getFileIconForMime } from './file-icons'
 import type { ThumbnailProps } from './types'
 import { useAuthedThumbnailURL } from './use-authed-file-url'
@@ -27,7 +28,14 @@ export function Thumbnail({ source, size = 120 }: ThumbnailProps) {
         <Image
             source={{ uri: url }}
             style={{ width: size, height: size, borderRadius: 4 }}
-            resizeMode="cover"
+            contentFit="cover"
+            // Cache thumbnails on disk + memory so scrolling/paging the list
+            // doesn't refetch them. recyclingKey is the stable record id so the
+            // cached bitmap is reused across the rotating ?token= in the URL
+            // (which would otherwise bust a URL-keyed cache every ~90s).
+            cachePolicy="memory-disk"
+            recyclingKey={source.recordId}
+            transition={100}
         />
     )
 }
