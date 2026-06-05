@@ -114,12 +114,17 @@ test.describe('todo install', () => {
         await loginAsSuperuser(page)
 
         // Login lands on the Packages tab. Open the install form, then submit.
-        await page.getByRole('button', { name: 'Install', exact: true }).click()
+        // PackageManager's Install controls are Pressable+Text with no
+        // accessibilityRole, so on RN Web they expose as plain text, not
+        // buttons — getByRole('button', { name: 'Install' }) matches nothing.
+        // Target by text instead. The field DOES expose a role (TextInput sets
+        // accessibilityLabel), so getByRole('textbox', …) is correct there.
+        await page.getByText('Install', { exact: true }).click()
         await page.getByRole('textbox', { name: 'npm Package Name', exact: true }).fill(TODO_SPEC)
-        // When the form is open the toggle button reads 'Cancel', so only the
-        // form's submit button reads 'Install' here; .last() is defensive
-        // against future relabeling, not resolving a present collision.
-        await page.getByRole('button', { name: 'Install', exact: true }).last().click()
+        // When the form is open the toggle's text flips to 'Cancel', so only the
+        // form's submit reads 'Install'; .last() is defensive against future
+        // relabeling, not resolving a present collision.
+        await page.getByText('Install', { exact: true }).last().click()
 
         // The InstallProgressModal renders once the job starts. Walk the
         // stages in order — each assertion names where it got stuck.

@@ -245,9 +245,11 @@ ENV FZ_VERSION="1.25.1"
 # invoke `pnpm exec tsx scripts/<x>.ts` (reset-demo, seed-db), so Node must be on
 # PATH. libcap2-bin (setcap) is needed at image build time below; we keep it
 # available so operators on autocert who use the in-app package installer can
-# manually re-apply the cap to a freshly-rebuilt binary.
+# manually re-apply the cap to a freshly-rebuilt binary. git is required by the
+# in-app package installer: `npm pack <git-spec>` (e.g. github:owner/repo) clones
+# the repo via git, so without it git-spec installs fail with `spawn git ENOENT`.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl gnupg gosu \
+    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl git gnupg gosu \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get autoremove -y \
