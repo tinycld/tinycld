@@ -10,6 +10,10 @@
  *
  * Options:
  *   --url <url>        PocketBase URL (default: http://127.0.0.1:7100)
+ *   --browse-url <url> URL the developer opens in the browser (the dev proxy).
+ *                      Defaults to --url with 127.0.0.1 → localhost. Set this
+ *                      when PB sits behind a proxy on a different port (e.g.
+ *                      the expo:test flow seeds PB on :7299 but browses :7200).
  *   --data-dir <dir>   Data directory (default: server/pb_data)
  *   --skip-build       Skip building PocketBase
  *   --keep-running     Keep server running after seeding (default: false)
@@ -21,6 +25,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 
@@ -40,6 +45,7 @@ try {
 
 interface Config {
     url: string
+    browseUrl: string | null
     dataDir: string
     skipBuild: boolean
     keepRunning: boolean
@@ -49,6 +55,7 @@ function parseArgs(): Config {
     const args = process.argv.slice(2)
     const config: Config = {
         url: 'http://127.0.0.1:7100',
+        browseUrl: null,
         dataDir: 'server/pb_data',
         skipBuild: false,
         keepRunning: false,
@@ -59,6 +66,9 @@ function parseArgs(): Config {
         switch (arg) {
             case '--url':
                 config.url = args[++i]
+                break
+            case '--browse-url':
+                config.browseUrl = args[++i]
                 break
             case '--data-dir':
                 config.dataDir = args[++i]
@@ -89,6 +99,11 @@ const PB_HOST = parsedUrl.hostname
 const PB_PORT = parseInt(parsedUrl.port || '8090', 10)
 const PB_DATA_DIR = path.join(process.cwd(), CONFIG.dataDir)
 const PB_BINARY = path.join(process.cwd(), 'server/app')
+
+// The URL the developer actually opens. Prefer an explicit --browse-url (the
+// dev proxy, which may live on a different port than PB), otherwise fall back to
+// the PB URL with 127.0.0.1 → localhost for readability.
+const BROWSE_URL = (CONFIG.browseUrl ?? PB_URL.replace('127.0.0.1', 'localhost')).replace(/\/$/, '')
 
 async function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms))
@@ -156,16 +171,41 @@ function buildPocketBase(): void {
     log('Build complete')
 }
 
-function getCredentials(): { email: string; password: string } {
+// A reasonably strong random password for a freshly-created superuser when the
+// operator didn't supply one. Not hardcoded — a baked-in default would ship a
+// known admin password to anyone who runs the reset without setting the env.
+function generateAdminPassword(): string {
+    const bytes = randomBytes(18).toString('base64url')
+    return `Tc!${bytes}`
+}
+
+// Resolve once per process: getCredentials() is called several times (create,
+// seed, summary) and a fresh random each call would diverge — we'd create the
+// superuser with one password and then fail to auth/seed with another.
+let resolvedCredentials: { email: string; password: string; generated: boolean } | null = null
+
+function getCredentials(): { email: string; password: string; generated: boolean } {
+    if (resolvedCredentials) return resolvedCredentials
     const email =
-        process.env.POCKETBASE_EMAIL || process.env.SEED_ADMIN_EMAIL || 'admin@tinycld.org'
-    const password =
-        process.env.POCKETBASE_PASSWORD || process.env.SEED_ADMIN_PW || 'AdminPass1234!'
-    return { email, password }
+        process.env.POCKETBASE_EMAIL ||
+        process.env.SEED_ADMIN_EMAIL ||
+        process.env.ADMIN_USER_LOGIN ||
+        'admin@tinycld.org'
+    // ADMIN_USER_PW is the var CI sets and the e2e superuser helpers read (via
+    // POCKETBASE_PASSWORD || 'AdminPass1234!'), so honor it here too — otherwise
+    // a fresh random would be created that those helpers can't authenticate.
+    const supplied =
+        process.env.POCKETBASE_PASSWORD ||
+        process.env.SEED_ADMIN_PW ||
+        process.env.ADMIN_USER_PW ||
+        ''
+    const password = supplied || generateAdminPassword()
+    resolvedCredentials = { email, password, generated: supplied === '' }
+    return resolvedCredentials
 }
 
 function createSuperuser(): void {
-    const { email, password } = getCredentials()
+    const { email, password, generated } = getCredentials()
     log('Creating superuser:', email)
 
     const result = spawnSync(
@@ -178,7 +218,19 @@ function createSuperuser(): void {
     if (result.status !== 0) {
         throw new Error('Failed to create superuser')
     }
+
+    // Surface a generated password once so the operator can actually log in.
+    // Supplied passwords (env/CI) are never echoed.
+    if (generated) {
+        log('Generated superuser password (set POCKETBASE_PASSWORD to override):')
+        log(`  ${email} / ${password}`)
+    }
 }
+
+// When false, PB's stdout is consumed but not echoed — see the relay comment in
+// startPocketBase. Flipped off before printing the credential boxes so PB's
+// async logs don't land between the box borders. stderr is always echoed.
+let relayPbStdout = true
 
 async function startPocketBase(): Promise<ReturnType<typeof spawn>> {
     log(`Starting PocketBase at ${PB_HOST}:${PB_PORT}...`)
@@ -210,8 +262,14 @@ async function startPocketBase(): Promise<ReturnType<typeof spawn>> {
     // When the readiness probe times out, having these lines in the CI log
     // is the difference between a one-line "failed to start" and a real
     // diagnosis.
+    // Relay PB's (chatty) stdout through a mutable `relay` flag rather than a
+    // detachable listener. When we silence PB (before printing the boxed
+    // summaries) we flip relay=false but KEEP consuming the pipe — detaching
+    // the reader instead would let PB's stdout buffer fill and make it emit
+    // "dropping unclosed output" warnings mid-box. stderr is always relayed so
+    // a genuine error is never swallowed.
     pb.stdout?.on('data', data => {
-        log('[pocketbase]', data.toString().trimEnd())
+        if (relayPbStdout) log('[pocketbase]', data.toString().trimEnd())
     })
 
     pb.stderr?.on('data', data => {
@@ -279,7 +337,13 @@ async function runSeedScript(): Promise<void> {
                 // --preserve-symlinks Node resolves seed.ts to its
                 // realpath inside the sibling repo and can't find peer
                 // deps (exceljs, etc.) in the app shell's node_modules.
-                env: { ...process.env, NODE_OPTIONS: '--preserve-symlinks' },
+                // TINYCLD_BROWSE_URL tells the seed's login summary which URL
+                // the developer browses (the proxy), not PB's internal port.
+                env: {
+                    ...process.env,
+                    NODE_OPTIONS: '--preserve-symlinks',
+                    TINYCLD_BROWSE_URL: BROWSE_URL,
+                },
             }
         )
 
@@ -311,6 +375,13 @@ async function main() {
             throw new Error('PocketBase failed to start within timeout')
         }
         log('PocketBase is ready')
+
+        // Silence PB's stdout before seeding so the seed's login-summary box
+        // isn't interleaved with PB's async SQL logs. The seed prints its own
+        // [seed] progress; PB errors still surface via stderr, and a failed
+        // seed exits non-zero (thrown below). The box itself (app + superuser
+        // creds, the /_/ and /setup URLs) is printed by the seed script.
+        relayPbStdout = false
 
         await runSeedScript()
 

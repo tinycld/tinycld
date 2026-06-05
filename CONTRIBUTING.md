@@ -144,7 +144,9 @@ available in production.
 - The logger shows timestamps and colors in development mode
 
 ## Scripts Reference
-- `pnpm run dev` starts Expo + PocketBase together (generator runs first).
+- `pnpm run dev` starts Expo + PocketBase together (generator runs first). It reuses whatever is in `server/pb_data` — it does not seed.
+- `pnpm run db:reset` wipes `server/pb_data`, re-runs migrations, and seeds a test user + org. **Run this once on a fresh checkout to get something to log in with.** It prints a boxed login summary at the end (see "Logging in for local dev" below).
+- `pnpm run db:seed` seeds into the current database without wiping it; also prints the login summary.
 - `pnpm run typecheck` runs `tinycld-pkg typecheck` (tsc for this member).
 - `pnpm run checks` runs lint and typechecks (ecosystem-wide biome + app tsc).
 - `pnpm run lint` (or `pnpm run lint:fix`) runs Biome over the app and every present sibling. Biome lives only in the app shell; `app/biome.json` is the single config for the app **and** every member. Sibling repos do not ship their own `biome.json` or `lint`/`checks` scripts — `pnpm run lint` walks the sibling dirs at their real workspace-root filesystem paths.
@@ -160,6 +162,13 @@ available in production.
 - Keep migrations in `server/pb_migrations/` and describe manual steps in the PR body.
 - Create api routes only as a last resort and after discussion. Prefer to create records using standard useMutation with pbtsdb stores.  If needed we can use golang hooks to observe and modify records as they're created/modified
 - Go server hooks (e.g. CardDAV in the `@tinycld/contacts` sibling's `server/` directory) use SDK methods that bypass PocketBase API rules — they implement equivalent authorization manually. When changing API rules on a collection, check if a Go hook also accesses that collection and update its filters to match.
+
+## Logging in for local dev
+- After `pnpm run db:reset` (or `pnpm run db:seed`) the script prints a boxed summary of the credentials to use — you don't need to read the seed script.
+- Two accounts exist: the **app user** `user@tinycld.org` (what you sign in to TinyCld with) and the **PocketBase superuser** `admin@tinycld.org` (the `/_/` admin UI and the `/setup` superuser dashboard).
+- Both passwords are **generated randomly on first create** and printed in the box. To pin known passwords (e.g. to match an existing `.env` or share across resets), set `TEST_USER_PW` (app user) and `ADMIN_USER_PW` (superuser) in `app/.env`, or pass `--user-pw`. CI sets both so logins are deterministic — don't change that contract.
+- Override the login emails with `TEST_USER_LOGIN` / `ADMIN_USER_LOGIN` in `app/.env`.
+- There's no first-run `…/setup?token=…` link locally: `db:reset` creates the superuser up front (so it can seed), so PocketBase isn't on its first run. That token flow is only for an empty self-hosted instance. The `/setup` link `db:reset` prints goes to the superuser login → dashboard instead.
 
 ## Users & Organizations
 - Users belong to orgs via the `user_org` junction table (many-to-many)
