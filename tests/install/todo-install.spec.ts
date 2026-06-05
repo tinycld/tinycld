@@ -24,22 +24,29 @@ const TEST_ORG_OWNER_EMAIL = 'owner@todo.example'
 const TEST_ORG_OWNER_PASSWORD = 'OwnerPass1234!'
 const TEST_ORG_MAIL_DOMAIN = 'todo.example'
 
-async function loginAsSuperuser(page: Page) {
-    await page.goto('/setup')
-    await expect(page.getByText('Superuser Login')).toBeVisible()
+async function loginAsSuperuser(page: Page, timeoutMs?: number) {
+    await page.goto('/setup', timeoutMs ? { timeout: timeoutMs } : undefined)
+    await expect(page.getByText('Superuser Login')).toBeVisible(
+        timeoutMs ? { timeout: timeoutMs } : undefined
+    )
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
     await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
     await page.getByRole('button', { name: 'Sign in' }).click()
-    await expect(page.getByText('Organizations', { exact: true })).toBeVisible()
+    await expect(page.getByText('Organizations', { exact: true })).toBeVisible(
+        timeoutMs ? { timeout: timeoutMs } : undefined
+    )
 }
 
 // After the install-triggered restart the server may briefly refuse
 // connections. Retry the superuser login a few times before giving up.
-async function loginAsSuperuserWithRetry(page: Page, attempts = 10) {
+async function loginAsSuperuserWithRetry(page: Page, attempts = 20) {
     let lastErr: unknown
     for (let i = 0; i < attempts; i++) {
         try {
-            await loginAsSuperuser(page)
+            // Short per-attempt timeout so a still-restarting server fails
+            // fast and the loop actually iterates, instead of one attempt
+            // eating the whole budget under the default ~30s timeouts.
+            await loginAsSuperuser(page, 8_000)
             return
         } catch (err) {
             lastErr = err
@@ -129,7 +136,7 @@ test.describe('todo install', () => {
     })
 
     test('todo is registered, in nav, and reachable after restart', async ({ page }) => {
-        test.setTimeout(180_000)
+        test.setTimeout(300_000)
 
         // 1. Registry: Todo appears on the Packages tab with an installed badge.
         await loginAsSuperuserWithRetry(page)
@@ -161,21 +168,28 @@ test.describe('todo install', () => {
 
         // 3. Nav + reachable screen: log into the org as the owner, confirm the
         //    Todo rail entry renders and its screen mounts.
+        // Fresh page for the org-owner session. It shares this context's
+        // cookies/storage with `page` (partial isolation), which is fine —
+        // we only need a clean tab to drive the org-user login.
         const orgPage = await page.context().newPage()
-        await orgPage.goto('/')
-        await orgPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
-        await orgPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
-        await orgPage.getByTestId('login-submit').click()
-        await orgPage.waitForURL(/\/a\//, { timeout: 30_000 })
+        try {
+            await orgPage.goto('/')
+            await orgPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
+            await orgPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
+            await orgPage.getByTestId('login-submit').click()
+            await orgPage.waitForURL(/\/a\//, { timeout: 30_000 })
 
-        // The Todo nav-rail entry is icon-only; target it by testID.
-        const todoNav = orgPage.getByTestId('nav-todo')
-        await expect(todoNav).toBeVisible({ timeout: 30_000 })
-        await todoNav.click()
+            // The Todo nav-rail entry is icon-only; target it by testID.
+            const todoNav = orgPage.getByTestId('nav-todo')
+            await expect(todoNav).toBeVisible({ timeout: 30_000 })
+            await todoNav.click()
 
-        // The Todo screen mounts at /a/<orgSlug>/todo. Its add-todo input is a
-        // unique, stable signal that the package's bundled screen loaded.
-        await expect(orgPage).toHaveURL(/\/a\/[^/]+\/todo/, { timeout: 30_000 })
-        await expect(orgPage.getByPlaceholder('Add a todo…')).toBeVisible({ timeout: 30_000 })
+            // The Todo screen mounts at /a/<orgSlug>/todo. Its add-todo input is a
+            // unique, stable signal that the installed package's screen loaded.
+            await expect(orgPage).toHaveURL(/\/a\/[^/]+\/todo/, { timeout: 30_000 })
+            await expect(orgPage.getByPlaceholder('Add a todo…')).toBeVisible({ timeout: 30_000 })
+        } finally {
+            await orgPage.close()
+        }
     })
 })
