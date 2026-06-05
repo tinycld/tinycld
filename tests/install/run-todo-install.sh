@@ -57,6 +57,25 @@ wait_healthy() {
     return 1
 }
 
+# Wait for the server to go DOWN after a restart was requested. Returns as
+# soon as /api/health stops responding. If it never goes down within the
+# window (a restart faster than our poll, or one we missed), warn and return
+# 0 — the subsequent wait_healthy still gates on the server being back up, so
+# the worst case is we proceed against a server that never actually restarted,
+# which the post-restart test's own login-retry loop will still exercise.
+wait_unhealthy() {
+    local label="$1"
+    for i in $(seq 1 60); do
+        if ! curl -sf "${BASE_URL}/api/health" >/dev/null 2>&1; then
+            echo "[runner] ${label}: server went down after ${i}s"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "[runner] WARN: ${label}: server never went down within 60s (fast or missed restart)"
+    return 0
+}
+
 # 1. Build image from the working tree (unless IMAGE points at an existing tag).
 if [ "${BUILD_IMAGE}" = "1" ]; then
     echo "[runner] building ${IMAGE} from ${WS_ROOT}"
@@ -116,8 +135,8 @@ echo "[runner] running bootstrap + install"
 
 # 7. The install requested a restart. Wait for the container to come back.
 echo "[runner] waiting for post-install restart"
-sleep 5  # let the container actually exit before re-polling
-wait_healthy "post-restart"
+wait_unhealthy "restart down"   # observe the old server exit first
+wait_healthy "post-restart"     # then wait for the new binary to come up
 
 # 8. Run the post-restart verification test.
 echo "[runner] running post-restart verification"
