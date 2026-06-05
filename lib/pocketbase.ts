@@ -7,6 +7,7 @@ import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pb
 import PocketBase, { AsyncAuthStore } from 'pocketbase'
 import { Platform } from 'react-native'
 import { PB_SERVER_ADDR } from './config'
+import { createReachabilityTracker } from './server-reachability'
 import { useConnectivityStore } from './stores/connectivity-store'
 import type { UserSession } from './types'
 
@@ -70,38 +71,29 @@ export const pb = new PocketBase(PB_SERVER_ADDR, store)
 
 pb.autoCancellation(false)
 
-const RECOVERY_WINDOW_MS = 10_000
-const RECOVERY_THRESHOLD = 2
-const sessionStart = Date.now()
-let networkFailures = 0
-
-function isNetworkLevelFailure(err: unknown): boolean {
-    if (!err || typeof err !== 'object') return false
-    const e = err as { status?: number; isAbort?: boolean; originalError?: unknown }
-    if (e.isAbort) return false
-    if (typeof e.status === 'number' && e.status > 0) return false
-    return true
-}
+// The server-unreachable signal (which drives the offline overlay) is
+// derived from pb.send outcomes via a rolling sustained-failure tracker.
+// See server-reachability.ts for the rationale — in short, a single blip,
+// an aborted request, or a failed auth-refresh must NOT flip the badge;
+// only several genuine network failures in quick succession do.
+const reachability = createReachabilityTracker()
 
 const origSend = pb.send.bind(pb)
 pb.send = (async <T>(path: string, options: Parameters<typeof origSend>[1]) => {
     try {
         const result = (await origSend(path, options)) as T
+        reachability.record(path, true, null, Date.now())
+        // Any successful request proves the server is reachable — recover the
+        // signal regardless of tracker streak state (the health-probe poll or
+        // another path may have flipped it).
         if (!useConnectivityStore.getState().isServerReachable) {
             useConnectivityStore.getState().setServerReachable(true)
         }
-        networkFailures = 0
         return result
     } catch (err) {
-        if (!isNetworkLevelFailure(err)) throw err
-        networkFailures++
-        // During the first RECOVERY_WINDOW_MS we require RECOVERY_THRESHOLD
-        // failures before flipping, because the auth bootstrap can race
-        // pb.send and produce a single spurious failure. After the window we
-        // trust any single network-level failure.
-        const inEarlyWindow = Date.now() - sessionStart <= RECOVERY_WINDOW_MS
-        if (inEarlyWindow && networkFailures < RECOVERY_THRESHOLD) throw err
-        useConnectivityStore.getState().setServerReachable(false)
+        if (reachability.record(path, false, err, Date.now()) === 'down') {
+            useConnectivityStore.getState().setServerReachable(false)
+        }
         throw err
     }
 }) as typeof pb.send
