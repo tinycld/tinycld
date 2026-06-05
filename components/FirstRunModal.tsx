@@ -1,8 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import type { LucideIcon } from 'lucide-react-native'
 import { type ReactNode, useEffect, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 /**
  * Headline + body shell for one-shot first-run education modals.
@@ -75,6 +77,9 @@ export function FirstRunModal({
     const accent = useThemeColor(accentToken)
     const accentFg = useThemeColor(`${accentToken}-foreground` as 'primary-foreground')
 
+    const isMobile = useBreakpoint() === 'mobile'
+    const insets = useSafeAreaInsets()
+
     useEffect(() => {
         if (!enabled) return
         let cancelled = false
@@ -114,28 +119,58 @@ export function FirstRunModal({
         setPhase('hide')
     }
 
+    // On a phone the centered 460px card was taller than the viewport, and
+    // `overflow-hidden` clipped the title at the top and the action buttons at
+    // the bottom — the modal became unusable (the demo-workspace report). On
+    // mobile we go full-screen and let the body scroll; on wider screens we
+    // keep the centered card but cap its height and make the body scrollable so
+    // it can never clip, even with the keyboard open.
+    const cardClass = isMobile
+        ? 'w-full h-full bg-background'
+        : 'max-w-full max-h-[85vh] border border-border bg-background rounded-[20px] overflow-hidden'
+
+    const cardStyle = isMobile
+        ? undefined
+        : {
+              width: 460,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 12 },
+              shadowOpacity: 0.2,
+              shadowRadius: 32,
+              elevation: 12,
+          }
+
     return (
-        <View
-            className="absolute top-0 left-0 right-0 bottom-0 justify-center items-center z-[250] p-6"
+        <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            className={`absolute top-0 left-0 right-0 bottom-0 z-[250] ${isMobile ? '' : 'justify-center items-center p-6'}`}
             style={{ backgroundColor: backdrop }}
         >
             <View
-                className="max-w-full border border-border bg-background rounded-[20px] overflow-hidden"
-                style={{
-                    width: 460,
-                    shadowColor: '#000',
-                    shadowOffset: { width: 0, height: 12 },
-                    shadowOpacity: 0.2,
-                    shadowRadius: 32,
-                    elevation: 12,
-                }}
+                className={cardClass}
+                style={[cardStyle, isMobile ? { paddingTop: insets.top } : null]}
             >
                 {/* Accent edge along the top — same role as the SVG draw-on
                     in the marketing CTA: a small cue that this surface is
-                    distinct from the rest of the chrome. */}
+                    distinct from the rest of the chrome. On mobile the card's
+                    own paddingTop keeps it below the status bar / notch while
+                    the notch strip still shows the modal background. */}
                 <View className="h-[3px]" style={{ backgroundColor: accent }} />
 
-                <View className="p-7">
+                <ScrollView
+                    contentContainerClassName="p-7"
+                    contentContainerStyle={
+                        isMobile
+                            ? {
+                                  flexGrow: 1,
+                                  justifyContent: 'center',
+                                  paddingBottom: insets.bottom + 28,
+                              }
+                            : undefined
+                    }
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator={false}
+                >
                     <View
                         className="w-11 h-11 rounded-xl items-center justify-center mb-[18px]"
                         style={{ backgroundColor: accent }}
@@ -183,9 +218,9 @@ export function FirstRunModal({
                             </Text>
                         </Pressable>
                     </View>
-                </View>
+                </ScrollView>
             </View>
-        </View>
+        </KeyboardAvoidingView>
     )
 }
 
