@@ -34,23 +34,27 @@ async function loginAsSuperuser(page: Page) {
 }
 
 // Asserts the install modal advances through an expected stage by its
-// VISIBLE message text (step.message, not the short step name). If a
-// FAILED line appears first, throws with the failing message so the
-// output names the stage that broke. `label` is the human stage name
-// for the error string.
-async function expectStage(page: Page, label: string, messageSubstring: string) {
-    const failed = page.getByText(/^FAILED: /)
+// visible message text. Both racing waits only RESOLVE — the throw happens
+// after the race settles, based on the winner, so the losing wait can't
+// reject into an unhandled promise after the race is over. `label` names
+// the stage in the failure message; `timeoutMs` lets slow build stages
+// (go build, expo export) get more headroom than the fast ones.
+async function expectStage(
+    page: Page,
+    label: string,
+    messageSubstring: string,
+    timeoutMs = 120_000
+) {
+    const failed = page.getByText(/^FAILED: /).first()
     const target = page.getByText(messageSubstring, { exact: false }).first()
-    await Promise.race([
-        target.waitFor({ state: 'visible', timeout: 300_000 }),
-        failed
-            .first()
-            .waitFor({ state: 'visible', timeout: 300_000 })
-            .then(async () => {
-                const msg = (await failed.first().textContent()) ?? ''
-                throw new Error(`install failed before "${label}": ${msg}`)
-            }),
+    const winner = await Promise.race([
+        target.waitFor({ state: 'visible', timeout: timeoutMs }).then(() => 'ok' as const),
+        failed.waitFor({ state: 'visible', timeout: timeoutMs }).then(() => 'failed' as const),
     ])
+    if (winner === 'failed') {
+        const msg = (await failed.textContent()) ?? ''
+        throw new Error(`install failed before "${label}": ${msg}`)
+    }
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -82,7 +86,7 @@ test.describe('todo install', () => {
     })
 
     test('install @tinycld/todo from github through the installer UI', async ({ page }) => {
-        test.setTimeout(900_000) // go build + expo export are minutes-long
+        test.setTimeout(1_800_000) // 30 min: go build + expo export dominate
 
         await loginAsSuperuser(page)
 
@@ -91,19 +95,20 @@ test.describe('todo install', () => {
         await page
             .getByRole('textbox', { name: 'npm Package Name', exact: true })
             .fill(TODO_SPEC)
-        // The form's submit button shares the 'Install' label; click the one
-        // inside the install form (the second match, after the toggle).
+        // When the form is open the toggle button reads 'Cancel', so only the
+        // form's submit button reads 'Install' here; .last() is defensive
+        // against future relabeling, not resolving a present collision.
         await page.getByRole('button', { name: 'Install', exact: true }).last().click()
 
         // The InstallProgressModal renders once the job starts. Walk the
         // stages in order — each assertion names where it got stuck.
-        await expectStage(page, 'Downloading package', 'Running npm pack')
-        await expectStage(page, 'Manifest parsed', 'Package: Todo (todo)')
-        await expectStage(page, 'Installing dependencies', 'Running pnpm install')
-        await expectStage(page, 'Generating wiring', 'Running package generation script')
-        await expectStage(page, 'Building server', 'Compiling new server binary')
-        await expectStage(page, 'Building web app', 'Running expo export')
-        await expectStage(page, 'Requesting restart', 'Signaling server restart')
+        await expectStage(page, 'Downloading package', 'Running npm pack', 120_000)
+        await expectStage(page, 'Manifest parsed', 'Package: Todo (todo)', 120_000)
+        await expectStage(page, 'Installing dependencies', 'Running pnpm install', 300_000)
+        await expectStage(page, 'Generating wiring', 'Running package generation script', 120_000)
+        await expectStage(page, 'Building server', 'Compiling new server binary', 420_000)
+        await expectStage(page, 'Building web app', 'Running expo export', 420_000)
+        await expectStage(page, 'Requesting restart', 'Signaling server restart', 120_000)
 
         // Confirm the modal didn't end in a failed state.
         await expect(page.getByText('Installation Failed')).not.toBeVisible()
