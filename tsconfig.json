@@ -17,5 +17,5 @@
         }
     },
     "exclude": ["node_modules", ".expo", "dist", "scripts/eas-workspace-files"],
-    "include": ["**/*.ts", "**/*.tsx"]
+    "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }
