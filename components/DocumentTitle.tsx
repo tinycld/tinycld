@@ -32,9 +32,9 @@ interface DocumentTitleProps {
 }
 
 /**
- * Sets the browser tab title on web. On iOS, forwards into the
- * NSUserActivity bridge so the route becomes addressable by Spotlight
- * and Handoff. Android renders nothing (expo-router/head is a no-op).
+ * Sets the browser tab title on web. Renders nothing on native (iOS /
+ * Android) — see #28; expo-router/head is effectively a no-op there and
+ * we deliberately don't drive NSUserActivity from this component.
  *
  * Final tab string is "<brand>[: <org>][ — <pkg>][ — <title>]", with
  * empty segments dropped. When no segments are present at all the tab
@@ -43,8 +43,19 @@ interface DocumentTitleProps {
  * The brand comes from CoreConfig.brandName (which the app derives
  * from app.json's expo.name), so a fork rebrands the whole app by
  * editing app.json alone.
+ *
+ * Because it's web-only, the org lookup (useOrgInfo → pbtsdb useStore)
+ * lives in the inner web component, which only mounts on web where the
+ * full Providers stack (incl. PBTSDBProvider) is guaranteed. Calling it
+ * on native would crash on pre-auth screens like /connect, which render
+ * under MinimalProviders without pbtsdb.
  */
-export function DocumentTitle({
+export function DocumentTitle(props: DocumentTitleProps) {
+    if (Platform.OS !== 'web') return null
+    return <DocumentTitleWeb {...props} />
+}
+
+function DocumentTitleWeb({
     title,
     pkg,
     includeOrg = true,
@@ -53,8 +64,7 @@ export function DocumentTitle({
     const brand = getCoreConfigOptional()?.brandName ?? 'TinyCld'
     // useOrgInfo is safe outside OrgSlugProvider: useOrgSlug() returns ''
     // when there's no provider and no URL param, the live query matches
-    // no rows, and org collapses to null. So pre-auth screens that mount
-    // <DocumentTitle> don't need any guard — they just get no org segment.
+    // no rows, and org collapses to null.
     const { org } = useOrgInfo()
 
     const segments: string[] = []
@@ -68,7 +78,6 @@ export function DocumentTitle({
     }
 
     const text = segments.length > 0 ? `${brand}: ${segments.join(' — ')}` : brand
-    if (Platform.OS !== 'web') return null
     return (
         <Head>
             <title>{text}</title>
