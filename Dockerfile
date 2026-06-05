@@ -262,12 +262,27 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Enable corepack so `pnpm` is on PATH for the in-app package installer, which
-# runs `pnpm install` at the workspace root (step 7 of the install pipeline).
-# corepack shims pnpm to the version pinned in the root package.json
-# `packageManager` field. Node ships corepack; the runtime image just activates
-# it (the build stages do the same via `corepack enable`).
-RUN corepack enable
+# Make `pnpm` available on PATH for the in-app package installer, which runs
+# `pnpm install` at the workspace root (step 7 of the install pipeline). Node
+# ships corepack; `corepack enable` only creates a SHIM that lazily downloads
+# pnpm on first use AND prompts for confirmation — which fails non-interactively
+# inside the installer ("! Corepack is about to download …pnpm-11.3.0.tgz",
+# exit 1). So we `corepack prepare … --activate` here to actually fetch + cache
+# the pinned pnpm into the image at build time.
+#
+# COREPACK_HOME must be a shared, world-readable path: corepack caches the
+# prepared pnpm under $COREPACK_HOME (default ~/.cache/node/corepack), and we
+# prepare it here as root but the installer runs pnpm as the unprivileged
+# tinycld user — root's HOME cache is unreadable to tinycld. Point COREPACK_HOME
+# at /opt/corepack (chmod a+rX) and set the SAME env at runtime so the tinycld
+# process resolves the same cache. COREPACK_ENABLE_DOWNLOAD_PROMPT=0 belt-and-
+# suspenders against any later fetch blocking on a prompt. Version matches the
+# root package.json `packageManager` pin.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ENV COREPACK_HOME=/opt/corepack
+RUN corepack enable \
+    && corepack prepare pnpm@11.3.0 --activate \
+    && chmod -R a+rX /opt/corepack
 
 # Copy Go toolchain from build stage (needed for the in-app package installer's
 # runtime Go-package rebuilds).
