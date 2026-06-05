@@ -48,11 +48,21 @@ var goModulePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+(/[a
 var gitSpecPattern = regexp.MustCompile(
 	`^(` +
 		`(github|gitlab|bitbucket):[\w.-]+/[\w.-]+` + // host:owner/repo
-		`|[\w.-]+/[\w.-]+` + // owner/repo shorthand
+		`|[a-zA-Z0-9][\w.-]*/[a-zA-Z0-9][\w.-]*` + // owner/repo shorthand (segments start alphanumeric, so no ../)
 		`|git\+https://[\w./@:-]+` + // git+https URL
 		`|git\+ssh://[\w./@:-]+` + // git+ssh URL
 		`|https://[\w./@:-]+` + // https URL (incl. .git)
 		`)$`,
+)
+
+// npmVersionedPattern matches a bare npm name (optionally @scoped) with an
+// optional trailing @<version> — e.g. `mail`, `mail@1.2.3`, `mail@latest`,
+// `@tinycld/mail@1.2.3`. The version segment is a tight charset (no slashes,
+// no metachars) so it can't smuggle a second npm-pack argument. The bare
+// npmPackagePattern (no version) still covers the un-suffixed case; this is
+// additive.
+var npmVersionedPattern = regexp.MustCompile(
+	`^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*(@[a-zA-Z0-9][a-zA-Z0-9.+-]*)?$`,
 )
 
 // shellUnsafePattern flags any character that has no business in a package
@@ -197,7 +207,7 @@ func validatePackageSpec(spec string) error {
 	if shellUnsafePattern.MatchString(spec) {
 		return fmt.Errorf("invalid package spec (unsafe characters): %s", spec)
 	}
-	if npmPackagePattern.MatchString(spec) || gitSpecPattern.MatchString(spec) {
+	if npmPackagePattern.MatchString(spec) || npmVersionedPattern.MatchString(spec) || gitSpecPattern.MatchString(spec) {
 		return nil
 	}
 	return fmt.Errorf("invalid package spec: %s", spec)

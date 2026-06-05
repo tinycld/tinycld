@@ -20,6 +20,13 @@ func TestValidatePackageSpec(t *testing.T) {
 		{"https://github.com/tinycld/todo.git", false},
 		{"git+https://github.com/tinycld/todo.git", false},
 		{"git+ssh://git@github.com/tinycld/todo.git", false},
+		// versioned npm specs (npm pack name@version)
+		{"mail@1.2.3", false},
+		{"@tinycld/mail@1.2.3", false},
+		{"mail@latest", false},
+		// tightened bare owner/repo shorthand — no path traversal
+		{"../etc", true},
+		{"..%2f/etc", true},
 		// rejected: arg injection / shell metacharacters / empty
 		{"", true},
 		{"-rf", true},
