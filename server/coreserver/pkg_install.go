@@ -427,7 +427,7 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	// workspace; pnpm discovers the new member from pnpm-workspace.yaml (updated
 	// above) and the postinstall (link-members + generator) wires it in.
 	emitProgress(job, "Installing dependencies", 50, "Running pnpm install")
-	npmOut, err := runCmd(wsRoot, "pnpm", "install", "--no-frozen-lockfile")
+	npmOut, err := runCmdEnv(wsRoot, []string{"CI=true"}, "pnpm", "install", "--no-frozen-lockfile")
 	if err != nil {
 		fail("pnpm install", fmt.Errorf("%v: %s", err, npmOut))
 		return
@@ -619,7 +619,7 @@ func runUninstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	// node_modules/@tinycld/<slug> symlink before the rebuild. Without this the
 	// dangling symlink can break expo export's module resolution.
 	emitProgress(job, "Updating dependencies", 48, "Running pnpm install")
-	npmOut, err := runCmd(wsRoot, "pnpm", "install", "--no-frozen-lockfile")
+	npmOut, err := runCmdEnv(wsRoot, []string{"CI=true"}, "pnpm", "install", "--no-frozen-lockfile")
 	if err != nil {
 		fail("pnpm install", fmt.Errorf("%v: %s", err, npmOut))
 		return
@@ -1024,6 +1024,26 @@ func runCmd(dir string, name string, args ...string) (string, error) {
 	log.Printf("[pkg_install] $ (cd %s && %s %s)", dir, name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if s := strings.TrimRight(string(out), "\n"); s != "" {
+		log.Printf("[pkg_install] output of %s:\n%s", name, s)
+	}
+	if err != nil {
+		log.Printf("[pkg_install] %s FAILED: %v", name, err)
+	}
+	return string(out), err
+}
+
+// runCmdEnv is runCmd with additional environment variables appended to the
+// inherited environment. Used for the pnpm-install steps, which must run with
+// CI=true so pnpm proceeds non-interactively (otherwise it blocks on a
+// node_modules-purge confirmation and exits 1: "If you are running pnpm in CI,
+// set the CI environment variable to 'true'…").
+func runCmdEnv(dir string, env []string, name string, args ...string) (string, error) {
+	log.Printf("[pkg_install] $ (cd %s && %s %s %s)", dir, strings.Join(env, " "), name, strings.Join(args, " "))
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
 	out, err := cmd.CombinedOutput()
 	if s := strings.TrimRight(string(out), "\n"); s != "" {
 		log.Printf("[pkg_install] output of %s:\n%s", name, s)
