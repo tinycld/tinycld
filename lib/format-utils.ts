@@ -7,8 +7,12 @@ export function formatBytes(bytes: number): string {
 }
 
 export function formatDate(isoDate: string): string {
-    const date = new Date(isoDate)
-    return date.toLocaleDateString('en-US', {
+    // Render nothing for an absent date rather than the literal "Invalid Date".
+    // The only source of an empty value is a caller that has no date to pass
+    // (e.g. a drive search row before its record is loaded); our API otherwise
+    // always emits well-formed dates.
+    if (!isoDate) return ''
+    return new Date(isoDate).toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',
         year: 'numeric',

@@ -33,21 +33,32 @@ export function PreviewModal({
 
     if (!source) return null
 
-    // Use the Gluestack Modal everywhere — on native it's a styled overlay
-    // in the React tree (no native RN <Modal>), so any other Gluestack
-    // dialog opened from a toolbar action (e.g. drive's folder picker)
-    // naturally stacks above it via tree order. On mobile/native we use
-    // the modal's `full` size so the panel fills the screen; on desktop
-    // web we keep the windowed 95vw × 90vh frame.
+    // Use the Gluestack Modal everywhere — it portals to the app-root
+    // OverlayProvider. On mobile/native we use the modal's `full` size so the
+    // panel fills the screen; on desktop web we keep the windowed 95vw × 90vh
+    // frame.
     const isFullscreen = isMobile || Platform.OS !== 'web'
     const contentClass = isFullscreen
         ? 'h-full p-0 rounded-none border-0'
         : 'w-[95vw] h-[90vh] max-w-[1400px] p-0 rounded-xl overflow-hidden'
 
     return (
-        <Modal isOpen={isVisible} onClose={onClose} size={isFullscreen ? 'full' : 'md'}>
+        // On native the gluestack overlay portals into the React tree, where it
+        // shares no stacking context with the mobile bottom tab bar — so the tab
+        // bar (zIndex 10) painted over a fullscreen preview, leaving the nav
+        // visible/tappable underneath (you could switch tabs and strand the
+        // modal). `useRNModal` renders the overlay inside a real react-native
+        // <Modal> (a top-level OS window) which is guaranteed above everything,
+        // including the tab bar. Web is unaffected (it already stacks at 9999 and
+        // ignores useRNModal).
+        <Modal
+            isOpen={isVisible}
+            onClose={onClose}
+            size={isFullscreen ? 'full' : 'md'}
+            useRNModal={isFullscreen}
+        >
             <ModalBackdrop />
-            <ModalContent className={contentClass}>
+            <ModalContent testID="file-preview-modal" className={contentClass}>
                 <PreviewModalContent
                     source={source}
                     onClose={onClose}
