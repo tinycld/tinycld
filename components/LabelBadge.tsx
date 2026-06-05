@@ -1,4 +1,4 @@
-import { hexToRgba } from '@tinycld/core/lib/color-utils'
+import { hexToRgba, readableTextColor } from '@tinycld/core/lib/color-utils'
 import { Text, View } from 'react-native'
 
 interface LabelBadgeProps {
@@ -7,6 +7,9 @@ interface LabelBadgeProps {
 }
 
 export function LabelBadge({ name, color }: LabelBadgeProps) {
+    // A light label color (yellow, lime, pale blue) rendered as text over its
+    // own 20% tint is unreadable — pull it to a darker shade of the same hue.
+    const textColor = readableTextColor(color)
     return (
         <View
             className="flex-row px-1.5 rounded border"
@@ -16,7 +19,7 @@ export function LabelBadge({ name, color }: LabelBadgeProps) {
                 borderColor: hexToRgba(color, 0.38),
             }}
         >
-            <Text style={{ fontSize: 11, fontWeight: '500', color }}>{name}</Text>
+            <Text style={{ fontSize: 11, fontWeight: '500', color: textColor }}>{name}</Text>
         </View>
     )
 }

@@ -29,5 +29,5 @@ export function OrgLogo({ org, size = 36, fallback = null }: OrgLogoProps) {
             </View>
         )
     }
-    return <NameAvatar firstName={org.name} size={size} />
+    return <NameAvatar firstName={org.name} colorKey={org.id} size={size} />
 }
