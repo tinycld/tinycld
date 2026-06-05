@@ -33,6 +33,22 @@ async function loginAsSuperuser(page: Page) {
     await expect(page.getByText('Organizations', { exact: true })).toBeVisible()
 }
 
+// After the install-triggered restart the server may briefly refuse
+// connections. Retry the superuser login a few times before giving up.
+async function loginAsSuperuserWithRetry(page: Page, attempts = 10) {
+    let lastErr: unknown
+    for (let i = 0; i < attempts; i++) {
+        try {
+            await loginAsSuperuser(page)
+            return
+        } catch (err) {
+            lastErr = err
+            await page.waitForTimeout(3_000)
+        }
+    }
+    throw new Error(`superuser login failed after restart (${attempts} attempts): ${lastErr}`)
+}
+
 // Asserts the install modal advances through an expected stage by its
 // visible message text. Both racing waits only RESOLVE — the throw happens
 // after the race settles, based on the winner, so the losing wait can't
@@ -92,9 +108,7 @@ test.describe('todo install', () => {
 
         // Login lands on the Packages tab. Open the install form, then submit.
         await page.getByRole('button', { name: 'Install', exact: true }).click()
-        await page
-            .getByRole('textbox', { name: 'npm Package Name', exact: true })
-            .fill(TODO_SPEC)
+        await page.getByRole('textbox', { name: 'npm Package Name', exact: true }).fill(TODO_SPEC)
         // When the form is open the toggle button reads 'Cancel', so only the
         // form's submit button reads 'Install' here; .last() is defensive
         // against future relabeling, not resolving a present collision.
@@ -112,5 +126,56 @@ test.describe('todo install', () => {
 
         // Confirm the modal didn't end in a failed state.
         await expect(page.getByText('Installation Failed')).not.toBeVisible()
+    })
+
+    test('todo is registered, in nav, and reachable after restart', async ({ page }) => {
+        test.setTimeout(180_000)
+
+        // 1. Registry: Todo appears on the Packages tab with an installed badge.
+        await loginAsSuperuserWithRetry(page)
+        await expect(page.getByText('Todo', { exact: true })).toBeVisible()
+        await expect(page.getByText('installed', { exact: true }).first()).toBeVisible()
+
+        // 2. Create an org to log into — the superuser dashboard isn't the app
+        //    shell; the nav rail lives in the org-scoped app.
+        await page.getByText('Organizations', { exact: true }).first().click()
+        await page.getByRole('button', { name: 'New Organization' }).click()
+        await page
+            .getByRole('textbox', { name: 'Organization Name', exact: true })
+            .fill(TEST_ORG_NAME)
+        await page.getByRole('textbox', { name: 'Slug', exact: true }).fill(TEST_ORG_SLUG)
+        await page
+            .getByRole('textbox', { name: 'Owner Name', exact: true })
+            .fill(TEST_ORG_OWNER_NAME)
+        await page
+            .getByRole('textbox', { name: 'Owner Email', exact: true })
+            .fill(TEST_ORG_OWNER_EMAIL)
+        await page
+            .getByRole('textbox', { name: 'Owner Password', exact: true })
+            .fill(TEST_ORG_OWNER_PASSWORD)
+        await page
+            .getByRole('textbox', { name: 'Mail Domain', exact: true })
+            .fill(TEST_ORG_MAIL_DOMAIN)
+        await page.getByRole('button', { name: 'Create Organization' }).click()
+        await expect(page.getByText(TEST_ORG_NAME, { exact: true })).toBeVisible()
+
+        // 3. Nav + reachable screen: log into the org as the owner, confirm the
+        //    Todo rail entry renders and its screen mounts.
+        const orgPage = await page.context().newPage()
+        await orgPage.goto('/')
+        await orgPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
+        await orgPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
+        await orgPage.getByTestId('login-submit').click()
+        await orgPage.waitForURL(/\/a\//, { timeout: 30_000 })
+
+        // The Todo nav-rail entry is icon-only; target it by testID.
+        const todoNav = orgPage.getByTestId('nav-todo')
+        await expect(todoNav).toBeVisible({ timeout: 30_000 })
+        await todoNav.click()
+
+        // The Todo screen mounts at /a/<orgSlug>/todo. Its add-todo input is a
+        // unique, stable signal that the package's bundled screen loaded.
+        await expect(orgPage).toHaveURL(/\/a\/[^/]+\/todo/, { timeout: 30_000 })
+        await expect(orgPage.getByPlaceholder('Add a todo…')).toBeVisible({ timeout: 30_000 })
     })
 })
