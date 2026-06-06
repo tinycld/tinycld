@@ -248,14 +248,18 @@ ENV FZ_VERSION="1.25.1"
 # manually re-apply the cap to a freshly-rebuilt binary. git is required by the
 # in-app package installer: `npm pack <git-spec>` (e.g. github:owner/repo) clones
 # the repo via git, so without it git-spec installs fail with `spawn git ENOENT`.
-# gcc is required to install a package that ships a Go server: the installer's
-# checkGoBuildPrereqs() gate needs both `go` (from the copied toolchain) and a C
-# compiler on PATH, and the server binary is built with CGO_ENABLED=1 (it links
-# libmupdf via go-fitz). Without gcc, server packages are rejected at manifest
-# validation ("requires Phase 3 support"). libmupdf-dev (already listed) supplies
-# the cgo link target.
+# gcc AND g++ are required to install a package that ships a Go server: the
+# installer's checkGoBuildPrereqs() gate needs `go` (from the copied toolchain)
+# plus a C compiler, and the server is built with CGO_ENABLED=1. The cgo set
+# needs BOTH compilers — gcc for libmupdf (go-fitz) and g++ for goheif/libde265
+# (HEIF decode, which shells out to g++). The build-stage go-builder gets both
+# from the golang:trixie base (build-essential); the slim runtime base has
+# neither, so add them explicitly. Without gcc, server packages are rejected at
+# manifest validation ("requires Phase 3 support"); without g++, the runtime
+# `go build` fails with `exec: "g++": executable file not found`. libmupdf-dev
+# (already listed) supplies the cgo link target.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl git gcc gnupg gosu \
+    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl git gcc g++ gnupg gosu \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get autoremove -y \
