@@ -63,7 +63,7 @@ jobs:
           echo "Testing ${image}"
 
       - name: Log in to GHCR (read-only)
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -182,7 +182,7 @@ jobs:
 
       - name: Upload Playwright report + container logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: smoke-test-artifacts-${{ steps.imgref.outputs.ref }}
           path: |
