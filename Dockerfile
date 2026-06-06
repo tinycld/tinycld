@@ -258,8 +258,14 @@ ENV FZ_VERSION="1.25.1"
 # manifest validation ("requires Phase 3 support"); without g++, the runtime
 # `go build` fails with `exec: "g++": executable file not found`. libmupdf-dev
 # (already listed) supplies the cgo link target.
+#
+# sqlite3 (the CLI) is needed by the installer's database-backup step, which runs
+# `sqlite3 <db> "VACUUM INTO '<backup>'"` for a consistent snapshot before
+# swapping in the rebuilt binary. The Go server embeds a SQLite driver so the CLI
+# was never otherwise required; without it the install fails at "Backing up
+# database" with `exec: "sqlite3": not found`.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl git gcc g++ gnupg gosu \
+    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl git gcc g++ sqlite3 gnupg gosu \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get autoremove -y \
