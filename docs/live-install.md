@@ -312,6 +312,84 @@ which removes the `pkg_build` record and the `builds/<id>/` archive. The current
 build can't be deleted. Archived binaries are large (cgo, ~100 MB+), so operators
 should delete builds they no longer need.
 
+## Per-package version changes
+
+Build revert (above) rolls the **whole image** back to an earlier snapshot by
+count (`migrate down N`), superseding everything newer. A **version change**
+(Setup → Versions) instead moves **one package** to any version its source
+publishes — newer (update) or older (downgrade) — leaving every other package's
+schema and data untouched.
+
+### Why the named-migration runner exists
+
+All packages' migrations interleave by timestamp in one `_migrations` table, so
+the count-based `migrate down N` cannot revert just one package's migrations
+without tearing down unrelated ones. `pkg_migrate.go` drives a **named subset**
+instead: it looks each migration up by filename in `core.AppMigrations` (the same
+global list the jsvm plugin registers every `.js` `migrate(up, down)` into) and
+runs its own `Up`/`Down` inside the stock aux+main transaction nesting,
+replicating the `_migrations` insert/delete itself. Because it only ever touches
+the named files for one package, no other package's history or schema is affected.
+
+A key enabler: the **running process** keeps every migration it registered at its
+own startup, regardless of later on-disk file changes — so even after a downgrade
+swaps a package's files to an older version (removing the newer migration files
+from disk), the running binary can still execute the newer migrations' `Down`
+closures.
+
+### Migration → package attribution
+
+The generator (`symlinkServerArtifacts`) emits `server/pb_migrations_owner.json`,
+a `{ migration-file → owning-slug }` map (core migrations owned by `core`), while
+it flattens each package's `pb-migrations/` into the shared dir. The server reads
+it via `migrationsForPackage(slug)` / `packageForMigration(file)`. Each install
+also records its package's own migration files on the `pkg_build` record
+(`pkg_migration_files`), so a version change knows exactly which files to diff.
+
+### The pipeline (`runVersionChangePipeline`)
+
+`POST /api/admin/packages/versions/apply` with `{ changes: [{ slug, targetVersion }] }`
+returns a `jobId` (same SSE progress stream as install). For each change:
+
+1. Re-run the compatibility solver authoritatively against the live registry.
+2. Back up the DB (the downgrade safety net).
+3. `npm pack` / git-fetch the target version, validate its manifest, swap the
+   workspace member files (with a `.bak` restore on rollback).
+4. Regenerate wiring — rewrites the owner map so `migrationsForPackage(slug)`
+   reflects the **target** version's file set.
+5. Diff against the current build's recorded set:
+   upgrade → `applyNamedMigrations(target ∖ current)`;
+   downgrade → `revertNamedMigrations(current ∖ target)`.
+6. `pnpm install`, rebuild the binary (if the package has a server) + web bundle,
+   archive a new build, upsert the registry version, and request the exit-75
+   relaunch.
+
+Any failure unwinds the per-package rollback stack and restores the DB backup.
+The whole operation holds the same `installMu`/`currentJob` single-flight lock as
+install/revert, so version changes can't race them.
+
+Because the deployed image runs with `HooksWatch: true` (JS-hook hot-reload),
+re-running the generator mid-pipeline rewrites the watched `pb_hooks` symlinks,
+which would otherwise make PocketBase's watcher call `app.Restart()` and tear the
+process down between steps. An `OnTerminate` guard
+(`shouldSuppressRestart`) vetoes any in-process restart (`IsRestart`) while a
+package operation holds the single-flight lock; our own intentional relaunch uses
+`os.Exit(75)` (a different path the guard never sees), so it still fires once the
+pipeline finishes.
+
+### Discovery, compatibility, and the drop report
+
+- `GET /api/admin/packages/versions` lists each registry package's available
+  versions (npm registry versions or git tags, inferred from the stored spec),
+  with a short in-memory TTL cache and per-package failure isolation.
+- `POST /api/admin/packages/versions/check` runs the `peerVersions` solver over a
+  proposed `{ slug → version }` set and returns violations; the UI disables Apply
+  while any exist, and the pipeline re-checks before mutating.
+- `POST /api/admin/packages/versions/drop-report` dry-reverts the package's
+  current migrations inside a transaction it rolls back, returning the
+  collections/fields a downgrade would drop — the UI lists them and gates the
+  downgrade behind a typed slug confirmation.
+
 ## Runtime image requirements
 
 The live installer shells out to real tools and needs a workspace it can write

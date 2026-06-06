@@ -276,6 +276,7 @@ export default manifest
 | `server` | Go server extension: `package` is the subdir, `module` is its Go module path. |
 | `build.script` | A build script run before bundling (e.g. an embedded webview bundle). |
 | `dependencies[]` | Other package **slugs** — used to topologically order seeds. |
+| `peerVersions` | `{ '<slug or @tinycld/core>': '<semver range>' }` — version-aware compatibility constraints **enforced** by the version-management solver (Setup → Versions). A proposed set of version changes is blocked if it leaves any range unsatisfied. Distinct from `dependencies` (advisory, slug-only). |
 
 A package can contribute **only** a settings panel (no nav, no routes — like
 `@tinycld/google-takeout-import`), or purely `publicRoutes`, or any
