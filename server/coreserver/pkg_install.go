@@ -453,11 +453,23 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	// toolchain runs in goSrcDir (<appDir>/server, where go.work lives); the
 	// new/live binary and pb_data are in appDir.
 	if manifest.HasServer {
-		emitProgress(job, "Updating Go modules", 67, "Running go mod tidy")
-		tidyOut, tidyErr := runCmd(goSrcDir, "go", "mod", "tidy")
-		if tidyErr != nil {
-			fail("go mod tidy", fmt.Errorf("%v: %s", tidyErr, tidyOut))
-			return
+		// Reconcile the Go workspace with `go work sync`, NOT `go mod tidy`.
+		// The feature server modules (tinycld.org/packages/<slug>) are local
+		// modules wired only through the generated go.work `use` directives;
+		// `go mod tidy` ignores go.work for those imports and tries to fetch
+		// them from the network ("unrecognized import path …/packages/<slug>"),
+		// which fails. `go work sync` honors the `use` entries and reconciles
+		// go.sum offline — the same step the Docker image's go-builder runs
+		// before building. Skip when there's no go.work (defensive; the
+		// generator always emits one for a workspace with server packages).
+		emitProgress(job, "Updating Go modules", 67, "Running go work sync")
+		goWorkPath := filepath.Join(goSrcDir, "go.work")
+		if _, statErr := os.Stat(goWorkPath); statErr == nil {
+			syncOut, syncErr := runCmd(goSrcDir, "go", "work", "sync")
+			if syncErr != nil {
+				fail("go work sync", fmt.Errorf("%v: %s", syncErr, syncOut))
+				return
+			}
 		}
 
 		emitProgress(job, "Building server", 70, "Compiling new server binary")
