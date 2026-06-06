@@ -180,4 +180,35 @@ echo "[runner] running post-restart verification"
         -g 'after restart'
 ) || { echo "[runner] post-restart phase failed"; dump_logs; exit 1; }
 
-echo "[runner] ✅ todo install integration test passed"
+# 9. Trigger a revert back to the base build through the Build History UI. Like
+# the install, this requests an exit-75 relaunch (swap archived base binary +
+# migrate down + re-stage base bundle), so it's driven as its own phase.
+echo "[runner] running revert-to-base"
+(
+    cd "${PW_ROOT}"
+    PW_BASE_URL="${BASE_URL}" \
+    RUN_TODO_INSTALL_TEST=1 \
+    CI=true FORCE_COLOR=0 \
+    ./node_modules/.bin/playwright test --reporter=line,list \
+        -g 'revert to the base build'
+) || { echo "[runner] revert phase failed"; dump_logs; exit 1; }
+
+# 10. The revert requested a restart. Wait for the container to come back, then
+# re-attach the live log to capture the post-revert boot trace.
+echo "[runner] waiting for post-revert restart"
+wait_unhealthy "revert restart down"
+wait_healthy "post-revert"
+start_live_log
+
+# 11. Verify todo is gone after the revert to base.
+echo "[runner] running post-revert verification"
+(
+    cd "${PW_ROOT}"
+    PW_BASE_URL="${BASE_URL}" \
+    RUN_TODO_INSTALL_TEST=1 \
+    CI=true FORCE_COLOR=0 \
+    ./node_modules/.bin/playwright test --reporter=line,list \
+        -g 'gone after revert'
+) || { echo "[runner] post-revert phase failed"; dump_logs; exit 1; }
+
+echo "[runner] ✅ todo install + revert integration test passed"

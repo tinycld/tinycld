@@ -6,9 +6,10 @@ import { expect, type Page, test } from '@playwright/test'
 // the git-spec validation change is present). Runs serially — every step
 // depends on prior container state, and the install restarts the container.
 //
-// Designed for legible failure: each install stage is asserted by its
-// visible modal message, so a hang reports the last stage that appeared
-// rather than a generic timeout.
+// Install/revert progress streams to a modal over SSE, but the test judges
+// success by polling the server's pkg_install_log status (ground truth),
+// not the modal — an EventSource that connects a hair late can miss the
+// fast early stages, making modal-text assertions inherently racy here.
 //
 // NOT a normal-CI test. It needs a purpose-built docker image (the runner
 // `tests/install/run-todo-install.sh` builds it) and drives a real,
@@ -68,28 +69,146 @@ async function loginAsSuperuserWithRetry(page: Page, attempts = 20) {
     throw new Error(`superuser login failed after restart (${attempts} attempts): ${lastErr}`)
 }
 
-// Asserts the install modal advances through an expected stage by its
-// visible message text. Both racing waits only RESOLVE — the throw happens
-// after the race settles, based on the winner, so the losing wait can't
-// reject into an unhandled promise after the race is over. `label` names
-// the stage in the failure message; `timeoutMs` lets slow build stages
-// (go build, expo export) get more headroom than the fast ones.
-async function expectStage(
-    page: Page,
-    label: string,
-    messageSubstring: string,
-    timeoutMs = 120_000
-) {
-    const failed = page.getByText(/^FAILED: /).first()
-    const target = page.getByText(messageSubstring, { exact: false }).first()
-    const winner = await Promise.race([
-        target.waitFor({ state: 'visible', timeout: timeoutMs }).then(() => 'ok' as const),
-        failed.waitFor({ state: 'visible', timeout: timeoutMs }).then(() => 'failed' as const),
-    ])
-    if (winner === 'failed') {
-        const msg = (await failed.textContent()) ?? ''
-        throw new Error(`install failed before "${label}": ${msg}`)
+// Mints a fresh superuser token via the API. The setup page's PocketBase
+// instance (useSuperUserPB) has no persistent auth store — its token lives only
+// in memory — so we can't read it from localStorage. Instead authenticate
+// directly against the _superusers collection, the same call the login form makes.
+async function superuserToken(page: Page): Promise<string> {
+    const res = await page.request.post('/api/collections/_superusers/auth-with-password', {
+        data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
+        failOnStatusCode: false,
+    })
+    if (!res.ok()) {
+        throw new Error(`superuser auth failed: ${res.status()} ${await res.text()}`)
     }
+    const body = (await res.json()) as { token?: string }
+    if (!body.token) throw new Error('superuser auth returned no token')
+    return body.token
+}
+
+// Polls the admin package-status endpoint (backed by pkg_install_log) until the
+// slug's install reaches `wantStatus`, throwing on a terminal failure. This is
+// the SSE-independent ground truth for "did the background install finish?".
+// Uses page.request so it shares the browser's network context (same origin,
+// so PB_SERVER_ADDR resolution is irrelevant — we hit the same host as the app).
+async function waitForInstallStatus(
+    page: Page,
+    slug: string,
+    wantStatus: string,
+    timeoutMs: number,
+    wantAction?: string
+) {
+    const url = `/api/admin/packages/status/${slug}`
+    const deadline = Date.now() + timeoutMs
+    let token = await superuserToken(page)
+    let last = 'no-response-yet'
+
+    // One status read. Returns the parsed body, or null on any transient
+    // condition (network error / connection reset / non-ok). The job ends by
+    // restarting the server (exit 75), so ECONNRESET and refused connections are
+    // EXPECTED mid-poll and must NOT fail the test — they just mean "try again".
+    // Re-mints the token on an auth failure (tokens expire; a restart can also
+    // invalidate the session).
+    async function readStatusOnce(): Promise<{
+        status?: string
+        error?: string
+        action?: string
+    } | null> {
+        let res: Awaited<ReturnType<typeof page.request.get>>
+        try {
+            res = await page.request.get(url, {
+                headers: { Authorization: token },
+                failOnStatusCode: false,
+            })
+        } catch {
+            return null // connection reset/refused during the restart window
+        }
+        if (res.status() === 401 || res.status() === 403) {
+            try {
+                token = await superuserToken(page)
+                res = await page.request.get(url, {
+                    headers: { Authorization: token },
+                    failOnStatusCode: false,
+                })
+            } catch {
+                return null
+            }
+        }
+        if (!res.ok()) return null
+        try {
+            return await res.json()
+        } catch {
+            return null
+        }
+    }
+
+    while (Date.now() < deadline) {
+        const body = await readStatusOnce()
+        if (body) {
+            last = `${body.action ?? '?'}/${body.status ?? '?'}`
+            // Only judge the operation we're waiting on. The status endpoint
+            // returns the latest log row; if wantAction is set, ignore rows for a
+            // different action (e.g. a stale install row before the revert row
+            // lands).
+            const actionMatches = !wantAction || body.action === wantAction
+            if (actionMatches && body.status === wantStatus) return
+            if (actionMatches && (body.status === 'failed' || body.status === 'rolled_back')) {
+                throw new Error(
+                    `${slug} ${body.action} ended ${body.status}: ${body.error ?? '(no error)'}`
+                )
+            }
+        }
+        await page.waitForTimeout(3_000)
+    }
+    throw new Error(
+        `${slug} did not reach ${wantAction ?? ''}/${wantStatus} within ${timeoutMs}ms (last=${last})`
+    )
+}
+
+// Polls the pkg_build collection until the given build reaches `wantStatus`
+// (e.g. base build → `current` after a revert). This is the unambiguous,
+// SSE-independent signal a revert finished: a revert logs under the TARGET
+// build's slug (for the base build that's "(base image)", not the package
+// slug), so the build record's status — not the install log — is the reliable
+// ground truth. Resilient to the exit-75 restart the revert triggers.
+async function waitForBuildStatus(
+    page: Page,
+    buildId: string,
+    wantStatus: string,
+    timeoutMs: number
+) {
+    const deadline = Date.now() + timeoutMs
+    let token = await superuserToken(page)
+    let last = 'no-response-yet'
+    while (Date.now() < deadline) {
+        let body: { items?: Array<{ status?: string }> } | null = null
+        try {
+            const filter = encodeURIComponent(`build_id='${buildId}'`)
+            let res = await page.request.get(
+                `/api/collections/pkg_build/records?filter=${filter}`,
+                { headers: { Authorization: token }, failOnStatusCode: false }
+            )
+            if (res.status() === 401 || res.status() === 403) {
+                token = await superuserToken(page)
+                res = await page.request.get(
+                    `/api/collections/pkg_build/records?filter=${filter}`,
+                    { headers: { Authorization: token }, failOnStatusCode: false }
+                )
+            }
+            if (res.ok()) body = await res.json()
+        } catch {
+            // connection reset/refused during the restart window — retry
+        }
+        const status = body?.items?.[0]?.status
+        if (status) {
+            last = status
+            if (status === wantStatus) return
+        }
+        await page.waitForTimeout(3_000)
+    }
+    throw new Error(
+        `build ${buildId} did not reach ${wantStatus} within ${timeoutMs}ms (last=${last})`
+    )
 }
 
 test.describe.configure({ mode: 'serial' })
@@ -154,27 +273,17 @@ test.describe('todo install', () => {
         // relabeling, not resolving a present collision.
         await page.getByText('Install', { exact: true }).last().click()
 
-        // The InstallProgressModal renders once the job starts. Walk the
-        // stages in order — each assertion names where it got stuck.
-        // Per-stage timeouts are the WAIT FOR THAT STAGE'S MESSAGE TO APPEAR,
-        // so each must cover the duration of the operation that PRECEDES it.
-        // The two long waits: 'pnpm install' follows the cold pnpm install, and
-        // 'Running expo export' is reached only after go build (uncached →
-        // downloads + CGO compile, the single slowest step). Give those, plus
-        // the post-expo restart signal, large headroom; the fast metadata
-        // stages stay tight so a genuine hang there still fails fast.
-        await expectStage(page, 'Downloading package', 'Running npm pack', 120_000)
-        await expectStage(page, 'Manifest parsed', 'Package: Todo (todo)', 120_000)
-        await expectStage(page, 'Installing dependencies', 'Running pnpm install', 300_000)
-        await expectStage(page, 'Generating wiring', 'Running package generation script', 120_000)
-        await expectStage(page, 'Building server', 'Compiling new server binary', 300_000)
-        // go build (uncached): downloads + CGO compile — the slowest single step.
-        await expectStage(page, 'Building web app', 'Running expo export', 900_000)
-        // expo export: the web bundle rebuild.
-        await expectStage(page, 'Requesting restart', 'Signaling server restart', 600_000)
-
-        // Confirm the modal didn't end in a failed state.
-        await expect(page.getByText('Installation Failed')).not.toBeVisible()
+        // The install runs server-side as a background job and the modal streams
+        // its progress over SSE. We DON'T assert on the SSE-streamed modal stages
+        // here: the early stages can blow past in well under a second and an
+        // EventSource that connects a hair late never sees them, making
+        // stage-by-stage assertions inherently racy in this environment. The
+        // authoritative signal that the install succeeded is the server's own
+        // pkg_install_log record reaching status `success` — poll that via the
+        // admin status endpoint (ground truth, independent of the modal). The
+        // install ends by requesting an exit-75 restart; the runner waits for the
+        // relaunch and the next test verifies the package is actually live.
+        await waitForInstallStatus(page, 'todo', 'success', 2_400_000) // up to 40 min
     })
 
     test('todo is registered, in nav, and reachable after restart', async ({ page }) => {
@@ -184,6 +293,16 @@ test.describe('todo install', () => {
         await loginAsSuperuserWithRetry(page)
         await expect(page.getByText('Todo', { exact: true })).toBeVisible()
         await expect(page.getByText('installed', { exact: true }).first()).toBeVisible()
+
+        // 1b. Build History: the install saved a restorable build. The new tab
+        //     lists the todo build as `current` (proves the pkg_build row was
+        //     written and builds/<id>/ archived during the install pipeline), and
+        //     the base build seeded on first boot as `available` — the target the
+        //     later revert test returns to.
+        await page.getByText('Build History', { exact: true }).click()
+        await expect(page.getByText('todo', { exact: true }).first()).toBeVisible()
+        await expect(page.getByText('current', { exact: true }).first()).toBeVisible()
+        await expect(page.getByText('(base image)', { exact: true })).toBeVisible()
 
         // 2. Create an org to log into — the superuser dashboard isn't the app
         //    shell; the nav rail lives in the org-scoped app.
@@ -221,15 +340,73 @@ test.describe('todo install', () => {
             await orgPage.getByTestId('login-submit').click()
             await orgPage.waitForURL(/\/a\//, { timeout: 30_000 })
 
-            // The Todo nav-rail entry is icon-only; target it by testID.
+            // The Todo nav-rail entry is icon-only; target it by testID. Its
+            // presence proves the installed package was wired into the nav.
             const todoNav = orgPage.getByTestId('nav-todo')
             await expect(todoNav).toBeVisible({ timeout: 30_000 })
             await todoNav.click()
 
-            // The Todo screen mounts at /a/<orgSlug>/todo. Its add-todo input is a
-            // unique, stable signal that the installed package's screen loaded.
-            await expect(orgPage).toHaveURL(/\/a\/[^/]+\/todo/, { timeout: 30_000 })
-            await expect(orgPage.getByPlaceholder('Add a todo…')).toBeVisible({ timeout: 30_000 })
+            // The Todo screen mounts at /a/<orgSlug>/todo — the route resolving is
+            // the signal that the installed package's screen is reachable. On a
+            // freshly-installed package the lazy route chunk is compiled by Metro
+            // on first navigation (cold), which can take a while on the container,
+            // so allow generous headroom. We assert the route, not a specific
+            // input inside the third-party Todo screen, whose markup we don't own.
+            await expect(orgPage).toHaveURL(/\/a\/[^/]+\/todo/, { timeout: 120_000 })
+        } finally {
+            await orgPage.close()
+        }
+    })
+
+    test('revert to the base build through the Build History UI', async ({ page }) => {
+        // Reverting swaps in the archived base binary, runs `migrate down N` to
+        // reverse todo's migration, re-stages the base web bundle, and triggers
+        // another exit-75 relaunch. Generous budget for the relaunch + health
+        // check (no go build / expo export this time — the base artifacts are
+        // already archived — so it's far quicker than the install).
+        test.setTimeout(600_000)
+
+        await loginAsSuperuserWithRetry(page)
+
+        await page.getByText('Build History', { exact: true }).click()
+        // Only the base build (status `available`) shows a Revert control; the
+        // todo build is `current` and hides it. Click Revert, then confirm.
+        await expect(page.getByText('(base image)', { exact: true })).toBeVisible()
+        await page.getByText('Revert', { exact: true }).first().click()
+        // The confirm dialog appears with a second Revert button; .last() targets
+        // the confirm action rather than the row trigger that opened it.
+        await page.getByText('Revert', { exact: true }).last().click()
+
+        // Judge the revert by the base build becoming `current` — the
+        // unambiguous server-side signal it completed (a revert logs under the
+        // target build's slug, "(base image)", so the install-log/status endpoint
+        // keyed by package slug isn't the right probe here). The revert ends with
+        // the same exit-75 restart, which the runner waits on before the next test.
+        await waitForBuildStatus(page, 'build-base', 'current', 300_000)
+    })
+
+    test('todo is gone after revert to base', async ({ page }) => {
+        test.setTimeout(300_000)
+
+        // 1. Registry: the todo build is now `superseded` and the base build is
+        //    `current` again.
+        await loginAsSuperuserWithRetry(page)
+        await page.getByText('Build History', { exact: true }).click()
+        await expect(page.getByText('superseded', { exact: true }).first()).toBeVisible()
+
+        // 2. The package is no longer wired in — its migration was reversed
+        //    (collection dropped) and the reverted base binary doesn't register
+        //    the package, so the Todo nav-rail entry is gone.
+        const orgPage = await page.context().newPage()
+        try {
+            await orgPage.goto('/')
+            await orgPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
+            await orgPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
+            await orgPage.getByTestId('login-submit').click()
+            await orgPage.waitForURL(/\/a\//, { timeout: 30_000 })
+
+            // The todo rail entry should no longer render after revert.
+            await expect(orgPage.getByTestId('nav-todo')).toHaveCount(0, { timeout: 30_000 })
         } finally {
             await orgPage.close()
         }

@@ -24,6 +24,7 @@ This is the operator/agent-facing reference for the mechanics. For the package
 - [The install pipeline, stage by stage](#the-install-pipeline-stage-by-stage)
 - [How relaunch works](#how-relaunch-works)
 - [Rollback](#rollback)
+- [Build history & revert](#build-history--revert)
 - [Runtime image requirements](#runtime-image-requirements)
 - [Uninstall](#uninstall)
 - [Observability & troubleshooting](#observability--troubleshooting)
@@ -112,6 +113,7 @@ stdout (visible in `docker logs`).
 | 85–88 | Building web app | `npx expo export --platform web` |
 | 90–92 | Staging release | Move `dist/` → `release-staging/<id>/`, rename `index.html` → `app.html` |
 | 95–97 | Updating database | Upsert the `pkg_registry` record (status `installed`) |
+| 98–99 | Archiving build | Copy the now-live binary + staged bundle into `builds/<build_id>/`, write `build.json`, and record a `pkg_build` row (status `current`) capturing how many migrations this install applied (see [Build history & revert](#build-history--revert)) |
 | 99 | Requesting restart | `os.Exit(75)` — hands off to the entrypoint (see next section) |
 
 ### The server-package prerequisite gate
@@ -212,6 +214,104 @@ Failures *after* the swap are caught at relaunch:
 - The pre-swap **SQLite `VACUUM INTO` backup** (`data.db.backup`) lets the
   install pipeline's rollback restore the database if a later step fails.
 
+## Build history & revert
+
+Beyond the install pipeline's automatic rollback, every **successful** install is
+saved as a restorable **build** that a superuser can manually revert to from the
+setup dashboard's **Build History** tab (`POST /api/admin/packages/revert`). The
+server code lives in `core/server/coreserver/pkg_build.go` (archive + record
+helpers) and `pkg_revert.go` (the revert pipeline + endpoints).
+
+### What's saved per build
+
+The install pipeline's "Archiving build" stage writes, under the binary's
+directory:
+
+```
+builds/<build_id>/
+    tinycld          # the server binary that was live after this install (server packages only)
+    release/         # a copy of the staged web bundle (app.html + assets + release-id.txt)
+    build.json       # mirror of the pkg_build record, for offline restore
+```
+
+and a `pkg_build` collection row (`pbc_pkg_build_01`) with: `build_id`
+(= the dir name, `build-<unixMilli>`), `pkg_slug`, `npm_package`, `version`,
+`binary_archived`, `release_id`, **`migrations_applied`** + **`migration_files`**
+(the exact migrations this install added, captured by diffing the `_migrations`
+history table before and after the `migrate` step), and `status` (`current` for
+the newest, `available` for older revertible builds, `superseded` for ones a
+revert skipped past). The prior `current` build is demoted to `available`. No
+per-build DB snapshot is taken — schema rollback is done with `migrate down`.
+
+### How a revert works
+
+`runRevertPipeline` mirrors the install pipeline (same SSE `progress`/`complete`
+events, so the same `InstallProgressModal` drives it) and **reuses the exit-75
+relaunch**:
+
+1. **Validate** the target build exists, is `available`, and its archive is intact.
+2. **Migration safety gate.** Sum `migrations_applied` across every build newer
+   than the target — that's the `N` for `migrate down N`. Confirm the live
+   `_migrations` tail (newest-first) still equals the recorded chain of those
+   newer builds. If it diverged (manual edit, `history-sync`, an out-of-band
+   install), **block** — a blind `migrate down N` could reverse the wrong
+   migrations. There is no DB-snapshot fallback; the operator resolves the
+   mismatch manually.
+3. **Backup the DB** (`data.db.backup`) as the revert operation's own safety net.
+4. **Swap in the archived binary** (`swapToArchivedBinary`): the live binary
+   becomes `tinycld.prev` (so the entrypoint's health-check can roll back to it),
+   and the archived binary is *copied* in (the archive stays intact).
+5. **`migrate down N`** runs with the **target's** binary, which understands the
+   older schema. User data is preserved; only the schema is rolled back.
+6. **Re-stage** `builds/<id>/release/` into `release-staging/<release_id>/` so the
+   entrypoint's `promote_release` serves it after relaunch.
+7. **Update records (one transaction):** mark the target `current`, mark every
+   newer build `superseded`, reconcile `pkg_registry` (a package whose *install*
+   was reverted past is set `disabled` — unless an earlier surviving build still
+   keeps it installed; bundled packages and the synthetic `(base image)` slug are
+   never touched), and point the target's `pkg_registry` row at the reverted
+   version. Wrapping these in `app.RunInTransaction` means an interrupted revert
+   can't leave the build set with zero or multiple `current` rows. The
+   `pkg_install_log` row (action `revert`) is the history trail.
+8. **`os.Exit(75)`** → the entrypoint health-checks the reverted binary and, on
+   failure, auto-restores `tinycld.prev` exactly as it does for an install.
+
+### Revert is one-way
+
+Because step 5 tears down the newer builds' migrations and step 7 marks them
+`superseded`, those builds are **permanently unreachable** — their binaries assume
+schema that no longer exists, and the migration tail they relied on is gone. The
+UI hides **Revert** on `superseded` (and `current`) rows and the confirm dialog
+names exactly which builds a revert will invalidate. Moving forward again is a
+fresh install of the newer version, which produces a new `available` build.
+
+### The base build (initial deploy)
+
+So that an operator can always return to "fresh image, before any live install",
+`SeedBaseBuild` (in `pkg_build.go`, called from the `OnServe` boot hook right after
+`SyncBundledPackages`) records a one-time **base build** the first time a deployed
+image boots. It is idempotent — it no-ops once any `pkg_build` row exists — and
+only runs in the deployed-image layout (it needs the live binary on disk and a
+promoted `releases/current/` to archive), so it silently skips in dev / `go run`.
+
+The base build has `build_id = build-base`, `migrations_applied = 0`, and an empty
+`migration_files`: the bundled migrations already applied at first boot are the
+schema floor and must never be stepped down. Reverting **to** the base build
+therefore reverses exactly the migrations of every live-installed build that came
+after it, and stops there. Its archived `release/` holds only `app.html` +
+`release-id.txt` (matching what `releases/current/` contains); the hashed assets
+already live in the append-only `_static/` pool, so promoting the base bundle on a
+revert resolves them without re-archiving. The first real install demotes the base
+build from `current` to `available`, at which point it becomes a revert target.
+
+### Retention & deletion
+
+Builds are **never auto-pruned** — they accumulate until a superuser deletes one
+with the per-row **Delete** action (`POST /api/admin/packages/builds/delete`),
+which removes the `pkg_build` record and the `builds/<id>/` archive. The current
+build can't be deleted. Archived binaries are large (cgo, ~100 MB+), so operators
+should delete builds they no longer need.
+
 ## Runtime image requirements
 
 The live installer shells out to real tools and needs a workspace it can write
@@ -280,7 +380,11 @@ means the POST never fired (e.g. a UI selector targeting the wrong element).
 `tests/install/run-todo-install.sh`) exercises this whole path end to end: it
 builds an image from the working tree, walks `/setup`, installs
 `github:tinycld/todo`, and asserts the package is registered, its collection
-exists (migration applied), and its route is reachable after the relaunch.
+exists (migration applied), a `pkg_build` row + the base build are listed in
+**Build History**, and its route is reachable after the relaunch. It then
+**reverts to the base build** through the Build History UI and asserts — after
+that second relaunch — that the todo build is now `superseded`, todo's migration
+was reversed (`migrate down`), and its nav entry/route are gone.
 
 Run it from the app member (needs Docker):
 
