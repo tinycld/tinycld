@@ -9,6 +9,18 @@ import { expect, type Page, test } from '@playwright/test'
 // Designed for legible failure: each install stage is asserted by its
 // visible modal message, so a hang reports the last stage that appeared
 // rather than a generic timeout.
+//
+// NOT a normal-CI test. It needs a purpose-built docker image (the runner
+// `tests/install/run-todo-install.sh` builds it) and drives a real,
+// minutes-long install (npm pack → pnpm → go build → expo export → restart).
+// It is excluded from `tinycld-pkg test:e2e` by living outside tests/e2e/, and
+// from the docker smoke workflow (which copies only setup-and-packages.spec.ts).
+// As belt-and-suspenders we ALSO hard-skip the whole suite unless the runner
+// opts in via RUN_TODO_INSTALL_TEST=1, so it can never run accidentally if some
+// future config globs tests/install/ into a CI suite. The skip is asserted in a
+// beforeAll inside the describe (below) so every test in the file is skipped as
+// a group when the opt-in is absent.
+const RUN_INSTALL_TEST = process.env.RUN_TODO_INSTALL_TEST === '1'
 
 const SETUP_TOKEN = process.env.PW_TODO_SETUP_TOKEN
 
@@ -83,6 +95,16 @@ async function expectStage(
 test.describe.configure({ mode: 'serial' })
 
 test.describe('todo install', () => {
+    // Hard opt-in gate: this whole suite is runner-only (see the file header).
+    // Without RUN_TODO_INSTALL_TEST=1 every test is skipped, so the spec can't
+    // run in a normal CI suite even if its directory gets globbed in.
+    test.beforeAll(() => {
+        test.skip(
+            !RUN_INSTALL_TEST,
+            'todo-install is runner-only — set RUN_TODO_INSTALL_TEST=1 (run-todo-install.sh does)'
+        )
+    })
+
     test('bootstrap superuser via /setup wizard', async ({ page }) => {
         test.skip(
             !SETUP_TOKEN,
@@ -109,7 +131,13 @@ test.describe('todo install', () => {
     })
 
     test('install @tinycld/todo from github through the installer UI', async ({ page }) => {
-        test.setTimeout(1_800_000) // 30 min: go build + expo export dominate
+        // Generous overall budget: the runtime image has no Go module cache, so
+        // the installer's `go build` downloads hundreds of MB AND compiles
+        // (CGO/cgo links mupdf + libde265) — minutes on its own — and `expo
+        // export` is another multi-minute web build. 45 min covers a cold run on
+        // a slow network without the outer test timeout pre-empting the
+        // per-stage, stage-named timeouts below.
+        test.setTimeout(2_700_000) // 45 min
 
         await loginAsSuperuser(page)
 
@@ -128,13 +156,22 @@ test.describe('todo install', () => {
 
         // The InstallProgressModal renders once the job starts. Walk the
         // stages in order — each assertion names where it got stuck.
+        // Per-stage timeouts are the WAIT FOR THAT STAGE'S MESSAGE TO APPEAR,
+        // so each must cover the duration of the operation that PRECEDES it.
+        // The two long waits: 'pnpm install' follows the cold pnpm install, and
+        // 'Running expo export' is reached only after go build (uncached →
+        // downloads + CGO compile, the single slowest step). Give those, plus
+        // the post-expo restart signal, large headroom; the fast metadata
+        // stages stay tight so a genuine hang there still fails fast.
         await expectStage(page, 'Downloading package', 'Running npm pack', 120_000)
         await expectStage(page, 'Manifest parsed', 'Package: Todo (todo)', 120_000)
         await expectStage(page, 'Installing dependencies', 'Running pnpm install', 300_000)
         await expectStage(page, 'Generating wiring', 'Running package generation script', 120_000)
-        await expectStage(page, 'Building server', 'Compiling new server binary', 420_000)
-        await expectStage(page, 'Building web app', 'Running expo export', 420_000)
-        await expectStage(page, 'Requesting restart', 'Signaling server restart', 120_000)
+        await expectStage(page, 'Building server', 'Compiling new server binary', 300_000)
+        // go build (uncached): downloads + CGO compile — the slowest single step.
+        await expectStage(page, 'Building web app', 'Running expo export', 900_000)
+        // expo export: the web bundle rebuild.
+        await expectStage(page, 'Requesting restart', 'Signaling server restart', 600_000)
 
         // Confirm the modal didn't end in a failed state.
         await expect(page.getByText('Installation Failed')).not.toBeVisible()

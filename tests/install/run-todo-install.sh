@@ -155,6 +155,7 @@ echo "[runner] running bootstrap + install"
     cd "${PW_ROOT}"
     PW_BASE_URL="${BASE_URL}" \
     PW_TODO_SETUP_TOKEN="${TOKEN}" \
+    RUN_TODO_INSTALL_TEST=1 \
     CI=true FORCE_COLOR=0 \
     ./node_modules/.bin/playwright test --reporter=line,list \
         -g 'bootstrap|install @tinycld/todo'
@@ -173,6 +174,7 @@ echo "[runner] running post-restart verification"
 (
     cd "${PW_ROOT}"
     PW_BASE_URL="${BASE_URL}" \
+    RUN_TODO_INSTALL_TEST=1 \
     CI=true FORCE_COLOR=0 \
     ./node_modules/.bin/playwright test --reporter=line,list \
         -g 'after restart'
