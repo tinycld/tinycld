@@ -12,8 +12,9 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 
 # Ensure the bind-mounted data directories are writable by the runtime user.
 #
-# When a host bind-mount target (./pb_data, ./types in docker-compose.yml)
-# doesn't exist yet, the Docker daemon creates it owned by root:root. The
+# When a host bind-mount target (./pb_data → /workspace/app/pb_data and
+# ./types → /workspace/core/types in docker-compose.yml) doesn't exist yet, the
+# Docker daemon creates it owned by root:root. The
 # unprivileged tinycld user then can't open the SQLite database — PocketBase
 # fails with "unable to open database file (14)" and the container crash-loops.
 # Reported in https://github.com/tinycld/app/issues/26.
@@ -25,7 +26,7 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 fix_data_dir_ownership() {
     [ "$(id -u)" = "0" ] || return 0
 
-    for dir in /workspace/app/pb_data /workspace/app/types; do
+    for dir in /workspace/app/pb_data /workspace/core/types; do
         mkdir -p "$dir"
         # Skip the (potentially large) recursive chown when the top-level dir is
         # already owned correctly — the steady state after first run, so normal
