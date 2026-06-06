@@ -128,28 +128,26 @@ jobs:
 
       # Derive OCI labels (standard image.* + custom tinycld.packages) from the
       # pinned manifest so `docker inspect` and registry UIs show exactly which
-      # package versions this image bundles. `org.tinycld.packages` is a compact
-      # comma-separated app=tag,member=tag list.
+      # package versions this image bundles. The inventory (key=value lines) is
+      # produced by app/scripts/release-image-inventory.sh — the SAME script the
+      # merge job uses for index annotations, so labels and annotations can't
+      # drift. `org.tinycld.packages` is a compact app=tag,member=tag list.
       - name: Compute image labels
         id: labels
         working-directory: ws
         run: |
           set -euo pipefail
-          MANIFEST=".release-assets/manifest.json"
-          APP_TAG=$(jq -r '.appTag' "$MANIFEST")
-          APP_SHA=$(jq -r '.appSha' "$MANIFEST")
-          RELEASED_AT=$(jq -r '.releasedAt' "$MANIFEST")
-          PKGS=$(jq -r '[ "app=" + .appTag ] + [ .members[] | .name + "=" + .tag ] | join(",")' "$MANIFEST")
+          # build-push-action's `labels:` input takes the same newline-delimited
+          # key=value format the script emits, so pass it straight through.
+          app/scripts/release-image-inventory.sh \
+            .release-assets/manifest.json "${GITHUB_REPOSITORY}" > /tmp/image-inventory.txt
           {
             echo "labels<<EOF"
-            echo "org.opencontainers.image.version=${APP_TAG}"
-            echo "org.opencontainers.image.revision=${APP_SHA}"
-            echo "org.opencontainers.image.created=${RELEASED_AT}"
-            echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
-            echo "org.tinycld.packages=${PKGS}"
+            cat /tmp/image-inventory.txt
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-          echo "Packages: ${PKGS}"
+          echo "Inventory:"
+          cat /tmp/image-inventory.txt
 
       - name: Build and push by digest
         id: build
@@ -216,10 +214,14 @@ jobs:
         run: echo "name=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/tinycld" >> "$GITHUB_OUTPUT"
 
       # Per-arch labels live on the child manifests; the multi-arch index needs
-      # annotations set explicitly. Re-download the pinned manifest (this job has
-      # no ws/ checkout) and build the same inventory as index annotations.
+      # annotations set explicitly. This job has no ws/ checkout, so re-download
+      # the pinned manifest AND the inventory script from the release tag's tree,
+      # then build the same key=value inventory the per-arch labels used (one
+      # source of truth — app/scripts/release-image-inventory.sh). The args are
+      # written to a FILE the create step reads directly; nothing is round-tripped
+      # through a `${{ }}`-interpolated shell string, so a value containing shell
+      # metacharacters can't be re-split or injected.
       - name: Compute index annotations
-        id: annotations
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -227,20 +229,17 @@ jobs:
           TAG="${GITHUB_REF_NAME:-${{ github.event.release.tag_name }}}"
           mkdir -p /tmp/rel
           gh release download "${TAG}" -R "${GITHUB_REPOSITORY}" -p manifest.json --dir /tmp/rel
-          MANIFEST="/tmp/rel/manifest.json"
-          APP_TAG=$(jq -r '.appTag' "$MANIFEST")
-          APP_SHA=$(jq -r '.appSha' "$MANIFEST")
-          RELEASED_AT=$(jq -r '.releasedAt' "$MANIFEST")
-          PKGS=$(jq -r '[ "app=" + .appTag ] + [ .members[] | .name + "=" + .tag ] | join(",")' "$MANIFEST")
-          {
-            echo "args<<EOF"
-            echo "--annotation=index:org.opencontainers.image.version=${APP_TAG}"
-            echo "--annotation=index:org.opencontainers.image.revision=${APP_SHA}"
-            echo "--annotation=index:org.opencontainers.image.created=${RELEASED_AT}"
-            echo "--annotation=index:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
-            echo "--annotation=index:org.tinycld.packages=${PKGS}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+          # Fetch the inventory script from the tagged commit so the merge job
+          # uses the exact same logic as the per-arch build (no ws/ checkout here).
+          gh api "repos/${GITHUB_REPOSITORY}/contents/app/scripts/release-image-inventory.sh?ref=${TAG}" \
+            -H 'Accept: application/vnd.github.raw' > /tmp/release-image-inventory.sh
+          chmod +x /tmp/release-image-inventory.sh
+          # One --annotation=index:<k>=<v> arg per inventory line, written to a
+          # file the create step reads with `read -r` (no eval, no word-splitting).
+          /tmp/release-image-inventory.sh /tmp/rel/manifest.json "${GITHUB_REPOSITORY}" \
+            | sed 's/^/--annotation=index:/' > /tmp/index-annotations.txt
+          echo "Index annotations:"
+          cat /tmp/index-annotations.txt
 
       - name: Derive tags
         id: tags
@@ -286,12 +285,15 @@ jobs:
           done
 
           # Index annotations carry the package-version inventory on the
-          # multi-arch manifest list itself (one --annotation arg per line).
+          # multi-arch manifest list itself — one --annotation arg per line of
+          # the file the previous step wrote. Reading from a file (not a
+          # `${{ }}`-interpolated string) keeps each arg a single shell word
+          # even if a value ever contained whitespace or metacharacters.
           annotation_args=()
           while IFS= read -r ann; do
             [ -z "$ann" ] && continue
             annotation_args+=("$ann")
-          done <<< '${{ steps.annotations.outputs.args }}'
+          done < /tmp/index-annotations.txt
 
           docker buildx imagetools create "${annotation_args[@]}" $tag_args $src_args
 
