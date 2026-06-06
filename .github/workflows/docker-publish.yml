@@ -121,6 +121,33 @@ jobs:
           # Drop the pinned lockfile into the workspace root so the Dockerfile's
           # `pnpm install --frozen-lockfile` reproduces the exact dependency set.
           cp "${LOCKFILE}" pnpm-lock.yaml
+          # Hand the manifest to the Docker build so it's baked into the image
+          # and served by /api/release (the About panel reads it). The wildcard
+          # COPY in the Dockerfile makes it optional, so this is the only wiring.
+          cp "${MANIFEST}" app/.release-manifest
+
+      # Derive OCI labels (standard image.* + custom tinycld.packages) from the
+      # pinned manifest so `docker inspect` and registry UIs show exactly which
+      # package versions this image bundles. The inventory (key=value lines) is
+      # produced by app/scripts/release-image-inventory.sh — the SAME script the
+      # merge job uses for index annotations, so labels and annotations can't
+      # drift. `org.tinycld.packages` is a compact app=tag,member=tag list.
+      - name: Compute image labels
+        id: labels
+        working-directory: ws
+        run: |
+          set -euo pipefail
+          # build-push-action's `labels:` input takes the same newline-delimited
+          # key=value format the script emits, so pass it straight through.
+          app/scripts/release-image-inventory.sh \
+            .release-assets/manifest.json "${GITHUB_REPOSITORY}" > /tmp/image-inventory.txt
+          {
+            echo "labels<<EOF"
+            cat /tmp/image-inventory.txt
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Inventory:"
+          cat /tmp/image-inventory.txt
 
       - name: Build and push by digest
         id: build
@@ -129,6 +156,7 @@ jobs:
           context: ws
           file: ws/app/Dockerfile
           platforms: ${{ matrix.platform }}
+          labels: ${{ steps.labels.outputs.labels }}
           # Cache scoped per-platform so the two jobs don't trample each
           # other's layers. Cache hit speeds repeat builds dramatically.
           cache-from: type=gha,scope=${{ matrix.cache_scope }}
@@ -185,6 +213,34 @@ jobs:
         id: image
         run: echo "name=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/tinycld" >> "$GITHUB_OUTPUT"
 
+      # Per-arch labels live on the child manifests; the multi-arch index needs
+      # annotations set explicitly. This job has no ws/ checkout, so re-download
+      # the pinned manifest AND the inventory script from the release tag's tree,
+      # then build the same key=value inventory the per-arch labels used (one
+      # source of truth — app/scripts/release-image-inventory.sh). The args are
+      # written to a FILE the create step reads directly; nothing is round-tripped
+      # through a `${{ }}`-interpolated shell string, so a value containing shell
+      # metacharacters can't be re-split or injected.
+      - name: Compute index annotations
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-${{ github.event.release.tag_name }}}"
+          mkdir -p /tmp/rel
+          gh release download "${TAG}" -R "${GITHUB_REPOSITORY}" -p manifest.json --dir /tmp/rel
+          # Fetch the inventory script from the tagged commit so the merge job
+          # uses the exact same logic as the per-arch build (no ws/ checkout here).
+          gh api "repos/${GITHUB_REPOSITORY}/contents/app/scripts/release-image-inventory.sh?ref=${TAG}" \
+            -H 'Accept: application/vnd.github.raw' > /tmp/release-image-inventory.sh
+          chmod +x /tmp/release-image-inventory.sh
+          # One --annotation=index:<k>=<v> arg per inventory line, written to a
+          # file the create step reads with `read -r` (no eval, no word-splitting).
+          /tmp/release-image-inventory.sh /tmp/rel/manifest.json "${GITHUB_REPOSITORY}" \
+            | sed 's/^/--annotation=index:/' > /tmp/index-annotations.txt
+          echo "Index annotations:"
+          cat /tmp/index-annotations.txt
+
       - name: Derive tags
         id: tags
         uses: docker/metadata-action@v6
@@ -228,7 +284,18 @@ jobs:
             src_args="$src_args ${{ steps.image.outputs.name }}@sha256:${f}"
           done
 
-          docker buildx imagetools create $tag_args $src_args
+          # Index annotations carry the package-version inventory on the
+          # multi-arch manifest list itself — one --annotation arg per line of
+          # the file the previous step wrote. Reading from a file (not a
+          # `${{ }}`-interpolated string) keeps each arg a single shell word
+          # even if a value ever contained whitespace or metacharacters.
+          annotation_args=()
+          while IFS= read -r ann; do
+            [ -z "$ann" ] && continue
+            annotation_args+=("$ann")
+          done < /tmp/index-annotations.txt
+
+          docker buildx imagetools create "${annotation_args[@]}" $tag_args $src_args
 
       - name: Inspect published manifest
         run: |

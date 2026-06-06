@@ -136,6 +136,13 @@ ENV NODE_OPTIONS="--max-old-space-size=2048"
 # (a hand-run `docker build`), the RUN below derives an id internally.
 COPY app/.release-id* ./app/
 
+# Bring in .release-manifest, the pinned-release manifest the release pipeline
+# uploads as a GitHub Release asset (utils/lib/pin-release.ts). CI copies it to
+# app/.release-manifest before `docker build`; the RUN below stages it next to
+# release-id.txt so the Go /api/release handler can serve it. The wildcard makes
+# it optional — local/hand-run builds with no manifest still build cleanly.
+COPY app/.release-manifest* ./app/
+
 # Resolve effective release id and stage the dist tree under
 # app/release-staging/<id>/. Done in one shell so the resolved id is consistent
 # across all steps. The web build runs from the app member (WORKDIR /ws/app):
@@ -159,6 +166,10 @@ RUN set -eu \
     && mkdir -p /ws/app/release-staging \
     && mv /ws/app/dist "/ws/app/release-staging/$rid" \
     && printf '%s' "$rid" > "/ws/app/release-staging/$rid/release-id.txt" \
+    && if [ -s .release-manifest ]; then \
+        cp .release-manifest "/ws/app/release-staging/$rid/manifest.json"; \
+        rm -f .release-manifest; \
+    fi \
     && mv "/ws/app/release-staging/$rid/index.html" "/ws/app/release-staging/$rid/app.html"
 
 
