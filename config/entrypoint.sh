@@ -295,8 +295,20 @@ while true; do
     if [ $EXIT_CODE -eq 75 ]; then
         echo "[entrypoint] Restart requested (exit code 75)"
 
-        # Health check: start new binary on a temp port, verify /api/health responds
-        run_tinycld serve --http=127.0.0.1:${HEALTH_PORT} &
+        # Health check: start the new binary on a temp HTTP port and verify
+        # /api/health responds. Disable the mail package's IMAP (:993) and SMTP
+        # (:465) listeners FOR THE PROBE ONLY via IMAP_ENABLED/SMTP_ENABLED=false
+        # — otherwise the probe binds those fixed ports, and after we kill it the
+        # ports aren't released before the real server restarts, so the restart
+        # crashes with "listen tcp :993: bind: address already in use". The probe
+        # only needs the HTTP listener to answer /api/health. The real serve
+        # below (the `continue`d loop iteration) starts with mail enabled as
+        # normal. Export the vars inside a backgrounded subshell so gosu passes
+        # them to the child and they don't leak to the real server.
+        (
+            export IMAP_ENABLED=false SMTP_ENABLED=false
+            run_tinycld serve --http=127.0.0.1:${HEALTH_PORT}
+        ) &
         HEALTH_PID=$!
 
         HEALTHY=false
