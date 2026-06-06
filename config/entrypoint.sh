@@ -282,8 +282,15 @@ fi
 # Serve args are in $@ (positional params) so a multi-domain list survives
 # without re-splitting.
 while true; do
-    run_tinycld serve "$@"
-    EXIT_CODE=$?
+    # Capture the serve exit code WITHOUT letting `set -e` abort the script.
+    # The in-app installer signals a restart by exiting the serve process with
+    # code 75; under `set -e` a bare `run_tinycld serve` would make the shell
+    # exit immediately on that non-zero code, before the 75-handling below ever
+    # runs (the container would just exit 75 instead of restarting in place).
+    # `|| EXIT_CODE=$?` swallows the non-zero for set -e and records the code;
+    # reset to 0 first so a clean exit is captured too.
+    EXIT_CODE=0
+    run_tinycld serve "$@" || EXIT_CODE=$?
 
     if [ $EXIT_CODE -eq 75 ]; then
         echo "[entrypoint] Restart requested (exit code 75)"
