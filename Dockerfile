@@ -297,24 +297,25 @@ ARG TINYCLD_UID=1000
 ARG TINYCLD_GID=1000
 RUN groupadd --system --gid "$TINYCLD_GID" tinycld \
     && useradd --system --uid "$TINYCLD_UID" --gid "$TINYCLD_GID" \
-        --home-dir /app --no-create-home --shell /usr/sbin/nologin tinycld
+        --home-dir /workspace/app --no-create-home --shell /usr/sbin/nologin tinycld
 
-# The runtime app tree lives at /app and mirrors the app member: the server
-# binary, the per-release web bundle, migrations, and the runtime scripts. The
-# workspace-level pieces the runtime scripts and in-app installer need
+# The runtime app tree lives at /workspace/app and mirrors the app member: the
+# server binary, the per-release web bundle, migrations, and the runtime scripts.
+# The workspace-level pieces the runtime scripts and in-app installer need
 # (node_modules, root manifests, tinycld.packages.ts, the sibling members) live
-# one level up at /app/.. (i.e. /), assembled below so that
-# node_modules/@tinycld/<x> symlinks → ../../<x> still resolve.
-WORKDIR /app
+# at /workspace (the parent of /workspace/app), assembled below so that
+# node_modules/@tinycld/<x> symlinks → ../../<x> resolve within /workspace.
+WORKDIR /workspace/app
 
 # Compiled server binary.
 COPY --from=go-builder /ws/app/server/tinycld ./tinycld
 
 # Per-release web bundle, staged by the web-builder. The entrypoint promotes
-# this on container start to /app/releases/. The /app/public/ directory is
-# reserved for the marketing website (populated by tinycld.org's deploy tail).
-COPY --from=web-builder /ws/app/release-staging /app/release-staging
-RUN mkdir -p /app/public /app/releases
+# this on container start to /workspace/app/releases/. The /workspace/app/public/
+# directory is reserved for the marketing website (populated by tinycld.org's
+# deploy tail).
+COPY --from=web-builder /ws/app/release-staging /workspace/app/release-staging
+RUN mkdir -p /workspace/app/public /workspace/app/releases
 
 # Migrations with symlinks already resolved in web-builder.
 COPY --from=web-builder /ws/app/server/pb_migrations ./pb_migrations
@@ -324,30 +325,32 @@ COPY --from=web-builder /ws/app/server/pb_migrations ./pb_migrations
 # package.json / pnpm-lock.yaml / pnpm-workspace.yaml / .npmrc, the hoisted
 # node_modules (with the @tinycld/<x> member symlinks), tinycld.packages.ts, and
 # scripts/link-members.ts (the in-app installer's postinstall re-runs it). They
-# sit one directory above the app tree so the symlinks (node_modules/@tinycld/<x>
-# → ../../<x>) still point at the sibling members copied below.
-COPY --from=web-builder /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /
-COPY --from=web-builder /ws/tinycld.packages.ts /tinycld.packages.ts
-COPY --from=web-builder /ws/scripts /scripts
-COPY --from=web-builder /ws/node_modules /node_modules
+# sit at /workspace (one directory above /workspace/app) so the symlinks
+# (node_modules/@tinycld/<x> → ../../<x>) still point at the sibling members
+# copied below.
+COPY --from=web-builder /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /workspace/
+COPY --from=web-builder /ws/tinycld.packages.ts /workspace/tinycld.packages.ts
+COPY --from=web-builder /ws/scripts /workspace/scripts
+COPY --from=web-builder /ws/node_modules /workspace/node_modules
 # package-scripts (the tinycld-pkg CLI) now lives inside the app member, so the
 # node_modules/@tinycld/package-scripts symlink resolves to ../../app/package-scripts
-# (i.e. /app/package-scripts at runtime, WORKDIR /app). Land it there.
+# (i.e. /workspace/app/package-scripts at runtime, WORKDIR /workspace/app). Land it there.
 COPY --from=web-builder /ws/app/package-scripts ./package-scripts
 
 # Sibling members. seed-db.ts (run by the reset-demo cron) imports
 # ../tinycld.seeds → each @tinycld/<feature>/seed, resolved through the
 # node_modules symlinks (node_modules/@tinycld/<x> → ../../<x>) into these
-# member dirs; core supplies the runtime libs they import. They sit at / so
-# the symlinks resolve (/node_modules/@tinycld/<x> → /<x>).
-COPY --from=web-builder /ws/core /core
-COPY --from=web-builder /ws/contacts /contacts
-COPY --from=web-builder /ws/mail /mail
-COPY --from=web-builder /ws/calendar /calendar
-COPY --from=web-builder /ws/drive /drive
-COPY --from=web-builder /ws/calc /calc
-COPY --from=web-builder /ws/text /text
-COPY --from=web-builder /ws/google-takeout-import /google-takeout-import
+# member dirs; core supplies the runtime libs they import. They sit at
+# /workspace so the symlinks resolve (/workspace/node_modules/@tinycld/<x>
+# → /workspace/<x>).
+COPY --from=web-builder /ws/core /workspace/core
+COPY --from=web-builder /ws/contacts /workspace/contacts
+COPY --from=web-builder /ws/mail /workspace/mail
+COPY --from=web-builder /ws/calendar /workspace/calendar
+COPY --from=web-builder /ws/drive /workspace/drive
+COPY --from=web-builder /ws/calc /workspace/calc
+COPY --from=web-builder /ws/text /workspace/text
+COPY --from=web-builder /ws/google-takeout-import /workspace/google-takeout-import
 
 # app-member files the runtime needs:
 #   - tinycld.config.ts / tinycld.seeds.ts: imported by seed-db.ts at runtime.
@@ -374,40 +377,31 @@ COPY --from=go-builder /ws/app/server/ ./server/
 
 # bundled-packages.json so core's coreserver.SyncBundledPackages can find it at
 # startup. Generated at app/server/bundled-packages.json; the binary reads it
-# relative to its own dir, so place a copy at /app for the boot-time seed.
+# relative to its own dir, so place a copy at /workspace/app for the boot-time seed.
 COPY --from=web-builder /ws/app/server/bundled-packages.json ./bundled-packages.json
 
-# Data dir (PB writes /app/pb_data relative to cwd) + the generated-types dir.
+# Data dir (PB writes pb_data relative to cwd) + the generated-types dir.
 # coreserver.DefaultTypesDir() resolves to <binaryDir>/../../core/types — with
-# the binary at /app/tinycld that is /core/types — where the schema hook writes
-# pbSchema.ts / pbZodSchema.ts at boot. Create it so the write succeeds.
-RUN mkdir -p /app/pb_data /core/types
+# the binary at /workspace/app/tinycld that is /workspace/core/types — where the
+# schema hook writes pbSchema.ts / pbZodSchema.ts at boot. Create it so the
+# write succeeds.
+RUN mkdir -p /workspace/app/pb_data /workspace/core/types
 
 
 COPY app/config/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
-# Hand the entire app tree AND the workspace-root state to the tinycld user.
-# pb_data/ and types/ are bind-mount targets whose mount-time ownership is the
-# host's responsibility. The chown spans / one level up too, because the
-# runtime scripts and in-app installer write under the workspace root
-# (node_modules, generated files).
-#
-# The workspace root is `/` itself (the binary is at /app/tinycld, so the
-# installer's wsRoot = filepath.Dir(/app) = /). Installing a NEW package copies
-# its source to /<slug> (e.g. /todo) and edits /pnpm-workspace.yaml — both
-# require the unprivileged tinycld user to write directly in /. That `/` chown
-# CANNOT be done here: chowning the overlay mount root does not survive a layer
-# commit (it reverts to root:root). It's done at runtime instead, as root, by
-# entrypoint.sh's fix_workspace_root_ownership() before privileges are dropped.
+# Hand the entire workspace tree to the tinycld user with a single build-time
+# chown. Because /workspace is an ordinary subdirectory (not the overlay mount
+# root /), this chown PERSISTS through the layer commit — unlike a chown of /
+# which reverts to root:root. So no runtime chown is needed for workspace paths;
+# only bind-mounted data dirs (/workspace/app/pb_data, /workspace/core/types)
+# need fixing at runtime when Docker creates them owned by root.
 #
 # Must run BEFORE setcap below — chown strips file capabilities (it resets the
 # security.capability xattr along with ownership), so setcap'ing first then
 # chown'ing would silently wipe the cap.
-RUN chown -R tinycld:tinycld /app \
-    && chown -R tinycld:tinycld /node_modules /core /contacts /mail /calendar /drive /calc /text /google-takeout-import \
-    && chown tinycld:tinycld /package.json /pnpm-lock.yaml /pnpm-workspace.yaml /.npmrc /tinycld.packages.ts \
-    && chown -R tinycld:tinycld /scripts
+RUN chown -R tinycld:tinycld /workspace
 
 # Grant cap_net_bind_service so the non-root user can bind :80/:443 when
 # autocert is on (AUTOCERT_ENABLED=true with PRIMARY_DOMAIN set). The plain-HTTP
@@ -427,13 +421,13 @@ RUN setcap 'cap_net_bind_service=+ep' ./tinycld
 EXPOSE 7090 80 443 993 465
 
 # The container starts as root so the entrypoint can fix ownership of the
-# bind-mounted data dirs (/app/pb_data, /app/types) before the server runs.
-# When a host bind-mount target doesn't exist yet, Docker creates it owned by
-# root; the unprivileged tinycld user then can't open the SQLite DB ("unable to
-# open database file (14)") and the container crash-loops. entrypoint.sh
-# chown's those dirs to tinycld and drops to uid 1000 via gosu for the server
-# itself, so nothing privileged actually runs the application. See the
-# fix_data_dir_ownership() function in entrypoint.sh.
+# bind-mounted data dirs (/workspace/app/pb_data, /workspace/core/types) before
+# the server runs. When a host bind-mount target doesn't exist yet, Docker
+# creates it owned by root; the unprivileged tinycld user then can't open the
+# SQLite DB ("unable to open database file (14)") and the container crash-loops.
+# entrypoint.sh chown's those dirs to tinycld and drops to uid 1000 via gosu
+# for the server itself, so nothing privileged actually runs the application.
+# See the fix_data_dir_ownership() function in entrypoint.sh.
 USER root
 
 # The server process still runs as uid 1000 (tinycld) — the entrypoint drops

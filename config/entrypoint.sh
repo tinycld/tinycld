@@ -25,7 +25,7 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 fix_data_dir_ownership() {
     [ "$(id -u)" = "0" ] || return 0
 
-    for dir in /app/pb_data /app/types; do
+    for dir in /workspace/app/pb_data /workspace/app/types; do
         mkdir -p "$dir"
         # Skip the (potentially large) recursive chown when the top-level dir is
         # already owned correctly — the steady state after first run, so normal
@@ -36,26 +36,6 @@ fix_data_dir_ownership() {
             chown -R "$RUN_AS:$RUN_AS" "$dir"
         fi
     done
-}
-
-# Make the workspace root (`/`) writable by the runtime user so the in-app
-# package installer can create new member directories there (it copies a new
-# package's source to /<slug> and edits /pnpm-workspace.yaml; wsRoot is `/`
-# because the binary lives at /app/tinycld).
-#
-# This CANNOT be done at image-build time: a `chown`/`chmod` of `/` does not
-# survive a Docker layer commit (the overlay mount root reverts to root:root).
-# So we do it here at runtime, as root, on the live filesystem — which does
-# persist for the container's lifetime — before dropping to RUN_AS. Idempotent
-# and cheap (single, non-recursive chown), so it's fine on every boot.
-fix_workspace_root_ownership() {
-    [ "$(id -u)" = "0" ] || return 0
-
-    owner=$(stat -c '%u:%g' / 2>/dev/null || echo '')
-    if [ "$owner" != "1000:1000" ]; then
-        echo "[entrypoint] making workspace root / writable by $RUN_AS (was '$owner')"
-        chown "$RUN_AS:$RUN_AS" /
-    fi
 }
 
 # Run a tinycld subcommand as the unprivileged runtime user.
@@ -77,18 +57,17 @@ run_tinycld() {
 }
 
 fix_data_dir_ownership
-fix_workspace_root_ownership
 
-# Promote the staged release to /app/releases/. Runs on every container
-# start; idempotent.
+# Promote the staged release to /workspace/app/releases/. Runs on every
+# container start; idempotent.
 #
-# /app/releases is typically the container's writable layer (compose-style
-# deploys) and starts empty on every fresh container; Dokku-style deploys
-# may back it with a persistent volume so old releases survive container
-# replacement. Either way the promote logic below is the same: copy the
-# staged tree off the image, swap the `current` symlink atomically.
+# /workspace/app/releases is typically the container's writable layer
+# (compose-style deploys) and starts empty on every fresh container; Dokku-style
+# deploys may back it with a persistent volume so old releases survive container
+# replacement. Either way the promote logic below is the same: copy the staged
+# tree off the image, swap the `current` symlink atomically.
 #
-# Layout produced under /app/releases/:
+# Layout produced under /workspace/app/releases/:
 #   <id>/             per-release dir: app.html + release-id.txt
 #   _static/          cross-release asset pool:
 #     _expo/static/...    (content-hashed, immutable)
@@ -102,8 +81,8 @@ fix_workspace_root_ownership
 # old entries. The Go server serves /_expo/static/ and /assets/ from
 # _static/ directly — there is no per-request release lookup.
 promote_release() {
-    staging_dir=/app/release-staging
-    releases_dir=/app/releases
+    staging_dir=/workspace/app/release-staging
+    releases_dir=/workspace/app/releases
     pool_dir="$releases_dir/_static"
 
     echo "[entrypoint] promote_release: staging=$staging_dir releases=$releases_dir"
