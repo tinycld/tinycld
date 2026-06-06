@@ -242,6 +242,7 @@ func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
 		Func: func(e *core.ServeEvent) error {
 			GenerateSchemas(e.App, opts.TypesDir)
 			SyncBundledPackages(e.App)
+			SeedBaseBuild(e.App)
 
 			// Per-route asset handlers, registered before the catch-all so
 			// the asset prefixes win. Both paths read from the cross-release

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,9 +21,10 @@ import (
 
 type installJob struct {
 	ID        string
-	Action    string // "install" or "uninstall"
+	Action    string // "install", "uninstall", or "revert"
 	Slug      string
 	NpmPkg    string
+	BuildID   string // revert target (action == "revert")
 	Progress  int
 	Step      string
 	Status    string // "running", "success", "failed", "rolled_back"
@@ -68,6 +70,14 @@ func RegisterPackageInstallEndpoints(app *pocketbase.PocketBase) {
 
 		g.POST("/uninstall", func(re *core.RequestEvent) error {
 			return handleUninstall(app, re)
+		}).BindFunc(requireSuperuser)
+
+		g.POST("/revert", func(re *core.RequestEvent) error {
+			return handleRevert(app, re)
+		}).BindFunc(requireSuperuser)
+
+		g.POST("/builds/delete", func(re *core.RequestEvent) error {
+			return handleDeleteBuild(app, re)
 		}).BindFunc(requireSuperuser)
 
 		g.GET("/events/{jobId}", func(re *core.RequestEvent) error {
@@ -227,15 +237,44 @@ func handleEvents(re *core.RequestEvent) error {
 	ch := make(chan sseEvent, 64)
 	job.mu.Lock()
 	job.listeners = append(job.listeners, ch)
-	// Send current state as initial event
-	if job.Progress > 0 {
-		ch <- sseEvent{Event: "progress", Data: progressData{
-			Step:     job.Step,
-			Progress: job.Progress,
-			Message:  job.Step,
-		}}
+	// Backfill the FULL progress history to a late-connecting client, not just
+	// the latest step. The pipeline can blow through several fast early stages
+	// (npm pack, manifest parse, file copy) in well under a second; a client
+	// whose EventSource connects after that would otherwise never see those
+	// messages, since only live events flow afterward. Replaying every recorded
+	// LogLine (each is "[N%] Step: message") makes the stream's history complete
+	// regardless of connect timing. We write these directly to the response here
+	// — while holding job.mu so the snapshot is consistent — rather than through
+	// the bounded channel, which could overflow on a long history.
+	backfill := make([]progressData, 0, len(job.LogLines))
+	for _, line := range job.LogLines {
+		if pct, step, msg, ok := parseLogLine(line); ok {
+			backfill = append(backfill, progressData{Step: step, Progress: pct, Message: msg})
+		}
 	}
+	jobStatus := job.Status
+	jobErr := job.Error
+	jobDone := job.Status == "success" || job.Status == "failed" || job.Status == "rolled_back"
 	job.mu.Unlock()
+
+	for _, pd := range backfill {
+		data, _ := json.Marshal(pd)
+		fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
+	}
+	// If the job already finished before this client connected, emit the
+	// terminal event now so the modal resolves instead of hanging on the
+	// (never-arriving) live complete event.
+	if jobDone {
+		status := "success"
+		if jobStatus != "success" {
+			status = "failed"
+		}
+		data, _ := json.Marshal(completeData{Status: status, Error: jobErr})
+		fmt.Fprintf(w, "event: complete\ndata: %s\n\n", data)
+		flusher.Flush()
+		return nil
+	}
+	flusher.Flush()
 
 	ctx := re.Request.Context()
 	for {
@@ -259,14 +298,21 @@ func handleEvents(re *core.RequestEvent) error {
 func handleStatus(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	slug := re.Request.PathValue("slug")
 
-	record, err := app.FindFirstRecordByFilter(
+	// Return the MOST RECENT log for the slug, not an arbitrary one — a package
+	// can have several entries over time (install, then revert), and callers want
+	// the status of the latest operation.
+	records, err := app.FindRecordsByFilter(
 		"pkg_install_log",
 		"pkg_slug = {:slug}",
+		"-created",
+		1,
+		0,
 		map[string]any{"slug": slug},
 	)
-	if err != nil {
+	if err != nil || len(records) == 0 {
 		return re.NotFoundError("No install log found for this package", nil)
 	}
+	record := records[0]
 
 	return re.JSON(http.StatusOK, map[string]any{
 		"id":          record.Id,
@@ -375,6 +421,9 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		return
 	}
 	job.Slug = manifest.Slug
+	// The log row was created before the slug was known (it fell back to the npm
+	// spec); rewrite it to the real slug now so status lookups by slug find it.
+	updateInstallLogSlug(app, logRecord, job.Slug)
 	emitProgress(job, "Manifest parsed", 30, fmt.Sprintf("Package: %s (%s)", manifest.Name, manifest.Slug))
 
 	// Step 4: Validate manifest (35%)
@@ -513,6 +562,14 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		})
 	}
 
+	// Snapshot the _migrations history before applying so we can record exactly
+	// which migrations this install adds — the count drives `migrate down N` on a
+	// future revert.
+	migrationsBefore, beforeErr := appliedMigrationFiles(app)
+	if beforeErr != nil {
+		log.Printf("pkg_install: failed to snapshot migrations before apply: %v", beforeErr)
+	}
+
 	// Run migrations (via new binary if Go package, otherwise current)
 	emitProgress(job, "Running migrations", 80, "Applying database migrations")
 	migrateBin := resolveServerBinary()
@@ -525,6 +582,13 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		return
 	}
 	emitProgress(job, "Migrations applied", 83, "Database migrations complete")
+
+	// Determine which migrations the apply step added.
+	migrationsAfter, afterErr := appliedMigrationFiles(app)
+	if afterErr != nil {
+		log.Printf("pkg_install: failed to snapshot migrations after apply: %v", afterErr)
+	}
+	appliedNow := newMigrationFiles(migrationsBefore, migrationsAfter)
 
 	// Rebuild web bundle. expo export runs from the app dir and writes to
 	// <appDir>/dist.
@@ -558,6 +622,37 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		return
 	}
 	emitProgress(job, "Database updated", 97, "Package registry updated")
+
+	// Archive this build as a restorable snapshot (binary + web bundle + the
+	// metadata a revert needs). The build_id doubles as the on-disk archive dir.
+	emitProgress(job, "Archiving build", 98, "Saving build for revert")
+	buildID := fmt.Sprintf("build-%d", time.Now().UnixMilli())
+	releaseID := filepath.Base(stageDest)
+	// build.json on disk mirrors the pkg_build record so a build is self-describing
+	// for offline restore.
+	buildFields := map[string]any{
+		"build_id":           buildID,
+		"pkg_slug":           manifest.Slug,
+		"npm_package":        job.NpmPkg,
+		"version":            manifest.Version,
+		"action":             "install",
+		"binary_archived":    manifest.HasServer,
+		"release_id":         releaseID,
+		"migrations_applied": len(appliedNow),
+		"migration_files":    appliedNow,
+	}
+	_, archiveCleanup, archErr := archiveBuild(appDir, buildID, stageDest, manifest.HasServer, buildFields)
+	if archErr != nil {
+		fail("archive build", archErr)
+		return
+	}
+	rollbackStack = append(rollbackStack, archiveCleanup)
+
+	if _, err := recordBuild(app, buildFields); err != nil {
+		fail("record build", err)
+		return
+	}
+	emitProgress(job, "Build archived", 99, "Build saved")
 
 	// Request restart
 	emitProgress(job, "Requesting restart", 99, "Signaling server restart")
@@ -708,6 +803,29 @@ func emitProgress(job *installJob, step string, progress int, message string) {
 	}
 }
 
+// parseLogLine reverses emitProgress's "[N%] Step: message" formatting back into
+// its parts, for replaying recorded history to a late-connecting SSE client.
+// Returns ok=false for any line that doesn't match the shape.
+func parseLogLine(line string) (pct int, step, msg string, ok bool) {
+	if !strings.HasPrefix(line, "[") {
+		return 0, "", "", false
+	}
+	closeIdx := strings.Index(line, "%] ")
+	if closeIdx < 1 {
+		return 0, "", "", false
+	}
+	n, err := strconv.Atoi(line[1:closeIdx])
+	if err != nil {
+		return 0, "", "", false
+	}
+	rest := line[closeIdx+3:]
+	colon := strings.Index(rest, ": ")
+	if colon < 0 {
+		return n, rest, "", true
+	}
+	return n, rest[:colon], rest[colon+2:], true
+}
+
 func emitComplete(job *installJob, status string, errMsg string) {
 	job.mu.Lock()
 	defer job.mu.Unlock()
@@ -742,9 +860,18 @@ func createInstallLog(app core.App, job *installJob, action string) *core.Record
 		return nil
 	}
 
+	// pkg_slug is required, but for an install the real slug isn't known until
+	// the manifest is parsed several steps in. Fall back to the npm spec so the
+	// row always persists; updateInstallLogSlug rewrites it once the slug is
+	// known. (uninstall/revert pass job.Slug up front, so they skip the fallback.)
+	slug := job.Slug
+	if slug == "" {
+		slug = job.NpmPkg
+	}
+
 	record := core.NewRecord(collection)
 	record.Set("action", action)
-	record.Set("pkg_slug", job.Slug)
+	record.Set("pkg_slug", slug)
 	record.Set("npm_package", job.NpmPkg)
 	record.Set("status", "running")
 	record.Set("started_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
@@ -755,6 +882,18 @@ func createInstallLog(app core.App, job *installJob, action string) *core.Record
 	}
 
 	return record
+}
+
+// updateInstallLogSlug rewrites the log row's pkg_slug once the real slug is
+// known (the install pipeline creates the row before parsing the manifest).
+func updateInstallLogSlug(app core.App, record *core.Record, slug string) {
+	if record == nil || slug == "" {
+		return
+	}
+	record.Set("pkg_slug", slug)
+	if err := app.Save(record); err != nil {
+		log.Printf("pkg_install: failed to update install log slug: %v", err)
+	}
 }
 
 func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg string, logLines []string) {

@@ -52,6 +52,13 @@ func backupDatabase(appDir string) (rollbackFn func() error, err error) {
 	dbPath := filepath.Join(appDir, "pb_data", "data.db")
 	backupPath := filepath.Join(appDir, "pb_data", "data.db.backup")
 
+	// SQLite's VACUUM INTO refuses to overwrite an existing file ("output file
+	// already exists"). A prior install/revert leaves data.db.backup behind, so
+	// clear any stale copy before snapshotting.
+	if err := os.Remove(backupPath); err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("failed to clear stale backup %s: %w", backupPath, err)
+	}
+
 	// Use sqlite3 VACUUM INTO for a consistent snapshot
 	cmd := exec.Command("sqlite3", dbPath, fmt.Sprintf("VACUUM INTO '%s';", backupPath))
 	out, err := cmd.CombinedOutput()
@@ -101,6 +108,43 @@ func swapBinary(appDir string) (rollbackFn func() error, err error) {
 
 	rollbackFn = func() error {
 		log.Printf("pkg_go_build: rolling back binary swap")
+		failedPath := filepath.Join(appDir, "tinycld.failed")
+		os.Rename(currentPath, failedPath)
+		return os.Rename(prevPath, currentPath)
+	}
+
+	return rollbackFn, nil
+}
+
+// swapToArchivedBinary installs an archived build's binary as the live one,
+// keeping the current binary as <binary>.prev so the entrypoint's health-check
+// can roll back to it if the reverted binary fails to boot. The archived binary
+// is copied (not moved) so the build archive stays intact and re-revertible.
+// Returns a rollback function that reverses the swap.
+func swapToArchivedBinary(appDir, archivedBinary string) (rollbackFn func() error, err error) {
+	currentPath := filepath.Join(appDir, binaryName)
+	prevPath := filepath.Join(appDir, binaryName+".prev")
+
+	if _, statErr := os.Stat(archivedBinary); statErr != nil {
+		return nil, fmt.Errorf("archived binary not found: %w", statErr)
+	}
+
+	// <binary> → <binary>.prev
+	if err := os.Rename(currentPath, prevPath); err != nil {
+		return nil, fmt.Errorf("failed to move current binary to .prev: %w", err)
+	}
+
+	// copy archived → <binary>
+	cp := exec.Command("cp", "-a", archivedBinary, currentPath)
+	if out, err := cp.CombinedOutput(); err != nil {
+		os.Rename(prevPath, currentPath) // restore
+		return nil, fmt.Errorf("failed to install archived binary: %v\n%s", err, out)
+	}
+
+	log.Printf("pkg_go_build: swapped in archived binary %s", archivedBinary)
+
+	rollbackFn = func() error {
+		log.Printf("pkg_go_build: rolling back archived-binary swap")
 		failedPath := filepath.Join(appDir, "tinycld.failed")
 		os.Rename(currentPath, failedPath)
 		return os.Rename(prevPath, currentPath)
