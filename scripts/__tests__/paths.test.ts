@@ -10,8 +10,8 @@ import {
 } from '../paths'
 
 describe('generator paths', () => {
-    it('APP_DIR is the app member dir', () => {
-        expect(path.basename(APP_DIR)).toBe('app')
+    it('APP_DIR is the tinycld member dir', () => {
+        expect(path.basename(APP_DIR)).toBe('tinycld')
     })
     it('WS_ROOT is the parent of APP_DIR', () => {
         expect(WS_ROOT).toBe(path.resolve(APP_DIR, '..'))
