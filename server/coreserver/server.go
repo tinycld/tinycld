@@ -253,6 +253,7 @@ func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
 				e.Router.GET("/_expo/static/{path...}", PoolAssets(opts.ReleasesDir, "_expo/static", "public, max-age=31536000, immutable"))
 				e.Router.GET("/assets/{path...}", PoolAssets(opts.ReleasesDir, "assets", "public, max-age=300"))
 				e.Router.GET("/api/version", VersionHandler(opts.ReleasesDir))
+				e.Router.GET("/api/release", ReleaseHandler(opts.ReleasesDir))
 			}
 
 			if !e.Router.HasRoute(http.MethodGet, "/{path...}") {

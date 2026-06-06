@@ -40,6 +40,12 @@ pnpm run packages:unlink <package-name>
 
 Removing a package hides its UI and stops registering its collections, but **does not delete data** — relinking the package restores everything.
 
+## Checking which versions are installed
+
+To see exactly which version of each package your app is running, open **Settings → About**. Below the app version, an **Included packages** list shows every bundled package with its released version and the short commit it was built from, plus the date the release was assembled.
+
+This list reflects the pinned release the running image was built from, so it's the authoritative answer to "what's actually deployed". It appears only on released builds — local development installs show just the app version.
+
 ## Customizing the nav icon
 
 A package's nav-rail icon comes from `manifest.ts`:
