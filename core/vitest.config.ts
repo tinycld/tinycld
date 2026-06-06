@@ -1,5 +1,5 @@
 import { mergeConfig } from 'vitest/config'
-import appConfig from '../app/vitest.config'
+import appConfig from '../vitest.config'
 
 // Package-scoped vitest for @tinycld/core: inherit the app shell's canonical
 // aliases (so @tinycld/core/*, the react-native/expo stubs, etc. resolve
