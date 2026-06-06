@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import { BuildHistoryTab } from './BuildHistoryTab'
 import { PackageManager } from './PackageManager'
+import { PackageVersionsTab } from './PackageVersionsTab'
 
 const mailInstalled = packageRegistry.some(p => p.slug === 'mail')
 
@@ -66,7 +67,7 @@ interface SetupDashboardProps {
     defaultTab?: SetupTab
 }
 
-type SetupTab = 'organizations' | 'packages' | 'builds'
+type SetupTab = 'organizations' | 'packages' | 'versions' | 'builds'
 
 export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardProps) {
     const primaryBg = useThemeColor('primary')
@@ -94,6 +95,14 @@ export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardPr
                     textColor={fgColor}
                 />
                 <TabButton
+                    label="Versions"
+                    isActive={activeTab === 'versions'}
+                    onPress={() => setActiveTab('versions')}
+                    activeColor={primaryBg}
+                    inactiveColor={mutedColor}
+                    textColor={fgColor}
+                />
+                <TabButton
                     label="Build History"
                     isActive={activeTab === 'builds'}
                     onPress={() => setActiveTab('builds')}
@@ -104,6 +113,7 @@ export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardPr
             </View>
             <OrganizationsTab isVisible={activeTab === 'organizations'} pb={pb} />
             <PackagesTab isVisible={activeTab === 'packages'} pb={pb} />
+            <PackageVersionsTab isVisible={activeTab === 'versions'} pb={pb} />
             <BuildHistoryTab isVisible={activeTab === 'builds'} pb={pb} />
         </View>
     )

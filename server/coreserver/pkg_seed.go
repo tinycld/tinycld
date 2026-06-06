@@ -10,13 +10,14 @@ import (
 )
 
 type bundledPackage struct {
-	Name        string `json:"name"`
-	Slug        string `json:"slug"`
-	Version     string `json:"version"`
-	Icon        string `json:"icon"`
-	Description string `json:"description"`
-	HasServer   bool   `json:"hasServer"`
-	NavOrder    int    `json:"navOrder"`
+	Name         string `json:"name"`
+	Slug         string `json:"slug"`
+	Version      string `json:"version"`
+	Icon         string `json:"icon"`
+	Description  string `json:"description"`
+	HasServer    bool   `json:"hasServer"`
+	NavOrder     int    `json:"navOrder"`
+	ManifestJSON string `json:"manifestJson"`
 }
 
 func SyncBundledPackages(app core.App) {
@@ -69,6 +70,12 @@ func SyncBundledPackages(app core.App) {
 			record.Set("has_server", pkg.HasServer)
 			record.Set("nav_order", pkg.NavOrder)
 			record.Set("status", "bundled")
+			// manifest_json feeds the version-management compatibility solver
+			// (peerVersions). Keep it in sync with the installed-package path
+			// (upsertPkgRegistry), which stores the full manifest here.
+			if pkg.ManifestJSON != "" {
+				record.Set("manifest_json", pkg.ManifestJSON)
+			}
 			if err := app.Save(record); err != nil {
 				log.Printf("pkg_seed: failed to create %s: %v", pkg.Slug, err)
 			}
@@ -82,6 +89,9 @@ func SyncBundledPackages(app core.App) {
 		existing.Set("description", pkg.Description)
 		existing.Set("has_server", pkg.HasServer)
 		existing.Set("nav_order", pkg.NavOrder)
+		if pkg.ManifestJSON != "" {
+			existing.Set("manifest_json", pkg.ManifestJSON)
+		}
 		if existing.GetString("status") == "disabled" {
 			// Re-enable if it was disabled but is still bundled
 			existing.Set("status", "bundled")

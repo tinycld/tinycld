@@ -3,6 +3,7 @@ module tinycld.org/core
 go 1.25.0
 
 require (
+	github.com/Masterminds/semver/v3 v3.2.1
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coder/websocket v1.8.14
 	github.com/disintegration/imaging v1.6.2

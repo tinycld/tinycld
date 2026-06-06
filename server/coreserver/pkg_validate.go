@@ -10,15 +10,15 @@ import (
 
 // parsedManifest represents the validated fields from a package manifest.ts
 type parsedManifest struct {
-	Name        string            `json:"name"`
-	Slug        string            `json:"slug"`
-	Version     string            `json:"version"`
-	Description string            `json:"description"`
-	Routes      *manifestRoutes   `json:"routes"`
-	Nav         *manifestNav      `json:"nav"`
-	Server      *manifestServer   `json:"server,omitempty"`
-	HasServer   bool              `json:"-"`
-	RawJSON     map[string]any    `json:"-"`
+	Name        string          `json:"name"`
+	Slug        string          `json:"slug"`
+	Version     string          `json:"version"`
+	Description string          `json:"description"`
+	Routes      *manifestRoutes `json:"routes"`
+	Nav         *manifestNav    `json:"nav"`
+	Server      *manifestServer `json:"server,omitempty"`
+	HasServer   bool            `json:"-"`
+	RawJSON     map[string]any  `json:"-"`
 }
 
 type manifestRoutes struct {
@@ -64,6 +64,13 @@ var gitSpecPattern = regexp.MustCompile(
 var npmVersionedPattern = regexp.MustCompile(
 	`^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*(@[a-zA-Z0-9][a-zA-Z0-9.+-]*)?$`,
 )
+
+// versionTokenPattern constrains a target version / git tag to a safe charset
+// before it is concatenated into an `npm pack name@<v>` or git `remote#<v>` spec.
+// It must start alphanumeric (so a leading '-' can't be read as a flag) and
+// allows the semver/tag charset (digits, letters, dot, plus, hyphen) — covering
+// `1.2.3`, `1.2.3-beta.1`, `v1.0.0`, `latest`. Anchored, no whitespace/slashes.
+var versionTokenPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-]*$`)
 
 // shellUnsafePattern flags any character that has no business in a package
 // spec. exec.Command uses no shell so these can't *execute*, but rejecting
