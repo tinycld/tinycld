@@ -10,6 +10,7 @@ tmp/
 test-results/
 playwright-report/
 playwright/.cache/
+tests/install/todo-install-logs/
 
 # Local secrets — never commit
 .env

@@ -245,14 +245,54 @@ ENV FZ_VERSION="1.25.1"
 # invoke `pnpm exec tsx scripts/<x>.ts` (reset-demo, seed-db), so Node must be on
 # PATH. libcap2-bin (setcap) is needed at image build time below; we keep it
 # available so operators on autocert who use the in-app package installer can
-# manually re-apply the cap to a freshly-rebuilt binary.
+# manually re-apply the cap to a freshly-rebuilt binary. git is required by the
+# in-app package installer: `npm pack <git-spec>` (e.g. github:owner/repo) clones
+# the repo via git, so without it git-spec installs fail with `spawn git ENOENT`.
+# gcc AND g++ are required to install a package that ships a Go server: the
+# installer's checkGoBuildPrereqs() gate needs `go` (from the copied toolchain)
+# plus a C compiler, and the server is built with CGO_ENABLED=1. The cgo set
+# needs BOTH compilers — gcc for libmupdf (go-fitz) and g++ for goheif/libde265
+# (HEIF decode, which shells out to g++). The build-stage go-builder gets both
+# from the golang:trixie base (build-essential); the slim runtime base has
+# neither, so add them explicitly. Without gcc, server packages are rejected at
+# manifest validation ("requires Phase 3 support"); without g++, the runtime
+# `go build` fails with `exec: "g++": executable file not found`. libmupdf-dev
+# (already listed) supplies the cgo link target.
+#
+# sqlite3 (the CLI) is needed by the installer's database-backup step, which runs
+# `sqlite3 <db> "VACUUM INTO '<backup>'"` for a consistent snapshot before
+# swapping in the rebuilt binary. The Go server embeds a SQLite driver so the CLI
+# was never otherwise required; without it the install fails at "Backing up
+# database" with `exec: "sqlite3": not found`.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl gnupg gosu \
+    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl git gcc g++ sqlite3 gnupg gosu \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Make `pnpm` available on PATH for the in-app package installer, which runs
+# `pnpm install` at the workspace root (step 7 of the install pipeline). Node
+# ships corepack; `corepack enable` only creates a SHIM that lazily downloads
+# pnpm on first use AND prompts for confirmation — which fails non-interactively
+# inside the installer ("! Corepack is about to download …pnpm-11.3.0.tgz",
+# exit 1). So we `corepack prepare … --activate` here to actually fetch + cache
+# the pinned pnpm into the image at build time.
+#
+# COREPACK_HOME must be a shared, world-readable path: corepack caches the
+# prepared pnpm under $COREPACK_HOME (default ~/.cache/node/corepack), and we
+# prepare it here as root but the installer runs pnpm as the unprivileged
+# tinycld user — root's HOME cache is unreadable to tinycld. Point COREPACK_HOME
+# at /opt/corepack (chmod a+rX) and set the SAME env at runtime so the tinycld
+# process resolves the same cache. COREPACK_ENABLE_DOWNLOAD_PROMPT=0 belt-and-
+# suspenders against any later fetch blocking on a prompt. Version matches the
+# root package.json `packageManager` pin.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+ENV COREPACK_HOME=/opt/corepack
+RUN corepack enable \
+    && corepack prepare pnpm@11.3.0 --activate \
+    && chmod -R a+rX /opt/corepack
 
 # Copy Go toolchain from build stage (needed for the in-app package installer's
 # runtime Go-package rebuilds).
@@ -267,57 +307,62 @@ ARG TINYCLD_UID=1000
 ARG TINYCLD_GID=1000
 RUN groupadd --system --gid "$TINYCLD_GID" tinycld \
     && useradd --system --uid "$TINYCLD_UID" --gid "$TINYCLD_GID" \
-        --home-dir /app --no-create-home --shell /usr/sbin/nologin tinycld
+        --home-dir /workspace/app --no-create-home --shell /usr/sbin/nologin tinycld
 
-# The runtime app tree lives at /app and mirrors the app member: the server
-# binary, the per-release web bundle, migrations, and the runtime scripts. The
-# workspace-level pieces the runtime scripts and in-app installer need
+# The runtime app tree lives at /workspace/app and mirrors the app member: the
+# server binary, the per-release web bundle, migrations, and the runtime scripts.
+# The workspace-level pieces the runtime scripts and in-app installer need
 # (node_modules, root manifests, tinycld.packages.ts, the sibling members) live
-# one level up at /app/.. (i.e. /), assembled below so that
-# node_modules/@tinycld/<x> symlinks → ../../<x> still resolve.
-WORKDIR /app
+# at /workspace (the parent of /workspace/app), assembled below so that
+# node_modules/@tinycld/<x> symlinks → ../../<x> resolve within /workspace.
+WORKDIR /workspace/app
 
 # Compiled server binary.
 COPY --from=go-builder /ws/app/server/tinycld ./tinycld
 
 # Per-release web bundle, staged by the web-builder. The entrypoint promotes
-# this on container start to /app/releases/. The /app/public/ directory is
-# reserved for the marketing website (populated by tinycld.org's deploy tail).
-COPY --from=web-builder /ws/app/release-staging /app/release-staging
-RUN mkdir -p /app/public /app/releases
+# this on container start to /workspace/app/releases/. The /workspace/app/public/
+# directory is reserved for the marketing website (populated by tinycld.org's
+# deploy tail).
+COPY --from=web-builder /ws/app/release-staging /workspace/app/release-staging
+RUN mkdir -p /workspace/app/public /workspace/app/releases
 
-# Migrations with symlinks already resolved in web-builder.
-COPY --from=web-builder /ws/app/server/pb_migrations ./pb_migrations
+# Migrations: see the symlink set up after the full server tree is copied
+# below. (The runtime jsvm reads /workspace/app/pb_migrations; the generator +
+# in-app installer write to /workspace/app/server/pb_migrations — we make the
+# former a symlink to the latter so all three agree.)
 
 # Workspace-root files for the runtime scripts + in-app package-install
 # pipeline. These live at the workspace ROOT in the new layout: the root
 # package.json / pnpm-lock.yaml / pnpm-workspace.yaml / .npmrc, the hoisted
 # node_modules (with the @tinycld/<x> member symlinks), tinycld.packages.ts, and
 # scripts/link-members.ts (the in-app installer's postinstall re-runs it). They
-# sit one directory above the app tree so the symlinks (node_modules/@tinycld/<x>
-# → ../../<x>) still point at the sibling members copied below.
-COPY --from=web-builder /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /
-COPY --from=web-builder /ws/tinycld.packages.ts /tinycld.packages.ts
-COPY --from=web-builder /ws/scripts /scripts
-COPY --from=web-builder /ws/node_modules /node_modules
+# sit at /workspace (one directory above /workspace/app) so the symlinks
+# (node_modules/@tinycld/<x> → ../../<x>) still point at the sibling members
+# copied below.
+COPY --from=web-builder /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /workspace/
+COPY --from=web-builder /ws/tinycld.packages.ts /workspace/tinycld.packages.ts
+COPY --from=web-builder /ws/scripts /workspace/scripts
+COPY --from=web-builder /ws/node_modules /workspace/node_modules
 # package-scripts (the tinycld-pkg CLI) now lives inside the app member, so the
 # node_modules/@tinycld/package-scripts symlink resolves to ../../app/package-scripts
-# (i.e. /app/package-scripts at runtime, WORKDIR /app). Land it there.
+# (i.e. /workspace/app/package-scripts at runtime, WORKDIR /workspace/app). Land it there.
 COPY --from=web-builder /ws/app/package-scripts ./package-scripts
 
 # Sibling members. seed-db.ts (run by the reset-demo cron) imports
 # ../tinycld.seeds → each @tinycld/<feature>/seed, resolved through the
 # node_modules symlinks (node_modules/@tinycld/<x> → ../../<x>) into these
-# member dirs; core supplies the runtime libs they import. They sit at / so
-# the symlinks resolve (/node_modules/@tinycld/<x> → /<x>).
-COPY --from=web-builder /ws/core /core
-COPY --from=web-builder /ws/contacts /contacts
-COPY --from=web-builder /ws/mail /mail
-COPY --from=web-builder /ws/calendar /calendar
-COPY --from=web-builder /ws/drive /drive
-COPY --from=web-builder /ws/calc /calc
-COPY --from=web-builder /ws/text /text
-COPY --from=web-builder /ws/google-takeout-import /google-takeout-import
+# member dirs; core supplies the runtime libs they import. They sit at
+# /workspace so the symlinks resolve (/workspace/node_modules/@tinycld/<x>
+# → /workspace/<x>).
+COPY --from=web-builder /ws/core /workspace/core
+COPY --from=web-builder /ws/contacts /workspace/contacts
+COPY --from=web-builder /ws/mail /workspace/mail
+COPY --from=web-builder /ws/calendar /workspace/calendar
+COPY --from=web-builder /ws/drive /workspace/drive
+COPY --from=web-builder /ws/calc /workspace/calc
+COPY --from=web-builder /ws/text /workspace/text
+COPY --from=web-builder /ws/google-takeout-import /workspace/google-takeout-import
 
 # app-member files the runtime needs:
 #   - tinycld.config.ts / tinycld.seeds.ts: imported by seed-db.ts at runtime.
@@ -342,34 +387,45 @@ COPY --from=web-builder /ws/app/assets ./assets
 # resolve against the members + node_modules copied above.
 COPY --from=go-builder /ws/app/server/ ./server/
 
+# Point the runtime migrations dir at the generator/installer's migrations dir.
+# jsvm reads /workspace/app/pb_migrations; the generator (and the in-app
+# installer when it regenerates after installing a package) writes migration
+# symlinks into /workspace/app/server/pb_migrations. Symlinking the former to
+# the latter means a newly-installed package's migrations are immediately
+# visible to the runtime and actually apply on the post-install restart —
+# without this, installed-package migrations land only in server/pb_migrations
+# and silently never run. Build-time (bundled) migrations live in
+# server/pb_migrations too (resolved real files from the go-builder COPY above),
+# so this unifies build + runtime + installer on one directory.
+RUN rm -rf ./pb_migrations && ln -s server/pb_migrations ./pb_migrations
+
 # bundled-packages.json so core's coreserver.SyncBundledPackages can find it at
 # startup. Generated at app/server/bundled-packages.json; the binary reads it
-# relative to its own dir, so place a copy at /app for the boot-time seed.
+# relative to its own dir, so place a copy at /workspace/app for the boot-time seed.
 COPY --from=web-builder /ws/app/server/bundled-packages.json ./bundled-packages.json
 
-# Data dir (PB writes /app/pb_data relative to cwd) + the generated-types dir.
+# Data dir (PB writes pb_data relative to cwd) + the generated-types dir.
 # coreserver.DefaultTypesDir() resolves to <binaryDir>/../../core/types — with
-# the binary at /app/tinycld that is /core/types — where the schema hook writes
-# pbSchema.ts / pbZodSchema.ts at boot. Create it so the write succeeds.
-RUN mkdir -p /app/pb_data /core/types
+# the binary at /workspace/app/tinycld that is /workspace/core/types — where the
+# schema hook writes pbSchema.ts / pbZodSchema.ts at boot. Create it so the
+# write succeeds.
+RUN mkdir -p /workspace/app/pb_data /workspace/core/types
 
 
 COPY app/config/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
-# Hand the entire app tree AND the workspace-root state to the tinycld user.
-# pb_data/ and types/ are bind-mount targets whose mount-time ownership is the
-# host's responsibility. The chown spans / one level up too, because the
-# runtime scripts and in-app installer write under the workspace root
-# (node_modules, generated files).
+# Hand the entire workspace tree to the tinycld user with a single build-time
+# chown. Because /workspace is an ordinary subdirectory (not the overlay mount
+# root /), this chown PERSISTS through the layer commit — unlike a chown of /
+# which reverts to root:root. So no runtime chown is needed for workspace paths;
+# only bind-mounted data dirs (/workspace/app/pb_data, /workspace/core/types)
+# need fixing at runtime when Docker creates them owned by root.
 #
 # Must run BEFORE setcap below — chown strips file capabilities (it resets the
 # security.capability xattr along with ownership), so setcap'ing first then
 # chown'ing would silently wipe the cap.
-RUN chown -R tinycld:tinycld /app \
-    && chown -R tinycld:tinycld /node_modules /core /contacts /mail /calendar /drive /calc /text /google-takeout-import \
-    && chown tinycld:tinycld /package.json /pnpm-lock.yaml /pnpm-workspace.yaml /.npmrc /tinycld.packages.ts \
-    && chown -R tinycld:tinycld /scripts
+RUN chown -R tinycld:tinycld /workspace
 
 # Grant cap_net_bind_service so the non-root user can bind :80/:443 when
 # autocert is on (AUTOCERT_ENABLED=true with PRIMARY_DOMAIN set). The plain-HTTP
@@ -389,13 +445,13 @@ RUN setcap 'cap_net_bind_service=+ep' ./tinycld
 EXPOSE 7090 80 443 993 465
 
 # The container starts as root so the entrypoint can fix ownership of the
-# bind-mounted data dirs (/app/pb_data, /app/types) before the server runs.
-# When a host bind-mount target doesn't exist yet, Docker creates it owned by
-# root; the unprivileged tinycld user then can't open the SQLite DB ("unable to
-# open database file (14)") and the container crash-loops. entrypoint.sh
-# chown's those dirs to tinycld and drops to uid 1000 via gosu for the server
-# itself, so nothing privileged actually runs the application. See the
-# fix_data_dir_ownership() function in entrypoint.sh.
+# bind-mounted data dirs (/workspace/app/pb_data, /workspace/core/types) before
+# the server runs. When a host bind-mount target doesn't exist yet, Docker
+# creates it owned by root; the unprivileged tinycld user then can't open the
+# SQLite DB ("unable to open database file (14)") and the container crash-loops.
+# entrypoint.sh chown's those dirs to tinycld and drops to uid 1000 via gosu
+# for the server itself, so nothing privileged actually runs the application.
+# See the fix_data_dir_ownership() function in entrypoint.sh.
 USER root
 
 # The server process still runs as uid 1000 (tinycld) — the entrypoint drops

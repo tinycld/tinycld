@@ -12,8 +12,9 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 
 # Ensure the bind-mounted data directories are writable by the runtime user.
 #
-# When a host bind-mount target (./pb_data, ./types in docker-compose.yml)
-# doesn't exist yet, the Docker daemon creates it owned by root:root. The
+# When a host bind-mount target (./pb_data → /workspace/app/pb_data and
+# ./types → /workspace/core/types in docker-compose.yml) doesn't exist yet, the
+# Docker daemon creates it owned by root:root. The
 # unprivileged tinycld user then can't open the SQLite database — PocketBase
 # fails with "unable to open database file (14)" and the container crash-loops.
 # Reported in https://github.com/tinycld/app/issues/26.
@@ -25,7 +26,7 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 fix_data_dir_ownership() {
     [ "$(id -u)" = "0" ] || return 0
 
-    for dir in /app/pb_data /app/types; do
+    for dir in /workspace/app/pb_data /workspace/core/types; do
         mkdir -p "$dir"
         # Skip the (potentially large) recursive chown when the top-level dir is
         # already owned correctly — the steady state after first run, so normal
@@ -58,16 +59,16 @@ run_tinycld() {
 
 fix_data_dir_ownership
 
-# Promote the staged release to /app/releases/. Runs on every container
-# start; idempotent.
+# Promote the staged release to /workspace/app/releases/. Runs on every
+# container start; idempotent.
 #
-# /app/releases is typically the container's writable layer (compose-style
-# deploys) and starts empty on every fresh container; Dokku-style deploys
-# may back it with a persistent volume so old releases survive container
-# replacement. Either way the promote logic below is the same: copy the
-# staged tree off the image, swap the `current` symlink atomically.
+# /workspace/app/releases is typically the container's writable layer
+# (compose-style deploys) and starts empty on every fresh container; Dokku-style
+# deploys may back it with a persistent volume so old releases survive container
+# replacement. Either way the promote logic below is the same: copy the staged
+# tree off the image, swap the `current` symlink atomically.
 #
-# Layout produced under /app/releases/:
+# Layout produced under /workspace/app/releases/:
 #   <id>/             per-release dir: app.html + release-id.txt
 #   _static/          cross-release asset pool:
 #     _expo/static/...    (content-hashed, immutable)
@@ -81,8 +82,8 @@ fix_data_dir_ownership
 # old entries. The Go server serves /_expo/static/ and /assets/ from
 # _static/ directly — there is no per-request release lookup.
 promote_release() {
-    staging_dir=/app/release-staging
-    releases_dir=/app/releases
+    staging_dir=/workspace/app/release-staging
+    releases_dir=/workspace/app/releases
     pool_dir="$releases_dir/_static"
 
     echo "[entrypoint] promote_release: staging=$staging_dir releases=$releases_dir"
@@ -282,14 +283,33 @@ fi
 # Serve args are in $@ (positional params) so a multi-domain list survives
 # without re-splitting.
 while true; do
-    run_tinycld serve "$@"
-    EXIT_CODE=$?
+    # Capture the serve exit code WITHOUT letting `set -e` abort the script.
+    # The in-app installer signals a restart by exiting the serve process with
+    # code 75; under `set -e` a bare `run_tinycld serve` would make the shell
+    # exit immediately on that non-zero code, before the 75-handling below ever
+    # runs (the container would just exit 75 instead of restarting in place).
+    # `|| EXIT_CODE=$?` swallows the non-zero for set -e and records the code;
+    # reset to 0 first so a clean exit is captured too.
+    EXIT_CODE=0
+    run_tinycld serve "$@" || EXIT_CODE=$?
 
     if [ $EXIT_CODE -eq 75 ]; then
         echo "[entrypoint] Restart requested (exit code 75)"
 
-        # Health check: start new binary on a temp port, verify /api/health responds
-        run_tinycld serve --http=127.0.0.1:${HEALTH_PORT} &
+        # Health check: start the new binary on a temp HTTP port and verify
+        # /api/health responds. Disable the mail package's IMAP (:993) and SMTP
+        # (:465) listeners FOR THE PROBE ONLY via IMAP_ENABLED/SMTP_ENABLED=false
+        # — otherwise the probe binds those fixed ports, and after we kill it the
+        # ports aren't released before the real server restarts, so the restart
+        # crashes with "listen tcp :993: bind: address already in use". The probe
+        # only needs the HTTP listener to answer /api/health. The real serve
+        # below (the `continue`d loop iteration) starts with mail enabled as
+        # normal. Export the vars inside a backgrounded subshell so gosu passes
+        # them to the child and they don't leak to the real server.
+        (
+            export IMAP_ENABLED=false SMTP_ENABLED=false
+            run_tinycld serve --http=127.0.0.1:${HEALTH_PORT}
+        ) &
         HEALTH_PID=$!
 
         HEALTHY=false
