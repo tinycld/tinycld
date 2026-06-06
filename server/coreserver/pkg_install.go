@@ -124,7 +124,7 @@ func handleInstall(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		return re.BadRequestError("Invalid request body", err)
 	}
 
-	if err := validateNpmPackageName(body.NpmPackage); err != nil {
+	if err := validatePackageSpec(body.NpmPackage); err != nil {
 		return re.BadRequestError(err.Error(), nil)
 	}
 
@@ -320,7 +320,7 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 
 	// Step 1: Validate npm package name (5%)
 	emitProgress(job, "Validating package name", 5, "Checking "+job.NpmPkg)
-	if err := validateNpmPackageName(job.NpmPkg); err != nil {
+	if err := validatePackageSpec(job.NpmPkg); err != nil {
 		fail("validate", err)
 		return
 	}
@@ -427,7 +427,7 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	// workspace; pnpm discovers the new member from pnpm-workspace.yaml (updated
 	// above) and the postinstall (link-members + generator) wires it in.
 	emitProgress(job, "Installing dependencies", 50, "Running pnpm install")
-	npmOut, err := runCmd(wsRoot, "pnpm", "install", "--no-frozen-lockfile")
+	npmOut, err := runCmdEnv(wsRoot, []string{"CI=true"}, "pnpm", "install", "--no-frozen-lockfile")
 	if err != nil {
 		fail("pnpm install", fmt.Errorf("%v: %s", err, npmOut))
 		return
@@ -453,11 +453,23 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	// toolchain runs in goSrcDir (<appDir>/server, where go.work lives); the
 	// new/live binary and pb_data are in appDir.
 	if manifest.HasServer {
-		emitProgress(job, "Updating Go modules", 67, "Running go mod tidy")
-		tidyOut, tidyErr := runCmd(goSrcDir, "go", "mod", "tidy")
-		if tidyErr != nil {
-			fail("go mod tidy", fmt.Errorf("%v: %s", tidyErr, tidyOut))
-			return
+		// Reconcile the Go workspace with `go work sync`, NOT `go mod tidy`.
+		// The feature server modules (tinycld.org/packages/<slug>) are local
+		// modules wired only through the generated go.work `use` directives;
+		// `go mod tidy` ignores go.work for those imports and tries to fetch
+		// them from the network ("unrecognized import path …/packages/<slug>"),
+		// which fails. `go work sync` honors the `use` entries and reconciles
+		// go.sum offline — the same step the Docker image's go-builder runs
+		// before building. Skip when there's no go.work (defensive; the
+		// generator always emits one for a workspace with server packages).
+		emitProgress(job, "Updating Go modules", 67, "Running go work sync")
+		goWorkPath := filepath.Join(goSrcDir, "go.work")
+		if _, statErr := os.Stat(goWorkPath); statErr == nil {
+			syncOut, syncErr := runCmd(goSrcDir, "go", "work", "sync")
+			if syncErr != nil {
+				fail("go work sync", fmt.Errorf("%v: %s", syncErr, syncOut))
+				return
+			}
 		}
 
 		emitProgress(job, "Building server", 70, "Compiling new server binary")
@@ -619,7 +631,7 @@ func runUninstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	// node_modules/@tinycld/<slug> symlink before the rebuild. Without this the
 	// dangling symlink can break expo export's module resolution.
 	emitProgress(job, "Updating dependencies", 48, "Running pnpm install")
-	npmOut, err := runCmd(wsRoot, "pnpm", "install", "--no-frozen-lockfile")
+	npmOut, err := runCmdEnv(wsRoot, []string{"CI=true"}, "pnpm", "install", "--no-frozen-lockfile")
 	if err != nil {
 		fail("pnpm install", fmt.Errorf("%v: %s", err, npmOut))
 		return
@@ -678,6 +690,7 @@ func emitProgress(job *installJob, step string, progress int, message string) {
 	job.Step = step
 	job.Progress = progress
 	job.LogLines = append(job.LogLines, fmt.Sprintf("[%d%%] %s: %s", progress, step, message))
+	log.Printf("[pkg_install] [%s] [%d%%] %s: %s", job.ID, progress, step, message)
 
 	evt := sseEvent{
 		Event: "progress",
@@ -698,6 +711,12 @@ func emitProgress(job *installJob, step string, progress int, message string) {
 func emitComplete(job *installJob, status string, errMsg string) {
 	job.mu.Lock()
 	defer job.mu.Unlock()
+
+	if errMsg != "" {
+		log.Printf("[pkg_install] [%s] COMPLETE status=%s error=%s", job.ID, status, errMsg)
+	} else {
+		log.Printf("[pkg_install] [%s] COMPLETE status=%s", job.ID, status)
+	}
 
 	evt := sseEvent{
 		Event: "complete",
@@ -1008,10 +1027,42 @@ func getBundledSlugs(app core.App) map[string]bool {
 
 // ---------- utility helpers ----------
 
+// runCmd runs a command, capturing its combined output to return to the
+// caller (which surfaces it via SSE + the install-log record) AND echoing
+// the command line and its output to the server's stdout so `docker logs`
+// shows the full install trace — including the real npm/pnpm/go/expo errors
+// that would otherwise be buried in the SSE stream / DB record only.
 func runCmd(dir string, name string, args ...string) (string, error) {
+	log.Printf("[pkg_install] $ (cd %s && %s %s)", dir, name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
+	if s := strings.TrimRight(string(out), "\n"); s != "" {
+		log.Printf("[pkg_install] output of %s:\n%s", name, s)
+	}
+	if err != nil {
+		log.Printf("[pkg_install] %s FAILED: %v", name, err)
+	}
+	return string(out), err
+}
+
+// runCmdEnv is runCmd with additional environment variables appended to the
+// inherited environment. Used for the pnpm-install steps, which must run with
+// CI=true so pnpm proceeds non-interactively (otherwise it blocks on a
+// node_modules-purge confirmation and exits 1: "If you are running pnpm in CI,
+// set the CI environment variable to 'true'…").
+func runCmdEnv(dir string, env []string, name string, args ...string) (string, error) {
+	log.Printf("[pkg_install] $ (cd %s && %s %s %s)", dir, strings.Join(env, " "), name, strings.Join(args, " "))
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	if s := strings.TrimRight(string(out), "\n"); s != "" {
+		log.Printf("[pkg_install] output of %s:\n%s", name, s)
+	}
+	if err != nil {
+		log.Printf("[pkg_install] %s FAILED: %v", name, err)
+	}
 	return string(out), err
 }
 
