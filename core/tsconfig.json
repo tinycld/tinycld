@@ -4,7 +4,7 @@
             "~/*": ["./*"],
             "@tinycld/core": ["./index.ts"],
             "@tinycld/core/*": ["./*"],
-            "@tinycld/app-generated/*": ["../app/lib/generated/*"]
+            "@tinycld/app-generated/*": ["../lib/generated/*"]
         },
         "allowJs": true,
         "esModuleInterop": true,
@@ -35,5 +35,5 @@
     "typeAcquisition": {
         "enable": true
     },
-    "include": ["**/*.ts", "**/*.tsx", "expo-env.d.ts", "../app/uniwind-types.d.ts"]
+    "include": ["**/*.ts", "**/*.tsx", "expo-env.d.ts", "../uniwind-types.d.ts"]
 }
