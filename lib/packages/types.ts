@@ -114,4 +114,18 @@ export interface PackageManifest {
     }
 
     dependencies?: string[]
+
+    /**
+     * Semver ranges this version of the package requires of OTHER packages
+     * (and of `@tinycld/core`) to be compatible. Keys are package slugs or
+     * `@tinycld/core`; values are semver ranges (e.g. `'>=2.1 <3'`, `'^1.0'`).
+     *
+     * The version-management compatibility solver checks a proposed set of
+     * version changes against every selected package's `peerVersions`: a change
+     * is blocked if it would leave any declared range unsatisfied by the
+     * resolved versions. Unlike `dependencies` (which is advisory + seed
+     * ordering and only names slugs), `peerVersions` is enforced and version-aware.
+     * Omit it when a package has no cross-package version constraints.
+     */
+    peerVersions?: Record<string, string>
 }

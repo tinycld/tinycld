@@ -20,11 +20,13 @@ import (
 // ---------- types ----------
 
 type installJob struct {
-	ID        string
-	Action    string // "install", "uninstall", or "revert"
-	Slug      string
-	NpmPkg    string
-	BuildID   string // revert target (action == "revert")
+	ID      string
+	Action  string // "install", "uninstall", "revert", or "version_change"
+	Slug    string
+	NpmPkg  string
+	BuildID string // revert target (action == "revert")
+	// version_change: the ordered set of {slug → targetVersion} to apply together.
+	Changes   []versionChange
 	Progress  int
 	Step      string
 	Status    string // "running", "success", "failed", "rolled_back"
@@ -61,6 +63,23 @@ var (
 // ---------- registration ----------
 
 func RegisterPackageInstallEndpoints(app *pocketbase.PocketBase) {
+	// Guard against a hooks-watcher (HooksWatch) restart firing in the MIDDLE of
+	// an install/revert/version-change pipeline. Those pipelines re-run the
+	// generator, which rewrites the watched pb_hooks symlinks; with HooksWatch on,
+	// PocketBase's jsvm watcher would call app.Restart() (an in-process re-exec)
+	// and tear the process down between, say, the file swap and the migration step
+	// — leaving a half-applied state with no rollback. app.Restart() routes
+	// through OnTerminate with IsRestart=true, so we veto it while a job holds the
+	// single-flight lock. Our OWN intentional restarts use os.Exit(75)
+	// (requestRestart), a different path this guard never sees.
+	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+		if shouldSuppressRestart(e.IsRestart) {
+			log.Println("pkg_install: suppressing watcher restart — a package operation is in progress")
+			return nil // short-circuit: don't run the execve handler
+		}
+		return e.Next()
+	})
+
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		g := e.Router.Group("/api/admin/packages")
 
@@ -90,8 +109,36 @@ func RegisterPackageInstallEndpoints(app *pocketbase.PocketBase) {
 			return handleStatus(app, re)
 		}).BindFunc(requireSuperuser)
 
+		g.GET("/versions", func(re *core.RequestEvent) error {
+			return handleVersions(app, re)
+		}).BindFunc(requireSuperuser)
+
+		g.POST("/versions/check", func(re *core.RequestEvent) error {
+			return handleVersionsCheck(app, re)
+		}).BindFunc(requireSuperuser)
+
+		g.POST("/versions/drop-report", func(re *core.RequestEvent) error {
+			return handleDropReport(app, re)
+		}).BindFunc(requireSuperuser)
+
+		g.POST("/versions/apply", func(re *core.RequestEvent) error {
+			return handleVersionChange(app, re)
+		}).BindFunc(requireSuperuser)
+
 		return e.Next()
 	})
+}
+
+// shouldSuppressRestart reports whether an in-process restart (isRestart) must be
+// vetoed because a package pipeline is mid-flight. Pure read of the single-flight
+// state under the lock, so it's unit-testable.
+func shouldSuppressRestart(isRestart bool) bool {
+	if !isRestart {
+		return false
+	}
+	installMu.Lock()
+	defer installMu.Unlock()
+	return currentJob != nil
 }
 
 func requireSuperuser(re *core.RequestEvent) error {
@@ -589,6 +636,12 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		log.Printf("pkg_install: failed to snapshot migrations after apply: %v", afterErr)
 	}
 	appliedNow := newMigrationFiles(migrationsBefore, migrationsAfter)
+	// Narrow the install's migration delta to the files this package actually
+	// owns (per the generator's attribution map). For a normal single-package
+	// install appliedNow is already exactly this package's files, but the
+	// intersection is the source of truth a per-package version revert reads, so
+	// record it explicitly rather than relying on the delta staying clean.
+	pkgMigrationFiles := intersectStrings(appliedNow, migrationsForPackage(manifest.Slug))
 
 	// Rebuild web bundle. expo export runs from the app dir and writes to
 	// <appDir>/dist.
@@ -631,15 +684,16 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	// build.json on disk mirrors the pkg_build record so a build is self-describing
 	// for offline restore.
 	buildFields := map[string]any{
-		"build_id":           buildID,
-		"pkg_slug":           manifest.Slug,
-		"npm_package":        job.NpmPkg,
-		"version":            manifest.Version,
-		"action":             "install",
-		"binary_archived":    manifest.HasServer,
-		"release_id":         releaseID,
-		"migrations_applied": len(appliedNow),
-		"migration_files":    appliedNow,
+		"build_id":            buildID,
+		"pkg_slug":            manifest.Slug,
+		"npm_package":         job.NpmPkg,
+		"version":             manifest.Version,
+		"action":              "install",
+		"binary_archived":     manifest.HasServer,
+		"release_id":          releaseID,
+		"migrations_applied":  len(appliedNow),
+		"migration_files":     appliedNow,
+		"pkg_migration_files": pkgMigrationFiles,
 	}
 	_, archiveCleanup, archErr := archiveBuild(appDir, buildID, stageDest, manifest.HasServer, buildFields)
 	if archErr != nil {
