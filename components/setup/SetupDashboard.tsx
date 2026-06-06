@@ -9,6 +9,7 @@ import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
 import { useCallback, useEffect, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
+import { BuildHistoryTab } from './BuildHistoryTab'
 import { PackageManager } from './PackageManager'
 
 const mailInstalled = packageRegistry.some(p => p.slug === 'mail')
@@ -65,7 +66,7 @@ interface SetupDashboardProps {
     defaultTab?: SetupTab
 }
 
-type SetupTab = 'organizations' | 'packages'
+type SetupTab = 'organizations' | 'packages' | 'builds'
 
 export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardProps) {
     const primaryBg = useThemeColor('primary')
@@ -92,9 +93,18 @@ export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardPr
                     inactiveColor={mutedColor}
                     textColor={fgColor}
                 />
+                <TabButton
+                    label="Build History"
+                    isActive={activeTab === 'builds'}
+                    onPress={() => setActiveTab('builds')}
+                    activeColor={primaryBg}
+                    inactiveColor={mutedColor}
+                    textColor={fgColor}
+                />
             </View>
             <OrganizationsTab isVisible={activeTab === 'organizations'} pb={pb} />
             <PackagesTab isVisible={activeTab === 'packages'} pb={pb} />
+            <BuildHistoryTab isVisible={activeTab === 'builds'} pb={pb} />
         </View>
     )
 }
