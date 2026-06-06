@@ -327,8 +327,10 @@ COPY --from=go-builder /ws/app/server/tinycld ./tinycld
 COPY --from=web-builder /ws/app/release-staging /workspace/app/release-staging
 RUN mkdir -p /workspace/app/public /workspace/app/releases
 
-# Migrations with symlinks already resolved in web-builder.
-COPY --from=web-builder /ws/app/server/pb_migrations ./pb_migrations
+# Migrations: see the symlink set up after the full server tree is copied
+# below. (The runtime jsvm reads /workspace/app/pb_migrations; the generator +
+# in-app installer write to /workspace/app/server/pb_migrations — we make the
+# former a symlink to the latter so all three agree.)
 
 # Workspace-root files for the runtime scripts + in-app package-install
 # pipeline. These live at the workspace ROOT in the new layout: the root
@@ -384,6 +386,18 @@ COPY --from=web-builder /ws/app/assets ./assets
 # `replace => ../../core/server` and go.work `use ../../node_modules/...` paths
 # resolve against the members + node_modules copied above.
 COPY --from=go-builder /ws/app/server/ ./server/
+
+# Point the runtime migrations dir at the generator/installer's migrations dir.
+# jsvm reads /workspace/app/pb_migrations; the generator (and the in-app
+# installer when it regenerates after installing a package) writes migration
+# symlinks into /workspace/app/server/pb_migrations. Symlinking the former to
+# the latter means a newly-installed package's migrations are immediately
+# visible to the runtime and actually apply on the post-install restart —
+# without this, installed-package migrations land only in server/pb_migrations
+# and silently never run. Build-time (bundled) migrations live in
+# server/pb_migrations too (resolved real files from the go-builder COPY above),
+# so this unifies build + runtime + installer on one directory.
+RUN rm -rf ./pb_migrations && ln -s server/pb_migrations ./pb_migrations
 
 # bundled-packages.json so core's coreserver.SyncBundledPackages can find it at
 # startup. Generated at app/server/bundled-packages.json; the binary reads it
