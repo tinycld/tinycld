@@ -121,6 +121,35 @@ jobs:
           # Drop the pinned lockfile into the workspace root so the Dockerfile's
           # `pnpm install --frozen-lockfile` reproduces the exact dependency set.
           cp "${LOCKFILE}" pnpm-lock.yaml
+          # Hand the manifest to the Docker build so it's baked into the image
+          # and served by /api/release (the About panel reads it). The wildcard
+          # COPY in the Dockerfile makes it optional, so this is the only wiring.
+          cp "${MANIFEST}" app/.release-manifest
+
+      # Derive OCI labels (standard image.* + custom tinycld.packages) from the
+      # pinned manifest so `docker inspect` and registry UIs show exactly which
+      # package versions this image bundles. `org.tinycld.packages` is a compact
+      # comma-separated app=tag,member=tag list.
+      - name: Compute image labels
+        id: labels
+        working-directory: ws
+        run: |
+          set -euo pipefail
+          MANIFEST=".release-assets/manifest.json"
+          APP_TAG=$(jq -r '.appTag' "$MANIFEST")
+          APP_SHA=$(jq -r '.appSha' "$MANIFEST")
+          RELEASED_AT=$(jq -r '.releasedAt' "$MANIFEST")
+          PKGS=$(jq -r '[ "app=" + .appTag ] + [ .members[] | .name + "=" + .tag ] | join(",")' "$MANIFEST")
+          {
+            echo "labels<<EOF"
+            echo "org.opencontainers.image.version=${APP_TAG}"
+            echo "org.opencontainers.image.revision=${APP_SHA}"
+            echo "org.opencontainers.image.created=${RELEASED_AT}"
+            echo "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            echo "org.tinycld.packages=${PKGS}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Packages: ${PKGS}"
 
       - name: Build and push by digest
         id: build
@@ -129,6 +158,7 @@ jobs:
           context: ws
           file: ws/app/Dockerfile
           platforms: ${{ matrix.platform }}
+          labels: ${{ steps.labels.outputs.labels }}
           # Cache scoped per-platform so the two jobs don't trample each
           # other's layers. Cache hit speeds repeat builds dramatically.
           cache-from: type=gha,scope=${{ matrix.cache_scope }}
@@ -185,6 +215,33 @@ jobs:
         id: image
         run: echo "name=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/tinycld" >> "$GITHUB_OUTPUT"
 
+      # Per-arch labels live on the child manifests; the multi-arch index needs
+      # annotations set explicitly. Re-download the pinned manifest (this job has
+      # no ws/ checkout) and build the same inventory as index annotations.
+      - name: Compute index annotations
+        id: annotations
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-${{ github.event.release.tag_name }}}"
+          mkdir -p /tmp/rel
+          gh release download "${TAG}" -R "${GITHUB_REPOSITORY}" -p manifest.json --dir /tmp/rel
+          MANIFEST="/tmp/rel/manifest.json"
+          APP_TAG=$(jq -r '.appTag' "$MANIFEST")
+          APP_SHA=$(jq -r '.appSha' "$MANIFEST")
+          RELEASED_AT=$(jq -r '.releasedAt' "$MANIFEST")
+          PKGS=$(jq -r '[ "app=" + .appTag ] + [ .members[] | .name + "=" + .tag ] | join(",")' "$MANIFEST")
+          {
+            echo "args<<EOF"
+            echo "--annotation=index:org.opencontainers.image.version=${APP_TAG}"
+            echo "--annotation=index:org.opencontainers.image.revision=${APP_SHA}"
+            echo "--annotation=index:org.opencontainers.image.created=${RELEASED_AT}"
+            echo "--annotation=index:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}"
+            echo "--annotation=index:org.tinycld.packages=${PKGS}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Derive tags
         id: tags
         uses: docker/metadata-action@v5
@@ -228,7 +285,15 @@ jobs:
             src_args="$src_args ${{ steps.image.outputs.name }}@sha256:${f}"
           done
 
-          docker buildx imagetools create $tag_args $src_args
+          # Index annotations carry the package-version inventory on the
+          # multi-arch manifest list itself (one --annotation arg per line).
+          annotation_args=()
+          while IFS= read -r ann; do
+            [ -z "$ann" ] && continue
+            annotation_args+=("$ann")
+          done <<< '${{ steps.annotations.outputs.args }}'
+
+          docker buildx imagetools create "${annotation_args[@]}" $tag_args $src_args
 
       - name: Inspect published manifest
         run: |

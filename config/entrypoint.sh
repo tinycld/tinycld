@@ -143,11 +143,16 @@ promote_release() {
     fi
 
     if [ ! -d "$dst" ]; then
-        echo "[entrypoint] promoting release $release_id ($src -> $dst, app.html + release-id.txt only)"
+        echo "[entrypoint] promoting release $release_id ($src -> $dst, app.html + release-id.txt + manifest.json)"
         rm -rf "$dst.tmp"
         mkdir "$dst.tmp"
         cp -a "$src/app.html" "$dst.tmp/"
         cp -a "$src/release-id.txt" "$dst.tmp/"
+        # manifest.json is present only on release builds (pinned-release recipe);
+        # the /api/release handler degrades gracefully when it's absent.
+        if [ -f "$src/manifest.json" ]; then
+            cp -a "$src/manifest.json" "$dst.tmp/"
+        fi
         mv "$dst.tmp" "$dst"
         echo "[entrypoint] promotion complete; size=$(du -sh "$dst" 2>/dev/null | cut -f1)"
     else
