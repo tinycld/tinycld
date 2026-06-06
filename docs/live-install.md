@@ -280,7 +280,43 @@ means the POST never fired (e.g. a UI selector targeting the wrong element).
 `tests/install/run-todo-install.sh`) exercises this whole path end to end: it
 builds an image from the working tree, walks `/setup`, installs
 `github:tinycld/todo`, and asserts the package is registered, its collection
-exists (migration applied), and its route is reachable after the relaunch. It is
-**runner-only** — gated behind `RUN_TODO_INSTALL_TEST=1` and excluded from
-normal CI — because it builds a purpose-made image and runs a real
-minutes-long install.
+exists (migration applied), and its route is reachable after the relaunch.
+
+Run it from the app member (needs Docker):
+
+```sh
+cd app
+bash tests/install/run-todo-install.sh
+```
+
+The runner builds the image from the current working tree, boots it, scrapes the
+setup token from the container logs, and drives the Playwright spec in a
+standalone sandbox. Env knobs:
+
+| Var | Effect |
+| --- | --- |
+| `IMAGE=<tag>` | Skip the build and test an existing image tag (e.g. one you built earlier). |
+| `KEEP=1` | Leave the container running after the run for manual inspection. |
+| `PW_BASE_URL` | Override the container URL (default `http://localhost:7090`). |
+
+```sh
+# Reuse an already-built image and leave it up to poke at afterwards:
+IMAGE=tinycld-todo-test KEEP=1 bash tests/install/run-todo-install.sh
+```
+
+The spec is **runner-only** — it hard-skips unless `RUN_TODO_INSTALL_TEST=1` is
+set (the runner sets it) and lives outside `tests/e2e/`, so it never runs in the
+normal `tinycld-pkg test:e2e` suite or the docker smoke workflow. It builds a
+purpose-made image and runs a real, minutes-long install (the server `go build`
+downloads its deps from the network), so it's not part of routine CI.
+
+Because the install can outlast Playwright's wait on a cold `go build`, the
+authoritative result is the container log, not the Playwright exit code:
+
+```sh
+docker logs tinycld-todo-test | grep -E 'COMPLETE status=|Restart requested|Server started'
+```
+
+A successful run shows `COMPLETE status=success`, then the relaunch
+(`Restart requested` → `Health check passed` → a fresh `Server started`), with
+the container still up and `Todo` present in `pkg_registry` as `installed`.
