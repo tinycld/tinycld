@@ -21,7 +21,7 @@ describe('generate.ts (smoke, real workspace)', () => {
         fs.writeFileSync(rootSentinel, '// app-owned root file, must survive generation\n')
         fs.writeFileSync(subSentinel, '// app-owned subdir file, must survive generation\n')
         try {
-            execFileSync('node_modules/.bin/tsx', ['app/scripts/generate.ts'], {
+            execFileSync('node_modules/.bin/tsx', ['tinycld/scripts/generate.ts'], {
                 cwd: path.resolve(APP_DIR, '..'),
                 stdio: 'pipe',
             })

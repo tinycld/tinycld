@@ -118,6 +118,14 @@ describe('buildBundledPackages', () => {
                 description: 'Email',
                 hasServer: true,
                 navOrder: 10,
+                manifestJson: JSON.stringify({
+                    name: 'Mail',
+                    slug: 'mail',
+                    version: '0.1.0',
+                    description: 'Email',
+                    nav: { label: 'Mail', icon: 'mail', order: 10 },
+                    server: { package: 'server', module: 'tinycld.org/packages/mail' },
+                }),
             },
             {
                 name: 'Calc',
@@ -127,6 +135,12 @@ describe('buildBundledPackages', () => {
                 description: '',
                 hasServer: false,
                 navOrder: 0,
+                manifestJson: JSON.stringify({
+                    name: 'Calc',
+                    slug: 'calc',
+                    version: '0.2.0',
+                    description: '',
+                }),
             },
         ])
     })

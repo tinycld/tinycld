@@ -52,7 +52,7 @@ function buildMemberDirIndex(): Map<string, string> {
             const name = JSON.parse(fs.readFileSync(corePkg, 'utf8')).name
             if (name === '@tinycld/core') index.set('@tinycld/core', nestedCore)
         } catch {
-            // no nested core — leave unset (lean shells still have core via the repo)
+            // no nested core/package.json (e.g. a synthetic test tree) — leave unset
         }
     }
     return index
