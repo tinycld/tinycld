@@ -30,6 +30,10 @@ export interface PackageManifest {
     help?: { directory: string }
     repository?: { url: string; issueTemplate?: string }
     dependencies?: string[]
+    // Semver ranges this version requires of other packages / @tinycld/core,
+    // enforced by the version-management compatibility solver. See the
+    // PackageManifest doc in core/lib/packages/types.ts.
+    peerVersions?: Record<string, string>
 }
 
 // Import a member's manifest.ts (ESM default export). This file is run via tsx,

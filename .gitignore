@@ -53,6 +53,7 @@ server/pb_test_data/
 /server/go.work
 /server/go.work.sum
 /server/bundled-packages.json
+/server/pb_migrations_owner.json
 /server/pb_migrations/
 /server/pb_hooks/
 /server/tinycld

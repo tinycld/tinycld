@@ -174,32 +174,99 @@ function readHelpGroup(src: Feature): HelpGroupInput | null {
 }
 
 // --- 6. server: migration + hook symlinks ------------------------------
+// The symlink merge flattens every package's pb-migrations/ into one directory,
+// which is what PocketBase needs but loses each migration's owning package.
+// Per-package version changes (apply/revert a single package's named migrations
+// without touching others) need that attribution back, so as we link we record a
+// migration-file → owning-slug map and emit it as pb_migrations_owner.json for
+// the Go server to read at boot. Core migrations are owned by slug 'core'.
 function symlinkServerArtifacts(features: Feature[]) {
     fs.mkdirSync(SERVER_DIR, { recursive: true })
     cleanDir(MIGRATIONS_DIR)
     cleanDir(HOOKS_DIR)
+    const migrationOwners: Record<string, string> = {}
+    // Tracks hook filenames across packages to reject cross-package collisions in
+    // the flat HOOKS_DIR (not persisted — purely a guard).
+    const hookOwners: Record<string, string> = {}
     // core migrations first (core has no manifest; include explicitly)
     linkDirContents(
         path.join(memberDir('@tinycld/core'), 'server', 'pb_migrations'),
-        MIGRATIONS_DIR
+        MIGRATIONS_DIR,
+        'core',
+        migrationOwners
     )
     for (const f of features) {
         if (f.manifest.migrations?.directory) {
-            linkDirContents(path.join(f.dir, f.manifest.migrations.directory), MIGRATIONS_DIR)
+            linkDirContents(
+                path.join(f.dir, f.manifest.migrations.directory),
+                MIGRATIONS_DIR,
+                f.manifest.slug,
+                migrationOwners
+            )
         }
         if (f.manifest.hooks?.directory) {
-            linkDirContents(path.join(f.dir, f.manifest.hooks.directory), HOOKS_DIR)
+            linkDirContents(
+                path.join(f.dir, f.manifest.hooks.directory),
+                HOOKS_DIR,
+                f.manifest.slug,
+                hookOwners,
+                'hook'
+            )
         }
     }
+    fs.writeFileSync(
+        path.join(SERVER_DIR, 'pb_migrations_owner.json'),
+        `${JSON.stringify(migrationOwners, null, 2)}\n`
+    )
 }
 
 // Symlink every regular file in `srcDir` into `destDir` (no-op if srcDir absent).
-function linkDirContents(srcDir: string, destDir: string) {
+// When ownerSlug + owners are supplied, each linked filename is recorded as owned
+// by ownerSlug. A filename collision across packages is a hard error: the flat
+// migrations/hooks dirs require globally-unique filenames, and a silent overwrite
+// would mis-attribute the file and let one package clobber another's (for hooks,
+// silently dropping a package's hook). `kind` only labels the error message.
+function linkDirContents(
+    srcDir: string,
+    destDir: string,
+    ownerSlug?: string,
+    owners?: Record<string, string>,
+    kind: 'migration' | 'hook' = 'migration'
+) {
     if (!fs.existsSync(srcDir)) return
     for (const file of fs.readdirSync(srcDir)) {
         const srcPath = path.join(srcDir, file)
         if (!fs.statSync(srcPath).isFile()) continue
+        if (owners && ownerSlug) {
+            if (owners[file] && owners[file] !== ownerSlug) {
+                throw new Error(
+                    `[generate] ${kind} filename collision: '${file}' is provided by both ` +
+                        `'${owners[file]}' and '${ownerSlug}'. ${kind} filenames must be globally unique.`
+                )
+            }
+            owners[file] = ownerSlug
+        }
         replaceSymlink(srcPath, path.join(destDir, file))
+    }
+}
+
+// buildCoreManifest synthesizes a minimal manifest for @tinycld/core (which has
+// no manifest.ts) so it can be seeded into pkg_registry. Only the fields the
+// registry seed + compatibility solver read are populated: name, slug, version,
+// and any peerVersions core itself declares (read from core/package.json under a
+// `tinycld.peerVersions` key, if present). nav is omitted so core never appears
+// in the nav rail.
+function buildCoreManifest(): PackageManifest {
+    const corePkgJson = JSON.parse(
+        fs.readFileSync(path.join(memberDir('@tinycld/core'), 'package.json'), 'utf8')
+    )
+    const peerVersions = corePkgJson.tinycld?.peerVersions as Record<string, string> | undefined
+    return {
+        name: '@tinycld/core',
+        slug: 'core',
+        version: corePkgJson.version ?? '',
+        description: 'Shared core library',
+        ...(peerVersions ? { peerVersions } : {}),
     }
 }
 
@@ -313,9 +380,17 @@ async function main() {
 
     symlinkServerArtifacts(features)
     emitGoWiring(features)
+    // Seed a synthetic `core` manifest so @tinycld/core gets a pkg_registry row.
+    // core has no manifest.ts and isn't a feature, but the compatibility solver
+    // needs core's version resolvable so other packages' `@tinycld/core` peer
+    // ranges can be satisfied (otherwise every such constraint is unsatisfiable).
+    const coreManifest = buildCoreManifest()
     fs.writeFileSync(
         path.join(SERVER_DIR, 'bundled-packages.json'),
-        buildBundledPackages(features.map(f => ({ manifest: f.manifest })))
+        buildBundledPackages([
+            { manifest: coreManifest },
+            ...features.map(f => ({ manifest: f.manifest })),
+        ])
     )
 
     console.log(`Generated config for ${features.length} feature package(s).`)

@@ -73,6 +73,12 @@ interface BundledPkgInput {
 
 // Emit server/bundled-packages.json — consumed by core's Go
 // coreserver.SyncBundledPackages at boot to seed the pkg_registry collection.
+//
+// `manifestJson` carries the FULL manifest object as a string so the seeded
+// `pkg_registry.manifest_json` matches what an installed package stores (via
+// parseManifestViaNode → upsertPkgRegistry). The compatibility solver reads
+// `peerVersions` out of this; without it, bundled packages would carry no
+// constraints and the solver would silently never block anything.
 export function buildBundledPackages(features: BundledPkgInput[]): string {
     const rows = features.map(f => ({
         name: f.manifest.name,
@@ -82,6 +88,7 @@ export function buildBundledPackages(features: BundledPkgInput[]): string {
         description: f.manifest.description ?? '',
         hasServer: !!f.manifest.server,
         navOrder: f.manifest.nav?.order ?? 0,
+        manifestJson: JSON.stringify(f.manifest),
     }))
     return `${JSON.stringify(rows, null, 2)}\n`
 }
