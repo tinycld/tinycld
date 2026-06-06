@@ -601,7 +601,7 @@ function startProxy(opts: { proxyPort: number; pbPort: number; expoPort: number;
         server = http.createServer(handler)
     }
     server.on('upgrade', onUpgrade)
-    server.listen(opts.proxyPort, '127.0.0.1')
+    server.listen(opts.proxyPort, '0.0.0.0')
     return server
 }
 
