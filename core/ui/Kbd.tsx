@@ -15,6 +15,7 @@ export function Kbd({ keys }: KbdProps) {
     return (
         <View className="flex-row items-center gap-1">
             {groups.map((parts, atomIndex) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: static shortcut atoms parsed from a fixed key string, never reordered
                 <KbdBadge key={atomIndex} parts={parts} />
             ))}
         </View>

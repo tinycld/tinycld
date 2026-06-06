@@ -11,6 +11,7 @@ const stableProviderChain: ProviderComp[] = Object.values(packageProviders).filt
 
 export function PackageProviderWrapper({ children }: { children: ReactNode }) {
     const chain = stableProviderChain.reduceRight<ReactNode>(
+        // biome-ignore lint/suspicious/noArrayIndexKey: fixed provider chain derived once at module load, never reordered
         (acc, Provider, i) => <Provider key={i}>{acc}</Provider>,
         children
     )

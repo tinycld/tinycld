@@ -13,6 +13,7 @@ const viewerSession: ShareSession = {
     name: 'Q1 Report',
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     orgName: 'Acme Inc',
+    orgSlug: 'acme',
 }
 
 const commentorSession: ShareSession = {

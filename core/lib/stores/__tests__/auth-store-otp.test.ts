@@ -46,10 +46,11 @@ vi.mock('@tinycld/core/lib/store', () => ({
             state = { ...state, ...patch }
         }
         const get = () => state
-        const methods = (fn as (set: typeof set, get: typeof get) => Record<string, unknown>)(
-            set,
-            get
-        )
+        type Factory = (
+            set: (patch: Record<string, unknown>) => void,
+            get: () => Record<string, unknown>
+        ) => Record<string, unknown>
+        const methods = (fn as Factory)(set, get)
         state = { ...state, ...methods }
         const store = (selector: (s: typeof state) => unknown) => selector(state)
         store.getState = () => state
@@ -82,7 +83,7 @@ describe('auth-store OTP methods', () => {
         vi.resetModules()
         // Re-import after resetting modules so mocks are fresh
         const { useAuthStore } = await import('@tinycld/core/lib/stores/auth-store')
-        const state = useAuthStore.getState() as Record<string, unknown>
+        const state = useAuthStore.getState() as unknown as Record<string, unknown>
         requestShareOtp = state.requestShareOtp as typeof requestShareOtp
         verifyShareOtp = state.verifyShareOtp as typeof verifyShareOtp
     })

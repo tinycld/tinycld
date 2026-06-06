@@ -129,14 +129,17 @@ class HelpRenderer extends Renderer {
             <View key={this.getKey()} style={outer}>
                 <View style={rowFlex}>
                     {header.map((cell, i) => (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: static table header cells from parsed markdown, never reordered
                         <View key={`h-${i}`} style={cellFlexFor(i)}>
                             {cell}
                         </View>
                     ))}
                 </View>
                 {rows.map((row, ri) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: static table rows from parsed markdown, never reordered
                     <View key={`r-${ri}`} style={rowFlex}>
                         {row.map((cell, ci) => (
+                            // biome-ignore lint/suspicious/noArrayIndexKey: static table cells from parsed markdown, never reordered
                             <View key={`c-${ri}-${ci}`} style={cellFlexFor(ci)}>
                                 {cell}
                             </View>
