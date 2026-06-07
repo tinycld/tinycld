@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -182,6 +183,14 @@ func appendToEmailLog(entry loggedEmail) {
 	}
 	fileLogMu.Lock()
 	defer fileLogMu.Unlock()
+
+	// Ensure the parent dir exists: O_CREATE makes the file but not the
+	// directory. In e2e the webServer (and thus PB) can boot and send the
+	// first email before globalSetup has created tmp/, so create it here.
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "[mailer] failed to create email log dir %q: %v\n", filepath.Dir(path), err)
+		return
+	}
 
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
