@@ -15,6 +15,14 @@
         "moduleResolution": "bundler",
         "customConditions": ["react-native"],
         "noEmit": true,
+        // vitest-config.ts re-exports the app shell's config by explicit `.ts`
+        // path (`../vitest.config.ts`). The extension is required because feature
+        // siblings reach the shim through core's package `exports` map, so its
+        // re-export is resolved by Node's ESM loader (which doesn't infer
+        // extensions) rather than vite. noEmit + bundler resolution make this the
+        // TS-intended config for importing `.ts` directly, not a workaround.
+        // Scoped to core's own compile; siblings extend tsconfig.package-base.json.
+        "allowImportingTsExtensions": true,
         "resolveJsonModule": true,
         "skipLibCheck": true,
         "target": "ESNext",
