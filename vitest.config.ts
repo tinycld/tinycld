@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config'
 // `include` glob (or a positional filter) at one package's tests/, but always
 // resolve through these aliases so cross-package `@tinycld/core/*` imports and
 // the `~/*` package-source alias work identically everywhere.
-const APP_DIR = __dirname
+const APP_DIR = import.meta.dirname
 const CORE_DIR = path.join(APP_DIR, 'core')
 
 export default defineConfig({

@@ -38,7 +38,8 @@
         ],
         "./Providers": "./components/Providers.tsx",
         "./tsconfig.package-base.json": "./tsconfig.package-base.json",
-        "./uniwind-types": "./uniwind-types.d.ts"
+        "./uniwind-types": "./uniwind-types.d.ts",
+        "./vitest-config": "./vitest-config.ts"
     },
     "scripts": {
         "typecheck": "tinycld-pkg typecheck",

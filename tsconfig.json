@@ -4,6 +4,11 @@
         "strict": true,
         "module": "Preserve",
         "moduleResolution": "Bundler",
+        // The app's `include` pulls in nested core/, incl. core/vitest-config.ts,
+        // which re-exports the app config by explicit `.ts` path. typecheck runs
+        // `tsc --noEmit`, so allowing the extension here is valid and matches
+        // core/tsconfig.json. See core/vitest-config.ts for why the extension.
+        "allowImportingTsExtensions": true,
         "skipLibCheck": true,
         "jsx": "react-jsx",
         "noImplicitAny": false,
