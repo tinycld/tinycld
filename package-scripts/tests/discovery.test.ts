@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { discover } from '../src/discovery'
+import { discover, isAppShellName } from '../src/discovery'
 
 // Build a fake workspace: <ws>/{app,contacts,core} with app named "app".
 function makeWs(): string {
@@ -40,6 +40,13 @@ describe('discover', () => {
     it('identifies the app shell member (name "app")', () => {
         const d = discover(path.join(ws, 'contacts'))
         expect(path.basename(d.appDir)).toBe('app')
+    })
+
+    it('recognizes the app shell by either "tinycld" or the legacy "app" name', () => {
+        expect(isAppShellName('tinycld')).toBe(true)
+        expect(isAppShellName('app')).toBe(true)
+        expect(isAppShellName('@tinycld/contacts')).toBe(false)
+        expect(isAppShellName(null)).toBe(false)
     })
 
     it('infers the current package from cwd (feature with manifest.ts)', () => {

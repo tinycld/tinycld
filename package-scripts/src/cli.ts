@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { type CurrentPackage, discover } from './discovery'
+import { type CurrentPackage, discover, isAppShellName } from './discovery'
 import { runAll } from './orchestrator'
 import {
     buildCheckCommands,
@@ -52,8 +52,8 @@ function allTargets(workspaceRoot: string, appDir: string, verb: Verb): CurrentP
             fs.existsSync(path.join(dir, 'manifest.ts')) ||
             fs.existsSync(path.join(dir, 'manifest.js'))
         if (hasManifest && pj.name) targets.push({ dir, name: pj.name, kind: 'feature' })
-        else if (dir === appDir && pj.name === 'app' && verb !== 'test:e2e')
-            targets.push({ dir, name: 'app', kind: 'app' })
+        else if (dir === appDir && isAppShellName(pj.name) && verb !== 'test:e2e')
+            targets.push({ dir, name: pj.name, kind: 'app' })
         // core: shared lib, no manifest, no e2e — but typecheck/test/check it.
         else if (pj.name === '@tinycld/core' && verb !== 'test:e2e')
             targets.push({ dir, name: '@tinycld/core', kind: 'core' })

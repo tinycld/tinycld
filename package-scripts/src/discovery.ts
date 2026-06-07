@@ -12,6 +12,12 @@ export interface Discovery {
     currentPackage: CurrentPackage | null
 }
 
+// The app-shell member package was renamed "app" → "tinycld". Accept either so
+// this shared CLI works against workspaces assembled before or after the rename.
+export function isAppShellName(name: string | null | undefined): name is 'tinycld' | 'app' {
+    return name === 'tinycld' || name === 'app'
+}
+
 function readName(dir: string): string | null {
     try {
         return JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).name ?? null
@@ -55,17 +61,18 @@ function findWorkspaceRoot(start: string): string {
     }
 }
 
-// The app shell = the workspace member whose package.json name is "app".
+// The app shell = the workspace member whose package.json name is "tinycld"
+// (formerly "app").
 function findAppDir(workspaceRoot: string): string {
     for (const entry of fs.readdirSync(workspaceRoot)) {
         const dir = path.join(workspaceRoot, entry)
         try {
-            if (fs.statSync(dir).isDirectory() && readName(dir) === 'app') return dir
+            if (fs.statSync(dir).isDirectory() && isAppShellName(readName(dir))) return dir
         } catch {
             // skip
         }
     }
-    throw new Error(`No app shell (member named "app") under ${workspaceRoot}`)
+    throw new Error(`No app shell (member named "tinycld") under ${workspaceRoot}`)
 }
 
 // The current scope target = nearest ancestor of cwd that is a feature package
@@ -78,7 +85,7 @@ function findCurrentPackage(start: string, appDir: string): CurrentPackage | nul
     while (true) {
         if (fs.existsSync(path.join(dir, 'package.json'))) {
             const name = readName(dir)
-            if (dir === appDir && name === 'app') return { dir, name, kind: 'app' }
+            if (dir === appDir && isAppShellName(name)) return { dir, name, kind: 'app' }
             if (name === '@tinycld/core') return { dir, name, kind: 'core' }
             if (hasManifest(dir) && name) return { dir, name, kind: 'feature' }
         }
