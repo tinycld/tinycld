@@ -10,11 +10,25 @@ import { InstallProgressModal } from './InstallProgressModal'
 import { PackageStatusBadge } from './PackageStatusBadge'
 import {
     type CompatViolation,
+    compareVersions,
     type DropReport,
     type PackageVersionInfo,
     type PendingChange,
     usePackageVersions,
 } from './use-package-versions'
+
+// Git tags come back `v`-prefixed (v1.0.0) while the registry's `current` is the
+// bare manifest version (1.0.0), so a raw `===` never matches across the two.
+// Compare by semver value instead (compareVersions tolerates a leading `v`).
+function sameVersion(a: string, b: string): boolean {
+    return compareVersions(a, b) === 0
+}
+
+// Strip a leading `v` for display so a `v`-prefixed git tag doesn't render as
+// `vv1.0.0` once the `v` prefix is re-added in the option label.
+function bareVersion(v: string): string {
+    return v.replace(/^v/, '')
+}
 
 interface PackageVersionsTabProps {
     isVisible: boolean
@@ -252,9 +266,16 @@ function VersionRow({
 }
 
 function buildVersionOptions(info: PackageVersionInfo) {
-    const list = info.available.length > 0 ? info.available : info.current ? [info.current] : []
+    // available is typed string[] but the server can omit it (nil slice → JSON
+    // null) for unknown-source packages; guard so a stale/edge response can't crash
+    // the whole tab on `.length`.
+    const available = info.available ?? []
+    const list = available.length > 0 ? available : info.current ? [info.current] : []
+    // `value` keeps the raw discovered string (the git tag, e.g. `v1.0.0`) so it
+    // round-trips to the install spec; `label` displays the bare version and marks
+    // the current one via a semver-aware compare (tag vs bare registry version).
     return list.map(v => ({
-        label: v === info.current ? `v${v} (current)` : `v${v}`,
+        label: sameVersion(v, info.current) ? `v${bareVersion(v)} (current)` : `v${bareVersion(v)}`,
         value: v,
     }))
 }
@@ -275,8 +296,12 @@ function RowVersionSelect({
     onChange: (v: string) => void
 }) {
     const fgColor = useThemeColor('foreground')
-    const selected = options.find(o => o.value === value)
-    const label = selected?.label ?? `v${value}`
+    // `value` is the bare registry version (or a chosen raw-tag target); option
+    // values are raw tags. Match by semver so the current/selected option resolves
+    // its label (e.g. `v1.0.0 (current)`) instead of falling through to a bare
+    // `v1.0.0` that loses the (current) marker.
+    const selected = options.find(o => sameVersion(o.value, value))
+    const label = selected?.label ?? `v${bareVersion(value)}`
 
     if (disabled) {
         return (

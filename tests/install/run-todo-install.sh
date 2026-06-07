@@ -149,66 +149,58 @@ TSCFG
     ./node_modules/.bin/playwright install --with-deps chromium >/dev/null
 )
 
-# 6. Run bootstrap + install tests (everything except the post-restart check).
-echo "[runner] running bootstrap + install"
-(
-    cd "${PW_ROOT}"
-    PW_BASE_URL="${BASE_URL}" \
-    PW_TODO_SETUP_TOKEN="${TOKEN}" \
-    RUN_TODO_INSTALL_TEST=1 \
-    CI=true FORCE_COLOR=0 \
-    ./node_modules/.bin/playwright test --reporter=line,list \
-        -g 'bootstrap|install @tinycld/todo'
-) || { echo "[runner] install phase failed"; dump_logs; exit 1; }
+# Runs a subset of the serial spec, selected by a title grep. The first phase
+# needs the setup token (for the bootstrap wizard); later phases don't. Each
+# call shares the container's persisted state from the prior phase. $1 is the
+# title grep, $2 a human label for failure messages.
+run_phase() {
+    local grep_expr="$1" label="$2"
+    echo "[runner] running ${label}"
+    (
+        cd "${PW_ROOT}"
+        PW_BASE_URL="${BASE_URL}" \
+        PW_TODO_SETUP_TOKEN="${TOKEN}" \
+        RUN_TODO_INSTALL_TEST=1 \
+        CI=true FORCE_COLOR=0 \
+        ./node_modules/.bin/playwright test --reporter=line,list -g "${grep_expr}"
+    ) || { echo "[runner] ${label} phase failed"; dump_logs; exit 1; }
+}
 
-# 7. The install requested a restart. Wait for the container to come back.
-# The restart kills the `docker logs -f` stream, so re-attach it after the
-# container is healthy again to keep capturing the post-restart boot trace.
-echo "[runner] waiting for post-install restart"
-wait_unhealthy "restart down"   # observe the old server exit first
-wait_healthy "post-restart"     # then wait for the new binary to come up
-start_live_log                  # re-attach the live log to the restarted container
+# Waits out one install-class exit-75 restart and re-attaches the live log.
+# The restart kills the `docker logs -f` stream, so re-attach after the new
+# binary is healthy again to keep capturing the post-restart boot trace.
+await_restart() {
+    local label="$1"
+    echo "[runner] waiting for ${label} restart"
+    wait_unhealthy "${label} restart down"   # observe the old server exit first
+    wait_healthy "${label} post-restart"     # then wait for the new binary up
+    start_live_log                            # re-attach to the restarted container
+}
 
-# 8. Run the post-restart verification test.
-echo "[runner] running post-restart verification"
-(
-    cd "${PW_ROOT}"
-    PW_BASE_URL="${BASE_URL}" \
-    RUN_TODO_INSTALL_TEST=1 \
-    CI=true FORCE_COLOR=0 \
-    ./node_modules/.bin/playwright test --reporter=line,list \
-        -g 'after restart'
-) || { echo "[runner] post-restart phase failed"; dump_logs; exit 1; }
+# The flow has THREE install-class restarts (install-v1, upgrade-v2,
+# downgrade-v1). Phases that don't trigger a restart (the verify/tag steps) run
+# in the same invocation as the step before them where possible, but here each
+# verify follows a restart, so they're driven as their own post-restart phase.
 
-# 9. Trigger a revert back to the base build through the Build History UI. Like
-# the install, this requests an exit-75 relaunch (swap archived base binary +
-# migrate down + re-stage base bundle), so it's driven as its own phase.
-echo "[runner] running revert-to-base"
-(
-    cd "${PW_ROOT}"
-    PW_BASE_URL="${BASE_URL}" \
-    RUN_TODO_INSTALL_TEST=1 \
-    CI=true FORCE_COLOR=0 \
-    ./node_modules/.bin/playwright test --reporter=line,list \
-        -g 'revert to the base build'
-) || { echo "[runner] revert phase failed"; dump_logs; exit 1; }
+# Phase 1 — bootstrap the superuser, then install todo pinned to v1.0.0.
+run_phase 'bootstrap|install @tinycld/todo' 'bootstrap + install v1.0.0'
+await_restart "post-install"
 
-# 10. The revert requested a restart. Wait for the container to come back, then
-# re-attach the live log to capture the post-revert boot trace.
-echo "[runner] waiting for post-revert restart"
-wait_unhealthy "revert restart down"
-wait_healthy "post-revert"
-start_live_log
+# Phase 2 — verify v1.0.0 is live (no tags schema) and seed an org + a todo.
+run_phase 'v1.0.0 is live' 'verify v1.0.0'
 
-# 11. Verify todo is gone after the revert to base.
-echo "[runner] running post-revert verification"
-(
-    cd "${PW_ROOT}"
-    PW_BASE_URL="${BASE_URL}" \
-    RUN_TODO_INSTALL_TEST=1 \
-    CI=true FORCE_COLOR=0 \
-    ./node_modules/.bin/playwright test --reporter=line,list \
-        -g 'gone after revert'
-) || { echo "[runner] post-revert phase failed"; dump_logs; exit 1; }
+# Phase 3 — upgrade to v2.0.0 via the Versions tab (applies create_tags UP).
+run_phase 'upgrade todo to v2.0.0' 'upgrade to v2.0.0'
+await_restart "post-upgrade"
 
-echo "[runner] ✅ todo install + revert integration test passed"
+# Phase 4 — verify v2.0.0 is live (tags schema present) and tag a todo.
+run_phase 'v2.0.0 is live' 'verify v2.0.0 + tag'
+
+# Phase 5 — downgrade to v1.0.0 via the Versions tab (runs create_tags DOWN).
+run_phase 'downgrade todo to v1.0.0' 'downgrade to v1.0.0'
+await_restart "post-downgrade"
+
+# Phase 6 — verify the down migration ran: tags schema dropped, TAGS editor gone.
+run_phase 'down migration ran' 'verify down migration'
+
+echo "[runner] ✅ todo install + upgrade + downgrade integration test passed"

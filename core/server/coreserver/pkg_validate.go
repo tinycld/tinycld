@@ -204,6 +204,14 @@ func validateManifest(m *parsedManifest, allowServer bool, bundledSlugs map[stri
 // `npm pack`: either a bare npm package name or one of the git/URL forms
 // npm pack understands natively. Rejects empty input, leading dashes
 // (flag injection), and any shell-metacharacter / whitespace.
+//
+// A git spec may carry a trailing `#<ref>` to pin a tag/branch/commit (e.g.
+// `github:tinycld/todo#v1.0.0`), which `npm pack` resolves by cloning at that
+// ref. `#` isn't part of gitSpecPattern, so the bare spec and the ref are
+// validated separately here: the bare part against gitSpecPattern, the ref
+// against versionTokenPattern (so it can't smuggle a flag or second arg).
+// npm specs never contain `#`, so this only affects git forms — matching how
+// classifySpec / specForVersion strip the ref downstream.
 func validatePackageSpec(spec string) error {
 	if spec == "" {
 		return fmt.Errorf("package spec is required")
@@ -214,7 +222,24 @@ func validatePackageSpec(spec string) error {
 	if shellUnsafePattern.MatchString(spec) {
 		return fmt.Errorf("invalid package spec (unsafe characters): %s", spec)
 	}
-	if npmPackagePattern.MatchString(spec) || npmVersionedPattern.MatchString(spec) || gitSpecPattern.MatchString(spec) {
+
+	// Split off a trailing git ref (`#<ref>`) before pattern-matching. Only a
+	// git-form bare spec may carry one; an npm name with a `#` falls through to
+	// the final error.
+	bare := spec
+	if hash := strings.Index(spec, "#"); hash >= 0 {
+		ref := spec[hash+1:]
+		bare = spec[:hash]
+		if !gitSpecPattern.MatchString(bare) {
+			return fmt.Errorf("invalid package spec (only git specs may pin a #ref): %s", spec)
+		}
+		if !versionTokenPattern.MatchString(ref) {
+			return fmt.Errorf("invalid git ref %q in package spec: %s", ref, spec)
+		}
+		return nil
+	}
+
+	if npmPackagePattern.MatchString(bare) || npmVersionedPattern.MatchString(bare) || gitSpecPattern.MatchString(bare) {
 		return nil
 	}
 	return fmt.Errorf("invalid package spec: %s", spec)

@@ -1,26 +1,43 @@
 import { expect, type Page, test } from '@playwright/test'
 
-// Integration test for installing @tinycld/todo from GitHub through the
-// real in-app package installer. Boots against an already-running
-// container (the runner script builds the image from the working tree so
-// the git-spec validation change is present). Runs serially — every step
-// depends on prior container state, and the install restarts the container.
+// Integration test for the per-package VERSION-CHANGE flow in /setup, driven
+// through the real in-app installer + Versions tab against an already-running
+// container (the runner script builds the image from the working tree so the
+// pinned-git-tag install change is present). Runs serially — every step depends
+// on prior container state, and each install-class operation restarts the
+// container.
 //
-// Install/revert progress streams to a modal over SSE, but the test judges
-// success by polling the server's pkg_install_log status (ground truth),
-// not the modal — an EventSource that connects a hair late can miss the
-// fast early stages, making modal-text assertions inherently racy here.
+// The scenario validates upgrade AND downgrade end-to-end:
+//   1. install @tinycld/todo pinned to v1.0.0 (no tags feature)
+//   2. upgrade to v2.0.0 via the Versions tab (adds the tags/todo_tags schema)
+//   3. tag a todo through the v2 UI (exercises the new feature)
+//   4. downgrade to v1.0.0 via the Versions tab (runs the v2->v1 DOWN migration)
+//   5. prove the down migration ran: tags/todo_tags collections are DROPPED
+//      (collections API) and the in-app TAGS editor is gone (v1 binary).
+//
+// Install/upgrade/downgrade progress streams to a modal over SSE, but the test
+// judges success by polling the server's pkg_install_log status (ground truth),
+// not the modal — an EventSource that connects a hair late can miss the fast
+// early stages, making modal-text assertions inherently racy here.
 //
 // NOT a normal-CI test. It needs a purpose-built docker image (the runner
-// `tests/install/run-todo-install.sh` builds it) and drives a real,
-// minutes-long install (npm pack → pnpm → go build → expo export → restart).
-// It is excluded from `tinycld-pkg test:e2e` by living outside tests/e2e/, and
-// from the docker smoke workflow (which copies only setup-and-packages.spec.ts).
-// As belt-and-suspenders we ALSO hard-skip the whole suite unless the runner
-// opts in via RUN_TODO_INSTALL_TEST=1, so it can never run accidentally if some
-// future config globs tests/install/ into a CI suite. The skip is asserted in a
-// beforeAll inside the describe (below) so every test in the file is skipped as
-// a group when the opt-in is absent.
+// `tests/install/run-todo-install.sh` builds it) and drives three real,
+// minutes-long install-class operations (npm pack → pnpm → go build → expo
+// export → restart). It is excluded from `tinycld-pkg test:e2e` by living
+// outside tests/e2e/, and from the docker smoke workflow (which copies only
+// setup-and-packages.spec.ts). As belt-and-suspenders we ALSO hard-skip the
+// whole suite unless the runner opts in via RUN_TODO_INSTALL_TEST=1, so it can
+// never run accidentally if some future config globs tests/install/ into a CI
+// suite. The skip is asserted in a beforeAll inside the describe (below) so
+// every test in the file is skipped as a group when the opt-in is absent.
+//
+// FIXTURE CONTRACT (repo tinycld/todo): the v1.0.0 tag ships package.json
+// version "1.0.0" and only the create_todo migration; the v2.0.0 tag ships
+// version "2.0.0" and adds create_tags (tags + todo_tags collections, with a
+// down closure that drops both). The Versions feature derives `current` from
+// the installed package.json version and `available` from git tags, so the tag
+// names MUST match the package.json versions for upgrade/downgrade direction to
+// resolve correctly. `main` mirrors v2.0.0.
 const RUN_INSTALL_TEST = process.env.RUN_TODO_INSTALL_TEST === '1'
 
 const SETUP_TOKEN = process.env.PW_TODO_SETUP_TOKEN
@@ -28,7 +45,9 @@ const SETUP_TOKEN = process.env.PW_TODO_SETUP_TOKEN
 const SUPERUSER_EMAIL = 'todo-smoke@example.com'
 const SUPERUSER_PASSWORD = 'TodoSmoke1234!'
 
-const TODO_SPEC = 'github:tinycld/todo'
+// Install pinned to a git TAG via the #ref suffix. validatePackageSpec accepts
+// `<git-spec>#<safe-ref>` and `npm pack` clones the repo at that tag.
+const TODO_SPEC_V1 = 'github:tinycld/todo#v1.0.0'
 
 const TEST_ORG_NAME = 'Todo Org'
 const TEST_ORG_SLUG = 'todo-org'
@@ -36,6 +55,9 @@ const TEST_ORG_OWNER_NAME = 'Todo Owner'
 const TEST_ORG_OWNER_EMAIL = 'owner@todo.example'
 const TEST_ORG_OWNER_PASSWORD = 'OwnerPass1234!'
 const TEST_ORG_MAIL_DOMAIN = 'todo.example'
+
+const TODO_TEXT = 'Buy milk'
+const TAG_TEXT = 'errand'
 
 async function loginAsSuperuser(page: Page, timeoutMs?: number) {
     await page.goto('/setup', timeoutMs ? { timeout: timeoutMs } : undefined)
@@ -50,8 +72,8 @@ async function loginAsSuperuser(page: Page, timeoutMs?: number) {
     )
 }
 
-// After the install-triggered restart the server may briefly refuse
-// connections. Retry the superuser login a few times before giving up.
+// After an install-class restart the server may briefly refuse connections.
+// Retry the superuser login a few times before giving up.
 async function loginAsSuperuserWithRetry(page: Page, attempts = 20) {
     let lastErr: unknown
     for (let i = 0; i < attempts; i++) {
@@ -86,17 +108,52 @@ async function superuserToken(page: Page): Promise<string> {
     return body.token
 }
 
+// Reads the id of the slug's most-recent pkg_install_log row (via the status
+// endpoint), or null if there's no row yet / the server isn't reachable. Used to
+// snapshot the prior operation's row id BEFORE kicking off a new operation, so
+// waitForOpStatus can ignore that stale row (see `notId`).
+async function latestOpId(page: Page, slug: string): Promise<string | null> {
+    let token: string
+    try {
+        token = await superuserToken(page)
+    } catch {
+        return null
+    }
+    let res: Awaited<ReturnType<typeof page.request.get>>
+    try {
+        res = await page.request.get(`/api/admin/packages/status/${slug}`, {
+            headers: { Authorization: token },
+            failOnStatusCode: false,
+        })
+    } catch {
+        return null
+    }
+    if (!res.ok()) return null
+    const body = (await res.json()) as { id?: string }
+    return body.id ?? null
+}
+
 // Polls the admin package-status endpoint (backed by pkg_install_log) until the
-// slug's install reaches `wantStatus`, throwing on a terminal failure. This is
-// the SSE-independent ground truth for "did the background install finish?".
+// slug's operation reaches `wantStatus`, throwing on a terminal failure. This is
+// the SSE-independent ground truth for "did the background operation finish?".
 // Uses page.request so it shares the browser's network context (same origin,
 // so PB_SERVER_ADDR resolution is irrelevant — we hit the same host as the app).
-async function waitForInstallStatus(
+// `wantAction` (e.g. 'install' / 'version_change') ignores stale rows for a
+// different action when more than one operation has run for the slug.
+//
+// `notId` guards against a stale SAME-action row: the status endpoint returns the
+// single most-recent row, and a version-change POST returns 202 and writes its
+// new log row ASYNCHRONOUSLY. Between the click and that write, the latest
+// `version_change` row is still the PRIOR version-change's `success` row — which
+// would falsely satisfy the wait. Pass the prior row's id (snapshot via
+// latestOpId before the click) so a matching id is treated as "not yet started".
+async function waitForOpStatus(
     page: Page,
     slug: string,
     wantStatus: string,
     timeoutMs: number,
-    wantAction?: string
+    wantAction?: string,
+    notId?: string | null
 ) {
     const url = `/api/admin/packages/status/${slug}`
     const deadline = Date.now() + timeoutMs
@@ -110,6 +167,7 @@ async function waitForInstallStatus(
     // Re-mints the token on an auth failure (tokens expire; a restart can also
     // invalidate the session).
     async function readStatusOnce(): Promise<{
+        id?: string
         status?: string
         error?: string
         action?: string
@@ -146,13 +204,15 @@ async function waitForInstallStatus(
         const body = await readStatusOnce()
         if (body) {
             last = `${body.action ?? '?'}/${body.status ?? '?'}`
-            // Only judge the operation we're waiting on. The status endpoint
-            // returns the latest log row; if wantAction is set, ignore rows for a
-            // different action (e.g. a stale install row before the revert row
-            // lands).
+            // Ignore the stale prior-operation row until the new row lands.
+            const isStale = notId != null && body.id === notId
             const actionMatches = !wantAction || body.action === wantAction
-            if (actionMatches && body.status === wantStatus) return
-            if (actionMatches && (body.status === 'failed' || body.status === 'rolled_back')) {
+            if (!isStale && actionMatches && body.status === wantStatus) return
+            if (
+                !isStale &&
+                actionMatches &&
+                (body.status === 'failed' || body.status === 'rolled_back')
+            ) {
                 throw new Error(
                     `${slug} ${body.action} ended ${body.status}: ${body.error ?? '(no error)'}`
                 )
@@ -165,55 +225,180 @@ async function waitForInstallStatus(
     )
 }
 
-// Polls the pkg_build collection until the given build reaches `wantStatus`
-// (e.g. base build → `current` after a revert). This is the unambiguous,
-// SSE-independent signal a revert finished: a revert logs under the TARGET
-// build's slug (for the base build that's "(base image)", not the package
-// slug), so the build record's status — not the install log — is the reliable
-// ground truth. Resilient to the exit-75 restart the revert triggers.
-async function waitForBuildStatus(
+// Reads pkg_registry.version for a slug via the superuser API — the
+// authoritative `current` the Versions feature compares against. Returns null
+// when the registry row or server isn't reachable (e.g. mid-restart).
+async function registryVersion(page: Page, slug: string): Promise<string | null> {
+    let token: string
+    try {
+        token = await superuserToken(page)
+    } catch {
+        return null
+    }
+    const filter = encodeURIComponent(`slug='${slug}'`)
+    let res: Awaited<ReturnType<typeof page.request.get>>
+    try {
+        res = await page.request.get(`/api/collections/pkg_registry/records?filter=${filter}`, {
+            headers: { Authorization: token },
+            failOnStatusCode: false,
+        })
+    } catch {
+        return null
+    }
+    if (!res.ok()) return null
+    const body = (await res.json()) as { items?: Array<{ version?: string }> }
+    return body.items?.[0]?.version ?? null
+}
+
+// Polls registryVersion until the slug reports `wantVersion`. After a version
+// change the registry row is rewritten to the swapped package.json version, so
+// this is the SSE-independent confirmation that a version change took effect.
+async function waitForRegistryVersion(
     page: Page,
-    buildId: string,
-    wantStatus: string,
+    slug: string,
+    wantVersion: string,
     timeoutMs: number
 ) {
     const deadline = Date.now() + timeoutMs
-    let token = await superuserToken(page)
-    let last = 'no-response-yet'
+    let last = 'none'
     while (Date.now() < deadline) {
-        let body: { items?: Array<{ status?: string }> } | null = null
-        try {
-            const filter = encodeURIComponent(`build_id='${buildId}'`)
-            let res = await page.request.get(
-                `/api/collections/pkg_build/records?filter=${filter}`,
-                { headers: { Authorization: token }, failOnStatusCode: false }
-            )
-            if (res.status() === 401 || res.status() === 403) {
-                token = await superuserToken(page)
-                res = await page.request.get(
-                    `/api/collections/pkg_build/records?filter=${filter}`,
-                    { headers: { Authorization: token }, failOnStatusCode: false }
-                )
-            }
-            if (res.ok()) body = await res.json()
-        } catch {
-            // connection reset/refused during the restart window — retry
-        }
-        const status = body?.items?.[0]?.status
-        if (status) {
-            last = status
-            if (status === wantStatus) return
+        const v = await registryVersion(page, slug)
+        if (v) {
+            last = v
+            if (v === wantVersion) return
         }
         await page.waitForTimeout(3_000)
     }
     throw new Error(
-        `build ${buildId} did not reach ${wantStatus} within ${timeoutMs}ms (last=${last})`
+        `${slug} registry version did not reach ${wantVersion} within ${timeoutMs}ms (last=${last})`
     )
+}
+
+// Returns whether a collection exists, via a superuser read of its records
+// endpoint. PocketBase returns 404 for an UNKNOWN COLLECTION (not for an empty
+// record set — a known-but-empty collection returns 200 with items: []), so the
+// 200/404 split is a reliable existence check. This is the ground truth the
+// down-migration assertion rests on: after the v2→v1 downgrade drops `tags`/
+// `todo_tags`, their records endpoints must 404. Any other status (incl.
+// transient mid-restart) returns null so callers retry rather than mis-assert.
+async function collectionExists(page: Page, name: string): Promise<boolean | null> {
+    let token: string
+    try {
+        token = await superuserToken(page)
+    } catch {
+        return null
+    }
+    let res: Awaited<ReturnType<typeof page.request.get>>
+    try {
+        res = await page.request.get(`/api/collections/${name}/records?perPage=1`, {
+            headers: { Authorization: token },
+            failOnStatusCode: false,
+        })
+    } catch {
+        return null
+    }
+    if (res.status() === 200) return true
+    if (res.status() === 404) return false
+    return null
+}
+
+// Polls collectionExists until it reports `want`, tolerating transient nulls.
+async function waitForCollection(page: Page, name: string, want: boolean, timeoutMs: number) {
+    const deadline = Date.now() + timeoutMs
+    let last: boolean | null = null
+    while (Date.now() < deadline) {
+        const exists = await collectionExists(page, name)
+        if (exists !== null) {
+            last = exists
+            if (exists === want) return
+        }
+        await page.waitForTimeout(2_000)
+    }
+    throw new Error(`collection ${name} exists=${last}, wanted ${want} within ${timeoutMs}ms`)
+}
+
+// Logs in as the org owner on a fresh page and navigates to the Todo screen.
+// Returns the page so the caller can interact + close it. The owner session
+// shares this context's cookies/storage (partial isolation), which is fine —
+// we only need a clean tab to drive the org-user login.
+async function openTodoAsOwner(page: Page): Promise<Page> {
+    const orgPage = await page.context().newPage()
+    await orgPage.goto('/')
+    await orgPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
+    await orgPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
+    await orgPage.getByTestId('login-submit').click()
+    await orgPage.waitForURL(/\/a\//, { timeout: 30_000 })
+
+    const todoNav = orgPage.getByTestId('nav-todo')
+    await expect(todoNav).toBeVisible({ timeout: 30_000 })
+    await todoNav.click()
+    // On a freshly-installed/changed package the lazy route chunk is compiled by
+    // Metro on first navigation (cold), which can take a while on the container.
+    await expect(orgPage).toHaveURL(/\/a\/[^/]+\/todo/, { timeout: 120_000 })
+    return orgPage
+}
+
+// Sets a package row's target version in the Versions tab and applies it. The
+// row's version picker is an anchored Menu (RowVersionSelect); options read
+// `v<version>` / `v<version> (current)`. On a downgrade the ConfirmChangesModal
+// requires typing the slug to confirm; on an upgrade it's a plain Apply.
+async function applyVersionChange(
+    page: Page,
+    slug: string,
+    targetLabel: string,
+    opts: { downgrade: boolean }
+) {
+    await page.getByText('Versions', { exact: true }).click()
+
+    // Scope every action to the TARGET package's row. In a full assembly the
+    // Versions tab lists ~9 packages, each with its own `v… (current)` picker, so a
+    // global `.first()` would grab the wrong row (alphabetically calc's picker, not
+    // todo's). Identify the row by its unique descriptor `<slug> · current v…`
+    // (count 1) and climb to the row container, then act only within it.
+    //
+    // The tab fetches /versions on open, which shells out to `git ls-remote`
+    // server-side (seconds, spinner until it resolves) — so gate on the descriptor
+    // with a generous budget for a cold ls-remote before touching the picker.
+    const descriptor = page.getByText(new RegExp(`^${slug} · current v`))
+    await expect(descriptor).toBeVisible({ timeout: 90_000 })
+    // Row container = descriptor's grandparent (Text → column View → row View).
+    const row = descriptor.locator('xpath=../..')
+
+    // Open this row's picker. Its label reads `v<cur> (current)` (the ` (current)`
+    // suffix is unique to the trigger; the descriptor has no parenthetical).
+    const trigger = row.getByText(/^v\d+\.\d+\.\d+ \(current\)$/)
+    await expect(trigger).toBeVisible({ timeout: 30_000 })
+    await trigger.click()
+    // The opened menu renders in a portal (outside the row), so select the option
+    // at page scope by exact label (e.g. `v2.0.0`).
+    await page.getByText(targetLabel, { exact: true }).click()
+
+    // Selecting a target kicks off a 300ms-debounced server compatibility check
+    // (`/versions/check`); the Apply bar button is disabled while it runs. A RN-Web
+    // Pressable's disabled state is opacity-only (no DOM `disabled`), so a click
+    // during the check would silently no-op and the confirm modal would never open.
+    // Wait for the "Checking compatibility…" indicator to clear before applying.
+    await expect(page.getByText('Checking compatibility…')).toBeHidden({ timeout: 30_000 })
+
+    // Apply the pending change, then confirm in the modal that opens.
+    await page.getByText(/^Apply \d+ change/).click()
+
+    if (opts.downgrade) {
+        // Downgrade modal ("Confirm downgrade") gates on typing the slug; the input
+        // placeholder is the comma-joined downgraded slug list.
+        await expect(page.getByText('Confirm downgrade')).toBeVisible({ timeout: 15_000 })
+        await page.getByPlaceholder(slug).fill(slug)
+        await page.getByText('Downgrade', { exact: true }).click()
+    } else {
+        // Upgrade modal ("Apply version changes") confirms with a plain "Apply".
+        await expect(page.getByText('Apply version changes')).toBeVisible({ timeout: 15_000 })
+        await page.getByText('Apply', { exact: true }).last().click()
+    }
 }
 
 test.describe.configure({ mode: 'serial' })
 
-test.describe('todo install', () => {
+test.describe('todo version change', () => {
     // Hard opt-in gate: this whole suite is runner-only (see the file header).
     // Without RUN_TODO_INSTALL_TEST=1 every test is skipped, so the spec can't
     // run in a normal CI suite even if its directory gets globbed in.
@@ -249,7 +434,7 @@ test.describe('todo install', () => {
         await expect(page.getByText('No organizations yet.')).toBeVisible()
     })
 
-    test('install @tinycld/todo from github through the installer UI', async ({ page }) => {
+    test('install @tinycld/todo pinned to v1.0.0 through the installer UI', async ({ page }) => {
         // Generous overall budget: the runtime image has no Go module cache, so
         // the installer's `go build` downloads hundreds of MB AND compiles
         // (CGO/cgo links mupdf + libde265) — minutes on its own — and `expo
@@ -267,44 +452,34 @@ test.describe('todo install', () => {
         // Target by text instead. The field DOES expose a role (TextInput sets
         // accessibilityLabel), so getByRole('textbox', …) is correct there.
         await page.getByText('Install', { exact: true }).click()
-        await page.getByRole('textbox', { name: 'npm Package Name', exact: true }).fill(TODO_SPEC)
+        await page
+            .getByRole('textbox', { name: 'npm Package Name', exact: true })
+            .fill(TODO_SPEC_V1)
         // When the form is open the toggle's text flips to 'Cancel', so only the
         // form's submit reads 'Install'; .last() is defensive against future
         // relabeling, not resolving a present collision.
         await page.getByText('Install', { exact: true }).last().click()
 
-        // The install runs server-side as a background job and the modal streams
-        // its progress over SSE. We DON'T assert on the SSE-streamed modal stages
-        // here: the early stages can blow past in well under a second and an
-        // EventSource that connects a hair late never sees them, making
-        // stage-by-stage assertions inherently racy in this environment. The
-        // authoritative signal that the install succeeded is the server's own
-        // pkg_install_log record reaching status `success` — poll that via the
-        // admin status endpoint (ground truth, independent of the modal). The
-        // install ends by requesting an exit-75 restart; the runner waits for the
-        // relaunch and the next test verifies the package is actually live.
-        await waitForInstallStatus(page, 'todo', 'success', 2_400_000) // up to 40 min
+        // The install runs server-side as a background job and ends by requesting
+        // an exit-75 restart. Judge success by the server's own pkg_install_log
+        // reaching status `success` (ground truth, independent of the SSE modal).
+        await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'install') // up to 40 min
     })
 
-    test('todo is registered, in nav, and reachable after restart', async ({ page }) => {
+    test('v1.0.0 is live, has no tags schema, and an org exists', async ({ page }) => {
         test.setTimeout(300_000)
 
-        // 1. Registry: Todo appears on the Packages tab with an installed badge.
         await loginAsSuperuserWithRetry(page)
-        await expect(page.getByText('Todo', { exact: true })).toBeVisible()
-        await expect(page.getByText('installed', { exact: true }).first()).toBeVisible()
 
-        // 1b. Build History: the install saved a restorable build. The new tab
-        //     lists the todo build as `current` (proves the pkg_build row was
-        //     written and builds/<id>/ archived during the install pipeline), and
-        //     the base build seeded on first boot as `available` — the target the
-        //     later revert test returns to.
-        await page.getByText('Build History', { exact: true }).click()
-        await expect(page.getByText('todo', { exact: true }).first()).toBeVisible()
-        await expect(page.getByText('current', { exact: true }).first()).toBeVisible()
-        await expect(page.getByText('(base image)', { exact: true })).toBeVisible()
+        // 1. Registry records the installed version as 1.0.0 (proves the pinned
+        //    tag install resolved to the v1 tag, whose package.json is 1.0.0).
+        await waitForRegistryVersion(page, 'todo', '1.0.0', 60_000)
 
-        // 2. Create an org to log into — the superuser dashboard isn't the app
+        // 2. v1 ships no tagging — the tags/todo_tags collections must NOT exist.
+        await waitForCollection(page, 'tags', false, 30_000)
+        await waitForCollection(page, 'todo_tags', false, 30_000)
+
+        // 3. Create an org to log into — the superuser dashboard isn't the app
         //    shell; the nav rail lives in the org-scoped app.
         await page.getByText('Organizations', { exact: true }).first().click()
         await page.getByRole('button', { name: 'New Organization' }).click()
@@ -327,86 +502,116 @@ test.describe('todo install', () => {
         await page.getByRole('button', { name: 'Create Organization' }).click()
         await expect(page.getByText(TEST_ORG_NAME, { exact: true })).toBeVisible()
 
-        // 3. Nav + reachable screen: log into the org as the owner, confirm the
-        //    Todo rail entry renders and its screen mounts.
-        // Fresh page for the org-owner session. It shares this context's
-        // cookies/storage with `page` (partial isolation), which is fine —
-        // we only need a clean tab to drive the org-user login.
-        const orgPage = await page.context().newPage()
+        // 4. Seed a todo as the org owner so the upgrade has data to tag later.
+        const orgPage = await openTodoAsOwner(page)
         try {
-            await orgPage.goto('/')
-            await orgPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
-            await orgPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
-            await orgPage.getByTestId('login-submit').click()
-            await orgPage.waitForURL(/\/a\//, { timeout: 30_000 })
-
-            // The Todo nav-rail entry is icon-only; target it by testID. Its
-            // presence proves the installed package was wired into the nav.
-            const todoNav = orgPage.getByTestId('nav-todo')
-            await expect(todoNav).toBeVisible({ timeout: 30_000 })
-            await todoNav.click()
-
-            // The Todo screen mounts at /a/<orgSlug>/todo — the route resolving is
-            // the signal that the installed package's screen is reachable. On a
-            // freshly-installed package the lazy route chunk is compiled by Metro
-            // on first navigation (cold), which can take a while on the container,
-            // so allow generous headroom. We assert the route, not a specific
-            // input inside the third-party Todo screen, whose markup we don't own.
-            await expect(orgPage).toHaveURL(/\/a\/[^/]+\/todo/, { timeout: 120_000 })
+            await orgPage.getByPlaceholder('Add a todo…').fill(TODO_TEXT)
+            await orgPage.getByLabel('Add todo').click()
+            await expect(orgPage.getByText(TODO_TEXT, { exact: true })).toBeVisible()
         } finally {
             await orgPage.close()
         }
     })
 
-    test('revert to the base build through the Build History UI', async ({ page }) => {
-        // Reverting swaps in the archived base binary, runs `migrate down N` to
-        // reverse todo's migration, re-stages the base web bundle, and triggers
-        // another exit-75 relaunch. Generous budget for the relaunch + health
-        // check (no go build / expo export this time — the base artifacts are
-        // already archived — so it's far quicker than the install).
-        test.setTimeout(600_000)
+    test('upgrade todo to v2.0.0 via the Versions tab', async ({ page }) => {
+        // Upgrade fetches v2, runs the create_tags UP migration, rebuilds, and
+        // requests an exit-75 relaunch. Same multi-minute build budget as install.
+        test.setTimeout(2_700_000) // 45 min
 
         await loginAsSuperuserWithRetry(page)
+        // Snapshot the prior log row (the install's row) so the wait ignores it
+        // until the version-change row lands — the POST is async, so the status
+        // endpoint briefly still returns the previous operation's row.
+        const priorId = await latestOpId(page, 'todo')
+        await applyVersionChange(page, 'todo', 'v2.0.0', { downgrade: false })
 
-        await page.getByText('Build History', { exact: true }).click()
-        // Only the base build (status `available`) shows a Revert control; the
-        // todo build is `current` and hides it. Click Revert, then confirm.
-        await expect(page.getByText('(base image)', { exact: true })).toBeVisible()
-        await page.getByText('Revert', { exact: true }).first().click()
-        // The confirm dialog appears with a second Revert button; .last() targets
-        // the confirm action rather than the row trigger that opened it.
-        await page.getByText('Revert', { exact: true }).last().click()
-
-        // Judge the revert by the base build becoming `current` — the
-        // unambiguous server-side signal it completed (a revert logs under the
-        // target build's slug, "(base image)", so the install-log/status endpoint
-        // keyed by package slug isn't the right probe here). The revert ends with
-        // the same exit-75 restart, which the runner waits on before the next test.
-        await waitForBuildStatus(page, 'build-base', 'current', 300_000)
+        // Judge by the version-change log reaching success (ground truth). The
+        // restart follows; the runner waits for relaunch before the next test.
+        await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'version_change', priorId)
     })
 
-    test('todo is gone after revert to base', async ({ page }) => {
+    test('v2.0.0 is live, has the tags schema, and a todo can be tagged', async ({ page }) => {
         test.setTimeout(300_000)
 
-        // 1. Registry: the todo build is now `superseded` and the base build is
-        //    `current` again.
         await loginAsSuperuserWithRetry(page)
-        await page.getByText('Build History', { exact: true }).click()
-        await expect(page.getByText('superseded', { exact: true }).first()).toBeVisible()
 
-        // 2. The package is no longer wired in — its migration was reversed
-        //    (collection dropped) and the reverted base binary doesn't register
-        //    the package, so the Todo nav-rail entry is gone.
-        const orgPage = await page.context().newPage()
+        // 1. Registry now reports 2.0.0 and the tags schema exists.
+        await waitForRegistryVersion(page, 'todo', '2.0.0', 60_000)
+        await waitForCollection(page, 'tags', true, 60_000)
+        await waitForCollection(page, 'todo_tags', true, 60_000)
+
+        // 2. Tag the existing todo through the v2 UI — the new feature in action.
+        const orgPage = await openTodoAsOwner(page)
         try {
-            await orgPage.goto('/')
-            await orgPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
-            await orgPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
-            await orgPage.getByTestId('login-submit').click()
-            await orgPage.waitForURL(/\/a\//, { timeout: 30_000 })
+            // Open the todo's detail screen, where the TAGS editor lives.
+            await orgPage.getByLabel(`Edit ${TODO_TEXT}`).click()
+            await expect(orgPage.getByText('TAGS', { exact: true })).toBeVisible({
+                timeout: 30_000,
+            })
+            await orgPage.getByPlaceholder('Add a tag…').fill(TAG_TEXT)
+            await orgPage.getByLabel('Add tag').click()
+            // The new tag renders as a chip and can be removed (proves the link
+            // row persisted, not just optimistic text).
+            await expect(orgPage.getByLabel(`Remove tag ${TAG_TEXT}`)).toBeVisible({
+                timeout: 15_000,
+            })
+        } finally {
+            await orgPage.close()
+        }
 
-            // The todo rail entry should no longer render after revert.
-            await expect(orgPage.getByTestId('nav-todo')).toHaveCount(0, { timeout: 30_000 })
+        // 3. Ground truth: a todo_tags link row exists in the DB.
+        const token = await superuserToken(page)
+        const res = await page.request.get('/api/collections/todo_tags/records?perPage=1', {
+            headers: { Authorization: token },
+            failOnStatusCode: false,
+        })
+        expect(res.ok()).toBeTruthy()
+        const body = (await res.json()) as { totalItems?: number }
+        expect(body.totalItems ?? 0).toBeGreaterThan(0)
+    })
+
+    test('downgrade todo to v1.0.0 via the Versions tab', async ({ page }) => {
+        // Downgrade fetches v1, runs the create_tags DOWN migration (drops
+        // todo_tags then tags), rebuilds, and requests an exit-75 relaunch.
+        test.setTimeout(2_700_000) // 45 min
+
+        await loginAsSuperuserWithRetry(page)
+        // CRUCIAL: the prior latest row is the UPGRADE's version_change/success
+        // row — same action — so without notId the wait would return immediately
+        // against it, racing the still-running downgrade. Snapshot it first.
+        const priorId = await latestOpId(page, 'todo')
+        await applyVersionChange(page, 'todo', 'v1.0.0', { downgrade: true })
+
+        await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'version_change', priorId)
+    })
+
+    test('down migration ran: tags schema dropped and TAGS editor gone', async ({ page }) => {
+        test.setTimeout(300_000)
+
+        await loginAsSuperuserWithRetry(page)
+
+        // 1. Registry back to 1.0.0.
+        await waitForRegistryVersion(page, 'todo', '1.0.0', 60_000)
+
+        // 2. THE CRUX — the v2->v1 down migration dropped both collections.
+        await waitForCollection(page, 'todo_tags', false, 60_000)
+        await waitForCollection(page, 'tags', false, 60_000)
+
+        // 3. UI confirmation: the todo survived (its row is in todo_items, which
+        //    v1 keeps) but the reverted v1 binary no longer ships the tag editor,
+        //    so the detail screen has no TAGS section.
+        const orgPage = await openTodoAsOwner(page)
+        try {
+            await expect(orgPage.getByText(TODO_TEXT, { exact: true })).toBeVisible({
+                timeout: 30_000,
+            })
+            await orgPage.getByLabel(`Edit ${TODO_TEXT}`).click()
+            // The v1 detail screen renders the DESCRIPTION editor; wait for it so
+            // we're asserting against a mounted screen, not a still-loading one.
+            await expect(orgPage.getByText('DESCRIPTION', { exact: true })).toBeVisible({
+                timeout: 30_000,
+            })
+            await expect(orgPage.getByText('TAGS', { exact: true })).toHaveCount(0)
         } finally {
             await orgPage.close()
         }

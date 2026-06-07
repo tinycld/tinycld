@@ -369,11 +369,25 @@ func applyOneVersionChange(
 	}
 	targetPkgMigrations := migrationsForPackage(change.Slug)
 
-	// 3. Step the schema to the target by name (against the running process's
-	// still-registered closures). appliedDelta is the migrations this change
+	// 3. Step the schema to the target. appliedDelta is the migrations this change
 	// actually applied (upgrade) — empty for a downgrade, which only reverts.
-	// From here on the live DB schema is mutated in-process: signal the caller so
-	// a later failure restarts after restoring the DB backup.
+	// From here on the live DB schema is mutated: signal the caller so a later
+	// failure restarts after restoring the DB backup.
+	//
+	// DIRECTION ASYMMETRY (important): a DOWNGRADE reverts in-process via the
+	// running binary's still-registered Down closures — the migration being
+	// reverted WAS registered at this process's startup (we booted on the newer
+	// version), so revertNamedMigrations can run it even after the file is swapped
+	// off disk. An UPGRADE cannot apply in-process: the NEW migration only exists
+	// in the just-swapped files and was NEVER registered in this (older) process's
+	// core.AppMigrations, so applyNamedMigrations would fail with "not registered".
+	// Instead we apply the upgrade the same way the install pipeline does — shell
+	// out to the current binary's `migrate` subcommand, which boots fresh, has jsvm
+	// re-scan the (now-updated) pb_migrations/ dir, registers the new .js file, and
+	// applies all pending. Only this package's migration is pending at this point
+	// (we just regenerated for a single-package change), so "apply pending" == the
+	// package's new migrations. We snapshot _migrations before/after to record the
+	// exact applied delta for the build record.
 	*dbMutated = true
 	var appliedDelta []string
 	if downgrade {
@@ -387,10 +401,30 @@ func applyOneVersionChange(
 		toApply := subtractStrings(targetPkgMigrations, currentPkgMigrations)
 		emitProgress(job, "Applying migrations", baseProgress+12,
 			fmt.Sprintf("Applying %d migration(s)", len(toApply)))
-		if _, aErr := applyNamedMigrations(app, toApply); aErr != nil {
-			return fmt.Errorf("apply migrations: %w", aErr)
+		before, beforeErr := appliedMigrationFiles(app)
+		if beforeErr != nil {
+			log.Printf("pkg_version_change: snapshot before apply failed: %v", beforeErr)
 		}
-		appliedDelta = toApply
+		// Use the CURRENT on-disk binary's migrate subcommand: jsvm scans the
+		// migrations DIR (independent of the binary's compiled-in Go migration set),
+		// so the just-swapped .js file is picked up and applied even though the new
+		// binary isn't built yet (that happens in finalizeVersionChange).
+		migrateBin := resolveServerBinary()
+		if out, mErr := runCmd(appDir, migrateBin, "migrate"); mErr != nil {
+			return fmt.Errorf("apply migrations: %w: %s", mErr, out)
+		}
+		after, afterErr := appliedMigrationFiles(app)
+		if afterErr != nil {
+			log.Printf("pkg_version_change: snapshot after apply failed: %v", afterErr)
+		}
+		// Record exactly what the apply added, narrowed to this package's owned
+		// files (the same source-of-truth intersection the install pipeline uses).
+		appliedDelta = intersectStrings(newMigrationFiles(before, after), targetPkgMigrations)
+		// Defensive: if snapshots were unavailable, fall back to the intended set so
+		// the build record isn't silently empty.
+		if len(appliedDelta) == 0 && len(toApply) > 0 && (beforeErr != nil || afterErr != nil) {
+			appliedDelta = toApply
+		}
 	}
 
 	// 4. Rebuild the binary + web bundle so the post-restart process matches the

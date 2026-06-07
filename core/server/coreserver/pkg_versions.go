@@ -167,6 +167,12 @@ func listGitTagVersions(remote string) ([]string, error) {
 		if tag == "" {
 			continue
 		}
+		// Keep the RAW tag (e.g. `v1.0.0`, NOT a normalized `1.0.0`): it becomes
+		// the `#<ref>` in specForVersion, and `npm pack github:o/r#1.0.0` does NOT
+		// resolve a `v1.0.0` tag (git checkout of `1.0.0` fails — the tag is named
+		// `v1.0.0`). Comparisons against the registry's bare `current` are made
+		// semver-aware at the call sites (see sameVersion / isNewer / the UI's
+		// compareVersions) so a `v`-prefixed tag still matches a bare current.
 		if _, err := semver.NewVersion(tag); err == nil {
 			versions = append(versions, tag)
 		}
@@ -264,6 +270,12 @@ func handleVersions(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		info := versionInfo{
 			Slug:    rec.GetString("slug"),
 			Current: current,
+			// Always a non-nil slice so it marshals as `[]`, never `null`: the
+			// client types `available` as string[] and calls `.length`/`.indexOf`
+			// on it (PackageVersionsTab, detectDowngrade), which throw on null. A
+			// nil Go slice JSON-encodes to `null`, so initialize it here — the
+			// unknown-source continue path below relies on this default.
+			Available: []string{},
 		}
 		if spec == "" {
 			// Bundled packages with no install spec have no external source.
@@ -273,7 +285,9 @@ func handleVersions(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		}
 		src, versions, fetchErr := versionsForSpec(spec)
 		info.Source = src
-		info.Available = versions
+		if versions != nil {
+			info.Available = versions
+		}
 		info.Error = fetchErr
 		if len(versions) > 0 {
 			info.Latest = versions[0]

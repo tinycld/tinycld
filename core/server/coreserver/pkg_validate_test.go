@@ -20,6 +20,18 @@ func TestValidatePackageSpec(t *testing.T) {
 		{"https://github.com/tinycld/todo.git", false},
 		{"git+https://github.com/tinycld/todo.git", false},
 		{"git+ssh://git@github.com/tinycld/todo.git", false},
+		// git specs pinned to a tag/ref via #ref (npm pack clones at the ref)
+		{"github:tinycld/todo#v1.0.0", false},
+		{"github:tinycld/todo#2.0.0", false},
+		{"tinycld/todo#v1.0.0", false},
+		{"https://github.com/tinycld/todo.git#v1.0.0", false},
+		{"git+https://github.com/tinycld/todo.git#1.2.3-beta.1", false},
+		// rejected #ref forms: only git specs may pin, ref must be a safe token
+		{"mail#v1.0.0", true},          // npm name can't carry a #ref
+		{"@tinycld/mail#v1.0.0", true}, // scoped npm name can't carry a #ref
+		{"github:tinycld/todo#-flag", true},
+		{"github:tinycld/todo#", true}, // empty ref
+		{"github:tinycld/todo#v1.0.0#extra", true},
 		// versioned npm specs (npm pack name@version)
 		{"mail@1.2.3", false},
 		{"@tinycld/mail@1.2.3", false},
