@@ -17,6 +17,15 @@ const PORT = Number(process.env.E2E_PORT ?? 7200)
 const EMAIL_LOG_PATH = path.join(import.meta.dirname, 'tmp', 'emails.log')
 
 export default defineConfig({
+    // Override Playwright's CI default (the `dot` reporter, which prints a bare
+    // `·` per completed test — no name, so a run looks frozen during the cold
+    // Metro compile each worker pays on its first test, then dumps every dot at
+    // once). In non-TTY CI, `list` prints a NAMED line as each test COMPLETES
+    // (`✓ 3 mail › opens thread (4.1s)`) — it doesn't stream a per-test "started"
+    // line (that's TTY-only), but the accruing named lines + durations show
+    // which tests have finished and that the run is progressing. Inherited by
+    // every package's playwright.config.ts.
+    reporter: 'list',
     // Scoped to tests/e2e/ specifically. The tests/install/ tree has
     // its own playwright.config.ts and is invoked separately by the
     // docker smoke-test workflow — leaving testDir at the playwright
