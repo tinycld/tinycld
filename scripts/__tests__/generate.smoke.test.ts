@@ -1,9 +1,15 @@
 import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import {
+    SMOKE_STUB_SLUG,
+    scaffoldSmokeStub,
+    unregisterSmokeStub,
+} from '../../tests/scripts/scaffold-smoke-stub'
 
 const APP_DIR = path.resolve(import.meta.dirname, '..', '..')
+const WS_ROOT = path.resolve(APP_DIR, '..')
 const ORG_DIR = path.join(APP_DIR, 'app', 'a', '[orgSlug]')
 
 // Uniquely-named app-owned sentinels under [orgSlug] — must survive generation
@@ -14,15 +20,55 @@ const rootSentinel = path.join(ORG_DIR, '_preserve_test_root.tsx')
 const subDir = path.join(ORG_DIR, '_preserve_test_dir')
 const subSentinel = path.join(subDir, 'file.tsx')
 
+// The smoke test asserts the generator emits a real feature package's artifacts.
+// Rather than hard-code a first-party slug (contacts/mail/…) that only exists in
+// a full local checkout, we scaffold a feature via BOOTSTRAP (--preset full) so
+// the fixture matches whatever shape bootstrap produces and is present in every
+// assembly (CI app+core, or full local). We assert on that stub's slug.
+let stubDir: string
+// True only when THIS run created the stub (a clean CI checkout). A developer's
+// full local workspace may already have smoke-stub — then we leave the dir in
+// place on cleanup and only unregister, to avoid clobbering their state.
+let createdStub = false
+
 describe('generate.ts (smoke, real workspace)', () => {
-    it('produces config/routes/help/uniwind AND preserves app-owned [orgSlug] files', () => {
+    beforeAll(() => {
+        createdStub = !fs.existsSync(path.join(WS_ROOT, SMOKE_STUB_SLUG))
+        stubDir = scaffoldSmokeStub()
+    }, 120_000)
+
+    afterAll(() => {
+        unregisterSmokeStub()
+        // Remove the generated route re-exports for the stub.
+        const stubRoutes = path.join(ORG_DIR, SMOKE_STUB_SLUG)
+        if (fs.existsSync(stubRoutes)) fs.rmSync(stubRoutes, { recursive: true, force: true })
+        // Only delete the stub source dir if we created it this run.
+        if (createdStub && stubDir && fs.existsSync(stubDir)) {
+            fs.rmSync(stubDir, { recursive: true, force: true })
+        }
+        // The test's generator run left tinycld.config.ts / tinycld.seeds.ts
+        // referencing smoke-stub. Now that it's gone, regenerate so the
+        // (gitignored) build artifacts match the real present-member set —
+        // otherwise a subsequent typecheck in the same job fails on the stale
+        // @tinycld/smoke-stub imports.
+        try {
+            execFileSync('node_modules/.bin/tsx', ['tinycld/scripts/generate.ts'], {
+                cwd: WS_ROOT,
+                stdio: 'pipe',
+            })
+        } catch {
+            // best-effort: a failed regen here shouldn't mask the test result
+        }
+    })
+
+    it('produces config/routes/help/uniwind for a bootstrap-scaffolded feature AND preserves app-owned [orgSlug] files', () => {
         // Seed app-owned sentinels before generating.
         fs.mkdirSync(subDir, { recursive: true })
         fs.writeFileSync(rootSentinel, '// app-owned root file, must survive generation\n')
         fs.writeFileSync(subSentinel, '// app-owned subdir file, must survive generation\n')
         try {
             execFileSync('node_modules/.bin/tsx', ['tinycld/scripts/generate.ts'], {
-                cwd: path.resolve(APP_DIR, '..'),
+                cwd: WS_ROOT,
                 stdio: 'pipe',
             })
             // App-owned files under [orgSlug] survive a generator run.
@@ -34,13 +80,13 @@ describe('generate.ts (smoke, real workspace)', () => {
         }
         const config = fs.readFileSync(path.join(APP_DIR, 'tinycld.config.ts'), 'utf8')
         expect(config).toContain('export const tinycldConfig')
-        expect(config).toContain('@tinycld/contacts')
+        expect(config).toContain(`@tinycld/${SMOKE_STUB_SLUG}`)
         expect(config).toContain('export type MergedPackageSchema')
 
-        const routeIndex = path.join(APP_DIR, 'app', 'a', '[orgSlug]', 'contacts', 'index.tsx')
+        const routeIndex = path.join(ORG_DIR, SMOKE_STUB_SLUG, 'index.tsx')
         expect(fs.existsSync(routeIndex)).toBe(true)
         expect(fs.readFileSync(routeIndex, 'utf8')).toContain(
-            "from '@tinycld/contacts/screens/index'"
+            `from '@tinycld/${SMOKE_STUB_SLUG}/screens/index'`
         )
 
         expect(fs.existsSync(path.join(APP_DIR, 'lib', 'generated', 'package-help.ts'))).toBe(true)
@@ -49,7 +95,7 @@ describe('generate.ts (smoke, real workspace)', () => {
             'utf8'
         )
         expect(css).toContain('@source')
-        expect(css).toContain('contacts')
+        expect(css).toContain(SMOKE_STUB_SLUG)
 
         // tinycld.seeds.ts
         expect(fs.existsSync(path.join(APP_DIR, 'tinycld.seeds.ts'))).toBe(true)
