@@ -6,11 +6,36 @@
     "type": "module",
     "exports": {
         ".": "./index.ts",
-        "./lib/*": ["./lib/*.ts", "./lib/*.tsx", "./lib/*/index.ts", "./lib/*/index.tsx"],
-        "./components/*": ["./components/*.ts", "./components/*.tsx", "./components/*/index.ts", "./components/*/index.tsx"],
-        "./ui/*": ["./ui/*.ts", "./ui/*.tsx", "./ui/*/index.ts", "./ui/*/index.tsx"],
-        "./types/*": ["./types/*.ts", "./types/*.tsx", "./types/*/index.ts", "./types/*/index.tsx"],
-        "./file-viewer/*": ["./file-viewer/*.ts", "./file-viewer/*.tsx", "./file-viewer/*/index.ts", "./file-viewer/*/index.tsx"],
+        "./lib/*": [
+            "./lib/*.ts",
+            "./lib/*.tsx",
+            "./lib/*/index.ts",
+            "./lib/*/index.tsx"
+        ],
+        "./components/*": [
+            "./components/*.ts",
+            "./components/*.tsx",
+            "./components/*/index.ts",
+            "./components/*/index.tsx"
+        ],
+        "./ui/*": [
+            "./ui/*.ts",
+            "./ui/*.tsx",
+            "./ui/*/index.ts",
+            "./ui/*/index.tsx"
+        ],
+        "./types/*": [
+            "./types/*.ts",
+            "./types/*.tsx",
+            "./types/*/index.ts",
+            "./types/*/index.tsx"
+        ],
+        "./file-viewer/*": [
+            "./file-viewer/*.ts",
+            "./file-viewer/*.tsx",
+            "./file-viewer/*/index.ts",
+            "./file-viewer/*/index.tsx"
+        ],
         "./Providers": "./components/Providers.tsx",
         "./tsconfig.package-base.json": "./tsconfig.package-base.json",
         "./uniwind-types": "./uniwind-types.d.ts"
