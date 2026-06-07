@@ -17,21 +17,23 @@ jobs:
     name: Lint, Typecheck, Unit (app)
     runs-on: ubuntu-latest
     steps:
-      # app (this repo) is the triggering checkout. bootstrap GENERATES the
-      # workspace root into ws/ and clones core as the only sibling app
-      # genuinely depends on — no `--with <feature>` flags. App PRs only
-      # check app's own code; cross-package integration drift surfaces on
-      # the downstream feature PR's CI.
+      # This repo (the merged app shell + core) is the triggering checkout. It IS
+      # the `tinycld` workspace member, so check it out into the ws/tinycld slot —
+      # bootstrap then sees it present and skips re-cloning it (testing THIS PR's
+      # code, not a fresh clone of main). bootstrap generates the workspace root
+      # into ws/ around it; no `--with <feature>` flags, so the assembly is
+      # app+core only. App PRs check app's own code; cross-package integration
+      # drift surfaces on the downstream feature PR's CI.
       - uses: actions/checkout@v5
         with:
-          path: ws/app
-      # app carries its own .node-version; read it from the checkout (no
+          path: ws/tinycld
+      # tinycld carries its own .node-version; read it from the checkout (no
       # dependency on bootstrap having generated ws/.node-version yet). No
       # package-manager cache: no committed lockfile (pnpm resolves fresh;
       # corepack enable selects the pnpm pinned in the workspace package.json).
       - uses: actions/setup-node@v5
         with:
-          node-version-file: ws/app/.node-version
+          node-version-file: ws/tinycld/.node-version
       - name: Assemble workspace (app + core)
         working-directory: ws
         run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
@@ -43,25 +45,24 @@ jobs:
         working-directory: ws
         run: corepack enable && pnpm install --no-frozen-lockfile
       - name: Check (lint + typecheck + unit)
-        working-directory: ws/app
+        working-directory: ws/tinycld
         run: pnpm exec tinycld-pkg check
 
   go:
     name: Go build & test
     runs-on: ubuntu-latest
     steps:
-      # Same minimal assembly as the checks job — app+core only. The
-      # generator emits a package_extensions.go and go.work that import
-      # only the features present in the workspace, so without `--with
-      # <feature>` flags, app's Go build embeds zero feature servers and
-      # builds cleanly. Feature PRs verify their own Go modules on their
-      # own CI; integration is tested at release time.
+      # Same minimal assembly as the checks job — app+core only. The generator
+      # always emits server/go.work listing core (so even a zero-feature build
+      # resolves core's transitive deps in workspace mode). Feature PRs verify
+      # their own Go modules on their own CI; integration is tested at release
+      # time.
       - uses: actions/checkout@v5
         with:
-          path: ws/app
+          path: ws/tinycld
       - uses: actions/setup-node@v5
         with:
-          node-version-file: ws/app/.node-version
+          node-version-file: ws/tinycld/.node-version
       - name: Assemble workspace (app + core)
         working-directory: ws
         run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
@@ -71,19 +72,17 @@ jobs:
       - name: Install (workspace root)
         working-directory: ws
         run: corepack enable && pnpm install --no-frozen-lockfile
-      # go mod download populates go.sum entries the committed go.sum is
-      # missing — specifically the `/go.mod h1:` hashes for transitive
-      # deps resolved through go.work's `use ../../core/server`. Without
-      # this, go build errors on "missing go.sum entry for go.mod file"
-      # the first time a sibling module is reached.
+      # Warm go.work.sum: in workspace mode `go mod download` writes the
+      # transitive `/go.mod` hashes (reached through go.work's `use ../core/server`)
+      # into go.work.sum so the build below verifies cleanly.
       - name: Go mod download
-        working-directory: ws/app/server
+        working-directory: ws/tinycld/server
         run: go mod download
       - name: Go build
-        working-directory: ws/app/server
+        working-directory: ws/tinycld/server
         run: go build -o tinycld .
       - name: Go test
-        working-directory: ws/app/server
+        working-directory: ws/tinycld/server
         run: go test -tags no_ui ./...
 
   e2e:
@@ -99,10 +98,10 @@ jobs:
       # for what the stub provides.
       - uses: actions/checkout@v5
         with:
-          path: ws/app
+          path: ws/tinycld
       - uses: actions/setup-node@v5
         with:
-          node-version-file: ws/app/.node-version
+          node-version-file: ws/tinycld/.node-version
       - name: Assemble workspace (app + core)
         working-directory: ws
         run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
@@ -112,29 +111,27 @@ jobs:
       - name: Install (workspace root)
         working-directory: ws
         run: corepack enable && pnpm install --no-frozen-lockfile
-      # go mod download before E2E so the webServer (which builds PB
-      # via pnpm run expo:test → reset-dev-db) doesn't fail on a missing
-      # go.sum entry. Same fix as the Go job above; both need it
-      # because the committed go.sum lacks the `/go.mod h1:` hashes for
-      # transitive deps resolved through go.work's `use ../../core/server`.
+      # Warm go.work.sum before E2E so the webServer (which builds PB via
+      # pnpm run expo:test → reset-dev-db) doesn't fail verifying a transitive
+      # dep reached through go.work's `use ../core/server`.
       - name: Go mod download
-        working-directory: ws/app/server
+        working-directory: ws/tinycld/server
         run: go mod download
       # Composite action: installs watchman so Metro doesn't fall back to
       # the fs.watch polling that has correlated with a blank-page-after-
       # reload flake under Playwright multi-worker load. Lives in this
       # repo and is also consumed by sibling repos via
-      # `tinycld/app/.github/actions/configure-test-env@main`.
+      # `tinycld/tinycld/.github/actions/configure-test-env@main`.
       - name: Configure test env
-        uses: ./ws/app/.github/actions/configure-test-env
+        uses: ./ws/tinycld/.github/actions/configure-test-env
       - name: Scaffold shortcut-stub package
         working-directory: ws
-        run: pnpm exec tsx app/tests/scripts/scaffold-shortcut-stub.ts
+        run: pnpm exec tsx tinycld/tests/scripts/scaffold-shortcut-stub.ts
       - name: Install Playwright browsers
-        working-directory: ws/app
+        working-directory: ws/tinycld
         run: pnpm exec playwright install --with-deps chromium
       - name: E2E
-        working-directory: ws/app
+        working-directory: ws/tinycld
         run: pnpm exec tinycld-pkg test:e2e
       # Capture Playwright's per-failure artifacts (trace, screenshot,
       # video, error-context.md) so a CI failure can be diagnosed
@@ -146,6 +143,6 @@ jobs:
         with:
           name: playwright-artifacts
           path: |
-            ws/app/test-results/
-            ws/app/playwright-report/
+            ws/tinycld/test-results/
+            ws/tinycld/playwright-report/
           retention-days: 14
