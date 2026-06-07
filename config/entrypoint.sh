@@ -12,9 +12,9 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 
 # Ensure the bind-mounted data directories are writable by the runtime user.
 #
-# When a host bind-mount target (./pb_data → /workspace/app/pb_data and
-# ./types → /workspace/core/types in docker-compose.yml) doesn't exist yet, the
-# Docker daemon creates it owned by root:root. The
+# When a host bind-mount target (./pb_data → /workspace/tinycld/pb_data and
+# ./types → /workspace/tinycld/core/types in docker-compose.yml) doesn't exist
+# yet, the Docker daemon creates it owned by root:root. The
 # unprivileged tinycld user then can't open the SQLite database — PocketBase
 # fails with "unable to open database file (14)" and the container crash-loops.
 # Reported in https://github.com/tinycld/app/issues/26.
@@ -26,7 +26,7 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 fix_data_dir_ownership() {
     [ "$(id -u)" = "0" ] || return 0
 
-    for dir in /workspace/app/pb_data /workspace/core/types; do
+    for dir in /workspace/tinycld/pb_data /workspace/tinycld/core/types; do
         mkdir -p "$dir"
         # Skip the (potentially large) recursive chown when the top-level dir is
         # already owned correctly — the steady state after first run, so normal
@@ -59,16 +59,16 @@ run_tinycld() {
 
 fix_data_dir_ownership
 
-# Promote the staged release to /workspace/app/releases/. Runs on every
+# Promote the staged release to /workspace/tinycld/releases/. Runs on every
 # container start; idempotent.
 #
-# /workspace/app/releases is typically the container's writable layer
+# /workspace/tinycld/releases is typically the container's writable layer
 # (compose-style deploys) and starts empty on every fresh container; Dokku-style
 # deploys may back it with a persistent volume so old releases survive container
 # replacement. Either way the promote logic below is the same: copy the staged
 # tree off the image, swap the `current` symlink atomically.
 #
-# Layout produced under /workspace/app/releases/:
+# Layout produced under /workspace/tinycld/releases/:
 #   <id>/             per-release dir: app.html + release-id.txt
 #   _static/          cross-release asset pool:
 #     _expo/static/...    (content-hashed, immutable)
@@ -82,8 +82,8 @@ fix_data_dir_ownership
 # old entries. The Go server serves /_expo/static/ and /assets/ from
 # _static/ directly — there is no per-request release lookup.
 promote_release() {
-    staging_dir=/workspace/app/release-staging
-    releases_dir=/workspace/app/releases
+    staging_dir=/workspace/tinycld/release-staging
+    releases_dir=/workspace/tinycld/releases
     pool_dir="$releases_dir/_static"
 
     echo "[entrypoint] promote_release: staging=$staging_dir releases=$releases_dir"
@@ -99,12 +99,21 @@ promote_release() {
 
     mkdir -p "$releases_dir" "$pool_dir/_expo/static" "$pool_dir/assets"
 
+    # Pick the MOST RECENTLY MODIFIED staging dir, not the first by glob order.
+    # After an in-app package install the staging dir holds BOTH the base image's
+    # release (e.g. 2026-…-deadbee, staged at image-build time and never removed)
+    # AND the install's freshly-built bundle (install-<ts>). Globbing alphabetically
+    # would pick the base dir (`2026-…` sorts before `install-…`) and promote a
+    # bundle WITHOUT the just-installed package's routes — the SPA then 404s
+    # ("Unmatched Route") on that package. Newest-mtime always selects the install's
+    # bundle (or, on first boot, the only dir present). `ls -1dt` lists dirs
+    # newest-first; we take the first one that carries a release-id.txt.
     release_id=""
-    for d in "$staging_dir"/*/; do
+    for d in $(ls -1dt "$staging_dir"/*/ 2>/dev/null); do
         [ -d "$d" ] || continue
         if [ -f "$d/release-id.txt" ]; then
             release_id=$(cat "$d/release-id.txt")
-            echo "[entrypoint] found release-id.txt in $d -> '$release_id'"
+            echo "[entrypoint] found release-id.txt in $d -> '$release_id' (newest staging dir)"
             break
         else
             echo "[entrypoint] WARN: $d has no release-id.txt"
@@ -331,6 +340,16 @@ while true; do
 
         if [ "$HEALTHY" = "true" ]; then
             echo "[entrypoint] Health check passed, restarting server"
+            # Re-promote before re-serving. The in-app installer / version-change /
+            # revert pipelines build a new web bundle and leave it in
+            # release-staging/<id>, relying on promote_release to point
+            # releases/current at it (see stageRelease's doc comment). Because this
+            # exit-75 "restart" is an IN-PROCESS loop (the entrypoint stays alive
+            # and `continue`s) rather than a full container restart, promote_release
+            # — which otherwise runs only once at container start — must run again
+            # here, or the server keeps serving the OLD bundle and a
+            # newly-installed package's routes 404 ("Unmatched Route").
+            promote_release
             continue
         else
             echo "[entrypoint] Health check failed, attempting rollback"

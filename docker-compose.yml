@@ -82,6 +82,6 @@ services:
       # the container fixes their ownership on startup (it boots as root, chown's
       # them to its unprivileged runtime user, then drops privileges), so no
       # manual `chown` is needed before the first `docker compose up`.
-      - ./pb_data:/workspace/app/pb_data
+      - ./pb_data:/workspace/tinycld/pb_data
       # Generated TypeScript types (pbSchema, pbZodSchema). Small, regenerated on migrations.
-      - ./types:/workspace/core/types
+      - ./types:/workspace/tinycld/core/types

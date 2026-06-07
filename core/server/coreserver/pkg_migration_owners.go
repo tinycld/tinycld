@@ -85,11 +85,23 @@ func queryMigrationsForPackage(owners map[string]string, slug string) []string {
 }
 
 func findMigrationOwnersJSON() string {
+	// The generator writes the owner map to the Go server dir, which is
+	// <appDir>/server/ (SERVER_DIR in scripts/paths.ts). Post-merge the running
+	// binary lives at <appDir>/tinycld, so binaryDir()/resolveServerDir() == appDir
+	// and the file is one level deeper at <appDir>/server/. Earlier candidates
+	// assumed the OLD layout (binary at app/server/, cwd app/server) where
+	// `../server` or the binary dir itself held the file; keep them for back-compat
+	// but ALSO check <appDir>/server/ and <cwd>/server/ for the merged layout.
+	binDir := filepath.Dir(os.Args[0])
+	srvDir := resolveServerDir()
 	candidates := []string{
-		migrationOwnersFile,
-		filepath.Join("..", "server", migrationOwnersFile),
-		filepath.Join(filepath.Dir(os.Args[0]), migrationOwnersFile),
-		filepath.Join(resolveServerDir(), migrationOwnersFile),
+		migrationOwnersFile,                                  // <cwd>/
+		filepath.Join("server", migrationOwnersFile),         // <cwd>/server/ (merged: cwd==appDir)
+		filepath.Join("..", "server", migrationOwnersFile),   // <cwd>/../server/ (old layout)
+		filepath.Join(binDir, migrationOwnersFile),           // <binaryDir>/
+		filepath.Join(binDir, "server", migrationOwnersFile), // <binaryDir>/server/ (merged)
+		filepath.Join(srvDir, migrationOwnersFile),           // resolveServerDir()/
+		filepath.Join(srvDir, "server", migrationOwnersFile), // resolveServerDir()/server/ (merged)
 	}
 	for _, p := range candidates {
 		if _, err := os.Stat(p); err == nil {
