@@ -44,7 +44,10 @@ import { fileURLToPath } from 'node:url'
 export const STUB_SLUG = 'shortcut-stub'
 export const STUB_NAV_SHORTCUT = 'k'
 export const STUB_NAV_LABEL = 'Shortcut Stub'
-const BOOTSTRAP_VERSION = '@tinycld/bootstrap@latest'
+// Pin a known-good bootstrap so CI is reproducible — `@latest` lets an
+// unrelated bootstrap release silently turn this e2e fixture red. Bump
+// deliberately when adopting a new bootstrap that changes scaffold output.
+const BOOTSTRAP_VERSION = '@tinycld/bootstrap@2.4.0'
 
 function workspaceRoot(): string {
     // tinycld/tests/scripts/scaffold-shortcut-stub.ts → tinycld/ → workspace root

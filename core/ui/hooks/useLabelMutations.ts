@@ -79,7 +79,15 @@ export function useLabelMutations() {
         Error,
         { labelId: string; recordId: string; collection: string }
     >({
-        mutationFn: async ({ labelId, recordId, collection }) => {
+        mutationFn: async ({
+            labelId,
+            recordId,
+            collection,
+        }: {
+            labelId: string
+            recordId: string
+            collection: string
+        }) => {
             const record = await pb
                 .collection('label_assignments')
                 .getFirstListItem(
