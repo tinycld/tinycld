@@ -44,10 +44,13 @@ func DefaultReleasesDir() string {
 }
 
 // DefaultTypesDir returns the default location the server writes generated
-// pbSchema.ts / pbZodSchema.ts to. In the standalone-member layout core is its
-// own workspace member ( <workspace>/core ) and the app shell's binary lives at
-// <workspace>/app/server/app, so core's types/ is two levels up from the
-// binary dir and into the sibling core member: app/server → ../../core/types.
+// pbSchema.ts / pbZodSchema.ts to. Post-merge, core is nested INSIDE the app
+// member ( <appDir>/core ) rather than a top-level sibling, and the installed
+// binary lives at <appDir>/tinycld. So core's types/ sits directly under the
+// binary's dir: <appDir>/core/types.
+//
+// For `go run` (tempdir binary) the cwd is the Go server dir (<appDir>/server),
+// whose parent is <appDir>; core/types is then ../core/types.
 //
 // TINYCLD_TYPES_DIR overrides this (CI/tests scanning a non-standard tree).
 func DefaultTypesDir() string {
@@ -56,12 +59,12 @@ func DefaultTypesDir() string {
 	}
 	dir := binaryDir()
 	if dir == "" {
-		// `go run` / temp-built binary: cwd is the app dir (app/server's parent
-		// is app/, whose sibling is core/). Resolve relative to cwd's parent.
+		// `go run` / temp-built binary: cwd is the Go server dir (<appDir>/server),
+		// and core is nested at <appDir>/core. Resolve relative to cwd's parent.
 		return filepath.Join("..", "core", "types")
 	}
-	// Binary at <ws>/app/server/app → <ws>/core/types
-	return filepath.Join(dir, "..", "..", "core", "types")
+	// Installed binary at <appDir>/tinycld; core nested at <appDir>/core.
+	return filepath.Join(dir, "core", "types")
 }
 
 // StaticWithFallback serves static files from dir, falling back to

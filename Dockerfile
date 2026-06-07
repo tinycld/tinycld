@@ -1,6 +1,6 @@
 # Build pipeline assumes the build context is the ASSEMBLED WORKSPACE ROOT:
 #
-#   <context>/                 # the pnpm workspace root (@tinycld/workspace)
+#   <context>/                 # the pnpm workspace root (NOT a git repo)
 #       package.json           # packageManager: pnpm@<ver>; tsx devDep; postinstall
 #       pnpm-workspace.yaml     # member list + pnpm settings (nodeLinker: hoisted)
 #       pnpm-lock.yaml          # pinned lockfile (from the release asset)
@@ -8,42 +8,57 @@
 #       tinycld.packages.ts    # member enumeration used by the generator
 #       scripts/link-members.ts # links members into node_modules/@tinycld/ (postinstall)
 #       tests/                 # shared unit-test stubs
-#       core/                  # @tinycld/core — shared lib + Go module tinycld.org/core
-#       app/                   # @tinycld/app — this shell (generator lives here)
-#           package-scripts/   # the tinycld-pkg CLI (a workspace member, nested in app)
+#       tinycld/               # the MERGED member: app shell at its root +
+#           core/              #   @tinycld/core nested here (Go module tinycld.org/core)
+#           package-scripts/   #   the tinycld-pkg CLI nested here
+#           server/            #   the app's Go module tinycld.org/app (generator output)
+#           scripts/           #   the generator (scripts/generate.ts) + runtime scripts
+#           app/ lib/ ...      #   Expo Router route tree + app source
 #       contacts/ mail/ ...    # feature members (each its own sibling repo)
 #
-# There is NO bundled `packages/@tinycld/core` and NO `generate-packages.ts`.
-# core is a standalone sibling member, and the generator is app/scripts/generate.ts
-# (run by the workspace-root `postinstall`). CI assembles this tree first
-# (e.g. `@tinycld/bootstrap --tooling --with <features>`) and then builds with
+# Post-merge layout: the app shell, @tinycld/core, and @tinycld/package-scripts
+# all live INSIDE the single `tinycld/` member (previously two separate `app/` +
+# `core/` members). The generator is tinycld/scripts/generate.ts (run by the
+# workspace-root `postinstall`). CI assembles this tree first (e.g.
+# `@tinycld/bootstrap --assemble-only --with <features>`) and then builds with
 # the workspace root as context:
 #
-#   docker build -f app/Dockerfile -t tinycld <workspace-root>
+#   docker build -f tinycld/Dockerfile -t tinycld <workspace-root>
 #
 # `pnpm install --frozen-lockfile` at the root installs the pinned graph; the
-# postinstall runs link-members (linking every member under
-# node_modules/@tinycld/<name>) then the generator, which materializes app/lib/generated/,
-# app/tinycld.config.ts, app/tinycld.seeds.ts, route re-exports under
-# app/app/a/[orgSlug]/<slug>/, app/server/{package_extensions.go,go.work,
-# pb_migrations/,pb_hooks/,bundled-packages.json}, etc. The Go app module is
-# tinycld.org/app at app/server/ with `replace tinycld.org/core => ../../core/server`
-# and a generated go.work wiring each feature's ../../node_modules/@tinycld/<x>/server.
+# postinstall runs the generator then link-members (linking every member under
+# node_modules/@tinycld/<name> plus @tinycld/app-generated → tinycld/lib/generated).
+# The generator materializes tinycld/lib/generated/, tinycld/tinycld.config.ts,
+# tinycld/tinycld.seeds.ts, route re-exports under tinycld/app/a/[orgSlug]/<slug>/,
+# tinycld/server/{package_extensions.go,go.work,pb_migrations/,pb_hooks/,
+# bundled-packages.json}, etc. The Go app module is tinycld.org/app at
+# tinycld/server/ with `replace tinycld.org/core => ../core/server` and a
+# generated go.work wiring each feature's ../../<x>/server.
+#
+# RUNTIME LAYOUT (mirrors the source tree so the in-app installer's runtime
+# `pnpm install` + generator + `go build` behave exactly like dev):
+#   /workspace/                 wsRoot — root manifests, node_modules, scripts/,
+#                               tinycld.packages.ts, feature siblings
+#   /workspace/tinycld/         appDir = the binary's dir (resolveServerDir());
+#                               the `tinycld` binary, scripts/, lib/, app/, configs,
+#                               pb_data, releases/, server/ (goSrcDir = appDir/server)
+#   /workspace/tinycld/core/    @tinycld/core; core/types written here at boot
+#   /workspace/<feature>/       feature siblings (mail, calc, …)
 
 # Pre-builder: compiles the standalone `export-types` Go binary used by the
-# workspace postinstall (see app/scripts/export-types.ts). The binary
+# workspace postinstall (see tinycld/scripts/export-types.ts). The binary
 # regenerates core/types/pbSchema.ts + pbZodSchema.ts from migrations so the
 # subsequent `expo export` can typecheck every package's collections.ts /
 # types.ts. It imports only core/coreserver — pure Go, no CGO, no feature-
 # server dependency chain (mupdf, goheif, dav1d), so we don't drag a C
 # toolchain into the lean web-builder Node stage just to write two TS files.
 #
-# Sources copied: core/server only (the binary's full dependency closure).
+# Sources copied: tinycld/core/server only (the binary's full dependency closure).
 # The go-builder stage below builds the real CGO_ENABLED Linux runtime binary
 # from the full workspace; this stage is throwaway, ~50 lines of Go work.
 FROM golang:1.25-trixie AS types-binary-builder
 WORKDIR /src
-COPY core/server/ ./core/server/
+COPY tinycld/core/server/ ./core/server/
 WORKDIR /src/core/server
 RUN CGO_ENABLED=0 go build -o /out/export-types ./cmd/export-types/
 
@@ -52,26 +67,26 @@ FROM node:22-bookworm-slim AS web-builder
 
 WORKDIR /ws
 
-# The pre-built export-types binary. app/scripts/export-types.ts reads
+# The pre-built export-types binary. tinycld/scripts/export-types.ts reads
 # TINYCLD_EXPORT_TYPES_BIN and invokes the binary directly when set,
 # skipping the `go run` toolchain dependency that would otherwise force a
 # Go install in this Node-only stage.
 COPY --from=types-binary-builder /out/export-types /usr/local/bin/export-types
 ENV TINYCLD_EXPORT_TYPES_BIN=/usr/local/bin/export-types
 
-# Root manifests + shared test stubs. Copied first so the subsequent member
-# COPYs are the only thing that changes between most builds. package-scripts (the
-# tinycld-pkg CLI) now lives inside the app member (app/package-scripts), so it
-# arrives with the `COPY app/ ./app/` below — no separate root COPY.
+# Root manifests + shared test stubs + the workspace-root scripts (link-members).
+# Copied first so the subsequent member COPYs are the only thing that changes
+# between most builds.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tinycld.packages.ts ./
 COPY scripts/ ./scripts/
 COPY tests/ ./tests/
 
-# Workspace members. core + app first (most likely to change last), then the
-# feature members. Each is a real directory in the assembled context — no
-# symlinks, no per-member node_modules (pnpm install recreates the workspace links).
-COPY core/ ./core/
-COPY app/ ./app/
+# Workspace members. The merged `tinycld/` member (app shell + nested core +
+# nested package-scripts) first — it carries the generator and is most likely to
+# change last — then the feature members. Each is a real directory in the
+# assembled context; no symlinks, no per-member node_modules (pnpm install
+# recreates the workspace links).
+COPY tinycld/ ./tinycld/
 COPY contacts/ ./contacts/
 COPY mail/ ./mail/
 COPY calendar/ ./calendar/
@@ -84,24 +99,24 @@ COPY google-takeout-import/ ./google-takeout-import/
 # reference to expo/types). Because it's gitignored it isn't in the build
 # context, so ensure it exists for the runtime COPY below (the in-app installer
 # re-runs the generator + a web rebuild, which needs Expo's ambient types).
-RUN [ -f app/expo-env.d.ts ] || printf '/// <reference types="expo/types" />\n' > app/expo-env.d.ts
+RUN [ -f tinycld/expo-env.d.ts ] || printf '/// <reference types="expo/types" />\n' > tinycld/expo-env.d.ts
 
-# Install the whole workspace at the root. The postinstall runs link-members
-# (linking every member under node_modules/@tinycld/<name>) and then the
-# generator (`cd app && pnpm run packages:generate && pnpm run assets:copy-pdfjs`).
-# All members are present by now, so the generator resolves every package. Do
-# NOT pass --ignore-scripts: the postinstall IS the generation step we depend on
-# for the Go wiring, route re-exports, and lib/generated/. corepack enable picks
-# the pnpm version pinned in package.json; --frozen-lockfile enforces the pinned
+# Install the whole workspace at the root. The postinstall runs the generator
+# (`cd tinycld && pnpm run packages:generate`) and link-members (linking every
+# member under node_modules/@tinycld/<name> plus @tinycld/app-generated). All
+# members are present by now, so the generator resolves every package. Do NOT
+# pass --ignore-scripts: the postinstall IS the generation step we depend on for
+# the Go wiring, route re-exports, and lib/generated/. corepack enable picks the
+# pnpm version pinned in package.json; --frozen-lockfile enforces the pinned
 # pnpm-lock.yaml for a reproducible image.
 RUN corepack enable && pnpm install --frozen-lockfile
 
 # Resolve the migration/hook symlinks the generator wrote under
-# app/server/{pb_migrations,pb_hooks} into real files. They point at member
+# tinycld/server/{pb_migrations,pb_hooks} into real files. They point at member
 # source via node_modules symlinks here, which is fine for this stage, but the
 # go-builder and runtime COPY steps need real content (a COPY of a symlink that
 # escapes its tree breaks), so materialize them in place.
-RUN for d in app/server/pb_migrations app/server/pb_hooks; do \
+RUN for d in tinycld/server/pb_migrations tinycld/server/pb_hooks; do \
         [ -d "$d" ] || continue; \
         find "$d" -type l -exec sh -c 'target=$(readlink -f "$1") && rm "$1" && cp "$target" "$1"' _ {} \; ; \
     done
@@ -112,11 +127,11 @@ RUN for d in app/server/pb_migrations app/server/pb_hooks; do \
 # files changes — independent of any Go source edits. The app server's go.work
 # is generator output; it wires the sibling Go modules (core + each feature's
 # server/) into the workspace, so it must travel with the manifests. Scan the
-# workspace members (app/server, core/server, <feature>/server) rather than the
-# old `server packages` roots. tar --files-from preserves relative paths.
+# workspace members (tinycld/server, tinycld/core/server, <feature>/server).
+# tar --files-from preserves relative paths.
 RUN mkdir -p /ws/go-mod-staging \
     && cd /ws \
-    && find app core contacts mail calendar drive calc text google-takeout-import \
+    && find tinycld contacts mail calendar drive calc text google-takeout-import \
         \( -name go.mod -o -name go.sum -o -name go.work -o -name go.work.sum \) -print0 \
         | tar --null --files-from=- -cf - \
         | tar -xf - -C /ws/go-mod-staging
@@ -131,26 +146,27 @@ ENV EXPO_PUBLIC_SENTRY_DSN=$EXPO_PUBLIC_SENTRY_DSN
 ENV EXPO_PUBLIC_GIT_COMMIT=$EXPO_PUBLIC_GIT_COMMIT
 ENV NODE_OPTIONS="--max-old-space-size=2048"
 
-# Bring in .release-id, which the deploy tooling writes into the app member
+# Bring in .release-id, which the deploy tooling writes into the merged member
 # right before pushing. Format: YYYY-MM-DD-HHMMSS-<short-sha>. When absent
 # (a hand-run `docker build`), the RUN below derives an id internally.
-COPY app/.release-id* ./app/
+COPY tinycld/.release-id* ./tinycld/
 
 # Bring in .release-manifest, the pinned-release manifest the release pipeline
 # uploads as a GitHub Release asset (utils/lib/pin-release.ts). CI copies it to
-# app/.release-manifest before `docker build`; the RUN below stages it next to
-# release-id.txt so the Go /api/release handler can serve it. The wildcard makes
-# it optional — local/hand-run builds with no manifest still build cleanly.
-COPY app/.release-manifest* ./app/
+# tinycld/.release-manifest before `docker build`; the RUN below stages it next
+# to release-id.txt so the Go /api/release handler can serve it. The wildcard
+# makes it optional — local/hand-run builds with no manifest still build cleanly.
+COPY tinycld/.release-manifest* ./tinycld/
 
 # Resolve effective release id and stage the dist tree under
-# app/release-staging/<id>/. Done in one shell so the resolved id is consistent
-# across all steps. The web build runs from the app member (WORKDIR /ws/app):
-# Metro's watchFolders points at the workspace root, so member source resolves
-# through the node_modules/@tinycld/* symlinks. The entrypoint promotes this
-# staging dir on container start and renames the SPA shell index.html → app.html.
-# EXPO_PUBLIC_RELEASE_ID is inlined so /api/version polling can detect deploys.
-WORKDIR /ws/app
+# tinycld/release-staging/<id>/. Done in one shell so the resolved id is
+# consistent across all steps. The web build runs from the merged member
+# (WORKDIR /ws/tinycld): Metro's watchFolders points at the workspace root, so
+# member source resolves through the node_modules/@tinycld/* symlinks. The
+# entrypoint promotes this staging dir on container start and renames the SPA
+# shell index.html → app.html. EXPO_PUBLIC_RELEASE_ID is inlined so /api/version
+# polling can detect deploys.
+WORKDIR /ws/tinycld
 RUN set -eu \
     && if [ -s .release-id ]; then \
         rid=$(tr -d '[:space:]' < .release-id); \
@@ -163,14 +179,14 @@ RUN set -eu \
     && rm -f .release-id \
     && export EXPO_PUBLIC_RELEASE_ID="$rid" \
     && npx expo export --platform web \
-    && mkdir -p /ws/app/release-staging \
-    && mv /ws/app/dist "/ws/app/release-staging/$rid" \
-    && printf '%s' "$rid" > "/ws/app/release-staging/$rid/release-id.txt" \
+    && mkdir -p /ws/tinycld/release-staging \
+    && mv /ws/tinycld/dist "/ws/tinycld/release-staging/$rid" \
+    && printf '%s' "$rid" > "/ws/tinycld/release-staging/$rid/release-id.txt" \
     && if [ -s .release-manifest ]; then \
-        cp .release-manifest "/ws/app/release-staging/$rid/manifest.json"; \
+        cp .release-manifest "/ws/tinycld/release-staging/$rid/manifest.json"; \
         rm -f .release-manifest; \
     fi \
-    && mv "/ws/app/release-staging/$rid/index.html" "/ws/app/release-staging/$rid/app.html"
+    && mv "/ws/tinycld/release-staging/$rid/index.html" "/ws/tinycld/release-staging/$rid/app.html"
 
 
 # Build stage for Go server.
@@ -187,33 +203,28 @@ WORKDIR /ws
 # caches until those files change. Without this, every source edit busts the
 # cache and re-downloads ~hundreds of MB of Go modules. The app server's go.work
 # (generator output) wires the sibling Go modules — core via the go.mod
-# `replace => ../../core/server`, each feature via go.work
-# `use ../../node_modules/@tinycld/<x>/server`. Those relative paths resolve
-# from /ws/app/server, so the manifests must land at their member paths. The
-# web-builder staged them all under /ws/go-mod-staging/ with structure preserved.
+# `replace => ../core/server`, each feature via go.work
+# `use ../../<x>/server`. Those relative paths resolve from /ws/tinycld/server,
+# so the manifests must land at their member paths. The web-builder staged them
+# all under /ws/go-mod-staging/ with structure preserved.
 COPY --from=web-builder /ws/go-mod-staging/ ./
 
-# The go.work `use` entries reference ../../node_modules/@tinycld/<x>/server.
-# Recreate those workspace symlinks (npm-owned in web-builder) so `go mod
-# download`/`go work sync` can resolve each feature module through them. The
-# symlink targets (the member server/ trees) land with the full source COPY
-# below; for the cache-warming download step only the manifests + link graph
-# need to exist.
-COPY --from=web-builder /ws/node_modules/@tinycld ./node_modules/@tinycld
+# The go.work `use` entries reference ../../<x>/server (feature siblings) and the
+# go.mod `replace` references ../core/server. The module-download step only needs
+# the manifests + the directory structure to exist; the full source lands below.
 
-WORKDIR /ws/app/server
+WORKDIR /ws/tinycld/server
 # Warm the module cache. Reused on every rebuild as long as none of the
 # go.mod/go.sum/go.work files copied above changed.
 RUN go mod download
 
-# Now bring in the full member trees the Go workspace spans: the app server,
-# core's Go module (replace target), and each feature's source (its server/ is
-# a go.work member; copying the whole member dir is simplest and the non-Go
-# files are cheap). Changes here invalidate everything below but leave the
-# (much larger) module-download layer above intact.
+# Now bring in the full member trees the Go workspace spans: the merged member
+# (app server + nested core's Go module — the replace target), and each
+# feature's source (its server/ is a go.work member; copying the whole member
+# dir is simplest and the non-Go files are cheap). Changes here invalidate
+# everything below but leave the (much larger) module-download layer above intact.
 WORKDIR /ws
-COPY --from=web-builder /ws/app/ ./app/
-COPY --from=web-builder /ws/core/ ./core/
+COPY --from=web-builder /ws/tinycld/ ./tinycld/
 COPY --from=web-builder /ws/contacts/ ./contacts/
 COPY --from=web-builder /ws/mail/ ./mail/
 COPY --from=web-builder /ws/calendar/ ./calendar/
@@ -222,7 +233,7 @@ COPY --from=web-builder /ws/calc/ ./calc/
 COPY --from=web-builder /ws/text/ ./text/
 COPY --from=web-builder /ws/google-takeout-import/ ./google-takeout-import/
 
-WORKDIR /ws/app/server
+WORKDIR /ws/tinycld/server
 # Reconcile go.sum across the workspace after the full source lands. The
 # web-builder generated package_extensions.go and go.work but had no Go
 # toolchain to populate go.sum entries; `go work sync` does that now, offline
@@ -318,55 +329,46 @@ ARG TINYCLD_UID=1000
 ARG TINYCLD_GID=1000
 RUN groupadd --system --gid "$TINYCLD_GID" tinycld \
     && useradd --system --uid "$TINYCLD_UID" --gid "$TINYCLD_GID" \
-        --home-dir /workspace/app --no-create-home --shell /usr/sbin/nologin tinycld
+        --home-dir /workspace/tinycld --no-create-home --shell /usr/sbin/nologin tinycld
 
-# The runtime app tree lives at /workspace/app and mirrors the app member: the
-# server binary, the per-release web bundle, migrations, and the runtime scripts.
-# The workspace-level pieces the runtime scripts and in-app installer need
-# (node_modules, root manifests, tinycld.packages.ts, the sibling members) live
-# at /workspace (the parent of /workspace/app), assembled below so that
-# node_modules/@tinycld/<x> symlinks → ../../<x> resolve within /workspace.
-WORKDIR /workspace/app
+# The runtime app tree lives at /workspace/tinycld and mirrors the merged member:
+# the server binary, the per-release web bundle, migrations, nested core, and the
+# runtime scripts. The workspace-level pieces the runtime scripts and in-app
+# installer need (node_modules, root manifests, tinycld.packages.ts, the feature
+# siblings) live at /workspace (the parent of /workspace/tinycld), so that
+# node_modules/@tinycld/<x> symlinks → ../../<x> resolve within /workspace and
+# resolveServerDir()==/workspace/tinycld with wsRoot==/workspace.
+WORKDIR /workspace/tinycld
 
-# Compiled server binary.
-COPY --from=go-builder /ws/app/server/tinycld ./tinycld
+# Compiled server binary, placed at appDir root (resolveServerDir() returns the
+# binary's own dir; the installer expects the live binary at <appDir>/tinycld and
+# the Go toolchain dir one level deeper at <appDir>/server).
+COPY --from=go-builder /ws/tinycld/server/tinycld ./tinycld
 
 # Per-release web bundle, staged by the web-builder. The entrypoint promotes
-# this on container start to /workspace/app/releases/. The /workspace/app/public/
-# directory is reserved for the marketing website (populated by tinycld.org's
-# deploy tail).
-COPY --from=web-builder /ws/app/release-staging /workspace/app/release-staging
-RUN mkdir -p /workspace/app/public /workspace/app/releases
+# this on container start to /workspace/tinycld/releases/. The
+# /workspace/tinycld/public/ directory is reserved for the marketing website.
+COPY --from=web-builder /ws/tinycld/release-staging /workspace/tinycld/release-staging
+RUN mkdir -p /workspace/tinycld/public /workspace/tinycld/releases
 
-# Migrations: see the symlink set up after the full server tree is copied
-# below. (The runtime jsvm reads /workspace/app/pb_migrations; the generator +
-# in-app installer write to /workspace/app/server/pb_migrations — we make the
-# former a symlink to the latter so all three agree.)
-
-# Workspace-root files for the runtime scripts + in-app package-install
-# pipeline. These live at the workspace ROOT in the new layout: the root
-# package.json / pnpm-lock.yaml / pnpm-workspace.yaml / .npmrc, the hoisted
-# node_modules (with the @tinycld/<x> member symlinks), tinycld.packages.ts, and
-# scripts/link-members.ts (the in-app installer's postinstall re-runs it). They
-# sit at /workspace (one directory above /workspace/app) so the symlinks
-# (node_modules/@tinycld/<x> → ../../<x>) still point at the sibling members
-# copied below.
+# Workspace-root files for the runtime scripts + in-app package-install pipeline.
+# These live at the workspace ROOT: the root package.json / pnpm-lock.yaml /
+# pnpm-workspace.yaml / .npmrc, the hoisted node_modules (with the @tinycld/<x>
+# member symlinks), tinycld.packages.ts, and scripts/ (link-members.ts — the
+# in-app installer's postinstall re-runs it). They sit at /workspace (one
+# directory above /workspace/tinycld) so the symlinks
+# (node_modules/@tinycld/<x> → ../../<x>) still point at the members copied below.
 COPY --from=web-builder /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /workspace/
 COPY --from=web-builder /ws/tinycld.packages.ts /workspace/tinycld.packages.ts
 COPY --from=web-builder /ws/scripts /workspace/scripts
+COPY --from=web-builder /ws/tests /workspace/tests
 COPY --from=web-builder /ws/node_modules /workspace/node_modules
-# package-scripts (the tinycld-pkg CLI) now lives inside the app member, so the
-# node_modules/@tinycld/package-scripts symlink resolves to ../../app/package-scripts
-# (i.e. /workspace/app/package-scripts at runtime, WORKDIR /workspace/app). Land it there.
-COPY --from=web-builder /ws/app/package-scripts ./package-scripts
 
-# Sibling members. seed-db.ts (run by the reset-demo cron) imports
-# ../tinycld.seeds → each @tinycld/<feature>/seed, resolved through the
-# node_modules symlinks (node_modules/@tinycld/<x> → ../../<x>) into these
-# member dirs; core supplies the runtime libs they import. They sit at
-# /workspace so the symlinks resolve (/workspace/node_modules/@tinycld/<x>
-# → /workspace/<x>).
-COPY --from=web-builder /ws/core /workspace/core
+# Feature siblings at /workspace/<x>. seed-db.ts (run by the reset-demo cron)
+# imports ../tinycld.seeds → each @tinycld/<feature>/seed, resolved through the
+# node_modules symlinks (node_modules/@tinycld/<x> → ../../<x>) into these member
+# dirs. They sit at /workspace so the symlinks resolve
+# (/workspace/node_modules/@tinycld/<x> → /workspace/<x>).
 COPY --from=web-builder /ws/contacts /workspace/contacts
 COPY --from=web-builder /ws/mail /workspace/mail
 COPY --from=web-builder /ws/calendar /workspace/calendar
@@ -375,63 +377,74 @@ COPY --from=web-builder /ws/calc /workspace/calc
 COPY --from=web-builder /ws/text /workspace/text
 COPY --from=web-builder /ws/google-takeout-import /workspace/google-takeout-import
 
-# app-member files the runtime needs:
-#   - tinycld.config.ts / tinycld.seeds.ts: imported by seed-db.ts at runtime.
-#   - scripts/: reset-demo, seed-db, generate.ts + gen-*.ts (the in-app
-#     installer re-runs the generator after installing a package).
-#   - lib/generated/: package-help.ts etc. that the generated config imports.
-#   - app config files (package.json, tsconfig, metro/babel, app.json,
-#     global.css, public/, assets/): needed when the in-app installer re-runs
-#     the generator + a web rebuild at runtime.
-COPY --from=web-builder /ws/app/tinycld.config.ts /ws/app/tinycld.seeds.ts ./
-COPY --from=web-builder /ws/app/package.json /ws/app/tsconfig.json /ws/app/tsconfig.package-base.json ./
-COPY --from=web-builder /ws/app/metro.config.cjs /ws/app/babel.config.cjs ./
-COPY --from=web-builder /ws/app/app.json /ws/app/global.css /ws/app/uniwind-types.d.ts /ws/app/expo-env.d.ts ./
-COPY --from=web-builder /ws/app/scripts ./scripts
-COPY --from=web-builder /ws/app/lib ./lib
-COPY --from=web-builder /ws/app/public ./public
-COPY --from=web-builder /ws/app/assets ./assets
-
-# Full server tree (for the in-app installer's runtime Go-package builds). The
-# generated go.work + package_extensions.go + go.mod/go.sum land here; the
-# `replace => ../../core/server` and go.work `use ../../node_modules/...` paths
-# resolve against the members + node_modules copied above.
-COPY --from=go-builder /ws/app/server/ ./server/
+# The merged member's sub-trees the runtime + in-app installer need (everything
+# inside tinycld/ EXCEPT the binary and release-staging, which were placed above
+# and are NOT part of the source member). Copied per-subpath from the go-builder
+# stage — which has the full member from web-builder PLUS the compiled Go
+# artifacts — so the regenerated Go wiring (server/go.work, package_extensions.go,
+# go.mod/go.sum, the materialized pb_migrations/pb_hooks), nested core (core/, the
+# go.mod replace target + boot-time core/types target), nested package-scripts,
+# the generator (scripts/), generated config (tinycld.config.ts, tinycld.seeds.ts,
+# lib/), and the app source (app/, configs) all land at /workspace/tinycld.
+# The merged member's own node_modules — tiny (just the @tinycld/<x> symlink
+# dir; all real deps are hoisted to the workspace-root node_modules). Metro
+# resolves member packages through these relative symlinks
+# (node_modules/@tinycld/core → ../../core, …/mail → ../../../mail), so they must
+# be present at /workspace/tinycld/node_modules for the runtime in-app installer's
+# `expo export` to resolve @tinycld/* before its own pnpm install re-links them.
+COPY --from=go-builder /ws/tinycld/node_modules/ ./node_modules/
+COPY --from=go-builder /ws/tinycld/server/ ./server/
+COPY --from=go-builder /ws/tinycld/core/ ./core/
+COPY --from=go-builder /ws/tinycld/package-scripts/ ./package-scripts/
+COPY --from=go-builder /ws/tinycld/scripts/ ./scripts/
+COPY --from=go-builder /ws/tinycld/lib/ ./lib/
+COPY --from=go-builder /ws/tinycld/app/ ./app/
+COPY --from=go-builder /ws/tinycld/public/ ./public/
+COPY --from=go-builder /ws/tinycld/assets/ ./assets/
+COPY --from=go-builder /ws/tinycld/tinycld.config.ts /ws/tinycld/tinycld.seeds.ts ./
+# tsconfig.package-base.json is NOT at the merged-member root post-merge — it
+# lives in core (core/tsconfig.package-base.json, surfaced via @tinycld/core's
+# exports) and arrives with the `core/` COPY above. Members extend it by package
+# name, so no root copy is needed.
+COPY --from=go-builder /ws/tinycld/package.json /ws/tinycld/tsconfig.json ./
+COPY --from=go-builder /ws/tinycld/metro.config.cjs /ws/tinycld/babel.config.cjs ./
+COPY --from=go-builder /ws/tinycld/app.json /ws/tinycld/global.css /ws/tinycld/uniwind-types.d.ts /ws/tinycld/expo-env.d.ts ./
 
 # Point the runtime migrations dir at the generator/installer's migrations dir.
-# jsvm reads /workspace/app/pb_migrations; the generator (and the in-app
+# jsvm reads /workspace/tinycld/pb_migrations; the generator (and the in-app
 # installer when it regenerates after installing a package) writes migration
-# symlinks into /workspace/app/server/pb_migrations. Symlinking the former to
-# the latter means a newly-installed package's migrations are immediately
-# visible to the runtime and actually apply on the post-install restart —
-# without this, installed-package migrations land only in server/pb_migrations
-# and silently never run. Build-time (bundled) migrations live in
-# server/pb_migrations too (resolved real files from the go-builder COPY above),
-# so this unifies build + runtime + installer on one directory.
+# symlinks into /workspace/tinycld/server/pb_migrations. Symlinking the former to
+# the latter means a newly-installed package's migrations are immediately visible
+# to the runtime and actually apply on the post-install restart — without this,
+# installed-package migrations land only in server/pb_migrations and silently
+# never run. Build-time (bundled) migrations live in server/pb_migrations too
+# (resolved real files from the go-builder COPY above), so this unifies build +
+# runtime + installer on one directory.
 RUN rm -rf ./pb_migrations && ln -s server/pb_migrations ./pb_migrations
 
 # bundled-packages.json so core's coreserver.SyncBundledPackages can find it at
-# startup. Generated at app/server/bundled-packages.json; the binary reads it
-# relative to its own dir, so place a copy at /workspace/app for the boot-time seed.
-COPY --from=web-builder /ws/app/server/bundled-packages.json ./bundled-packages.json
+# startup. Generated at tinycld/server/bundled-packages.json; the binary reads it
+# relative to its own dir, so place a copy at /workspace/tinycld for the boot-time seed.
+COPY --from=go-builder /ws/tinycld/server/bundled-packages.json ./bundled-packages.json
 
 # Data dir (PB writes pb_data relative to cwd) + the generated-types dir.
-# coreserver.DefaultTypesDir() resolves to <binaryDir>/../../core/types — with
-# the binary at /workspace/app/tinycld that is /workspace/core/types — where the
-# schema hook writes pbSchema.ts / pbZodSchema.ts at boot. Create it so the
-# write succeeds.
-RUN mkdir -p /workspace/app/pb_data /workspace/core/types
+# coreserver.DefaultTypesDir() resolves to <binaryDir>/core/types — with the
+# binary at /workspace/tinycld/tinycld that is /workspace/tinycld/core/types —
+# where the schema hook writes pbSchema.ts / pbZodSchema.ts at boot. Create it so
+# the write succeeds.
+RUN mkdir -p /workspace/tinycld/pb_data /workspace/tinycld/core/types
 
 
-COPY app/config/entrypoint.sh ./entrypoint.sh
+COPY tinycld/config/entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
 # Hand the entire workspace tree to the tinycld user with a single build-time
 # chown. Because /workspace is an ordinary subdirectory (not the overlay mount
 # root /), this chown PERSISTS through the layer commit — unlike a chown of /
 # which reverts to root:root. So no runtime chown is needed for workspace paths;
-# only bind-mounted data dirs (/workspace/app/pb_data, /workspace/core/types)
-# need fixing at runtime when Docker creates them owned by root.
+# only bind-mounted data dirs (/workspace/tinycld/pb_data,
+# /workspace/tinycld/core/types) need fixing at runtime when Docker creates them
+# owned by root.
 #
 # Must run BEFORE setcap below — chown strips file capabilities (it resets the
 # security.capability xattr along with ownership), so setcap'ing first then
@@ -456,13 +469,14 @@ RUN setcap 'cap_net_bind_service=+ep' ./tinycld
 EXPOSE 7090 80 443 993 465
 
 # The container starts as root so the entrypoint can fix ownership of the
-# bind-mounted data dirs (/workspace/app/pb_data, /workspace/core/types) before
-# the server runs. When a host bind-mount target doesn't exist yet, Docker
-# creates it owned by root; the unprivileged tinycld user then can't open the
-# SQLite DB ("unable to open database file (14)") and the container crash-loops.
-# entrypoint.sh chown's those dirs to tinycld and drops to uid 1000 via gosu
-# for the server itself, so nothing privileged actually runs the application.
-# See the fix_data_dir_ownership() function in entrypoint.sh.
+# bind-mounted data dirs (/workspace/tinycld/pb_data,
+# /workspace/tinycld/core/types) before the server runs. When a host bind-mount
+# target doesn't exist yet, Docker creates it owned by root; the unprivileged
+# tinycld user then can't open the SQLite DB ("unable to open database file
+# (14)") and the container crash-loops. entrypoint.sh chown's those dirs to
+# tinycld and drops to uid 1000 via gosu for the server itself, so nothing
+# privileged actually runs the application. See fix_data_dir_ownership() in
+# entrypoint.sh.
 USER root
 
 # The server process still runs as uid 1000 (tinycld) — the entrypoint drops

@@ -49,8 +49,9 @@ interface RegistryRow {
 // it returns true — a downgrade is the DESTRUCTIVE direction, so "unknown" must
 // require confirmation rather than silently skip it.
 export function detectDowngrade(info: PackageVersionInfo, targetVersion: string): boolean {
-    const idx = info.available.indexOf(targetVersion)
-    const curIdx = info.available.indexOf(info.current)
+    const available = info.available ?? []
+    const idx = available.indexOf(targetVersion)
+    const curIdx = available.indexOf(info.current)
     if (idx >= 0 && curIdx >= 0) return idx > curIdx
     const cmp = compareVersions(targetVersion, info.current)
     if (cmp !== null) return cmp < 0
