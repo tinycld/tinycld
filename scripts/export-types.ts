@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { MIGRATIONS_DIR, SERVER_DIR, WS_ROOT } from './paths'
+import { MIGRATIONS_DIR, memberDir, SERVER_DIR } from './paths'
 
 // Regenerate core/types/pbSchema.ts + pbZodSchema.ts by invoking the
 // standalone `export-types` Go binary against a fresh tmpdir pb_data
@@ -35,8 +35,12 @@ import { MIGRATIONS_DIR, SERVER_DIR, WS_ROOT } from './paths'
 // from a small pre-builder stage, and the TINYCLD_EXPORT_TYPES_BIN env
 // var points at it so this script skips the `go run` step entirely.
 
-const TYPES_DIR = path.resolve(WS_ROOT, 'core', 'types')
-const CMD_DIR = path.resolve(WS_ROOT, 'core', 'server', 'cmd', 'export-types')
+// @tinycld/core lives nested inside the tinycld member (APP_DIR/core) in the
+// merged layout. memberDir() resolves it the same way the generator does, so
+// this can't drift if the member is renamed or core is relocated.
+const CORE_DIR = memberDir('@tinycld/core')
+const TYPES_DIR = path.resolve(CORE_DIR, 'types')
+const CMD_DIR = path.resolve(CORE_DIR, 'server', 'cmd', 'export-types')
 
 function run(cmd: string, args: string[], cwd: string): void {
     const result = spawnSync(cmd, args, { cwd, stdio: 'inherit' })

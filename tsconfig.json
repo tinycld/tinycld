@@ -12,8 +12,8 @@
         "paths": {
             "~/*": ["./*"],
             "@tinycld/app-generated/*": ["./lib/generated/*"],
-            "@tinycld/core": ["../core/index.ts"],
-            "@tinycld/core/*": ["../core/*"]
+            "@tinycld/core": ["./core/index.ts"],
+            "@tinycld/core/*": ["./core/*"]
         }
     },
     "exclude": ["node_modules", ".expo", "dist", "scripts/eas-workspace-files"],

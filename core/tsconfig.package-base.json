@@ -1,0 +1,23 @@
+{
+    "compilerOptions": {
+        "module": "preserve",
+        "moduleResolution": "bundler",
+        "customConditions": ["react-native"],
+        "jsx": "react-jsx",
+        "lib": ["dom", "esnext"],
+        "target": "esnext",
+        "strict": true,
+        "noImplicitAny": false,
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "resolveJsonModule": true,
+        "moduleDetection": "force",
+        "noEmit": true,
+        "types": ["node", "react", "@tinycld/core/uniwind-types"]
+        // No explicit typeRoots: under pnpm's hoisted linker @types/node and
+        // @types/react are flat-hoisted to the workspace-root node_modules, so
+        // tsc's default node_modules/@types walk-up from each member dir finds
+        // them (member -> workspace root). An explicit typeRoots pinned at the
+        // app shell would miss them now that they live at the root.
+    }
+}

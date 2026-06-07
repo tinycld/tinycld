@@ -42,6 +42,19 @@ function buildMemberDirIndex(): Map<string, string> {
             index.set(name, dir)
         }
     }
+    // @tinycld/core now lives nested inside the tinycld member (at <APP_DIR>/core/),
+    // not as a top-level sibling. The top-level scan above won't find it, so look
+    // for it explicitly. (Only core is nested; feature siblings stay top-level.)
+    if (!index.has('@tinycld/core')) {
+        const nestedCore = path.join(APP_DIR, 'core')
+        const corePkg = path.join(nestedCore, 'package.json')
+        try {
+            const name = JSON.parse(fs.readFileSync(corePkg, 'utf8')).name
+            if (name === '@tinycld/core') index.set('@tinycld/core', nestedCore)
+        } catch {
+            // no nested core/package.json (e.g. a synthetic test tree) — leave unset
+        }
+    }
     return index
 }
 

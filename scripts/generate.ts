@@ -285,11 +285,17 @@ function emitGoWiring(features: Feature[]) {
     const coreServerDir = path.join(memberDir('@tinycld/core'), 'server')
     const coreServerRel = path.relative(SERVER_DIR, coreServerDir)
     const goWork = path.join(SERVER_DIR, 'go.work')
-    if (serverPkgs.length > 0) {
-        fs.writeFileSync(goWork, buildGoWork(coreServerRel, serverPkgs))
-    } else if (fs.existsSync(goWork)) {
-        fs.unlinkSync(goWork)
-    }
+    // Always emit go.work, even with zero feature servers. The app server's
+    // go.mod carries `replace tinycld.org/core => ../core/server`, so core is a
+    // local-replace dependency on every assembly. Without a go.work the build
+    // drops to single-module mode and verifies core's transitive deps against
+    // app server/go.sum — which only records the app's own direct deps, not the
+    // `/go.mod` hashes of deps reached through core (e.g. Masterminds/semver via
+    // coreserver/pkg_compat.go), so it fails with "missing go.sum entry for
+    // go.mod file". In workspace mode those hashes live in go.work.sum, which
+    // `go mod download` regenerates. buildGoWork always lists `.` + core; an
+    // empty serverPkgs just omits the feature `use` lines.
+    fs.writeFileSync(goWork, buildGoWork(coreServerRel, serverPkgs))
 
     // Per-member go.work so each server module resolves tinycld.org/core when
     // built on its own (the app build above is unaffected — it runs from
@@ -344,6 +350,27 @@ async function main() {
     validateSidebarContributions(configPkgs)
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.config.ts'), buildConfigSource(configPkgs))
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.seeds.ts'), buildSeedsSource(configPkgs))
+
+    // --- 1b. @tinycld/app-generated package manifest -----------------------
+    // Makes lib/generated/ a real, name-resolvable package so `@tinycld/app-generated/*`
+    // resolves by name (via the node_modules/@tinycld/app-generated symlink that
+    // link-members.ts creates) — no consumer tsconfig `paths` entry required. The
+    // 4-candidate exports cover files and directory-modules in both extensions.
+    fs.writeFileSync(
+        path.join(GENERATED_DIR, 'package.json'),
+        `${JSON.stringify(
+            {
+                name: '@tinycld/app-generated',
+                version: '0.0.0',
+                private: true,
+                exports: {
+                    './*': ['./*.ts', './*.tsx', './*/index.ts', './*/index.tsx'],
+                },
+            },
+            null,
+            4
+        )}\n`
+    )
 
     // --- 2. @tinycld/app-generated/tinycld-config re-export shim ------------
     // core imports `@tinycld/app-generated/tinycld-config`; the app supplies it.

@@ -6,7 +6,7 @@ import { defineConfig } from 'vitest/config'
 // resolve through these aliases so cross-package `@tinycld/core/*` imports and
 // the `~/*` package-source alias work identically everywhere.
 const APP_DIR = __dirname
-const CORE_DIR = path.resolve(APP_DIR, '..', 'core')
+const CORE_DIR = path.join(APP_DIR, 'core')
 
 export default defineConfig({
     resolve: {
@@ -88,7 +88,7 @@ export default defineConfig({
     },
     test: {
         environment: 'node',
-        include: ['tests/**/*.test.{ts,tsx}'],
+        include: ['tests/**/*.test.{ts,tsx}', 'scripts/**/__tests__/**/*.test.{ts,tsx}'],
         // The app shell has no tests/ of its own yet; self-mode `npm test`
         // (tinycld-pkg test from app/) must not fail on an empty match.
         passWithNoTests: true,

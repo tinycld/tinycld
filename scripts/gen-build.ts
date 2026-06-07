@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { APP_DIR } from './paths'
 
 // Resolve a manifest `build.script` value to a concrete on-disk file. Prefers
 // an exports-map entry; falls back to <script>.{ts,mjs,js} then the bare path.
@@ -54,7 +55,7 @@ export function runPackageBuilds(wsRoot: string, builds: BuildPkg[]): void {
     // yjs, react, …). Pass the app dir explicitly so they don't fall back to a
     // guessed relative path — under pnpm those deps are scoped to app/node_modules
     // (not flat-hoisted to the workspace root), so the path must be exact.
-    const appDir = path.join(wsRoot, 'app')
+    const appDir = APP_DIR
     for (const b of builds) {
         const scriptPath = resolveBuildScriptPath(b.packageDir, b.script)
         console.log(

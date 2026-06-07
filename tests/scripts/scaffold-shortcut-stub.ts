@@ -19,13 +19,13 @@
  * them doesn't require a clean checkout.
  *
  * Invocation:
- *   - CI: workflow runs `tsx app/tests/scripts/scaffold-shortcut-stub.ts`
+ *   - CI: workflow runs `tsx tinycld/tests/scripts/scaffold-shortcut-stub.ts`
  *     from the workspace root after `pnpm install`.
  *   - Local: developers run it once before `tinycld-pkg test:e2e`.
  *
- * Layout invariant: the workspace root is the parent of app/, and the
- * script always operates on that root, NOT on cwd. Running from inside
- * app/ or the root behaves the same.
+ * Layout invariant: the workspace root is the parent of tinycld/ (the merged
+ * app shell + core member), and the script always operates on that root, NOT on
+ * cwd. Running from inside tinycld/ or the root behaves the same.
  *
  * Pattern source: drive/tests/scripts/scaffold-share-stub.ts. Both
  * scripts use bootstrap's --new --preset settings-only flow then patch
@@ -44,10 +44,13 @@ import { fileURLToPath } from 'node:url'
 export const STUB_SLUG = 'shortcut-stub'
 export const STUB_NAV_SHORTCUT = 'k'
 export const STUB_NAV_LABEL = 'Shortcut Stub'
-const BOOTSTRAP_VERSION = '@tinycld/bootstrap@2.0.1'
+// Pin a known-good bootstrap so CI is reproducible — `@latest` lets an
+// unrelated bootstrap release silently turn this e2e fixture red. Bump
+// deliberately when adopting a new bootstrap that changes scaffold output.
+const BOOTSTRAP_VERSION = '@tinycld/bootstrap@2.4.0'
 
 function workspaceRoot(): string {
-    // app/tests/scripts/scaffold-shortcut-stub.ts → app/ → workspace root
+    // tinycld/tests/scripts/scaffold-shortcut-stub.ts → tinycld/ → workspace root
     return resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..')
 }
 
@@ -226,7 +229,7 @@ function regenerateConfig(wsRoot: string): void {
     // it, otherwise the rail won't render the stub's nav entry and the
     // shortcut binding won't be registered.
     const r = spawnSync('pnpm', ['run', 'packages:generate'], {
-        cwd: join(wsRoot, 'app'),
+        cwd: join(wsRoot, 'tinycld'),
         stdio: 'inherit',
     })
     if (r.status !== 0) {
