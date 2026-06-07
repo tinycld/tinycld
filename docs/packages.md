@@ -67,7 +67,7 @@ treated as a library, not a feature.
         scripts/generate-packages.ts  # the generator
         tinycld.packages.ts           # getPackages() — reads workspace members
         tinycld.config.ts             # generated source of truth (gitignored)
-        server/                       # Go (PocketBase) — module tinycld.org/app
+        server/                       # Go (PocketBase) — module tinycld.org/tinycld
     mail/   contacts/   calc/   ...   # sibling feature repos (workspace members)
 ```
 
@@ -645,7 +645,7 @@ or kill servers manually around a Playwright run.
 
 Two Go module boundaries, one binary:
 
-- **App** = `tinycld.org/app` (`server/go.mod`), which pulls core via
+- **App** = `tinycld.org/tinycld` (`server/go.mod`), which pulls core via
   `replace tinycld.org/core => ../packages/@tinycld/core/server`.
 - **Core** = `tinycld.org/core`
   (`packages/@tinycld/core/server/go.mod`), exporting

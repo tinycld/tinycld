@@ -1,4 +1,4 @@
-module tinycld.org/app
+module tinycld.org/tinycld
 
 go 1.25.0
 

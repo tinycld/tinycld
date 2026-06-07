@@ -90,7 +90,7 @@ pnpm run ssl:generate
   symlinks, and the Go server wiring. Runs on `postinstall`.
 - **`scripts/dev.ts`** — the dev launcher (proxy + PB + Expo).
 - **`server/main.go`** — load env, init Sentry, build `coreserver.Options`, call
-  `coreserver.Register(app, opts)`. Module `tinycld.org/app` with
+  `coreserver.Register(app, opts)`. Module `tinycld.org/tinycld` with
   `replace tinycld.org/core => ../../core/server`.
 - **`server/pb_migrations/`, `server/pb_hooks/`** — landing dirs for symlinks the generator
   populates from core's `server/` plus each linked feature package.

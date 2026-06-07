@@ -20,7 +20,7 @@ The Go side of core is module `tinycld.org/core` (at `core/server/`), exporting
 `coreserver` (registration orchestrator) plus subsystems `notify`, `push`,
 `mailer`, `audit`, `textextract`, `thumbnails`, `render`, `realtime`,
 `sharelink`. Core's PocketBase migrations live at `core/server/pb_migrations/`.
-The app server (`server/main.go`) is module `tinycld.org/app` and consumes core
+The app server (`server/main.go`) is module `tinycld.org/tinycld` and consumes core
 via `replace tinycld.org/core => ../core/server` (rewritten into `server/go.work`
 by the generator).
 

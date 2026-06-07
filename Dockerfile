@@ -11,7 +11,7 @@
 #       tinycld/               # the MERGED member: app shell at its root +
 #           core/              #   @tinycld/core nested here (Go module tinycld.org/core)
 #           package-scripts/   #   the tinycld-pkg CLI nested here
-#           server/            #   the app's Go module tinycld.org/app (generator output)
+#           server/            #   the app's Go module tinycld.org/tinycld (generator output)
 #           scripts/           #   the generator (scripts/generate.ts) + runtime scripts
 #           app/ lib/ ...      #   Expo Router route tree + app source
 #       contacts/ mail/ ...    # feature members (each its own sibling repo)
@@ -31,7 +31,7 @@
 # The generator materializes tinycld/lib/generated/, tinycld/tinycld.config.ts,
 # tinycld/tinycld.seeds.ts, route re-exports under tinycld/app/a/[orgSlug]/<slug>/,
 # tinycld/server/{package_extensions.go,go.work,pb_migrations/,pb_hooks/,
-# bundled-packages.json}, etc. The Go app module is tinycld.org/app at
+# bundled-packages.json}, etc. The Go app module is tinycld.org/tinycld at
 # tinycld/server/ with `replace tinycld.org/core => ../core/server` and a
 # generated go.work wiring each feature's ../../<x>/server.
 #
