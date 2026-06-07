@@ -42,7 +42,8 @@
         "./vitest-config": "./vitest-config.ts",
         "./playwright-config": "./playwright-config.ts",
         "./e2e-helpers": "./e2e-helpers.ts",
-        "./e2e-imap-helpers": "./e2e-imap-helpers.ts"
+        "./e2e-imap-helpers": "./e2e-imap-helpers.ts",
+        "./e2e-caldav-helpers": "./e2e-caldav-helpers.ts"
     },
     "scripts": {
         "typecheck": "tinycld-pkg typecheck",
