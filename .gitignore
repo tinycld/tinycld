@@ -68,9 +68,11 @@ server/pb_test_data/
 /.release-id
 /.release-manifest
 
-# Native projects — regenerated on demand by `expo prebuild`
-ios/
-android/
+# Native projects — regenerated on demand by `expo prebuild`.
+# Anchored to the repo root so local Expo modules' own native dirs
+# (e.g. modules/app-updater/ios/) stay tracked.
+/ios/
+/android/
 *.xcuserdata
 *.hprof
 
