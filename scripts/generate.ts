@@ -40,6 +40,44 @@ function resolveExportDir(packageDir: string, subpath: string): string | null {
     return exp.replace(/^\.\//, '').replace(/\/\*\.[^.]+$/, '')
 }
 
+// Write the workspace-root biome.json. Biome only searches UPWARD for config,
+// and the canonical biome.json lives at <ws-root>/tinycld/ — a SIBLING of the
+// feature members, never an ancestor. Without a root config, running biome from
+// inside a member (or via the editor/LSP) finds nothing and falls back to
+// biome's built-in defaults (wrong indent/quotes/semicolons), flooding output
+// with bogus reformatting. This minimal root config makes the canonical config
+// resolvable from anywhere: it's the one `root: true` config, and it `extends`
+// the canonical one (which is `root: false`). Members may drop their own
+// `root: false` biome.json that extends canonical to override rules; most don't.
+//
+// Written every install (not just on bootstrap assemble) so it self-heals: the
+// canonical config's `root: false` ships via the tinycld repo, and a non-root
+// config with no root above it breaks `pnpm run lint` — emitting this here means
+// the same install that pulls `root: false` also lays down the root config.
+// Bootstrap-owned (gitignored at the ws-root); content is static, so always
+// rewrite.
+//
+// `vcs.root` points at the app member dir (tinycld/), NOT the workspace root:
+// the canonical config relies on `.gitignore` to exclude generated/build
+// artifacts (ios/, .expo, tinycld.config.ts, Podspecs, …), and the only
+// .gitignore that lists them is tinycld/.gitignore. Once canonical is
+// `root: false`, EVERY invocation under the workspace root (including
+// `pnpm run lint` from tinycld/) resolves THIS config as the root and inherits
+// its vcs settings — so this is where useIgnoreFile must be anchored. The bare
+// workspace root has no .gitignore (and in a fresh bootstrap/CI assemble isn't
+// even a git repo), so pointing biome there would make it error
+// "couldn't find an ignore file".
+function writeRootBiomeConfig() {
+    const appDirName = path.basename(APP_DIR)
+    const config = {
+        $schema: 'https://biomejs.dev/schemas/2.4.16/schema.json',
+        root: true,
+        extends: [`./${appDirName}/biome.json`],
+        vcs: { enabled: true, clientKind: 'git', useIgnoreFile: true, root: appDirName },
+    }
+    fs.writeFileSync(path.join(WS_ROOT, 'biome.json'), `${JSON.stringify(config, null, 4)}\n`)
+}
+
 // Slugs come from trusted manifests, but any code path that joins a slug into
 // a path before rmSync gets this guard as defense-in-depth against a hostile
 // or typo'd manifest escaping the intended base dir.
@@ -419,6 +457,8 @@ async function main() {
             ...features.map(f => ({ manifest: f.manifest })),
         ])
     )
+
+    writeRootBiomeConfig()
 
     console.log(`Generated config for ${features.length} feature package(s).`)
 }

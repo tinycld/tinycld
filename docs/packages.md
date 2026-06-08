@@ -162,8 +162,12 @@ Three rules enforced here:
   `react-native` / `pbtsdb` / `yjs`, and TypeScript would then see two copies
   of every type and emit hundreds of "Type X is not assignable to type X"
   errors.
-- **No lint/biome/test scripts** — there is one Biome config in the whole
-  ecosystem (`tinycld/biome.json`); siblings don't ship one. The only script
+- **No lint/test scripts** — the canonical Biome config is `tinycld/biome.json`
+  (`root: false`); a minimal `root: true` config at the workspace root extends it
+  (written by bootstrap/the generator, gitignored) so biome resolves from inside
+  any member. A sibling ships **no** `biome.json` by default and inherits those
+  rules; it adds one only to override a rule
+  (`{ "root": false, "extends": ["../tinycld/biome.json"], … }`). The only script
   a sibling carries is `typecheck`.
 
 ### `tsconfig.json`
