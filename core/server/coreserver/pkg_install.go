@@ -643,6 +643,13 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	// record it explicitly rather than relying on the delta staying clean.
 	pkgMigrationFiles := intersectStrings(appliedNow, migrationsForPackage(manifest.Slug))
 
+	// Build identity used by both the web archive and the native OTA bundles.
+	// Computed up front so the per-platform bundle ids (build-<ts>-<platform>)
+	// share this build's timestamp. runtimeVersion is the APP version (appVersion
+	// policy), read from app.json — NOT the package version.
+	buildID := fmt.Sprintf("build-%d", time.Now().UnixMilli())
+	runtimeVersion := appVersionFromManifest(appDir)
+
 	// Rebuild web bundle. expo export runs from the app dir and writes to
 	// <appDir>/dist.
 	emitProgress(job, "Building web app", 85, "Running expo export")
@@ -667,6 +674,20 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	})
 	emitProgress(job, "Release staged", 92, "Web bundle staged for next boot")
 
+	// Native (ios/android) OTA bundles. Sequential, after web. Skipped (nil)
+	// when the RN toolchain is absent — mobile then stays on its embedded bundle.
+	nativeBundles, err := exportNativeBundles(job, appDir, buildID, runtimeVersion)
+	if err != nil {
+		fail("native export", err)
+		return
+	}
+	if len(nativeBundles) > 0 {
+		if err := stageNativeBundlesIntoRelease(stageDest, nativeBundles); err != nil {
+			fail("stage native bundles", err)
+			return
+		}
+	}
+
 	// Update pkg_registry
 	emitProgress(job, "Updating database", 95, "Updating package registry")
 	manifestJSON, _ := json.Marshal(manifest.RawJSON)
@@ -679,7 +700,6 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 	// Archive this build as a restorable snapshot (binary + web bundle + the
 	// metadata a revert needs). The build_id doubles as the on-disk archive dir.
 	emitProgress(job, "Archiving build", 98, "Saving build for revert")
-	buildID := fmt.Sprintf("build-%d", time.Now().UnixMilli())
 	releaseID := filepath.Base(stageDest)
 	// build.json on disk mirrors the pkg_build record so a build is self-describing
 	// for offline restore.
@@ -694,6 +714,7 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		"migrations_applied":  len(appliedNow),
 		"migration_files":     appliedNow,
 		"pkg_migration_files": pkgMigrationFiles,
+		"bundles":             serializeBundles(nativeBundles),
 	}
 	_, archiveCleanup, archErr := archiveBuild(appDir, buildID, stageDest, manifest.HasServer, buildFields)
 	if archErr != nil {

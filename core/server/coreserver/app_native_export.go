@@ -196,3 +196,44 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 	}
 	return out, nil
 }
+
+// appVersionFromManifest reads the Expo app version (app.json → expo.version),
+// which is the runtimeVersion under the appVersion policy. app.json may sit at
+// appDir in the runtime image or one level up in dev — try appDir then parent.
+func appVersionFromManifest(appDir string) string {
+	for _, base := range []string{appDir, filepath.Dir(appDir)} {
+		raw, err := os.ReadFile(filepath.Join(base, "app.json"))
+		if err != nil {
+			continue
+		}
+		var cfg struct {
+			Expo struct {
+				Version string `json:"version"`
+			} `json:"expo"`
+		}
+		if json.Unmarshal(raw, &cfg) == nil && cfg.Expo.Version != "" {
+			return cfg.Expo.Version
+		}
+	}
+	return ""
+}
+
+// serializeBundles converts the typed metadata into the []any shape PocketBase
+// stores in the `bundles` JSON field. Returns an empty (non-nil) slice so the
+// stored value is always a JSON array.
+func serializeBundles(bundles []bundleMeta) []any {
+	out := make([]any, 0, len(bundles))
+	for _, b := range bundles {
+		assets := make([]any, 0, len(b.Assets))
+		for _, a := range b.Assets {
+			assets = append(assets, map[string]any{
+				"key": a.Key, "hash": a.Hash, "content_type": a.ContentType, "file": a.File,
+			})
+		}
+		out = append(out, map[string]any{
+			"platform": b.Platform, "bundle_id": b.BundleID, "bundle_hash": b.BundleHash,
+			"bundle_file": b.BundleFile, "runtime_version": b.RuntimeVersion, "assets": assets,
+		})
+	}
+	return out
+}
