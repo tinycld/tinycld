@@ -1,0 +1,5 @@
+{
+    "platforms": ["ios", "android"],
+    "ios": { "modules": ["AppUpdaterModule"] },
+    "android": { "modules": ["org.tinycld.appupdater.AppUpdaterModule"] }
+}
