@@ -65,9 +65,7 @@ export function SetupPage({ token }: SetupPageProps) {
 
     return (
         <GestureHandlerRootView className="flex-1">
-            <ScrollView>
-                <SetupDashboard pb={pb} />
-            </ScrollView>
+            <SetupDashboard pb={pb} />
         </GestureHandlerRootView>
     )
 }

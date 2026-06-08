@@ -2,7 +2,7 @@ name: Smoke-test docker image
 
 # Runs after the docker-publish workflow uploads a fresh image to GHCR.
 # Pulls the just-published image, boots it via `docker run`, walks the
-# /setup wizard with Playwright, and asserts that every bundled package
+# /admin wizard with Playwright, and asserts that every bundled package
 # shows up on the Packages tab. Same path a docs-following operator
 # takes — guards the install instructions against regressions.
 

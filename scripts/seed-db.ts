@@ -30,6 +30,7 @@
  *   --help                 Show this help message
  */
 
+import { loadEnv } from '@tinycld/core/lib/load-env'
 import { deriveSeeds } from '@tinycld/core/lib/packages/derive-seeds'
 import PocketBase from 'pocketbase'
 import { tinycldSeeds } from '../tinycld.seeds'
@@ -43,11 +44,7 @@ function logError(...args: unknown[]) {
     process.stderr.write(`[seed] ${args.join(' ')}\n`)
 }
 
-try {
-    process.loadEnvFile()
-} catch {
-    // .env may not exist in CI
-}
+loadEnv()
 
 type SeedMode = 'test' | 'demo'
 
@@ -699,8 +696,8 @@ function printLoginSummary(config: SeedConfig, login: SeedLoginResult): void {
         `  user:     ${login.userEmail}`,
         `  password: ${appPassword}`,
         '',
-        'Superuser  (PocketBase /_/ dashboard, and /setup to manage orgs & packages)',
-        `  ${url}/setup`,
+        'Superuser  (PocketBase /_/ dashboard, and /admin to manage orgs & packages)',
+        `  ${url}/admin`,
         `  user:     ${config.adminEmail}`,
         `  password: ${config.adminPassword}`,
         '',
