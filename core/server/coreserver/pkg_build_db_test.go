@@ -31,6 +31,7 @@ func newPkgBuildTestApp(t *testing.T) *tests.TestApp {
 	c.Fields.Add(&core.NumberField{Name: "migrations_applied"})
 	c.Fields.Add(&core.JSONField{Name: "migration_files"})
 	c.Fields.Add(&core.JSONField{Name: "pkg_migration_files"})
+	c.Fields.Add(&core.JSONField{Name: "bundles"})
 	c.Fields.Add(&core.TextField{Name: "reverted_from"})
 	c.Fields.Add(&core.SelectField{
 		Name: "status", Required: true, MaxSelect: 1,
