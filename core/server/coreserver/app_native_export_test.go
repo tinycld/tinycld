@@ -162,7 +162,7 @@ func TestSerializeBundlesRoundTripsToResolveManifest(t *testing.T) {
 	}
 
 	// iOS: a newer build than the client's current → full manifest, asset intact.
-	m, status := resolveManifest(decoded, "ios", "1.13.7", "build-100-ios")
+	m, status := resolveManifest(decoded, "ios", "1.13.7", "build-100-ios", "")
 	if status != manifestNew {
 		t.Fatalf("ios status = %v, want manifestNew", status)
 	}
@@ -174,18 +174,18 @@ func TestSerializeBundlesRoundTripsToResolveManifest(t *testing.T) {
 	}
 
 	// Android: the assetless bundle still resolves; assets is an empty slice.
-	ma, statusA := resolveManifest(decoded, "android", "1.13.7", "build-100-android")
+	ma, statusA := resolveManifest(decoded, "android", "1.13.7", "build-100-android", "")
 	if statusA != manifestNew || ma.ID != "build-200-android" {
 		t.Fatalf("android manifest = %+v (status %v)", ma, statusA)
 	}
 
 	// Same id the client already runs → up to date (204 on the wire).
-	if _, s := resolveManifest(decoded, "ios", "1.13.7", "build-200-ios"); s != manifestUpToDate {
+	if _, s := resolveManifest(decoded, "ios", "1.13.7", "build-200-ios", ""); s != manifestUpToDate {
 		t.Fatalf("expected manifestUpToDate, got %v", s)
 	}
 
 	// A runtime the build has no bundle for → no match (204 / App Store gate).
-	if _, s := resolveManifest(decoded, "ios", "2.0.0", "build-100-ios"); s != manifestNoMatch {
+	if _, s := resolveManifest(decoded, "ios", "2.0.0", "build-100-ios", ""); s != manifestNoMatch {
 		t.Fatalf("expected manifestNoMatch for mismatched runtime, got %v", s)
 	}
 }

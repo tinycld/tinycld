@@ -112,8 +112,8 @@ stdout (visible in `docker logs`).
 | 77 | Swapping binary | `tinycld → tinycld.prev`, `tinycld.new → tinycld` (atomic renames) |
 | 80–83 | Running migrations | `<binary> migrate` — applies the package's `pb-migrations` |
 | 85–88 | Building web app | `npx expo export --platform web` |
-| 86–89 | Building native bundles | `npx expo export --platform ios` then `--platform android`, **sequential after web**. Skipped when the RN toolchain is absent (web-only image) — mobile then stays on its embedded bundle. See [Native OTA bundles](#native-ota-bundles). |
-| 90–92 | Staging release | Move `dist/` → `release-staging/<id>/`, rename `index.html` → `app.html`; copy each native bundle + assets into the staged release's `native/<platform>/` |
+| 90–92 | Staging release | Move `dist/` → `release-staging/<id>/`, rename `index.html` → `app.html` |
+| 93–94 | Building native bundles | `npx expo export --platform ios` then `--platform android`, **sequential, after web staging**. Each bundle + its assets are copied into the staged release's `native/<platform>/`. Skipped (`93`, no further work) when the RN toolchain is absent (web-only image) — mobile then stays on its embedded bundle. See [Native OTA bundles](#native-ota-bundles). |
 | 95–97 | Updating database | Upsert the `pkg_registry` record (status `installed`) |
 | 98–99 | Archiving build | Copy the now-live binary + staged bundle into `builds/<build_id>/`, write `build.json`, and record a `pkg_build` row (status `current`) capturing how many migrations this install applied (see [Build history & revert](#build-history--revert)) |
 | 99 | Requesting restart | `os.Exit(75)` — hands off to the entrypoint (see next section) |
@@ -145,23 +145,36 @@ app loads is a property of the **server it is connected to**, not the org: every
 org on a server shares the server's installed-package set and therefore the same
 bundle.
 
-- **Build.** After the web `expo export`, the pipeline runs `expo export
+- **Build.** After the web bundle is staged, the pipeline runs `expo export
   --platform ios` then `--platform android` (sequential — parallel Metro
-  processes risk OOM). Each export's `metadata.json` is parsed into per-platform
-  metadata (`bundle_id` = `build-<ts>-<platform>`, `bundle_hash` = hex SHA-256 of
-  the `.hbc`, `runtime_version` = the app version under the `appVersion` policy,
-  and the asset list). This metadata is persisted in the `pkg_build` row's
-  `bundles` JSON field and the files are copied into `release/native/<platform>/`.
+  processes risk OOM) and copies each result into the staged release. Each
+  export's `metadata.json` is parsed into per-platform metadata (`bundle_id` =
+  `build-<ts>-<platform>`, `bundle_hash` = hex SHA-256 of the `.hbc`,
+  `runtime_version` = the app version under the `appVersion` policy, and the
+  asset list). This metadata is persisted in the `pkg_build` row's `bundles` JSON
+  field and the files are copied into `release/native/<platform>/`. Each staged
+  file's existence is re-checked after copy, so the `bundles` row never advertises
+  a bundle the archive doesn't actually contain.
+- **Runtime version is required.** `runtime_version` comes from `app.json`'s
+  `expo.version` (the `appVersion` runtimeVersion policy). If it can't be read,
+  native export **fails the install** rather than producing bundles no device can
+  match — every client reports a concrete app version, so an empty one is
+  permanently undeliverable. (Changing the `runtimeVersion.policy` away from
+  `appVersion` would silently break matching — keep it `appVersion`.)
 - **Toolchain skip.** A web-only deploy image without the RN toolchain
   (`node_modules/expo`) skips native export entirely; the update endpoint then
   returns `204` for mobile and apps keep their embedded bundle.
-- **Serving.** `GET /api/app/update?platform=&runtimeVersion=&currentId=` (public,
-  no auth — the app calls it pre-login) reads the current `pkg_build` row and
-  returns a JSON manifest (`id`, `bundleUrl`, `bundleHash`, `assets[]`) when a
+- **Serving.** `GET /api/app/update?platform=&runtimeVersion=&currentId=&currentHash=`
+  (public, no auth — the app calls it pre-login) reads the current `pkg_build` row
+  and returns a JSON manifest (`id`, `bundleUrl`, `bundleHash`, `assets[]`) when a
   newer bundle exists for that platform+runtime, or `204` when up to date / no
-  match. `GET /api/app/bundle/...` and `/api/app/asset/...` serve the files from
-  the build archive. Revert restores an older build's `bundles` pointer along
-  with everything else, so reverting a package change reverts the mobile bundle.
+  match. "Up to date" matches on EITHER `currentId` (the running bundle id) OR
+  `currentHash` (its hex SHA-256) — the hash check spares a fresh App Store install
+  (whose id is `embedded-<version>`, never a server `build-<ts>` id) from
+  re-downloading a byte-identical bundle on first foreground. `GET
+  /api/app/bundle/...` and `/api/app/asset/...` serve the files from the build
+  archive. Revert restores an older build's `bundles` pointer along with everything
+  else, so reverting a package change reverts the mobile bundle.
 
 ## How relaunch works
 

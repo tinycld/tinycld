@@ -13,7 +13,7 @@ func bundlesFixture() []any {
 }
 
 func TestResolveManifestNewBundle(t *testing.T) {
-	m, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "build-100-ios")
+	m, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "build-100-ios", "")
 	if status != manifestNew {
 		t.Fatalf("status = %v, want manifestNew", status)
 	}
@@ -23,21 +23,41 @@ func TestResolveManifestNewBundle(t *testing.T) {
 }
 
 func TestResolveManifestUpToDate(t *testing.T) {
-	_, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "build-200-ios")
+	_, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "build-200-ios", "")
 	if status != manifestUpToDate {
 		t.Fatalf("status = %v, want manifestUpToDate", status)
 	}
 }
 
+// A fresh App Store install reports the embedded id (never a server build id) but
+// its bytecode can be identical to the server's current bundle. The hash match
+// must then report up-to-date so the app doesn't download + reload on every first
+// foreground after a store update.
+func TestResolveManifestUpToDateByHash(t *testing.T) {
+	_, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "embedded-1.13.7", "HASH")
+	if status != manifestUpToDate {
+		t.Fatalf("status = %v, want manifestUpToDate (hash match across embedded→server boundary)", status)
+	}
+}
+
+// A non-matching hash with a non-matching id must still offer the update — the
+// hash short-circuit only suppresses, never blocks, a genuinely newer bundle.
+func TestResolveManifestNewWhenHashDiffers(t *testing.T) {
+	_, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "embedded-1.13.7", "OTHERHASH")
+	if status != manifestNew {
+		t.Fatalf("status = %v, want manifestNew", status)
+	}
+}
+
 func TestResolveManifestRuntimeMismatch(t *testing.T) {
-	_, status := resolveManifest(bundlesFixture(), "ios", "1.14.0", "build-100-ios")
+	_, status := resolveManifest(bundlesFixture(), "ios", "1.14.0", "build-100-ios", "")
 	if status != manifestNoMatch {
 		t.Fatalf("status = %v, want manifestNoMatch", status)
 	}
 }
 
 func TestResolveManifestPlatformMissing(t *testing.T) {
-	_, status := resolveManifest(bundlesFixture(), "android", "1.13.7", "x")
+	_, status := resolveManifest(bundlesFixture(), "android", "1.13.7", "x", "")
 	if status != manifestNoMatch {
 		t.Fatalf("status = %v, want manifestNoMatch", status)
 	}

@@ -45,6 +45,7 @@ func newAppUpdateTestApp(t *testing.T) *tests.TestApp {
 			platform := re.Request.URL.Query().Get("platform")
 			runtime := re.Request.URL.Query().Get("runtimeVersion")
 			currentID := re.Request.URL.Query().Get("currentId")
+			currentHash := re.Request.URL.Query().Get("currentHash")
 			if platform == "" || runtime == "" {
 				return re.BadRequestError("platform and runtimeVersion are required", nil)
 			}
@@ -52,7 +53,7 @@ func newAppUpdateTestApp(t *testing.T) *tests.TestApp {
 			if buildID == "" {
 				return re.NoContent(http.StatusNoContent)
 			}
-			m, status := resolveManifest(bundles, platform, runtime, currentID)
+			m, status := resolveManifest(bundles, platform, runtime, currentID, currentHash)
 			if status != manifestNew {
 				return re.NoContent(http.StatusNoContent)
 			}
@@ -136,6 +137,12 @@ func TestAppUpdate_BundleEndpointRejectsTraversal(t *testing.T) {
 		{"encoded .. as whole build id", "/api/app/bundle/%2e%2e/ios/x"},
 		{"unknown platform", "/api/app/bundle/build-200/linux/x"},
 		{"non-build-shaped build id", "/api/app/bundle/etc/ios/passwd"},
+		// Traversal in the {path...} wildcard itself (valid build id + platform).
+		// buildIDPattern/platform validation passes, so these prove os.DirFS +
+		// fs.ValidPath confine the wildcard — a `..` segment must not escape
+		// release/native/<platform>/ to reach build.json or the binary above it.
+		{"encoded ../ in wildcard path", "/api/app/bundle/build-200/ios/..%2f..%2fbuild.json"},
+		{"encoded ../ escaping to binary", "/api/app/bundle/build-200/ios/..%2f..%2f..%2ftinycld"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

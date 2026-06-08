@@ -16,6 +16,7 @@ function deps(overrides = {}) {
         platform: 'ios' as const,
         runtimeVersion: '1.13.7',
         currentId: 'build-100-ios',
+        currentHash: 'CURHASH',
         fetchFn: vi.fn(),
         ...overrides,
     }
@@ -27,7 +28,7 @@ describe('checkForUpdate', () => {
         const result = await checkForUpdate(deps({ fetchFn }))
         expect(result).toBeNull()
         expect(fetchFn).toHaveBeenCalledWith(
-            'https://srv.test/api/app/update?platform=ios&runtimeVersion=1.13.7&currentId=build-100-ios'
+            'https://srv.test/api/app/update?platform=ios&runtimeVersion=1.13.7&currentId=build-100-ios&currentHash=CURHASH'
         )
     })
 
@@ -63,7 +64,7 @@ describe('downloadAndStage', () => {
     it('stages when the bundle hash matches', async () => {
         const d = stageDeps()
         await downloadAndStage(MANIFEST, d)
-        expect(d.stageBundleFn).toHaveBeenCalledWith('file:///tmp/upd/', 'build-200-ios')
+        expect(d.stageBundleFn).toHaveBeenCalledWith('file:///tmp/upd/', 'build-200-ios', 'HASH')
     })
 
     it('downloads into native/<platform>/ matching the native locateHbc layout', async () => {
@@ -126,7 +127,7 @@ describe('downloadAndStage', () => {
         const d = stageDeps({ hashFn })
         await downloadAndStage(manifestWithAsset, d)
         expect(d.downloadFn).toHaveBeenCalledTimes(2) // bundle + 1 asset
-        expect(d.stageBundleFn).toHaveBeenCalledWith('file:///tmp/upd/', 'build-200-ios')
+        expect(d.stageBundleFn).toHaveBeenCalledWith('file:///tmp/upd/', 'build-200-ios', 'HASH')
     })
 
     it('throws on asset hash mismatch and does not stage', async () => {

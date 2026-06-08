@@ -124,6 +124,10 @@ func nativeToolchainPresent(appDir string) bool {
 }
 
 // copyFile copies the file at src to dst, creating dst if it does not exist.
+// Both the file contents and the parent directory entry are fsync'd so a crash
+// during install can't leave a build archive whose bundles metadata references a
+// file that isn't durably on disk (which /api/app/update would then advertise but
+// /api/app/bundle would 404 — a spurious client rollback).
 func copyFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -138,7 +142,23 @@ func copyFile(src, dst string) error {
 	if _, err := io.Copy(out, in); err != nil {
 		return err
 	}
-	return out.Sync()
+	if err := out.Sync(); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(dst))
+}
+
+// syncDir fsyncs a directory so a newly-created entry within it survives a crash.
+// Opening a dir read-only and calling Sync is the portable way to flush the
+// directory entry on the platforms we deploy to (Linux). Best-effort on systems
+// that reject the open — the file content sync above is the load-bearing part.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }
 
 // stageNativeBundlesIntoRelease copies each platform's bundle and assets out of
@@ -162,6 +182,14 @@ func stageNativeBundlesIntoRelease(releaseDir string, bundles []bundleMeta) erro
 			if err := copyFile(from, to); err != nil {
 				return fmt.Errorf("stage %s/%s: %w", bm.Platform, rel, err)
 			}
+			// Confirm the file the bundles metadata will reference is actually on
+			// disk before the install proceeds to write the pkg_build row. The row
+			// is the single source of truth /api/app/update serves from, so a
+			// half-staged archive must abort the install rather than advertise a
+			// bundle URL that 404s.
+			if _, err := os.Stat(to); err != nil {
+				return fmt.Errorf("staged %s/%s missing after copy: %w", bm.Platform, rel, err)
+			}
 		}
 	}
 	return nil
@@ -174,8 +202,18 @@ func stageNativeBundlesIntoRelease(releaseDir string, bundles []bundleMeta) erro
 // runtimeVersion is the app version (appVersion policy).
 func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string) ([]bundleMeta, error) {
 	if !nativeToolchainPresent(appDir) {
-		emitProgress(job, "Native export skipped", 89, "RN toolchain absent — mobile served embedded bundle")
+		emitProgress(job, "Native export skipped", 93, "RN toolchain absent — mobile served embedded bundle")
 		return nil, nil
+	}
+
+	// A bundle whose runtime_version is empty can never match a real client (every
+	// device reports a concrete app version), so it would be undeliverable dead
+	// weight. The RN toolchain is present here, so we're committed to native
+	// export — fail loudly rather than spend minutes building bundles no device
+	// can receive. An empty version means app.json couldn't be read or has no
+	// expo.version; see appVersionFromManifest.
+	if runtimeVersion == "" {
+		return nil, fmt.Errorf("empty runtimeVersion: app.json has no expo.version (or wasn't found near %s) — bundles would be undeliverable", appDir)
 	}
 
 	var out []bundleMeta
@@ -183,7 +221,9 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 	for i, p := range platforms {
 		outDir := filepath.Join(appDir, fmt.Sprintf("dist-%s", p))
 		os.RemoveAll(outDir) // clean any prior export
-		emitProgress(job, "Building "+string(p)+" bundle", 86+i, "Running expo export --platform "+string(p))
+		// Native export runs after web staging (which reaches 92), so report in a
+		// 93→94 band rather than backwards into the web range.
+		emitProgress(job, "Building "+string(p)+" bundle", 93+i, "Running expo export --platform "+string(p))
 		if cmdOut, err := runCmd(appDir, "npx", "expo", "export", "--platform", string(p), "--output-dir", outDir); err != nil {
 			return nil, fmt.Errorf("expo export %s: %v: %s", p, err, cmdOut)
 		}

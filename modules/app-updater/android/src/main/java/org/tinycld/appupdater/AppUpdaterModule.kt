@@ -6,6 +6,7 @@ import com.facebook.react.bridge.UiThreadUtil
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
+import java.security.MessageDigest
 import org.json.JSONObject
 
 class AppUpdaterModule : Module() {
@@ -18,25 +19,30 @@ class AppUpdaterModule : Module() {
         Function("getEmbeddedId") { Store(context).embeddedId() }
         Function("getRuntimeVersion") { Store(context).embeddedRuntime() }
         Function("getCurrentBundleId") { Store(context).currentId() ?: Store(context).embeddedId() }
-
-        AsyncFunction("stageBundle") { localDir: String, id: String ->
-            Store(context).stagePending(localDir, id)
+        Function("getCurrentBundleHash") {
+            val store = Store(context)
+            store.currentBundleHash(store.embeddedId())
         }
 
-        Function("markBundleHealthy") { Store(context).clearBootMarker() }
+        AsyncFunction("stageBundle") { localDir: String, id: String, hash: String ->
+            Store(context).stagePending(localDir, id, hash)
+        }
+
+        Function("markBundleHealthy") { Store(context).markHealthy() }
 
         AsyncFunction("reload") { Store(context).requestReload() }
     }
 }
 
 /**
- * File-backed pointer store mirroring the iOS `Store`. Maintains four JSON files
- * in an app-private dir and drives staging / promote / crash-rollback.
+ * File-backed pointer store mirroring the iOS `Store`. Maintains JSON pointer
+ * files in an app-private dir and drives staging / promote / crash-rollback.
  *
- *   current.json   { id, dir }  — active OTA bundle (absent = run embedded)
- *   pending.json   { id, dir }  — staged, promoted on next launch
- *   previous.json  { id, dir }  — prior current, rollback target
- *   boot.json      { id, launchCount } — crash tracker
+ *   current.json        { id, dir, hash }  — active OTA bundle (absent = embedded)
+ *   pending.json        { id, dir, hash }  — staged, promoted on next launch
+ *   previous.json       { id, dir, hash }  — prior current, rollback target
+ *   boot.json           { id, launchCount } — crash tracker
+ *   embedded-hash.json  { id, hash }        — cached embedded-bundle hash
  */
 class Store(private val context: Context) {
     private val root: File =
@@ -46,6 +52,14 @@ class Store(private val context: Context) {
     private val pendingFile = File(root, "pending.json")
     private val previousFile = File(root, "previous.json")
     private val bootFile = File(root, "boot.json")
+    private val embeddedHashFile = File(root, "embedded-hash.json")
+
+    // A promoted OTA bundle is only rolled back after this many consecutive boots
+    // that never reach the JS "healthy" signal. 3 (i.e. two fully-failed boots)
+    // leaves margin for a boot that renders but is force-quit before markHealthy
+    // fires, which a threshold of 2 would mis-read as a crash and roll back a
+    // healthy bundle.
+    private val rollbackAfterLaunches = 3
 
     fun embeddedId(): String = resString("tinycld_bundle_id") ?: "embedded"
 
@@ -55,12 +69,53 @@ class Store(private val context: Context) {
 
     private fun currentDir(): String? = readJSON(currentFile)?.optString("dir")?.ifEmpty { null }
 
-    fun stagePending(dir: String, id: String) {
-        writeJSON(pendingFile, JSONObject().put("id", id).put("dir", dir))
+    private fun currentHash(): String? = readJSON(currentFile)?.optString("hash")?.ifEmpty { null }
+
+    fun stagePending(dir: String, id: String, hash: String) {
+        writeJSON(pendingFile, JSONObject().put("id", id).put("dir", dir).put("hash", hash))
     }
 
-    fun clearBootMarker() {
+    /**
+     * Marks the active OTA bundle healthy so crash-rollback won't revert it.
+     * Called from JS once the app reaches a stable state — the earlier it runs,
+     * the smaller the window in which a healthy bundle could be mis-rolled-back.
+     */
+    fun markHealthy() {
         bootFile.delete()
+    }
+
+    /**
+     * Hex SHA-256 of the bundle the app is currently running. For a promoted OTA
+     * bundle this is the hash recorded at stage time (matches the server's
+     * bundle_hash). With no OTA bundle promoted it's the embedded bundle's hash,
+     * computed once and cached keyed by the embedded id. Returns "" if the
+     * embedded bundle can't be read — the server tolerates an empty hash.
+     */
+    fun currentBundleHash(embeddedId: String): String =
+        currentHash() ?: embeddedBundleHash(embeddedId)
+
+    private fun embeddedBundleHash(embeddedId: String): String {
+        readJSON(embeddedHashFile)?.let { cached ->
+            if (cached.optString("id") == embeddedId) {
+                cached.optString("hash").ifEmpty { null }?.let { return it }
+            }
+        }
+        return try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            context.assets.open("index.android.bundle").use { input ->
+                val buf = ByteArray(1 shl 16)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    digest.update(buf, 0, n)
+                }
+            }
+            val hex = digest.digest().joinToString("") { "%02x".format(it) }
+            writeJSON(embeddedHashFile, JSONObject().put("id", embeddedId).put("hash", hex))
+            hex
+        } catch (_: Exception) {
+            ""
+        }
     }
 
     /**
@@ -82,7 +137,7 @@ class Store(private val context: Context) {
             boot = JSONObject().put("id", id).put("launchCount", 0)
         }
         val count = boot.optInt("launchCount", 0) + 1
-        if (count >= 2) {
+        if (count >= rollbackAfterLaunches) {
             rollbackToPrevious()
             return resolveAfterRollback()
         }

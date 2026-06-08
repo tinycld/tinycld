@@ -5,11 +5,12 @@ import type { CheckDeps, StageDeps, UpdateManifest } from './types'
 // date, runtime mismatch, or no native bundle). Network/parse errors propagate
 // to the caller, which captures them.
 export async function checkForUpdate(deps: CheckDeps): Promise<UpdateManifest | null> {
-    const { serverUrl, platform, runtimeVersion, currentId, fetchFn } = deps
+    const { serverUrl, platform, runtimeVersion, currentId, currentHash, fetchFn } = deps
     const url =
         `${serverUrl}/api/app/update?platform=${platform}` +
         `&runtimeVersion=${encodeURIComponent(runtimeVersion)}` +
-        `&currentId=${encodeURIComponent(currentId)}`
+        `&currentId=${encodeURIComponent(currentId)}` +
+        `&currentHash=${encodeURIComponent(currentHash)}`
     const res = await fetchFn(url)
     if (res.status === 204) return null
     if (!res.ok) throw new Error(`update check failed: ${res.status}`)
@@ -55,5 +56,5 @@ export async function downloadAndStage(manifest: UpdateManifest, deps: StageDeps
         }
     }
 
-    await stageBundleFn(tmpDir, manifest.id)
+    await stageBundleFn(tmpDir, manifest.id, manifest.bundleHash)
 }

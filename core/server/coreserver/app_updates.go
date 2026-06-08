@@ -49,10 +49,18 @@ type manifestAsset struct {
 
 // resolveManifest finds the bundle for platform whose runtime_version matches
 // runtimeVersion. Returns manifestNoMatch when none matches platform+runtime,
-// manifestUpToDate when its bundle_id equals currentID, else manifestNew with
-// the populated (URL-less) manifest. `bundles` is the pkg_build record's bundles
-// field decoded as []any.
-func resolveManifest(bundles []any, platform, runtimeVersion, currentID string) (clientManifest, manifestStatus) {
+// manifestUpToDate when the client already runs this bundle, else manifestNew
+// with the populated (URL-less) manifest. `bundles` is the pkg_build record's
+// bundles field decoded as []any.
+//
+// "Already runs this bundle" is true when EITHER the bundle_id equals currentID
+// OR the bundle_hash equals currentHash. The hash check is what spares a fresh
+// App Store install (whose currentID is the embedded `embedded-<version>`, never
+// equal to a server `build-<ts>-<platform>` id) from a guaranteed download +
+// reload on first foreground: when the embedded bytecode is identical to the
+// server's current bundle, the hashes match and we report up-to-date. currentHash
+// may be empty (older clients / hash unavailable) — then only the id check applies.
+func resolveManifest(bundles []any, platform, runtimeVersion, currentID, currentHash string) (clientManifest, manifestStatus) {
 	for _, raw := range bundles {
 		b, ok := raw.(map[string]any)
 		if !ok {
@@ -62,7 +70,8 @@ func resolveManifest(bundles []any, platform, runtimeVersion, currentID string) 
 			continue
 		}
 		id := str(b["bundle_id"])
-		if id == currentID {
+		hash := str(b["bundle_hash"])
+		if id == currentID || (currentHash != "" && hash == currentHash) {
 			return clientManifest{}, manifestUpToDate
 		}
 		assets := make([]manifestAsset, 0)
@@ -84,7 +93,7 @@ func resolveManifest(bundles []any, platform, runtimeVersion, currentID string) 
 			ID:             id,
 			RuntimeVersion: runtimeVersion,
 			BundleFile:     str(b["bundle_file"]),
-			BundleHash:     str(b["bundle_hash"]),
+			BundleHash:     hash,
 			Assets:         assets,
 		}, manifestNew
 	}
@@ -116,7 +125,15 @@ func currentBuildBundles(app core.App) (string, []any) {
 	}
 	rec := recs[0]
 	var bundles []any
-	_ = rec.UnmarshalJSONField("bundles", &bundles)
+	if err := rec.UnmarshalJSONField("bundles", &bundles); err != nil {
+		// A malformed bundles field shouldn't happen (serializeBundles always
+		// writes a JSON array), but if it does we'd otherwise silently serve 204
+		// to every mobile client forever. Log it so the cause is visible rather
+		// than presenting as "updates mysteriously never arrive".
+		app.Logger().Error("app-update: failed to decode current build bundles",
+			"build_id", rec.GetString("build_id"), "err", err)
+		return rec.GetString("build_id"), nil
+	}
 	return rec.GetString("build_id"), bundles
 }
 
@@ -131,6 +148,7 @@ func RegisterAppUpdateEndpoints(app *pocketbase.PocketBase) {
 			platform := re.Request.URL.Query().Get("platform")
 			runtime := re.Request.URL.Query().Get("runtimeVersion")
 			currentID := re.Request.URL.Query().Get("currentId")
+			currentHash := re.Request.URL.Query().Get("currentHash")
 			if platform == "" || runtime == "" {
 				return re.BadRequestError("platform and runtimeVersion are required", nil)
 			}
@@ -138,7 +156,7 @@ func RegisterAppUpdateEndpoints(app *pocketbase.PocketBase) {
 			if buildID == "" {
 				return re.NoContent(204)
 			}
-			m, status := resolveManifest(bundles, platform, runtime, currentID)
+			m, status := resolveManifest(bundles, platform, runtime, currentID, currentHash)
 			if status != manifestNew {
 				return re.NoContent(204)
 			}

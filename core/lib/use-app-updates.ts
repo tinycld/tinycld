@@ -30,6 +30,7 @@ async function checkAndApplyUpdate(): Promise<void> {
             platform,
             runtimeVersion: AppUpdater.getRuntimeVersion(),
             currentId: AppUpdater.getCurrentBundleId(),
+            currentHash: AppUpdater.getCurrentBundleHash(),
             fetchFn: fetch,
         })
         if (!manifest) return
@@ -54,7 +55,7 @@ async function checkAndApplyUpdate(): Promise<void> {
                 return { uri: r.uri }
             },
             hashFn: sha256HexOfFile,
-            stageBundleFn: (dir, id) => AppUpdater.stageBundle(dir, id),
+            stageBundleFn: (dir, id, hash) => AppUpdater.stageBundle(dir, id, hash),
             tmpDir,
         })
 

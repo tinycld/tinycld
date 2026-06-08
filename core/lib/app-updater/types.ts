@@ -18,6 +18,12 @@ export interface CheckDeps {
     platform: 'ios' | 'android'
     runtimeVersion: string
     currentId: string
+    // Hex SHA-256 of the bundle the app is currently running. Sent so the server
+    // can recognize an already-current bundle even when ids differ across the
+    // embedded→OTA boundary (a fresh install's id is `embedded-<version>`, never
+    // equal to a server `build-<ts>-<platform>` id). Empty string when the native
+    // module can't supply it — the server then falls back to the id comparison.
+    currentHash: string
     fetchFn: typeof fetch
 }
 
@@ -30,6 +36,9 @@ export interface StageDeps {
     platform: 'ios' | 'android'
     downloadFn: (url: string, destUri: string) => Promise<{ uri: string }>
     hashFn: (fileUri: string) => Promise<string> // lowercase hex sha256
-    stageBundleFn: (localDir: string, id: string) => Promise<void>
+    // Hands the staged dir, the bundle id, and its hex SHA-256 to the native
+    // module. The hash is persisted so getCurrentBundleHash can report it once
+    // this bundle becomes the active one (the server's up-to-date check).
+    stageBundleFn: (localDir: string, id: string, hash: string) => Promise<void>
     tmpDir: string
 }
