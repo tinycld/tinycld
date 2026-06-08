@@ -42,3 +42,17 @@ func TestResolveManifestPlatformMissing(t *testing.T) {
 		t.Fatalf("status = %v, want manifestNoMatch", status)
 	}
 }
+
+func TestFillManifestURLs(t *testing.T) {
+	m := clientManifest{
+		ID: "build-200-ios", BundleFile: "_expo/static/js/ios/i.hbc",
+		Assets: []manifestAsset{{Key: "assets/a", File: "assets/a"}},
+	}
+	fillManifestURLs(&m, "build-200", "ios")
+	if m.BundleURL != "/api/app/bundle/build-200/ios/_expo/static/js/ios/i.hbc" {
+		t.Fatalf("bundle url = %q", m.BundleURL)
+	}
+	if m.Assets[0].URL != "/api/app/asset/build-200/ios/assets/a" {
+		t.Fatalf("asset url = %q", m.Assets[0].URL)
+	}
+}
