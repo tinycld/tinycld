@@ -512,7 +512,7 @@ test.describe('todo version change', () => {
         }
     })
 
-    test('upgrade todo to v2.0.0 via the Versions tab', async ({ page }) => {
+    test('upgrade todo to v2.0.0 via the Packages version picker', async ({ page }) => {
         // Upgrade fetches v2, runs the create_tags UP migration, rebuilds, and
         // requests an exit-75 relaunch. Same multi-minute build budget as install.
         test.setTimeout(2_700_000) // 45 min
@@ -569,7 +569,7 @@ test.describe('todo version change', () => {
         expect(body.totalItems ?? 0).toBeGreaterThan(0)
     })
 
-    test('downgrade todo to v1.0.0 via the Versions tab', async ({ page }) => {
+    test('downgrade todo to v1.0.0 via the Packages version picker', async ({ page }) => {
         // Downgrade fetches v1, runs the create_tags DOWN migration (drops
         // todo_tags then tags), rebuilds, and requests an exit-75 relaunch.
         test.setTimeout(2_700_000) // 45 min

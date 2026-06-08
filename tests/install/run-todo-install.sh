@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Local runner for the todo-install integration test. Builds a TinyCld
 # image from the CURRENT working tree (so the git-spec validation change is
-# present), boots it, scrapes the setup token, runs the Playwright spec in a
-# standalone sandbox, and tears the container down.
+# present), boots it, scrapes the first-run /admin bootstrap token, runs the
+# Playwright spec in a standalone sandbox, and tears the container down.
 #
 # Env knobs:
 #   IMAGE=<tag>   Skip the build and test an existing image tag.
@@ -122,14 +122,16 @@ start_live_log
 # 3. Wait for first-boot health.
 wait_healthy "first boot"
 
-# 4. Scrape the setup token from logs.
+# 4. Scrape the first-run bootstrap token from logs. The server prints a
+#    `${url}/admin?token=…` line on first boot; the path doesn't matter here —
+#    we match the `token=` query param, so this is unaffected by /setup→/admin.
 TOKEN=$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'token=[a-f0-9]+' | head -1 | cut -d= -f2 || true)
 if [ -z "${TOKEN}" ]; then
-    echo "[runner] ERROR: no setup token printed in logs" >&2
+    echo "[runner] ERROR: no bootstrap token printed in logs" >&2
     dump_logs
     exit 1
 fi
-echo "[runner] scraped setup token (${#TOKEN} chars)"
+echo "[runner] scraped bootstrap token (${#TOKEN} chars)"
 
 # 5. Build the standalone Playwright sandbox (mirrors smoke-test-image.yml):
 #    @playwright/test installed locally + the spec + config copied in + a
@@ -150,7 +152,8 @@ TSCFG
 )
 
 # Runs a subset of the serial spec, selected by a title grep. The first phase
-# needs the setup token (for the bootstrap wizard); later phases don't. Each
+# needs the bootstrap token (for the first-run /admin wizard); later phases
+# don't. Each
 # call shares the container's persisted state from the prior phase. $1 is the
 # title grep, $2 a human label for failure messages.
 run_phase() {
