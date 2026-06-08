@@ -20,6 +20,7 @@
  *   --help                 Show this help message
  */
 
+import { loadEnv } from '@tinycld/core/lib/load-env'
 import type PocketBase from 'pocketbase'
 import { authSuperuser, seedForUser } from './seed-db'
 
@@ -31,11 +32,7 @@ function logError(...args: unknown[]) {
     process.stderr.write(`[reset-demo] ${args.join(' ')}\n`)
 }
 
-try {
-    process.loadEnvFile()
-} catch {
-    // .env may not exist in CI/Docker
-}
+loadEnv()
 
 // Mirror demo_start.go constants exactly. REVIEW_DEMO_EMAIL overrides the
 // email so App Review can sign in directly; if it differs from

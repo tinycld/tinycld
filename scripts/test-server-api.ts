@@ -10,11 +10,9 @@
  *   pnpm exec tsx scripts/test-server-api.ts [--email <email>] [--password <pw>] [--url <url>]
  */
 
-try {
-    process.loadEnvFile()
-} catch {
-    // .env may not exist
-}
+import { loadEnv } from '@tinycld/core/lib/load-env'
+
+loadEnv()
 
 interface Config {
     url: string
