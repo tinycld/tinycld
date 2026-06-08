@@ -7,10 +7,6 @@
         "platforms": ["ios", "android", "web"],
         "userInterfaceStyle": "automatic",
         "runtimeVersion": { "policy": "appVersion" },
-        "updates": {
-            "url": "https://u.expo.dev/ac921362-6d8a-49a4-b0a5-d5867617bc4d",
-            "fallbackToCacheTimeout": 0
-        },
         "plugins": [
             [
                 "expo-router",
@@ -62,10 +58,7 @@
             "typedRoutes": true
         },
         "extra": {
-            "router": {},
-            "eas": {
-                "projectId": "ac921362-6d8a-49a4-b0a5-d5867617bc4d"
-            }
+            "router": {}
         },
         "owner": "nathanstitt"
     }
