@@ -123,6 +123,50 @@ func nativeToolchainPresent(appDir string) bool {
 	return err == nil && info.IsDir()
 }
 
+// copyFile copies the file at src to dst, creating dst if it does not exist.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
+// stageNativeBundlesIntoRelease copies each platform's bundle and assets out of
+// its export dir into <releaseDir>/native/<platform>/<relative-path>, preserving
+// the relative layout the bundleMeta paths reference. This makes the build
+// archive self-contained: /api/app/bundle and /api/app/asset serve from here,
+// and a revert restoring the archive restores the native bundles too.
+func stageNativeBundlesIntoRelease(releaseDir string, bundles []bundleMeta) error {
+	for _, bm := range bundles {
+		dest := filepath.Join(releaseDir, "native", bm.Platform)
+		files := []string{bm.BundleFile}
+		for _, a := range bm.Assets {
+			files = append(files, a.File)
+		}
+		for _, rel := range files {
+			from := filepath.Join(bm.distDir, rel)
+			to := filepath.Join(dest, rel)
+			if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+				return err
+			}
+			if err := copyFile(from, to); err != nil {
+				return fmt.Errorf("stage %s/%s: %w", bm.Platform, rel, err)
+			}
+		}
+	}
+	return nil
+}
+
 // exportNativeBundles runs `expo export` for ios and android (sequentially,
 // after the caller's web export), parses each platform's metadata.json, and
 // returns the per-platform bundleMeta. Returns (nil, nil) when the toolchain is

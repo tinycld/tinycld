@@ -84,3 +84,36 @@ func TestNativeToolchainPresent(t *testing.T) {
 		t.Fatal("expected present toolchain once node_modules/expo exists")
 	}
 }
+
+func TestStageNativeBundlesIntoRelease(t *testing.T) {
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "_expo/static/js/ios"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "_expo/static/js/ios/i.hbc"), []byte("B"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, "assets"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "assets/a"), []byte("A"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	releaseDir := t.TempDir()
+	bm := bundleMeta{
+		Platform:   "ios",
+		BundleFile: "_expo/static/js/ios/i.hbc",
+		Assets:     []assetMeta{{File: "assets/a"}},
+		distDir:    src,
+	}
+	if err := stageNativeBundlesIntoRelease(releaseDir, []bundleMeta{bm}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	for _, rel := range []string{"_expo/static/js/ios/i.hbc", "assets/a"} {
+		p := filepath.Join(releaseDir, "native", "ios", rel)
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("expected staged file %s: %v", p, err)
+		}
+	}
+}
