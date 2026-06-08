@@ -22,6 +22,7 @@ This is the operator/agent-facing reference for the mechanics. For the package
 - [The big picture](#the-big-picture)
 - [Entry points](#entry-points)
 - [The install pipeline, stage by stage](#the-install-pipeline-stage-by-stage)
+- [Native OTA bundles](#native-ota-bundles)
 - [How relaunch works](#how-relaunch-works)
 - [Rollback](#rollback)
 - [Build history & revert](#build-history--revert)
@@ -111,7 +112,8 @@ stdout (visible in `docker logs`).
 | 77 | Swapping binary | `tinycld → tinycld.prev`, `tinycld.new → tinycld` (atomic renames) |
 | 80–83 | Running migrations | `<binary> migrate` — applies the package's `pb-migrations` |
 | 85–88 | Building web app | `npx expo export --platform web` |
-| 90–92 | Staging release | Move `dist/` → `release-staging/<id>/`, rename `index.html` → `app.html` |
+| 86–89 | Building native bundles | `npx expo export --platform ios` then `--platform android`, **sequential after web**. Skipped when the RN toolchain is absent (web-only image) — mobile then stays on its embedded bundle. See [Native OTA bundles](#native-ota-bundles). |
+| 90–92 | Staging release | Move `dist/` → `release-staging/<id>/`, rename `index.html` → `app.html`; copy each native bundle + assets into the staged release's `native/<platform>/` |
 | 95–97 | Updating database | Upsert the `pkg_registry` record (status `installed`) |
 | 98–99 | Archiving build | Copy the now-live binary + staged bundle into `builds/<build_id>/`, write `build.json`, and record a `pkg_build` row (status `current`) capturing how many migrations this install applied (see [Build history & revert](#build-history--revert)) |
 | 99 | Requesting restart | `os.Exit(75)` — hands off to the entrypoint (see next section) |
@@ -133,6 +135,33 @@ runtime jsvm plugin reads `/workspace/app/pb_migrations`, which the image makes
 a **symlink** to `server/pb_migrations` — so build-time (bundled), runtime, and
 installer-added migrations all share one directory and the **Running
 migrations** step actually applies the new package's migrations.
+
+## Native OTA bundles
+
+Alongside the web bundle, the install pipeline exports **native JavaScript
+bundles** (iOS + Android Hermes bytecode + assets) so mobile apps can update
+over-the-air from this server — replacing Expo/EAS Update. The bundle a mobile
+app loads is a property of the **server it is connected to**, not the org: every
+org on a server shares the server's installed-package set and therefore the same
+bundle.
+
+- **Build.** After the web `expo export`, the pipeline runs `expo export
+  --platform ios` then `--platform android` (sequential — parallel Metro
+  processes risk OOM). Each export's `metadata.json` is parsed into per-platform
+  metadata (`bundle_id` = `build-<ts>-<platform>`, `bundle_hash` = hex SHA-256 of
+  the `.hbc`, `runtime_version` = the app version under the `appVersion` policy,
+  and the asset list). This metadata is persisted in the `pkg_build` row's
+  `bundles` JSON field and the files are copied into `release/native/<platform>/`.
+- **Toolchain skip.** A web-only deploy image without the RN toolchain
+  (`node_modules/expo`) skips native export entirely; the update endpoint then
+  returns `204` for mobile and apps keep their embedded bundle.
+- **Serving.** `GET /api/app/update?platform=&runtimeVersion=&currentId=` (public,
+  no auth — the app calls it pre-login) reads the current `pkg_build` row and
+  returns a JSON manifest (`id`, `bundleUrl`, `bundleHash`, `assets[]`) when a
+  newer bundle exists for that platform+runtime, or `204` when up to date / no
+  match. `GET /api/app/bundle/...` and `/api/app/asset/...` serve the files from
+  the build archive. Revert restores an older build's `bundles` pointer along
+  with everything else, so reverting a package change reverts the mobile bundle.
 
 ## How relaunch works
 
@@ -231,6 +260,7 @@ directory:
 builds/<build_id>/
     tinycld          # the server binary that was live after this install (server packages only)
     release/         # a copy of the staged web bundle (app.html + assets + release-id.txt)
+        native/      #   per-platform OTA bundles: native/ios/**, native/android/** (when built)
     build.json       # mirror of the pkg_build record, for offline restore
 ```
 
