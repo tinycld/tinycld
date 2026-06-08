@@ -28,6 +28,7 @@ type bundleMeta struct {
 	BundleFile     string      `json:"bundle_file"`     // path of the .hbc relative to the release dir
 	RuntimeVersion string      `json:"runtime_version"` // appVersion policy → app version
 	Assets         []assetMeta `json:"assets"`
+	distDir        string      `json:"-"` // export output dir, used to stage; not persisted
 }
 
 type assetMeta struct {
@@ -111,4 +112,43 @@ func parseExportMetadata(distDir string, platform nativePlatform, buildID, runti
 		RuntimeVersion: runtimeVersion,
 		Assets:         assets,
 	}, nil
+}
+
+// nativeToolchainPresent reports whether the app dir carries enough of the RN
+// toolchain to run `expo export` for native platforms. A web-only deploy image
+// omits these; in that case we skip native export and the update endpoint just
+// returns 204 for mobile.
+func nativeToolchainPresent(appDir string) bool {
+	info, err := os.Stat(filepath.Join(appDir, "node_modules", "expo"))
+	return err == nil && info.IsDir()
+}
+
+// exportNativeBundles runs `expo export` for ios and android (sequentially,
+// after the caller's web export), parses each platform's metadata.json, and
+// returns the per-platform bundleMeta. Returns (nil, nil) when the toolchain is
+// absent. buildID is the server-generated build id (build-<UnixMilli>);
+// runtimeVersion is the app version (appVersion policy).
+func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string) ([]bundleMeta, error) {
+	if !nativeToolchainPresent(appDir) {
+		emitProgress(job, "Native export skipped", 89, "RN toolchain absent — mobile served embedded bundle")
+		return nil, nil
+	}
+
+	var out []bundleMeta
+	platforms := []nativePlatform{platformIOS, platformAndroid}
+	for i, p := range platforms {
+		outDir := filepath.Join(appDir, fmt.Sprintf("dist-%s", p))
+		os.RemoveAll(outDir) // clean any prior export
+		emitProgress(job, "Building "+string(p)+" bundle", 86+i, "Running expo export --platform "+string(p))
+		if cmdOut, err := runCmd(appDir, "npx", "expo", "export", "--platform", string(p), "--output-dir", outDir); err != nil {
+			return nil, fmt.Errorf("expo export %s: %v: %s", p, err, cmdOut)
+		}
+		bm, err := parseExportMetadata(outDir, p, buildID, runtimeVersion)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s export: %w", p, err)
+		}
+		bm.distDir = outDir
+		out = append(out, bm)
+	}
+	return out, nil
 }

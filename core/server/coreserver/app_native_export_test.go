@@ -71,3 +71,16 @@ func TestParseExportMetadata(t *testing.T) {
 		t.Fatalf("expected non-empty hashes: %+v", bm)
 	}
 }
+
+func TestNativeToolchainPresent(t *testing.T) {
+	dir := t.TempDir()
+	if nativeToolchainPresent(dir) {
+		t.Fatal("expected absent toolchain with empty appDir")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "expo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !nativeToolchainPresent(dir) {
+		t.Fatal("expected present toolchain once node_modules/expo exists")
+	}
+}
