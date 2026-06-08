@@ -80,11 +80,13 @@ const drawerBackdropStyle = tva({
     base: 'absolute left-0 top-0 right-0 bottom-0 bg-[#000]/50 web:cursor-default',
 })
 
-// Drawer width is fixed at 32rem (~512px) on the side, capped at 60% of the
-// viewport on narrow screens, regardless of the `size` prop. Keeping it
-// consistent across view/edit/create modes prevents the content from jumping
-// when the inner subview changes. Vertical drawers (top/bottom) keep height
-// scaling per `size`. Use `size="full"` for an edge-to-edge drawer.
+// Side drawers take 80% of the viewport, capped at 32rem (~512px) on wide
+// screens, regardless of the `size` prop. The 80% floor (rather than the old
+// 60%) gives phones a usable reading width — at 60% a help topic on a 375px
+// device only got ~225px. Keeping the width consistent across view/edit/create
+// modes prevents the content from jumping when the inner subview changes.
+// Vertical drawers (top/bottom) keep height scaling per `size`. Use
+// `size="full"` for an edge-to-edge drawer.
 const drawerContentStyle = tva({
     base: 'bg-background shadow-hard-5 p-6 absolute',
     parentVariants: {
@@ -95,8 +97,8 @@ const drawerContentStyle = tva({
             full: '',
         },
         anchor: {
-            left: 'h-full border-r border-border/80 w-[32rem] max-w-[60%]',
-            right: 'h-full border-l border-border/80 w-[32rem] max-w-[60%]',
+            left: 'h-full border-r border-border/80 w-[80%] max-w-[32rem]',
+            right: 'h-full border-l border-border/80 w-[80%] max-w-[32rem]',
             top: 'w-full border-b border-border/80 rounded-b-xl',
             bottom: 'w-full border-t border-border/80 rounded-t-xl',
         },

@@ -54,7 +54,11 @@ const UIModal = createModal({
 })
 
 const modalStyle = tva({
-    base: 'group/modal w-full h-full justify-center items-center web:pointer-events-none',
+    // z-[1000] lifts the whole modal (backdrop + content) above the mobile
+    // sidebar drawer (zIndex 201) and any other in-app overlay, so a dialog
+    // opened from a sidebar control — e.g. the label manager from the cog —
+    // renders in front of the sidebar rather than behind it.
+    base: 'group/modal w-full h-full justify-center items-center web:pointer-events-none z-[1000]',
     variants: {
         size: {
             xs: '',

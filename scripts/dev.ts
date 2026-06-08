@@ -432,7 +432,7 @@ function spawnPbBinary(pbPort: number, publicUrl: string, dataDir: string | null
     const child = spawn(path.join(ROOT, 'server', 'app'), args, {
         cwd: ROOT,
         stdio: ['inherit', 'pipe', 'pipe'],
-        // PB's first-run installer prints a /setup URL using the address
+        // PB's first-run installer prints a /admin URL using the address
         // it bound to. Override with the public proxy URL so the printed
         // URL points where the user actually browses, not at PB's
         // internal port.
@@ -454,10 +454,22 @@ function spawnExpo(expoPort: number, onReady: () => void): ChildProcess {
     // file watcher on `env.CI` — CI=true makes Metro log
     // "Metro is running in CI mode, reloads are disabled" and skips
     // watching entirely, which breaks HMR.
+    // Give Metro a larger V8 heap. The full ecosystem bundle (every member's
+    // screens + sidebars) can push the transform/serializer past Node's default
+    // ~4GB old-space ceiling on a cold `--clear` start — it OOM'd mid-bundle
+    // ("Reached heap limit Allocation failed") while transforming a sidebar
+    // chunk. The EAS production build already runs with 8192; match it here so
+    // dev doesn't crash on machines where the default limit is lower than the
+    // bundle needs. Preserve any caller-set NODE_OPTIONS by appending.
+    const existingNodeOptions = process.env.NODE_OPTIONS ?? ''
+    const heapFlag = '--max-old-space-size=8192'
+    const nodeOptions = existingNodeOptions.includes('--max-old-space-size')
+        ? existingNodeOptions
+        : `${existingNodeOptions} ${heapFlag}`.trim()
     const child = spawn('npx', ['expo', 'start', '--clear', '--port', String(expoPort)], {
         cwd: ROOT,
         stdio: ['inherit', 'pipe', 'pipe'],
-        env: { ...process.env },
+        env: { ...process.env, NODE_OPTIONS: nodeOptions },
     })
     // Expo prints "Logs for your project will appear …" once the dev server
     // is fully up. We use that as the signal to print the banner so it lands

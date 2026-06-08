@@ -1,6 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import type { LucideIcon } from 'lucide-react-native'
 import { Pressable } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 interface FABProps {
     icon: LucideIcon
@@ -9,12 +10,18 @@ interface FABProps {
     isVisible: boolean
     size?: number
     iconSize?: number
-    // Which bottom corner the button anchors to. Defaults to 'right' (the
-    // conventional FAB placement); calendar anchors 'left' so it doesn't sit
-    // over the right-hand event columns of the day/week grid.
-    side?: 'left' | 'right'
 }
 
+// Approximate height of the bottom tab bar's own content (pt-2 + icon + label
+// + pb-1), excluding the safe-area inset which we add separately. The FAB
+// clears this plus a small gap so it floats just above the toolbar.
+const BOTTOM_BAR_CONTENT_HEIGHT = 56
+const FAB_GAP_ABOVE_BAR = 16
+
+// All FABs anchor to the bottom-RIGHT corner for consistency across packages
+// (compose in mail, "+" in calendar, etc.) and sit just above the bottom tab
+// bar. The bottom offset tracks the safe-area inset so the gap above the bar
+// is uniform on notched and non-notched devices alike.
 export function FAB({
     icon: Icon,
     onPress,
@@ -22,9 +29,9 @@ export function FAB({
     isVisible,
     size = 56,
     iconSize = 22,
-    side = 'right',
 }: FABProps) {
     const primaryFg = useThemeColor('primary-foreground')
+    const insets = useSafeAreaInsets()
 
     if (!isVisible) return null
 
@@ -32,8 +39,8 @@ export function FAB({
         <Pressable
             className="absolute items-center justify-center bg-primary"
             style={{
-                bottom: 80,
-                ...(side === 'left' ? { left: 16 } : { right: 16 }),
+                bottom: insets.bottom + BOTTOM_BAR_CONTENT_HEIGHT + FAB_GAP_ABOVE_BAR,
+                right: 16,
                 width: size,
                 height: size,
                 borderRadius: size / 2,
