@@ -320,14 +320,42 @@ while true; do
         # below (the `continue`d loop iteration) starts with mail enabled as
         # normal. Export the vars inside a backgrounded subshell so gosu passes
         # them to the child and they don't leak to the real server.
-        (
+        #
+        # Run the probe in its OWN process group via setsid, so teardown can kill
+        # the WHOLE tree. Without setsid, `kill $HEALTH_PID` only kills the
+        # subshell — the gosu→tinycld grandchild it spawned SURVIVES, keeping
+        # :${HEALTH_PORT} bound. Across the install→upgrade→downgrade sequence
+        # (three exit-75 restarts) those leaked probe servers accumulate; the next
+        # restart's probe then can't bind and crashes with "listen tcp
+        # 127.0.0.1:${HEALTH_PORT}: bind: address already in use", the health check
+        # flaps, and the container is declared unhealthy. setsid makes $! the group
+        # leader (PID == PGID), so `kill -- -$PGID` reaps gosu + tinycld together.
+        # Preserve the same privilege drop as run_tinycld: gosu when root (which
+        # also keeps the binary's cap_net_bind_service), direct otherwise. `exec`
+        # so the gosu/tinycld process IS the group leader (no extra sh layer left
+        # holding the group open).
+        if [ "$(id -u)" = "0" ]; then
+            PROBE_CMD='exec gosu '"$RUN_AS"' ./tinycld serve --http=127.0.0.1:'"${HEALTH_PORT}"
+        else
+            PROBE_CMD='exec ./tinycld serve --http=127.0.0.1:'"${HEALTH_PORT}"
+        fi
+        setsid sh -c '
             export IMAP_ENABLED=false SMTP_ENABLED=false
-            run_tinycld serve --http=127.0.0.1:${HEALTH_PORT}
-        ) &
+            '"$PROBE_CMD"'
+        ' &
         HEALTH_PID=$!
 
+        # Poll the probe for up to 60s. The probe boots a FULL server — it runs
+        # pending migrations, regenerates the PB schema types, and seeds bundled
+        # packages before /api/health answers. After a version change (especially a
+        # downgrade, which reverts a migration and rebuilds) that cold boot can take
+        # well over 10s, more so under the concurrent load of the install
+        # integration test. A too-short window declares a healthy server "failed",
+        # trips the rollback path, and the container dies right after the probe
+        # starts (observed: post-downgrade restart never reaching the real :7090
+        # serve). 60s matches the real server's own cold-boot budget.
         HEALTHY=false
-        for i in 1 2 3 4 5 6 7 8 9 10; do
+        for i in $(seq 1 60); do
             if curl -sf http://127.0.0.1:${HEALTH_PORT}/api/health >/dev/null 2>&1; then
                 HEALTHY=true
                 break
@@ -335,8 +363,24 @@ while true; do
             sleep 1
         done
 
-        kill $HEALTH_PID 2>/dev/null
-        wait $HEALTH_PID 2>/dev/null || true
+        # Kill the probe's entire process group (negative PID), then reap. The
+        # group leader's PID equals the PGID because setsid created the group.
+        # The trailing `|| true` is REQUIRED under `set -e`: if the probe already
+        # exited on its own, BOTH kills return non-zero and the bare compound would
+        # abort the entrypoint (pid 1) → the container dies right here, which looks
+        # exactly like a failed restart. Never let probe teardown kill the script.
+        { kill -- "-${HEALTH_PID}" 2>/dev/null || kill "${HEALTH_PID}" 2>/dev/null; } || true
+        wait "${HEALTH_PID}" 2>/dev/null || true
+
+        # Belt-and-suspenders: wait out the kernel releasing :${HEALTH_PORT} before
+        # the next iteration's probe (or the real serve) tries to bind it. The
+        # group kill is synchronous-ish but the socket close + TIME_WAIT teardown
+        # is not; poll until the port is free (max ~5s) so a fast restart loop
+        # can't race the previous probe's socket.
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            curl -sf http://127.0.0.1:${HEALTH_PORT}/api/health >/dev/null 2>&1 || break
+            sleep 0.5
+        done
 
         if [ "$HEALTHY" = "true" ]; then
             echo "[entrypoint] Health check passed, restarting server"

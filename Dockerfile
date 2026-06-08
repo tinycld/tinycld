@@ -101,6 +101,43 @@ COPY google-takeout-import/ ./google-takeout-import/
 # re-runs the generator + a web rebuild, which needs Expo's ambient types).
 RUN [ -f tinycld/expo-env.d.ts ] || printf '/// <reference types="expo/types" />\n' > tinycld/expo-env.d.ts
 
+# Pin the pnpm content-addressable store to a FIXED absolute path
+# (/workspace/.pnpm-store) so the runtime in-app installer reuses the store baked
+# into the image instead of re-fetching the entire ~2GB dependency graph from the
+# network on every package install/upgrade.
+#
+# Why this is needed: the runtime image ships node_modules as real files, but the
+# pnpm STORE (the content-addressable cache pnpm links node_modules from) is NOT
+# carried into the runtime image by default — it lives under the BUILD user's HOME
+# (/root/.local/share/pnpm). At runtime the installer runs `pnpm install` as the
+# unprivileged tinycld user, whose store resolves to its own HOME
+# (/workspace/tinycld/.local/share/pnpm) — EMPTY. So pnpm re-downloads all ~1200
+# packages (reused 0, downloaded 1200) on every operation; on a slow/flaky network
+# that is minutes-to-effectively-stalled, which is what made the todo-install
+# upgrade phase appear to hang.
+#
+# The fix: a fixed store-dir set via pnpm-workspace.yaml's `storeDir:` key (the
+# ONLY mechanism pnpm 10+ honors — .npmrc store-dir and npm_config_store_dir env
+# are ignored), pinned to the SAME absolute path in both this build stage and the
+# runtime stage so a single copied store satisfies both. We append it to the
+# build's copy of pnpm-workspace.yaml (NOT the committed source — dev machines
+# keep their default ~/.local store). /workspace/.pnpm-store is on the same
+# filesystem as /workspace/node_modules, so pnpm hardlinks rather than copies.
+RUN printf '\nstoreDir: /workspace/.pnpm-store\n' >> pnpm-workspace.yaml
+
+# Bound pnpm's network waits so the runtime in-app installer can't hang forever.
+# pnpm 11 verifies the lockfile against supply-chain policies and fetches package
+# metadata at the start of every install; if one of those connections stalls
+# mid-stream (established but idle — observed intermittently on slow CI networks),
+# pnpm waits on it with NO effective timeout and the whole install hangs
+# indefinitely (seen: 22 min stuck at "Running pnpm install", zero progress). A
+# bounded fetchTimeout + a couple of retries turns an infinite hang into a
+# fast-failing, retried request — the installer then surfaces a real error
+# instead of appearing dead. Set in pnpm-workspace.yaml (the mechanism pnpm 10+
+# honors) so all three in-app `pnpm install` call sites inherit it; appended to
+# the build copy only, so the committed source / dev machines are untouched.
+RUN printf 'fetchTimeout: 60000\nfetchRetries: 2\nfetchRetryMaxtimeout: 30000\n' >> pnpm-workspace.yaml
+
 # Install the whole workspace at the root. The postinstall runs the generator
 # (`cd tinycld && pnpm run packages:generate`) and link-members (linking every
 # member under node_modules/@tinycld/<name> plus @tinycld/app-generated). All
@@ -108,7 +145,8 @@ RUN [ -f tinycld/expo-env.d.ts ] || printf '/// <reference types="expo/types" />
 # pass --ignore-scripts: the postinstall IS the generation step we depend on for
 # the Go wiring, route re-exports, and lib/generated/. corepack enable picks the
 # pnpm version pinned in package.json; --frozen-lockfile enforces the pinned
-# pnpm-lock.yaml for a reproducible image.
+# pnpm-lock.yaml for a reproducible image. The store lands in /workspace/.pnpm-store
+# (storeDir above), ready to be copied into the runtime image.
 RUN corepack enable && pnpm install --frozen-lockfile
 
 # Resolve the migration/hook symlinks the generator wrote under
@@ -363,6 +401,17 @@ COPY --from=web-builder /ws/tinycld.packages.ts /workspace/tinycld.packages.ts
 COPY --from=web-builder /ws/scripts /workspace/scripts
 COPY --from=web-builder /ws/tests /workspace/tests
 COPY --from=web-builder /ws/node_modules /workspace/node_modules
+
+# The pnpm content-addressable store, populated by the web-builder's
+# `pnpm install` (pinned to /workspace/.pnpm-store via the storeDir append in that
+# stage; the runtime pnpm-workspace.yaml copied above carries the SAME storeDir).
+# Carrying it into the image is what lets the in-app installer's `pnpm install`
+# relink from the store (reused N, downloaded 0) instead of re-downloading the
+# whole dependency graph from the network on every package install/upgrade — the
+# root cause of the todo-install upgrade phase appearing to hang. The whole-tree
+# `chown -R tinycld:tinycld /workspace` below makes it readable+writable by the
+# runtime user (pnpm adds newly-fetched packages here on a genuine version bump).
+COPY --from=web-builder /workspace/.pnpm-store /workspace/.pnpm-store
 
 # Feature siblings at /workspace/<x>. seed-db.ts (run by the reset-demo cron)
 # imports ../tinycld.seeds → each @tinycld/<feature>/seed, resolved through the

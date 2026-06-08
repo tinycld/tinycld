@@ -290,13 +290,12 @@ func runVersionChangePipeline(app *pocketbase.PocketBase, job *installJob) {
 		}
 	}
 
-	// All changes succeeded — drop the per-member .bak backups swapPackageFiles
-	// left behind (they're only needed for the rollback path). Leaving them would
-	// leak a full copy of each member dir on every successful change.
+	// All changes succeeded — drop the member backups swapPackageFiles left under
+	// wsRoot/backups/ (they're only needed for the rollback path). Leaving them
+	// would leak a full copy of each member dir on every successful change. Remove
+	// the whole backups/ dir so it never lingers in the workspace root.
 	wsRoot := filepath.Dir(appDir)
-	for _, change := range job.Changes {
-		os.RemoveAll(filepath.Join(wsRoot, change.Slug+".bak"))
-	}
+	os.RemoveAll(filepath.Join(wsRoot, backupsDirName))
 
 	emitProgress(job, "Requesting restart", 95, "Signaling server restart")
 	job.Status = "success"
@@ -594,10 +593,22 @@ func swapPackageFiles(
 		return nil, fmt.Errorf("fetched package slug %q does not match %q", manifest.Slug, slug)
 	}
 
-	// Back up the existing member dir so a failure restores it intact.
+	// Back up the existing member dir so a failure restores it intact. The backup
+	// goes under wsRoot/backups/<slug>, NOT a wsRoot/<slug>.bak sibling: getPackages()
+	// (tinycld.packages.ts) and the generator enumerate members by scanning wsRoot
+	// ONE level deep for dirs with a package.json, so a sibling .bak — a full cp -a
+	// of the member, package.json + manifest.ts and all — gets counted as a SECOND
+	// copy of the package, producing a duplicate `go.work` use entry and failing the
+	// rebuild with "go work sync: path <member>/server appears multiple times". The
+	// backups/ dir has no package.json of its own and its contents sit two levels
+	// deep, so the scan never sees them. It lives in wsRoot (not os.TempDir) so the
+	// rollback `mv` is a same-filesystem rename, not a cross-device copy.
 	pkgDest := filepath.Join(wsRoot, slug)
-	backupDir := pkgDest + ".bak"
+	backupDir := filepath.Join(wsRoot, backupsDirName, slug)
 	os.RemoveAll(backupDir)
+	if err := os.MkdirAll(filepath.Dir(backupDir), 0o755); err != nil {
+		return nil, fmt.Errorf("create backups dir: %w", err)
+	}
 	if _, err := runCmd(".", "cp", "-a", pkgDest, backupDir); err != nil {
 		return nil, fmt.Errorf("backup member dir: %w", err)
 	}
@@ -612,10 +623,17 @@ func swapPackageFiles(
 	if err := copyDir(extractDir, pkgDest); err != nil {
 		return nil, fmt.Errorf("copy package files: %w", err)
 	}
-	// Drop the backup on success-of-this-step is deferred to job completion; the
-	// rollback above handles the failure path. Leave .bak for the run's duration.
+	// Dropping the backup on success is deferred to job completion (see the
+	// backups/ cleanup in runVersionChangePipeline); the rollback above handles the
+	// failure path. The backup stays under wsRoot/backups/ for the run's duration.
 	return manifest, nil
 }
+
+// backupsDirName is the per-run member-backup root under the workspace root. It
+// deliberately has no package.json/manifest.ts so member enumeration (which scans
+// the workspace root one level deep) never treats a backed-up member as a second
+// installed copy of its package.
+const backupsDirName = "backups"
 
 // regenerateWiring re-runs the generator (rewrites routes, owner map, go wiring)
 // and records a rollback that regenerates again after a member restore.
