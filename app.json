@@ -31,7 +31,7 @@
                     "project": "tinycld"
                 }
             ],
-            "./plugins/with-app-updater"
+            "./plugins/with-app-updater.cjs"
         ],
         "icon": "./assets/app-icon.png",
         "splash": {
