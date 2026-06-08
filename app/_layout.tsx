@@ -15,6 +15,7 @@ import '~/lib/configure-core'
 import '~/global.css'
 import { MinimalProviders } from '@tinycld/core/components/MinimalProviders'
 import { NewVersionToast } from '@tinycld/core/components/NewVersionToast'
+import { markBundleHealthy } from '@tinycld/core/lib/mark-bundle-healthy'
 import { initSentry } from '@tinycld/core/lib/sentry'
 import {
     getResolvedAddress,
@@ -118,6 +119,12 @@ export default function Layout() {
     useVersionCheck()
     useChunkLoadRecovery()
     useAppUpdates()
+
+    // Once the app has mounted and rendered, mark the active OTA bundle healthy
+    // so the native crash-rollback won't revert a freshly-applied bundle.
+    useEffect(() => {
+        markBundleHealthy()
+    }, [])
 
     if (state.status === 'resolving') {
         return (
