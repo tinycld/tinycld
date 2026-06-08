@@ -20,3 +20,11 @@ export interface CheckDeps {
     currentId: string
     fetchFn: typeof fetch
 }
+
+export interface StageDeps {
+    serverUrl: string
+    downloadFn: (url: string, destUri: string) => Promise<{ uri: string }>
+    hashFn: (fileUri: string) => Promise<string> // lowercase hex sha256
+    stageBundleFn: (localDir: string, id: string) => Promise<void>
+    tmpDir: string
+}
