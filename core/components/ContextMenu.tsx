@@ -2,6 +2,7 @@ import { Menu } from '@tinycld/core/ui/menu'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { type GestureResponderEvent, Platform, Pressable, StyleSheet, View } from 'react-native'
+import { markContextMenuOpenedByLongPress } from './context-menu-press-guard'
 
 interface ContextMenuProps {
     children: ReactNode
@@ -285,6 +286,10 @@ function ContextMenuNative({ children, content, onOpen, className }: ContextMenu
             setPressPos({ x: pageX, y: pageY, width: 0, height: 0 })
             cancelLongPress()
             longPressTimerRef.current = setTimeout(() => {
+                // Tell the underlying row to ignore the press it will receive
+                // when the finger lifts — otherwise a long-press would open the
+                // menu AND trigger the row's tap (e.g. open the file).
+                markContextMenuOpenedByLongPress(Date.now())
                 handleOpenChange(true)
                 longPressTimerRef.current = null
             }, 400)
