@@ -30,7 +30,8 @@
                     "organization": "argosity",
                     "project": "tinycld"
                 }
-            ]
+            ],
+            "./plugins/with-app-updater"
         ],
         "icon": "./assets/app-icon.png",
         "splash": {
