@@ -56,3 +56,23 @@ func TestFillManifestURLs(t *testing.T) {
 		t.Fatalf("asset url = %q", m.Assets[0].URL)
 	}
 }
+
+func TestBuildIDPatternRejectsTraversal(t *testing.T) {
+	valid := []string{"build-123", "build-1717000000000", "build-base"}
+	for _, v := range valid {
+		if !buildIDPattern.MatchString(v) {
+			t.Errorf("expected %q to be a valid build id", v)
+		}
+	}
+	// These are exactly the shapes a percent-decoded path segment could carry
+	// into serveBuildFile; all must be rejected before the path join.
+	bad := []string{
+		"../../../etc", "..", "build-1/../..", "build-", "build-abc",
+		"build-123/x", "", "..%2f..", "/etc/passwd",
+	}
+	for _, b := range bad {
+		if buildIDPattern.MatchString(b) {
+			t.Errorf("expected %q to be rejected as a build id", b)
+		}
+	}
+}

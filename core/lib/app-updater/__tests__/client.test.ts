@@ -50,6 +50,7 @@ describe('checkForUpdate', () => {
 function stageDeps(overrides = {}) {
     return {
         serverUrl: 'https://srv.test',
+        platform: 'ios' as const,
         downloadFn: vi.fn().mockResolvedValue({ uri: 'file:///tmp/i.hbc' }),
         hashFn: vi.fn().mockResolvedValue('HASH'), // matches MANIFEST.bundleHash
         stageBundleFn: vi.fn().mockResolvedValue(undefined),
@@ -63,6 +64,40 @@ describe('downloadAndStage', () => {
         const d = stageDeps()
         await downloadAndStage(MANIFEST, d)
         expect(d.stageBundleFn).toHaveBeenCalledWith('file:///tmp/upd/', 'build-200-ios')
+    })
+
+    it('downloads into native/<platform>/ matching the native locateHbc layout', async () => {
+        // The native module searches `<stagedDir>/native/<platform>/` for the
+        // .hbc. If the download layout drifts from that, the staged bundle is
+        // never found and the update silently reverts to embedded. This pins the
+        // contract: bundleUrl .../ios/i.hbc → file:///tmp/upd/native/ios/i.hbc.
+        const d = stageDeps()
+        await downloadAndStage(MANIFEST, d)
+        expect(d.downloadFn).toHaveBeenCalledWith(
+            'https://srv.test/api/app/bundle/build-200/ios/i.hbc',
+            'file:///tmp/upd/native/ios/i.hbc'
+        )
+    })
+
+    it('lays assets out under native/<platform>/ at their server-relative path', async () => {
+        const manifestWithAsset = {
+            ...MANIFEST,
+            assets: [
+                {
+                    key: 'assets/a',
+                    hash: 'AH',
+                    contentType: 'image/png',
+                    url: '/api/app/asset/build-200/ios/assets/img/a.png',
+                },
+            ],
+        }
+        const hashFn = vi.fn().mockResolvedValueOnce('HASH').mockResolvedValueOnce('AH')
+        const d = stageDeps({ hashFn })
+        await downloadAndStage(manifestWithAsset, d)
+        expect(d.downloadFn).toHaveBeenCalledWith(
+            'https://srv.test/api/app/asset/build-200/ios/assets/img/a.png',
+            'file:///tmp/upd/native/ios/assets/img/a.png'
+        )
     })
 
     it('throws and does not stage on bundle hash mismatch', async () => {

@@ -72,16 +72,23 @@ function withIosIdentity(config) {
 
 // --- Android: RN host getJSBundleFile() -------------------------------------
 
-// Marker: the SDK 55 / RN 0.83 MainApplication.kt template configures the host
-// as `object : DefaultReactNativeHost(this)` and overrides getJSMainModuleName.
-// We anchor on that override and inject getJSBundleFile() right after it, so we
-// land inside the host object regardless of which other overrides are present.
-const ANDROID_HOST_MARKER = 'override fun getJSMainModuleName(): String ='
+// Anchor on the host object's OPENING BRACE rather than a sibling override.
+// The SDK 55 / RN 0.83 MainApplication.kt template declares the host as
+// `object : DefaultReactNativeHost(this) {` — a stable, single-line structural
+// point. Earlier this anchored on `getJSMainModuleName(): String =`, but the
+// template renders that as an expression body whose value can sit on the NEXT
+// line, so inserting after the `=` line split the expression and produced
+// uncompilable Kotlin. Injecting right after the object's `{` always lands as
+// the first member, valid regardless of how the other overrides are formatted.
+// We use a regex so whitespace between the ctor call and `{` doesn't matter.
+const ANDROID_HOST_OPEN_RE = /object\s*:\s*DefaultReactNativeHost\([^)]*\)\s*\{/
 
+// Block-body (not expression-body) override so there's no next-line ambiguity.
 const ANDROID_BUNDLE_OVERRIDE =
-    '\n\n            override fun getJSBundleFile(): String? =\n' +
-    '              org.tinycld.appupdater.AppUpdaterBundle.stagedBundlePath(applicationContext)\n' +
-    '                ?: super.getJSBundleFile()'
+    '\n          override fun getJSBundleFile(): String? {\n' +
+    '            return org.tinycld.appupdater.AppUpdaterBundle.stagedBundlePath(applicationContext)\n' +
+    '              ?: super.getJSBundleFile()\n' +
+    '          }\n'
 
 function withAndroidBundleSeam(config) {
     return withMainApplication(config, cfg => {
@@ -89,17 +96,16 @@ function withAndroidBundleSeam(config) {
         if (src.includes('AppUpdaterBundle.stagedBundlePath')) {
             return cfg // already wired (idempotent re-run)
         }
-        const markerIdx = src.indexOf(ANDROID_HOST_MARKER)
-        if (markerIdx === -1) {
+        const match = ANDROID_HOST_OPEN_RE.exec(src)
+        if (!match) {
             throw new Error(
-                '[with-app-updater] Android: could not find the RN host marker ' +
-                    `\`${ANDROID_HOST_MARKER}\` in MainApplication.kt. The SDK 55 ` +
-                    'template may have changed — update plugins/with-app-updater.js.'
+                '[with-app-updater] Android: could not find the RN host opener ' +
+                    '`object : DefaultReactNativeHost(...) {` in MainApplication.kt. ' +
+                    'The SDK 55 template may have changed — update plugins/with-app-updater.js.'
             )
         }
-        // Insert after the full marker line (find its line end).
-        const lineEnd = src.indexOf('\n', markerIdx)
-        const insertAt = lineEnd === -1 ? src.length : lineEnd
+        // Insert immediately after the matched `{` as the first object member.
+        const insertAt = match.index + match[0].length
         cfg.modResults.contents =
             src.slice(0, insertAt) + ANDROID_BUNDLE_OVERRIDE + src.slice(insertAt)
         return cfg

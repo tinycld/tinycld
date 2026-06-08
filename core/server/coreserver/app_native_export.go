@@ -197,6 +197,18 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 	return out, nil
 }
 
+// cleanupNativeExportDirs removes the per-platform `dist-<platform>` export dirs
+// after their contents have been staged into the build archive. Best-effort —
+// a failure here is non-fatal (the next export's os.RemoveAll clears it anyway),
+// so errors are ignored rather than aborting a successful install.
+func cleanupNativeExportDirs(bundles []bundleMeta) {
+	for _, b := range bundles {
+		if b.distDir != "" {
+			os.RemoveAll(b.distDir)
+		}
+	}
+}
+
 // appVersionFromManifest reads the Expo app version (app.json → expo.version),
 // which is the runtimeVersion under the appVersion policy. app.json may sit at
 // appDir in the runtime image or one level up in dev — try appDir then parent.

@@ -686,6 +686,10 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 			fail("stage native bundles", err)
 			return
 		}
+		// The dist-<platform> export dirs (tens of MB each) are now copied into
+		// the archive — remove them so each install doesn't leave a stale native
+		// export behind. Best-effort: a leftover is overwritten on the next run.
+		cleanupNativeExportDirs(nativeBundles)
 	}
 
 	// Update pkg_registry

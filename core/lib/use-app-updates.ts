@@ -34,11 +34,16 @@ async function checkAndApplyUpdate(): Promise<void> {
         })
         if (!manifest) return
 
-        const tmpDir = `${FileSystem.cacheDirectory}app-update/${manifest.id}/`
+        // Stage under documentDirectory, NOT cacheDirectory: once promoted, this
+        // dir IS the running bundle, and the OS can purge the cache dir under
+        // storage pressure — which would make the native loader miss the .hbc and
+        // trigger a spurious rollback. documentDirectory is not auto-evicted.
+        const tmpDir = `${FileSystem.documentDirectory}app-update/${manifest.id}/`
         await FileSystem.makeDirectoryAsync(tmpDir, { intermediates: true })
 
         await downloadAndStage(manifest, {
             serverUrl: PB_SERVER_ADDR,
+            platform,
             downloadFn: async (url, dest) => {
                 // Assets keep the server's relative paths (e.g. assets/a), so a
                 // dest can sit in a subdir that doesn't exist yet. downloadAsync

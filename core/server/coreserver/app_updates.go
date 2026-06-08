@@ -5,10 +5,19 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
+
+// buildIDPattern matches the only build_id shapes the install pipeline mints:
+// `build-<unixMilli>` and the seed `build-base`. serveBuildFile interpolates the
+// build id into the archive path, so it MUST be validated against this before
+// joining — Go's mux percent-decodes path segments, so an un-validated id like
+// `..%2f..%2f..` would otherwise let a public, pre-auth request escape the
+// builds dir and read arbitrary files. (See buildArchiveFor's contract note.)
+var buildIDPattern = regexp.MustCompile(`^build-(\d+|base)$`)
 
 type manifestStatus int
 
@@ -155,6 +164,17 @@ func serveBuildFile(re *core.RequestEvent) error {
 	buildID := re.Request.PathValue("buildId")
 	platform := re.Request.PathValue("platform")
 	rest := re.Request.PathValue("path")
+
+	// Both segments are interpolated into the FS root below, so validate them
+	// against fixed shapes BEFORE joining. os.DirFS + fs.ValidPath only confine
+	// the `rest` wildcard, not the root itself — a percent-decoded `..` in
+	// buildID/platform would otherwise escape the builds dir on this public path.
+	if platform != string(platformIOS) && platform != string(platformAndroid) {
+		return re.NotFoundError("", nil)
+	}
+	if !buildIDPattern.MatchString(buildID) {
+		return re.NotFoundError("", nil)
+	}
 
 	appDir := resolveServerDir()
 	base := filepath.Join(buildArchiveFor(appDir, buildID).release, "native", platform)
