@@ -28,6 +28,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { loadEnv } from '@tinycld/core/lib/load-env'
 
 function log(...args: unknown[]) {
     process.stdout.write(`[reset-dev-db] ${args.join(' ')}\n`)
@@ -37,11 +38,7 @@ function logError(...args: unknown[]) {
     process.stderr.write(`[reset-dev-db] ${args.join(' ')}\n`)
 }
 
-try {
-    process.loadEnvFile()
-} catch {
-    // .env may not exist in CI
-}
+loadEnv()
 
 interface Config {
     url: string
@@ -380,7 +377,7 @@ async function main() {
         // isn't interleaved with PB's async SQL logs. The seed prints its own
         // [seed] progress; PB errors still surface via stderr, and a failed
         // seed exits non-zero (thrown below). The box itself (app + superuser
-        // creds, the /_/ and /setup URLs) is printed by the seed script.
+        // creds, the /_/ and /admin URLs) is printed by the seed script.
         relayPbStdout = false
 
         await runSeedScript()

@@ -1,6 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 
-// Smoke-tests for the /setup flow. Split into three tests so most of the
+// Smoke-tests for the /admin flow. Split into three tests so most of the
 // coverage runs without the one-time PW_SETUP_TOKEN:
 //   1. bootstrap (needs PW_SETUP_TOKEN) — fills the first-run wizard and
 //      creates the superuser. Skipped if the token isn't exported.
@@ -44,25 +44,25 @@ const TEST_ORG_OWNER_PASSWORD = 'OwnerPass1234!'
 const TEST_ORG_MAIL_DOMAIN = 'smoke.example'
 
 async function loginAsSuperuser(page: Page) {
-    await page.goto('/setup')
+    await page.goto('/admin')
     await expect(page.getByText('Superuser Login')).toBeVisible()
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
     await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
     await page.getByRole('button', { name: 'Sign in' }).click()
-    // The dashboard renders the tab strip; wait for it before assertions.
-    await expect(page.getByText('Organizations', { exact: true })).toBeVisible()
+    // The dashboard renders the nav rail; wait for a rail entry before assertions.
+    await expect(page.getByText('Organizations', { exact: true }).first()).toBeVisible()
 }
 
 test.describe.configure({ mode: 'serial' })
 
 test.describe('first-run install', () => {
-    test('bootstrap superuser via /setup wizard', async ({ page }) => {
+    test('bootstrap superuser via /admin wizard', async ({ page }) => {
         test.skip(
             !SETUP_TOKEN,
             'PW_SETUP_TOKEN not set — workflow must scrape it from `docker logs` and export before running'
         )
 
-        await page.goto(`/setup?token=${SETUP_TOKEN}`)
+        await page.goto(`/admin?token=${SETUP_TOKEN}`)
 
         await expect(page.getByText('Welcome to TinyCld')).toBeVisible()
 
@@ -109,34 +109,34 @@ test.describe('first-run install', () => {
     test('superuser can create an organization', async ({ page }) => {
         await loginAsSuperuser(page)
 
+        // Switch to the Organizations section via the nav rail.
         await page.getByText('Organizations', { exact: true }).first().click()
 
         // Regression test for "Failed to create record. The username field
         // is required." — the form previously omitted username on the user
         // create, which is now derived from the email.
-        await page.getByRole('button', { name: 'New Organization' }).click()
+        await page.getByRole('button', { name: 'New organization' }).click()
 
-        await page
-            .getByRole('textbox', { name: 'Organization Name', exact: true })
-            .fill(TEST_ORG_NAME)
+        // The create form groups fields under Organization / Owner account
+        // fieldsets, so the org name field is just "Name" and the owner's is
+        // "Full name". Both are unique within the open form.
+        await page.getByRole('textbox', { name: 'Name', exact: true }).fill(TEST_ORG_NAME)
         // The slug auto-derives from the name; overwrite to make the assertion
         // explicit and decoupled from the derivation rules.
         await page.getByRole('textbox', { name: 'Slug', exact: true }).fill(TEST_ORG_SLUG)
         await page
-            .getByRole('textbox', { name: 'Owner Name', exact: true })
+            .getByRole('textbox', { name: 'Full name', exact: true })
             .fill(TEST_ORG_OWNER_NAME)
+        await page.getByRole('textbox', { name: 'Email', exact: true }).fill(TEST_ORG_OWNER_EMAIL)
         await page
-            .getByRole('textbox', { name: 'Owner Email', exact: true })
-            .fill(TEST_ORG_OWNER_EMAIL)
-        await page
-            .getByRole('textbox', { name: 'Owner Password', exact: true })
+            .getByRole('textbox', { name: 'Password', exact: true })
             .fill(TEST_ORG_OWNER_PASSWORD)
         // Mail is in EXPECTED_BUNDLED so the form requires a mail domain.
         await page
-            .getByRole('textbox', { name: 'Mail Domain', exact: true })
+            .getByRole('textbox', { name: 'Mail domain', exact: true })
             .fill(TEST_ORG_MAIL_DOMAIN)
 
-        await page.getByRole('button', { name: 'Create Organization' }).click()
+        await page.getByRole('button', { name: 'Create organization' }).click()
 
         // After creation the form closes and the org row renders with name + slug.
         await expect(page.getByText('No organizations yet.')).not.toBeVisible()

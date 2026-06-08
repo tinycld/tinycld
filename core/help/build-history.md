@@ -1,13 +1,13 @@
 ---
 title: Build history & reverting
-summary: Restore a previous package-install build from Setup
+summary: Restore a previous package-install build from the Admin console
 tags: [packages, install, revert, build, rollback]
 order: 55
 ---
 
 ## What a build is
 
-Every time you install a package from **Setup → Packages**, the app saves a
+Every time you install a package from **Admin → Packages**, the app saves a
 **build** — a snapshot of the server and web bundle that went live, plus a record
 of the database migrations that install applied. Builds let you go back to an
 earlier state if a package update misbehaves.
@@ -18,7 +18,7 @@ the image's out-of-the-box state — so you can always revert all the way back t
 
 ## To revert to an earlier build
 
-1. Open **Setup → Build History**.
+1. Open **Admin → Build History**.
 2. Find the build you want to return to and click **Revert**.
 3. Read the confirmation carefully — it lists any **newer builds that will be
    permanently invalidated** (see below) — then confirm.

@@ -272,9 +272,9 @@ func handleVersions(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 			Current: current,
 			// Always a non-nil slice so it marshals as `[]`, never `null`: the
 			// client types `available` as string[] and calls `.length`/`.indexOf`
-			// on it (PackageVersionsTab, detectDowngrade), which throw on null. A
-			// nil Go slice JSON-encodes to `null`, so initialize it here — the
-			// unknown-source continue path below relies on this default.
+			// on it (the Packages version controls, detectDowngrade), which throw
+			// on null. A nil Go slice JSON-encodes to `null`, so initialize it
+			// here — the unknown-source continue path below relies on this default.
 			Available: []string{},
 		}
 		if spec == "" {

@@ -1,11 +1,13 @@
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Divider } from '@tinycld/core/ui/divider'
-import { History, RotateCcw, Trash2, X } from 'lucide-react-native'
+import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
+import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
+import { History, RotateCcw, ShieldCheck, Trash2 } from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
 import { useCallback, useEffect, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
+import { PageHeader, SlugTag } from './console-ui'
 import { InstallProgressModal } from './InstallProgressModal'
 
 interface BuildRecord {
@@ -65,15 +67,11 @@ export function BuildHistoryTab({ isVisible, pb }: { isVisible: boolean; pb: Poc
         builds.filter(b => b.created > build.created && b.action === 'install')
 
     return (
-        <View className="gap-5">
-            <Text className="text-foreground" style={{ fontSize: 24, fontWeight: 'bold' }}>
-                Build History
-            </Text>
-            <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
-                Each successful package install is saved as a restorable build. Reverting to an
-                older build reverses every schema change made since it (your data is preserved) and
-                permanently invalidates the newer builds. Archives are kept until you delete them.
-            </Text>
+        <View className="gap-6">
+            <PageHeader
+                title="Build History"
+                subtitle="Every successful install is saved as a restorable build. Reverting reverses all schema changes made since that point — your data is preserved, but newer builds are permanently invalidated."
+            />
 
             <InstallProgressModal
                 isVisible={jobId !== null}
@@ -86,7 +84,7 @@ export function BuildHistoryTab({ isVisible, pb }: { isVisible: boolean; pb: Poc
                 onComplete={fetchBuilds}
             />
 
-            <BuildList
+            <BuildTimeline
                 builds={builds}
                 isLoading={isLoading}
                 mutedColor={mutedColor}
@@ -99,7 +97,7 @@ export function BuildHistoryTab({ isVisible, pb }: { isVisible: boolean; pb: Poc
     )
 }
 
-function BuildList({
+function BuildTimeline({
     builds,
     isLoading,
     mutedColor,
@@ -126,7 +124,7 @@ function BuildList({
 
     if (builds.length === 0) {
         return (
-            <View className="p-8 items-center rounded-xl border gap-2 bg-surface-secondary border-border">
+            <View className="p-10 items-center rounded-xl border gap-2 bg-surface-secondary border-border">
                 <History size={32} color={`${mutedColor}60`} />
                 <Text className="text-muted-foreground" style={{ fontSize: 15 }}>
                     No builds yet. Installing a package saves its first build.
@@ -136,271 +134,414 @@ function BuildList({
     }
 
     return (
-        <View className="rounded-xl border overflow-hidden bg-surface-secondary border-border">
+        <View>
             {builds.map((build, i) => (
-                <View key={build.id}>
-                    {i > 0 && <Divider />}
-                    <BuildRow
-                        build={build}
-                        invalidates={newerThan(build)}
-                        pb={pb}
-                        onJobStarted={onJobStarted}
-                        onChanged={onChanged}
-                    />
-                </View>
+                <BuildTimelineItem
+                    key={build.id}
+                    build={build}
+                    isLast={i === builds.length - 1}
+                    invalidates={newerThan(build)}
+                    pb={pb}
+                    onJobStarted={onJobStarted}
+                    onChanged={onChanged}
+                />
             ))}
         </View>
     )
 }
 
-function BuildRow({
+function BuildTimelineItem({
     build,
+    isLast,
     invalidates,
     pb,
     onJobStarted,
     onChanged,
 }: {
     build: BuildRecord
+    isLast: boolean
     invalidates: BuildRecord[]
     pb: PocketBase
     onJobStarted: (jobId: string) => void
     onChanged: () => void
 }) {
     const mutedColor = useThemeColor('muted-foreground')
-    const [confirmRevert, setConfirmRevert] = useState(false)
-    const [confirmDelete, setConfirmDelete] = useState(false)
+    const successColor = useThemeColor('success')
+    const successSoft = useThemeColor('success-soft')
+    const borderColor = useThemeColor('border')
+    const [showRevert, setShowRevert] = useState(false)
+    const [showDelete, setShowDelete] = useState(false)
     const [error, setError] = useState<string | null>(null)
 
     const isCurrent = build.status === 'current'
     const isSuperseded = build.status === 'superseded'
     const isRevertMarker = build.action === 'revert'
+    const canRevert = !isCurrent && !isSuperseded && !isRevertMarker
+    const canDelete = !isCurrent
 
     const doRevert = async () => {
         setError(null)
-        try {
-            const res = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/revert`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: pb.authStore.token,
-                },
-                body: JSON.stringify({ buildId: build.build_id }),
-            })
-            const data = await res.json()
-            if (!res.ok) {
-                setError(data.error ?? 'Failed to start revert')
-                return
-            }
-            setConfirmRevert(false)
-            onJobStarted(data.jobId)
-        } catch (err) {
-            captureException('setup.buildHistory.revert', err)
-            setError('Failed to start revert')
-        }
+        const res = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/revert`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: pb.authStore.token },
+            body: JSON.stringify({ buildId: build.build_id }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? 'Failed to start revert')
+        setShowRevert(false)
+        onJobStarted(data.jobId)
     }
 
     const doDelete = async () => {
         setError(null)
+        const res = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/builds/delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: pb.authStore.token },
+            body: JSON.stringify({ buildId: build.build_id }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error ?? 'Failed to delete build')
+        setShowDelete(false)
+        onChanged()
+    }
+
+    // node colors: current = filled success w/ ring; superseded/revert = hollow muted.
+    const nodeFill = isCurrent ? successColor : 'transparent'
+    const nodeBorder = isCurrent ? successColor : `${mutedColor}80`
+    const dimmed = isSuperseded || isRevertMarker
+
+    return (
+        <View className="flex-row gap-4">
+            <View className="items-center" style={{ width: 16 }}>
+                <View
+                    style={{
+                        width: 14,
+                        height: 14,
+                        borderRadius: 7,
+                        marginTop: 22,
+                        backgroundColor: nodeFill,
+                        borderWidth: 2,
+                        borderColor: nodeBorder,
+                        ...(isCurrent
+                            ? { shadowColor: successColor, shadowOpacity: 1, shadowRadius: 0 }
+                            : {}),
+                    }}
+                />
+                {isCurrent && (
+                    <View
+                        style={{
+                            position: 'absolute',
+                            top: 18,
+                            width: 22,
+                            height: 22,
+                            borderRadius: 11,
+                            backgroundColor: successSoft,
+                        }}
+                    />
+                )}
+                {!isLast && (
+                    <View
+                        className="flex-1"
+                        style={{ width: 2, marginTop: 2, backgroundColor: borderColor }}
+                    />
+                )}
+            </View>
+
+            <View
+                className="flex-1 mb-4 rounded-xl border bg-surface-secondary border-border p-4 gap-2"
+                style={dimmed ? { opacity: 0.62 } : undefined}
+            >
+                <View className="flex-row items-center justify-between gap-3">
+                    <View className="flex-1 gap-1.5">
+                        <View className="flex-row gap-2 items-center flex-wrap">
+                            <SlugTag>
+                                {build.pkg_slug}
+                                {build.version ? ` · v${build.version}` : ''}
+                            </SlugTag>
+                            <BuildStatusBadge status={build.status} />
+                            {isRevertMarker ? (
+                                <Text style={{ fontSize: 11, color: `${mutedColor}99` }}>
+                                    revert
+                                </Text>
+                            ) : null}
+                        </View>
+                        <Text
+                            style={{
+                                fontSize: 12,
+                                color: `${mutedColor}cc`,
+                                fontFamily: 'monospace',
+                            }}
+                        >
+                            {formatWhen(build.created)}
+                            {build.migrations_applied > 0
+                                ? ` · ${build.migrations_applied} migration${build.migrations_applied === 1 ? '' : 's'}`
+                                : ''}
+                        </Text>
+                    </View>
+
+                    <View className="flex-row gap-2 items-center">
+                        {canRevert ? (
+                            <Button onPress={() => setShowRevert(true)} size="sm" variant="outline">
+                                <ButtonIcon as={RotateCcw} />
+                                <ButtonText>Revert here</ButtonText>
+                            </Button>
+                        ) : null}
+                        {canDelete ? (
+                            <DeleteBuildButton onPress={() => setShowDelete(true)} />
+                        ) : null}
+                    </View>
+                </View>
+
+                {error ? (
+                    <View className="rounded-md p-2 bg-danger-soft">
+                        <Text className="text-xs text-danger">{error}</Text>
+                    </View>
+                ) : null}
+            </View>
+
+            <RevertModal
+                isOpen={showRevert}
+                build={build}
+                invalidates={invalidates}
+                onClose={() => setShowRevert(false)}
+                onConfirm={doRevert}
+            />
+            <DeleteBuildModal
+                isOpen={showDelete}
+                build={build}
+                onClose={() => setShowDelete(false)}
+                onConfirm={doDelete}
+            />
+        </View>
+    )
+}
+
+function DeleteBuildButton({ onPress }: { onPress: () => void }) {
+    const dangerColor = useThemeColor('danger')
+    return (
+        <Pressable onPress={onPress} className="p-2 rounded-lg">
+            <Trash2 size={15} color={dangerColor} />
+        </Pressable>
+    )
+}
+
+function RevertModal({
+    isOpen,
+    build,
+    invalidates,
+    onClose,
+    onConfirm,
+}: {
+    isOpen: boolean
+    build: BuildRecord
+    invalidates: BuildRecord[]
+    onClose: () => void
+    onConfirm: () => Promise<void>
+}) {
+    const warningColor = useThemeColor('warning')
+    const successColor = useThemeColor('success')
+    const [submitting, setSubmitting] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+
+    if (!isOpen) return null
+
+    const close = () => {
+        setError(null)
+        onClose()
+    }
+
+    const confirm = async () => {
+        setSubmitting(true)
+        setError(null)
         try {
-            const res = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/builds/delete`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: pb.authStore.token,
-                },
-                body: JSON.stringify({ buildId: build.build_id }),
-            })
-            const data = await res.json()
-            if (!res.ok) {
-                setError(data.error ?? 'Failed to delete build')
-                return
-            }
-            setConfirmDelete(false)
-            onChanged()
+            await onConfirm()
         } catch (err) {
-            captureException('setup.buildHistory.delete', err)
-            setError('Failed to delete build')
+            captureException('setup.buildHistory.revert', err)
+            setError(err instanceof Error ? err.message : 'Failed to start revert')
+        } finally {
+            setSubmitting(false)
         }
     }
 
     return (
-        <View className="px-4 py-3 gap-2">
-            <View className="flex-row items-center justify-between gap-3">
-                <View className="flex-1 gap-0.5">
-                    <View className="flex-row gap-2 items-center flex-wrap">
+        <Modal isOpen onClose={close}>
+            <ModalBackdrop />
+            <ModalContent className="w-[480px] p-5 gap-4">
+                <View className="flex-row gap-3 items-start">
+                    <View className="w-10 h-10 rounded-xl items-center justify-center bg-warning-soft">
+                        <RotateCcw size={20} color={warningColor} />
+                    </View>
+                    <View className="flex-1 gap-1">
                         <Text
                             className="text-foreground"
-                            style={{ fontSize: 15, fontWeight: '600' }}
+                            style={{ fontSize: 18, fontWeight: '600' }}
                         >
-                            {build.pkg_slug}
+                            Revert to this build
                         </Text>
-                        {build.version ? (
-                            <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
-                                v{build.version}
+                        <Text className="text-muted-foreground" style={{ fontSize: 14 }}>
+                            Roll the deployment back to{' '}
+                            <Text style={{ fontFamily: 'monospace', fontWeight: '600' }}>
+                                {build.pkg_slug}
+                                {build.version ? ` v${build.version}` : ''}
                             </Text>
-                        ) : null}
-                        <BuildStatusBadge status={build.status} />
-                        {isRevertMarker ? (
-                            <Text style={{ fontSize: 11, color: `${mutedColor}99` }}>revert</Text>
-                        ) : null}
+                            . This reverses the schema added since it and restarts the server.
+                        </Text>
                     </View>
-                    <Text style={{ fontSize: 12, color: `${mutedColor}99` }}>
-                        {formatWhen(build.created)}
-                        {build.migrations_applied > 0
-                            ? ` · ${build.migrations_applied} migration${build.migrations_applied === 1 ? '' : 's'}`
-                            : ''}
+                </View>
+
+                {invalidates.length > 0 ? (
+                    <View className="rounded-xl p-4 gap-2 bg-danger-soft">
+                        <Text
+                            className="text-danger"
+                            style={{
+                                fontSize: 12,
+                                fontWeight: '600',
+                                textTransform: 'uppercase',
+                                letterSpacing: 0.5,
+                            }}
+                        >
+                            Permanently invalidates {invalidates.length} newer build
+                            {invalidates.length === 1 ? '' : 's'}
+                        </Text>
+                        {invalidates.map(b => (
+                            <Text
+                                key={b.id}
+                                className="text-danger"
+                                style={{ fontSize: 13, fontFamily: 'monospace' }}
+                            >
+                                − {b.pkg_slug} v{b.version}
+                            </Text>
+                        ))}
+                    </View>
+                ) : null}
+
+                <View className="flex-row gap-2 items-center px-3 py-2.5 rounded-lg bg-success-soft">
+                    <ShieldCheck size={16} color={successColor} />
+                    <Text className="text-success-soft-foreground" style={{ fontSize: 13 }}>
+                        Your data is preserved. A backup is taken before reverting.
                     </Text>
                 </View>
 
-                <BuildActions
-                    canRevert={!isCurrent && !isSuperseded && !isRevertMarker}
-                    canDelete={!isCurrent}
-                    confirmRevert={confirmRevert}
-                    confirmDelete={confirmDelete}
-                    onRevert={() => {
-                        setConfirmDelete(false)
-                        setConfirmRevert(true)
-                    }}
-                    onDelete={() => {
-                        setConfirmRevert(false)
-                        setConfirmDelete(true)
-                    }}
-                    onCancel={() => {
-                        setConfirmRevert(false)
-                        setConfirmDelete(false)
-                    }}
-                    onConfirmRevert={doRevert}
-                    onConfirmDelete={doDelete}
-                    mutedColor={mutedColor}
-                />
-            </View>
+                {error ? (
+                    <View className="rounded-lg p-2 bg-danger-soft">
+                        <Text className="text-danger" style={{ fontSize: 12 }}>
+                            {error}
+                        </Text>
+                    </View>
+                ) : null}
 
-            <RevertConfirmNotice
-                isVisible={confirmRevert}
-                invalidates={invalidates}
-                mutedColor={mutedColor}
-            />
-
-            {error ? (
-                <View className="rounded-md p-2 bg-danger-soft">
-                    <Text className="text-xs text-danger">{error}</Text>
+                <View className="flex-row gap-3 justify-end">
+                    <Pressable onPress={close} className="px-3 py-2" disabled={submitting}>
+                        <Text className="text-foreground" style={{ fontSize: 13 }}>
+                            Cancel
+                        </Text>
+                    </Pressable>
+                    <Button
+                        onPress={confirm}
+                        isDisabled={submitting}
+                        size="sm"
+                        variant="destructive"
+                    >
+                        <ButtonText>
+                            {submitting
+                                ? 'Reverting…'
+                                : invalidates.length > 0
+                                  ? `Revert & invalidate ${invalidates.length}`
+                                  : 'Revert'}
+                        </ButtonText>
+                    </Button>
                 </View>
-            ) : null}
-        </View>
+            </ModalContent>
+        </Modal>
     )
 }
 
-function RevertConfirmNotice({
-    isVisible,
-    invalidates,
-    mutedColor,
+function DeleteBuildModal({
+    isOpen,
+    build,
+    onClose,
+    onConfirm,
 }: {
-    isVisible: boolean
-    invalidates: BuildRecord[]
-    mutedColor: string
+    isOpen: boolean
+    build: BuildRecord
+    onClose: () => void
+    onConfirm: () => Promise<void>
 }) {
-    if (!isVisible) return null
-    return (
-        <View className="rounded-md p-2.5 gap-1" style={{ backgroundColor: `${mutedColor}12` }}>
-            <Text className="text-foreground" style={{ fontSize: 12 }}>
-                Reverting reverses the schema added since this build (your data is preserved) and
-                restarts the server.
-            </Text>
-            {invalidates.length > 0 ? (
-                <Text className="text-warning" style={{ fontSize: 12 }}>
-                    This permanently invalidates {invalidates.length} newer build
-                    {invalidates.length === 1 ? '' : 's'}:{' '}
-                    {invalidates.map(b => `${b.pkg_slug} v${b.version}`).join(', ')}.
-                </Text>
-            ) : null}
-        </View>
-    )
-}
-
-function BuildActions({
-    canRevert,
-    canDelete,
-    confirmRevert,
-    confirmDelete,
-    onRevert,
-    onDelete,
-    onCancel,
-    onConfirmRevert,
-    onConfirmDelete,
-    mutedColor,
-}: {
-    canRevert: boolean
-    canDelete: boolean
-    confirmRevert: boolean
-    confirmDelete: boolean
-    onRevert: () => void
-    onDelete: () => void
-    onCancel: () => void
-    onConfirmRevert: () => void
-    onConfirmDelete: () => void
-    mutedColor: string
-}) {
-    const primaryBg = useThemeColor('primary')
-    const primaryFg = useThemeColor('primary-foreground')
     const dangerColor = useThemeColor('danger')
-    const dangerFg = useThemeColor('danger-foreground')
+    const [submitting, setSubmitting] = useState(false)
+    const [error, setError] = useState<string | null>(null)
 
-    if (confirmRevert) {
-        return (
-            <View className="flex-row gap-1.5 items-center">
-                <Pressable
-                    onPress={onConfirmRevert}
-                    className="px-3 py-1.5 rounded-md"
-                    style={{ backgroundColor: primaryBg }}
-                >
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: primaryFg }}>
-                        Revert
-                    </Text>
-                </Pressable>
-                <Pressable onPress={onCancel} className="p-1">
-                    <X size={14} color={mutedColor} />
-                </Pressable>
-            </View>
-        )
+    if (!isOpen) return null
+
+    const close = () => {
+        setError(null)
+        onClose()
     }
 
-    if (confirmDelete) {
-        return (
-            <View className="flex-row gap-1.5 items-center">
-                <Pressable
-                    onPress={onConfirmDelete}
-                    className="px-3 py-1.5 rounded-md"
-                    style={{ backgroundColor: dangerColor }}
-                >
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: dangerFg }}>Delete</Text>
-                </Pressable>
-                <Pressable onPress={onCancel} className="p-1">
-                    <X size={14} color={mutedColor} />
-                </Pressable>
-            </View>
-        )
+    const confirm = async () => {
+        setSubmitting(true)
+        setError(null)
+        try {
+            await onConfirm()
+        } catch (err) {
+            captureException('setup.buildHistory.delete', err)
+            setError(err instanceof Error ? err.message : 'Failed to delete build')
+        } finally {
+            setSubmitting(false)
+        }
     }
 
     return (
-        <View className="flex-row gap-2 items-center">
-            {canRevert ? (
-                <Pressable
-                    onPress={onRevert}
-                    className="flex-row gap-1 items-center px-2.5 py-1.5 rounded-md"
-                    style={{ borderWidth: 1, borderColor: `${primaryBg}40` }}
-                >
-                    <RotateCcw size={13} color={primaryBg} />
-                    <Text className="text-primary" style={{ fontSize: 12, fontWeight: '600' }}>
-                        Revert
-                    </Text>
-                </Pressable>
-            ) : null}
-            {canDelete ? (
-                <Pressable onPress={onDelete} className="p-1.5 rounded-md">
-                    <Trash2 size={15} color={dangerColor} />
-                </Pressable>
-            ) : null}
-        </View>
+        <Modal isOpen onClose={close}>
+            <ModalBackdrop />
+            <ModalContent className="w-[440px] p-5 gap-4">
+                <View className="flex-row gap-3 items-start">
+                    <View className="w-10 h-10 rounded-xl items-center justify-center bg-danger-soft">
+                        <Trash2 size={20} color={dangerColor} />
+                    </View>
+                    <View className="flex-1 gap-1">
+                        <Text
+                            className="text-foreground"
+                            style={{ fontSize: 18, fontWeight: '600' }}
+                        >
+                            Delete this build archive
+                        </Text>
+                        <Text className="text-muted-foreground" style={{ fontSize: 14 }}>
+                            Removes the archived build for{' '}
+                            <Text style={{ fontFamily: 'monospace', fontWeight: '600' }}>
+                                {build.pkg_slug}
+                                {build.version ? ` v${build.version}` : ''}
+                            </Text>
+                            . You won't be able to revert to it afterward.
+                        </Text>
+                    </View>
+                </View>
+
+                {error ? (
+                    <View className="rounded-lg p-2 bg-danger-soft">
+                        <Text className="text-danger" style={{ fontSize: 12 }}>
+                            {error}
+                        </Text>
+                    </View>
+                ) : null}
+
+                <View className="flex-row gap-3 justify-end">
+                    <Pressable onPress={close} className="px-3 py-2" disabled={submitting}>
+                        <Text className="text-foreground" style={{ fontSize: 13 }}>
+                            Cancel
+                        </Text>
+                    </Pressable>
+                    <Button
+                        onPress={confirm}
+                        isDisabled={submitting}
+                        size="sm"
+                        variant="destructive"
+                    >
+                        <ButtonText>{submitting ? 'Deleting…' : 'Delete build'}</ButtonText>
+                    </Button>
+                </View>
+            </ModalContent>
+        </Modal>
     )
 }
 
@@ -410,11 +551,16 @@ const badgeClasses: Record<string, { bg: string; text: string }> = {
     superseded: { bg: 'bg-danger-soft', text: 'text-danger-soft-foreground' },
 }
 
+const badgeLabels: Record<string, string> = {
+    available: 'restorable',
+}
+
 function BuildStatusBadge({ status }: { status: string }) {
     const variant = badgeClasses[status] ?? badgeClasses.available
+    const label = badgeLabels[status] ?? status
     return (
         <View className={`px-2 py-0.5 rounded-full ${variant.bg}`}>
-            <Text className={`text-[11px] font-semibold ${variant.text}`}>{status}</Text>
+            <Text className={`text-[11px] font-semibold ${variant.text}`}>{label}</Text>
         </View>
     )
 }

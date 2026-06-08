@@ -52,7 +52,7 @@ func RegisterSetupBootstrap(app *pocketbase.PocketBase) {
 			if publicURL == "" {
 				publicURL = strings.TrimRight(baseURL, "/")
 			}
-			setupURL := fmt.Sprintf("%s/setup?token=%s", publicURL, token)
+			setupURL := fmt.Sprintf("%s/admin?token=%s", publicURL, token)
 			printBoxed("First run setup, visit below URL to configure tinycld:", setupURL)
 			return nil
 		}

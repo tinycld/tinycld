@@ -1,6 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 
-// Integration test for the per-package VERSION-CHANGE flow in /setup, driven
+// Integration test for the per-package VERSION-CHANGE flow in /admin, driven
 // through the real in-app installer + Versions tab against an already-running
 // container (the runner script builds the image from the working tree so the
 // pinned-git-tag install change is present). Runs serially — every step depends
@@ -60,14 +60,16 @@ const TODO_TEXT = 'Buy milk'
 const TAG_TEXT = 'errand'
 
 async function loginAsSuperuser(page: Page, timeoutMs?: number) {
-    await page.goto('/setup', timeoutMs ? { timeout: timeoutMs } : undefined)
+    await page.goto('/admin', timeoutMs ? { timeout: timeoutMs } : undefined)
     await expect(page.getByText('Superuser Login')).toBeVisible(
         timeoutMs ? { timeout: timeoutMs } : undefined
     )
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
     await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
     await page.getByRole('button', { name: 'Sign in' }).click()
-    await expect(page.getByText('Organizations', { exact: true })).toBeVisible(
+    // 'Organizations' appears in both the nav rail and (when that tab is open)
+    // the page title, so scope to the first match.
+    await expect(page.getByText('Organizations', { exact: true }).first()).toBeVisible(
         timeoutMs ? { timeout: timeoutMs } : undefined
     )
 }
@@ -338,34 +340,42 @@ async function openTodoAsOwner(page: Page): Promise<Page> {
     return orgPage
 }
 
-// Sets a package row's target version in the Versions tab and applies it. The
-// row's version picker is an anchored Menu (RowVersionSelect); options read
-// `v<version>` / `v<version> (current)`. On a downgrade the ConfirmChangesModal
-// requires typing the slug to confirm; on an upgrade it's a plain Apply.
+// Sets a package row's target version on the Packages screen and applies it.
+// Versions were merged into Packages: each package row carries its own version
+// picker (an anchored Menu / RowVersionSelect) whose options read `v<version>` /
+// `v<version> (current)`, plus a staged-changes apply footer. On a downgrade the
+// ConfirmChangesModal requires typing the slug to confirm; on an upgrade it's a
+// plain Apply. The Packages screen is the default tab after login, so there's no
+// tab to switch to first.
 async function applyVersionChange(
     page: Page,
     slug: string,
     targetLabel: string,
     opts: { downgrade: boolean }
 ) {
-    await page.getByText('Versions', { exact: true }).click()
-
     // Scope every action to the TARGET package's row. In a full assembly the
-    // Versions tab lists ~9 packages, each with its own `v… (current)` picker, so a
-    // global `.first()` would grab the wrong row (alphabetically calc's picker, not
-    // todo's). Identify the row by its unique descriptor `<slug> · current v…`
-    // (count 1) and climb to the row container, then act only within it.
+    // Packages list shows ~9 rows, each with its own `v… (current)` picker, so a
+    // global `.first()` would grab the wrong row. The row renders the bare slug in
+    // a monospace SlugTag; identify the row by that slug cell + its `(current)`
+    // trigger, then act only within it.
     //
-    // The tab fetches /versions on open, which shells out to `git ls-remote`
-    // server-side (seconds, spinner until it resolves) — so gate on the descriptor
+    // The screen fetches /versions on mount, which shells out to `git ls-remote`
+    // server-side (seconds, spinner until it resolves) — so gate on the slug cell
     // with a generous budget for a cold ls-remote before touching the picker.
-    const descriptor = page.getByText(new RegExp(`^${slug} · current v`))
-    await expect(descriptor).toBeVisible({ timeout: 90_000 })
-    // Row container = descriptor's grandparent (Text → column View → row View).
-    const row = descriptor.locator('xpath=../..')
+    const slugCell = page.getByText(slug, { exact: true })
+    await expect(slugCell.first()).toBeVisible({ timeout: 90_000 })
+    // Row container = the nearest ancestor div that holds BOTH this slug cell and a
+    // `(current)` version trigger — i.e. the package row. Filtering ancestors by
+    // `has:` both descendants pins the right row without depending on the exact
+    // nesting depth (which the layout can change).
+    const row = page
+        .locator('div')
+        .filter({ has: page.getByText(slug, { exact: true }) })
+        .filter({ has: page.getByText(/^v\d+\.\d+\.\d+ \(current\)$/) })
+        .last()
 
     // Open this row's picker. Its label reads `v<cur> (current)` (the ` (current)`
-    // suffix is unique to the trigger; the descriptor has no parenthetical).
+    // suffix is unique to the trigger; the slug cell has no parenthetical).
     const trigger = row.getByText(/^v\d+\.\d+\.\d+ \(current\)$/)
     await expect(trigger).toBeVisible({ timeout: 30_000 })
     await trigger.click()
@@ -409,13 +419,13 @@ test.describe('todo version change', () => {
         )
     })
 
-    test('bootstrap superuser via /setup wizard', async ({ page }) => {
+    test('bootstrap superuser via /admin wizard', async ({ page }) => {
         test.skip(
             !SETUP_TOKEN,
             'PW_TODO_SETUP_TOKEN not set — the runner must scrape it from `docker logs`'
         )
 
-        await page.goto(`/setup?token=${SETUP_TOKEN}`)
+        await page.goto(`/admin?token=${SETUP_TOKEN}`)
         await expect(page.getByText('Welcome to TinyCld')).toBeVisible()
 
         await page
@@ -445,20 +455,13 @@ test.describe('todo version change', () => {
 
         await loginAsSuperuser(page)
 
-        // Login lands on the Packages tab. Open the install form, then submit.
-        // PackageManager's Install controls are Pressable+Text with no
-        // accessibilityRole, so on RN Web they expose as plain text, not
-        // buttons — getByRole('button', { name: 'Install' }) matches nothing.
-        // Target by text instead. The field DOES expose a role (TextInput sets
-        // accessibilityLabel), so getByRole('textbox', …) is correct there.
-        await page.getByText('Install', { exact: true }).click()
-        await page
-            .getByRole('textbox', { name: 'npm Package Name', exact: true })
-            .fill(TODO_SPEC_V1)
-        // When the form is open the toggle's text flips to 'Cancel', so only the
-        // form's submit reads 'Install'; .last() is defensive against future
-        // relabeling, not resolving a present collision.
-        await page.getByText('Install', { exact: true }).last().click()
+        // Login lands on the Packages tab. 'Install package' opens a modal; fill
+        // the package source field, then submit with the modal's 'Install' button.
+        // Buttons are gluestack Button (role=button); the field exposes a role via
+        // TextInput's accessibilityLabel.
+        await page.getByRole('button', { name: 'Install package' }).click()
+        await page.getByRole('textbox', { name: 'Package source', exact: true }).fill(TODO_SPEC_V1)
+        await page.getByRole('button', { name: 'Install', exact: true }).click()
 
         // The install runs server-side as a background job and ends by requesting
         // an exit-75 restart. Judge success by the server's own pkg_install_log
@@ -482,24 +485,20 @@ test.describe('todo version change', () => {
         // 3. Create an org to log into — the superuser dashboard isn't the app
         //    shell; the nav rail lives in the org-scoped app.
         await page.getByText('Organizations', { exact: true }).first().click()
-        await page.getByRole('button', { name: 'New Organization' }).click()
-        await page
-            .getByRole('textbox', { name: 'Organization Name', exact: true })
-            .fill(TEST_ORG_NAME)
+        await page.getByRole('button', { name: 'New organization' }).click()
+        await page.getByRole('textbox', { name: 'Name', exact: true }).fill(TEST_ORG_NAME)
         await page.getByRole('textbox', { name: 'Slug', exact: true }).fill(TEST_ORG_SLUG)
         await page
-            .getByRole('textbox', { name: 'Owner Name', exact: true })
+            .getByRole('textbox', { name: 'Full name', exact: true })
             .fill(TEST_ORG_OWNER_NAME)
+        await page.getByRole('textbox', { name: 'Email', exact: true }).fill(TEST_ORG_OWNER_EMAIL)
         await page
-            .getByRole('textbox', { name: 'Owner Email', exact: true })
-            .fill(TEST_ORG_OWNER_EMAIL)
-        await page
-            .getByRole('textbox', { name: 'Owner Password', exact: true })
+            .getByRole('textbox', { name: 'Password', exact: true })
             .fill(TEST_ORG_OWNER_PASSWORD)
         await page
-            .getByRole('textbox', { name: 'Mail Domain', exact: true })
+            .getByRole('textbox', { name: 'Mail domain', exact: true })
             .fill(TEST_ORG_MAIL_DOMAIN)
-        await page.getByRole('button', { name: 'Create Organization' }).click()
+        await page.getByRole('button', { name: 'Create organization' }).click()
         await expect(page.getByText(TEST_ORG_NAME, { exact: true })).toBeVisible()
 
         // 4. Seed a todo as the org owner so the upgrade has data to tag later.
@@ -513,7 +512,7 @@ test.describe('todo version change', () => {
         }
     })
 
-    test('upgrade todo to v2.0.0 via the Versions tab', async ({ page }) => {
+    test('upgrade todo to v2.0.0 via the Packages version picker', async ({ page }) => {
         // Upgrade fetches v2, runs the create_tags UP migration, rebuilds, and
         // requests an exit-75 relaunch. Same multi-minute build budget as install.
         test.setTimeout(2_700_000) // 45 min
@@ -570,7 +569,7 @@ test.describe('todo version change', () => {
         expect(body.totalItems ?? 0).toBeGreaterThan(0)
     })
 
-    test('downgrade todo to v1.0.0 via the Versions tab', async ({ page }) => {
+    test('downgrade todo to v1.0.0 via the Packages version picker', async ({ page }) => {
         // Downgrade fetches v1, runs the create_tags DOWN migration (drops
         // todo_tags then tags), rebuilds, and requests an exit-75 relaunch.
         test.setTimeout(2_700_000) // 45 min

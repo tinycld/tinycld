@@ -2,19 +2,54 @@ import { DragHandle } from '@tinycld/core/components/DragHandle'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
 import { Divider } from '@tinycld/core/ui/divider'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
+import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { Switch } from '@tinycld/core/ui/switch'
-import { Download, Package, Pencil, Trash2, X } from 'lucide-react-native'
+import {
+    AlertTriangle,
+    CircleCheck,
+    CircleX,
+    Download,
+    Loader,
+    Package,
+    Pencil,
+    Plus,
+    ShieldCheck,
+    Trash2,
+    X,
+} from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
 import { useCallback, useEffect, useState } from 'react'
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
+import {
+    ActivityIndicator,
+    Pressable,
+    TextInput as RNTextInput,
+    StyleSheet,
+    Text,
+    View,
+} from 'react-native'
 import DraggableFlatList, {
     type RenderItemParams,
     ScaleDecorator,
 } from 'react-native-draggable-flatlist'
+import { PageHeader, SectionLabel, SlugTag } from './console-ui'
 import { InstallProgressModal } from './InstallProgressModal'
 import { PackageStatusBadge } from './PackageStatusBadge'
+import {
+    type CompatViolation,
+    type PackageVersionInfo,
+    usePackageVersions,
+} from './use-package-versions'
+import { ConfirmChangesModal } from './version-apply'
+import {
+    buildVersionOptions,
+    ChangeFlag,
+    type RowDirection,
+    RowVersionSelect,
+    stagedDirection,
+} from './version-controls'
 
 interface PkgRecord {
     id: string
@@ -41,17 +76,24 @@ const registerSchema = z.object({
 
 interface PackageManagerProps {
     pb: PocketBase
+    // Gates the version-discovery fetch so it only runs when this screen is shown
+    // (the dashboard keeps every tab mounted). Defaults true for any standalone use.
+    isVisible?: boolean
 }
 
-export function PackageManager({ pb }: PackageManagerProps) {
-    const primaryFgColor = useThemeColor('primary-foreground')
-    const mutedColor = useThemeColor('muted-foreground')
+export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     const [packages, setPackages] = useState<PkgRecord[]>([])
     const [isLoading, setIsLoading] = useState(true)
     const [showRegister, setShowRegister] = useState(false)
     const [showInstall, setShowInstall] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
     const [installJobId, setInstallJobId] = useState<string | null>(null)
+    const [confirmOpen, setConfirmOpen] = useState(false)
+
+    // Version discovery + the staging/compat/apply solver. Lives alongside the
+    // lifecycle list so a package's version sits on its own row.
+    const vm = usePackageVersions(pb, isVisible)
+    const versionBySlug = new Map(vm.versions.map(v => [v.slug, v]))
 
     const fetchPackages = useCallback(async () => {
         setIsLoading(true)
@@ -81,46 +123,30 @@ export function PackageManager({ pb }: PackageManagerProps) {
     }, [])
 
     return (
-        <View className="gap-5">
-            <View className="flex-row justify-between items-center">
-                <Text className="text-foreground" style={{ fontSize: 24, fontWeight: 'bold' }}>
-                    Packages
-                </Text>
-                <View className="flex-row gap-2">
-                    <Pressable
-                        onPress={() => {
-                            setShowInstall(v => !v)
-                            setShowRegister(false)
-                        }}
-                        className="flex-row gap-1.5 items-center px-3 py-2 rounded-lg bg-primary"
-                    >
-                        <Download size={14} color={primaryFgColor} />
-                        <Text
-                            className="text-primary-foreground"
-                            style={{ fontWeight: '600', fontSize: 14 }}
-                        >
-                            {showInstall ? 'Cancel' : 'Install'}
-                        </Text>
-                    </Pressable>
-                    <Pressable
-                        onPress={() => {
-                            setShowRegister(v => !v)
-                            setShowInstall(false)
-                        }}
-                        className="flex-row gap-1.5 items-center px-3 py-2 rounded-lg border border-muted-foreground/25"
-                    >
-                        <Package size={14} color={mutedColor} />
-                        <Text
-                            className="text-muted-foreground"
-                            style={{ fontWeight: '500', fontSize: 14 }}
-                        >
-                            {showRegister ? 'Cancel' : 'New Package'}
-                        </Text>
-                    </Pressable>
-                </View>
-            </View>
+        <View className="gap-6">
+            <PageHeader
+                title="Packages"
+                subtitle="Features installed on this deployment. Toggle availability, reorder the sidebar, change versions, install from npm, or register a new source."
+                actions={
+                    <>
+                        <Button onPress={() => setShowRegister(true)} size="sm" variant="outline">
+                            <ButtonIcon as={Plus} />
+                            <ButtonText>Register</ButtonText>
+                        </Button>
+                        <Button onPress={() => setShowInstall(true)} size="sm">
+                            <ButtonIcon as={Download} />
+                            <ButtonText>Install package</ButtonText>
+                        </Button>
+                    </>
+                }
+            />
 
-            <InstallPackageForm isVisible={showInstall} pb={pb} onStarted={handleInstallStarted} />
+            <InstallPackageModal
+                isOpen={showInstall}
+                pb={pb}
+                onClose={() => setShowInstall(false)}
+                onStarted={handleInstallStarted}
+            />
 
             <InstallProgressModal
                 isVisible={installJobId !== null}
@@ -133,23 +159,73 @@ export function PackageManager({ pb }: PackageManagerProps) {
                 onComplete={fetchPackages}
             />
 
-            <RegisterPackageForm
-                isVisible={showRegister}
+            <RegisterPackageModal
+                isOpen={showRegister}
                 pb={pb}
+                onClose={() => setShowRegister(false)}
                 onCreated={() => {
                     setShowRegister(false)
                     fetchPackages()
                 }}
             />
 
-            <PackageList
-                packages={packages}
-                isLoading={isLoading}
-                pb={pb}
-                editingId={editingId}
-                onEdit={setEditingId}
-                onUpdated={fetchPackages}
-                onUninstallStarted={handleUninstallStarted}
+            <View className="gap-3">
+                <View className="flex-row items-center justify-between">
+                    <SectionLabel>Installed · drag to reorder sidebar</SectionLabel>
+                    <StageActions
+                        pendingCount={vm.pendingChanges.length}
+                        onSelectAll={vm.selectAllUpdates}
+                        onClear={vm.clearSelection}
+                    />
+                </View>
+                <View className="rounded-xl border overflow-hidden bg-surface-secondary border-border">
+                    <PackageList
+                        packages={packages}
+                        isLoading={isLoading}
+                        pb={pb}
+                        editingId={editingId}
+                        onEdit={setEditingId}
+                        onUpdated={fetchPackages}
+                        onUninstallStarted={handleUninstallStarted}
+                        versionBySlug={versionBySlug}
+                        targets={vm.targets}
+                        onSetTarget={vm.setTarget}
+                    />
+                    <ViolationList violations={vm.violations} isChecking={vm.isChecking} />
+                    <ApplyFooter
+                        pendingCount={vm.pendingChanges.length}
+                        violationCount={vm.violations.length}
+                        isChecking={vm.isChecking}
+                        canApply={vm.canApply}
+                        onApply={() => setConfirmOpen(true)}
+                    />
+                </View>
+            </View>
+
+            <ConfirmChangesModal
+                isOpen={confirmOpen}
+                pendingChanges={vm.pendingChanges}
+                hasDowngrade={vm.hasDowngrade}
+                fetchDropReport={vm.fetchDropReport}
+                onCancel={() => setConfirmOpen(false)}
+                onConfirm={async () => {
+                    await vm.applyChanges()
+                    setConfirmOpen(false)
+                }}
+            />
+
+            <InstallProgressModal
+                isVisible={vm.applyJobId !== null}
+                jobId={vm.applyJobId}
+                authToken={pb.authStore.token}
+                onClose={() => {
+                    vm.onApplyComplete()
+                    fetchPackages()
+                }}
+                onComplete={() => {
+                    vm.refresh()
+                    fetchPackages()
+                }}
             />
         </View>
     )
@@ -163,6 +239,9 @@ function PackageList({
     onEdit,
     onUpdated,
     onUninstallStarted,
+    versionBySlug,
+    targets,
+    onSetTarget,
 }: {
     packages: PkgRecord[]
     isLoading: boolean
@@ -171,11 +250,14 @@ function PackageList({
     onEdit: (id: string | null) => void
     onUpdated: () => void
     onUninstallStarted: (jobId: string) => void
+    versionBySlug: Map<string, PackageVersionInfo>
+    targets: Record<string, string>
+    onSetTarget: (slug: string, version: string) => void
 }) {
     const surfaceBg = useThemeColor('surface-secondary')
+    const accentColor = useThemeColor('accent')
     const borderColor = useThemeColor('border')
     const mutedColor = useThemeColor('muted-foreground')
-    const accentColor = useThemeColor('accent')
 
     const pkgMap = new Map(packages.map(p => [p.id, p]))
 
@@ -197,19 +279,35 @@ function PackageList({
 
     function renderItem({ item, drag, isActive }: RenderItemParams<PkgRecord>) {
         const pkg = pkgMap.get(item.id) ?? item
-        const isEditing = editingId === pkg.id
+        const info = versionBySlug.get(pkg.slug)
+        const target = targets[pkg.slug]
+        // A row with a staged version change locks its lifecycle controls
+        // (toggle/drag/uninstall) until the change is applied or cleared, so an
+        // immediate mutation can't collide with the pending transaction.
+        const isStaged = info ? stagedDirection(info, target) !== 'none' : false
 
         return (
             <ScaleDecorator activeScale={1}>
                 <View
                     style={{
-                        backgroundColor: isActive ? `${accentColor}20` : surfaceBg,
+                        backgroundColor: isActive
+                            ? `${accentColor}20`
+                            : isStaged
+                              ? `${accentColor}1f`
+                              : surfaceBg,
                         borderBottomWidth: StyleSheet.hairlineWidth,
                         borderColor,
                     }}
                 >
-                    <View className="flex-row items-center px-4 py-3.5">
-                        <DragHandle drag={drag} disabled={isActive} color={mutedColor} />
+                    <View className="flex-row items-center gap-3 px-4 py-3.5">
+                        <DragHandle
+                            drag={drag}
+                            disabled={isActive || isStaged}
+                            color={mutedColor}
+                        />
+                        <View className="w-10 h-10 rounded-xl items-center justify-center bg-surface border border-border">
+                            <Package size={18} color={mutedColor} />
+                        </View>
                         <View className="flex-1 gap-0.5">
                             <View className="flex-row gap-2 items-center">
                                 <Text
@@ -223,33 +321,36 @@ function PackageList({
                                     {pkg.name}
                                 </Text>
                                 <PackageStatusBadge status={pkg.status} />
+                                {info?.hasUpdate && !isStaged ? (
+                                    <PackageStatusBadge status="update-available" />
+                                ) : null}
                             </View>
-                            {pkg.description ? (
-                                <Text
-                                    className="text-muted-foreground"
-                                    style={{ fontSize: 13 }}
-                                    numberOfLines={1}
-                                >
-                                    {pkg.description}
-                                </Text>
-                            ) : (
-                                <Text style={{ fontSize: 12, color: `${mutedColor}80` }}>
-                                    {pkg.slug}
-                                    {pkg.version ? ` · v${pkg.version}` : ''}
-                                </Text>
-                            )}
+                            <View className="flex-row gap-2 items-center flex-wrap">
+                                <SlugTag>{pkg.slug}</SlugTag>
+                                {pkg.description ? (
+                                    <Text
+                                        className="text-muted-foreground"
+                                        style={{ fontSize: 13 }}
+                                        numberOfLines={1}
+                                    >
+                                        {pkg.description}
+                                    </Text>
+                                ) : null}
+                            </View>
                         </View>
+                        <RowVersion info={info} target={target} onSetTarget={onSetTarget} />
                         <PackageActions
                             pkg={pkg}
                             pb={pb}
-                            isEditing={isEditing}
-                            onEdit={() => onEdit(isEditing ? null : pkg.id)}
+                            isEditing={editingId === pkg.id}
+                            isLocked={isStaged}
+                            onEdit={() => onEdit(editingId === pkg.id ? null : pkg.id)}
                             onUpdated={onUpdated}
                             onUninstallStarted={onUninstallStarted}
                         />
                     </View>
                     <EditPackageForm
-                        isVisible={isEditing}
+                        isVisible={editingId === pkg.id && !isStaged}
                         pkg={pkg}
                         pb={pb}
                         onClose={() => onEdit(null)}
@@ -272,7 +373,7 @@ function PackageList({
 
     if (packages.length === 0) {
         return (
-            <View className="p-8 items-center rounded-xl border gap-2 bg-surface-secondary border-border">
+            <View className="p-8 items-center gap-2">
                 <Package size={32} color={`${mutedColor}60`} />
                 <Text className="text-muted-foreground" style={{ fontSize: 15 }}>
                     No packages installed yet
@@ -282,15 +383,59 @@ function PackageList({
     }
 
     return (
-        <View className="rounded-xl border overflow-hidden bg-surface-secondary border-border">
-            <DraggableFlatList
-                data={packages}
-                keyExtractor={keyExtractor}
-                onDragEnd={handleDragEnd}
-                renderItem={renderItem}
-                scrollEnabled={false}
-                activationDistance={1}
+        <DraggableFlatList
+            data={packages}
+            keyExtractor={keyExtractor}
+            onDragEnd={handleDragEnd}
+            renderItem={renderItem}
+            scrollEnabled={false}
+            activationDistance={1}
+        />
+    )
+}
+
+// RowVersion is the per-row version cell. A package with >1 available version
+// gets the interactive picker + change flag; a bundled / single-version package
+// (Core, unmanaged sources) shows just its static version, no dropdown — there's
+// nothing to stage.
+function RowVersion({
+    info,
+    target,
+    onSetTarget,
+}: {
+    info?: PackageVersionInfo
+    target?: string
+    onSetTarget: (slug: string, version: string) => void
+}) {
+    if (!info) {
+        return null
+    }
+
+    const options = buildVersionOptions(info)
+    const direction: RowDirection = stagedDirection(info, target)
+
+    if (options.length <= 1) {
+        return (
+            <View style={{ width: 150 }} className="items-end">
+                <Text
+                    className="text-muted-foreground"
+                    style={{ fontFamily: 'monospace', fontSize: 13 }}
+                >
+                    v{info.current || '—'}
+                </Text>
+            </View>
+        )
+    }
+
+    return (
+        <View style={{ width: 150 }} className="gap-1">
+            <RowVersionSelect
+                options={options}
+                value={target ?? info.current}
+                direction={direction}
+                onChange={v => onSetTarget(info.slug, v)}
             />
+            <ChangeFlag direction={direction} />
         </View>
     )
 }
@@ -299,6 +444,7 @@ function PackageActions({
     pkg,
     pb,
     isEditing,
+    isLocked,
     onEdit,
     onUpdated,
     onUninstallStarted,
@@ -306,16 +452,19 @@ function PackageActions({
     pkg: PkgRecord
     pb: PocketBase
     isEditing: boolean
+    // True when this package has a staged version change — its toggle and
+    // uninstall are disabled until the change is applied or cleared, so an
+    // immediate mutation can't race the pending transaction.
+    isLocked: boolean
     onEdit: () => void
     onUpdated: () => void
     onUninstallStarted: (jobId: string) => void
 }) {
     const mutedColor = useThemeColor('muted-foreground')
     const dangerColor = useThemeColor('danger')
-    const dangerFgColor = useThemeColor('danger-foreground')
     const primaryBg = useThemeColor('primary')
     const [isToggling, setIsToggling] = useState(false)
-    const [confirmUninstall, setConfirmUninstall] = useState(false)
+    const [showUninstall, setShowUninstall] = useState(false)
 
     const isEnabled = pkg.status !== 'disabled'
     const isInstalled = pkg.status === 'installed'
@@ -335,91 +484,321 @@ function PackageActions({
     }
 
     const handleUninstall = async () => {
-        try {
-            const response = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/uninstall`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: pb.authStore.token,
-                },
-                body: JSON.stringify({ slug: pkg.slug }),
-            })
-            const data = await response.json()
-            if (response.ok) {
-                setConfirmUninstall(false)
-                onUninstallStarted(data.jobId)
-            }
-        } catch (err) {
-            captureException('Failed to start uninstall', err)
+        const response = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/uninstall`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: pb.authStore.token,
+            },
+            body: JSON.stringify({ slug: pkg.slug }),
+        })
+        const data = await response.json()
+        if (!response.ok) {
+            throw new Error(data.error ?? 'Failed to start uninstall')
         }
+        setShowUninstall(false)
+        onUninstallStarted(data.jobId)
     }
 
     return (
-        <View className="flex-row gap-3 items-center">
-            <Switch value={isEnabled} onValueChange={toggleStatus} disabled={isToggling} />
+        <View
+            className="flex-row gap-2 items-center"
+            style={isLocked ? { opacity: 0.5 } : undefined}
+        >
+            <Switch
+                value={isEnabled}
+                onValueChange={toggleStatus}
+                disabled={isToggling || isLocked}
+            />
             <Pressable
                 onPress={onEdit}
-                className="p-1.5 rounded-md"
+                disabled={isLocked}
+                className="p-2 rounded-lg"
                 style={{ backgroundColor: isEditing ? `${primaryBg}15` : 'transparent' }}
             >
                 <Pencil size={15} color={isEditing ? primaryBg : mutedColor} />
             </Pressable>
-            <UninstallButton
-                isVisible={isInstalled}
-                isConfirming={confirmUninstall}
-                onPress={() => setConfirmUninstall(true)}
+            {isInstalled ? (
+                <Pressable
+                    onPress={() => setShowUninstall(true)}
+                    disabled={isLocked}
+                    className="p-2 rounded-lg"
+                >
+                    <Trash2 size={15} color={dangerColor} />
+                </Pressable>
+            ) : null}
+            <UninstallModal
+                isOpen={showUninstall}
+                name={pkg.name}
+                slug={pkg.slug}
+                onClose={() => setShowUninstall(false)}
                 onConfirm={handleUninstall}
-                onCancel={() => setConfirmUninstall(false)}
-                color={dangerColor}
-                textColor={dangerFgColor}
-                mutedColor={mutedColor}
             />
         </View>
     )
 }
 
-function UninstallButton({
-    isVisible,
-    isConfirming,
-    onPress,
-    onConfirm,
-    onCancel,
-    color,
-    textColor,
-    mutedColor,
+// StageActions: the "stage all updates" / "clear" controls in the section header,
+// shown alongside the package list. Mirrors the old Versions tab's selection bar.
+function StageActions({
+    pendingCount,
+    onSelectAll,
+    onClear,
 }: {
-    isVisible: boolean
-    isConfirming: boolean
-    onPress: () => void
-    onConfirm: () => void
-    onCancel: () => void
-    color: string
-    textColor: string
-    mutedColor: string
+    pendingCount: number
+    onSelectAll: () => void
+    onClear: () => void
 }) {
-    if (!isVisible) return null
-    if (isConfirming) {
-        return (
-            <View className="flex-row gap-1 items-center">
-                <Pressable
-                    onPress={onConfirm}
-                    className="px-2.5 py-1 rounded-md"
-                    style={{ backgroundColor: color }}
-                >
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: textColor }}>
-                        Uninstall
+    return (
+        <View className="flex-row gap-2 items-center">
+            {pendingCount > 0 && (
+                <Button onPress={onClear} size="sm" variant="ghost">
+                    <ButtonText>Clear ({pendingCount})</ButtonText>
+                </Button>
+            )}
+            <Button onPress={onSelectAll} size="sm" variant="outline">
+                <ButtonText>Stage all updates</ButtonText>
+            </Button>
+        </View>
+    )
+}
+
+// ViolationList: the compatibility panel between the rows and the apply footer,
+// inside the same bordered list, so a conflict reads as part of the staged set.
+function ViolationList({
+    violations,
+    isChecking,
+}: {
+    violations: CompatViolation[]
+    isChecking: boolean
+}) {
+    const dangerColor = useThemeColor('danger')
+    if (isChecking || violations.length === 0) return null
+    return (
+        <View className="p-4 gap-2.5 bg-danger-soft border-t border-border">
+            {violations.map(v => (
+                <View key={`${v.package}:${v.requires}`} className="flex-row gap-2.5 items-start">
+                    <AlertTriangle size={16} color={dangerColor} style={{ marginTop: 2 }} />
+                    <Text className="text-danger flex-1" style={{ fontSize: 13.5 }}>
+                        <Text style={{ fontFamily: 'monospace', fontWeight: '600' }}>
+                            {v.package}
+                        </Text>{' '}
+                        requires{' '}
+                        <Text style={{ fontFamily: 'monospace' }}>
+                            {v.requires} {v.range}
+                        </Text>{' '}
+                        — found {v.found || 'not installed'}
                     </Text>
-                </Pressable>
-                <Pressable onPress={onCancel} className="p-1">
-                    <X size={14} color={mutedColor} />
-                </Pressable>
+                </View>
+            ))}
+        </View>
+    )
+}
+
+// ApplyFooter: the list's status bar — a live compatibility verdict on the left,
+// the apply action on the right. Renders only once something is staged.
+function ApplyFooter({
+    pendingCount,
+    violationCount,
+    isChecking,
+    canApply,
+    onApply,
+}: {
+    pendingCount: number
+    violationCount: number
+    isChecking: boolean
+    canApply: boolean
+    onApply: () => void
+}) {
+    if (pendingCount === 0) return null
+    const hasViolation = violationCount > 0
+    return (
+        <View
+            className={`flex-row items-center gap-4 px-4 py-3.5 border-t border-border ${hasViolation ? 'bg-danger-soft' : 'bg-surface'}`}
+        >
+            <SolverStatus
+                isChecking={isChecking}
+                violationCount={violationCount}
+                pendingCount={pendingCount}
+            />
+            <View className="flex-1" />
+            <Button
+                onPress={onApply}
+                isDisabled={!canApply}
+                size="sm"
+                variant={hasViolation ? 'destructive' : 'default'}
+            >
+                <ButtonText>
+                    Apply {pendingCount} change{pendingCount === 1 ? '' : 's'}
+                </ButtonText>
+            </Button>
+        </View>
+    )
+}
+
+function SolverStatus({
+    isChecking,
+    violationCount,
+    pendingCount,
+}: {
+    isChecking: boolean
+    violationCount: number
+    pendingCount: number
+}) {
+    const infoColor = useThemeColor('link')
+    const successColor = useThemeColor('success')
+    const dangerColor = useThemeColor('danger')
+
+    if (isChecking) {
+        return (
+            <View className="flex-row items-center gap-2">
+                <Loader size={16} color={infoColor} />
+                <Text style={{ color: infoColor, fontSize: 13.5 }}>Checking compatibility…</Text>
+            </View>
+        )
+    }
+    if (violationCount > 0) {
+        return (
+            <View className="flex-row items-center gap-2">
+                <CircleX size={16} color={dangerColor} />
+                <Text style={{ color: dangerColor, fontSize: 13.5 }}>
+                    <Text style={{ fontWeight: '600' }}>
+                        {violationCount} conflict{violationCount === 1 ? '' : 's'}
+                    </Text>{' '}
+                    · {pendingCount} staged
+                </Text>
             </View>
         )
     }
     return (
-        <Pressable onPress={onPress} className="p-1.5 rounded-md">
-            <Trash2 size={15} color={color} />
-        </Pressable>
+        <View className="flex-row items-center gap-2">
+            <CircleCheck size={16} color={successColor} />
+            <Text style={{ color: successColor, fontSize: 13.5 }}>
+                Compatible · {pendingCount} staged
+            </Text>
+        </View>
+    )
+}
+
+// UninstallModal requires the operator to type the package slug before the
+// destructive action unlocks — the same typed-confirmation guard used for
+// downgrades, so an errant click can't drop a package's data.
+function UninstallModal({
+    isOpen,
+    name,
+    slug,
+    onClose,
+    onConfirm,
+}: {
+    isOpen: boolean
+    name: string
+    slug: string
+    onClose: () => void
+    onConfirm: () => Promise<void>
+}) {
+    const dangerColor = useThemeColor('danger')
+    const fgColor = useThemeColor('foreground')
+    const mutedColor = useThemeColor('muted-foreground')
+    const successColor = useThemeColor('success')
+    const [typed, setTyped] = useState('')
+    const [submitting, setSubmitting] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+
+    if (!isOpen) return null
+
+    const confirmEnabled = typed.trim() === slug && !submitting
+
+    const close = () => {
+        setTyped('')
+        setError(null)
+        onClose()
+    }
+
+    const confirm = async () => {
+        setSubmitting(true)
+        setError(null)
+        try {
+            await onConfirm()
+            setTyped('')
+        } catch (err) {
+            captureException('setup.packages.uninstall', err)
+            setError(err instanceof Error ? err.message : 'Failed to start uninstall')
+        } finally {
+            setSubmitting(false)
+        }
+    }
+
+    return (
+        <Modal isOpen onClose={close}>
+            <ModalBackdrop />
+            <ModalContent className="w-[460px] p-5 gap-4">
+                <View className="flex-row gap-3 items-start">
+                    <View className="w-10 h-10 rounded-xl items-center justify-center bg-danger-soft">
+                        <Trash2 size={20} color={dangerColor} />
+                    </View>
+                    <View className="flex-1 gap-1">
+                        <Text
+                            className="text-foreground"
+                            style={{ fontSize: 18, fontWeight: '600' }}
+                        >
+                            Uninstall {name}
+                        </Text>
+                        <Text className="text-muted-foreground" style={{ fontSize: 14 }}>
+                            This removes the feature and runs its down-migrations. Records owned by
+                            this package will be dropped.
+                        </Text>
+                    </View>
+                </View>
+
+                <View className="gap-2">
+                    <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
+                        Type{' '}
+                        <Text style={{ fontFamily: 'monospace', color: dangerColor }}>{slug}</Text>{' '}
+                        to confirm
+                    </Text>
+                    <RNTextInput
+                        value={typed}
+                        onChangeText={setTyped}
+                        autoCapitalize="none"
+                        placeholder={slug}
+                        placeholderTextColor={mutedColor}
+                        className="rounded-lg border border-border px-3 py-2.5 bg-surface"
+                        style={{ color: fgColor, fontSize: 14, fontFamily: 'monospace' }}
+                    />
+                </View>
+
+                <View className="flex-row gap-2 items-center px-3 py-2.5 rounded-lg bg-success-soft">
+                    <ShieldCheck size={16} color={successColor} />
+                    <Text className="text-success-soft-foreground" style={{ fontSize: 13 }}>
+                        A backup is taken before uninstalling.
+                    </Text>
+                </View>
+
+                {error && (
+                    <View className="rounded-lg p-2 bg-danger-soft">
+                        <Text className="text-danger" style={{ fontSize: 12 }}>
+                            {error}
+                        </Text>
+                    </View>
+                )}
+
+                <View className="flex-row gap-3 justify-end">
+                    <Pressable onPress={close} className="px-3 py-2" disabled={submitting}>
+                        <Text className="text-foreground" style={{ fontSize: 13 }}>
+                            Cancel
+                        </Text>
+                    </Pressable>
+                    <Button
+                        onPress={confirm}
+                        isDisabled={!confirmEnabled}
+                        size="sm"
+                        variant="destructive"
+                    >
+                        <ButtonText>{submitting ? 'Uninstalling…' : 'Uninstall'}</ButtonText>
+                    </Button>
+                </View>
+            </ModalContent>
+        </Modal>
     )
 }
 
@@ -500,7 +879,7 @@ function EditPackageForm({
 
     return (
         <View
-            className="mx-3 mb-3 rounded-lg p-4 gap-3"
+            className="mx-3 mb-3 rounded-xl p-4 gap-3"
             style={{
                 backgroundColor: `${borderColor}30`,
                 borderWidth: StyleSheet.hairlineWidth,
@@ -508,25 +887,11 @@ function EditPackageForm({
             }}
         >
             <View className="flex-row items-center justify-between">
-                <Text
-                    className="text-muted-foreground"
-                    style={{
-                        fontSize: 12,
-                        fontWeight: '600',
-                        textTransform: 'uppercase',
-                        letterSpacing: 0.5,
-                    }}
-                >
-                    Edit Package
-                </Text>
-                <View className="flex-row items-center gap-1">
-                    <Text style={{ fontSize: 12, color: `${mutedColor}80` }}>{pkg.slug}</Text>
-                    {pkg.version ? (
-                        <Text style={{ fontSize: 12, color: `${mutedColor}60` }}>
-                            · v{pkg.version}
-                        </Text>
-                    ) : null}
-                </View>
+                <SectionLabel>Edit package</SectionLabel>
+                <SlugTag>
+                    {pkg.slug}
+                    {pkg.version ? ` · v${pkg.version}` : ''}
+                </SlugTag>
             </View>
 
             <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
@@ -554,17 +919,9 @@ function EditPackageForm({
             <View className="flex-row items-center">
                 {confirmRemove ? (
                     <View className="flex-row gap-1.5 items-center">
-                        <Pressable
-                            onPress={handleRemove}
-                            className="px-3 py-1.5 rounded-md bg-danger"
-                        >
-                            <Text
-                                className="text-danger-foreground"
-                                style={{ fontWeight: '600', fontSize: 13 }}
-                            >
-                                Confirm Remove
-                            </Text>
-                        </Pressable>
+                        <Button onPress={handleRemove} size="sm" variant="destructive">
+                            <ButtonText>Confirm remove</ButtonText>
+                        </Button>
                         <Pressable onPress={() => setConfirmRemove(false)} className="p-1.5">
                             <X size={14} color={mutedColor} />
                         </Pressable>
@@ -590,31 +947,26 @@ function EditPackageForm({
                             Cancel
                         </Text>
                     </Pressable>
-                    <Pressable
-                        onPress={onSave}
-                        disabled={!saveEnabled}
-                        className={`px-4 py-1.5 rounded-md bg-primary ${saveEnabled ? 'opacity-100' : 'opacity-40'}`}
-                    >
-                        <Text
-                            className="text-primary-foreground"
-                            style={{ fontWeight: '600', fontSize: 13 }}
-                        >
-                            {isSaving ? 'Saving...' : 'Save'}
-                        </Text>
-                    </Pressable>
+                    <Button onPress={onSave} isDisabled={!saveEnabled} size="sm">
+                        <ButtonText>{isSaving ? 'Saving…' : 'Save'}</ButtonText>
+                    </Button>
                 </View>
             </View>
         </View>
     )
 }
 
-function RegisterPackageForm({
-    isVisible,
+const registerDefaults = { name: '', slug: '', npm_package: '', description: '' }
+
+function RegisterPackageModal({
+    isOpen,
     pb,
+    onClose,
     onCreated,
 }: {
-    isVisible: boolean
+    isOpen: boolean
     pb: PocketBase
+    onClose: () => void
     onCreated: () => void
 }) {
     const [submitError, setSubmitError] = useState<string | null>(null)
@@ -627,9 +979,15 @@ function RegisterPackageForm({
         formState: { errors, isSubmitted },
     } = useForm({
         resolver: zodResolver(registerSchema),
-        defaultValues: { name: '', slug: '', npm_package: '', description: '' },
+        defaultValues: registerDefaults,
         mode: 'onChange',
     })
+
+    const close = () => {
+        reset(registerDefaults)
+        setSubmitError(null)
+        onClose()
+    }
 
     const onSubmit = handleSubmit(async data => {
         setSubmitError(null)
@@ -640,7 +998,7 @@ function RegisterPackageForm({
                 status: 'available',
                 nav_order: 0,
             })
-            reset()
+            reset(registerDefaults)
             onCreated()
         } catch (err) {
             setSubmitError(err instanceof Error ? err.message : 'Failed to register')
@@ -649,21 +1007,14 @@ function RegisterPackageForm({
         }
     })
 
-    if (!isVisible) return null
+    if (!isOpen) return null
 
     return (
-        <View className="rounded-xl border overflow-hidden bg-surface-secondary border-border">
-            <View className="p-4 gap-4">
-                <Text
-                    className="text-muted-foreground"
-                    style={{
-                        fontSize: 12,
-                        fontWeight: '600',
-                        textTransform: 'uppercase',
-                        letterSpacing: 0.5,
-                    }}
-                >
-                    Create New Package
+        <Modal isOpen onClose={close}>
+            <ModalBackdrop />
+            <ModalContent className="w-[520px] p-5 gap-4">
+                <Text className="text-foreground" style={{ fontSize: 18, fontWeight: '600' }}>
+                    Register a package source
                 </Text>
 
                 <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
@@ -679,8 +1030,8 @@ function RegisterPackageForm({
                         <TextInput
                             control={control}
                             name="name"
-                            label="Name"
-                            placeholder="My Package"
+                            label="Display name"
+                            placeholder="Contacts"
                         />
                     </View>
                     <View className="flex-1 min-w-[200px]">
@@ -688,8 +1039,9 @@ function RegisterPackageForm({
                             control={control}
                             name="slug"
                             label="Slug"
-                            placeholder="my-package"
+                            placeholder="contacts"
                             autoCapitalize="none"
+                            hint="kebab-case"
                         />
                     </View>
                 </View>
@@ -698,8 +1050,8 @@ function RegisterPackageForm({
                         <TextInput
                             control={control}
                             name="npm_package"
-                            label="npm Package / Git URL"
-                            placeholder="@scope/package"
+                            label="npm package / git URL"
+                            placeholder="@tinycld/contacts"
                             autoCapitalize="none"
                         />
                     </View>
@@ -708,25 +1060,23 @@ function RegisterPackageForm({
                             control={control}
                             name="description"
                             label="Description"
-                            placeholder="Optional description"
+                            placeholder="Optional"
                         />
                     </View>
                 </View>
 
-                <Pressable
-                    onPress={onSubmit}
-                    disabled={isCreating}
-                    className={`px-4 py-2 rounded-lg self-start bg-primary ${isCreating ? 'opacity-60' : 'opacity-100'}`}
-                >
-                    <Text
-                        className="text-primary-foreground"
-                        style={{ fontWeight: '600', fontSize: 14 }}
-                    >
-                        {isCreating ? 'Creating...' : 'Create'}
-                    </Text>
-                </Pressable>
-            </View>
-        </View>
+                <View className="flex-row gap-3 justify-end">
+                    <Pressable onPress={close} className="px-3 py-2" disabled={isCreating}>
+                        <Text className="text-foreground" style={{ fontSize: 13 }}>
+                            Cancel
+                        </Text>
+                    </Pressable>
+                    <Button onPress={onSubmit} isDisabled={isCreating} size="sm">
+                        <ButtonText>{isCreating ? 'Registering…' : 'Register'}</ButtonText>
+                    </Button>
+                </View>
+            </ModalContent>
+        </Modal>
     )
 }
 
@@ -734,16 +1084,17 @@ const installSchema = z.object({
     npm_package: z.string().min(1, 'Required'),
 })
 
-function InstallPackageForm({
-    isVisible,
+function InstallPackageModal({
+    isOpen,
     pb,
+    onClose,
     onStarted,
 }: {
-    isVisible: boolean
+    isOpen: boolean
     pb: PocketBase
+    onClose: () => void
     onStarted: (jobId: string) => void
 }) {
-    const warningColor = useThemeColor('warning')
     const [submitError, setSubmitError] = useState<string | null>(null)
     const [isInstalling, setIsInstalling] = useState(false)
 
@@ -762,6 +1113,12 @@ function InstallPackageForm({
     const npmValue = watch('npm_package')
     const showWarning = npmValue.length > 0 && !npmValue.startsWith('@tinycld/')
 
+    const close = () => {
+        reset({ npm_package: '' })
+        setSubmitError(null)
+        onClose()
+    }
+
     const onSubmit = handleSubmit(async data => {
         setSubmitError(null)
         setIsInstalling(true)
@@ -779,7 +1136,7 @@ function InstallPackageForm({
                 setSubmitError(result.error ?? 'Failed to start install')
                 return
             }
-            reset()
+            reset({ npm_package: '' })
             onStarted(result.jobId)
         } catch (err) {
             setSubmitError(err instanceof Error ? err.message : 'Failed to start install')
@@ -788,21 +1145,14 @@ function InstallPackageForm({
         }
     })
 
-    if (!isVisible) return null
+    if (!isOpen) return null
 
     return (
-        <View className="rounded-xl border overflow-hidden bg-surface-secondary border-border">
-            <View className="p-4 gap-4">
-                <Text
-                    className="text-muted-foreground"
-                    style={{
-                        fontSize: 12,
-                        fontWeight: '600',
-                        textTransform: 'uppercase',
-                        letterSpacing: 0.5,
-                    }}
-                >
-                    Install Package from npm
+        <Modal isOpen onClose={close}>
+            <ModalBackdrop />
+            <ModalContent className="w-[520px] p-5 gap-4">
+                <Text className="text-foreground" style={{ fontSize: 18, fontWeight: '600' }}>
+                    Install from npm or git
                 </Text>
 
                 <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
@@ -813,54 +1163,39 @@ function InstallPackageForm({
                     </View>
                 )}
 
-                <SecurityWarning isVisible={showWarning} warningColor={warningColor} />
+                <SecurityWarning isVisible={showWarning} />
 
-                <View className="flex-row gap-3 items-end flex-wrap">
-                    <View className="flex-1 min-w-[300px]">
-                        <TextInput
-                            control={control}
-                            name="npm_package"
-                            label="npm Package Name"
-                            placeholder="@tinycld/my-package"
-                            autoCapitalize="none"
-                        />
-                    </View>
-                    <Pressable
-                        onPress={onSubmit}
-                        disabled={isInstalling}
-                        className={`px-4 py-2.5 rounded-lg bg-primary ${isInstalling ? 'opacity-60' : 'opacity-100'}`}
-                    >
-                        <Text
-                            className="text-primary-foreground"
-                            style={{ fontWeight: '600', fontSize: 14 }}
-                        >
-                            {isInstalling ? 'Starting...' : 'Install'}
+                <TextInput
+                    control={control}
+                    name="npm_package"
+                    label="Package source"
+                    placeholder="@tinycld/contacts"
+                    autoCapitalize="none"
+                    hint="npm package name, version spec, or a git URL"
+                />
+
+                <View className="flex-row gap-3 justify-end">
+                    <Pressable onPress={close} className="px-3 py-2" disabled={isInstalling}>
+                        <Text className="text-foreground" style={{ fontSize: 13 }}>
+                            Cancel
                         </Text>
                     </Pressable>
+                    <Button onPress={onSubmit} isDisabled={isInstalling} size="sm">
+                        <ButtonText>{isInstalling ? 'Starting…' : 'Install'}</ButtonText>
+                    </Button>
                 </View>
-            </View>
-        </View>
+            </ModalContent>
+        </Modal>
     )
 }
 
-function SecurityWarning({
-    isVisible,
-    warningColor,
-}: {
-    isVisible: boolean
-    warningColor: string
-}) {
+function SecurityWarning({ isVisible }: { isVisible: boolean }) {
+    const warningColor = useThemeColor('warning')
     if (!isVisible) return null
     return (
-        <View
-            className="rounded-lg p-3"
-            style={{
-                backgroundColor: `${warningColor}15`,
-                borderColor: `${warningColor}40`,
-                borderWidth: 1,
-            }}
-        >
-            <Text className="text-warning" style={{ fontSize: 13 }}>
+        <View className="flex-row gap-2 items-start rounded-lg p-3 bg-warning-soft">
+            <AlertTriangle size={16} color={warningColor} style={{ marginTop: 1 }} />
+            <Text className="text-warning-soft-foreground flex-1" style={{ fontSize: 13 }}>
                 This package is not in the @tinycld/ scope. Only install packages you trust.
             </Text>
         </View>

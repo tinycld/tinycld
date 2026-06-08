@@ -2,84 +2,27 @@ import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import type PocketBase from 'pocketbase'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+    type CompatViolation,
+    type DropReport,
+    detectDowngrade,
+    type PackageVersionInfo,
+    type PendingChange,
+} from './version-compare'
+import { useVersionStagingStore } from './version-staging-store'
 
-// Shared types for the version-management UI. Mirrors the Go discovery/check
-// endpoints (pkg_versions.go, pkg_compat.go).
-
-export interface PackageVersionInfo {
-    slug: string
-    source: 'npm' | 'git' | 'unknown'
-    current: string
-    latest: string
-    available: string[]
-    hasUpdate: boolean
-    error?: string
-}
-
-export interface CompatViolation {
-    package: string
-    requires: string
-    range: string
-    found: string
-}
-
-export interface DropReport {
-    droppedCollections: string[]
-    droppedFields: { collection: string; field: string }[]
-}
-
-// A pending per-package version selection (target differs from current).
-export interface PendingChange {
-    slug: string
-    targetVersion: string
-    isDowngrade: boolean
-}
-
-interface RegistryRow {
-    slug: string
-    name: string
-    version: string
-}
-
-// detectDowngrade decides whether moving a package to targetVersion is a
-// downgrade. It prefers the published `available` order (newest-first, so a
-// higher index == older == downgrade) when both versions are present; otherwise
-// it falls back to a numeric semver compare. When it genuinely can't tell (e.g.
-// the current version was yanked and isn't in `available` and neither parses),
-// it returns true — a downgrade is the DESTRUCTIVE direction, so "unknown" must
-// require confirmation rather than silently skip it.
-export function detectDowngrade(info: PackageVersionInfo, targetVersion: string): boolean {
-    const available = info.available ?? []
-    const idx = available.indexOf(targetVersion)
-    const curIdx = available.indexOf(info.current)
-    if (idx >= 0 && curIdx >= 0) return idx > curIdx
-    const cmp = compareVersions(targetVersion, info.current)
-    if (cmp !== null) return cmp < 0
-    return true // can't determine → treat as downgrade (requires confirmation)
-}
-
-// compareVersions does a minimal numeric semver compare (ignoring pre-release
-// tags): returns <0 if a<b, 0 if equal, >0 if a>b, or null if either is
-// unparseable. Leading `v` is tolerated. This is intentionally small — the
-// authoritative comparison runs server-side; this only drives the UI's
-// confirmation gate.
-export function compareVersions(a: string, b: string): number | null {
-    const parse = (v: string) => {
-        const core = v.replace(/^v/, '').split(/[-+]/)[0]
-        const parts = core.split('.').map(n => Number.parseInt(n, 10))
-        if (parts.some(Number.isNaN) || parts.length === 0) return null
-        return parts
-    }
-    const pa = parse(a)
-    const pb = parse(b)
-    if (!pa || !pb) return null
-    const len = Math.max(pa.length, pb.length)
-    for (let i = 0; i < len; i++) {
-        const d = (pa[i] ?? 0) - (pb[i] ?? 0)
-        if (d !== 0) return d
-    }
-    return 0
-}
+// The pure version helpers + their types live in the leaf module version-compare
+// (no React/store/network), so the hook and the staging store can both use them
+// without an import cycle. Re-exported here for existing call sites that import
+// these from the hook.
+export {
+    type CompatViolation,
+    compareVersions,
+    type DropReport,
+    detectDowngrade,
+    type PackageVersionInfo,
+    type PendingChange,
+} from './version-compare'
 
 async function adminFetch<T>(pb: PocketBase, path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${PB_SERVER_ADDR}/api/admin/packages${path}`, {
@@ -96,26 +39,37 @@ async function adminFetch<T>(pb: PocketBase, path: string, init?: RequestInit): 
     return res.json() as Promise<T>
 }
 
-// usePackageVersions owns all data + selection + mutation state for the version
-// tab, keeping the component JSX declarative. Selection is a map of slug →
-// target version; clearing a target (set to current) removes it from the set.
-export function usePackageVersions(pb: PocketBase) {
+// usePackageVersions owns the version discovery + selection + compat/apply
+// mutation state for the merged Packages screen, keeping the JSX declarative.
+// Selection (the staged target per slug) lives in the version-staging store;
+// this hook layers the server data and mutations on top of it.
+//
+// `enabled` gates the initial `/versions` fetch on the Packages tab being shown
+// (the dashboard keeps every tab's component mounted). Deferring it avoids
+// firing the discovery — which shells out to `git ls-remote` server-side — until
+// it's actually needed.
+export function usePackageVersions(pb: PocketBase, enabled = true) {
     const [versions, setVersions] = useState<PackageVersionInfo[]>([])
-    const [names, setNames] = useState<Record<string, string>>({})
     const [isLoading, setIsLoading] = useState(true)
-    const [targets, setTargets] = useState<Record<string, string>>({})
+    // Staged version targets live in a store so the row selects, the apply
+    // footer, and the per-row "staged" lock all share one source of truth.
+    const targets = useVersionStagingStore(s => s.targets)
+    const setTargetInStore = useVersionStagingStore(s => s.setTarget)
+    const setAllTargets = useVersionStagingStore(s => s.setAll)
+    const clearTargets = useVersionStagingStore(s => s.clear)
     const [violations, setViolations] = useState<CompatViolation[]>([])
     const [isChecking, setIsChecking] = useState(false)
     const [applyJobId, setApplyJobId] = useState<string | null>(null)
 
+    // Only fetches `/versions` (the per-package discovery, which shells out to
+    // `git ls-remote` server-side). The merged Packages screen owns the
+    // pkg_registry list, so this hook no longer reads that collection — which
+    // also removes the same-collection auto-cancel race that two simultaneous
+    // pkg_registry reads caused.
     const fetchVersions = useCallback(async () => {
         setIsLoading(true)
         try {
-            const [reg, vers] = await Promise.all([
-                pb.collection('pkg_registry').getFullList<RegistryRow>({ sort: 'name' }),
-                adminFetch<{ packages: PackageVersionInfo[] }>(pb, '/versions'),
-            ])
-            setNames(Object.fromEntries(reg.map(r => [r.slug, r.name])))
+            const vers = await adminFetch<{ packages: PackageVersionInfo[] }>(pb, '/versions')
             setVersions(vers.packages)
         } catch (err) {
             captureException('versions.fetch', err)
@@ -125,8 +79,8 @@ export function usePackageVersions(pb: PocketBase) {
     }, [pb])
 
     useEffect(() => {
-        fetchVersions()
-    }, [fetchVersions])
+        if (enabled) fetchVersions()
+    }, [enabled, fetchVersions])
 
     const currentBySlug = useMemo(
         () => Object.fromEntries(versions.map(v => [v.slug, v.current])),
@@ -135,17 +89,9 @@ export function usePackageVersions(pb: PocketBase) {
 
     const setTarget = useCallback(
         (slug: string, version: string) => {
-            setTargets(prev => {
-                const next = { ...prev }
-                if (version === currentBySlug[slug] || !version) {
-                    delete next[slug]
-                } else {
-                    next[slug] = version
-                }
-                return next
-            })
+            setTargetInStore(slug, version, currentBySlug[slug] ?? '')
         },
-        [currentBySlug]
+        [currentBySlug, setTargetInStore]
     )
 
     const pendingChanges = useMemo<PendingChange[]>(() => {
@@ -160,16 +106,14 @@ export function usePackageVersions(pb: PocketBase) {
     }, [targets, versions])
 
     const selectAllUpdates = useCallback(() => {
-        setTargets(() => {
-            const next: Record<string, string> = {}
-            for (const v of versions) {
-                if (v.hasUpdate && v.latest) next[v.slug] = v.latest
-            }
-            return next
-        })
-    }, [versions])
+        const next: Record<string, string> = {}
+        for (const v of versions) {
+            if (v.hasUpdate && v.latest) next[v.slug] = v.latest
+        }
+        setAllTargets(next)
+    }, [versions, setAllTargets])
 
-    const clearSelection = useCallback(() => setTargets({}), [])
+    const clearSelection = useCallback(() => clearTargets(), [clearTargets])
 
     // Re-check compatibility whenever the target set changes.
     useEffect(() => {
@@ -236,7 +180,6 @@ export function usePackageVersions(pb: PocketBase) {
 
     return {
         versions,
-        names,
         isLoading,
         targets,
         setTarget,
