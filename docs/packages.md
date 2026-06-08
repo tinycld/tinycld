@@ -44,7 +44,7 @@ Three kinds of code live in the ecosystem:
 | Kind | Where it lives | Git | Has `manifest.ts`? | Discovered how |
 |---|---|---|---|---|
 | **App shell** | `tinycld/` | own repo | n/a | it *is* the runner |
-| **`@tinycld/core`** | bundled inside the shell at `tinycld/packages/@tinycld/core/` | **no separate repo** | **no** | wired in explicitly |
+| **`@tinycld/core`** | nested inside the shell repo at `tinycld/core/` | own repo | **no** | wired in explicitly |
 | **Feature packages** | sibling repos (`mail/`, `contacts/`, `calc/`, `calendar/`, `drive/`, `text/`, `google-takeout-import/`) | each its own repo + remote | **yes** | auto-discovered |
 
 The defining structural rule: **a directory is a feature package iff it
@@ -55,14 +55,12 @@ treated as a library, not a feature.
 ~/code/tinycld/                       # pnpm workspace root (package.json + pnpm-workspace.yaml)
     node_modules/
         @tinycld/
-            core     -> ../../tinycld/packages/@tinycld/core  # pnpm workspace symlink
-            mail     -> ../../mail                            # pnpm workspace symlink
+            core     -> ../../tinycld/core  # pnpm workspace symlink
+            mail     -> ../../mail          # pnpm workspace symlink
             contacts -> ../../contacts
             ...
     tinycld/                          # app shell (the only runnable thing)
-        packages/
-            @tinycld/
-                core/                 # bundled library (real dir, no manifest.ts)
+        core/                         # @tinycld/core — nested member (real dir, no manifest.ts)
         node_modules/                 # heavy deps (React/RN/Expo/…) live HERE
         scripts/generate-packages.ts  # the generator
         tinycld.packages.ts           # getPackages() — reads workspace members
@@ -172,22 +170,25 @@ Three rules enforced here:
 
 ### `tsconfig.json`
 
-Siblings extend the app shell's tsconfig and map the import aliases onto the
-bundled core:
+Siblings extend `@tinycld/core/tsconfig.package-base.json` (resolved by package
+name) and declare only their own `~/tinycld/<slug>/*` self-alias. Every
+`@tinycld/*` dependency — `@tinycld/core`, `@tinycld/app-generated`, and any
+cross-sibling dep — resolves **by package name** through the
+`node_modules/@tinycld/*` symlinks + each package's `exports` map under
+`moduleResolution: bundler`, so **no sibling tsconfig needs a `paths` entry for
+any `@tinycld/*` dep**:
 
 ```jsonc
 {
-    "extends": "../tinycld/tsconfig.json",
+    "extends": "@tinycld/core/tsconfig.package-base.json",
     "compilerOptions": {
-        "baseUrl": ".", "rootDir": "..", "noEmit": true, "preserveSymlinks": false,
+        "baseUrl": ".",
         "paths": {
-            "~/tinycld/contacts/*": ["./tinycld/contacts/*"],          // own source
-            "@tinycld/app-generated/*": ["../tinycld/lib/generated/*"], // generator output
-            "@tinycld/core/*": ["../tinycld/packages/@tinycld/core/*"], // core (explicit)
-            "@tinycld/*": ["../tinycld/packages/@tinycld/*"],           // other siblings
-            "~/*": ["../tinycld/packages/@tinycld/core/*"]              // core (~ alias)
+            "~/tinycld/contacts/*": ["./tinycld/contacts/*"] // own source only
         }
-    }
+    },
+    "include": ["tinycld/**/*.ts", "tinycld/**/*.tsx"],
+    "exclude": ["node_modules", "server", "pb-migrations", "tests/**/*.spec.ts"]
 }
 ```
 
@@ -650,9 +651,9 @@ or kill servers manually around a Playwright run.
 Two Go module boundaries, one binary:
 
 - **App** = `tinycld.org/tinycld` (`server/go.mod`), which pulls core via
-  `replace tinycld.org/core => ../packages/@tinycld/core/server`.
+  `replace tinycld.org/core => ../core/server`.
 - **Core** = `tinycld.org/core`
-  (`packages/@tinycld/core/server/go.mod`), exporting
+  (`core/server/go.mod`), exporting
   `coreserver.Register(app, Options)` plus subsystems (`notify`, `push`,
   `mailer`, `audit`, `textextract`, `thumbnails`, `realtime`, `render`).
 - **Each server-bearing sibling** = `tinycld.org/packages/<slug>`, exporting
@@ -763,7 +764,7 @@ Where changes go:
 | Change | Repo to edit |
 |---|---|
 | A feature's behavior | that sibling repo (`mail/`, `calc/`, …) — commit & push there |
-| Shared lib / UI / providers | `tinycld/packages/@tinycld/core/` (bundled in the shell) |
+| Shared lib / UI / providers | `tinycld/core/` (`@tinycld/core`, nested in the shell repo) |
 | Bundler config, scripts, generator, `app/` tree, provider wiring | `tinycld/` (app shell) |
 
 **Never commit generator output.** These paths are gitignored and regenerate
