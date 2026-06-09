@@ -149,22 +149,25 @@ func requireSuperuser(re *core.RequestEvent) error {
 }
 
 // requireSuperuserOrToken allows SSE connections to authenticate via query param
-// since browser EventSource does not support custom headers.
-func requireSuperuserOrToken(app *pocketbase.PocketBase, re *core.RequestEvent) error {
+// since browser EventSource does not support custom headers. Takes core.App (not
+// *pocketbase.PocketBase) so it's unit-testable against tests.TestApp — it only
+// needs FindAuthRecordByToken, a core.App method.
+func requireSuperuserOrToken(app core.App, re *core.RequestEvent) error {
 	// Try standard auth first
 	if re.HasSuperuserAuth() {
 		return re.Next()
 	}
 
-	// Fall back to query param token for SSE
+	// Fall back to query param token for SSE. FindAuthRecordByToken's variadic
+	// arg is the token TYPE (core.TokenTypeAuth), not a collection id — passing a
+	// collection id makes it match no valid type and reject every token (the 403
+	// the install progress stream hit). Validate as an auth token, then confirm
+	// the record is actually a superuser so a regular user's token can't pass.
 	token := re.Request.URL.Query().Get("token")
 	if token != "" {
-		superusers, err := app.FindCollectionByNameOrId(core.CollectionNameSuperusers)
-		if err == nil {
-			record, err := app.FindAuthRecordByToken(token, superusers.Id)
-			if err == nil && record != nil {
-				return re.Next()
-			}
+		record, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth)
+		if err == nil && record != nil && record.IsSuperuser() {
+			return re.Next()
 		}
 	}
 
