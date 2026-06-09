@@ -8,20 +8,22 @@ A self-hosted workspace alternative — Expo Router on the front, PocketBase on 
 back, every feature shipped as a separately-installable package. See
 [tinycld.org](https://tinycld.org) for the full story.
 
-This repo (`@tinycld/app`, member name `app`) is the runnable **app shell**: branding,
+This repo (`tinycld`) is the runnable **app shell**: branding,
 Expo native projects, deployment configs, the package generator, and all the heavy
 runtime dependencies. It is the entrypoint for `pnpm run dev` and
 `docker pull ghcr.io/tinycld/tinycld`.
 
-`@tinycld/core` (the shared TypeScript + Go library) is **no longer bundled here** — it
-is its own repo ([tinycld/core](https://github.com/tinycld/core)), cloned as a sibling
-workspace member. Feature packages are siblings too. The whole tree is one npm workspace:
+`@tinycld/core` (the shared TypeScript + Go library) is **part of this repo** — nested at
+`core/` (`tinycld/core/`) and imported as `@tinycld/core`. The `tinycld-pkg` CLI
+(`@tinycld/package-scripts`) is nested at `package-scripts/`. Feature packages are sibling
+repos. The whole tree is one pnpm workspace:
 
 ```
 ~/code/tinycld/
-    app/                     # this repo — the app shell (member "app")
-    core/                    # @tinycld/core (shared lib; its own repo)
-    mail/                    # @tinycld/mail (feature package)
+    tinycld/                 # this repo — the app shell (package "tinycld")
+        core/                # @tinycld/core (shared lib; nested)
+        package-scripts/     # @tinycld/package-scripts — the tinycld-pkg CLI (nested)
+    mail/                    # @tinycld/mail (feature package; sibling repo)
     calendar/                # @tinycld/calendar
     contacts/                # @tinycld/contacts
     drive/                   # @tinycld/drive
@@ -31,22 +33,22 @@ workspace member. Feature packages are siblings too. The whole tree is one npm w
 ```
 
 Everything imports core as `@tinycld/core/*` (and `tinycld.org/core` for Go); resolution
-is by the npm `node_modules/@tinycld/core` symlink (Metro), tsconfig `paths` (typecheck),
+is by the pnpm `node_modules/@tinycld/core` symlink (Metro), tsconfig `paths` (typecheck),
 vitest aliases (tests), and a Go `replace` directive (server).
 
 ## Getting a working tree
 
 This repo is one member of a workspace, not a standalone clone target. Let
-`@tinycld/bootstrap` assemble the workspace root, the app shell, and `@tinycld/core`
-together — it writes the workspace coordination files (`package.json`,
-`tinycld.packages.ts`, shared test stubs) from embedded templates and clones each
-member as a sibling directory:
+`@tinycld/bootstrap` assemble the workspace root and clone this `tinycld` repo
+(which carries `@tinycld/core` + `@tinycld/package-scripts` nested) — it writes the
+workspace coordination files (`package.json`, `tinycld.packages.ts`, shared test
+stubs) from embedded templates and clones each member as a sibling directory:
 
 ```sh
 mkdir ~/code/tinycld && cd ~/code/tinycld
 npx @tinycld/bootstrap@latest --assemble-only --with mail --with contacts
 pnpm install        # links members + runs the generator (postinstall)
-cd app && pnpm run dev
+cd tinycld && pnpm run dev
 ```
 
 Full guide: <https://tinycld.org/docs/getting-started>.
@@ -72,7 +74,7 @@ pnpm run ssl:generate
 
 ## What's where
 
-- **`app/`** — Expo Router routes. `_layout.tsx` calls `configureCore(appConfig)` first, then
+- **`app/`** — Expo Router route tree. `_layout.tsx` calls `configureCore(appConfig)` first, then
   imports core's Providers and mounts the gate.
 - **`lib/app-config.ts`** — `CoreConfig` value handed to core at boot. Branding, server
   shortcuts, Sentry creds, review-mode flags.
@@ -91,16 +93,16 @@ pnpm run ssl:generate
 - **`scripts/dev.ts`** — the dev launcher (proxy + PB + Expo).
 - **`server/main.go`** — load env, init Sentry, build `coreserver.Options`, call
   `coreserver.Register(app, opts)`. Module `tinycld.org/tinycld` with
-  `replace tinycld.org/core => ../../core/server`.
+  `replace tinycld.org/core => ../core/server`.
 - **`server/pb_migrations/`, `server/pb_hooks/`** — landing dirs for symlinks the generator
   populates from core's `server/` plus each linked feature package.
 - **`Dockerfile`, `docker-compose.yml`, `eas.json`** — deployment.
 
 ## Adding / removing feature packages
 
-There is no `packages:link`/`packages:install` step — linking is the npm workspace install.
-The workspace-root `package.json` already lists every known first-party feature, so adding
-one is just cloning the sibling and re-installing. The fastest path is bootstrap:
+There is no `packages:link`/`packages:install` step — linking is the pnpm workspace install.
+`pnpm-workspace.yaml`'s `packages:` list already enumerates every known first-party feature, so
+adding one is just cloning the sibling and re-installing. The fastest path is bootstrap:
 
 ```sh
 cd ~/code/tinycld
@@ -116,8 +118,8 @@ git clone git@github.com:tinycld/<slug>.git <slug>
 pnpm install        # links it + regenerates
 ```
 
-For a third-party package, also add its directory name to the `workspaces` array in
-the workspace-root `package.json` before installing.
+For a third-party package, also add its directory name to the `packages:` list in
+the workspace-root `pnpm-workspace.yaml` before installing.
 
 Remove one by deleting its sibling clone and re-running `pnpm install`. The set of
 linked packages = the set of installed workspace members.
@@ -126,7 +128,7 @@ linked packages = the set of installed workspace members.
 
 ```sh
 cd ~/code/tinycld && pnpm install   # at the workspace root (postinstall runs the generator)
-cd app
+cd tinycld
 pnpm run checks                     # biome + tsc
 pnpm run test                       # vitest (this member)
 pnpm run test:e2e                   # playwright (this member)
@@ -135,7 +137,7 @@ cd server && go build -o tinycld . && ./tinycld --help
 
 Per-member checks run via the `tinycld-pkg` CLI (`@tinycld/package-scripts`): from any
 member dir, `pnpm exec tinycld-pkg check` typechecks + unit-tests just that member;
-`tinycld-pkg check --all` runs every member (app, core, and each feature sibling).
+`tinycld-pkg check --all` runs every member (the `tinycld` shell, core, and each feature sibling).
 
 ## Code style
 
