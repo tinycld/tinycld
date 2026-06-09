@@ -448,6 +448,14 @@ COPY --from=go-builder /ws/tinycld/package-scripts/ ./package-scripts/
 COPY --from=go-builder /ws/tinycld/scripts/ ./scripts/
 COPY --from=go-builder /ws/tinycld/lib/ ./lib/
 COPY --from=go-builder /ws/tinycld/app/ ./app/
+# plugins/ and modules/ are needed by the in-app installer's `expo export`:
+# app.json lists `./plugins/with-app-updater.cjs`, which getConfig() resolves
+# (a missing file fails config resolution before bundling even starts), and
+# metro.config.cjs maps the `app-updater` specifier to modules/app-updater/
+# (its web stub on web, index.ts on native) — so both subtrees must ship in the
+# runtime image, not just the dev tree.
+COPY --from=go-builder /ws/tinycld/plugins/ ./plugins/
+COPY --from=go-builder /ws/tinycld/modules/ ./modules/
 COPY --from=go-builder /ws/tinycld/public/ ./public/
 COPY --from=go-builder /ws/tinycld/assets/ ./assets/
 COPY --from=go-builder /ws/tinycld/tinycld.config.ts /ws/tinycld/tinycld.seeds.ts ./

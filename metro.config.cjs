@@ -16,21 +16,27 @@ config.watchFolders = [workspaceRoot]
 // @tinycld/core imports these virtual modules by name and the app supplies
 // the concrete files. Metro doesn't read tsconfig paths, so alias here.
 const APP_GENERATED_DIR = path.join(__dirname, 'lib', 'generated')
-// The `app-updater` local Expo native module (modules/app-updater/) resolves by
-// name only AFTER `expo prebuild` autolinks it into node_modules on iOS/Android.
-// The web bundle has no prebuild, so the bare `app-updater` import (reached via
-// use-app-updates.ts and mark-bundle-healthy.ts) is otherwise unresolvable and
-// 500s the web bundle — even though those callers no-op on web. Point it at the
-// module's web stub so the web bundle resolves; native keeps using autolinking.
-const APP_UPDATER_WEB_STUB = path.join(__dirname, 'modules', 'app-updater', 'index.web.ts')
+// The `app-updater` local Expo native module (modules/app-updater/) is NOT a
+// node_modules package: Expo autolinking wires its NATIVE code into the iOS/
+// Android build by absolute path, but it never creates a node_modules/app-updater
+// symlink, so Metro's JS resolver can't satisfy the bare `app-updater` specifier
+// (reached via use-app-updates.ts and mark-bundle-healthy.ts) on any platform.
+// Map the specifier to the module's own entry: the web stub on web (no native
+// module exists there), and index.ts on native (which requireNativeModule's the
+// autolinked AppUpdaterModule). Without the native branch, `expo run:ios` 500s
+// the bundle with "Unable to resolve app-updater".
+const APP_UPDATER_DIR = path.join(__dirname, 'modules', 'app-updater')
+const APP_UPDATER_WEB_STUB = path.join(APP_UPDATER_DIR, 'index.web.ts')
+const APP_UPDATER_NATIVE_ENTRY = path.join(APP_UPDATER_DIR, 'index.ts')
 const originalResolveRequest = config.resolver.resolveRequest
 config.resolver.resolveRequest = (context, moduleName, platform) => {
     if (moduleName.startsWith('@tinycld/app-generated/')) {
         const subpath = moduleName.slice('@tinycld/app-generated/'.length)
         return context.resolveRequest(context, path.join(APP_GENERATED_DIR, subpath), platform)
     }
-    if (moduleName === 'app-updater' && platform === 'web') {
-        return context.resolveRequest(context, APP_UPDATER_WEB_STUB, platform)
+    if (moduleName === 'app-updater') {
+        const target = platform === 'web' ? APP_UPDATER_WEB_STUB : APP_UPDATER_NATIVE_ENTRY
+        return context.resolveRequest(context, target, platform)
     }
     return (originalResolveRequest ?? context.resolveRequest)(context, moduleName, platform)
 }
