@@ -149,6 +149,37 @@ async function latestOpId(page: Page, slug: string): Promise<string | null> {
 // `version_change` row is still the PRIOR version-change's `success` row — which
 // would falsely satisfy the wait. Pass the prior row's id (snapshot via
 // latestOpId before the click) so a matching id is treated as "not yet started".
+// waitForProgressAdvance asserts the install progress modal's bar actually moves
+// — i.e. SSE progress events are reaching the browser. Reads the numeric value
+// off the progress fill (accessibilityValue → aria-valuenow) and waits until it
+// climbs to at least `minPct`. This is the end-to-end guard for the events-stream
+// auth: a 403 on /api/admin/packages/events (the token-type bug) leaves the bar
+// frozen at 0% even though the server-side install runs fine, so a stuck bar here
+// catches that regression — distinctly from waitForOpStatus, which reads the
+// install log directly and would pass even with a dead stream.
+async function waitForProgressAdvance(page: Page, minPct: number, timeoutMs: number) {
+    const fill = page.getByTestId('install-progress-fill')
+    // The modal mounts as soon as the install POST returns a jobId.
+    await expect(fill).toBeVisible({ timeout: 30_000 })
+
+    const deadline = Date.now() + timeoutMs
+    let lastSeen = -1
+    while (Date.now() < deadline) {
+        const raw = await fill.getAttribute('aria-valuenow').catch(() => null)
+        const pct = raw ? Number(raw) : Number.NaN
+        if (Number.isFinite(pct)) {
+            lastSeen = pct
+            if (pct >= minPct) return
+        }
+        await page.waitForTimeout(1_000)
+    }
+    throw new Error(
+        `install progress bar did not advance to ${minPct}% within ${Math.round(timeoutMs / 1000)}s ` +
+            `(highest observed: ${lastSeen}%). The SSE progress stream likely never reached the browser ` +
+            `— check /api/admin/packages/events auth (a 403 freezes the bar at 0%).`
+    )
+}
+
 async function waitForOpStatus(
     page: Page,
     slug: string,
@@ -462,6 +493,14 @@ test.describe('todo version change', () => {
         await page.getByRole('button', { name: 'Install package' }).click()
         await page.getByRole('textbox', { name: 'Package source', exact: true }).fill(TODO_SPEC_V1)
         await page.getByRole('button', { name: 'Install', exact: true }).click()
+
+        // The SSE progress modal must actually advance — proves the events stream
+        // authenticates and reaches the browser. The early stages (validate, npm
+        // pack, manifest, copy, pnpm) carry the bar well past 50% before the long
+        // go-build/expo-export stages, so requiring ≥50% within 10 min confirms a
+        // live stream without coupling to a specific percentage. (A frozen 0% bar
+        // here is the signature of the events-endpoint 403 regression.)
+        await waitForProgressAdvance(page, 50, 600_000)
 
         // The install runs server-side as a background job and ends by requesting
         // an exit-75 restart. Judge success by the server's own pkg_install_log

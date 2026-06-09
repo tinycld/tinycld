@@ -186,6 +186,11 @@ function ProgressBar({
     return (
         <View className="h-2 rounded-full bg-border overflow-hidden">
             <View
+                testID="install-progress-fill"
+                // The numeric progress is exposed via accessibilityValue so e2e can
+                // read it directly (the visual width is an inline % style that's
+                // awkward to assert on). Proves the SSE stream is advancing.
+                accessibilityValue={{ now: progress, min: 0, max: 100 }}
                 className="h-full rounded-full"
                 style={{
                     width: `${progress}%`,
