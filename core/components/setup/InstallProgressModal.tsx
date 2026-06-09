@@ -40,6 +40,10 @@ export function InstallProgressModal({
 
         const url = `${PB_SERVER_ADDR}/api/admin/packages/events/${jobId}?token=${encodeURIComponent(authToken)}`
         const eventSource = new EventSource(url)
+        // True once we've seen a terminal `complete` event, so the `error`
+        // handler can tell a normal post-complete close from a real connection
+        // failure and not clobber the resolved status.
+        let completed = false
 
         eventSource.addEventListener('progress', (event: MessageEvent) => {
             const data = JSON.parse(event.data) as ProgressStep
@@ -48,6 +52,7 @@ export function InstallProgressModal({
 
         eventSource.addEventListener('complete', (event: MessageEvent) => {
             const data = JSON.parse(event.data) as { status: string; error?: string }
+            completed = true
             setStatus(data.status === 'success' ? 'success' : 'failed')
             if (data.error) setError(data.error)
             eventSource.close()
@@ -55,7 +60,22 @@ export function InstallProgressModal({
         })
 
         eventSource.addEventListener('error', () => {
-            eventSource.close()
+            // The browser EventSource auto-reconnects on a transient drop and
+            // re-fires `error` each time; on reconnect the server replays the
+            // full progress history and (if the job has since finished) the
+            // terminal `complete` event — so a recoverable blip resolves itself.
+            // Acting on a still-CONNECTING/OPEN source would kill that retry and
+            // freeze the modal at its last %. Only surface a failure once the
+            // connection is truly dead (CLOSED) before any `complete` — otherwise
+            // a stalled stream looks identical to "still installing", leaving the
+            // bar lying at 0% forever (the exact symptom this guards against).
+            if (completed || eventSource.readyState !== EventSource.CLOSED) return
+            setStatus('failed')
+            setError(
+                prev =>
+                    prev ??
+                    'Lost connection to the install stream — check the server logs for the outcome.'
+            )
         })
 
         return () => eventSource.close()
