@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { getPackages } from '../../tinycld.packages'
@@ -288,6 +289,41 @@ function linkDirContents(
     }
 }
 
+// resolveGitSource returns the canonical `github:owner/repo` spec the in-app
+// upgrader fetches newer versions of this member from. It reads the member's
+// actual `origin` remote (so a fork / non-tinycld org is honored) and normalizes
+// the URL to the `github:` shorthand the Go server's classifySpec understands;
+// if there's no resolvable remote it falls back to the deterministic
+// `github:tinycld/<slug>` (matching utils/lib/packages.ts and bootstrap's clone
+// URLs). Non-github remotes (gitlab/bitbucket/self-hosted) are passed through as
+// a normalized git URL, which classifySpec also accepts.
+function resolveGitSource(dir: string, slug: string): string {
+    let remote = ''
+    try {
+        remote = execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim()
+    } catch {
+        // no git remote (e.g. a not-yet-pushed member, or CI assembly without a
+        // checkout) — fall through to the deterministic default below.
+    }
+    const normalized = normalizeGitRemote(remote)
+    return normalized ?? `github:tinycld/${slug}`
+}
+
+// normalizeGitRemote turns a github remote URL into the `github:owner/repo`
+// shorthand; returns the URL unchanged for other hosts, and null when there's
+// nothing usable. Mirrors the inverse of the server's gitRemoteURL expansion.
+function normalizeGitRemote(remote: string): string | null {
+    if (!remote) return null
+    // git@github.com:owner/repo(.git) | https://github.com/owner/repo(.git);
+    // strip a trailing slash first so it never leaks into the repo segment.
+    const gh = remote.replace(/\/$/, '').match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?$/)
+    if (gh) return `github:${gh[1]}/${gh[2]}`
+    return remote
+}
+
 // buildCoreManifest synthesizes a minimal manifest for @tinycld/core (which has
 // no manifest.ts) so it can be seeded into pkg_registry. Only the fields the
 // registry seed + compatibility solver read are populated: name, slug, version,
@@ -300,10 +336,16 @@ function buildCoreManifest(): PackageManifest {
     )
     const peerVersions = corePkgJson.tinycld?.peerVersions as Record<string, string> | undefined
     return {
-        name: '@tinycld/core',
+        // User-facing label for the platform row in the admin packages list. This
+        // row represents the whole TinyCld base (app shell + core library + Go
+        // server), not just the core package — it's updated via the base-update
+        // flow, not the per-package upgrade. The `slug` stays 'core': it's the
+        // stable internal key the compatibility solver (corePackageKey) and the
+        // migration-owner map depend on.
+        name: 'TinyCld Base',
         slug: 'core',
         version: corePkgJson.version ?? '',
-        description: 'Shared core library',
+        description: 'The TinyCld base — app shell, core library, and server.',
         ...(peerVersions ? { peerVersions } : {}),
     }
 }
@@ -453,8 +495,19 @@ async function main() {
     fs.writeFileSync(
         path.join(SERVER_DIR, 'bundled-packages.json'),
         buildBundledPackages([
-            { manifest: coreManifest },
-            ...features.map(f => ({ manifest: f.manifest })),
+            // core is a server-bearing package (core/server, module
+            // tinycld.org/core) that's upgradeable from its own repo, so it
+            // carries a `source` git spec and an explicit hasServer — its
+            // synthetic manifest has no `server` field to derive that from.
+            {
+                manifest: coreManifest,
+                source: 'github:tinycld/tinycld',
+                hasServer: true,
+            },
+            ...features.map(f => ({
+                manifest: f.manifest,
+                source: resolveGitSource(f.dir, f.manifest.slug),
+            })),
         ])
     )
 
