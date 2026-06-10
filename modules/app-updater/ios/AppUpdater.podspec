@@ -18,4 +18,13 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore'
   s.dependency 'React-Core'
   s.source_files = '*.{swift,h,m}'
+
+  # DEFINES_MODULE makes CocoaPods generate the Swift-interop header
+  # (AppUpdater-Swift.h) and include it in the module's umbrella, so
+  # `import AppUpdater` from AppDelegate.swift actually exposes the Swift
+  # `@objc public class AppUpdaterBundle`. Without it the umbrella ships only
+  # the ObjC headers (AppUpdaterReload.h) and the Swift class is invisible —
+  # the build fails with "cannot find 'AppUpdaterBundle' in scope" in the
+  # Release AppDelegate branch, even with the import present.
+  s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
 end

@@ -38,11 +38,52 @@ const IOS_INJECTED_RETURN =
     'if let staged = AppUpdaterBundle.stagedBundleURL() { return staged }\n' +
     '    return Bundle.main.url(forResource: "main", withExtension: "jsbundle")'
 
+// The `app-updater` module compiles as a static framework (AppUpdater.podspec
+// sets `static_framework = true` + DEFINES_MODULE), so its
+// `@objc public class AppUpdaterBundle` lives in a separate Swift module named
+// `AppUpdater`. AppDelegate.swift must import it; without the import the injected
+// call fails with "cannot find 'AppUpdaterBundle' in scope".
+//
+// The SDK 55 template uses Swift 6 access-level-qualified imports (the first
+// line is `internal import Expo`). Swift rejects a bare `import AppUpdater` mixed
+// with access-qualified ones as "ambiguous implicit access level", so we MUST
+// emit the import with a matching access level. We anchor on the file's first
+// import line (qualified or not) and reuse whatever access modifier it carries
+// (default `internal`), inserting our import right after it.
+const IOS_IMPORT_MODULE = 'AppUpdater'
+// Captures an optional access modifier (group 1) on the first import statement.
+const IOS_FIRST_IMPORT_RE =
+    /^(public |internal |fileprivate |private |package )?import .*$/m
+
+function addImportAppUpdater(src) {
+    if (new RegExp(`\\bimport ${IOS_IMPORT_MODULE}\\b`).test(src)) {
+        return src // already imported (idempotent re-run)
+    }
+    const match = IOS_FIRST_IMPORT_RE.exec(src)
+    if (!match) {
+        throw new Error(
+            '[with-app-updater] iOS: could not find any `import` line in ' +
+                'AppDelegate.swift to anchor `import AppUpdater`. The SDK 55 ' +
+                'template may have changed — update plugins/with-app-updater.cjs.'
+        )
+    }
+    // Mirror the access level of the file's first import so Swift 6 doesn't flag
+    // a mixed bare/qualified import as ambiguous. `internal` is the implicit
+    // default when the first import is unqualified.
+    const accessLevel = (match[1] ?? 'internal ').trim()
+    const importLine = `${accessLevel} import ${IOS_IMPORT_MODULE}`
+    const insertAt = match.index + match[0].length
+    return `${src.slice(0, insertAt)}\n${importLine}${src.slice(insertAt)}`
+}
+
 function withIosBundleSeam(config) {
     return withAppDelegate(config, cfg => {
-        const src = cfg.modResults.contents
+        let src = cfg.modResults.contents
         if (src.includes('AppUpdaterBundle.stagedBundleURL()')) {
-            return cfg // already wired (idempotent re-run)
+            // Call already wired; still ensure the import is present (covers an
+            // ios/ tree patched by an older plugin version that lacked it).
+            cfg.modResults.contents = addImportAppUpdater(src)
+            return cfg
         }
         if (!IOS_BUNDLE_RE.test(src)) {
             throw new Error(
@@ -54,7 +95,8 @@ function withIosBundleSeam(config) {
         }
         // Replace the FIRST match (the release `#else` branch). The DEBUG branch
         // uses RCTBundleURLProvider, so the marker appears exactly once.
-        cfg.modResults.contents = src.replace(IOS_BUNDLE_RE, IOS_INJECTED_RETURN)
+        src = src.replace(IOS_BUNDLE_RE, IOS_INJECTED_RETURN)
+        cfg.modResults.contents = addImportAppUpdater(src)
         return cfg
     })
 }
