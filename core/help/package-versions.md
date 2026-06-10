@@ -19,9 +19,33 @@ Available versions come from wherever the package was installed:
 - **npm packages** — the versions published to the registry.
 - **git packages** — the repository's release tags.
 
+This applies to the features that ship with TinyCld (Mail, Drive, Contacts, and
+so on) too: they each track their own git repository, so they update and
+downgrade exactly like a package you installed yourself.
+
 A package whose source can't be reached shows _"Couldn't check versions"_, and a
-package with only its current version (or a bundled/built-in one) shows its
-version as plain text with no picker — there's nothing to move it to.
+package with only its current version shows its version as plain text with no
+picker — there's nothing to move it to.
+
+## Updating the TinyCld base
+
+The **TinyCld Base** row at the top of the list is the platform itself — the app
+shell, the core library, and the server. It now upgrades **and** downgrades
+in-app like any other package: pick a target version from its row's picker and
+apply, exactly the per-package flow described below.
+
+The base differs only in how it's fetched. Because it's the whole app-shell
+repository — not a swappable sibling package — applying a version change clones
+the base repo at the target version, swaps the source in place (your database and
+prior builds are preserved), rebuilds the binary and web bundle, runs any new
+core migrations, and restarts. Aside from the longer rebuild, it behaves like the
+updates above: you can move the base without touching your features, and vice
+versa.
+
+The base is the one thing you can't remove: it has no uninstall, no
+enable/disable, and no reorder (it isn't a nav entry). Everything else — picking a
+version, staging, compatibility checks, and downgrade warnings — works the same as
+for any package.
 
 ## To update one or more packages
 
