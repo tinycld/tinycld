@@ -7,13 +7,21 @@ import { expect, type Page, test } from '@playwright/test'
 // on prior container state, and each install-class operation restarts the
 // container.
 //
-// The scenario validates upgrade AND downgrade end-to-end:
+// The scenario validates upgrade, downgrade, rollback AND delete end-to-end:
 //   1. install @tinycld/todo pinned to v1.0.0 (no tags feature)
 //   2. upgrade to v2.0.0 via the Versions tab (adds the tags/todo_tags schema)
 //   3. tag a todo through the v2 UI (exercises the new feature)
 //   4. downgrade to v1.0.0 via the Versions tab (runs the v2->v1 DOWN migration)
 //   5. prove the down migration ran: tags/todo_tags collections are DROPPED
 //      (collections API) and the in-app TAGS editor is gone (v1 binary).
+//   6. ROLLBACK: revert to the archived v2.0.0 build (the Build-History revert).
+//   7. DELETE: uninstall todo (the package-row Trash2 confirm).
+//
+// Steps 6 and 7 reproduce the operations an operator reported failing on /admin
+// with `registry update: FAILED: database disk image is malformed (11)`. They
+// run against a DB three prior install-class ops have already churned, and the
+// runner mounts pb_data/builds/releases so the SQLite file sits on the same
+// bind-mounted volume the operator uses (a no-mount run never reproduced it).
 //
 // Install/upgrade/downgrade progress streams to a modal over SSE, but the test
 // judges success by polling the server's pkg_install_log status (ground truth),
@@ -350,6 +358,114 @@ async function waitForCollection(page: Page, name: string, want: boolean, timeou
     throw new Error(`collection ${name} exists=${last}, wanted ${want} within ${timeoutMs}ms`)
 }
 
+// POSTs to an admin package endpoint with superuser auth — the same call the
+// /admin UI makes. Used to drive uninstall (`/uninstall` {slug}) and rollback
+// (`/revert` {buildId}) from the test the way the Trash2 button / Build-History
+// revert do, but without the brittle unlabeled-icon selectors. The server runs
+// the operation as a background job; the test judges success via waitForOpStatus
+// against pkg_install_log (ground truth), identical to the install/version paths.
+async function postAdminPackageOp(page: Page, path: string, payload: Record<string, string>) {
+    const token = await superuserToken(page)
+    const res = await page.request.post(`/api/admin/packages/${path}`, {
+        headers: { Authorization: token },
+        data: payload,
+        failOnStatusCode: false,
+    })
+    if (!res.ok()) {
+        throw new Error(
+            `POST /api/admin/packages/${path} failed: ${res.status()} ${await res.text()}`
+        )
+    }
+}
+
+// The app version (app.json → expo.version) the native bundles are stamped with.
+// /api/app/update keys updates by runtimeVersion, so the OTA check must send the
+// same value a real device on this build reports. Bump here if app.json changes.
+const RUNTIME_VERSION = '1.13.7'
+
+// Polls the public OTA endpoint /api/app/update until it advertises a new bundle
+// (HTTP 200 + manifest) for the given platform, or throws. After every package
+// modification (install/upgrade/downgrade/rollback) the pipeline runs
+// `expo export --platform <p>`, archives the bundle on the new `current`
+// pkg_build, and /api/app/update serves it — so a 200 here is the end-to-end
+// proof that "a new expo update is available" to mobile clients.
+//
+// We send `currentId` = a bundle id the server will never have minted (the shape
+// a fresh App-Store install reports, `embedded-<ver>`), so the server always
+// classifies its current bundle as NEW relative to us and returns 200 with the
+// manifest. The returned manifest id is the per-platform bundle id
+// (`build-<ts>-<platform>`); the caller asserts it changed across modifications.
+// 404/204 mean "no update": 204 specifically is what a toolchain-less image
+// returns (no native bundles) — surfaced in the throw so a regression there is
+// obvious rather than a silent timeout.
+async function waitForExpoUpdate(
+    page: Page,
+    platform: 'ios' | 'android',
+    timeoutMs: number
+): Promise<{ id: string; bundleHash: string; bundleUrl: string }> {
+    const url =
+        `/api/app/update?platform=${platform}` +
+        `&runtimeVersion=${RUNTIME_VERSION}` +
+        `&currentId=embedded-${RUNTIME_VERSION}&currentHash=none`
+    const deadline = Date.now() + timeoutMs
+    let last = 'no-response'
+    while (Date.now() < deadline) {
+        let res: Awaited<ReturnType<typeof page.request.get>> | null = null
+        try {
+            res = await page.request.get(url, { failOnStatusCode: false })
+        } catch {
+            res = null // connection refused mid-restart — retry
+        }
+        if (res) {
+            if (res.status() === 200) {
+                const m = (await res.json()) as {
+                    id?: string
+                    bundleHash?: string
+                    bundleUrl?: string
+                }
+                if (m.id)
+                    return {
+                        id: m.id,
+                        bundleHash: m.bundleHash ?? '',
+                        bundleUrl: m.bundleUrl ?? '',
+                    }
+            }
+            last = `HTTP ${res.status()}`
+        }
+        await page.waitForTimeout(2_000)
+    }
+    throw new Error(
+        `/api/app/update never advertised a ${platform} update within ${timeoutMs}ms (last=${last}). ` +
+            `A persistent 204 means native bundles weren't produced — the build image is missing the ` +
+            `RN toolchain (node_modules/expo), so 'expo export --platform ${platform}' was skipped.`
+    )
+}
+
+// Asserts a NEW expo update is offered for both native platforms after a package
+// modification, and that each platform's bundle id advanced from the previous
+// modification's id. `prev` is the per-platform id map from the last call (empty
+// on first use). Returns the new id map to thread into the next assertion.
+async function assertNewExpoUpdate(
+    page: Page,
+    prev: { ios?: string; android?: string }
+): Promise<{ ios: string; android: string }> {
+    const ios = await waitForExpoUpdate(page, 'ios', 120_000)
+    const android = await waitForExpoUpdate(page, 'android', 120_000)
+    expect(ios.id, 'ios bundle id should be a build-<ts>-ios id').toMatch(/^build-\d+-ios$/)
+    expect(android.id, 'android bundle id should be a build-<ts>-android id').toMatch(
+        /^build-\d+-android$/
+    )
+    if (prev.ios) {
+        expect(ios.id, 'a modification must produce a NEW ios bundle id').not.toBe(prev.ios)
+    }
+    if (prev.android) {
+        expect(android.id, 'a modification must produce a NEW android bundle id').not.toBe(
+            prev.android
+        )
+    }
+    return { ios: ios.id, android: android.id }
+}
+
 // Logs in as the org owner on a fresh page and navigates to the Todo screen.
 // Returns the page so the caller can interact + close it. The owner session
 // shares this context's cookies/storage (partial isolation), which is fine —
@@ -438,6 +554,12 @@ async function applyVersionChange(
 }
 
 test.describe.configure({ mode: 'serial' })
+
+// Tracks the per-platform OTA bundle id seen after the previous modification, so
+// each modification can assert its id ADVANCED (a genuinely new update), not just
+// that some update exists. Module-scoped because the suite runs serial and these
+// verify steps are separate tests sharing the one container's state.
+let lastExpoBundleIds: { ios?: string; android?: string } = {}
 
 test.describe('todo version change', () => {
     // Hard opt-in gate: this whole suite is runner-only (see the file header).
@@ -549,6 +671,11 @@ test.describe('todo version change', () => {
         } finally {
             await orgPage.close()
         }
+
+        // 5. The install produced a new web+native release — mobile clients must now
+        //    be offered an OTA update. Record the per-platform bundle ids so later
+        //    modifications can assert the id advanced (a genuinely new update).
+        lastExpoBundleIds = await assertNewExpoUpdate(page, lastExpoBundleIds)
     })
 
     test('upgrade todo to v2.0.0 via the Packages version picker', async ({ page }) => {
@@ -606,6 +733,10 @@ test.describe('todo version change', () => {
         expect(res.ok()).toBeTruthy()
         const body = (await res.json()) as { totalItems?: number }
         expect(body.totalItems ?? 0).toBeGreaterThan(0)
+
+        // 4. The upgrade rebuilt the bundles → a new OTA update must be offered,
+        //    with bundle ids distinct from the install's.
+        lastExpoBundleIds = await assertNewExpoUpdate(page, lastExpoBundleIds)
     })
 
     test('downgrade todo to v1.0.0 via the Packages version picker', async ({ page }) => {
@@ -653,5 +784,118 @@ test.describe('todo version change', () => {
         } finally {
             await orgPage.close()
         }
+
+        // A downgrade is a modification too: it reverts files + rebuilds the
+        // bundles, so a fresh OTA update must be advertised with new bundle ids.
+        lastExpoBundleIds = await assertNewExpoUpdate(page, lastExpoBundleIds)
+    })
+
+    // --- The operations the operator reported failing on /admin with
+    // --- "registry update: FAILED: database disk image is malformed (11)".
+    // These run LAST, against a DB that three prior install-class operations have
+    // already churned, which is when the corruption surfaced in the field. The
+    // runner mounts pb_data/builds/releases so the SQLite file lives on the same
+    // bind-mounted volume the operator uses (the no-mount runner never reproduced
+    // this — WAL behaves on the container's own overlayfs).
+
+    test('rollback: revert to the archived v2.0.0 build succeeds (no malformed DB)', async ({
+        page,
+    }) => {
+        // Revert restores the archived build: swaps its binary, runs migrate to
+        // reconcile schema, re-stages its bundle, rewrites build/registry rows,
+        // then relaunches. Same multi-minute budget as the other install-class ops.
+        test.setTimeout(2_700_000) // 45 min
+
+        await loginAsSuperuserWithRetry(page)
+
+        // Target the v2.0.0 build that the upgrade archived. It's now a
+        // non-current build in history (the downgrade made the v1 build current),
+        // so reverting to it is a valid forward restore that re-applies create_tags.
+        const token = await superuserToken(page)
+        const filter = encodeURIComponent(
+            "pkg_slug='todo' && version='2.0.0' && status!='superseded'"
+        )
+        const res = await page.request.get(
+            `/api/collections/pkg_build/records?filter=${filter}&sort=-created&perPage=1`,
+            { headers: { Authorization: token }, failOnStatusCode: false }
+        )
+        expect(res.ok()).toBeTruthy()
+        const builds = (await res.json()) as { items?: Array<{ build_id?: string }> }
+        const targetBuild = builds.items?.[0]?.build_id
+        expect(targetBuild, 'expected an archived v2.0.0 build to revert to').toBeTruthy()
+
+        const priorId = await latestOpId(page, 'todo')
+        // POST /revert — the same call the Build-History "Revert" control issues.
+        await postAdminPackageOp(page, 'revert', { buildId: targetBuild as string })
+
+        // THE ASSERTION the operator's failure violates: the revert's
+        // pkg_install_log row must reach `success`, NOT `failed` with a malformed
+        // DB at "Updating records". waitForOpStatus throws with the server's error
+        // string on a failed/rolled_back row, surfacing the exact malformed-DB
+        // message if it recurs.
+        await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'revert', priorId)
+    })
+
+    test('rollback landed: v2.0.0 is current again and the tags schema is back', async ({
+        page,
+    }) => {
+        test.setTimeout(300_000)
+        await loginAsSuperuserWithRetry(page)
+        // The reverted-to v2 build is current; its schema (create_tags) is reapplied.
+        await waitForRegistryVersion(page, 'todo', '2.0.0', 60_000)
+        await waitForCollection(page, 'tags', true, 60_000)
+        await waitForCollection(page, 'todo_tags', true, 60_000)
+
+        // The revert re-staged the archived v2 build as current, so /api/app/update
+        // again advertises that build's bundles — distinct from the downgrade's, so
+        // a client that took the downgrade update is offered this one.
+        lastExpoBundleIds = await assertNewExpoUpdate(page, lastExpoBundleIds)
+    })
+
+    test('delete: uninstalling todo succeeds (no malformed DB at registry update)', async ({
+        page,
+    }) => {
+        // Uninstall rebuilds the web bundle without the member, then flips the
+        // registry row to `disabled` and relaunches. No migrate subprocess, but it
+        // still ends with the app.Save the operator saw fail at "registry update".
+        test.setTimeout(2_700_000) // 45 min
+
+        await loginAsSuperuserWithRetry(page)
+        const priorId = await latestOpId(page, 'todo')
+        // POST /uninstall — the same call the Trash2 confirm modal issues.
+        await postAdminPackageOp(page, 'uninstall', { slug: 'todo' })
+
+        // The uninstall log row must reach `success`. If the malformed-DB bug
+        // recurs it lands here as action=uninstall/status=failed and this throws
+        // with the server's "registry update: … malformed" error.
+        await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'uninstall', priorId)
+    })
+
+    test('delete landed: todo registry row is disabled', async ({ page }) => {
+        test.setTimeout(300_000)
+        await loginAsSuperuserWithRetry(page)
+        // The registry keeps the row but marks it disabled (the uninstall pipeline's
+        // final state). Poll the row's status via the superuser API.
+        const deadline = Date.now() + 90_000
+        let last = 'none'
+        while (Date.now() < deadline) {
+            const token = await superuserToken(page).catch(() => null)
+            if (token) {
+                const filter = encodeURIComponent("slug='todo'")
+                const res = await page.request
+                    .get(`/api/collections/pkg_registry/records?filter=${filter}`, {
+                        headers: { Authorization: token },
+                        failOnStatusCode: false,
+                    })
+                    .catch(() => null)
+                if (res?.ok()) {
+                    const body = (await res.json()) as { items?: Array<{ status?: string }> }
+                    last = body.items?.[0]?.status ?? 'no-row'
+                    if (last === 'disabled') return
+                }
+            }
+            await page.waitForTimeout(3_000)
+        }
+        throw new Error(`todo registry status did not reach 'disabled' within 90s (last=${last})`)
     })
 })

@@ -38,9 +38,13 @@ cleanup() {
     if [ "${KEEP:-}" = "1" ]; then
         echo "[runner] KEEP=1 — leaving container ${CONTAINER} up"
         echo "[runner] live container log: ${LIVE_LOG}"
+        [ -n "${MOUNT_ROOT:-}" ] && echo "[runner] bind-mount dirs preserved at ${MOUNT_ROOT}"
         return
     fi
     docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+    # Leave MOUNT_ROOT on disk for post-mortem DB inspection; it's a mktemp dir
+    # under /tmp the OS reaps. Print it so a failed run's DB is findable.
+    [ -n "${MOUNT_ROOT:-}" ] && echo "[runner] bind-mount dirs at ${MOUNT_ROOT} (pb_data/ has the DB for inspection)"
 }
 trap cleanup EXIT
 
@@ -112,8 +116,32 @@ else
 fi
 
 # 2. Boot.
+#
+# Mount pb_data, builds and releases from host dirs (mirroring bin/local-docker
+# and the operator's deployment). This is REQUIRED to reproduce the field bug
+# "registry update: FAILED: database disk image is malformed (11)" on
+# install/delete/rollback: that corruption only manifests when the SQLite DB
+# lives on a Docker bind-mount (the VirtioFS/gRPC-FUSE layer doesn't keep WAL's
+# shared-memory + file locks coherent across the live server and the installer's
+# sqlite3/migrate subprocesses). A container running the DB on its own overlayfs
+# (the old no-mount runner) never reproduces it. Fresh dirs each run for a clean
+# first-boot bootstrap; KEEP=1 leaves them (and the container) for inspection.
+MOUNT_ROOT="${MOUNT_ROOT:-$(mktemp -d -t tinycld-todo-mounts.XXXXXX)}"
+PB_DATA_DIR="${MOUNT_ROOT}/pb_data"
+BUILDS_DIR="${MOUNT_ROOT}/builds"
+RELEASES_DIR="${MOUNT_ROOT}/releases"
+mkdir -p "${PB_DATA_DIR}" "${BUILDS_DIR}" "${RELEASES_DIR}"
+echo "[runner] bind-mounting host dirs under ${MOUNT_ROOT}"
+echo "[runner]   pb_data  → ${PB_DATA_DIR}"
+echo "[runner]   builds   → ${BUILDS_DIR}"
+echo "[runner]   releases → ${RELEASES_DIR}"
+
 docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
-docker run -d --name "${CONTAINER}" -p 7090:7090 "${IMAGE}"
+docker run -d --name "${CONTAINER}" -p 7090:7090 \
+    -v "${PB_DATA_DIR}:/workspace/tinycld/pb_data" \
+    -v "${BUILDS_DIR}:/workspace/tinycld/builds" \
+    -v "${RELEASES_DIR}:/workspace/tinycld/releases" \
+    "${IMAGE}"
 
 # 2a. Begin streaming container logs to a file immediately, so we capture the
 # full install trace live even if a later step hangs.
@@ -206,4 +234,21 @@ await_restart "post-downgrade"
 # Phase 6 — verify the down migration ran: tags schema dropped, TAGS editor gone.
 run_phase 'down migration ran' 'verify down migration'
 
-echo "[runner] ✅ todo install + upgrade + downgrade integration test passed"
+# Phase 7 — ROLLBACK: revert to the archived v2.0.0 build (restores its binary +
+# schema). This is one of the ops the operator reported failing with the
+# malformed-DB error; it restarts on success.
+run_phase 'revert to the archived v2.0.0 build' 'rollback to v2.0.0 build'
+await_restart "post-rollback"
+
+# Phase 8 — verify the rollback landed: v2.0.0 current, tags schema restored.
+run_phase 'rollback landed' 'verify rollback'
+
+# Phase 9 — DELETE: uninstall todo. The second op the operator reported failing.
+# Restarts on success.
+run_phase 'uninstalling todo succeeds' 'delete (uninstall) todo'
+await_restart "post-delete"
+
+# Phase 10 — verify the delete landed: todo registry row marked disabled.
+run_phase 'delete landed' 'verify delete'
+
+echo "[runner] ✅ todo install + upgrade + downgrade + rollback + delete integration test passed"
