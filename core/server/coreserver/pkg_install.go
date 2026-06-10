@@ -661,6 +661,19 @@ func runInstallPipeline(app *pocketbase.PocketBase, job *installJob) {
 		fail("migrate", fmt.Errorf("%v: %s", err, migrateOut))
 		return
 	}
+	// The `migrate` subprocess opened pb_data/data.db as a SEPARATE process and,
+	// on close, reset the WAL (PocketBase truncate-checkpoints), unlinking the
+	// -wal/-shm files the LIVE server still has mmap'd. modernc/SQLite's live
+	// write connection then validates its now-stale WAL-index against the db
+	// header on the next write and reports "database disk image is malformed (11)"
+	// — even though the on-disk file is perfectly healthy (reads, served from a
+	// separate snapshot, keep working; only the first post-migrate app.Save
+	// write fails). Recover the live write pool before any post-migrate write so
+	// the registry/build app.Save succeeds.
+	if err := recoverLiveDBAfterExternalWrite(app); err != nil {
+		fail("db reconnect", err)
+		return
+	}
 	emitProgress(job, "Migrations applied", 83, "Database migrations complete")
 
 	// Determine which migrations the apply step added.

@@ -6,7 +6,39 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/pocketbase/pocketbase"
 )
+
+// recoverLiveDBAfterExternalWrite re-establishes the live app's SQLite
+// connections after a SEPARATE process (the `migrate` subprocess, or the
+// `sqlite3 VACUUM INTO` backup) opened pb_data/data.db in WAL mode.
+//
+// Why this is needed: PocketBase/modernc keep the WAL shared-memory index
+// (data.db-shm) mmap'd for the life of the connection pool. When another process
+// opens the same WAL database and resets the WAL on close (PocketBase truncate-
+// checkpoints, unlinking -wal/-shm), the live server's mmap'd index is left
+// pointing at a stale/unlinked inode. The live WRITE connection then validates
+// that stale index against the db header on its next write and fails with
+// "database disk image is malformed (11)" — even though the on-disk file is
+// perfectly intact (reads, served from a separate snapshot, keep working; the
+// first post-migrate app.Save is what breaks). This bites only when pb_data is a
+// bind-mount/overlay where the unlink-then-recreate isn't transparent to the
+// holder of the old mmap, which is exactly the operator's deployment.
+//
+// app.Bootstrap() tears down and re-opens both DB pools (initDataDB/initAuxDB),
+// dropping the stale mmap and re-reading the current WAL index, then reloads the
+// cached collections + settings so the rest of the pipeline sees a consistent
+// app. It re-fires OnBootstrap hooks, which is acceptable here: the install job
+// is mid-flight on a background goroutine, no request is being served against
+// these specific writes, and the process restarts moments later anyway.
+func recoverLiveDBAfterExternalWrite(app *pocketbase.PocketBase) error {
+	log.Printf("pkg_install: reconnecting live DB after external WAL access")
+	if err := app.Bootstrap(); err != nil {
+		return fmt.Errorf("re-bootstrap app DB after migrate: %w", err)
+	}
+	return nil
+}
 
 // checkGoBuildPrereqs verifies that Go and gcc are available on PATH.
 func checkGoBuildPrereqs() error {

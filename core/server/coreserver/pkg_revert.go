@@ -231,6 +231,16 @@ func runRevertPipeline(app *pocketbase.PocketBase, job *installJob) {
 		emitProgress(job, "Reversing migrations", 55, "No schema changes to reverse")
 	}
 
+	// The `migrate down` subprocess (and the VACUUM INTO backup in Step 3) opened
+	// pb_data/data.db as a separate process and reset its WAL, leaving the live
+	// server's mmap'd WAL index stale — so the Step 7 app.RunInTransaction write
+	// would fail with "database disk image is malformed (11)" on a bind-mounted
+	// pb_data. Reconnect the live DB pools first. See recoverLiveDBAfterExternalWrite.
+	if rErr := recoverLiveDBAfterExternalWrite(app); rErr != nil {
+		fail("db reconnect", rErr)
+		return
+	}
+
 	// Step 6: Re-stage the archived web bundle (70%). Copy it into
 	// release-staging/<release_id> so the entrypoint's promote_release picks it
 	// up on the post-restart boot.

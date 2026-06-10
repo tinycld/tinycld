@@ -114,13 +114,29 @@ func parseExportMetadata(distDir string, platform nativePlatform, buildID, runti
 	}, nil
 }
 
-// nativeToolchainPresent reports whether the app dir carries enough of the RN
-// toolchain to run `expo export` for native platforms. A web-only deploy image
-// omits these; in that case we skip native export and the update endpoint just
-// returns 204 for mobile.
+// nativeToolchainPresent reports whether the RN toolchain needed to run `expo
+// export` for native platforms is available to appDir. A web-only deploy image
+// omits it; in that case we skip native export and the update endpoint returns
+// 204 for mobile.
+//
+// Resolution must match how `npx expo export` actually finds expo: under pnpm's
+// hoisted workspace layout the package is installed once at the WORKSPACE ROOT
+// (<wsRoot>/node_modules/expo), not in the app member's own node_modules — the
+// app's web export works precisely because Node walks up to the root. So a check
+// that only stats <appDir>/node_modules/expo wrongly reports "absent" on a
+// perfectly capable image and silently skips native export (mobile then never
+// gets OTA updates). Check appDir first, then walk up to the workspace root.
 func nativeToolchainPresent(appDir string) bool {
-	info, err := os.Stat(filepath.Join(appDir, "node_modules", "expo"))
-	return err == nil && info.IsDir()
+	candidates := []string{
+		filepath.Join(appDir, "node_modules", "expo"),
+		filepath.Join(filepath.Dir(appDir), "node_modules", "expo"),
+	}
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 // copyFile copies the file at src to dst, creating dst if it does not exist.
