@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path"
@@ -105,6 +106,36 @@ func str(v any) string {
 	return s
 }
 
+// manifestStatusName renders a manifestStatus for the debug log.
+func manifestStatusName(s manifestStatus) string {
+	switch s {
+	case manifestNoMatch:
+		return "no-match"
+	case manifestUpToDate:
+		return "up-to-date"
+	case manifestNew:
+		return "new"
+	default:
+		return "unknown"
+	}
+}
+
+// summarizeBundles renders the per-platform bundle metadata (platform, id, hash,
+// runtime) for the /api/app/update debug log without dumping the full asset
+// lists. Each entry is "platform=…,id=…,hash=…,runtime=…".
+func summarizeBundles(bundles []any) []string {
+	out := make([]string, 0, len(bundles))
+	for _, raw := range bundles {
+		b, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		out = append(out, fmt.Sprintf("platform=%s,id=%s,hash=%s,runtime=%s",
+			str(b["platform"]), str(b["bundle_id"]), str(b["bundle_hash"]), str(b["runtime_version"])))
+	}
+	return out
+}
+
 // fillManifestURLs sets server-root-relative URLs for the bundle and each asset,
 // keyed by the build id (the archive dir) and platform. buildID here is the
 // pkg_build build_id (e.g. build-200), NOT the per-platform bundle_id.
@@ -149,18 +180,52 @@ func RegisterAppUpdateEndpoints(app *pocketbase.PocketBase) {
 			runtime := re.Request.URL.Query().Get("runtimeVersion")
 			currentID := re.Request.URL.Query().Get("currentId")
 			currentHash := re.Request.URL.Query().Get("currentHash")
+
+			// Verbose per-request debug log: who asked, with what client state, and
+			// what the server knows. Lets the OTA flow be traced end-to-end from
+			// `docker logs` (and lets the install e2e assert on the decision). Kept at
+			// Info so it's visible without enabling debug-level logging.
+			buildID, bundles := currentBuildBundles(app)
+			app.Logger().Info("app-update: request",
+				"method", re.Request.Method,
+				"path", re.Request.URL.RequestURI(),
+				"remoteAddr", re.Request.RemoteAddr,
+				"realIP", re.RealIP(),
+				"userAgent", re.Request.UserAgent(),
+				"q.platform", platform,
+				"q.runtimeVersion", runtime,
+				"q.currentId", currentID,
+				"q.currentHash", currentHash,
+				"server.currentBuildId", buildID,
+				"server.bundleCount", len(bundles),
+				"server.bundles", summarizeBundles(bundles),
+			)
+
 			if platform == "" || runtime == "" {
+				app.Logger().Info("app-update: response 400 (missing platform/runtimeVersion)",
+					"q.platform", platform, "q.runtimeVersion", runtime)
 				return re.BadRequestError("platform and runtimeVersion are required", nil)
 			}
-			buildID, bundles := currentBuildBundles(app)
 			if buildID == "" {
+				app.Logger().Info("app-update: response 204 (no current build / no bundles)")
 				return re.NoContent(204)
 			}
 			m, status := resolveManifest(bundles, platform, runtime, currentID, currentHash)
 			if status != manifestNew {
+				app.Logger().Info("app-update: response 204 (no new bundle)",
+					"status", manifestStatusName(status),
+					"q.platform", platform, "q.runtimeVersion", runtime,
+					"q.currentId", currentID, "q.currentHash", currentHash)
 				return re.NoContent(204)
 			}
 			fillManifestURLs(&m, buildID, platform)
+			app.Logger().Info("app-update: response 200 (update available)",
+				"manifest.id", m.ID,
+				"manifest.runtimeVersion", m.RuntimeVersion,
+				"manifest.bundleHash", m.BundleHash,
+				"manifest.bundleUrl", m.BundleURL,
+				"manifest.assetCount", len(m.Assets),
+			)
 			return re.JSON(http.StatusOK, m)
 		})
 
