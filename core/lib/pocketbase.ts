@@ -207,6 +207,12 @@ const org_pkg_enabled = newCollection('org_pkg_enabled', {
     ...indexing,
 })
 
+const super_admins = newCollection('super_admins', {
+    omitOnInsert: ['created', 'updated'],
+    expand: { user: users },
+    ...indexing,
+})
+
 const audit_logs = newCollection('audit_logs', {
     omitOnInsert: ['created', 'updated'],
     expand: { actor: users },
@@ -248,6 +254,7 @@ const coreStores = {
     audit_logs,
     pkg_install_log,
     notifications,
+    super_admins,
 }
 export type CoreStores = typeof coreStores
 
@@ -274,6 +281,9 @@ export function getUserFromAuthStore(primaryOrgSlug?: string | null): UserSessio
         primaryOrgSlug: primaryOrgSlug ?? undefined,
         isDemo: !!(authRecord as Users & { is_demo?: boolean }).is_demo,
         isBetaTester: !!metadata?.isBetaTester,
+        // Derived reactively from the super_admins store via useIsSuperAdmin();
+        // the session itself doesn't carry it.
+        isSuperAdmin: false,
     }
 }
 
@@ -291,6 +301,7 @@ export async function preloadStores() {
         stores.org_pkg_access.preload(),
         stores.pkg_registry.preload(),
         stores.org_pkg_enabled.preload(),
+        stores.super_admins.preload(),
     ])
 }
 

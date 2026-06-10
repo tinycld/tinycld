@@ -7,6 +7,12 @@ import { expect, test } from '@playwright/test'
 // password, and the full bootstrap/login/dashboard flow is covered by the
 // docker smoke suite (tests/install/setup-and-packages.spec.ts). Here we only
 // need to prove the route + page shell are intact after the rename.
+//
+// SetupPage now has a super-admin app-user path: a logged-in user listed in
+// super_admins reaches the dashboard with their normal session (no superuser
+// login). That path is exercised by the docker smoke suite (which can seed a
+// super-admin grant); the anonymous case below still falls through to the
+// superuser login form, so this assertion is unchanged.
 test.describe('Admin console route', () => {
     test('/admin resolves to the superuser console', async ({ page }) => {
         await page.goto('/admin')

@@ -13,4 +13,10 @@ export interface UserSession {
      *  future work. Set the JSON value by hand against an individual user in the
      *  PocketBase admin (no UI yet). */
     isBetaTester: boolean
+    /** True when this user is listed in the super_admins collection, granting
+     *  the cross-org /admin console. NOT derived from the user record — it lives
+     *  in a separate junction. The session builders below default this to false;
+     *  the reactive source of truth in UI is useIsSuperAdmin(), which live-queries
+     *  the super_admins store. */
+    isSuperAdmin: boolean
 }

@@ -1,5 +1,6 @@
 import { tinycldConfig } from '@tinycld/app-generated/tinycld-config'
-import type { ComponentType, LazyExoticComponent, ReactNode } from 'react'
+import { type ComponentType, type LazyExoticComponent, lazy, type ReactNode } from 'react'
+import { ADMIN_PACKAGE_SLUG } from './builtin-admin'
 import type { PackageSettingsPanel, SidebarContribution } from './config-types'
 
 interface SidebarProps {
@@ -114,7 +115,13 @@ export function deriveSidebarContributions(
     return out
 }
 
-export const packageSidebars = deriveSidebars(tinycldConfig)
+export const packageSidebars: Record<string, SidebarComp | null> = {
+    ...deriveSidebars(tinycldConfig),
+    // Admin is a built-in (non-package) area that still renders in the workspace
+    // shell with a PackageSidebar. It has no manifest, so its sidebar is wired
+    // in here rather than derived from the generated config.
+    [ADMIN_PACKAGE_SLUG]: lazy(() => import('@tinycld/core/components/setup/AdminSidebar')),
+}
 export const packageProviders = deriveProviders(tinycldConfig)
 export const packageSettings = deriveSettings(tinycldConfig)
 export const packageSidebarContributions = deriveSidebarContributions(tinycldConfig)

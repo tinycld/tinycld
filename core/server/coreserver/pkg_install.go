@@ -83,21 +83,26 @@ func RegisterPackageInstallEndpoints(app *pocketbase.PocketBase) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		g := e.Router.Group("/api/admin/packages")
 
+		// All admin endpoints accept a PB superuser OR a super-admin app user.
+		adminGuard := func(re *core.RequestEvent) error {
+			return requireAdmin(app, re)
+		}
+
 		g.POST("/install", func(re *core.RequestEvent) error {
 			return handleInstall(app, re)
-		}).BindFunc(requireSuperuser)
+		}).BindFunc(adminGuard)
 
 		g.POST("/uninstall", func(re *core.RequestEvent) error {
 			return handleUninstall(app, re)
-		}).BindFunc(requireSuperuser)
+		}).BindFunc(adminGuard)
 
 		g.POST("/revert", func(re *core.RequestEvent) error {
 			return handleRevert(app, re)
-		}).BindFunc(requireSuperuser)
+		}).BindFunc(adminGuard)
 
 		g.POST("/builds/delete", func(re *core.RequestEvent) error {
 			return handleDeleteBuild(app, re)
-		}).BindFunc(requireSuperuser)
+		}).BindFunc(adminGuard)
 
 		g.GET("/events/{jobId}", func(re *core.RequestEvent) error {
 			return handleEvents(re)
@@ -107,23 +112,23 @@ func RegisterPackageInstallEndpoints(app *pocketbase.PocketBase) {
 
 		g.GET("/status/{slug}", func(re *core.RequestEvent) error {
 			return handleStatus(app, re)
-		}).BindFunc(requireSuperuser)
+		}).BindFunc(adminGuard)
 
 		g.GET("/versions", func(re *core.RequestEvent) error {
 			return handleVersions(app, re)
-		}).BindFunc(requireSuperuser)
+		}).BindFunc(adminGuard)
 
 		g.POST("/versions/check", func(re *core.RequestEvent) error {
 			return handleVersionsCheck(app, re)
-		}).BindFunc(requireSuperuser)
+		}).BindFunc(adminGuard)
 
 		g.POST("/versions/drop-report", func(re *core.RequestEvent) error {
 			return handleDropReport(app, re)
-		}).BindFunc(requireSuperuser)
+		}).BindFunc(adminGuard)
 
 		g.POST("/versions/apply", func(re *core.RequestEvent) error {
 			return handleVersionChange(app, re)
-		}).BindFunc(requireSuperuser)
+		}).BindFunc(adminGuard)
 
 		return e.Next()
 	})
@@ -141,11 +146,32 @@ func shouldSuppressRestart(isRestart bool) bool {
 	return currentJob != nil
 }
 
-func requireSuperuser(re *core.RequestEvent) error {
-	if !re.HasSuperuserAuth() {
-		return re.ForbiddenError("Superuser access required", nil)
+// isSuperAdmin reports whether the given app-user id is listed in the
+// super_admins junction — i.e. a regular user granted cross-org admin powers.
+// PB superusers are NOT in this table (they're authorized separately via
+// IsSuperuser); the two paths are unioned by the guards below.
+func isSuperAdmin(app core.App, userID string) bool {
+	if userID == "" {
+		return false
 	}
-	return re.Next()
+	_, err := app.FindFirstRecordByFilter(
+		"super_admins",
+		"user = {:user}",
+		map[string]any{"user": userID},
+	)
+	return err == nil
+}
+
+// requireAdmin authorizes either a PB superuser OR an app user listed in
+// super_admins. Takes core.App so the super_admins lookup is unit-testable.
+func requireAdmin(app core.App, re *core.RequestEvent) error {
+	if re.HasSuperuserAuth() {
+		return re.Next()
+	}
+	if re.Auth != nil && isSuperAdmin(app, re.Auth.Id) {
+		return re.Next()
+	}
+	return re.ForbiddenError("Admin access required", nil)
 }
 
 // requireSuperuserOrToken allows SSE connections to authenticate via query param
@@ -153,25 +179,29 @@ func requireSuperuser(re *core.RequestEvent) error {
 // *pocketbase.PocketBase) so it's unit-testable against tests.TestApp — it only
 // needs FindAuthRecordByToken, a core.App method.
 func requireSuperuserOrToken(app core.App, re *core.RequestEvent) error {
-	// Try standard auth first
+	// Try standard auth first — a PB superuser or a super-admin app user.
 	if re.HasSuperuserAuth() {
+		return re.Next()
+	}
+	if re.Auth != nil && isSuperAdmin(app, re.Auth.Id) {
 		return re.Next()
 	}
 
 	// Fall back to query param token for SSE. FindAuthRecordByToken's variadic
 	// arg is the token TYPE (core.TokenTypeAuth), not a collection id — passing a
 	// collection id makes it match no valid type and reject every token (the 403
-	// the install progress stream hit). Validate as an auth token, then confirm
-	// the record is actually a superuser so a regular user's token can't pass.
+	// the install progress stream hit). Validate as an auth token, then accept it
+	// only if the record is a superuser or a super-admin app user — a plain
+	// user's token must not pass.
 	token := re.Request.URL.Query().Get("token")
 	if token != "" {
 		record, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth)
-		if err == nil && record != nil && record.IsSuperuser() {
+		if err == nil && record != nil && (record.IsSuperuser() || isSuperAdmin(app, record.Id)) {
 			return re.Next()
 		}
 	}
 
-	return re.ForbiddenError("Superuser access required", nil)
+	return re.ForbiddenError("Admin access required", nil)
 }
 
 // ---------- handlers ----------

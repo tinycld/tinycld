@@ -2,6 +2,7 @@ import { eq, or } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useMemo } from 'react'
+import { ADMIN_PACKAGE_ENTRY, ADMIN_PACKAGE_SLUG } from './builtin-admin'
 import { packageRegistry } from './static-registry'
 import type { PackageManifest } from './types'
 
@@ -62,5 +63,10 @@ export function usePackages(): PackageEntry[] {
 
 export function usePackage(slug: string) {
     const packages = usePackages()
+    // Admin is a built-in shell area, not a member of usePackages() (kept out so
+    // it never renders among the rail's package icons). Resolve it here so the
+    // shell's package-shaped lookups — WorkspaceLayout's sidebar gate and
+    // PackageSidebar — find its synthetic entry.
+    if (slug === ADMIN_PACKAGE_SLUG) return ADMIN_PACKAGE_ENTRY
     return packages.find(a => a.slug === slug) ?? null
 }

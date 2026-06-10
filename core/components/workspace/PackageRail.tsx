@@ -9,6 +9,7 @@ import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { type Href, Link } from 'expo-router'
 import { Building2, HelpCircle, type LucideIcon, Settings } from 'lucide-react-native'
 import { Pressable, View } from 'react-native'
+import { AdminRailButton } from './AdminRailButton'
 import { getIcon } from './package-icon-map'
 import { UserMenu } from './UserMenu'
 
@@ -74,6 +75,8 @@ export function PackageRail() {
                         <HelpCircle size={22} color={railText} />
                     </Pressable>
                 </Link>
+
+                <AdminRailButton />
 
                 <Link href={orgHref('settings')} asChild>
                     <Pressable
