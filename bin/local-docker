@@ -1,0 +1,23 @@
+#!/bin/sh
+
+# Build the image from your PR branch (so the server has your Go changes):
+
+docker build -t tinycld:testing-build -f Dockerfile ..   # context = workspace root
+
+# Run it on plain HTTP for local testing.
+#
+# Three persistent mounts so in-app installs and OTA bundles survive container
+# restarts:
+#   pb_data   — PocketBase DB (pkg_registry/pkg_build rows, orgs, users, …)
+#   builds    — per-build archives a revert restores (incl. native OTA bundles)
+#   releases  — the promoted web bundle (releases/current)
+# Keeping all three together avoids the DB referencing builds/bundles that no
+# longer exist on disk after a restart. The entrypoint chowns these to the
+# runtime user, so fresh root-owned mounts are fixed up automatically.
+mkdir -p /tmp/tinycld-pb_data /tmp/tinycld-builds /tmp/tinycld-releases
+
+docker run --rm -p 7090:7090 \
+    -v /tmp/tinycld-pb_data:/workspace/tinycld/pb_data \
+    -v /tmp/tinycld-builds:/workspace/tinycld/builds \
+    -v /tmp/tinycld-releases:/workspace/tinycld/releases \
+    --name tinycld-testing tinycld:testing-build

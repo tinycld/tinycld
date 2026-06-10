@@ -19,6 +19,12 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 # fails with "unable to open database file (14)" and the container crash-loops.
 # Reported in https://github.com/tinycld/app/issues/26.
 #
+# The same applies to ./builds and ./releases when an operator backs them with a
+# persistent volume/bind-mount so installed-package archives and the promoted web
+# bundle (incl. the native OTA bundles staged into each build's release dir)
+# survive container restarts. Without the chown the install pipeline can't write
+# the archive and fails at "archive build".
+#
 # We run this as root (the container's start user) and chown the dirs to the
 # runtime user before dropping privileges. Only runs when we're actually root;
 # if an operator overrode the start user to non-root they're responsible for
@@ -26,7 +32,11 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 fix_data_dir_ownership() {
     [ "$(id -u)" = "0" ] || return 0
 
-    for dir in /workspace/tinycld/pb_data /workspace/tinycld/core/types; do
+    for dir in \
+        /workspace/tinycld/pb_data \
+        /workspace/tinycld/core/types \
+        /workspace/tinycld/builds \
+        /workspace/tinycld/releases; do
         mkdir -p "$dir"
         # Skip the (potentially large) recursive chown when the top-level dir is
         # already owned correctly — the steady state after first run, so normal
