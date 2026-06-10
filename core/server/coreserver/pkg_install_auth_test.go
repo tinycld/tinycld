@@ -2,11 +2,25 @@ package coreserver
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 )
+
+func TestRejectBaseUninstall(t *testing.T) {
+	if err := rejectBaseUninstall("core"); err == nil {
+		t.Fatal("expected uninstall of core to be rejected, got nil")
+	} else if !strings.Contains(strings.ToLower(err.Error()), "base") {
+		t.Fatalf("expected a base-specific rejection message, got: %v", err)
+	}
+	for _, slug := range []string{"mail", "drive", "calendar", "contacts"} {
+		if err := rejectBaseUninstall(slug); err != nil {
+			t.Errorf("rejectBaseUninstall(%q) = %v, want nil (features are uninstallable)", slug, err)
+		}
+	}
+}
 
 // These guard the admin authorization paths:
 //   - requireAdmin authorizes a PB superuser OR an app user listed in

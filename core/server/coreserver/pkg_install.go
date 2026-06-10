@@ -249,6 +249,18 @@ func handleInstall(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	return re.JSON(http.StatusAccepted, map[string]any{"jobId": jobId})
 }
 
+// rejectBaseUninstall returns an error when slug is the TinyCld base (`core`).
+// The base is the platform itself — uninstalling it (or disabling it, which is
+// the uninstall pipeline's terminal state) would strand the deployment without
+// its server. The /admin UI hides these controls for the core row; this guards
+// the API path so a direct call can't remove the platform.
+func rejectBaseUninstall(slug string) error {
+	if slug == "core" {
+		return fmt.Errorf("the TinyCld base cannot be uninstalled")
+	}
+	return nil
+}
+
 func handleUninstall(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	var body struct {
 		Slug string `json:"slug"`
@@ -259,6 +271,10 @@ func handleUninstall(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 
 	if body.Slug == "" {
 		return re.BadRequestError("slug is required", nil)
+	}
+
+	if err := rejectBaseUninstall(body.Slug); err != nil {
+		return re.BadRequestError(err.Error(), nil)
 	}
 
 	installMu.Lock()
@@ -1247,7 +1263,13 @@ func upsertPkgRegistry(app core.App, m *parsedManifest, npmPkg string, manifestJ
 		existing.Set("description", m.Description)
 		existing.Set("icon", m.Nav.Icon)
 		existing.Set("has_server", m.HasServer)
-		existing.Set("status", "installed")
+		// Preserve bundled status across an in-app version change: a bundled
+		// feature that's been upgraded is still bundled (so the uninstall guard
+		// keeps blocking it), only its version moved. Any other prior status
+		// (available → being installed) promotes to installed as before.
+		if existing.GetString("status") != "bundled" {
+			existing.Set("status", "installed")
+		}
 		existing.Set("manifest_json", json.RawMessage(manifestJSON))
 		return app.Save(existing)
 	}
