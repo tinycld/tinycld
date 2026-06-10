@@ -18,6 +18,12 @@ type bundledPackage struct {
 	HasServer    bool   `json:"hasServer"`
 	NavOrder     int    `json:"navOrder"`
 	ManifestJSON string `json:"manifestJson"`
+	// Source is the canonical git spec (e.g. `github:tinycld/mail`) the in-app
+	// upgrader fetches newer versions from. Seeded into npm_package so a bundled
+	// feature flows through the same version-discovery + version-change pipeline
+	// as an installed package. Empty for rows the generator emits without a
+	// source spec.
+	Source string `json:"source"`
 }
 
 func SyncBundledPackages(app core.App) {
@@ -70,6 +76,13 @@ func SyncBundledPackages(app core.App) {
 			record.Set("has_server", pkg.HasServer)
 			record.Set("nav_order", pkg.NavOrder)
 			record.Set("status", "bundled")
+			// npm_package is the upgrade source spec. With it set, handleVersions
+			// stops short-circuiting on empty spec and discovers git tags, which
+			// lights up the version picker + the version-change pipeline for this
+			// bundled feature. Left unset only for rows the generator emits with no source spec.
+			if pkg.Source != "" {
+				record.Set("npm_package", pkg.Source)
+			}
 			// manifest_json feeds the version-management compatibility solver
 			// (peerVersions). Keep it in sync with the installed-package path
 			// (upsertPkgRegistry), which stores the full manifest here.
@@ -82,13 +95,23 @@ func SyncBundledPackages(app core.App) {
 			continue
 		}
 
-		// Update existing bundled record
+		// Update existing bundled record. version tracks bundled-packages.json,
+		// which the generator re-emits from the on-disk member after an in-app
+		// upgrade (regenerateWiring) — so the seed file stays authoritative and a
+		// redeploy correctly reconciles the version either way.
 		existing.Set("name", pkg.Name)
 		existing.Set("version", pkg.Version)
 		existing.Set("icon", pkg.Icon)
 		existing.Set("description", pkg.Description)
 		existing.Set("has_server", pkg.HasServer)
 		existing.Set("nav_order", pkg.NavOrder)
+		// Backfill the upgrade source onto already-seeded rows (which predate the
+		// source field and so carry an empty npm_package). Only when empty: once a
+		// row has a spec — whether from a prior backfill or an in-app upgrade that
+		// pinned `#<tag>` — leave it alone so we don't clobber the resolved source.
+		if pkg.Source != "" && existing.GetString("npm_package") == "" {
+			existing.Set("npm_package", pkg.Source)
+		}
 		if pkg.ManifestJSON != "" {
 			existing.Set("manifest_json", pkg.ManifestJSON)
 		}
