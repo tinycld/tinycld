@@ -187,10 +187,18 @@ function ProgressBar({
         <View className="h-2 rounded-full bg-border overflow-hidden">
             <View
                 testID="install-progress-fill"
-                // The numeric progress is exposed via accessibilityValue so e2e can
-                // read it directly (the visual width is an inline % style that's
-                // awkward to assert on). Proves the SSE stream is advancing.
-                accessibilityValue={{ now: progress, min: 0, max: 100 }}
+                // The numeric progress is exposed as ARIA value attributes so e2e can
+                // read it directly off `aria-valuenow` (the visual width is an inline %
+                // style that's awkward to assert on). Proves the SSE stream is advancing.
+                // NOTE: react-native-web 0.21 dropped support for the object form
+                // `accessibilityValue={{ now, min, max }}` — it only forwards the
+                // flattened `aria-value*` props (with a `progressbar` role), so the
+                // object form silently emits no `aria-valuenow` and the e2e read sees
+                // `null`. Pass the flattened props directly.
+                role="progressbar"
+                aria-valuenow={progress}
+                aria-valuemin={0}
+                aria-valuemax={100}
                 className="h-full rounded-full"
                 style={{
                     width: `${progress}%`,
