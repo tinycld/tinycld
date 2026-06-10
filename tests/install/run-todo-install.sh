@@ -191,6 +191,8 @@ run_phase() {
         cd "${PW_ROOT}"
         PW_BASE_URL="${BASE_URL}" \
         PW_TODO_SETUP_TOKEN="${TOKEN}" \
+        PW_CORE_CUR="${CORE_CUR:-}" \
+        PW_CORE_NEXT="${CORE_NEXT:-}" \
         RUN_TODO_INSTALL_TEST=1 \
         CI=true FORCE_COLOR=0 \
         ./node_modules/.bin/playwright test --reporter=line,list -g "${grep_expr}"
@@ -251,4 +253,97 @@ await_restart "post-delete"
 # Phase 10 — verify the delete landed: todo registry row marked disabled.
 run_phase 'delete landed' 'verify delete'
 
-echo "[runner] ✅ todo install + upgrade + downgrade + rollback + delete integration test passed"
+# --- Core (base) upgrade/downgrade phases -------------------------------------
+#
+# The base-update pipeline clones the base repo named in pkg_registry.npm_package.
+# To drive a real, deterministic core upgrade without touching the shared remote,
+# we build a LOCAL bare git remote INSIDE the container from the running tree,
+# add a minimal v-next commit (bump core/package.json + one trivial core
+# migration), tag it, and repoint core's registry source at that file:// remote.
+# The downgrade target is the current baked version (v<CORE_CUR>).
+
+CORE_CUR=$(docker exec "${CONTAINER}" node -e "console.log(require('/workspace/tinycld/core/package.json').version)")
+echo "[runner] current base version: ${CORE_CUR}"
+CORE_NEXT="0.0.5"   # synthetic upgrade target; must be > CORE_CUR (0.0.4)
+
+provision_base_remote() {
+    echo "[runner] provisioning local base remote with v${CORE_CUR} + v${CORE_NEXT}"
+    docker exec "${CONTAINER}" sh -lc '
+        set -e
+        BARE=/workspace/base-remote.git
+        WORK=/workspace/base-work
+        rm -rf "$BARE" "$WORK"
+        git init -q "$WORK"
+        cd "$WORK"
+        git config user.email t@t.local && git config user.name t
+        # Copy the live base source (excluding runtime state) into the work tree.
+        for d in app core scripts server app.json package.json metro.config.cjs \
+                 tsconfig.json biome.json babel.config.js eslint.config.mjs; do
+            [ -e "/workspace/tinycld/$d" ] && cp -a "/workspace/tinycld/$d" .
+        done
+        git add -A && git commit -qm "base v'"${CORE_CUR}"'"
+        git tag "v'"${CORE_CUR}"'"
+        # v-next: bump core/package.json version + add one trivial core migration.
+        node -e "const f=\"core/package.json\";const j=require(\"./\"+f);j.version=\"'"${CORE_NEXT}"'\";require(\"fs\").writeFileSync(f,JSON.stringify(j,null,4)+\"\n\")"
+        mkdir -p core/server/pb_migrations
+        cat > core/server/pb_migrations/1990000000_create_base_probe.js <<"MIG"
+/// <reference path="../pb_data/types.d.ts" />
+migrate(
+    app => {
+        const collection = new Collection({
+            id: "pbc_base_probe_01",
+            name: "base_probe",
+            type: "base",
+            system: false,
+            listRule: null,
+            viewRule: null,
+            createRule: null,
+            updateRule: null,
+            deleteRule: null,
+            fields: [
+                {
+                    id: "bp_note",
+                    name: "note",
+                    type: "text",
+                    max: 2000,
+                },
+            ],
+        })
+        app.save(collection)
+    },
+    app => {
+        try {
+            const c = app.findCollectionByNameOrId("base_probe")
+            app.delete(c)
+        } catch (e) {
+            // may not exist
+        }
+    }
+)
+MIG
+        git add -A && git commit -qm "base v'"${CORE_NEXT}"'"
+        git tag "v'"${CORE_NEXT}"'"
+        git clone -q --bare "$WORK" "$BARE"
+    '
+    # Repoint core registry source at the local bare remote (git+file://).
+    docker exec "${CONTAINER}" sqlite3 /workspace/tinycld/pb_data/data.db \
+        "UPDATE pkg_registry SET npm_package='git+file:///workspace/base-remote.git' WHERE slug='core';"
+}
+
+provision_base_remote
+
+# Phase C1 — upgrade core to v-next via the base row's version picker.
+run_phase 'upgrade core to v0.0.5' 'upgrade core'
+await_restart "post-core-upgrade"
+
+# Phase C2 — verify the upgrade: registry version advanced + base_probe exists.
+run_phase 'core upgrade landed' 'verify core upgrade'
+
+# Phase C3 — downgrade core back to the baked version (runs base_probe DOWN).
+run_phase 'downgrade core to v0.0.4' 'downgrade core'
+await_restart "post-core-downgrade"
+
+# Phase C4 — verify the downgrade: version reverted + base_probe dropped.
+run_phase 'core downgrade landed' 'verify core downgrade'
+
+echo "[runner] ✅ todo install/upgrade/downgrade/rollback/delete + core base upgrade/downgrade integration test passed"
