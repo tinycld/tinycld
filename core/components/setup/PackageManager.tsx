@@ -281,6 +281,13 @@ function PackageList({
         const pkg = pkgMap.get(item.id) ?? item
         const info = versionBySlug.get(pkg.slug)
         const target = targets[pkg.slug]
+        // The `core` row is the TinyCld base (app shell + core + server). It
+        // upgrades through the same version-change pipeline as any package, so it
+        // gets the normal version picker and update-available badge. Only a narrow
+        // set of traits stay special: a distinct `base` status badge, no
+        // drag/reorder (the base has no nav position), and no lifecycle controls
+        // (it can't be disabled or uninstalled).
+        const isBase = pkg.slug === 'core'
         // A row with a staged version change locks its lifecycle controls
         // (toggle/drag/uninstall) until the change is applied or cleared, so an
         // immediate mutation can't collide with the pending transaction.
@@ -302,7 +309,7 @@ function PackageList({
                     <View className="flex-row items-center gap-3 px-4 py-3.5">
                         <DragHandle
                             drag={drag}
-                            disabled={isActive || isStaged}
+                            disabled={isActive || isStaged || isBase}
                             color={mutedColor}
                         />
                         <View className="w-10 h-10 rounded-xl items-center justify-center bg-surface border border-border">
@@ -320,7 +327,7 @@ function PackageList({
                                 >
                                     {pkg.name}
                                 </Text>
-                                <PackageStatusBadge status={pkg.status} />
+                                <PackageStatusBadge status={isBase ? 'base' : pkg.status} />
                                 {info?.hasUpdate && !isStaged ? (
                                     <PackageStatusBadge status="update-available" />
                                 ) : null}
@@ -342,6 +349,7 @@ function PackageList({
                         <PackageActions
                             pkg={pkg}
                             pb={pb}
+                            isBase={isBase}
                             isEditing={editingId === pkg.id}
                             isLocked={isStaged}
                             onEdit={() => onEdit(editingId === pkg.id ? null : pkg.id)}
@@ -395,8 +403,8 @@ function PackageList({
 }
 
 // RowVersion is the per-row version cell. A package with >1 available version
-// gets the interactive picker + change flag; a bundled / single-version package
-// (Core, unmanaged sources) shows just its static version, no dropdown — there's
+// gets the interactive picker + change flag; a single-version package
+// (unmanaged sources) shows just its static version, no dropdown — there's
 // nothing to stage.
 function RowVersion({
     info,
@@ -443,6 +451,7 @@ function RowVersion({
 function PackageActions({
     pkg,
     pb,
+    isBase,
     isEditing,
     isLocked,
     onEdit,
@@ -451,6 +460,10 @@ function PackageActions({
 }: {
     pkg: PkgRecord
     pb: PocketBase
+    // The TinyCld base row: no toggle (can't disable the platform), no uninstall,
+    // no metadata edit (its name/description are generator-owned and reset on the
+    // next build). Upgraded via its version picker like any package.
+    isBase: boolean
     isEditing: boolean
     // True when this package has a staged version change — its toggle and
     // uninstall are disabled until the change is applied or cleared, so an
@@ -498,6 +511,12 @@ function PackageActions({
         }
         setShowUninstall(false)
         onUninstallStarted(data.jobId)
+    }
+
+    // The base row carries no lifecycle controls — it's upgraded via its version
+    // picker like any package, just never disabled, edited, or uninstalled.
+    if (isBase) {
+        return null
     }
 
     return (
