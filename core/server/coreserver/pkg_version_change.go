@@ -346,9 +346,22 @@ func applyOneVersionChange(
 		return specErr
 	}
 
-	// 1. Swap files to the target version.
+	// 1. Swap files to the target version. The base (`core`) is the whole
+	// app-shell repo, fetched by git clone of its source repo and swapped
+	// source-only (preserving runtime state); a feature is an npm-pack of one
+	// sibling dir. Downstream (regen -> migrate -> rebuild -> stage -> archive ->
+	// restart) is identical — swapBaseFiles returns HasServer:true so the existing
+	// rebuild gate fires for core with no slug-based branching there.
 	emitProgress(job, "Installing files", baseProgress+4, "Fetching "+targetSpec)
-	manifest, swapErr := swapPackageFiles(app, job, targetSpec, change.Slug, wsRoot, appDir, rollbackStack)
+	var manifest *parsedManifest
+	var swapErr error
+	if change.Slug == "core" {
+		// The base clones its whole repo from the registry's source spec at the
+		// bare target ref (the version tag), not a feature npm-pack spec.
+		manifest, swapErr = swapBaseFiles(app, job, reg.GetString("npm_package"), change.TargetVersion, wsRoot, appDir, rollbackStack)
+	} else {
+		manifest, swapErr = swapPackageFiles(app, job, targetSpec, change.Slug, wsRoot, appDir, rollbackStack)
+	}
 	if swapErr != nil {
 		return swapErr
 	}
