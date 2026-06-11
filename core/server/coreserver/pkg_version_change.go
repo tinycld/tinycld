@@ -766,6 +766,7 @@ func finalizeVersionChange(
 		"migrations_applied":  len(appliedDelta),
 		"migration_files":     appliedDelta,
 		"pkg_migration_files": targetPkgMigrations,
+		"bundles":             serializeBundles(nativeBundles),
 		"notes":               fmt.Sprintf("Version change to %s", change.TargetVersion),
 	}
 	_, archiveCleanup, archErr := archiveBuild(appDir, buildID, stageDest, manifest.HasServer, buildFields)
