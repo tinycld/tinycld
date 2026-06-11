@@ -182,10 +182,11 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 			seq = append(seq, "assemble")
 			return os.MkdirAll(filepath.Join(dir, "tinycld", "server", "pb_migrations"), 0o755)
 		},
-		pipeline:       func(j *installJob, dir string) error { seq = append(seq, "pipeline"); return nil },
+		pipeline:       func(j *installJob, dir string) (buildOutput, error) { seq = append(seq, "pipeline"); return buildOutput{}, nil },
 		backupDB:       func() error { seq = append(seq, "backup"); return nil },
 		syncMig:        func(buildDir string) (SyncResult, error) { seq = append(seq, "sync"); return SyncResult{}, nil },
 		activate:       func(id string) error { seq = append(seq, "activate"); return nil },
+		recordBuild:    func(out buildOutput) error { seq = append(seq, "record"); return nil },
 		commitRegistry: func() error { seq = append(seq, "commit"); return nil },
 		prune:          func(keep int) error { seq = append(seq, "prune"); return nil },
 		finalizeLog:    func(status, errMsg string) { seq = append(seq, "finalize") },
@@ -196,7 +197,7 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 	if err := rebuildWith(job, m, deps); err != nil {
 		t.Fatal(err)
 	}
-	want := "assemble,pipeline,backup,sync,activate,commit,prune,finalize,restart"
+	want := "assemble,pipeline,backup,sync,activate,record,commit,prune,finalize,restart"
 	if got := strings.Join(seq, ","); got != want {
 		t.Fatalf("sequence = %s, want %s", got, want)
 	}
@@ -208,7 +209,7 @@ func TestRebuild_FinalizesLogOnFailure(t *testing.T) {
 	var finalized string
 	deps := rebuildDeps{
 		assemble:    func(m RebuildManifest, dir string) error { return fmt.Errorf("assemble broke") },
-		pipeline:    func(j *installJob, dir string) error { return nil },
+		pipeline:    func(j *installJob, dir string) (buildOutput, error) { return buildOutput{}, nil },
 		backupDB:    func() error { return nil },
 		syncMig:     func(buildDir string) (SyncResult, error) { return SyncResult{}, nil },
 		activate:    func(id string) error { return nil },
@@ -231,7 +232,7 @@ func TestRebuild_PipelineFailure_NoActivateNoRestore(t *testing.T) {
 	var restored, activated bool
 	deps := rebuildDeps{
 		assemble:  func(m RebuildManifest, dir string) error { return nil },
-		pipeline:  func(j *installJob, dir string) error { return fmt.Errorf("build broke") },
+		pipeline:  func(j *installJob, dir string) (buildOutput, error) { return buildOutput{}, fmt.Errorf("build broke") },
 		backupDB:  func() error { return nil },
 		restoreDB: func() error { restored = true; return nil },
 		syncMig:   func(buildDir string) (SyncResult, error) { return SyncResult{}, nil },
@@ -258,7 +259,7 @@ func TestRebuild_MigrateFailure_RestoresAndNoActivate(t *testing.T) {
 	var restored, activated bool
 	deps := rebuildDeps{
 		assemble:  func(m RebuildManifest, dir string) error { return nil },
-		pipeline:  func(j *installJob, dir string) error { return nil },
+		pipeline:  func(j *installJob, dir string) (buildOutput, error) { return buildOutput{}, nil },
 		backupDB:  func() error { return nil },
 		restoreDB: func() error { restored = true; return nil },
 		syncMig:   func(buildDir string) (SyncResult, error) { return SyncResult{}, fmt.Errorf("down broke") },

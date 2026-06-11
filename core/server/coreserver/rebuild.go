@@ -50,12 +50,16 @@ const buildsToKeep = 5
 // control flow (ordering, failure handling, rollback) is unit-testable without
 // running a real build.
 type rebuildDeps struct {
-	assemble       func(m RebuildManifest, buildDir string) error
-	pipeline       func(job *installJob, buildDir string) error
-	backupDB       func() error
-	restoreDB      func() error
-	syncMig        func(buildDir string) (SyncResult, error)
-	activate       func(buildID string) error
+	assemble func(m RebuildManifest, buildDir string) error
+	pipeline func(job *installJob, buildDir string) (buildOutput, error)
+	backupDB func() error
+	restoreDB func() error
+	syncMig  func(buildDir string) (SyncResult, error)
+	activate func(buildID string) error
+	// recordBuild persists the pkg_build row (release id + native OTA bundles)
+	// the /api/app/update endpoint and the revert/rollback UI read. Runs after a
+	// successful build, before restart. Optional (nil-safe).
+	recordBuild    func(out buildOutput) error
 	commitRegistry func() error
 	prune          func(keep int) error
 	// finalizeLog records the terminal state of the pkg_install_log row the UI
@@ -86,7 +90,8 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	if err := d.assemble(m, buildDir); err != nil {
 		return d.fail(job, "assemble", err)
 	}
-	if err := d.pipeline(job, buildDir); err != nil {
+	out, err := d.pipeline(job, buildDir)
+	if err != nil {
 		// Failure precedes the DB backup; live state untouched. Discard build.
 		_ = os.RemoveAll(buildDir)
 		return d.fail(job, "build", err)
@@ -104,6 +109,14 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	if err := d.activate(m.BuildID); err != nil {
 		restore(d)
 		return d.fail(job, "activate", err)
+	}
+	if d.recordBuild != nil {
+		if err := d.recordBuild(out); err != nil {
+			// The build is already live; failing to record the pkg_build row only
+			// affects OTA-update advertisement + the rollback UI, not correctness.
+			// Log and continue rather than abort an already-activated build.
+			log.Printf("rebuild: recordBuild warning: %v", err)
+		}
 	}
 	if d.commitRegistry != nil {
 		if err := d.commitRegistry(); err != nil {
@@ -158,7 +171,9 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 
 	deps := rebuildDeps{
 		assemble: assembleBuild,
-		pipeline: runBuildPipeline,
+		pipeline: func(j *installJob, bd string) (buildOutput, error) {
+			return runBuildPipeline(j, bd, m.BuildID)
+		},
 		backupDB: func() error {
 			r, e := backupDatabase(filepath.Join(buildDir, "tinycld"))
 			restoreClosure = r
@@ -181,7 +196,10 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 			}
 			return syncMigrations(app, applied, newSet)
 		},
-		activate:       activateBuild,
+		activate: activateBuild,
+		recordBuild: func(out buildOutput) error {
+			return recordRebuildBuild(app, m, out)
+		},
 		commitRegistry: func() error { return commitRegistry(app, m, buildDir) },
 		prune:          pruneBuilds,
 		finalizeLog: func(status, errMsg string) {
@@ -196,6 +214,50 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 		},
 	}
 	return rebuildWith(job, m, deps)
+}
+
+// recordRebuildBuild persists the pkg_build row for a freshly-activated build:
+// its release id and the native OTA bundle metadata /api/app/update serves, plus
+// enough identity for the rollback UI to offer this build as a revert target.
+// recordBuild() demotes the prior `current` row to `available` in the same
+// transaction. binary_archived is always true — every rebuild compiles a server
+// binary that travels with its build dir.
+func recordRebuildBuild(app core.App, m RebuildManifest, out buildOutput) error {
+	fields := map[string]any{
+		"build_id":        m.BuildID,
+		"pkg_slug":        rebuildPrimarySlug(m),
+		"version":         rebuildPrimaryVersion(m),
+		"action":          "install",
+		"binary_archived": true,
+		"release_id":      out.releaseID,
+		"bundles":         serializeBundles(out.bundles),
+	}
+	_, err := recordBuild(app, fields)
+	return err
+}
+
+// rebuildPrimarySlug returns the registry slug that best labels a build for the
+// rollback UI. A build's manifest lists every member; the base (tinycld) is the
+// least informative, so prefer any non-base member, falling back to "core".
+func rebuildPrimarySlug(m RebuildManifest) string {
+	for _, ms := range m.Members {
+		if ms.Slug != baseMemberSlug {
+			return ms.Slug
+		}
+	}
+	return baseRegistrySlug
+}
+
+func rebuildPrimaryVersion(m RebuildManifest) string {
+	for _, ms := range m.Members {
+		if ms.Slug != baseMemberSlug {
+			return ms.Version
+		}
+	}
+	if ms, ok := m.MemberBySlug(baseMemberSlug); ok {
+		return ms.Version
+	}
+	return ""
 }
 
 // The base platform is the `tinycld` workspace member, but its pkg_registry row
