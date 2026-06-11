@@ -721,13 +721,31 @@ func finalizeVersionChange(
 	}
 	*rollbackStack = append(*rollbackStack, func() { os.RemoveAll(stageDest) })
 
+	// Build identity, computed before the native export so the per-platform
+	// bundle ids (build-<ts>-<platform>) share this build's timestamp.
+	buildID := fmt.Sprintf("build-%d", time.Now().UnixMilli())
+
+	// Native (ios/android) OTA bundles — mirror the install pipeline so a version
+	// change offers mobile clients a fresh bundle too (not just web). Skipped
+	// (nil, no error) when the RN toolchain is absent.
+	runtimeVersion := appVersionFromManifest(appDir)
+	nativeBundles, err := exportNativeBundles(job, appDir, buildID, runtimeVersion)
+	if err != nil {
+		return fmt.Errorf("native export: %w", err)
+	}
+	if len(nativeBundles) > 0 {
+		if err := stageNativeBundlesIntoRelease(stageDest, nativeBundles); err != nil {
+			return fmt.Errorf("stage native bundles: %w", err)
+		}
+		cleanupNativeExportDirs(nativeBundles)
+	}
+
 	// Update the registry version + spec, and archive a new build snapshot.
 	manifestJSON, _ := json.Marshal(manifest.RawJSON)
 	if err := upsertPkgRegistry(app, manifest, targetSpec, manifestJSON); err != nil {
 		return fmt.Errorf("registry update: %w", err)
 	}
 
-	buildID := fmt.Sprintf("build-%d", time.Now().UnixMilli())
 	releaseID := filepath.Base(stageDest)
 	// migration_files / migrations_applied feed whole-image build revert's
 	// count-based `migrate down N` and tail check, so they must record only what
