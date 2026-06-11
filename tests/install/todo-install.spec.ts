@@ -433,12 +433,20 @@ async function waitForExpoUpdate(
         }
         if (res) {
             if (res.status() === 200) {
-                const m = (await res.json()) as {
-                    id?: string
-                    bundleHash?: string
-                    bundleUrl?: string
+                // Tolerate a transient SPA-HTML 200 during the post-restart
+                // window (the catch-all can briefly answer /api/ with app.html
+                // before the route is wired); retry rather than throw on json().
+                let m: { id?: string; bundleHash?: string; bundleUrl?: string } | null = null
+                try {
+                    m = (await res.json()) as {
+                        id?: string
+                        bundleHash?: string
+                        bundleUrl?: string
+                    }
+                } catch {
+                    m = null
                 }
-                if (m.id)
+                if (m?.id)
                     return {
                         id: m.id,
                         bundleHash: m.bundleHash ?? '',
