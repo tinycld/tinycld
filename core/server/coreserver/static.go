@@ -94,7 +94,15 @@ func StaticWithFallback(dir string, fallbackFile string) func(*core.RequestEvent
 			return e.FileFS(fs, indexPath)
 		}
 
-		if fallbackFile != "" {
+		// Never serve the SPA HTML fallback for API paths. This catch-all is
+		// registered after PocketBase's own /api/* routes, so it only sees an
+		// /api/ request when that route isn't (yet) registered — e.g. during the
+		// post-restart boot window after a package swap, before the collection
+		// routes are wired. Returning app.html there hands API clients
+		// "<!DOCTYPE …" with a 200, which a JSON parse then chokes on
+		// ("Unexpected token '<'"). A JSON 404 lets clients see "not ready" and
+		// retry instead of mis-parsing HTML as JSON.
+		if fallbackFile != "" && !strings.HasPrefix("/"+path, "/api/") {
 			return e.FileFS(fs, fallbackFile)
 		}
 
