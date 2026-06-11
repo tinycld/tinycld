@@ -122,6 +122,35 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
         setInstallJobId(jobId)
     }, [])
 
+    // Install/uninstall and apply (upgrade/downgrade) each start a background job,
+    // but only ONE runs at a time (server single-flight). Collapse both sources
+    // into a single active descriptor so the progress panel renders in ONE place
+    // with the handlers appropriate to whichever started it — previously two
+    // separate panels (one above the list, one below) made the position flip
+    // between install and upgrade.
+    const activeProgress = installJobId
+        ? {
+              jobId: installJobId,
+              onClose: () => {
+                  setInstallJobId(null)
+                  fetchPackages()
+              },
+              onComplete: fetchPackages,
+          }
+        : vm.applyJobId
+          ? {
+                jobId: vm.applyJobId,
+                onClose: () => {
+                    vm.onApplyComplete()
+                    fetchPackages()
+                },
+                onComplete: () => {
+                    vm.refresh()
+                    fetchPackages()
+                },
+            }
+          : null
+
     return (
         <View className="gap-6">
             <PageHeader
@@ -149,14 +178,11 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
             />
 
             <InstallProgressModal
-                isVisible={installJobId !== null}
-                jobId={installJobId}
+                isVisible={activeProgress !== null}
+                jobId={activeProgress?.jobId ?? null}
                 authToken={pb.authStore.token}
-                onClose={() => {
-                    setInstallJobId(null)
-                    fetchPackages()
-                }}
-                onComplete={fetchPackages}
+                onClose={() => activeProgress?.onClose()}
+                onComplete={() => activeProgress?.onComplete()}
             />
 
             <RegisterPackageModal
@@ -211,20 +237,6 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
                 onConfirm={async () => {
                     await vm.applyChanges()
                     setConfirmOpen(false)
-                }}
-            />
-
-            <InstallProgressModal
-                isVisible={vm.applyJobId !== null}
-                jobId={vm.applyJobId}
-                authToken={pb.authStore.token}
-                onClose={() => {
-                    vm.onApplyComplete()
-                    fetchPackages()
-                }}
-                onComplete={() => {
-                    vm.refresh()
-                    fetchPackages()
                 }}
             />
         </View>
