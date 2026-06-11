@@ -2,6 +2,7 @@ package coreserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,11 +63,43 @@ func TestAssembleBuild_FetchesAllAndScaffolds(t *testing.T) {
 		fetched = append(fetched, ms.Slug)
 		return os.MkdirAll(filepath.Join(dir, ms.Slug), 0o755)
 	}
-	if err := assembleBuildWith(manifest, build, fakeFetch); err != nil {
+	failCopy := func(ms MemberSpec, dir string) error {
+		return fmt.Errorf("copy should not be called when no member is FromCurrent")
+	}
+	if err := assembleBuildWith(manifest, build, fakeFetch, failCopy); err != nil {
 		t.Fatal(err)
 	}
 	if len(fetched) != 2 {
 		t.Fatalf("expected 2 fetches, got %v", fetched)
+	}
+}
+
+func TestAssembleBuild_CopiesFromCurrentVsFetch(t *testing.T) {
+	build := t.TempDir()
+	manifest := RebuildManifest{
+		BuildID: "build-2",
+		Members: []MemberSpec{
+			{Slug: "tinycld", Spec: "github:tinycld/tinycld", FromCurrent: true}, // unchanged → copy
+			{Slug: "mail", Spec: "@tinycld/mail@2"},                              // changed → fetch
+		},
+	}
+	var fetched, copied []string
+	fakeFetch := func(ms MemberSpec, dir string) error {
+		fetched = append(fetched, ms.Slug)
+		return os.MkdirAll(filepath.Join(dir, ms.Slug), 0o755)
+	}
+	fakeCopy := func(ms MemberSpec, dir string) error {
+		copied = append(copied, ms.Slug)
+		return os.MkdirAll(filepath.Join(dir, ms.Slug), 0o755)
+	}
+	if err := assembleBuildWith(manifest, build, fakeFetch, fakeCopy); err != nil {
+		t.Fatal(err)
+	}
+	if len(fetched) != 1 || fetched[0] != "mail" {
+		t.Fatalf("expected only mail fetched, got %v", fetched)
+	}
+	if len(copied) != 1 || copied[0] != "tinycld" {
+		t.Fatalf("expected only tinycld copied from current, got %v", copied)
 	}
 	if _, err := os.Stat(filepath.Join(build, "manifest.json")); err != nil {
 		t.Fatalf("manifest.json not written: %v", err)

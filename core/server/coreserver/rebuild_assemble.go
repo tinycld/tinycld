@@ -136,14 +136,39 @@ func fetchMemberWith(ms MemberSpec, buildDir string, pack packFn) error {
 // fetchFn fetches one member into buildDir. Injectable for tests.
 type fetchFn func(ms MemberSpec, buildDir string) error
 
-// assembleBuild writes the manifest, fetches every member by spec, and writes
+// assembleBuild writes the manifest, materializes every member (fetching the
+// changed ones, copying the unchanged ones from the active build), and writes
 // the workspace scaffold into buildDir. After this the build dir is a complete
 // pre-install workspace; runBuildPipeline turns it into a runnable one.
 func assembleBuild(m RebuildManifest, buildDir string) error {
-	return assembleBuildWith(m, buildDir, fetchMember)
+	return assembleBuildWith(m, buildDir, fetchMember, copyMemberFromCurrent)
 }
 
-func assembleBuildWith(m RebuildManifest, buildDir string, fetch fetchFn) error {
+// copyMemberFn materializes a FromCurrent member by copying it out of the
+// currently-active build. Injectable for tests.
+type copyMemberFn func(ms MemberSpec, buildDir string) error
+
+// copyMemberFromCurrent copies an unchanged member from the live build's
+// workspace root (the parent of resolveServerDir(), i.e. /workspace/current/..)
+// into buildDir. This keeps unchanged members byte-identical to what's running
+// instead of re-fetching (which could drift their spec below the running
+// version and drop migrations the running build ships).
+func copyMemberFromCurrent(ms MemberSpec, buildDir string) error {
+	src := filepath.Join(currentWorkspaceRoot(), ms.Slug)
+	if _, err := os.Stat(src); err != nil {
+		// The current build doesn't carry this member (shouldn't happen for an
+		// unchanged member). Surface it rather than silently producing a broken
+		// build — the caller fails the rebuild.
+		return fmt.Errorf("current build missing member %q at %s: %w", ms.Slug, src, err)
+	}
+	dest := filepath.Join(buildDir, ms.Slug)
+	if err := os.RemoveAll(dest); err != nil {
+		return err
+	}
+	return copyDir(src, dest)
+}
+
+func assembleBuildWith(m RebuildManifest, buildDir string, fetch fetchFn, copyCurrent copyMemberFn) error {
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
 		return err
 	}
@@ -157,7 +182,11 @@ func assembleBuildWith(m RebuildManifest, buildDir string, fetch fetchFn) error 
 	}
 	members := make([]string, 0, len(m.Members))
 	for _, ms := range m.Members {
-		if err := fetch(ms, buildDir); err != nil {
+		if ms.FromCurrent {
+			if err := copyCurrent(ms, buildDir); err != nil {
+				return fmt.Errorf("copy %s from current: %w", ms.Slug, err)
+			}
+		} else if err := fetch(ms, buildDir); err != nil {
 			return fmt.Errorf("fetch %s: %w", ms.Slug, err)
 		}
 		members = append(members, ms.Slug)

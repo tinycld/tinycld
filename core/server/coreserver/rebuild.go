@@ -15,12 +15,19 @@ import (
 // MemberSpec describes one workspace member to assemble into a build.
 // Spec is the fetch spec passed to `npm pack` — an npm name+range
 // (@tinycld/mail@0.3.1), a git URL (git+https://…#tag), or a local
-// git+file:// remote (used by the integration test). Every member,
-// including the tinycld app shell + core, is fetched this way.
+// git+file:// remote (used by the integration test).
+//
+// FromCurrent marks a member that should be COPIED from the currently-active
+// build rather than re-fetched. Only the member(s) a delta actually changes are
+// fetched fresh; everything else is copied from the live build so an install of
+// one package can't silently re-resolve another member's spec to a drifted
+// remote state (e.g. re-fetching the tinycld base from github HEAD, which may be
+// behind the running base — and would drop migrations the running base ships).
 type MemberSpec struct {
-	Slug    string `json:"slug"`
-	Version string `json:"version"`
-	Spec    string `json:"spec"`
+	Slug        string `json:"slug"`
+	Version     string `json:"version"`
+	Spec        string `json:"spec"`
+	FromCurrent bool   `json:"fromCurrent,omitempty"`
 }
 
 // RebuildManifest is the complete desired package set for one build. It is
@@ -419,11 +426,16 @@ func desiredSet(buildID string, current []MemberSpec, d setDelta) RebuildManifes
 			case "uninstall":
 				continue // drop it
 			case "install", "version":
+				// The changed member is fetched fresh (FromCurrent stays false).
 				out = append(out, MemberSpec{Slug: d.slug, Version: d.version, Spec: d.spec})
 				replaced = true
 				continue
 			}
 		}
+		// Unchanged members are copied from the currently-active build, NOT
+		// re-fetched — re-resolving their spec could drift them (e.g. the tinycld
+		// base from github HEAD) below the running version.
+		ms.FromCurrent = true
 		out = append(out, ms)
 	}
 	if !replaced && (d.op == "install" || d.op == "version") {
