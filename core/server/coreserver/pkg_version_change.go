@@ -759,7 +759,7 @@ func finalizeVersionChange(
 		"build_id":            buildID,
 		"pkg_slug":            change.Slug,
 		"npm_package":         targetSpec,
-		"version":             change.TargetVersion,
+		"version":             manifest.Version,
 		"action":              "install",
 		"binary_archived":     manifest.HasServer,
 		"release_id":          releaseID,
