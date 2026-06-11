@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -19,7 +18,6 @@ import (
 // recorded in the pkg_build collection. See app/docs/live-install.md.
 
 // buildsDirName is the per-build archive root under appDir.
-const buildsDirName = "builds"
 
 // buildArchive captures the on-disk paths for one build's archive.
 type buildArchive struct {
@@ -63,137 +61,6 @@ func appliedMigrationFiles(app core.App) ([]string, error) {
 		return nil, fmt.Errorf("query _migrations: %w", err)
 	}
 	return files, nil
-}
-
-// newMigrationFiles returns the entries in after that are not in before — the
-// migrations applied between the two snapshots. Order follows after (newest
-// first).
-func newMigrationFiles(before, after []string) []string {
-	seen := make(map[string]bool, len(before))
-	for _, f := range before {
-		seen[f] = true
-	}
-	out := make([]string, 0)
-	for _, f := range after {
-		if !seen[f] {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
-// archiveBuild copies the now-live binary (server packages) and the staged web
-// bundle into <appDir>/builds/<build_id>/ and writes build.json. stageDir is the
-// release-staging/<id> directory produced by stageRelease. Returns the archive
-// and a cleanup func for the install pipeline's rollback stack.
-func archiveBuild(appDir, buildID, stageDir string, hasServer bool, meta map[string]any) (buildArchive, func(), error) {
-	arch := buildArchiveFor(appDir, buildID)
-	if err := os.MkdirAll(arch.root, 0o755); err != nil {
-		return arch, nil, fmt.Errorf("create build dir: %w", err)
-	}
-	cleanup := func() {
-		os.RemoveAll(arch.root)
-		log.Printf("pkg_build: rollback — removed archive %s", buildID)
-	}
-
-	if hasServer {
-		// Copy (not move) the live binary so the running server keeps its file.
-		if _, err := runCmd(".", "cp", "-a", filepath.Join(appDir, binaryName), arch.binary); err != nil {
-			cleanup()
-			return arch, nil, fmt.Errorf("archive binary: %w", err)
-		}
-	}
-
-	// Copy the staged release bundle (app.html + assets + release-id.txt). The
-	// staged dir is still on disk here — the entrypoint only consumes it on the
-	// next boot — so a copy is safe and leaves the original for promotion.
-	if err := copyDir(stageDir, arch.release); err != nil {
-		cleanup()
-		return arch, nil, fmt.Errorf("archive release: %w", err)
-	}
-
-	// Archive this build's owned migration FILES so a future forward revert (one
-	// whose schema is AHEAD of the live state, e.g. reverting back up after a
-	// downgrade tore the package's migrations off disk) can restore them and
-	// re-apply. The on-disk server/pb_migrations entries are symlinks the generator
-	// re-points on every regen — after a downgrade they no longer include this
-	// build's newer files — so capturing the resolved file contents here is the
-	// only durable record. pkg_migration_files is the package's FULL target set at
-	// this build, which is exactly what reproduces this build's schema.
-	if err := archiveBuildMigrations(appDir, arch, migrationBasenames(meta)); err != nil {
-		cleanup()
-		return arch, nil, err
-	}
-
-	// build.json is an advisory mirror of the pkg_build record for offline
-	// inspection — the DB record is the source of truth — so a marshal error on
-	// this flat string/number/[]string map (which can't realistically fail) is
-	// ignored; the write error is not.
-	metaJSON, _ := json.MarshalIndent(meta, "", "  ")
-	if err := os.WriteFile(filepath.Join(arch.root, "build.json"), metaJSON, 0o644); err != nil {
-		cleanup()
-		return arch, nil, fmt.Errorf("write build.json: %w", err)
-	}
-
-	return arch, cleanup, nil
-}
-
-// migrationBasenames extracts the build's package migration file set from the
-// build meta. finalizeVersionChange / the install pipeline build meta in-memory,
-// so "pkg_migration_files" is a []string here; tolerate []any too (e.g. a JSON
-// round-trip) so a future caller can't silently lose the set. A missing or
-// wrong-typed value yields an empty set — archiveBuildMigrations then copies
-// nothing, which only weakens a forward revert TO this build, never the current op.
-func migrationBasenames(meta map[string]any) []string {
-	raw, ok := meta["pkg_migration_files"]
-	if !ok {
-		return nil
-	}
-	switch v := raw.(type) {
-	case []string:
-		return v
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if s, ok := item.(string); ok {
-				out = append(out, s)
-			}
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-// archiveBuildMigrations copies each named migration file from the live
-// server/pb_migrations dir (resolving the generator's symlinks to the real file)
-// into the build archive's pb_migrations/ subdir. It is defensive: a basename
-// missing from server/pb_migrations is logged and skipped rather than failing the
-// archive (an archive missing one migration only breaks a forward revert to it,
-// not the in-progress install/version-change). With no basenames it does nothing.
-func archiveBuildMigrations(appDir string, arch buildArchive, basenames []string) error {
-	if len(basenames) == 0 {
-		return nil
-	}
-	if err := os.MkdirAll(arch.migrations, 0o755); err != nil {
-		return fmt.Errorf("archive migrations: mkdir: %w", err)
-	}
-	srcDir := filepath.Join(appDir, "server", "pb_migrations")
-	for _, name := range basenames {
-		src := filepath.Join(srcDir, name)
-		if _, err := os.Stat(src); err != nil {
-			// os.Stat follows symlinks; a missing target (broken/absent link) lands
-			// here. Don't fail — just record that this build's archive is incomplete.
-			log.Printf("pkg_build: archive migrations — %s absent in server/pb_migrations, skipping", name)
-			continue
-		}
-		// cp -aL dereferences the symlink and copies the real file contents, so the
-		// archive holds a standalone copy that survives later generator regens.
-		if _, err := runCmd(".", "cp", "-aL", src, filepath.Join(arch.migrations, name)); err != nil {
-			return fmt.Errorf("archive migration %s: %w", name, err)
-		}
-	}
-	return nil
 }
 
 // ---------- pkg_build record helpers ----------
@@ -246,16 +113,6 @@ func recordBuild(app core.App, fields map[string]any) (*core.Record, error) {
 // siblings; the only residual ambiguity is a same-millisecond build that is
 // actually *older*, which can't happen here (installs are an operator action
 // seconds-to-minutes apart, and build_id embeds a monotonic UnixMilli).
-func buildsNewerThan(app core.App, target *core.Record) ([]*core.Record, error) {
-	return app.FindRecordsByFilter(
-		"pkg_build",
-		"created >= {:ts} && id != {:id}",
-		"-created",
-		0,
-		0,
-		dbx.Params{"ts": target.GetString("created"), "id": target.Id},
-	)
-}
 
 // ---------- base build (initial deploy) ----------
 

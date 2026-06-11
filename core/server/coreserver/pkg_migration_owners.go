@@ -54,11 +54,6 @@ func loadMigrationOwners() map[string]string {
 // resetMigrationOwnersCache forces the next loadMigrationOwners to re-read the
 // owner map from disk. Called after the generator rewrites it during a version
 // change so subsequent migrationsForPackage lookups reflect the new file set.
-func resetMigrationOwnersCache() {
-	migrationOwnersMu.Lock()
-	migrationOwnersLoaded = false
-	migrationOwnersMu.Unlock()
-}
 
 // parseMigrationOwners decodes the file→slug JSON, returning ok=false on invalid
 // JSON. Pure (no I/O) so the query helpers can be exercised in tests.
@@ -113,9 +108,6 @@ func findMigrationOwnersJSON() string {
 
 // packageForMigration returns the owning package slug for a migration filename,
 // or "" if unknown.
-func packageForMigration(file string) string {
-	return loadMigrationOwners()[file]
-}
 
 // migrationsForPackage returns the migration filenames owned by the given slug,
 // sorted ascending (timestamp order). Empty if the slug owns none or the map is

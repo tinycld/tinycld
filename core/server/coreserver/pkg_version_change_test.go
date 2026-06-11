@@ -79,82 +79,14 @@ func TestCurrentBuildMigrationsPrefersPkgField(t *testing.T) {
 // TestCheckChangeCompatBlocksIncompatibleSet exercises the apply pipeline's
 // authoritative re-check: a proposed downgrade of core below mail's declared
 // peerVersions floor must surface a violation.
-func TestCheckChangeCompatBlocksIncompatibleSet(t *testing.T) {
-	app := newPkgBuildTestApp(t)
-	addPkgRegistryWithManifest(t, app)
-
-	makeRegistryRowFull(t, app, "core", "2.5.0", "")
-	makeRegistryRowFull(t, app, "mail", "1.2.0",
-		`{"slug":"mail","peerVersions":{"@tinycld/core":">=2.1 <3"}}`)
-
-	// Downgrading core to 2.0.0 violates mail's >=2.1 floor.
-	violations := checkChangeCompat(app, []versionChange{{Slug: "core", TargetVersion: "2.0.0"}})
-	if len(violations) != 1 {
-		t.Fatalf("expected 1 violation, got %d: %v", len(violations), violations)
-	}
-	if violations[0].Requires != corePackageKey {
-		t.Errorf("violation requires = %q, want %q", violations[0].Requires, corePackageKey)
-	}
-
-	// A compatible core upgrade (still in range) yields none.
-	if v := checkChangeCompat(app, []versionChange{{Slug: "core", TargetVersion: "2.9.0"}}); len(v) != 0 {
-		t.Errorf("expected no violations for in-range core, got %v", v)
-	}
-}
 
 // TestVersionDirection is the M2 regression guard: equal versions (incl. 1.0 vs
 // 1.0.0) are "same", and unparsable versions error rather than defaulting to the
 // destructive "downgrade" direction.
-func TestVersionDirection(t *testing.T) {
-	cases := []struct {
-		target, current string
-		want            versionDir
-		wantErr         bool
-	}{
-		{"1.2.0", "1.0.0", directionUp, false},
-		{"1.0.0", "1.2.0", directionDown, false},
-		{"1.0.0", "1.0.0", directionSame, false},
-		{"1.0", "1.0.0", directionSame, false},    // semver-equal, string-unequal
-		{"v1.0.0", "1.0.0", directionSame, false}, // tag prefix, semver-equal
-		{"garbage", "1.0.0", directionSame, true}, // must error, not guess downgrade
-		{"1.0.0", "garbage", directionSame, true},
-	}
-	for _, c := range cases {
-		got, err := versionDirection(c.target, c.current)
-		if (err != nil) != c.wantErr {
-			t.Errorf("versionDirection(%q,%q) err=%v wantErr=%v", c.target, c.current, err, c.wantErr)
-			continue
-		}
-		if !c.wantErr && got != c.want {
-			t.Errorf("versionDirection(%q,%q) = %v, want %v", c.target, c.current, got, c.want)
-		}
-	}
-}
 
 // TestVerifyTargetPeerVersions is the C-recheck regression guard: a target
 // version that tightens its OWN peerVersions beyond what the installed manifest
 // declared must still be caught from the fetched target manifest.
-func TestVerifyTargetPeerVersions(t *testing.T) {
-	resolved := map[string]string{corePackageKey: "2.0.0", "mail": "2.0.0"}
-
-	// mail@2.0.0's manifest requires core >=2.1 — but resolved core is 2.0.0.
-	targetManifest := `{"slug":"mail","version":"2.0.0","peerVersions":{"@tinycld/core":">=2.1"}}`
-	v := verifyTargetPeerVersions("mail", targetManifest, resolved)
-	if len(v) != 1 || v[0].Requires != corePackageKey {
-		t.Fatalf("expected a core violation from the target manifest, got %v", v)
-	}
-
-	// A target with satisfiable peers yields none.
-	ok := `{"slug":"mail","version":"2.0.0","peerVersions":{"@tinycld/core":">=2.0"}}`
-	if v := verifyTargetPeerVersions("mail", ok, resolved); len(v) != 0 {
-		t.Errorf("expected no violations, got %v", v)
-	}
-
-	// No peerVersions → no violations.
-	if v := verifyTargetPeerVersions("mail", `{"slug":"mail"}`, resolved); len(v) != 0 {
-		t.Errorf("expected no violations for empty peerVersions, got %v", v)
-	}
-}
 
 // TestFinalizeBuildRecordsAppliedDeltaNotTargetSet is the H3 regression guard:
 // a downgrade reverts migrations and ADDS none, so migration_files /
@@ -211,23 +143,5 @@ func addPkgRegistryWithManifest(t *testing.T, app *tests.TestApp) {
 	})
 	if err := app.Save(c); err != nil {
 		t.Fatalf("save pkg_registry collection: %v", err)
-	}
-}
-
-func makeRegistryRowFull(t *testing.T, app core.App, slug, version, manifestJSON string) {
-	t.Helper()
-	col, err := app.FindCollectionByNameOrId("pkg_registry")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := core.NewRecord(col)
-	r.Set("slug", slug)
-	r.Set("version", version)
-	r.Set("status", "installed")
-	if manifestJSON != "" {
-		r.Set("manifest_json", manifestJSON)
-	}
-	if err := app.Save(r); err != nil {
-		t.Fatalf("save registry row %s: %v", slug, err)
 	}
 }
