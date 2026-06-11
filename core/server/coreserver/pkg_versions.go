@@ -153,13 +153,13 @@ func listNpmVersions(name string) ([]string, error) {
 // Shells out to `git ls-remote --tags <remote>` and keeps tags that parse as
 // semver (with or without a leading v), normalized to the bare version.
 func listGitTagVersions(remote string) ([]string, error) {
-	// -c safe.directory=* disables git's same-owner check. We run as the
-	// unprivileged runtime user, but a local file:// remote (a self-hosted or
-	// air-gapped base, or the integration test's provisioned bare repo) may be
-	// owned by a different user — git then refuses with "detected dubious
-	// ownership" (exit 128). These are server-internal reads of a trusted remote,
-	// so trusting the dir is safe.
-	out, err := runCmd(".", "git", "-c", "safe.directory=*", "ls-remote", "--tags", "--refs", gitRemoteURL(remote))
+	// A local file:// remote (self-hosted/air-gapped base, or the integration
+	// test's provisioned bare repo) may be owned by a different user than the
+	// runtime user, so git would refuse with "detected dubious ownership". The
+	// entrypoint writes `safe.directory=*` to the runtime user's GLOBAL git
+	// config to allow it — git honors the wildcard ONLY from a config file, not
+	// from `-c`/GIT_CONFIG_* env, so it can't be set here on the command line.
+	out, err := runCmd(".", "git", "ls-remote", "--tags", "--refs", gitRemoteURL(remote))
 	if err != nil {
 		return nil, errFromCmd("git ls-remote", out, err)
 	}

@@ -18,12 +18,21 @@ export TINYCLD_STATE_DIR=/workspace
 # A local file:// remote (a self-hosted/air-gapped base, or the integration
 # test's provisioned bare repo) can be owned by a different user, which makes git
 # refuse with "detected dubious ownership" (exit 128). These are server-internal
-# reads of a trusted, operator-configured remote, so trust the dirs globally.
-# GIT_CONFIG_* writes to a process-local config so we don't depend on a writable
-# HOME or a persisted ~/.gitconfig.
-export GIT_CONFIG_COUNT=1
-export GIT_CONFIG_KEY_0=safe.directory
-export GIT_CONFIG_VALUE_0='*'
+# reads of a trusted, operator-configured remote.
+#
+# IMPORTANT: git honors `safe.directory=*` (the wildcard) ONLY from a config
+# FILE — NOT from `-c safe.directory=*` or the GIT_CONFIG_* env vars (a
+# deliberate git restriction so the wildcard can't be injected via the
+# command line / environment). So we must WRITE it to the runtime user's global
+# config. HOME is /workspace (writable by tinycld); run the config write as that
+# user so the file is owned by and read by the git processes the server spawns.
+seed_git_safe_directory() {
+    if [ "$(id -u)" = "0" ]; then
+        gosu "$RUN_AS" git config --global --add safe.directory '*' 2>/dev/null || true
+    else
+        git config --global --add safe.directory '*' 2>/dev/null || true
+    fi
+}
 
 # The runnable code tree lives at /workspace/current → /workspace/builds/<id>/tinycld.
 # The image bakes a pristine first build at /opt/tinycld-baked (an UNMOUNTED path so a
@@ -145,6 +154,7 @@ run_tinycld() {
 }
 
 fix_data_dir_ownership
+seed_git_safe_directory
 seed_baked_build
 
 # Promote the staged release to /workspace/tinycld/releases/. Runs on every
