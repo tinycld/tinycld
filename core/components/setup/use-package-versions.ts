@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import type PocketBase from 'pocketbase'
@@ -49,8 +50,6 @@ async function adminFetch<T>(pb: PocketBase, path: string, init?: RequestInit): 
 // firing the discovery — which shells out to `git ls-remote` server-side — until
 // it's actually needed.
 export function usePackageVersions(pb: PocketBase, enabled = true) {
-    const [versions, setVersions] = useState<PackageVersionInfo[]>([])
-    const [isLoading, setIsLoading] = useState(true)
     // Staged version targets live in a store so the row selects, the apply
     // footer, and the per-row "staged" lock all share one source of truth.
     const targets = useVersionStagingStore(s => s.targets)
@@ -61,26 +60,24 @@ export function usePackageVersions(pb: PocketBase, enabled = true) {
     const [isChecking, setIsChecking] = useState(false)
     const [applyJobId, setApplyJobId] = useState<string | null>(null)
 
-    // Only fetches `/versions` (the per-package discovery, which shells out to
-    // `git ls-remote` server-side). The merged Packages screen owns the
-    // pkg_registry list, so this hook no longer reads that collection — which
-    // also removes the same-collection auto-cancel race that two simultaneous
-    // pkg_registry reads caused.
-    const fetchVersions = useCallback(async () => {
-        setIsLoading(true)
-        try {
+    // `/versions` is the per-package discovery (shells out to `git ls-remote`
+    // server-side), so it's a useQuery read keyed off nothing but the tab. The
+    // merged Packages screen owns the pkg_registry list, so this hook no longer
+    // reads that collection. enabled gates the fetch on the Packages tab being
+    // shown (the dashboard keeps every tab mounted) — deferring the costly
+    // discovery until it's needed. refetch() re-runs it after an apply completes.
+    const {
+        data: versions = [],
+        isLoading,
+        refetch: refetchVersions,
+    } = useQuery({
+        queryKey: ['admin', 'package-versions'],
+        queryFn: async (): Promise<PackageVersionInfo[]> => {
             const vers = await adminFetch<{ packages: PackageVersionInfo[] }>(pb, '/versions')
-            setVersions(vers.packages)
-        } catch (err) {
-            captureException('versions.fetch', err)
-        } finally {
-            setIsLoading(false)
-        }
-    }, [pb])
-
-    useEffect(() => {
-        if (enabled) fetchVersions()
-    }, [enabled, fetchVersions])
+            return vers.packages
+        },
+        enabled,
+    })
 
     const currentBySlug = useMemo(
         () => Object.fromEntries(versions.map(v => [v.slug, v.current])),
@@ -175,8 +172,8 @@ export function usePackageVersions(pb: PocketBase, enabled = true) {
     const onApplyComplete = useCallback(() => {
         setApplyJobId(null)
         clearSelection()
-        fetchVersions()
-    }, [clearSelection, fetchVersions])
+        refetchVersions()
+    }, [clearSelection, refetchVersions])
 
     return {
         versions,
@@ -194,6 +191,6 @@ export function usePackageVersions(pb: PocketBase, enabled = true) {
         applyChanges,
         applyJobId,
         onApplyComplete,
-        refresh: fetchVersions,
+        refresh: refetchVersions,
     }
 }

@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 import { DragHandle } from '@tinycld/core/components/DragHandle'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
@@ -21,7 +22,7 @@ import {
     X,
 } from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
     ActivityIndicator,
     Pressable,
@@ -82,8 +83,6 @@ interface PackageManagerProps {
 }
 
 export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
-    const [packages, setPackages] = useState<PkgRecord[]>([])
-    const [isLoading, setIsLoading] = useState(true)
     const [showRegister, setShowRegister] = useState(false)
     const [showInstall, setShowInstall] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
@@ -95,23 +94,20 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     const vm = usePackageVersions(pb, isVisible)
     const versionBySlug = new Map(vm.versions.map(v => [v.slug, v]))
 
-    const fetchPackages = useCallback(async () => {
-        setIsLoading(true)
-        try {
-            const records = await pb
-                .collection('pkg_registry')
-                .getFullList<PkgRecord>({ sort: 'nav_order,name' })
-            setPackages(records)
-        } catch (err) {
-            captureException('Failed to fetch packages', err)
-        } finally {
-            setIsLoading(false)
-        }
-    }, [pb])
-
-    useEffect(() => {
-        fetchPackages()
-    }, [fetchPackages])
+    // The setup console is a raw-pb surface (not the org-scoped pbtsdb store the
+    // app uses), so the registry list is a useQuery read rather than a live
+    // collection query. refetch() (aliased fetchPackages) is invoked after every
+    // mutation — install/uninstall/apply completion, register, edit, reorder.
+    const {
+        data: packages = [],
+        isLoading,
+        isError,
+        refetch: fetchPackages,
+    } = useQuery({
+        queryKey: ['admin', 'pkg-registry'],
+        queryFn: () =>
+            pb.collection('pkg_registry').getFullList<PkgRecord>({ sort: 'nav_order,name' }),
+    })
 
     const handleInstallStarted = useCallback((jobId: string) => {
         setShowInstall(false)
@@ -208,6 +204,7 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
                     <PackageList
                         packages={packages}
                         isLoading={isLoading}
+                        isError={isError}
                         pb={pb}
                         editingId={editingId}
                         onEdit={setEditingId}
@@ -246,6 +243,7 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
 function PackageList({
     packages,
     isLoading,
+    isError,
     pb,
     editingId,
     onEdit,
@@ -257,6 +255,7 @@ function PackageList({
 }: {
     packages: PkgRecord[]
     isLoading: boolean
+    isError: boolean
     pb: PocketBase
     editingId: string | null
     onEdit: (id: string | null) => void
@@ -387,6 +386,19 @@ function PackageList({
         return (
             <View className="p-8 items-center">
                 <ActivityIndicator size="large" color={mutedColor} />
+            </View>
+        )
+    }
+
+    // A failed load must not read as "no packages installed" on the package-
+    // management screen — that would look like the packages vanished.
+    if (isError) {
+        return (
+            <View className="p-8 items-center gap-2">
+                <CircleX size={32} color={`${mutedColor}60`} />
+                <Text className="text-danger" style={{ fontSize: 15 }}>
+                    Couldn't load packages. Check your connection and try again.
+                </Text>
             </View>
         )
     }
