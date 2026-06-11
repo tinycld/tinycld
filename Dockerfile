@@ -35,15 +35,19 @@
 # tinycld/server/ with `replace tinycld.org/core => ../core/server` and a
 # generated go.work wiring each feature's ../../<x>/server.
 #
-# RUNTIME LAYOUT (mirrors the source tree so the in-app installer's runtime
-# `pnpm install` + generator + `go build` behave exactly like dev):
-#   /workspace/                 wsRoot — root manifests, node_modules, scripts/,
-#                               tinycld.packages.ts, feature siblings
-#   /workspace/tinycld/         appDir = the binary's dir (resolveServerDir());
-#                               the `tinycld` binary, scripts/, lib/, app/, configs,
-#                               pb_data, releases/, server/ (goSrcDir = appDir/server)
-#   /workspace/tinycld/core/    @tinycld/core; core/types written here at boot
-#   /workspace/<feature>/       feature siblings (mail, calc, …)
+# RUNTIME LAYOUT (rebuild-from-scratch model). The image bakes a PRISTINE first
+# build at /opt/tinycld-baked; the entrypoint copies it to a build dir at first
+# boot. Each build dir is a complete workspace; the `current` symlink selects the
+# live one. Mutable state lives at /workspace, OUTSIDE the swapped build tree.
+#   /opt/tinycld-baked/         pristine baked workspace (root manifests,
+#                               node_modules, feature siblings, tinycld/ member)
+#   /workspace/                 STATE root (resolveStateDir()): pb_data/, releases/,
+#                               builds/, .pnpm-store/, current → builds/<id>/tinycld
+#   /workspace/builds/<id>/     a complete build (a copy of the baked tree or one
+#                               assembled by the in-app rebuild). Its tinycld/ holds
+#                               the binary (resolveServerDir()), server/, lib/, app/.
+#   /workspace/current/         symlink → the active build's tinycld/ (the binary's
+#                               dir; goSrcDir = current/server, core at current/core)
 
 # Pre-builder: compiles the standalone `export-types` Go binary used by the
 # workspace postinstall (see tinycld/scripts/export-types.ts). The binary
@@ -506,13 +510,12 @@ RUN mkdir -p /workspace/pb_data /workspace/releases /workspace/builds \
 COPY tinycld/config/entrypoint.sh /opt/entrypoint.sh
 RUN chmod +x /opt/entrypoint.sh
 
-# Hand the entire workspace tree to the tinycld user with a single build-time
-# chown. Because /workspace is an ordinary subdirectory (not the overlay mount
-# root /), this chown PERSISTS through the layer commit — unlike a chown of /
-# which reverts to root:root. So no runtime chown is needed for workspace paths;
-# only bind-mounted data dirs (/workspace/tinycld/pb_data,
-# /workspace/tinycld/core/types) need fixing at runtime when Docker creates them
-# owned by root.
+# Hand the workspace + baked tree to the tinycld user with a single build-time
+# chown. Because these are ordinary subdirectories (not the overlay mount root /),
+# the chown PERSISTS through the layer commit — unlike a chown of / which reverts
+# to root:root. So no runtime chown is needed for these paths; only bind-mounted
+# data dirs (/workspace/pb_data, /workspace/builds, /workspace/releases) need
+# fixing at runtime when Docker creates them owned by root.
 #
 # Must run BEFORE setcap below — chown strips file capabilities (it resets the
 # security.capability xattr along with ownership), so setcap'ing first then
@@ -537,8 +540,8 @@ RUN setcap 'cap_net_bind_service=+ep' /opt/tinycld-baked/tinycld/tinycld
 EXPOSE 7090 80 443 993 465
 
 # The container starts as root so the entrypoint can fix ownership of the
-# bind-mounted data dirs (/workspace/tinycld/pb_data,
-# /workspace/tinycld/core/types) before the server runs. When a host bind-mount
+# bind-mounted data dirs (/workspace/pb_data, /workspace/builds,
+# /workspace/releases) before the server runs. When a host bind-mount
 # target doesn't exist yet, Docker creates it owned by root; the unprivileged
 # tinycld user then can't open the SQLite DB ("unable to open database file
 # (14)") and the container crash-loops. entrypoint.sh chown's those dirs to
