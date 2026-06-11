@@ -8,7 +8,51 @@ HEALTH_PORT=19876
 # enough to fix bind-mount ownership, then drops to RUN_AS via gosu.
 RUN_AS=tinycld
 
+# Mutable runtime state lives under /workspace (pb_data, releases, builds), OUTSIDE
+# the per-build code tree the `current` symlink swaps. The Go binary reads this via
+# resolveStateDir(); export it so every invocation (serve, health probe) agrees.
+export TINYCLD_STATE_DIR=/workspace
+
+# The runnable code tree lives at /workspace/current → /workspace/builds/<id>/tinycld.
+# The image bakes a pristine first build at /opt/tinycld-baked (an UNMOUNTED path so a
+# bind-mounted /workspace/builds can't shadow it); first boot copies it into builds/
+# and points `current` at it.
+BAKED_BUILD=/opt/tinycld-baked
+CURRENT_LINK=/workspace/current
+
 echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
+
+# Seed the first build on a fresh deployment. When /workspace/current is missing or
+# dangling (first boot, or a bind-mounted empty /workspace/builds), copy the pristine
+# baked build into builds/build-baked and point current at it. Idempotent: a healthy
+# current symlink short-circuits.
+seed_baked_build() {
+    if [ -e "$CURRENT_LINK/tinycld" ]; then
+        return 0
+    fi
+    echo "[entrypoint] no live build; seeding from $BAKED_BUILD"
+    if [ ! -d "$BAKED_BUILD/tinycld" ]; then
+        echo "[entrypoint] ERROR: baked build $BAKED_BUILD missing — image is malformed" >&2
+        exit 1
+    fi
+    dest=/workspace/builds/build-baked
+    mkdir -p /workspace/builds
+    if [ ! -e "$dest/tinycld/tinycld" ]; then
+        rm -rf "$dest.tmp"
+        cp -a "$BAKED_BUILD" "$dest.tmp"
+        rm -rf "$dest"
+        mv "$dest.tmp" "$dest"
+    fi
+    ln -sfn "$dest/tinycld" "$CURRENT_LINK.tmp"
+    mv -T "$CURRENT_LINK.tmp" "$CURRENT_LINK"
+    # The runtime user owns the build tree + symlink so a later in-app rebuild can
+    # write sibling build dirs and atomically re-point current. Only when we're root.
+    if [ "$(id -u)" = "0" ]; then
+        chown -R "$RUN_AS:$RUN_AS" /workspace/builds 2>/dev/null || true
+        chown -h "$RUN_AS:$RUN_AS" "$CURRENT_LINK" 2>/dev/null || true
+    fi
+    echo "[entrypoint] seeded current -> $(readlink "$CURRENT_LINK")"
+}
 
 # Ensure the bind-mounted data directories are writable by the runtime user.
 #
@@ -33,10 +77,9 @@ fix_data_dir_ownership() {
     [ "$(id -u)" = "0" ] || return 0
 
     for dir in \
-        /workspace/tinycld/pb_data \
-        /workspace/tinycld/core/types \
-        /workspace/tinycld/builds \
-        /workspace/tinycld/releases; do
+        /workspace/pb_data \
+        /workspace/builds \
+        /workspace/releases; do
         mkdir -p "$dir"
         # Skip the (potentially large) recursive chown when the top-level dir is
         # already owned correctly — the steady state after first run, so normal
@@ -59,15 +102,19 @@ fix_data_dir_ownership() {
 # This deliberately does NOT exec: the serve loop below inspects the exit code
 # (75 = in-app package-install restart) and the health check runs a copy in the
 # background, so control must return here.
+# The binary runs from the active build's tinycld dir, reached via the `current`
+# symlink. cd there so its relative code/asset lookups (server/, lib/, app/) resolve
+# inside the active build, while pb_data/releases come from TINYCLD_STATE_DIR.
 run_tinycld() {
     if [ "$(id -u)" = "0" ]; then
-        gosu "$RUN_AS" ./tinycld "$@"
+        gosu "$RUN_AS" sh -c 'cd "$0" && exec ./tinycld "$@"' "$CURRENT_LINK" "$@"
     else
-        ./tinycld "$@"
+        ( cd "$CURRENT_LINK" && exec ./tinycld "$@" )
     fi
 }
 
 fix_data_dir_ownership
+seed_baked_build
 
 # Promote the staged release to /workspace/tinycld/releases/. Runs on every
 # container start; idempotent.
@@ -92,8 +139,8 @@ fix_data_dir_ownership
 # old entries. The Go server serves /_expo/static/ and /assets/ from
 # _static/ directly — there is no per-request release lookup.
 promote_release() {
-    staging_dir=/workspace/tinycld/release-staging
-    releases_dir=/workspace/tinycld/releases
+    staging_dir=/workspace/current/release-staging
+    releases_dir=/workspace/releases
     pool_dir="$releases_dir/_static"
 
     echo "[entrypoint] promote_release: staging=$staging_dir releases=$releases_dir"
@@ -344,10 +391,12 @@ while true; do
         # also keeps the binary's cap_net_bind_service), direct otherwise. `exec`
         # so the gosu/tinycld process IS the group leader (no extra sh layer left
         # holding the group open).
+        # The probe runs the NEW build's binary via the (just-flipped) current
+        # symlink, cd'd into it so its relative lookups resolve in the new tree.
         if [ "$(id -u)" = "0" ]; then
-            PROBE_CMD='exec gosu '"$RUN_AS"' ./tinycld serve --http=127.0.0.1:'"${HEALTH_PORT}"
+            PROBE_CMD='cd '"$CURRENT_LINK"' && exec gosu '"$RUN_AS"' ./tinycld serve --http=127.0.0.1:'"${HEALTH_PORT}"
         else
-            PROBE_CMD='exec ./tinycld serve --http=127.0.0.1:'"${HEALTH_PORT}"
+            PROBE_CMD='cd '"$CURRENT_LINK"' && exec ./tinycld serve --http=127.0.0.1:'"${HEALTH_PORT}"
         fi
         setsid sh -c '
             export IMAP_ENABLED=false SMTP_ENABLED=false
@@ -407,10 +456,21 @@ while true; do
             continue
         else
             echo "[entrypoint] Health check failed, attempting rollback"
-            if [ -f ./tinycld.prev ]; then
-                mv ./tinycld ./tinycld.failed
-                mv ./tinycld.prev ./tinycld
-                echo "[entrypoint] Rolled back to previous binary"
+            # The whole build tree swaps via the `current` symlink, so rollback is a
+            # symlink flip back to the previous build dir (recorded by activateBuild in
+            # /workspace/.previous-build) — not a binary mv. The DB was already restored
+            # in-process by the failed rebuild's restore step; here we only revert code.
+            if [ -f /workspace/.previous-build ]; then
+                prev=$(cat /workspace/.previous-build)
+                if [ -d "/workspace/builds/$prev/tinycld" ]; then
+                    ln -sfn "/workspace/builds/$prev/tinycld" "$CURRENT_LINK.tmp"
+                    mv -T "$CURRENT_LINK.tmp" "$CURRENT_LINK"
+                    echo "[entrypoint] Rolled back current -> $prev"
+                else
+                    echo "[entrypoint] WARN: previous build $prev not on disk; cannot roll back symlink" >&2
+                fi
+            else
+                echo "[entrypoint] WARN: no /workspace/.previous-build; cannot roll back" >&2
             fi
             continue
         fi
