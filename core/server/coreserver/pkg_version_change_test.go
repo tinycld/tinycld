@@ -1,12 +1,69 @@
 package coreserver
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 )
+
+// TestTargetMigrationsDirBase is the regression guard for the core drop-report
+// bug: the base/core member ships no root manifest, so resolving its target
+// migrations via parseManifestViaNode failed and the core drop report fell back
+// to dry-reverting the whole core set (and errored → "no data loss"). The base
+// branch must resolve to the fixed nested path and list its migration files
+// without touching a manifest.
+func TestTargetMigrationsDirBase(t *testing.T) {
+	extractDir := t.TempDir()
+	migDir := filepath.Join(extractDir, "core", "server", "pb_migrations")
+	if err := os.MkdirAll(migDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"1990000000_create_base_probe.js", "1700000000_create_core.js"} {
+		if err := os.WriteFile(filepath.Join(migDir, f), []byte("//"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := targetMigrationsDir(baseRegistrySlug, extractDir)
+	if err != nil {
+		t.Fatalf("targetMigrationsDir(core) err = %v", err)
+	}
+	want := filepath.Join("core", "server", "pb_migrations")
+	if got != want {
+		t.Fatalf("targetMigrationsDir(core) = %q, want %q", got, want)
+	}
+
+	files := listMigrationBasenames(filepath.Join(extractDir, got))
+	wantFiles := []string{"1700000000_create_core.js", "1990000000_create_base_probe.js"}
+	got2 := append([]string(nil), files...)
+	// listMigrationBasenames doesn't sort; compare as sets via a sorted copy.
+	if !equalStringSets(got2, wantFiles) {
+		t.Errorf("base migration files = %v, want (any order) %v", files, wantFiles)
+	}
+}
+
+func equalStringSets(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, x := range a {
+		seen[x]++
+	}
+	for _, x := range b {
+		seen[x]--
+	}
+	for _, n := range seen {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
+}
 
 func TestSubtractStrings(t *testing.T) {
 	a := []string{"a", "b", "c", "d"}
@@ -44,35 +101,33 @@ func TestSpecForVersion(t *testing.T) {
 	}
 }
 
-// TestCurrentBuildMigrationsPrefersPkgField verifies the per-package field is
-// used when present, with a graceful fallback to the global delta.
-func TestCurrentBuildMigrationsPrefersPkgField(t *testing.T) {
-	app := newPkgBuildTestApp(t)
+// TestCurrentBuildMigrationsUsesOwnerMap is the regression guard for the
+// drop-report accuracy bug: in the rebuild-from-scratch model there is one
+// `current` pkg_build row for the whole image (labeled by the last-changed
+// member), so a per-slug pkg_build lookup returned nothing for every other
+// package and the report wrongly said "nothing will be dropped". The migration
+// owner map is the per-package source of truth and is independent of which
+// member last built — so currentBuildMigrations must return a package's owned
+// files regardless of the pkg_build labeling.
+func TestCurrentBuildMigrationsUsesOwnerMap(t *testing.T) {
+	restore := setMigrationOwnersForTest(map[string]string{
+		"1713000005_x.js":   "mail",
+		"1713000006_y.js":   "mail",
+		"1700000000_core.js": "core",
+	})
+	defer restore()
 
-	col, err := app.FindCollectionByNameOrId("pkg_build")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := core.NewRecord(col)
-	rec.Set("build_id", "build-vc-1")
-	rec.Set("pkg_slug", "mail")
-	rec.Set("action", "install")
-	rec.Set("status", "current")
-	rec.Set("pkg_migration_files", []string{"1713000005_x.js", "1713000006_y.js"})
-	rec.Set("migration_files", []string{"1713000005_x.js", "1713000006_y.js", "1700000000_core.js"})
-	if err := app.Save(rec); err != nil {
-		t.Fatalf("save build: %v", err)
-	}
-
-	got := currentBuildMigrations(app, "mail")
+	// `current` pkg_build is labeled by a DIFFERENT package (core) — the old
+	// per-slug lookup would have found no `mail` row and returned empty.
+	got := currentBuildMigrations(nil, "mail")
 	want := []string{"1713000005_x.js", "1713000006_y.js"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("currentBuildMigrations = %v, want %v (from pkg_migration_files)", got, want)
+		t.Errorf("currentBuildMigrations(mail) = %v, want %v (from owner map)", got, want)
 	}
 
-	// Unknown slug → nil.
-	if got := currentBuildMigrations(app, "nope"); got != nil {
-		t.Errorf("currentBuildMigrations(unknown) = %v, want nil", got)
+	// Unknown slug → empty (not nil-panic).
+	if got := currentBuildMigrations(nil, "nope"); len(got) != 0 {
+		t.Errorf("currentBuildMigrations(unknown) = %v, want empty", got)
 	}
 }
 

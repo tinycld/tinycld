@@ -115,3 +115,19 @@ func findMigrationOwnersJSON() string {
 func migrationsForPackage(slug string) []string {
 	return queryMigrationsForPackage(loadMigrationOwners(), slug)
 }
+
+// setMigrationOwnersForTest installs an explicit owner map into the process
+// cache and returns a restore func. Tests use it to exercise the owner-map code
+// paths (migrationsForPackage / currentBuildMigrations) without an on-disk
+// pb_migrations_owner.json.
+func setMigrationOwnersForTest(owners map[string]string) func() {
+	migrationOwnersMu.Lock()
+	prevMap, prevLoaded := migrationOwnersMap, migrationOwnersLoaded
+	migrationOwnersMap, migrationOwnersLoaded = owners, true
+	migrationOwnersMu.Unlock()
+	return func() {
+		migrationOwnersMu.Lock()
+		migrationOwnersMap, migrationOwnersLoaded = prevMap, prevLoaded
+		migrationOwnersMu.Unlock()
+	}
+}

@@ -178,18 +178,45 @@ func targetMigrationFiles(app core.App, slug, targetVersion string) ([]string, e
 		return nil, fmt.Errorf("untar: %w", err)
 	}
 	extractDir := filepath.Join(tmpDir, "package")
-	manifest, err := parseManifestViaNode(extractDir)
-	if err != nil {
-		return nil, fmt.Errorf("parse manifest: %w", err)
-	}
 
-	migDir := migrationsDirFromManifest(manifest)
+	migDir, err := targetMigrationsDir(slug, extractDir)
+	if err != nil {
+		return nil, err
+	}
 	if migDir == "" {
 		return []string{}, nil // target ships no migrations
 	}
-	entries, err := os.ReadDir(filepath.Join(extractDir, migDir))
+	return listMigrationBasenames(filepath.Join(extractDir, migDir)), nil
+}
+
+// targetMigrationsDir resolves where a fetched target's migrations live inside
+// the extracted tarball, RELATIVE to extractDir. The base/core member is special:
+// it is the whole `tinycld` workspace member, so it carries NO root manifest.ts —
+// its migrations sit at the fixed nested path core/server/pb_migrations. Trying to
+// read them via parseManifestViaNode fails ("No manifest found"), which used to
+// make the core drop report fall back to dry-reverting the ENTIRE core migration
+// set (and error out), so a core downgrade wrongly reported no data loss. Every
+// other package declares its dir through manifest.migrations.directory.
+func targetMigrationsDir(slug, extractDir string) (string, error) {
+	if slug == baseRegistrySlug {
+		// The base tarball is the `tinycld` member packed at its own root, so its
+		// core migrations sit at core/server/pb_migrations (NOT nested under
+		// tinycld/). Matches the `npm notice core/server/pb_migrations/…` layout.
+		return filepath.Join("core", "server", "pb_migrations"), nil
+	}
+	manifest, err := parseManifestViaNode(extractDir)
 	if err != nil {
-		return []string{}, nil // no migrations dir in the tarball
+		return "", fmt.Errorf("parse manifest: %w", err)
+	}
+	return migrationsDirFromManifest(manifest), nil
+}
+
+// listMigrationBasenames returns the file (non-dir) basenames in dir, or an empty
+// slice if dir doesn't exist (a target that ships no migrations dir).
+func listMigrationBasenames(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []string{}
 	}
 	files := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -197,7 +224,7 @@ func targetMigrationFiles(app core.App, slug, targetVersion string) ([]string, e
 			files = append(files, e.Name())
 		}
 	}
-	return files, nil
+	return files
 }
 
 // migrationsDirFromManifest reads manifest.migrations.directory out of RawJSON
@@ -211,24 +238,20 @@ func migrationsDirFromManifest(m *parsedManifest) string {
 	return dir
 }
 
-// package's current build, falling back to the global delta narrowed to this
-// package for builds predating the pkg_migration_files field.
-func currentBuildMigrations(app core.App, slug string) []string {
-	build, err := app.FindFirstRecordByFilter(
-		"pkg_build",
-		"pkg_slug = {:s} && status = 'current'",
-		map[string]any{"s": slug},
-	)
-	if err != nil {
-		return nil
-	}
-	var files []string
-	if err := build.UnmarshalJSONField("pkg_migration_files", &files); err == nil && len(files) > 0 {
-		return files
-	}
-	var delta []string
-	_ = build.UnmarshalJSONField("migration_files", &delta)
-	return intersectStrings(delta, migrationsForPackage(slug))
+// currentBuildMigrations returns the migration files the given package currently
+// owns in the live build, per the generator's migration-owner map.
+//
+// In the rebuild-from-scratch model there is exactly ONE `current` pkg_build row
+// for the whole image, labeled by the single member the last operation changed —
+// so the old per-slug `pkg_build` lookup (pkg_slug = {slug} && status='current')
+// matched no row for any package other than that last-changed one, and silently
+// returned an empty set. That made the drop report wrongly say "nothing will be
+// dropped" for every other package (the exact bug this replaces). The owner map
+// is the authoritative, per-package source and is correct regardless of which
+// member last triggered a build. dryRevertNamedMigrations skips any file that
+// isn't actually applied, so returning the full owned set is safe.
+func currentBuildMigrations(_ core.App, slug string) []string {
+	return migrationsForPackage(slug)
 }
 
 // subtractStrings returns the members of a not present in b.

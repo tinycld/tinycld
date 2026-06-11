@@ -24,9 +24,12 @@ import { expect, type Page, test } from '@playwright/test'
 // bind-mounted volume the operator uses (a no-mount run never reproduced it).
 //
 // Install/upgrade/downgrade progress streams to a modal over SSE, but the test
-// judges success by polling the server's pkg_install_log status (ground truth),
-// not the modal — an EventSource that connects a hair late can miss the fast
-// early stages, making modal-text assertions inherently racy here.
+// judges per-step success by polling the server's pkg_install_log status (ground
+// truth) rather than the live bar — an EventSource that connects a hair late can
+// miss the fast early stages, making mid-stream modal-text assertions racy. The
+// modal's TERMINAL state, however, is asserted (the install test waits for
+// "Installation Complete"): it resolves via the durable job-status poll, which
+// survives the exit-75 restart, so it is reliable where the live stream isn't.
 //
 // NOT a normal-CI test. It needs a purpose-built docker image (the runner
 // `tests/install/run-todo-install.sh` builds it) and drives three real,
@@ -538,7 +541,7 @@ async function applyVersionChange(
     page: Page,
     slug: string,
     targetLabel: string,
-    opts: { downgrade: boolean }
+    opts: { downgrade: boolean; expectDrops?: string[] }
 ) {
     // Scope every action to the TARGET package's row. In a full assembly the
     // Packages list shows ~9 rows, each with its own `v… (current)` picker, so a
@@ -584,6 +587,21 @@ async function applyVersionChange(
         // Downgrade modal ("Confirm downgrade") gates on typing the slug; the input
         // placeholder is the comma-joined downgraded slug list.
         await expect(page.getByText('Confirm downgrade')).toBeVisible({ timeout: 15_000 })
+
+        // The drop report must be ACCURATE — a downgrade that drops schema has to
+        // say so in the modal, per-package. Before the owner-map fix the report
+        // queried a per-slug pkg_build row that doesn't exist in the rebuild model
+        // and wrongly rendered "No data loss" for a destructive downgrade. Assert
+        // each expected dropped collection is shown so that can't regress. The
+        // modal renders each as `collection <name>`; matching that full line (vs a
+        // bare name) disambiguates substrings like `tags` ⊂ `todo_tags`.
+        for (const dropped of opts.expectDrops ?? []) {
+            await expect(
+                page.getByText(`collection ${dropped}`, { exact: true }),
+                `drop report must list "${dropped}" for the ${slug} downgrade`
+            ).toBeVisible({ timeout: 30_000 })
+        }
+
         await page.getByPlaceholder(slug).fill(slug)
         await page.getByText('Downgrade', { exact: true }).click()
     } else {
@@ -668,6 +686,13 @@ test.describe('todo version change', () => {
         // an exit-75 restart. Judge success by the server's own pkg_install_log
         // reaching status `success` (ground truth, independent of the SSE modal).
         await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'install') // up to 40 min
+
+        // The modal itself must ALSO resolve — not just the server. The SSE stream
+        // dies on the exit-75 restart (the new process has no in-memory job), so
+        // the modal relies on the durable job-status poll to learn the outcome.
+        // Before that poll existed the modal hung forever on "Installing Package…";
+        // this assertion is the regression guard for that hang.
+        await expect(page.getByText('Installation Complete')).toBeVisible({ timeout: 120_000 })
     })
 
     test('v1.0.0 is live, has no tags schema, and an org exists', async ({ page }) => {
@@ -789,7 +814,12 @@ test.describe('todo version change', () => {
         // row — same action — so without notId the wait would return immediately
         // against it, racing the still-running downgrade. Snapshot it first.
         const priorId = await latestOpId(page, 'todo')
-        await applyVersionChange(page, 'todo', 'v1.0.0', { downgrade: true })
+        // v2→v1 drops the tagging schema; the confirm modal's drop report must
+        // list both collections (regression guard for the inaccurate report).
+        await applyVersionChange(page, 'todo', 'v1.0.0', {
+            downgrade: true,
+            expectDrops: ['tags', 'todo_tags'],
+        })
 
         await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'version_change', priorId)
     })
@@ -961,7 +991,12 @@ test.describe('todo version change', () => {
         test.setTimeout(2_700_000) // 45 min
         await loginAsSuperuserWithRetry(page)
         const priorId = await latestOpId(page, 'core')
-        await applyVersionChange(page, 'core', `v${CORE_CUR}`, { downgrade: true })
+        // The core downgrade drops the base_probe collection; the drop report
+        // must surface it (regression guard for the per-package drop accuracy).
+        await applyVersionChange(page, 'core', `v${CORE_CUR}`, {
+            downgrade: true,
+            expectDrops: ['base_probe'],
+        })
         await waitForOpStatus(page, 'core', 'success', 2_400_000, 'version_change', priorId)
     })
 
