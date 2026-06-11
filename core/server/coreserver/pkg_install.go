@@ -244,7 +244,7 @@ func handleInstall(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	currentJob = job
 	installMu.Unlock()
 
-	go runInstallPipeline(app, job)
+	go runInstallRebuild(app, job)
 
 	return re.JSON(http.StatusAccepted, map[string]any{"jobId": jobId})
 }
@@ -303,7 +303,7 @@ func handleUninstall(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	currentJob = job
 	installMu.Unlock()
 
-	go runUninstallPipeline(app, job)
+	go runUninstallRebuild(app, job)
 
 	return re.JSON(http.StatusAccepted, map[string]any{"jobId": jobId})
 }

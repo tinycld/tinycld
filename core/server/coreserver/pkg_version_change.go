@@ -96,7 +96,7 @@ func handleVersionChange(app *pocketbase.PocketBase, re *core.RequestEvent) erro
 	currentJob = job
 	installMu.Unlock()
 
-	go runVersionChangePipeline(app, job)
+	go runVersionChangeRebuild(app, job)
 
 	return re.JSON(http.StatusAccepted, map[string]any{"jobId": jobId})
 }
