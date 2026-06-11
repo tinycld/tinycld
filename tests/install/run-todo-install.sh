@@ -130,6 +130,14 @@ MOUNT_ROOT="${MOUNT_ROOT:-$(mktemp -d -t tinycld-todo-mounts.XXXXXX)}"
 PB_DATA_DIR="${MOUNT_ROOT}/pb_data"
 BUILDS_DIR="${MOUNT_ROOT}/builds"
 RELEASES_DIR="${MOUNT_ROOT}/releases"
+# The first-run setup token (which we scrape to drive the /admin wizard) is only
+# printed by PocketBase's InstallerFunc when the DB has NO superusers — i.e. a
+# truly empty pb_data. A fresh mktemp MOUNT_ROOT is already empty, but if the
+# caller reuses MOUNT_ROOT (the `:-` default above) a stale DB from a prior run
+# would suppress the token and the bootstrap scrape would fail. Wipe the mounts
+# before boot so an empty-DB first run — and thus the printed token — is
+# guaranteed regardless of how MOUNT_ROOT was chosen.
+rm -rf "${PB_DATA_DIR}" "${BUILDS_DIR}" "${RELEASES_DIR}"
 mkdir -p "${PB_DATA_DIR}" "${BUILDS_DIR}" "${RELEASES_DIR}"
 echo "[runner] bind-mounting host dirs under ${MOUNT_ROOT}"
 echo "[runner]   pb_data  → ${PB_DATA_DIR}"
