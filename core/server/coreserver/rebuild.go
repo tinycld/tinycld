@@ -56,7 +56,21 @@ type rebuildDeps struct {
 	activate       func(buildID string) error
 	commitRegistry func() error
 	prune          func(keep int) error
-	restart        func()
+	// finalizeLog records the terminal state of the pkg_install_log row the UI
+	// polls (status endpoint). It MUST run before restart() — restart os.Exit's
+	// the process, so a deferred finalize would never fire. Optional (nil-safe).
+	finalizeLog func(status, errMsg string)
+	restart     func()
+}
+
+// fail finalizes the install log (if any) and marks the job failed. Used at
+// every pre-activation failure exit so the status endpoint reports the failure
+// instead of hanging the UI poller.
+func (d rebuildDeps) fail(job *installJob, step string, err error) error {
+	if d.finalizeLog != nil {
+		d.finalizeLog("failed", err.Error())
+	}
+	return failJob(job, step, err)
 }
 
 // rebuildWith runs the full rebuild: assemble → build → backup → migrate →
@@ -68,26 +82,26 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	buildDir := filepath.Join(stateBuildsDir(), m.BuildID)
 
 	if err := d.assemble(m, buildDir); err != nil {
-		return failJob(job, "assemble", err)
+		return d.fail(job, "assemble", err)
 	}
 	if err := d.pipeline(job, buildDir); err != nil {
 		// Failure precedes the DB backup; live state untouched. Discard build.
 		_ = os.RemoveAll(buildDir)
-		return failJob(job, "build", err)
+		return d.fail(job, "build", err)
 	}
 	// From here the DB may change — back it up so we can roll back.
 	if err := d.backupDB(); err != nil {
 		_ = os.RemoveAll(buildDir)
-		return failJob(job, "backup", err)
+		return d.fail(job, "backup", err)
 	}
 	if _, err := d.syncMig(buildDir); err != nil {
 		restore(d)
 		_ = os.RemoveAll(buildDir)
-		return failJob(job, "migrate", err)
+		return d.fail(job, "migrate", err)
 	}
 	if err := d.activate(m.BuildID); err != nil {
 		restore(d)
-		return failJob(job, "activate", err)
+		return d.fail(job, "activate", err)
 	}
 	if d.commitRegistry != nil {
 		if err := d.commitRegistry(); err != nil {
@@ -101,6 +115,11 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 		if err := d.prune(buildsToKeep); err != nil {
 			log.Printf("rebuild: prune warning: %v", err)
 		}
+	}
+	job.Status = "success"
+	// Finalize the install log BEFORE restart — restart os.Exit's the process.
+	if d.finalizeLog != nil {
+		d.finalizeLog("success", "")
 	}
 	emitProgress(job, "Restarting", 99, "Activating new build")
 	emitComplete(job, "success", "")
@@ -127,7 +146,9 @@ func failJob(job *installJob, step string, err error) error {
 // rebuild wires the production dependencies and runs the full rebuild for the
 // given desired manifest. It is the single entry point every mutating package
 // operation (install / uninstall / version change / core upgrade) funnels into.
-func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest) error {
+// logRecord is the pkg_install_log row the status endpoint polls; it is
+// finalized (success/failed) before the restart so the UI poller terminates.
+func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, logRecord *core.Record) error {
 	buildDir := filepath.Join(stateBuildsDir(), m.BuildID)
 
 	// backupDatabase returns the restore closure; capture it across steps.
@@ -161,7 +182,10 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest) err
 		activate:       activateBuild,
 		commitRegistry: func() error { return commitRegistry(app, m) },
 		prune:          pruneBuilds,
-		restart:        func() { requestRestart("") },
+		finalizeLog: func(status, errMsg string) {
+			finalizeInstallLog(app, logRecord, status, errMsg, job.LogLines)
+		},
+		restart: func() { requestRestart("") },
 	}
 	return rebuildWith(job, m, deps)
 }

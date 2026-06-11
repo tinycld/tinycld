@@ -72,22 +72,29 @@ func resolveInstallSlugVersion(app *pocketbase.PocketBase, job *installJob) (slu
 func runInstallRebuild(app *pocketbase.PocketBase, job *installJob) {
 	defer finishJob(job)
 
+	// Create the install-log row up front (slug falls back to the npm spec until
+	// resolved) so the status endpoint the UI polls has something to report.
+	logRecord := createInstallLog(app, job, "install")
+
 	slug, version, err := resolveInstallSlugVersion(app, job)
 	if err != nil {
+		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
 		_ = failJob(job, "resolve", err)
 		return
 	}
 	job.Slug = slug
+	updateInstallLogSlug(app, logRecord, slug)
 
 	current, err := buildCurrentMemberSet(app)
 	if err != nil {
+		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
 		_ = failJob(job, "registry", err)
 		return
 	}
 	m := desiredSet(newBuildID(), current, setDelta{
 		op: "install", slug: slug, version: version, spec: job.NpmPkg,
 	})
-	if err := rebuild(app, job, m); err != nil {
+	if err := rebuild(app, job, m, logRecord); err != nil {
 		job.Status = "failed"
 		job.Error = err.Error()
 	}
@@ -98,14 +105,17 @@ func runInstallRebuild(app *pocketbase.PocketBase, job *installJob) {
 func runUninstallRebuild(app *pocketbase.PocketBase, job *installJob) {
 	defer finishJob(job)
 
+	logRecord := createInstallLog(app, job, "uninstall")
+
 	current, err := buildCurrentMemberSet(app)
 	if err != nil {
+		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
 		_ = failJob(job, "registry", err)
 		return
 	}
 	member := registrySlugToMember(job.Slug)
 	m := desiredSet(newBuildID(), current, setDelta{op: "uninstall", slug: member})
-	if err := rebuild(app, job, m); err != nil {
+	if err := rebuild(app, job, m, logRecord); err != nil {
 		job.Status = "failed"
 		job.Error = err.Error()
 	}
@@ -133,23 +143,30 @@ func loadBuildManifest(buildID string) (RebuildManifest, error) {
 func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 	defer finishJob(job)
 
+	job.Slug = job.BuildID // revert has no package slug; log keys on the build id
+	logRecord := createInstallLog(app, job, "revert")
+	failRevert := func(step string, err error) {
+		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
+		_ = failJob(job, step, err)
+	}
+
 	targetID := job.BuildID
 	emitProgress(job, "Validating build", 5, "Checking "+targetID)
 	targetDir := filepath.Join(stateBuildsDir(), targetID, "tinycld")
 	if _, err := os.Stat(targetDir); err != nil {
-		_ = failJob(job, "validate", fmt.Errorf("build %s not retained on disk: %w", targetID, err))
+		failRevert("validate", fmt.Errorf("build %s not retained on disk: %w", targetID, err))
 		return
 	}
 	m, err := loadBuildManifest(targetID)
 	if err != nil {
-		_ = failJob(job, "validate", fmt.Errorf("read target manifest: %w", err))
+		failRevert("validate", fmt.Errorf("read target manifest: %w", err))
 		return
 	}
 
 	emitProgress(job, "Backing up database", 20, "Creating SQLite backup")
 	restoreDB, err := backupDatabase(filepath.Join(stateBuildsDir(), targetID, "tinycld"))
 	if err != nil {
-		_ = failJob(job, "backup", err)
+		failRevert("backup", err)
 		return
 	}
 
@@ -157,30 +174,32 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 	newSet, err := buildMigrationFiles(filepath.Join(stateBuildsDir(), targetID))
 	if err != nil {
 		_ = restoreDB()
-		_ = failJob(job, "migrate", err)
+		failRevert("migrate", err)
 		return
 	}
 	applied, err := appliedMigrationFiles(app)
 	if err != nil {
 		_ = restoreDB()
-		_ = failJob(job, "migrate", err)
+		failRevert("migrate", err)
 		return
 	}
 	if _, err := syncMigrations(app, applied, newSet); err != nil {
 		_ = restoreDB()
-		_ = failJob(job, "migrate", err)
+		failRevert("migrate", err)
 		return
 	}
 
 	emitProgress(job, "Activating build", 70, "Flipping current symlink")
 	if err := activateBuild(targetID); err != nil {
 		_ = restoreDB()
-		_ = failJob(job, "activate", err)
+		failRevert("activate", err)
 		return
 	}
 	if err := commitRegistry(app, m); err != nil {
 		log.Printf("revert: commitRegistry warning: %v", err)
 	}
+	job.Status = "success"
+	finalizeInstallLog(app, logRecord, "success", "", job.LogLines)
 	emitProgress(job, "Restarting", 99, "Activating reverted build")
 	emitComplete(job, "success", "")
 	requestRestart("")
@@ -192,8 +211,11 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 func runVersionChangeRebuild(app *pocketbase.PocketBase, job *installJob) {
 	defer finishJob(job)
 
+	logRecord := createInstallLog(app, job, "version_change")
+
 	current, err := buildCurrentMemberSet(app)
 	if err != nil {
+		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
 		_ = failJob(job, "registry", err)
 		return
 	}
@@ -202,11 +224,13 @@ func runVersionChangeRebuild(app *pocketbase.PocketBase, job *installJob) {
 	for _, ch := range job.Changes {
 		reg, err := app.FindFirstRecordByFilter("pkg_registry", "slug = {:s}", map[string]any{"s": ch.Slug})
 		if err != nil {
+			finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
 			_ = failJob(job, "registry", fmt.Errorf("unknown package %q: %w", ch.Slug, err))
 			return
 		}
 		spec, err := specForVersion(reg.GetString("npm_package"), ch.TargetVersion)
 		if err != nil {
+			finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
 			_ = failJob(job, "spec", err)
 			return
 		}
@@ -215,7 +239,7 @@ func runVersionChangeRebuild(app *pocketbase.PocketBase, job *installJob) {
 			op: "version", slug: member, version: ch.TargetVersion, spec: spec,
 		})
 	}
-	if err := rebuild(app, job, m); err != nil {
+	if err := rebuild(app, job, m, logRecord); err != nil {
 		job.Status = "failed"
 		job.Error = err.Error()
 	}

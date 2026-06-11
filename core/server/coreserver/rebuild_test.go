@@ -188,6 +188,7 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 		activate:       func(id string) error { seq = append(seq, "activate"); return nil },
 		commitRegistry: func() error { seq = append(seq, "commit"); return nil },
 		prune:          func(keep int) error { seq = append(seq, "prune"); return nil },
+		finalizeLog:    func(status, errMsg string) { seq = append(seq, "finalize") },
 		restart:        func() { seq = append(seq, "restart") },
 	}
 	job := &installJob{ID: "j", Done: make(chan struct{})}
@@ -195,9 +196,32 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 	if err := rebuildWith(job, m, deps); err != nil {
 		t.Fatal(err)
 	}
-	want := "assemble,pipeline,backup,sync,activate,commit,prune,restart"
+	want := "assemble,pipeline,backup,sync,activate,commit,prune,finalize,restart"
 	if got := strings.Join(seq, ","); got != want {
 		t.Fatalf("sequence = %s, want %s", got, want)
+	}
+}
+
+func TestRebuild_FinalizesLogOnFailure(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("TINYCLD_STATE_DIR", state)
+	var finalized string
+	deps := rebuildDeps{
+		assemble:    func(m RebuildManifest, dir string) error { return fmt.Errorf("assemble broke") },
+		pipeline:    func(j *installJob, dir string) error { return nil },
+		backupDB:    func() error { return nil },
+		syncMig:     func(buildDir string) (SyncResult, error) { return SyncResult{}, nil },
+		activate:    func(id string) error { return nil },
+		prune:       func(keep int) error { return nil },
+		finalizeLog: func(status, errMsg string) { finalized = status },
+		restart:     func() {},
+	}
+	job := &installJob{ID: "j", Done: make(chan struct{})}
+	if err := rebuildWith(job, RebuildManifest{BuildID: "build-f"}, deps); err == nil {
+		t.Fatal("expected error")
+	}
+	if finalized != "failed" {
+		t.Fatalf("finalizeLog status = %q, want failed", finalized)
 	}
 }
 
