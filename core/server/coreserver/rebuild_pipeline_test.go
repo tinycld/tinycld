@@ -13,8 +13,14 @@ func TestRunBuildPipeline_StepOrder(t *testing.T) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		return "", nil
 	}
+	// pnpm install runs via the streaming runner — stub it to record the call
+	// alongside the buffered ones so the step-order check still sees "pnpm install".
+	defer stubPnpmStream(&calls)()
 	staged := false
-	stage := func(appDir string) (string, error) { staged = true; return filepath.Join(appDir, "release-staging", "rel-1"), nil }
+	stage := func(appDir string) (string, error) {
+		staged = true
+		return filepath.Join(appDir, "release-staging", "rel-1"), nil
+	}
 	nativeExported := false
 	nativeExport := func(j *installJob, appDir, buildID, rv string) ([]bundleMeta, error) {
 		nativeExported = true
@@ -45,12 +51,17 @@ func TestRunBuildPipeline_StepOrder(t *testing.T) {
 
 func TestRunBuildPipeline_StopsOnFailure(t *testing.T) {
 	build := t.TempDir()
-	var calls int
+	// pnpm install (the first step) fails via the streaming runner; the buffered
+	// runner must then never be called (the pipeline stops before go build).
+	prev := pnpmStream
+	pnpmStream = func(_ func(string), _, _ string, _ ...string) (string, error) {
+		return "", &cmdErr{"boom"}
+	}
+	defer func() { pnpmStream = prev }()
+
+	var bufferedCalls int
 	runner := func(dir, name string, args ...string) (string, error) {
-		calls++
-		if name == "pnpm" {
-			return "", &cmdErr{"boom"}
-		}
+		bufferedCalls++
 		return "", nil
 	}
 	noopStage := func(appDir string) (string, error) { return appDir, nil }
@@ -59,8 +70,48 @@ func TestRunBuildPipeline_StopsOnFailure(t *testing.T) {
 	if _, err := runBuildPipelineWith(job, build, "build-1", runner, noopStage, noopNative); err == nil {
 		t.Fatal("expected error from failing pnpm step")
 	}
-	if calls != 1 {
-		t.Fatalf("pipeline should stop after the first failure, ran %d steps", calls)
+	if bufferedCalls != 0 {
+		t.Fatalf("pipeline should stop after pnpm fails, ran %d later steps", bufferedCalls)
+	}
+}
+
+// stubPnpmStream replaces the pnpm streaming runner with a no-op that records a
+// "pnpm install" entry into calls, and returns a restore func.
+func stubPnpmStream(calls *[]string) func() {
+	prev := pnpmStream
+	pnpmStream = func(_ func(string), _, name string, args ...string) (string, error) {
+		*calls = append(*calls, name+" "+strings.Join(args, " "))
+		return "", nil
+	}
+	return func() { pnpmStream = prev }
+}
+
+// TestPnpmLineProgress locks the parser to pnpm's real non-TTY reporter lines
+// (captured from `pnpm install` without a TTY) so the bar advances through the
+// install band and never crosses the go-build milestone.
+func TestPnpmLineProgress(t *testing.T) {
+	cases := []struct {
+		line string
+		want int
+	}{
+		{"Progress: resolved 1, reused 0, downloaded 0, added 0", 49},
+		{"Progress: resolved 3, reused 1, downloaded 2, added 3, done", 49},
+		{"Packages: +3", 54},
+		{"Done in 807ms using pnpm v11.3.0", 58},
+		{"+ lodash 4.18.1", 0}, // dependency listing — no milestone
+		{"", 0},                // blank
+		{"some postinstall noise", 0},
+	}
+	for _, c := range cases {
+		if got := pnpmLineProgress(c.line); got != c.want {
+			t.Errorf("pnpmLineProgress(%q) = %d, want %d", c.line, got, c.want)
+		}
+	}
+	// Every recognized milestone must stay within [progPnpmInstall, progGoBuild).
+	for _, pct := range []int{49, 54, 58} {
+		if pct < progPnpmInstall || pct >= progGoBuild {
+			t.Errorf("pnpm milestone %d outside install band [%d,%d)", pct, progPnpmInstall, progGoBuild)
+		}
 	}
 }
 

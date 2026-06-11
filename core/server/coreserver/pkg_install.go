@@ -1,8 +1,10 @@
 package coreserver
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -449,7 +451,6 @@ func installLogStatusJSON(record *core.Record) map[string]any {
 	}
 }
 
-
 func emitProgress(job *installJob, step string, progress int, message string) {
 	if job == nil {
 		return
@@ -713,11 +714,54 @@ func runCmd(dir string, name string, args ...string) (string, error) {
 	return string(out), err
 }
 
-// runCmdEnv is runCmd with additional environment variables appended to the
-// inherited environment. Used for the pnpm-install steps, which must run with
-// CI=true so pnpm proceeds non-interactively (otherwise it blocks on a
-// node_modules-purge confirmation and exits 1: "If you are running pnpm in CI,
-// set the CI environment variable to 'true'…").
+// runCmdStreaming is runCmd that also invokes onLine for each line of combined
+// output AS IT ARRIVES, instead of only after the command exits. Long steps
+// (pnpm install) can forward their progress lines to the UI so the bar doesn't
+// sit frozen for minutes. It still buffers + returns the full output and error
+// so the buffered-runCmd contract is preserved.
+func runCmdStreaming(onLine func(line string), dir, name string, args ...string) (string, error) {
+	log.Printf("[pkg_install] $ (cd %s && %s %s)", dir, name, strings.Join(args, " "))
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+
+	var buf strings.Builder
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scanner := bufio.NewScanner(pr)
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			line := scanner.Text()
+			buf.WriteString(line)
+			buf.WriteByte('\n')
+			if onLine != nil {
+				onLine(line)
+			}
+		}
+	}()
+
+	err := cmd.Start()
+	if err == nil {
+		err = cmd.Wait()
+	}
+	// Close the writer so the scanner goroutine sees EOF, then wait for it to
+	// finish draining before reading the buffer.
+	_ = pw.Close()
+	<-done
+
+	out := buf.String()
+	if s := strings.TrimRight(out, "\n"); s != "" {
+		log.Printf("[pkg_install] output of %s:\n%s", name, s)
+	}
+	if err != nil {
+		log.Printf("[pkg_install] %s FAILED: %v", name, err)
+	}
+	return out, err
+}
 
 func copyDir(src, dst string) error {
 	_, err := runCmd(".", "cp", "-a", src+"/.", dst+"/")
@@ -736,4 +780,3 @@ func resolveServerDir() string {
 	}
 	return dir
 }
-

@@ -3,10 +3,21 @@ package coreserver
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 )
 
 // cmdRunner runs a command in dir; injectable for tests. Mirrors runCmd.
 type cmdRunner func(dir, name string, args ...string) (string, error)
+
+// streamingRunner runs a command, forwarding each output line to onLine as it
+// arrives, and returns the full output + error. Injectable for tests; production
+// uses runCmdStreaming.
+type streamingRunner func(onLine func(string), dir, name string, args ...string) (string, error)
+
+// pnpmStream is the streaming runner the pnpm-install step uses. A package var so
+// tests can stub the long real install while still exercising runPnpmInstall's
+// progress parsing.
+var pnpmStream streamingRunner = runCmdStreaming
 
 // stageReleaseFn moves the exported dist/ into release-staging/<id>/ and returns
 // the staged dir; injectable so the pipeline step-order test stays filesystem-free.
@@ -45,8 +56,7 @@ func runBuildPipelineWith(
 
 	emitProgress(job, "Installing dependencies", progPnpmInstall, "pnpm install")
 	if err := timeStep(job, "pnpm install (+ generator postinstall)", func() error {
-		_, e := run(buildDir, "pnpm", "install", "--no-frozen-lockfile")
-		return e
+		return runPnpmInstall(job, buildDir)
 	}); err != nil {
 		return buildOutput{}, wrapStep("pnpm install", err)
 	}
@@ -112,4 +122,56 @@ func runBuildPipelineWith(
 
 func wrapStep(step string, err error) error {
 	return fmt.Errorf("%s: %w", step, err)
+}
+
+// runPnpmInstall runs the per-build `pnpm install`, forwarding pnpm's own
+// progress lines to the job so the bar advances within the install band instead
+// of sitting frozen at progPnpmInstall for the (often minutes-long) install. The
+// generator + link-members run via the workspace postinstall, so their output
+// streams here too.
+func runPnpmInstall(job *installJob, buildDir string) error {
+	_, err := pnpmStream(
+		func(line string) { reportPnpmProgress(job, line) },
+		buildDir, "pnpm", "install", "--no-frozen-lockfile",
+	)
+	return err
+}
+
+// reportPnpmProgress maps a single pnpm output line onto the install progress
+// band [progPnpmInstall, progGoBuild). pnpm's non-TTY reporter prints periodic
+// "Progress: resolved N, reused M, downloaded K, added W" lines and "Packages:
+// +N" / "Done" markers; we nudge the bar a little on each so it visibly moves,
+// and surface the raw line in the step log. Unrecognized lines (postinstall /
+// generator output) advance nothing but still log.
+func reportPnpmProgress(job *installJob, line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	pct := pnpmLineProgress(line)
+	if pct == 0 {
+		return // not a milestone line — keep the bar where it is
+	}
+	emitProgress(job, "Installing dependencies", pct, line)
+}
+
+// pnpmLineProgress returns the progress percentage a recognized pnpm reporter
+// line should move the bar to, or 0 to leave it unchanged. The install band is
+// [progPnpmInstall=45, progGoBuild=60); each phase parks a few points higher so
+// the bar climbs through resolve → download → link → postinstall without ever
+// reaching the go-build milestone.
+func pnpmLineProgress(line string) int {
+	// Order matters: a "Progress:" line also contains "added"/"reused", so the
+	// generic markers must come AFTER the specific prefixes. Match on prefixes
+	// (pnpm's stable non-TTY reporter shape) rather than loose substrings.
+	switch {
+	case strings.HasPrefix(line, "Progress:"):
+		return 49 // resolving / downloading the graph
+	case strings.HasPrefix(line, "Packages: +"):
+		return 54 // packages linked into node_modules
+	case strings.HasPrefix(line, "Done in"), strings.Contains(line, "packages:generate"):
+		return 58 // install finished / postinstall (generator) running
+	default:
+		return 0
+	}
 }
