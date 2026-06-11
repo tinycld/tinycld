@@ -48,6 +48,29 @@ func TestWriteWorkspaceScaffold(t *testing.T) {
 	}
 }
 
+func TestFetchMember_PlacesExtractedDir(t *testing.T) {
+	build := t.TempDir()
+	// Fake an already-extracted "package" dir as if npm pack + untar ran.
+	fakeExtract := t.TempDir()
+	pkgDir := filepath.Join(fakeExtract, "package")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "manifest.ts"), []byte("export default {}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	packer := func(spec, into string) (string, error) {
+		return pkgDir, nil // pretend we packed+untarred
+	}
+	if err := fetchMemberWith(MemberSpec{Slug: "mail", Spec: "@tinycld/mail@0.3.1"}, build, packer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(build, "mail", "manifest.ts")); err != nil {
+		t.Fatalf("expected build/mail/manifest.ts: %v", err)
+	}
+}
+
 func TestCopyScaffoldExtras_CopiesFilesAndDirs(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()

@@ -84,6 +84,55 @@ func copyPath(src, dst string, isDir bool) error {
 	return err
 }
 
+// packFn packs spec (npm name / git URL / git+file://) and returns the path
+// to the extracted "package" directory. Injectable for tests.
+type packFn func(spec, workDir string) (extractedPackageDir string, err error)
+
+// realPack runs `npm pack <spec>` in a fresh temp dir, untars the resulting
+// tarball, and returns the extracted package/ path. Mirrors pkg_install.go's
+// fetch step but for an arbitrary member spec.
+func realPack(spec, _ string) (string, error) {
+	tmp, err := os.MkdirTemp("", "tinycld-fetch-*")
+	if err != nil {
+		return "", err
+	}
+	if _, err := runCmd(tmp, "npm", "pack", spec); err != nil {
+		return "", fmt.Errorf("npm pack %s: %w", spec, err)
+	}
+	entries, _ := os.ReadDir(tmp)
+	var tgz string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tgz") {
+			tgz = e.Name()
+			break
+		}
+	}
+	if tgz == "" {
+		return "", fmt.Errorf("no .tgz after npm pack %s", spec)
+	}
+	if _, err := runCmd(tmp, "tar", "xzf", tgz); err != nil {
+		return "", fmt.Errorf("untar %s: %w", tgz, err)
+	}
+	// npm pack always extracts into a subdirectory named "package".
+	return filepath.Join(tmp, "package"), nil
+}
+
+func fetchMember(ms MemberSpec, buildDir string) error {
+	return fetchMemberWith(ms, buildDir, realPack)
+}
+
+func fetchMemberWith(ms MemberSpec, buildDir string, pack packFn) error {
+	extracted, err := pack(ms.Spec, buildDir)
+	if err != nil {
+		return err
+	}
+	dest := filepath.Join(buildDir, ms.Slug)
+	if err := os.RemoveAll(dest); err != nil {
+		return err
+	}
+	return copyDir(extracted, dest)
+}
+
 // workspacePackages expands the member slug list into the pnpm `packages:`
 // entries: tinycld carries its two nested members (core, package-scripts).
 func workspacePackages(members []string) []string {
