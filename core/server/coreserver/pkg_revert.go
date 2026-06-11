@@ -187,6 +187,23 @@ func runRevertPipeline(app *pocketbase.PocketBase, job *installJob) {
 		return
 	}
 
+	// Forward case: when the target's schema is AHEAD of the live state (a newer
+	// build downgraded the package, tearing the target's migrations down), there's
+	// nothing to step down (downCount == 0) but the target's own migrations are
+	// missing and must be re-applied. Compute the migrations the target build
+	// expects (its full set) that are NOT currently applied — after the Step 4
+	// binary swap those are exactly the ones a forward `migrate` will re-apply.
+	var targetFiles []string
+	if uErr := target.UnmarshalJSONField("pkg_migration_files", &targetFiles); uErr != nil || len(targetFiles) == 0 {
+		_ = target.UnmarshalJSONField("migration_files", &targetFiles)
+	}
+	applied, appliedErr := appliedMigrationFiles(app)
+	if appliedErr != nil {
+		fail("migration check", appliedErr)
+		return
+	}
+	forwardSet := subtractStrings(targetFiles, applied)
+
 	// Step 3: Backup the current DB (the revert operation's own safety net) (25%)
 	emitProgress(job, "Backing up database", 25, "Creating SQLite backup")
 	dbRollback, dbErr := backupDatabase(appDir)
@@ -218,13 +235,25 @@ func runRevertPipeline(app *pocketbase.PocketBase, job *installJob) {
 		migrateBin = filepath.Join(appDir, binaryName)
 	}
 
-	// Step 5: Reverse migrations (55%)
+	// Step 5: Reconcile schema to the target (55%). Either step newer builds'
+	// migrations back down, or (the forward case) re-apply the target's own
+	// migrations that a later downgrade tore off.
 	if downCount > 0 {
 		emitProgress(job, "Reversing migrations", 55,
 			fmt.Sprintf("Running migrate down %d", downCount))
 		migrateOut, mErr := runCmd(appDir, migrateBin, "migrate", "down", strconv.Itoa(downCount))
 		if mErr != nil {
 			fail("migrate down", fmt.Errorf("%v: %s", mErr, migrateOut))
+			return
+		}
+	} else if len(forwardSet) > 0 {
+		// The swapped-in target binary has jsvm re-scan pb_migrations/ on boot, so
+		// only the target's own (currently-pending) migrations apply forward.
+		emitProgress(job, "Restoring migrations", 55,
+			fmt.Sprintf("Re-applying %d migration(s)", len(forwardSet)))
+		migrateOut, mErr := runCmd(appDir, migrateBin, "migrate")
+		if mErr != nil {
+			fail("migrate up", fmt.Errorf("%v: %s", mErr, migrateOut))
 			return
 		}
 	} else {
