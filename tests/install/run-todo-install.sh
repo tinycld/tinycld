@@ -295,8 +295,12 @@ provision_base_remote() {
         cd "$WORK"
         git config user.email t@t.local && git config user.name t
         # Copy the live base source (excluding runtime state) into the work tree.
-        for d in app core scripts server app.json package.json metro.config.cjs \
-                 tsconfig.json biome.json babel.config.js eslint.config.mjs; do
+        # package-scripts is a NESTED workspace member (tinycld/package-scripts) the
+        # pnpm `packages:` list references, so it MUST be in the base snapshot — else
+        # a base rebuild assembled from this remote lacks it and pnpm 404s trying to
+        # fetch @tinycld/package-scripts from the npm registry.
+        for d in app core package-scripts scripts server app.json package.json \
+                 metro.config.cjs tsconfig.json biome.json babel.config.js eslint.config.mjs; do
             [ -e "/workspace/current/$d" ] && cp -a "/workspace/current/$d" .
         done
         git add -A && git commit -qm "base v'"${CORE_CUR}"'"
