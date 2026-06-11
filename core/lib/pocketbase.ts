@@ -281,9 +281,6 @@ export function getUserFromAuthStore(primaryOrgSlug?: string | null): UserSessio
         primaryOrgSlug: primaryOrgSlug ?? undefined,
         isDemo: !!(authRecord as Users & { is_demo?: boolean }).is_demo,
         isBetaTester: !!metadata?.isBetaTester,
-        // Derived reactively from the super_admins store via useIsSuperAdmin();
-        // the session itself doesn't carry it.
-        isSuperAdmin: false,
     }
 }
 

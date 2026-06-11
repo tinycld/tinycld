@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -5,7 +6,7 @@ import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { Plus, ShieldCheck, Trash2, X } from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import { PageHeader, RowIcon, SectionLabel } from './console-ui'
 
@@ -37,25 +38,24 @@ async function adminFetch(pb: PocketBase, path: string, init?: RequestInit) {
 }
 
 export function SuperAdminsTab({ isVisible, pb }: { isVisible: boolean; pb: PocketBase }) {
-    const [admins, setAdmins] = useState<SuperAdminRow[]>([])
-    const [isLoading, setIsLoading] = useState(true)
     const [showGrantForm, setShowGrantForm] = useState(false)
 
-    const fetchAdmins = useCallback(async () => {
-        setIsLoading(true)
-        try {
+    // The roster comes from a custom /api/admin endpoint (the collection's RLS
+    // only exposes the caller's own row), so it's a useQuery read, not a live
+    // collection query. enabled:isVisible skips the fetch while the tab is hidden.
+    const {
+        data: admins = [],
+        isLoading,
+        error,
+        refetch,
+    } = useQuery({
+        queryKey: ['admin', 'super-admins'],
+        queryFn: async (): Promise<SuperAdminRow[]> => {
             const data = await adminFetch(pb, '')
-            setAdmins(data.superAdmins ?? [])
-        } catch (err) {
-            captureException('superAdmins.fetch', err)
-        } finally {
-            setIsLoading(false)
-        }
-    }, [pb])
-
-    useEffect(() => {
-        fetchAdmins()
-    }, [fetchAdmins])
+            return data.superAdmins ?? []
+        },
+        enabled: isVisible,
+    })
 
     if (!isVisible) return null
 
@@ -81,11 +81,17 @@ export function SuperAdminsTab({ isVisible, pb }: { isVisible: boolean; pb: Pock
                 pb={pb}
                 onGranted={() => {
                     setShowGrantForm(false)
-                    fetchAdmins()
+                    refetch()
                 }}
             />
 
-            <SuperAdminList admins={admins} isLoading={isLoading} pb={pb} onRevoked={fetchAdmins} />
+            <SuperAdminList
+                admins={admins}
+                isLoading={isLoading}
+                isError={error !== null}
+                pb={pb}
+                onRevoked={refetch}
+            />
         </View>
     )
 }
@@ -104,8 +110,12 @@ function GrantSection({
         handleSubmit,
         reset,
         setError,
-        formState: { errors, isSubmitting },
-    } = useForm({ resolver: zodResolver(grantSchema), defaultValues: { email: '' } })
+        formState: { errors, isSubmitting, isSubmitted },
+    } = useForm({
+        resolver: zodResolver(grantSchema),
+        defaultValues: { email: '' },
+        mode: 'onChange',
+    })
 
     const onSubmit = handleSubmit(async values => {
         try {
@@ -127,7 +137,7 @@ function GrantSection({
     return (
         <View className="gap-4 p-5 rounded-2xl bg-surface-secondary border border-border">
             <SectionLabel>Grant by email</SectionLabel>
-            <FormErrorSummary errors={errors} />
+            <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
             <TextInput
                 control={control}
                 name="email"
@@ -149,11 +159,13 @@ function GrantSection({
 function SuperAdminList({
     admins,
     isLoading,
+    isError,
     pb,
     onRevoked,
 }: {
     admins: SuperAdminRow[]
     isLoading: boolean
+    isError: boolean
     pb: PocketBase
     onRevoked: () => void
 }) {
@@ -161,6 +173,16 @@ function SuperAdminList({
         return (
             <View className="py-12 items-center">
                 <ActivityIndicator />
+            </View>
+        )
+    }
+
+    if (isError) {
+        return (
+            <View className="py-12 items-center">
+                <Text className="text-danger" style={{ fontSize: 14 }}>
+                    Couldn't load super admins. Check your connection and try again.
+                </Text>
             </View>
         )
     }

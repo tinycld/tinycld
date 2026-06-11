@@ -155,8 +155,6 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                 primaryOrgSlug,
                 isDemo: !!(authData.record as Users & { is_demo?: boolean }).is_demo,
                 isBetaTester: !!metadata?.isBetaTester,
-                // Reactively derived from the super_admins store (useIsSuperAdmin).
-                isSuperAdmin: false,
             }
 
             const { expand: _, ...userOrgRecord } = firstUserOrgWithSlug
@@ -267,7 +265,6 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                 primaryOrgSlug,
                 isDemo: false,
                 isBetaTester: false,
-                isSuperAdmin: false,
             }
 
             const { expand: _, ...userOrgRecord } = firstUserOrgWithSlug
@@ -327,7 +324,6 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                 primaryOrgSlug: DEMO_ORG_SLUG,
                 isDemo: true,
                 isBetaTester: false,
-                isSuperAdmin: false,
             }
 
             const { expand: _, ...userOrgRecord } = demoUserOrg
