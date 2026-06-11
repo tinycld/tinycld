@@ -185,7 +185,13 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 		finalizeLog: func(status, errMsg string) {
 			finalizeInstallLog(app, logRecord, status, errMsg, job.LogLines)
 		},
-		restart: func() { requestRestart("") },
+		restart: func() {
+			// Flush all pre-restart writes (install-log finalize, registry mirror)
+			// from the WAL into data.db before the hard os.Exit, or the new binary
+			// reads a data.db missing them.
+			checkpointWAL(app)
+			requestRestart("")
+		},
 	}
 	return rebuildWith(job, m, deps)
 }

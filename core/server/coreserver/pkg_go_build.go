@@ -40,6 +40,20 @@ func recoverLiveDBAfterExternalWrite(app *pocketbase.PocketBase) error {
 	return nil
 }
 
+// checkpointWAL flushes the write-ahead log into the main data.db file. The
+// rebuild restart path os.Exit(75)'s the process immediately after the final
+// DB writes (install-log finalize, registry mirror). In WAL mode a committed
+// transaction lives in the -wal file until a checkpoint folds it into data.db;
+// a hard os.Exit before that checkpoint leaves the new binary reading a data.db
+// that's missing those writes (observed: pkg_install_log stuck at "running").
+// TRUNCATE forces a full checkpoint and resets the WAL so the next process sees
+// every committed write. Best-effort: a checkpoint failure is logged, not fatal.
+func checkpointWAL(app *pocketbase.PocketBase) {
+	if _, err := app.DB().NewQuery("PRAGMA wal_checkpoint(TRUNCATE)").Execute(); err != nil {
+		log.Printf("pkg_install: WAL checkpoint before restart failed: %v", err)
+	}
+}
+
 // checkGoBuildPrereqs verifies that Go and gcc are available on PATH.
 func checkGoBuildPrereqs() error {
 	for _, tool := range []string{"go", "gcc"} {

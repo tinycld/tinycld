@@ -1049,7 +1049,9 @@ func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg
 
 	if err := app.Save(record); err != nil {
 		log.Printf("pkg_install: failed to finalize install log: %v", err)
+		return
 	}
+	log.Printf("pkg_install: finalized install log %s -> %s", record.Id, status)
 }
 
 // ---------- release staging ----------

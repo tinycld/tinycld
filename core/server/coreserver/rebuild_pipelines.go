@@ -202,6 +202,7 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 	finalizeInstallLog(app, logRecord, "success", "", job.LogLines)
 	emitProgress(job, "Restarting", 99, "Activating reverted build")
 	emitComplete(job, "success", "")
+	checkpointWAL(app) // flush WAL→data.db before the hard os.Exit
 	requestRestart("")
 }
 
