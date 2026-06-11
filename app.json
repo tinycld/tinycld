@@ -43,13 +43,22 @@
             "bundleIdentifier": "org.tinycld.app",
             "buildNumber": "1",
             "supportsTablet": true,
+            "associatedDomains": ["applinks:tinycld.org"],
             "infoPlist": {
                 "ITSAppUsesNonExemptEncryption": false,
                 "NSPhotoLibraryAddUsageDescription": "Allow TinyCld to save downloaded images to your Photos library."
             }
         },
         "android": {
-            "package": "org.tinycld.app"
+            "package": "org.tinycld.app",
+            "intentFilters": [
+                {
+                    "action": "VIEW",
+                    "autoVerify": true,
+                    "data": [{ "scheme": "https", "host": "tinycld.org", "pathPrefix": "/demo" }],
+                    "category": ["BROWSABLE", "DEFAULT"]
+                }
+            ]
         },
         "web": {
             "bundler": "metro",
