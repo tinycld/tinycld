@@ -173,3 +173,37 @@ func commitRegistry(app core.App, m RebuildManifest) error {
 	_ = m
 	return nil
 }
+
+// setDelta is the single mutation applied to the current member set.
+// op ∈ {"install","version","uninstall"}. For uninstall only slug matters.
+type setDelta struct {
+	op      string
+	slug    string
+	version string
+	spec    string
+}
+
+// desiredSet computes the target member set: the current set with delta applied.
+// Install/version replaces (or appends) the slug's spec+version; uninstall drops
+// it. Every other member is carried through unchanged.
+func desiredSet(buildID string, current []MemberSpec, d setDelta) RebuildManifest {
+	out := make([]MemberSpec, 0, len(current)+1)
+	replaced := false
+	for _, ms := range current {
+		if ms.Slug == d.slug {
+			switch d.op {
+			case "uninstall":
+				continue // drop it
+			case "install", "version":
+				out = append(out, MemberSpec{Slug: d.slug, Version: d.version, Spec: d.spec})
+				replaced = true
+				continue
+			}
+		}
+		out = append(out, ms)
+	}
+	if !replaced && (d.op == "install" || d.op == "version") {
+		out = append(out, MemberSpec{Slug: d.slug, Version: d.version, Spec: d.spec})
+	}
+	return RebuildManifest{BuildID: buildID, Members: out}
+}

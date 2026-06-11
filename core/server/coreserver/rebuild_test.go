@@ -43,6 +43,43 @@ func TestRebuildManifest_MemberBySlug(t *testing.T) {
 	}
 }
 
+func TestDesiredSet_Install(t *testing.T) {
+	current := []MemberSpec{
+		{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld#v1.0.0"},
+	}
+	delta := setDelta{op: "install", slug: "mail", version: "0.3.1", spec: "@tinycld/mail@0.3.1"}
+	m := desiredSet("build-1", current, delta)
+	if _, ok := m.MemberBySlug("mail"); !ok {
+		t.Fatal("mail not added")
+	}
+	if len(m.Members) != 2 {
+		t.Fatalf("want 2 members, got %d", len(m.Members))
+	}
+}
+
+func TestDesiredSet_Uninstall(t *testing.T) {
+	current := []MemberSpec{{Slug: "tinycld"}, {Slug: "mail"}}
+	m := desiredSet("build-2", current, setDelta{op: "uninstall", slug: "mail"})
+	if _, ok := m.MemberBySlug("mail"); ok {
+		t.Fatal("mail should be removed")
+	}
+	if _, ok := m.MemberBySlug("tinycld"); !ok {
+		t.Fatal("tinycld must remain")
+	}
+}
+
+func TestDesiredSet_Upgrade_OverridesSpec(t *testing.T) {
+	current := []MemberSpec{
+		{Slug: "tinycld"},
+		{Slug: "mail", Version: "0.3.1", Spec: "@tinycld/mail@0.3.1"},
+	}
+	m := desiredSet("build-3", current, setDelta{op: "version", slug: "mail", version: "0.4.0", spec: "@tinycld/mail@0.4.0"})
+	ms, _ := m.MemberBySlug("mail")
+	if ms.Version != "0.4.0" || ms.Spec != "@tinycld/mail@0.4.0" {
+		t.Fatalf("mail not upgraded: %+v", ms)
+	}
+}
+
 func TestRebuild_HappyPath_Sequence(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("TINYCLD_STATE_DIR", state)
