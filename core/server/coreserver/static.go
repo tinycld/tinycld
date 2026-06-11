@@ -143,6 +143,18 @@ func StaticWithDynamicFallback(publicDir, releasesDir string) func(*core.Request
 			return e.FileFS(publicFs, indexPath)
 		}
 
+		// Never serve the SPA HTML fallback for API paths. This catch-all is
+		// registered after PocketBase's own /api/* routes, so it only sees an
+		// /api/ request when that route isn't (yet) registered — e.g. during the
+		// post-restart boot window after a package swap, before the collection
+		// routes are wired. Returning app.html there hands API clients
+		// "<!DOCTYPE …" with a 200, which a JSON parse then chokes on
+		// ("Unexpected token '<'"). A JSON 404 lets clients see "not ready" and
+		// retry instead of mis-parsing HTML as JSON.
+		if strings.HasPrefix("/"+path, "/api/") {
+			return e.NotFoundError("", nil)
+		}
+
 		// SPA fallback. Set no-store on app.html so a tab reload always
 		// pulls the active release's shell rather than a cached copy that
 		// may reference asset hashes the client has since dropped.
