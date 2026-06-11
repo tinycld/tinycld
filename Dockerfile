@@ -367,7 +367,7 @@ ARG TINYCLD_UID=1000
 ARG TINYCLD_GID=1000
 RUN groupadd --system --gid "$TINYCLD_GID" tinycld \
     && useradd --system --uid "$TINYCLD_UID" --gid "$TINYCLD_GID" \
-        --home-dir /workspace/tinycld --no-create-home --shell /usr/sbin/nologin tinycld
+        --home-dir /workspace --no-create-home --shell /usr/sbin/nologin tinycld
 
 # The runtime app tree lives at /workspace/tinycld and mirrors the merged member:
 # the server binary, the per-release web bundle, migrations, nested core, and the
@@ -376,18 +376,27 @@ RUN groupadd --system --gid "$TINYCLD_GID" tinycld \
 # siblings) live at /workspace (the parent of /workspace/tinycld), so that
 # node_modules/@tinycld/<x> symlinks → ../../<x> resolve within /workspace and
 # resolveServerDir()==/workspace/tinycld with wsRoot==/workspace.
-WORKDIR /workspace/tinycld
+# The image bakes the fully-assembled workspace as a PRISTINE first build under
+# /opt/tinycld-baked (an unmounted path so a bind-mounted /workspace/builds can't
+# shadow it). The whole tree is baked — root manifests + node_modules + every
+# sibling member + the tinycld member — because node_modules/@tinycld/<x> are
+# RELATIVE symlinks (../../<x>), so a build dir must contain the entire workspace,
+# not just tinycld/. At first boot the entrypoint copies this into
+# /workspace/builds/build-baked and points /workspace/current at its tinycld/.
+# Mutable state (.pnpm-store, pb_data, releases, builds) lives at /workspace,
+# OUTSIDE the swapped tree.
+WORKDIR /opt/tinycld-baked/tinycld
 
-# Compiled server binary, placed at appDir root (resolveServerDir() returns the
-# binary's own dir; the installer expects the live binary at <appDir>/tinycld and
-# the Go toolchain dir one level deeper at <appDir>/server).
+# Compiled server binary, placed at the member root (resolveServerDir() returns
+# the binary's own dir; the in-app rebuild writes the live binary at
+# <buildDir>/tinycld/tinycld and runs the Go toolchain in <buildDir>/tinycld/server).
 COPY --from=go-builder /ws/tinycld/server/tinycld ./tinycld
 
 # Per-release web bundle, staged by the web-builder. The entrypoint promotes
-# this on container start to /workspace/tinycld/releases/. The
-# /workspace/tinycld/public/ directory is reserved for the marketing website.
-COPY --from=web-builder /ws/tinycld/release-staging /workspace/tinycld/release-staging
-RUN mkdir -p /workspace/tinycld/public /workspace/tinycld/releases
+# this on container start to /workspace/releases/. The public/ directory is
+# reserved for the marketing website.
+COPY --from=web-builder /ws/tinycld/release-staging /opt/tinycld-baked/tinycld/release-staging
+RUN mkdir -p /opt/tinycld-baked/tinycld/public
 
 # Workspace-root files for the runtime scripts + in-app package-install pipeline.
 # These live at the workspace ROOT: the root package.json / pnpm-lock.yaml /
@@ -396,11 +405,11 @@ RUN mkdir -p /workspace/tinycld/public /workspace/tinycld/releases
 # in-app installer's postinstall re-runs it). They sit at /workspace (one
 # directory above /workspace/tinycld) so the symlinks
 # (node_modules/@tinycld/<x> → ../../<x>) still point at the members copied below.
-COPY --from=web-builder /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /workspace/
-COPY --from=web-builder /ws/tinycld.packages.ts /workspace/tinycld.packages.ts
-COPY --from=web-builder /ws/scripts /workspace/scripts
-COPY --from=web-builder /ws/tests /workspace/tests
-COPY --from=web-builder /ws/node_modules /workspace/node_modules
+COPY --from=web-builder /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /opt/tinycld-baked/
+COPY --from=web-builder /ws/tinycld.packages.ts /opt/tinycld-baked/tinycld.packages.ts
+COPY --from=web-builder /ws/scripts /opt/tinycld-baked/scripts
+COPY --from=web-builder /ws/tests /opt/tinycld-baked/tests
+COPY --from=web-builder /ws/node_modules /opt/tinycld-baked/node_modules
 
 # The pnpm content-addressable store, populated by the web-builder's
 # `pnpm install` (pinned to /workspace/.pnpm-store via the storeDir append in that
@@ -418,13 +427,13 @@ COPY --from=web-builder /workspace/.pnpm-store /workspace/.pnpm-store
 # node_modules symlinks (node_modules/@tinycld/<x> → ../../<x>) into these member
 # dirs. They sit at /workspace so the symlinks resolve
 # (/workspace/node_modules/@tinycld/<x> → /workspace/<x>).
-COPY --from=web-builder /ws/contacts /workspace/contacts
-COPY --from=web-builder /ws/mail /workspace/mail
-COPY --from=web-builder /ws/calendar /workspace/calendar
-COPY --from=web-builder /ws/drive /workspace/drive
-COPY --from=web-builder /ws/calc /workspace/calc
-COPY --from=web-builder /ws/text /workspace/text
-COPY --from=web-builder /ws/google-takeout-import /workspace/google-takeout-import
+COPY --from=web-builder /ws/contacts /opt/tinycld-baked/contacts
+COPY --from=web-builder /ws/mail /opt/tinycld-baked/mail
+COPY --from=web-builder /ws/calendar /opt/tinycld-baked/calendar
+COPY --from=web-builder /ws/drive /opt/tinycld-baked/drive
+COPY --from=web-builder /ws/calc /opt/tinycld-baked/calc
+COPY --from=web-builder /ws/text /opt/tinycld-baked/text
+COPY --from=web-builder /ws/google-takeout-import /opt/tinycld-baked/google-takeout-import
 
 # The merged member's sub-trees the runtime + in-app installer need (everything
 # inside tinycld/ EXCEPT the binary and release-staging, which were placed above
@@ -484,16 +493,18 @@ RUN rm -rf ./pb_migrations && ln -s server/pb_migrations ./pb_migrations
 # relative to its own dir, so place a copy at /workspace/tinycld for the boot-time seed.
 COPY --from=go-builder /ws/tinycld/server/bundled-packages.json ./bundled-packages.json
 
-# Data dir (PB writes pb_data relative to cwd) + the generated-types dir.
-# coreserver.DefaultTypesDir() resolves to <binaryDir>/core/types — with the
-# binary at /workspace/tinycld/tinycld that is /workspace/tinycld/core/types —
-# where the schema hook writes pbSchema.ts / pbZodSchema.ts at boot. Create it so
-# the write succeeds.
-RUN mkdir -p /workspace/tinycld/pb_data /workspace/tinycld/core/types
+# Mutable state dirs at the workspace state root (resolveStateDir()==/workspace):
+# pb_data (the live DB), releases (promoted web bundles), builds (per-build trees).
+# These live OUTSIDE the swapped baked tree so they persist across the `current`
+# symlink flip. The generated-types dir is code-adjacent and stays in the build
+# tree (coreserver.DefaultTypesDir() → <binaryDir>/core/types).
+RUN mkdir -p /workspace/pb_data /workspace/releases /workspace/builds \
+    && mkdir -p /opt/tinycld-baked/tinycld/core/types
 
-
-COPY tinycld/config/entrypoint.sh ./entrypoint.sh
-RUN chmod +x ./entrypoint.sh
+# The entrypoint lives at a FIXED path outside the swapped tree so it survives a
+# `current` flip and isn't part of any build dir.
+COPY tinycld/config/entrypoint.sh /opt/entrypoint.sh
+RUN chmod +x /opt/entrypoint.sh
 
 # Hand the entire workspace tree to the tinycld user with a single build-time
 # chown. Because /workspace is an ordinary subdirectory (not the overlay mount
@@ -506,7 +517,7 @@ RUN chmod +x ./entrypoint.sh
 # Must run BEFORE setcap below — chown strips file capabilities (it resets the
 # security.capability xattr along with ownership), so setcap'ing first then
 # chown'ing would silently wipe the cap.
-RUN chown -R tinycld:tinycld /workspace
+RUN chown -R tinycld:tinycld /workspace /opt/tinycld-baked /opt/entrypoint.sh
 
 # Grant cap_net_bind_service so the non-root user can bind :80/:443 when
 # autocert is on (AUTOCERT_ENABLED=true with PRIMARY_DOMAIN set). The plain-HTTP
@@ -516,7 +527,7 @@ RUN chown -R tinycld:tinycld /workspace
 # os.Renames it into place. The new binary has no caps. On autocert hosts that
 # use the installer, the operator needs to re-apply the cap manually (the image
 # ships setcap for this) or restart from the original image. Plain HTTP is fine.
-RUN setcap 'cap_net_bind_service=+ep' ./tinycld
+RUN setcap 'cap_net_bind_service=+ep' /opt/tinycld-baked/tinycld/tinycld
 
 # 7090: plain HTTP (default, when autocert is off)
 # 80:   autocert HTTP-01 challenge + plain-HTTP redirect (when autocert is on)
@@ -549,4 +560,4 @@ USER root
 # Otherwise serve plain HTTP on :7090 (override with HTTP_ADDR), expecting an
 # upstream reverse proxy or compose port mapping to route to it. PRIMARY_DOMAIN
 # still feeds the user-facing setup URL in plain-HTTP/proxy mode.
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["/opt/entrypoint.sh"]

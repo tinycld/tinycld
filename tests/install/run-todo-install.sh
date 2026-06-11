@@ -146,9 +146,9 @@ echo "[runner]   releases → ${RELEASES_DIR}"
 
 docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
 docker run -d --name "${CONTAINER}" -p 7090:7090 \
-    -v "${PB_DATA_DIR}:/workspace/tinycld/pb_data" \
-    -v "${BUILDS_DIR}:/workspace/tinycld/builds" \
-    -v "${RELEASES_DIR}:/workspace/tinycld/releases" \
+    -v "${PB_DATA_DIR}:/workspace/pb_data" \
+    -v "${BUILDS_DIR}:/workspace/builds" \
+    -v "${RELEASES_DIR}:/workspace/releases" \
     "${IMAGE}"
 
 # 2a. Begin streaming container logs to a file immediately, so we capture the
@@ -270,7 +270,7 @@ run_phase 'delete landed' 'verify delete'
 # migration), tag it, and repoint core's registry source at that file:// remote.
 # The downgrade target is the current baked version (v<CORE_CUR>).
 
-CORE_CUR=$(docker exec "${CONTAINER}" node -e "console.log(require('/workspace/tinycld/core/package.json').version)")
+CORE_CUR=$(docker exec "${CONTAINER}" node -e "console.log(require('/workspace/current/core/package.json').version)")
 echo "[runner] current base version: ${CORE_CUR}"
 CORE_NEXT="0.0.5"   # synthetic upgrade target; must be > CORE_CUR (0.0.4)
 
@@ -287,7 +287,7 @@ provision_base_remote() {
         # Copy the live base source (excluding runtime state) into the work tree.
         for d in app core scripts server app.json package.json metro.config.cjs \
                  tsconfig.json biome.json babel.config.js eslint.config.mjs; do
-            [ -e "/workspace/tinycld/$d" ] && cp -a "/workspace/tinycld/$d" .
+            [ -e "/workspace/current/$d" ] && cp -a "/workspace/current/$d" .
         done
         git add -A && git commit -qm "base v'"${CORE_CUR}"'"
         git tag "v'"${CORE_CUR}"'"
@@ -334,7 +334,7 @@ MIG
         git clone -q --bare "$WORK" "$BARE"
     '
     # Repoint core registry source at the local bare remote (git+file://).
-    docker exec "${CONTAINER}" sqlite3 /workspace/tinycld/pb_data/data.db \
+    docker exec "${CONTAINER}" sqlite3 /workspace/pb_data/data.db \
         "UPDATE pkg_registry SET npm_package='git+file:///workspace/base-remote.git' WHERE slug='core';"
 }
 
