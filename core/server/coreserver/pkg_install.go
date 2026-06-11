@@ -114,6 +114,10 @@ func RegisterPackageInstallEndpoints(app *pocketbase.PocketBase) {
 			return handleStatus(app, re)
 		}).BindFunc(adminGuard)
 
+		g.GET("/job-status/{jobId}", func(re *core.RequestEvent) error {
+			return handleJobStatus(app, re)
+		}).BindFunc(adminGuard)
+
 		g.GET("/versions", func(re *core.RequestEvent) error {
 			return handleVersions(app, re)
 		}).BindFunc(adminGuard)
@@ -410,18 +414,46 @@ func handleStatus(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	}
 	record := records[0]
 
-	return re.JSON(http.StatusOK, map[string]any{
+	return re.JSON(http.StatusOK, installLogStatusJSON(record))
+}
+
+// handleJobStatus returns the durable outcome of one operation keyed by its
+// unique job id. The /admin progress modal polls this to learn an operation's
+// terminal state, because the live SSE stream dies when a successful apply
+// restarts the server (the new process has no in-memory job). Unlike the
+// slug-keyed status, a job id is unique per operation, so a re-run for the same
+// package can't return a stale prior row.
+func handleJobStatus(app *pocketbase.PocketBase, re *core.RequestEvent) error {
+	jobID := re.Request.PathValue("jobId")
+	record, err := app.FindFirstRecordByFilter(
+		"pkg_install_log",
+		"job_id = {:jobId}",
+		map[string]any{"jobId": jobID},
+	)
+	if err != nil || record == nil {
+		return re.NotFoundError("No install log found for this job", err)
+	}
+	return re.JSON(http.StatusOK, installLogStatusJSON(record))
+}
+
+// installLogStatusJSON is the shared status payload for the slug- and
+// job-keyed status endpoints.
+func installLogStatusJSON(record *core.Record) map[string]any {
+	return map[string]any{
 		"id":          record.Id,
 		"action":      record.GetString("action"),
 		"status":      record.GetString("status"),
 		"error":       record.GetString("error"),
 		"startedAt":   record.GetString("started_at"),
 		"completedAt": record.GetString("completed_at"),
-	})
+	}
 }
 
 
 func emitProgress(job *installJob, step string, progress int, message string) {
+	if job == nil {
+		return
+	}
 	job.mu.Lock()
 	defer job.mu.Unlock()
 	job.Step = step
@@ -514,6 +546,7 @@ func createInstallLog(app core.App, job *installJob, action string) *core.Record
 	record := core.NewRecord(collection)
 	record.Set("action", action)
 	record.Set("pkg_slug", slug)
+	record.Set("job_id", job.ID)
 	record.Set("npm_package", job.NpmPkg)
 	record.Set("status", "running")
 	record.Set("started_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))

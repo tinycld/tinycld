@@ -1,14 +1,8 @@
-import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Check, CircleAlert, Loader2 } from 'lucide-react-native'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
-
-interface ProgressStep {
-    step: string
-    progress: number
-    message: string
-}
+import { type OperationStatus, type ProgressStep, useInstallProgress } from './use-install-progress'
 
 interface InstallProgressModalProps {
     isVisible: boolean
@@ -30,85 +24,27 @@ export function InstallProgressModal({
     const successColor = useThemeColor('success')
     const dangerColor = useThemeColor('danger')
 
-    const [steps, setSteps] = useState<ProgressStep[]>([])
-    const [status, setStatus] = useState<'running' | 'success' | 'failed'>('running')
-    const [error, setError] = useState<string | null>(null)
+    const { steps, status, error } = useInstallProgress(isVisible, jobId, authToken, onComplete)
     const scrollRef = useRef<ScrollView>(null)
 
-    const handleSSE = useCallback(() => {
-        if (!jobId) return
-
-        const url = `${PB_SERVER_ADDR}/api/admin/packages/events/${jobId}?token=${encodeURIComponent(authToken)}`
-        const eventSource = new EventSource(url)
-        // True once we've seen a terminal `complete` event, so the `error`
-        // handler can tell a normal post-complete close from a real connection
-        // failure and not clobber the resolved status.
-        let completed = false
-
-        eventSource.addEventListener('progress', (event: MessageEvent) => {
-            const data = JSON.parse(event.data) as ProgressStep
-            setSteps(prev => [...prev, data])
-        })
-
-        eventSource.addEventListener('complete', (event: MessageEvent) => {
-            const data = JSON.parse(event.data) as { status: string; error?: string }
-            completed = true
-            setStatus(data.status === 'success' ? 'success' : 'failed')
-            if (data.error) setError(data.error)
-            eventSource.close()
-            if (data.status === 'success') onComplete()
-        })
-
-        eventSource.addEventListener('error', () => {
-            // The browser EventSource auto-reconnects on a transient drop and
-            // re-fires `error` each time; on reconnect the server replays the
-            // full progress history and (if the job has since finished) the
-            // terminal `complete` event — so a recoverable blip resolves itself.
-            // Acting on a still-CONNECTING/OPEN source would kill that retry and
-            // freeze the modal at its last %. Only surface a failure once the
-            // connection is truly dead (CLOSED) before any `complete` — otherwise
-            // a stalled stream looks identical to "still installing", leaving the
-            // bar lying at 0% forever (the exact symptom this guards against).
-            if (completed || eventSource.readyState !== EventSource.CLOSED) return
-            setStatus('failed')
-            setError(
-                prev =>
-                    prev ??
-                    'Lost connection to the install stream — check the server logs for the outcome.'
-            )
-        })
-
-        return () => eventSource.close()
-    }, [jobId, authToken, onComplete])
-
+    // Auto-scroll the step log to the bottom as new steps stream in. The effect
+    // reads stepCount so it genuinely depends on it: each appended step bumps the
+    // count, re-runs the effect, and scrolls to the newest line.
+    const stepCount = steps.length
     useEffect(() => {
-        if (!isVisible || !jobId) return
-        setSteps([])
-        setStatus('running')
-        setError(null)
-        return handleSSE()
-    }, [isVisible, jobId, handleSSE])
-
-    // biome-ignore lint/correctness/useExhaustiveDependencies: `steps.length` is the intentional trigger — auto-scroll to the bottom whenever a new progress step arrives
-    useEffect(() => {
-        scrollRef.current?.scrollToEnd({ animated: true })
-    }, [steps.length])
+        if (stepCount > 0) scrollRef.current?.scrollToEnd({ animated: true })
+    }, [stepCount])
 
     if (!isVisible) return null
 
-    const latestStep = steps[steps.length - 1]
-    const progress = latestStep?.progress ?? 0
+    const progress = steps[steps.length - 1]?.progress ?? 0
 
     return (
         <View className="rounded-xl border border-border bg-surface-secondary overflow-hidden">
             <View className="p-4 gap-4">
                 <View className="flex-row justify-between items-center">
                     <Text className="text-base font-semibold text-foreground">
-                        {status === 'running'
-                            ? 'Installing Package...'
-                            : status === 'success'
-                              ? 'Installation Complete'
-                              : 'Installation Failed'}
+                        {titleForStatus(status)}
                     </Text>
                     <StatusIcon
                         status={status}
@@ -152,6 +88,12 @@ export function InstallProgressModal({
             </View>
         </View>
     )
+}
+
+function titleForStatus(status: OperationStatus): string {
+    if (status === 'success') return 'Installation Complete'
+    if (status === 'failed') return 'Installation Failed'
+    return 'Installing Package...'
 }
 
 function StatusIcon({
