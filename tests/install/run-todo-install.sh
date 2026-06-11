@@ -294,13 +294,20 @@ provision_base_remote() {
         git init -q "$WORK"
         cd "$WORK"
         git config user.email t@t.local && git config user.name t
-        # Copy the live base source (excluding runtime state) into the work tree.
-        # package-scripts is a NESTED workspace member (tinycld/package-scripts) the
-        # pnpm `packages:` list references, so it MUST be in the base snapshot — else
-        # a base rebuild assembled from this remote lacks it and pnpm 404s trying to
-        # fetch @tinycld/package-scripts from the npm registry.
-        for d in app core package-scripts scripts server app.json package.json \
-                 metro.config.cjs tsconfig.json biome.json babel.config.js eslint.config.mjs; do
+        # Copy the live base source into the work tree: EVERYTHING a runnable base
+        # needs, mirroring the runtime tinycld COPY set in the Dockerfile, minus
+        # generated/runtime state (dist-*, release-staging, node_modules, the
+        # compiled tinycld binary, bundled-packages.json, the pb_migrations symlink,
+        # tinycld.config.ts/seeds.ts which the generator re-emits). Missing any of
+        # these breaks a base rebuild: package-scripts -> pnpm 404; plugins/modules
+        # -> expo export PluginError (app.json references the with-app-updater plugin
+        # and metro maps the app-updater specifier to modules); assets/lib/public/
+        # global.css/babel/tsconfig/uniwind -> metro resolution failures.
+        # NOTE: this comment lives inside a single-quoted sh -lc body, so NO
+        # apostrophes here (one would close the quote and break the parse).
+        for d in app assets babel.config.cjs core expo-env.d.ts global.css lib \
+                 metro.config.cjs modules package-scripts plugins public scripts \
+                 server tsconfig.json uniwind-types.d.ts app.json package.json; do
             [ -e "/workspace/current/$d" ] && cp -a "/workspace/current/$d" .
         done
         git add -A && git commit -qm "base v'"${CORE_CUR}"'"
