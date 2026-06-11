@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -165,12 +166,92 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest) err
 	return rebuildWith(job, m, deps)
 }
 
+// The base platform is the `tinycld` workspace member, but its pkg_registry row
+// (and the /admin UI delta) uses the historical slug "core". These map between
+// the two namespaces so the desired set always speaks member slugs while the
+// registry keeps its slug.
+const baseRegistrySlug = "core"
+const baseMemberSlug = "tinycld"
+
+func registrySlugToMember(slug string) string {
+	if slug == baseRegistrySlug {
+		return baseMemberSlug
+	}
+	return slug
+}
+
+func memberSlugToRegistry(slug string) string {
+	if slug == baseMemberSlug {
+		return baseRegistrySlug
+	}
+	return slug
+}
+
+// buildCurrentMemberSet reads installed/bundled pkg_registry rows into the
+// member set the current live build represents. The base row (slug "core") maps
+// to the tinycld member. Always includes tinycld.
+func buildCurrentMemberSet(app core.App) ([]MemberSpec, error) {
+	recs, err := app.FindAllRecords("pkg_registry",
+		dbx.In("status", "installed", "bundled"))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]MemberSpec, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, MemberSpec{
+			Slug:    registrySlugToMember(r.GetString("slug")),
+			Version: r.GetString("version"),
+			Spec:    r.GetString("npm_package"),
+		})
+	}
+	return out, nil
+}
+
 // commitRegistry mirrors the just-activated manifest into pkg_registry so the
-// admin inventory reflects the live build. Defined fully in Task 16; the
-// no-op default keeps the production wiring compiling until then.
+// admin inventory reflects the live build: each present member's version is
+// updated and its status set to installed (bundled rows keep "bundled"), and
+// any registry row absent from the manifest is marked disabled.
 func commitRegistry(app core.App, m RebuildManifest) error {
-	_ = app
-	_ = m
+	present := map[string]MemberSpec{}
+	for _, ms := range m.Members {
+		present[memberSlugToRegistry(ms.Slug)] = ms
+	}
+	recs, err := app.FindAllRecords("pkg_registry")
+	if err != nil {
+		return err
+	}
+	for _, r := range recs {
+		slug := r.GetString("slug")
+		ms, ok := present[slug]
+		if !ok {
+			// No longer in the desired set — uninstalled.
+			if r.GetString("status") != "bundled" && r.GetString("status") != "disabled" {
+				r.Set("status", "disabled")
+				if err := app.Save(r); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		changed := false
+		if ms.Version != "" && r.GetString("version") != ms.Version {
+			r.Set("version", ms.Version)
+			changed = true
+		}
+		if ms.Spec != "" && r.GetString("npm_package") != ms.Spec {
+			r.Set("npm_package", ms.Spec)
+			changed = true
+		}
+		if r.GetString("status") != "bundled" && r.GetString("status") != "installed" {
+			r.Set("status", "installed")
+			changed = true
+		}
+		if changed {
+			if err := app.Save(r); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 func TestRebuildManifest_RoundTrip(t *testing.T) {
@@ -40,6 +42,97 @@ func TestRebuildManifest_MemberBySlug(t *testing.T) {
 	}
 	if _, ok := m.MemberBySlug("absent"); ok {
 		t.Fatal("MemberBySlug(absent) should be !ok")
+	}
+}
+
+func setRegistryRow(t *testing.T, app core.App, slug, status, version, npmPkg string) {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("pkg_registry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := core.NewRecord(col)
+	r.Set("slug", slug)
+	r.Set("status", status)
+	r.Set("version", version)
+	r.Set("npm_package", npmPkg)
+	if err := app.Save(r); err != nil {
+		t.Fatalf("save registry row %s: %v", slug, err)
+	}
+}
+
+func TestBuildCurrentMemberSet_MapsCoreToTinycld(t *testing.T) {
+	app := newMigrateTestApp(t)
+	addPkgRegistryCollection(t, app)
+	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
+	setRegistryRow(t, app, "mail", "installed", "0.3.1", "@tinycld/mail@0.3.1")
+	setRegistryRow(t, app, "calc", "available", "0.1.0", "@tinycld/calc@0.1.0") // excluded
+
+	set, err := buildCurrentMemberSet(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySlug := map[string]MemberSpec{}
+	for _, ms := range set {
+		bySlug[ms.Slug] = ms
+	}
+	if _, ok := bySlug["tinycld"]; !ok {
+		t.Fatal("core row should map to tinycld member")
+	}
+	if _, ok := bySlug["mail"]; !ok {
+		t.Fatal("installed mail missing")
+	}
+	if _, ok := bySlug["calc"]; ok {
+		t.Fatal("available calc should be excluded")
+	}
+}
+
+func TestCommitRegistry_MirrorsManifest(t *testing.T) {
+	app := newMigrateTestApp(t)
+	addPkgRegistryCollection(t, app)
+	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
+	setRegistryRow(t, app, "mail", "installed", "0.3.1", "@tinycld/mail@0.3.1")
+
+	// Desired set upgrades mail and drops nothing; core stays.
+	m := RebuildManifest{
+		BuildID: "build-x",
+		Members: []MemberSpec{
+			{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld"},
+			{Slug: "mail", Version: "0.4.0", Spec: "@tinycld/mail@0.4.0"},
+		},
+	}
+	if err := commitRegistry(app, m); err != nil {
+		t.Fatal(err)
+	}
+	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mail.GetString("version") != "0.4.0" {
+		t.Fatalf("mail version = %s, want 0.4.0", mail.GetString("version"))
+	}
+}
+
+func TestCommitRegistry_DisablesDroppedMember(t *testing.T) {
+	app := newMigrateTestApp(t)
+	addPkgRegistryCollection(t, app)
+	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
+	setRegistryRow(t, app, "mail", "installed", "0.3.1", "@tinycld/mail@0.3.1")
+
+	// Desired set drops mail (uninstall).
+	m := RebuildManifest{
+		BuildID: "build-y",
+		Members: []MemberSpec{{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld"}},
+	}
+	if err := commitRegistry(app, m); err != nil {
+		t.Fatal(err)
+	}
+	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mail.GetString("status") != "disabled" {
+		t.Fatalf("mail status = %s, want disabled", mail.GetString("status"))
 	}
 }
 
