@@ -121,6 +121,20 @@ func runUninstallRebuild(app *pocketbase.PocketBase, job *installJob) {
 	}
 }
 
+// revertTargetSlug returns the pkg_slug recorded for a build (the changed
+// member, e.g. "todo"), so the revert's install-log + status endpoint key on the
+// package the UI polls. Falls back to the build id if the row is missing.
+func revertTargetSlug(app *pocketbase.PocketBase, buildID string) string {
+	rec, err := app.FindFirstRecordByFilter("pkg_build", "build_id = {:id}", map[string]any{"id": buildID})
+	if err != nil || rec == nil {
+		return buildID
+	}
+	if s := rec.GetString("pkg_slug"); s != "" {
+		return s
+	}
+	return buildID
+}
+
 // loadBuildManifest reads builds/<id>/manifest.json for a retained build.
 func loadBuildManifest(buildID string) (RebuildManifest, error) {
 	path := filepath.Join(stateBuildsDir(), buildID, "manifest.json")
@@ -143,14 +157,18 @@ func loadBuildManifest(buildID string) (RebuildManifest, error) {
 func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 	defer finishJob(job)
 
-	job.Slug = job.BuildID // revert has no package slug; log keys on the build id
+	targetID := job.BuildID
+	// The install-log + status endpoint key on pkg_slug. The UI polls
+	// status/<pkg_slug> for revert/success, so the revert must log under the
+	// package the target build represents (e.g. "todo"), NOT the build id.
+	// Resolve it from the target's pkg_build row (labeled by the changed member).
+	job.Slug = revertTargetSlug(app, targetID)
 	logRecord := createInstallLog(app, job, "revert")
 	failRevert := func(step string, err error) {
 		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
 		_ = failJob(job, step, err)
 	}
 
-	targetID := job.BuildID
 	emitProgress(job, "Validating build", 5, "Checking "+targetID)
 	targetDir := filepath.Join(stateBuildsDir(), targetID, "tinycld")
 	if _, err := os.Stat(targetDir); err != nil {
