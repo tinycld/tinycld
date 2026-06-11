@@ -44,15 +44,24 @@ func runBuildPipelineWith(
 	goDir := filepath.Join(appDir, "server")
 
 	emitProgress(job, "Installing dependencies", 50, "pnpm install")
-	if _, err := run(buildDir, "pnpm", "install", "--no-frozen-lockfile"); err != nil {
+	if err := timeStep(job, "pnpm install (+ generator postinstall)", func() error {
+		_, e := run(buildDir, "pnpm", "install", "--no-frozen-lockfile")
+		return e
+	}); err != nil {
 		return buildOutput{}, wrapStep("pnpm install", err)
 	}
 	emitProgress(job, "Building server", 70, "go build")
-	if _, err := run(goDir, "go", "build", "-o", filepath.Join(appDir, binaryName), "."); err != nil {
+	if err := timeStep(job, "go build (server binary)", func() error {
+		_, e := run(goDir, "go", "build", "-o", filepath.Join(appDir, binaryName), ".")
+		return e
+	}); err != nil {
 		return buildOutput{}, wrapStep("go build", err)
 	}
 	emitProgress(job, "Exporting web bundle", 85, "expo export")
-	if _, err := run(appDir, "npx", "expo", "export", "--platform", "web"); err != nil {
+	if err := timeStep(job, "expo export (web bundle)", func() error {
+		_, e := run(appDir, "npx", "expo", "export", "--platform", "web")
+		return e
+	}); err != nil {
 		return buildOutput{}, wrapStep("expo export", err)
 	}
 	// Stage the exported dist/ into <appDir>/release-staging/<id>/ so the
@@ -71,14 +80,22 @@ func runBuildPipelineWith(
 	// /api/app/update can advertise them. nativeExport no-ops (returns nil) when the
 	// RN toolchain is absent, leaving mobile on the embedded bundle.
 	emitProgress(job, "Exporting native bundles", 92, "expo export --platform ios/android")
-	bundles, err := nativeExport(job, appDir, buildID, runtimeVersion)
-	if err != nil {
+	jobLogf(job, "web bundle staged: release %s (runtime version %s)", releaseID, runtimeVersion)
+	var bundles []bundleMeta
+	if err := timeStep(job, "native OTA export (ios/android)", func() error {
+		var e error
+		bundles, e = nativeExport(job, appDir, buildID, runtimeVersion)
+		return e
+	}); err != nil {
 		return buildOutput{}, wrapStep("native export", err)
 	}
 	if len(bundles) > 0 {
+		jobLogf(job, "native OTA bundles produced: %d", len(bundles))
 		if err := stageNativeBundlesIntoRelease(stageDir, bundles); err != nil {
 			return buildOutput{}, wrapStep("stage native bundles", err)
 		}
+	} else {
+		jobLogf(job, "native OTA export skipped (RN toolchain absent) — mobile stays on embedded bundle")
 	}
 
 	emitProgress(job, "Build complete", 94, "workspace built")

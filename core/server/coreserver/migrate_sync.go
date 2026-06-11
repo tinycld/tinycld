@@ -16,6 +16,26 @@ type SyncResult struct {
 	Pending  []string // UP migrations the NEW binary will apply on boot
 }
 
+// logSyncResult records the migration diff into the durable job log: exactly
+// which migrations were reverted (DOWN, run now against the outgoing binary) and
+// which are pending (UP, applied by the new binary on its post-swap boot). When a
+// schema-state bug appears post-upgrade, this is the line that says what the
+// rebuild changed about the schema.
+func logSyncResult(job *installJob, res SyncResult) {
+	switch {
+	case len(res.Reverted) == 0 && len(res.Pending) == 0:
+		jobLogf(job, "migrations: no schema change (applied set matches the build)")
+		return
+	default:
+		if len(res.Reverted) > 0 {
+			jobLogf(job, "migrations DOWN (reverted now, %d): %s", len(res.Reverted), strings.Join(res.Reverted, ", "))
+		}
+		if len(res.Pending) > 0 {
+			jobLogf(job, "migrations UP (applied by the new binary on boot, %d): %s", len(res.Pending), strings.Join(res.Pending, ", "))
+		}
+	}
+}
+
 // syncMigrations brings the live DB toward newSet by running DOWN for every
 // migration the new build drops. UP migrations (present in newSet, not yet
 // applied) are NOT run here — the freshly-built binary applies them on its

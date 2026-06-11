@@ -97,30 +97,46 @@ func (d rebuildDeps) fail(job *installJob, step string, err error) error {
 // already backed up) the DB is restored, leaving the live `current` unchanged.
 func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	buildDir := filepath.Join(stateBuildsDir(), m.BuildID)
+	rebuildStart := monoNow()
 
-	if err := d.assemble(m, buildDir); err != nil {
+	// Document exactly what this build is assembled from — the most useful single
+	// line for reproducing / post-morteming a build later.
+	jobLogf(job, "rebuild starting: %s", memberSetSummary(m))
+	jobLogf(job, "build dir: %s  (state root: %s)", buildDir, resolveStateDir())
+
+	if err := timeStep(job, "assemble", func() error { return d.assemble(m, buildDir) }); err != nil {
 		return d.fail(job, "assemble", err)
 	}
 	out, err := d.pipeline(job, buildDir)
 	if err != nil {
 		// Failure precedes the DB backup; live state untouched. Discard build.
+		jobLogf(job, "build failed — discarding build dir %s (live state untouched)", buildDir)
 		_ = os.RemoveAll(buildDir)
 		return d.fail(job, "build", err)
 	}
 	// From here the DB may change — back it up so we can roll back.
-	if err := d.backupDB(); err != nil {
+	if err := timeStep(job, "backup database", d.backupDB); err != nil {
 		_ = os.RemoveAll(buildDir)
 		return d.fail(job, "backup", err)
 	}
-	if _, err := d.syncMig(buildDir); err != nil {
+	if err := timeStep(job, "sync migrations", func() error {
+		res, mErr := d.syncMig(buildDir)
+		if mErr == nil {
+			logSyncResult(job, res)
+		}
+		return mErr
+	}); err != nil {
+		jobLogf(job, "migration sync failed — restoring DB backup + discarding build")
 		restore(d)
 		_ = os.RemoveAll(buildDir)
 		return d.fail(job, "migrate", err)
 	}
-	if err := d.activate(m.BuildID); err != nil {
+	if err := timeStep(job, "activate build", func() error { return d.activate(m.BuildID) }); err != nil {
+		jobLogf(job, "activate failed — restoring DB backup")
 		restore(d)
 		return d.fail(job, "activate", err)
 	}
+	jobLogf(job, "current symlink now points at build %s", m.BuildID)
 	// backupDatabase (VACUUM INTO) and the migration sync access the SQLite file
 	// out-of-band, which leaves the live app's connection pools pointed at a stale
 	// view (observed: recordBuild/commitRegistry hit "no such table: pkg_registry"
@@ -128,8 +144,8 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	// + build-record writes land in the real DB. (The old in-place pipeline did the
 	// same via recoverLiveDBAfterExternalWrite after its migrate subprocess.)
 	if d.recoverDB != nil {
-		if err := d.recoverDB(); err != nil {
-			log.Printf("rebuild: recoverDB warning: %v", err)
+		if err := timeStep(job, "reconnect DB pools", d.recoverDB); err != nil {
+			jobLogf(job, "WARNING: recoverDB failed (post-activate writes may not land): %v", err)
 		}
 	}
 	if d.recordBuild != nil {
@@ -137,7 +153,10 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 			// The build is already live; failing to record the pkg_build row only
 			// affects OTA-update advertisement + the rollback UI, not correctness.
 			// Log and continue rather than abort an already-activated build.
-			log.Printf("rebuild: recordBuild warning: %v", err)
+			jobLogf(job, "WARNING: recordBuild failed (OTA + rollback-target metadata missing): %v", err)
+		} else {
+			jobLogf(job, "recorded pkg_build %s (release %s, %d native bundle(s))",
+				m.BuildID, out.releaseID, len(out.bundles))
 		}
 	}
 	if d.commitRegistry != nil {
@@ -145,15 +164,18 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 			// The build is already live; a registry mirror failure is logged but
 			// not fatal — the next boot reconciles from the live tree. Don't
 			// restore the DB (the new schema is correct) or unflip the symlink.
-			log.Printf("rebuild: commitRegistry warning: %v", err)
+			jobLogf(job, "WARNING: commitRegistry failed (admin inventory may lag; reconciles on next boot): %v", err)
+		} else {
+			jobLogf(job, "registry mirrored to the live build")
 		}
 	}
 	if d.prune != nil {
 		if err := d.prune(buildsToKeep); err != nil {
-			log.Printf("rebuild: prune warning: %v", err)
+			jobLogf(job, "WARNING: build prune failed (old builds retained): %v", err)
 		}
 	}
 	job.Status = "success"
+	jobLogf(job, "rebuild succeeded in %s — restarting onto build %s", monoSince(rebuildStart), m.BuildID)
 	// Finalize the install log BEFORE restart — restart os.Exit's the process.
 	if d.finalizeLog != nil {
 		d.finalizeLog("success", "")
@@ -192,7 +214,7 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 	var restoreClosure func() error
 
 	deps := rebuildDeps{
-		assemble: assembleBuild,
+		assemble: func(mm RebuildManifest, bd string) error { return assembleBuild(job, mm, bd) },
 		pipeline: func(j *installJob, bd string) (buildOutput, error) {
 			return runBuildPipeline(j, bd, m.BuildID)
 		},
@@ -357,6 +379,7 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir string) error {
 				if err := app.Save(r); err != nil {
 					return err
 				}
+				log.Printf("[pkg_install] registry: %s -> disabled (uninstalled)", slug)
 			}
 			continue
 		}
@@ -389,6 +412,8 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir string) error {
 			if err := app.Save(r); err != nil {
 				return err
 			}
+			log.Printf("[pkg_install] registry: %s -> version=%s status=%s",
+				slug, r.GetString("version"), r.GetString("status"))
 		}
 	}
 	// Create rows for freshly-installed members (no existing row). Parse each
@@ -400,6 +425,7 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir string) error {
 		if err := createRegistryRowFromBuild(app, buildDir, ms); err != nil {
 			return fmt.Errorf("create registry row for %s: %w", ms.Slug, err)
 		}
+		log.Printf("[pkg_install] registry: created %s (newly installed)", regSlug)
 	}
 	return nil
 }

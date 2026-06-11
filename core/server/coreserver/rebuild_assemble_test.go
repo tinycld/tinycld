@@ -66,7 +66,7 @@ func TestAssembleBuild_FetchesAllAndScaffolds(t *testing.T) {
 	failCopy := func(ms MemberSpec, dir string) error {
 		return fmt.Errorf("copy should not be called when no member is FromCurrent")
 	}
-	if err := assembleBuildWith(manifest, build, fakeFetch, failCopy); err != nil {
+	if err := assembleBuildWith(nil, manifest, build, fakeFetch, failCopy); err != nil {
 		t.Fatal(err)
 	}
 	if len(fetched) != 2 {
@@ -92,7 +92,7 @@ func TestAssembleBuild_CopiesFromCurrentVsFetch(t *testing.T) {
 		copied = append(copied, ms.Slug)
 		return os.MkdirAll(filepath.Join(dir, ms.Slug), 0o755)
 	}
-	if err := assembleBuildWith(manifest, build, fakeFetch, fakeCopy); err != nil {
+	if err := assembleBuildWith(nil, manifest, build, fakeFetch, fakeCopy); err != nil {
 		t.Fatal(err)
 	}
 	if len(fetched) != 1 || fetched[0] != "mail" {

@@ -1,9 +1,11 @@
 package coreserver
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 func currentLinkPath() string { return filepath.Join(resolveStateDir(), "current") }
@@ -21,7 +23,8 @@ func activateBuild(buildID string) error {
 	if _, err := os.Stat(target); err != nil {
 		return err
 	}
-	if prev := currentBuildID(); prev != "" && prev != buildID {
+	prev := currentBuildID()
+	if prev != "" && prev != buildID {
 		_ = os.WriteFile(previousBuildPath(), []byte(prev), 0o644)
 	}
 	tmp := currentLinkPath() + ".tmp"
@@ -29,7 +32,21 @@ func activateBuild(buildID string) error {
 	if err := os.Symlink(target, tmp); err != nil {
 		return err
 	}
-	return os.Rename(tmp, currentLinkPath())
+	if err := os.Rename(tmp, currentLinkPath()); err != nil {
+		return err
+	}
+	// Durable (docker logs) record of the atomic swap + the rollback target the
+	// entrypoint would flip back to on a failed post-restart health probe.
+	log.Printf("[pkg_install] activate: current %s -> %s (rollback target: %s)",
+		orNone(prev), buildID, orNone(prev))
+	return nil
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
 }
 
 // currentBuildID returns the build id `current` points at, or "" if unset.
@@ -70,12 +87,18 @@ func pruneBuilds(keep int) error {
 	for i := len(ids) - 1; i >= 0 && len(ids)-1-i < keep; i-- {
 		survive[ids[i]] = true
 	}
+	var pruned []string
 	for _, id := range ids {
 		if !survive[id] {
 			if err := os.RemoveAll(filepath.Join(stateBuildsDir(), id)); err != nil {
 				return err
 			}
+			pruned = append(pruned, id)
 		}
+	}
+	if len(pruned) > 0 {
+		log.Printf("[pkg_install] prune: removed %d old build(s): %s (kept current=%s + newest %d)",
+			len(pruned), strings.Join(pruned, ", "), orNone(cur), keep)
 	}
 	return nil
 }

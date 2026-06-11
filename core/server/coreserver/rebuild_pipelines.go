@@ -3,7 +3,6 @@ package coreserver
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -75,6 +74,7 @@ func runInstallRebuild(app *pocketbase.PocketBase, job *installJob) {
 	// Create the install-log row up front (slug falls back to the npm spec until
 	// resolved) so the status endpoint the UI polls has something to report.
 	logRecord := createInstallLog(app, job, "install")
+	jobLogf(job, "INSTALL requested: spec=%s (job %s)", job.NpmPkg, job.ID)
 
 	slug, version, err := resolveInstallSlugVersion(app, job)
 	if err != nil {
@@ -106,6 +106,7 @@ func runUninstallRebuild(app *pocketbase.PocketBase, job *installJob) {
 	defer finishJob(job)
 
 	logRecord := createInstallLog(app, job, "uninstall")
+	jobLogf(job, "UNINSTALL requested: slug=%s (job %s)", job.Slug, job.ID)
 
 	current, err := buildCurrentMemberSet(app)
 	if err != nil {
@@ -169,6 +170,8 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 		_ = failJob(job, step, err)
 	}
 
+	revertStart := monoNow()
+	jobLogf(job, "revert starting: reactivating retained build %s (package %s) — NO rebuild", targetID, job.Slug)
 	emitProgress(job, "Validating build", 5, "Checking "+targetID)
 	targetDir := filepath.Join(stateBuildsDir(), targetID, "tinycld")
 	if _, err := os.Stat(targetDir); err != nil {
@@ -201,11 +204,13 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 		failRevert("migrate", err)
 		return
 	}
-	if _, err := syncMigrations(app, applied, newSet); err != nil {
+	syncRes, err := syncMigrations(app, applied, newSet)
+	if err != nil {
 		_ = restoreDB()
 		failRevert("migrate", err)
 		return
 	}
+	logSyncResult(job, syncRes)
 
 	emitProgress(job, "Activating build", 70, "Flipping current symlink")
 	if err := activateBuild(targetID); err != nil {
@@ -217,12 +222,13 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 	// the registry write + install-log finalize below hit the real tables (see
 	// rebuildWith's recoverDB step).
 	if err := recoverLiveDBAfterExternalWrite(app); err != nil {
-		log.Printf("revert: recoverDB warning: %v", err)
+		jobLogf(job, "WARNING: revert recoverDB failed: %v", err)
 	}
 	if err := commitRegistry(app, m, filepath.Join(stateBuildsDir(), targetID)); err != nil {
-		log.Printf("revert: commitRegistry warning: %v", err)
+		jobLogf(job, "WARNING: revert commitRegistry failed (reconciles on next boot): %v", err)
 	}
 	job.Status = "success"
+	jobLogf(job, "revert succeeded in %s — restarting onto build %s", monoSince(revertStart), targetID)
 	finalizeInstallLog(app, logRecord, "success", "", job.LogLines)
 	emitProgress(job, "Restarting", 99, "Activating reverted build")
 	emitComplete(job, "success", "")
@@ -237,6 +243,10 @@ func runVersionChangeRebuild(app *pocketbase.PocketBase, job *installJob) {
 	defer finishJob(job)
 
 	logRecord := createInstallLog(app, job, "version_change")
+	jobLogf(job, "VERSION CHANGE requested: %d change(s) (job %s)", len(job.Changes), job.ID)
+	for _, ch := range job.Changes {
+		jobLogf(job, "  change: %s -> %s", ch.Slug, ch.TargetVersion)
+	}
 
 	current, err := buildCurrentMemberSet(app)
 	if err != nil {

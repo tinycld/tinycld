@@ -116,7 +116,11 @@ func backupDatabase(_ string) (rollbackFn func() error, err error) {
 		return nil, fmt.Errorf("database backup failed: %v\n%s", err, out)
 	}
 
-	log.Printf("pkg_go_build: database backed up to %s", backupPath)
+	var sizeNote string
+	if fi, statErr := os.Stat(backupPath); statErr == nil {
+		sizeNote = fmt.Sprintf(" (%.1f MB)", float64(fi.Size())/(1024*1024))
+	}
+	log.Printf("[pkg_install] database backed up to %s%s (restore-on-failure armed)", backupPath, sizeNote)
 
 	rollbackFn = func() error {
 		log.Printf("pkg_go_build: restoring database from backup")

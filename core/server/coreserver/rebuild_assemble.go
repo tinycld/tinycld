@@ -140,8 +140,8 @@ type fetchFn func(ms MemberSpec, buildDir string) error
 // changed ones, copying the unchanged ones from the active build), and writes
 // the workspace scaffold into buildDir. After this the build dir is a complete
 // pre-install workspace; runBuildPipeline turns it into a runnable one.
-func assembleBuild(m RebuildManifest, buildDir string) error {
-	return assembleBuildWith(m, buildDir, fetchMember, copyMemberFromCurrent)
+func assembleBuild(job *installJob, m RebuildManifest, buildDir string) error {
+	return assembleBuildWith(job, m, buildDir, fetchMember, copyMemberFromCurrent)
 }
 
 // copyMemberFn materializes a FromCurrent member by copying it out of the
@@ -168,7 +168,7 @@ func copyMemberFromCurrent(ms MemberSpec, buildDir string) error {
 	return copyDir(src, dest)
 }
 
-func assembleBuildWith(m RebuildManifest, buildDir string, fetch fetchFn, copyCurrent copyMemberFn) error {
+func assembleBuildWith(assembleJob *installJob, m RebuildManifest, buildDir string, fetch fetchFn, copyCurrent copyMemberFn) error {
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
 		return err
 	}
@@ -182,15 +182,22 @@ func assembleBuildWith(m RebuildManifest, buildDir string, fetch fetchFn, copyCu
 	}
 	members := make([]string, 0, len(m.Members))
 	for _, ms := range m.Members {
+		memStart := monoNow()
 		if ms.FromCurrent {
 			if err := copyCurrent(ms, buildDir); err != nil {
 				return fmt.Errorf("copy %s from current: %w", ms.Slug, err)
 			}
-		} else if err := fetch(ms, buildDir); err != nil {
-			return fmt.Errorf("fetch %s: %w", ms.Slug, err)
+			jobLogf(assembleJob, "member %s: copied from current build in %s", ms.Slug, monoSince(memStart))
+		} else {
+			jobLogf(assembleJob, "member %s: fetching %s", ms.Slug, ms.Spec)
+			if err := fetch(ms, buildDir); err != nil {
+				return fmt.Errorf("fetch %s: %w", ms.Slug, err)
+			}
+			jobLogf(assembleJob, "member %s: fetched in %s", ms.Slug, monoSince(memStart))
 		}
 		members = append(members, ms.Slug)
 	}
+	jobLogf(assembleJob, "assembled %d members; writing workspace scaffold", len(members))
 	return writeWorkspaceScaffold(buildDir, members)
 }
 
