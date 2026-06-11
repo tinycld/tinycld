@@ -358,8 +358,19 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir string) error {
 		}
 		seen[slug] = true
 		changed := false
-		if ms.Version != "" && r.GetString("version") != ms.Version {
-			r.Set("version", ms.Version)
+		// For a CHANGED member (fetched fresh), the authoritative version is the
+		// built package's manifest version (semver, e.g. "2.0.0"), NOT the delta's
+		// target string which may be a git TAG ("v2.0.0"). Parse it from the build
+		// so the registry stores what the rest of the system compares against.
+		// FromCurrent members are unchanged — keep their existing version.
+		version := ms.Version
+		if !ms.FromCurrent {
+			if v := manifestVersionFromBuild(buildDir, ms.Slug); v != "" {
+				version = v
+			}
+		}
+		if version != "" && r.GetString("version") != version {
+			r.Set("version", version)
 			changed = true
 		}
 		if ms.Spec != "" && r.GetString("npm_package") != ms.Spec {
@@ -387,6 +398,17 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir string) error {
 		}
 	}
 	return nil
+}
+
+// manifestVersionFromBuild returns the member's semver version parsed from its
+// manifest in the build dir, or "" if it can't be read. Used to store the real
+// package version in the registry instead of a delta's git-tag string.
+func manifestVersionFromBuild(buildDir, slug string) string {
+	manifest, err := parseManifestViaNode(filepath.Join(buildDir, slug))
+	if err != nil {
+		return ""
+	}
+	return manifest.Version
 }
 
 // createRegistryRowFromBuild parses the member's manifest out of the build dir
