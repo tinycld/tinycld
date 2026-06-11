@@ -35,8 +35,11 @@ type buildArchive struct {
 // stored build_id — it is never taken from user input, so joining it into a path
 // here is not a traversal vector. Keep it that way: do not make build_id
 // client-settable.
-func buildArchiveFor(appDir, buildID string) buildArchive {
-	root := filepath.Join(appDir, buildsDirName, buildID)
+func buildArchiveFor(_ string, buildID string) buildArchive {
+	// builds/ lives under the STATE root so archives persist across the
+	// per-build symlink swap. The legacy appDir param is retained for caller
+	// compatibility but no longer used for path resolution.
+	root := filepath.Join(stateBuildsDir(), buildID)
 	return buildArchive{
 		root:       root,
 		binary:     filepath.Join(root, binaryName),
@@ -290,7 +293,7 @@ func SeedBaseBuild(app core.App) {
 		// No binary on disk to archive (dev / `go run`): skip.
 		return
 	}
-	currentRelease := filepath.Join(appDir, "releases", "current")
+	currentRelease := filepath.Join(stateReleasesDir(), "current")
 	if _, err := os.Stat(filepath.Join(currentRelease, "app.html")); err != nil {
 		// No promoted web bundle to archive: skip.
 		return

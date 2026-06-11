@@ -31,16 +31,14 @@ func DefaultPublicDir() string {
 	return "./public"
 }
 
-// DefaultReleasesDir returns the default releases dir relative to the
-// running executable — "./releases" when running via `go run` (tempdir
-// binary) or next to the installed binary otherwise. The runtime
-// entrypoint promotes per-deploy bundles into this directory; a `current`
-// symlink there points at the active release.
+// DefaultReleasesDir returns the releases dir under the STATE root
+// (resolveStateDir()), which persists across the per-build symlink swap. The
+// runtime entrypoint promotes per-deploy bundles into this directory; a
+// `current` symlink there points at the active release. When TINYCLD_STATE_DIR
+// is unset, stateReleasesDir() falls back to the binary dir (the `go run` /
+// pre-relocation case), preserving the previous "./releases" behavior.
 func DefaultReleasesDir() string {
-	if dir := binaryDir(); dir != "" {
-		return filepath.Join(dir, "releases")
-	}
-	return "./releases"
+	return stateReleasesDir()
 }
 
 // DefaultTypesDir returns the default location the server writes generated
