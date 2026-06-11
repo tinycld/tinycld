@@ -5,7 +5,39 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/pocketbase/pocketbase/core"
 )
+
+// SyncResult records what a migration sync did.
+type SyncResult struct {
+	Reverted []string // DOWN migrations run against the outgoing binary
+	Pending  []string // UP migrations the NEW binary will apply on boot
+}
+
+// syncMigrations brings the live DB toward newSet by running DOWN for every
+// migration the new build drops. UP migrations (present in newSet, not yet
+// applied) are NOT run here — the freshly-built binary applies them on its
+// post-swap boot (PocketBase auto-migrates on start). They are returned in
+// Pending for logging/verification.
+//
+// applied is the current _migrations file set; newSet is the build's set
+// (buildMigrationFiles). DOWN runs newest-first; the caller must have taken a
+// pb_data backup first so a failure can be rolled back.
+func syncMigrations(app core.App, applied, newSet []string) (SyncResult, error) {
+	down := migrationsToRevert(applied, newSet)
+	up := migrationsToApply(applied, newSet)
+
+	var reverted []string
+	if len(down) > 0 {
+		r, err := revertNamedMigrations(app, down)
+		if err != nil {
+			return SyncResult{Reverted: r, Pending: up}, err
+		}
+		reverted = r
+	}
+	return SyncResult{Reverted: reverted, Pending: up}, nil
+}
 
 // buildMigrationFiles returns the sorted *.js migration filenames a built
 // workspace carries, read from <buildDir>/tinycld/server/pb_migrations.

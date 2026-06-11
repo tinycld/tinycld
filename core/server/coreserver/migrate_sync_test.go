@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 func TestMigrationsToApply(t *testing.T) {
@@ -34,6 +36,86 @@ func TestMigrationDiff_NoChange(t *testing.T) {
 	}
 	if got := migrationsToRevert(set, set); len(got) != 0 {
 		t.Fatalf("expected no reverts, got %v", got)
+	}
+}
+
+func TestSyncMigrations_RevertsDroppedSet(t *testing.T) {
+	app := newMigrateTestApp(t)
+
+	const colName = "ms_sync_widgets"
+	createFile := "9100000001_ms_create_widgets.js"
+	addFieldFile := "9100000002_ms_add_color.js"
+
+	withTestMigrations(t, []*core.Migration{
+		{
+			File: createFile,
+			Up: func(txApp core.App) error {
+				c := core.NewBaseCollection(colName)
+				c.Fields.Add(&core.TextField{Name: "title"})
+				return txApp.Save(c)
+			},
+			Down: func(txApp core.App) error {
+				c, err := txApp.FindCollectionByNameOrId(colName)
+				if err != nil {
+					return nil
+				}
+				return txApp.Delete(c)
+			},
+		},
+		{
+			File: addFieldFile,
+			Up: func(txApp core.App) error {
+				c, err := txApp.FindCollectionByNameOrId(colName)
+				if err != nil {
+					return err
+				}
+				c.Fields.Add(&core.TextField{Name: "color"})
+				return txApp.Save(c)
+			},
+			Down: func(txApp core.App) error {
+				c, err := txApp.FindCollectionByNameOrId(colName)
+				if err != nil {
+					return err
+				}
+				if c.Fields.GetByName("color") != nil {
+					c.Fields.RemoveByName("color")
+				}
+				return txApp.Save(c)
+			},
+		},
+	})
+
+	applied := []string{createFile, addFieldFile}
+	if _, err := applyNamedMigrations(app, applied); err != nil {
+		t.Fatalf("applyNamedMigrations: %v", err)
+	}
+
+	// The new build drops addFieldFile — sync must revert exactly that one.
+	newSet := []string{createFile}
+	res, err := syncMigrations(app, applied, newSet)
+	if err != nil {
+		t.Fatalf("syncMigrations: %v", err)
+	}
+	if len(res.Reverted) != 1 || res.Reverted[0] != addFieldFile {
+		t.Fatalf("Reverted = %v, want [%s]", res.Reverted, addFieldFile)
+	}
+	if stillApplied, _ := migrationApplied(app, addFieldFile); stillApplied {
+		t.Fatalf("%s should have been reverted", addFieldFile)
+	}
+	if stillApplied, _ := migrationApplied(app, createFile); !stillApplied {
+		t.Fatalf("%s should remain applied", createFile)
+	}
+}
+
+func TestSyncMigrations_NoChange(t *testing.T) {
+	app := newMigrateTestApp(t)
+	set := []string{"100_a.js", "200_b.js"}
+	res, err := syncMigrations(app, set, set)
+	if err != nil {
+		t.Fatalf("syncMigrations: %v", err)
+	}
+	if len(res.Reverted) != 0 || len(res.Pending) != 0 {
+		t.Fatalf("expected no-op sync, got %+v", res)
 	}
 }
 
