@@ -80,9 +80,13 @@ func validateBinary(binaryPath string) error {
 
 // backupDatabase creates a consistent SQLite backup using VACUUM INTO.
 // Returns a rollback function that restores the backup.
-func backupDatabase(appDir string) (rollbackFn func() error, err error) {
-	dbPath := filepath.Join(appDir, "pb_data", "data.db")
-	backupPath := filepath.Join(appDir, "pb_data", "data.db.backup")
+// backupDatabase snapshots the live DB and returns a restore closure. The DB
+// lives under the STATE dir (resolveStateDir()), not the build/binary dir, so
+// it persists across the per-build symlink swap. The legacy appDir parameter
+// is retained for caller compatibility but no longer used for path resolution.
+func backupDatabase(_ string) (rollbackFn func() error, err error) {
+	dbPath := filepath.Join(statePbDataDir(), "data.db")
+	backupPath := filepath.Join(statePbDataDir(), "data.db.backup")
 
 	// SQLite's VACUUM INTO refuses to overwrite an existing file ("output file
 	// already exists"). A prior install/revert leaves data.db.backup behind, so
