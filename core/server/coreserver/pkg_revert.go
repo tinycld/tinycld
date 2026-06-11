@@ -54,7 +54,7 @@ func handleRevert(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	currentJob = job
 	installMu.Unlock()
 
-	go runRevertPipeline(app, job)
+	go runRevertRebuild(app, job)
 
 	return re.JSON(http.StatusAccepted, map[string]any{"jobId": jobId})
 }

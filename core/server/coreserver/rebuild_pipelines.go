@@ -1,7 +1,9 @@
 package coreserver
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -107,6 +109,81 @@ func runUninstallRebuild(app *pocketbase.PocketBase, job *installJob) {
 		job.Status = "failed"
 		job.Error = err.Error()
 	}
+}
+
+// loadBuildManifest reads builds/<id>/manifest.json for a retained build.
+func loadBuildManifest(buildID string) (RebuildManifest, error) {
+	path := filepath.Join(stateBuildsDir(), buildID, "manifest.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return RebuildManifest{}, err
+	}
+	var m RebuildManifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		return RebuildManifest{}, err
+	}
+	return m, nil
+}
+
+// runRevertRebuild reactivates a previously-built, still-retained build dir.
+// No rebuild or re-fetch happens: the target tree already exists complete on
+// disk. We back up the DB, sync the schema to the target build's migration set
+// (reverting any migrations newer builds applied), flip the `current` symlink
+// to the target, mirror its manifest into the registry, and restart.
+func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
+	defer finishJob(job)
+
+	targetID := job.BuildID
+	emitProgress(job, "Validating build", 5, "Checking "+targetID)
+	targetDir := filepath.Join(stateBuildsDir(), targetID, "tinycld")
+	if _, err := os.Stat(targetDir); err != nil {
+		_ = failJob(job, "validate", fmt.Errorf("build %s not retained on disk: %w", targetID, err))
+		return
+	}
+	m, err := loadBuildManifest(targetID)
+	if err != nil {
+		_ = failJob(job, "validate", fmt.Errorf("read target manifest: %w", err))
+		return
+	}
+
+	emitProgress(job, "Backing up database", 20, "Creating SQLite backup")
+	restoreDB, err := backupDatabase(filepath.Join(stateBuildsDir(), targetID, "tinycld"))
+	if err != nil {
+		_ = failJob(job, "backup", err)
+		return
+	}
+
+	emitProgress(job, "Reconciling schema", 40, "Syncing migrations to target build")
+	newSet, err := buildMigrationFiles(filepath.Join(stateBuildsDir(), targetID))
+	if err != nil {
+		_ = restoreDB()
+		_ = failJob(job, "migrate", err)
+		return
+	}
+	applied, err := appliedMigrationFiles(app)
+	if err != nil {
+		_ = restoreDB()
+		_ = failJob(job, "migrate", err)
+		return
+	}
+	if _, err := syncMigrations(app, applied, newSet); err != nil {
+		_ = restoreDB()
+		_ = failJob(job, "migrate", err)
+		return
+	}
+
+	emitProgress(job, "Activating build", 70, "Flipping current symlink")
+	if err := activateBuild(targetID); err != nil {
+		_ = restoreDB()
+		_ = failJob(job, "activate", err)
+		return
+	}
+	if err := commitRegistry(app, m); err != nil {
+		log.Printf("revert: commitRegistry warning: %v", err)
+	}
+	emitProgress(job, "Restarting", 99, "Activating reverted build")
+	emitComplete(job, "success", "")
+	requestRestart("")
 }
 
 // runVersionChangeRebuild applies one or more version changes (upgrades or
