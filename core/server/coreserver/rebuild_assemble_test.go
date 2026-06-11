@@ -1,0 +1,73 @@
+package coreserver
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestWriteWorkspaceScaffold(t *testing.T) {
+	dir := t.TempDir()
+	src := t.TempDir() // empty src root → scaffold extras skipped
+	members := []string{"tinycld", "mail", "calc"}
+	if err := writeWorkspaceScaffoldFrom(dir, members, src); err != nil {
+		t.Fatal(err)
+	}
+
+	// package.json present + parses + has packageManager + nested members.
+	pj, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pkg map[string]any
+	if err := json.Unmarshal(pj, &pkg); err != nil {
+		t.Fatalf("package.json invalid: %v", err)
+	}
+	if _, ok := pkg["packageManager"]; !ok {
+		t.Fatal("package.json missing packageManager")
+	}
+
+	// pnpm-workspace.yaml lists every member (incl nested) + fixed store dir.
+	ws, err := os.ReadFile(filepath.Join(dir, "pnpm-workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(ws)
+	for _, m := range []string{"tinycld", "tinycld/core", "tinycld/package-scripts", "mail", "calc"} {
+		if !strings.Contains(s, m) {
+			t.Fatalf("pnpm-workspace.yaml missing member %q", m)
+		}
+	}
+	if !strings.Contains(s, "/workspace/.pnpm-store") {
+		t.Fatal("pnpm-workspace.yaml missing storeDir /workspace/.pnpm-store")
+	}
+	if !strings.Contains(s, "nodeLinker: hoisted") {
+		t.Fatal("pnpm-workspace.yaml missing nodeLinker: hoisted")
+	}
+}
+
+func TestCopyScaffoldExtras_CopiesFilesAndDirs(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	// One file extra and one dir extra.
+	if err := os.WriteFile(filepath.Join(src, ".npmrc"), []byte("x=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "scripts", "link-members.ts"), []byte("// x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyScaffoldExtras(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, ".npmrc")); err != nil {
+		t.Fatalf(".npmrc not copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "scripts", "link-members.ts")); err != nil {
+		t.Fatalf("scripts/ not copied: %v", err)
+	}
+}
