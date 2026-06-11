@@ -43,21 +43,21 @@ func runBuildPipelineWith(
 	appDir := filepath.Join(buildDir, "tinycld")
 	goDir := filepath.Join(appDir, "server")
 
-	emitProgress(job, "Installing dependencies", 50, "pnpm install")
+	emitProgress(job, "Installing dependencies", progPnpmInstall, "pnpm install")
 	if err := timeStep(job, "pnpm install (+ generator postinstall)", func() error {
 		_, e := run(buildDir, "pnpm", "install", "--no-frozen-lockfile")
 		return e
 	}); err != nil {
 		return buildOutput{}, wrapStep("pnpm install", err)
 	}
-	emitProgress(job, "Building server", 70, "go build")
+	emitProgress(job, "Building server", progGoBuild, "go build")
 	if err := timeStep(job, "go build (server binary)", func() error {
 		_, e := run(goDir, "go", "build", "-o", filepath.Join(appDir, binaryName), ".")
 		return e
 	}); err != nil {
 		return buildOutput{}, wrapStep("go build", err)
 	}
-	emitProgress(job, "Exporting web bundle", 85, "expo export")
+	emitProgress(job, "Exporting web bundle", progExpoWeb, "expo export")
 	if err := timeStep(job, "expo export (web bundle)", func() error {
 		_, e := run(appDir, "npx", "expo", "export", "--platform", "web")
 		return e
@@ -68,7 +68,7 @@ func runBuildPipelineWith(
 	// entrypoint's promote_release (which reads /workspace/current/release-staging
 	// after the swap) finds the new bundle. Without this the server serves the old
 	// bundle or 404s ("Unmatched Route") on a newly-installed package's routes.
-	emitProgress(job, "Staging web bundle", 88, "release-staging")
+	emitProgress(job, "Staging web bundle", progStageRelease, "release-staging")
 	stageDir, err := stage(appDir)
 	if err != nil {
 		return buildOutput{}, wrapStep("stage release", err)
@@ -79,7 +79,7 @@ func runBuildPipelineWith(
 	// Export the native iOS/Android OTA bundles and stage them into the release so
 	// /api/app/update can advertise them. nativeExport no-ops (returns nil) when the
 	// RN toolchain is absent, leaving mobile on the embedded bundle.
-	emitProgress(job, "Exporting native bundles", 92, "expo export --platform ios/android")
+	emitProgress(job, "Exporting native bundles", progNativeStart, "expo export --platform ios/android")
 	jobLogf(job, "web bundle staged: release %s (runtime version %s)", releaseID, runtimeVersion)
 	var bundles []bundleMeta
 	if err := timeStep(job, "native OTA export (ios/android)", func() error {
@@ -101,7 +101,7 @@ func runBuildPipelineWith(
 		jobLogf(job, "native OTA export skipped (RN toolchain absent) — mobile stays on embedded bundle")
 	}
 
-	emitProgress(job, "Build complete", 94, "workspace built")
+	emitProgress(job, "Build complete", progNativeEnd, "workspace built")
 	return buildOutput{
 		releaseID:      releaseID,
 		stageDir:       stageDir,

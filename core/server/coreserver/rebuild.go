@@ -53,6 +53,28 @@ func (m RebuildManifest) MemberBySlug(slug string) (MemberSpec, bool) {
 // the real disk cost per retained build is small.
 const buildsToKeep = 5
 
+// Progress milestones for the /admin progress bar, in the order a rebuild hits
+// them. The assemble band (members fetched/copied) runs from progAssembleStart
+// to progAssembleEnd with per-member ticks spread across it; the build pipeline
+// (pnpm/go/expo/native) owns the middle; the DB + activation phases own the tail.
+// Keeping the whole scale here (rather than scattered magic numbers) makes the
+// bar monotonic across all four rebuild paths.
+const (
+	progAssembleStart = 5
+	progAssembleEnd   = 42
+	progPnpmInstall   = 45
+	progGoBuild       = 60
+	progExpoWeb       = 72
+	progStageRelease  = 76
+	progNativeStart   = 80
+	progNativeEnd     = 88
+	progBackupDB      = 90
+	progSyncMig       = 93
+	progActivate      = 96
+	progCommit        = 98
+	progRestart       = 99
+)
+
 // rebuildDeps holds the orchestrator's steps as injectable functions so the
 // control flow (ordering, failure handling, rollback) is unit-testable without
 // running a real build.
@@ -104,6 +126,7 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	jobLogf(job, "rebuild starting: %s", memberSetSummary(m))
 	jobLogf(job, "build dir: %s  (state root: %s)", buildDir, resolveStateDir())
 
+	emitProgress(job, "Assembling build", progAssembleStart, memberSetSummary(m))
 	if err := timeStep(job, "assemble", func() error { return d.assemble(m, buildDir) }); err != nil {
 		return d.fail(job, "assemble", err)
 	}
@@ -115,10 +138,12 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 		return d.fail(job, "build", err)
 	}
 	// From here the DB may change — back it up so we can roll back.
+	emitProgress(job, "Backing up database", progBackupDB, "Creating SQLite backup")
 	if err := timeStep(job, "backup database", d.backupDB); err != nil {
 		_ = os.RemoveAll(buildDir)
 		return d.fail(job, "backup", err)
 	}
+	emitProgress(job, "Applying migrations", progSyncMig, "Reconciling schema to new build")
 	if err := timeStep(job, "sync migrations", func() error {
 		res, mErr := d.syncMig(buildDir)
 		if mErr == nil {
@@ -131,6 +156,7 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 		_ = os.RemoveAll(buildDir)
 		return d.fail(job, "migrate", err)
 	}
+	emitProgress(job, "Activating build", progActivate, "Flipping current symlink")
 	if err := timeStep(job, "activate build", func() error { return d.activate(m.BuildID) }); err != nil {
 		jobLogf(job, "activate failed — restoring DB backup")
 		restore(d)
@@ -159,6 +185,7 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 				m.BuildID, out.releaseID, len(out.bundles))
 		}
 	}
+	emitProgress(job, "Finalizing", progCommit, "Recording build + registry")
 	if d.commitRegistry != nil {
 		if err := d.commitRegistry(); err != nil {
 			// The build is already live; a registry mirror failure is logged but
@@ -180,7 +207,7 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	if d.finalizeLog != nil {
 		d.finalizeLog("success", "")
 	}
-	emitProgress(job, "Restarting", 99, "Activating new build")
+	emitProgress(job, "Restarting", progRestart, "Activating new build")
 	emitComplete(job, "success", "")
 	d.restart()
 	return nil

@@ -181,7 +181,13 @@ func assembleBuildWith(assembleJob *installJob, m RebuildManifest, buildDir stri
 		return err
 	}
 	members := make([]string, 0, len(m.Members))
-	for _, ms := range m.Members {
+	for i, ms := range m.Members {
+		// Tick the progress bar across the assemble band [progAssembleStart,
+		// progAssembleEnd) as each member is materialized, BEFORE the work so a
+		// slow npm-pack visibly parks the bar on the member it's fetching rather
+		// than after it finishes.
+		emitProgress(assembleJob, "Assembling build", assembleMemberPct(i, len(m.Members)),
+			memberAssembleMsg(ms))
 		memStart := monoNow()
 		if ms.FromCurrent {
 			if err := copyCurrent(ms, buildDir); err != nil {
@@ -199,6 +205,26 @@ func assembleBuildWith(assembleJob *installJob, m RebuildManifest, buildDir stri
 	}
 	jobLogf(assembleJob, "assembled %d members; writing workspace scaffold", len(members))
 	return writeWorkspaceScaffold(buildDir, members)
+}
+
+// assembleMemberPct maps member index i of n onto the assemble progress band
+// [progAssembleStart, progAssembleEnd), so the bar climbs evenly as members are
+// materialized. n is always >= 1 (every manifest carries tinycld).
+func assembleMemberPct(i, n int) int {
+	if n <= 0 {
+		return progAssembleStart
+	}
+	span := progAssembleEnd - progAssembleStart
+	return progAssembleStart + (span*i)/n
+}
+
+// memberAssembleMsg is the progress message for materializing one member —
+// "Fetching <spec>" for a changed member, "Copying <slug>" for an unchanged one.
+func memberAssembleMsg(ms MemberSpec) string {
+	if ms.FromCurrent {
+		return "Copying " + ms.Slug
+	}
+	return "Fetching " + ms.Spec
 }
 
 // workspacePackages expands the member slug list into the pnpm `packages:`

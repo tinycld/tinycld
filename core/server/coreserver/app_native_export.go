@@ -218,7 +218,7 @@ func stageNativeBundlesIntoRelease(releaseDir string, bundles []bundleMeta) erro
 // runtimeVersion is the app version (appVersion policy).
 func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string) ([]bundleMeta, error) {
 	if !nativeToolchainPresent(appDir) {
-		emitProgress(job, "Native export skipped", 93, "RN toolchain absent — mobile served embedded bundle")
+		emitProgress(job, "Native export skipped", progNativeStart, "RN toolchain absent — mobile served embedded bundle")
 		return nil, nil
 	}
 
@@ -237,9 +237,12 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 	for i, p := range platforms {
 		outDir := filepath.Join(appDir, fmt.Sprintf("dist-%s", p))
 		os.RemoveAll(outDir) // clean any prior export
-		// Native export runs after web staging (which reaches 92), so report in a
-		// 93→94 band rather than backwards into the web range.
-		emitProgress(job, "Building "+string(p)+" bundle", 93+i, "Running expo export --platform "+string(p))
+		// Spread the per-platform exports across the native band
+		// [progNativeStart, progNativeEnd) so the bar advances per platform
+		// without ever exceeding the build pipeline's native ceiling.
+		span := progNativeEnd - progNativeStart
+		pct := progNativeStart + (span*i)/len(platforms)
+		emitProgress(job, "Building "+string(p)+" bundle", pct, "Running expo export --platform "+string(p))
 		if cmdOut, err := runCmd(appDir, "npx", "expo", "export", "--platform", string(p), "--output-dir", outDir); err != nil {
 			return nil, fmt.Errorf("expo export %s: %v: %s", p, err, cmdOut)
 		}
