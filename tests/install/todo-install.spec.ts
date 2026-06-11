@@ -111,16 +111,33 @@ async function loginAsSuperuserWithRetry(page: Page, attempts = 20) {
 // in memory — so we can't read it from localStorage. Instead authenticate
 // directly against the _superusers collection, the same call the login form makes.
 async function superuserToken(page: Page): Promise<string> {
-    const res = await page.request.post('/api/collections/_superusers/auth-with-password', {
-        data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
-        failOnStatusCode: false,
-    })
-    if (!res.ok()) {
-        throw new Error(`superuser auth failed: ${res.status()} ${await res.text()}`)
+    // A package operation's backupDatabase() does `VACUUM INTO`, which briefly
+    // contends the SQLite WAL; a superuser auth landing in that window can come
+    // back 5xx ("Something went wrong"). It clears in well under a second, so
+    // retry transient server errors a few times rather than throwing — the same
+    // resilience the polling helpers apply to the mid-restart window. A genuine
+    // auth failure (4xx) still throws immediately.
+    let lastStatus = 0
+    let lastBody = ''
+    for (let attempt = 0; attempt < 8; attempt++) {
+        const res = await page.request.post('/api/collections/_superusers/auth-with-password', {
+            data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
+            failOnStatusCode: false,
+        })
+        if (res.ok()) {
+            const body = (await res.json()) as { token?: string }
+            if (!body.token) throw new Error('superuser auth returned no token')
+            return body.token
+        }
+        lastStatus = res.status()
+        lastBody = await res.text()
+        if (lastStatus < 500) {
+            // A real client/auth error — don't retry.
+            throw new Error(`superuser auth failed: ${lastStatus} ${lastBody}`)
+        }
+        await page.waitForTimeout(750) // transient 5xx (DB busy) — back off and retry
     }
-    const body = (await res.json()) as { token?: string }
-    if (!body.token) throw new Error('superuser auth returned no token')
-    return body.token
+    throw new Error(`superuser auth failed after retries: ${lastStatus} ${lastBody}`)
 }
 
 // Reads the id of the slug's most-recent pkg_install_log row (via the status
