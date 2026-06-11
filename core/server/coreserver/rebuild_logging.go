@@ -5,6 +5,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"github.com/getsentry/sentry-go"
 )
 
 // These helpers give the rebuild pipeline rich, operator-facing logging for what
@@ -80,6 +82,58 @@ func memberSetSummary(m RebuildManifest) string {
 	}
 	return fmt.Sprintf("build %s: fetch=[%s] copy-from-current=[%s]",
 		m.BuildID, fetched, strings.Join(current, ", "))
+}
+
+// captureRebuildFailure reports a failed package operation to Sentry with rich
+// context, so a botched production install/upgrade/downgrade/rollback PAGES
+// someone instead of sitting silently in a pkg_install_log row. Rebuild jobs run
+// on a background goroutine (no HTTP request), so the request-scoped Sentry
+// middleware never sees them — this is the only path that surfaces them.
+//
+// Safe when Sentry isn't configured (no SENTRY_DSN): the global hub no-ops.
+// The durable job log tail is attached as `extra` so the failing step + the
+// command output that caused it travel with the event.
+func captureRebuildFailure(job *installJob, action, step string, err error) {
+	if err == nil {
+		return
+	}
+	hub := sentry.CurrentHub().Clone()
+	hub.WithScope(func(scope *sentry.Scope) {
+		scope.SetLevel(sentry.LevelError)
+		scope.SetTag("op", "pkg_rebuild")
+		scope.SetTag("rebuild.action", action)
+		scope.SetTag("rebuild.step", step)
+		if job != nil {
+			scope.SetTag("rebuild.slug", job.Slug)
+			scope.SetTag("rebuild.job", job.ID)
+			// SetContext (not SetExtra) so the durable log tail attaches to the
+			// error event itself.
+			scope.SetContext("rebuild", map[string]any{
+				"action": action,
+				"step":   step,
+				"slug":   job.Slug,
+				"job":    job.ID,
+				"log":    lastLogLines(job, 60),
+			})
+		}
+		hub.CaptureException(fmt.Errorf("pkg %s failed at %s: %w", action, step, err))
+	})
+	hub.Flush(2 * time.Second) // background goroutine restarts/exits soon; flush now
+}
+
+// lastLogLines returns the final n durable log lines of a job, newest context
+// last, for attaching to a Sentry event.
+func lastLogLines(job *installJob, n int) string {
+	if job == nil {
+		return ""
+	}
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	start := 0
+	if len(job.LogLines) > n {
+		start = len(job.LogLines) - n
+	}
+	return strings.Join(job.LogLines[start:], "\n")
 }
 
 // monoNow/monoSince wrap time so the rest of the logging code reads cleanly.

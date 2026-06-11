@@ -199,6 +199,9 @@ func failJob(job *installJob, step string, err error) error {
 	job.Error = err.Error()
 	emitProgress(job, step, job.Progress, "FAILED: "+err.Error())
 	emitComplete(job, "failed", job.Error)
+	// Surface the failure to Sentry (background jobs bypass the request-scoped
+	// middleware). No-op when Sentry isn't configured.
+	captureRebuildFailure(job, job.Action, step, err)
 	return err
 }
 
