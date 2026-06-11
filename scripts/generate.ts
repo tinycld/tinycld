@@ -7,7 +7,7 @@ import { type BuildPkg, runPackageBuilds } from './gen-build'
 import { buildConfigSource, buildSeedsSource, type ConfigPkg } from './gen-config'
 import { buildHelpSource, type HelpGroupInput, parseFrontmatter } from './gen-help'
 import { buildPackageIconsSource } from './gen-icons'
-import { emitPublicRoutes, emitRoutes } from './gen-routes'
+import { emitPublicRoutes, emitRoutes, pruneOrphanRouteDirs } from './gen-routes'
 import {
     buildBundledPackages,
     buildGoWork,
@@ -114,18 +114,54 @@ function cleanDir(dir: string) {
 type Feature = { name: string; dir: string; manifest: PackageManifest }
 
 // --- 3. routes: re-export each package's screens into app/a/[orgSlug]/<slug> -
-// Do NOT cleanDir(ROUTES_BASE) — app-owned files live here (_layout.tsx,
-// index.tsx, settings/**). Clean only each linked package's own slug dir.
-// KNOWN TRADEOFF: a package unlinked since the last run leaves an orphan
-// ROUTES_BASE/<old-slug>/ dir behind (the old full-wipe removed those). Fine
-// while the linked set is stable; revisit (e.g. a generated-slugs manifest)
-// if packages get unlinked frequently.
+// We still don't cleanDir(ROUTES_BASE) before emitting — app-owned files and
+// dirs live here (_layout.tsx, index.tsx, admin/, help/, settings/**) and a
+// full wipe would take them out. Instead, each present package re-creates its
+// own slug dir (emitOrgRoutes/emitFeaturePublicRoutes rm+recreate it), and then
+// AFTER the emit loop pruneOrphanRouteDirs removes any leftover slug dir whose
+// package is no longer present. This closes the old KNOWN TRADEOFF: a package
+// unlinked since the last run (e.g. an uninstall) used to leave an orphan
+// ROUTES_BASE/<old-slug>/ dir behind whose re-export points at a now-absent
+// package, breaking the next `expo export` ("Unable to resolve module ...").
+// The prune is dir-only and allowlist-guarded so app-owned entries are never
+// touched (see APP_OWNED_ORG_ROUTE_DIRS / APP_OWNED_PUBLIC_ROUTE_DIRS).
+
+// Direct children of ROUTES_BASE the app owns — NOT package route slugs, never
+// pruned. (Files like _layout.tsx/index.tsx are already safe since prune only
+// touches directories; this guards the app-owned DIRS.)
+const APP_OWNED_ORG_ROUTE_DIRS = new Set(['admin', 'help', 'settings'])
+// app/p/ has no app-owned directories — only app-owned files (_layout.tsx,
+// demo.tsx) plus per-package public-route dirs — so the allowlist is empty.
+const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>()
+
 function emitFeatureRoutes(features: Feature[]) {
     fs.mkdirSync(ROUTES_BASE, { recursive: true })
     fs.mkdirSync(PUBLIC_ROUTES_BASE, { recursive: true })
     for (const f of features) {
         if (f.manifest.routes?.directory) emitOrgRoutes(f)
         if (f.manifest.publicRoutes?.directory) emitFeaturePublicRoutes(f)
+    }
+
+    const presentOrgSlugs = new Set(
+        features.filter(f => f.manifest.routes?.directory).map(f => f.manifest.slug)
+    )
+    for (const name of pruneOrphanRouteDirs(
+        ROUTES_BASE,
+        presentOrgSlugs,
+        APP_OWNED_ORG_ROUTE_DIRS
+    )) {
+        console.log(`[generate] pruned orphan route dir for removed package '${name}'`)
+    }
+
+    const presentPublicSlugs = new Set(
+        features.filter(f => f.manifest.publicRoutes?.directory).map(f => f.manifest.slug)
+    )
+    for (const name of pruneOrphanRouteDirs(
+        PUBLIC_ROUTES_BASE,
+        presentPublicSlugs,
+        APP_OWNED_PUBLIC_ROUTE_DIRS
+    )) {
+        console.log(`[generate] pruned orphan public route dir for removed package '${name}'`)
     }
 }
 
