@@ -28,9 +28,16 @@ CURRENT_LINK=/workspace/current
 # migrations (code, which does travel with the build):
 #   --dir          pb_data → /workspace/pb_data (persistent)
 #   --releasesDir  promoted web bundles → /workspace/releases (persistent)
-#   --migrationsDir → /workspace/current/pb_migrations (active build's migrations)
+#   --migrationsDir → the active build's server/pb_migrations (the REAL dir the
+#                     generator materializes for every build). We deliberately do
+#                     NOT use the member-root pb_data→server/pb_migrations symlink:
+#                     that symlink is created only by the Dockerfile for the baked
+#                     image, NOT by the generator, so a freshly-assembled in-app
+#                     build lacks it. Pointing at server/pb_migrations directly
+#                     means a newly-installed package's migrations always load and
+#                     apply on the post-swap boot.
 PB_DATA_DIR=/workspace/pb_data
-PB_SERVE_DIRS="--dir=${PB_DATA_DIR} --releasesDir=/workspace/releases --migrationsDir=${CURRENT_LINK}/pb_migrations"
+PB_SERVE_DIRS="--dir=${PB_DATA_DIR} --releasesDir=/workspace/releases --migrationsDir=${CURRENT_LINK}/server/pb_migrations"
 
 echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 
