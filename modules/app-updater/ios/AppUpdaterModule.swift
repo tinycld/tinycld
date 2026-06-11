@@ -138,7 +138,15 @@ final class Store {
     }
 
     private func locateHbc(in dir: String) -> String? {
-        let base = URL(fileURLWithPath: dir).appendingPathComponent("native/ios", isDirectory: true)
+        // `dir` is a filesystem path. JS stages from expo-file-system, whose
+        // documentDirectory is a `file://` URI; URL(fileURLWithPath:) would treat
+        // that prefix as a literal path component and never find the .hbc
+        // (silently rolling back to embedded). Resolve a file:// URI properly,
+        // otherwise treat the string as a plain path.
+        let dirURL = dir.hasPrefix("file://")
+            ? (URL(string: dir) ?? URL(fileURLWithPath: dir))
+            : URL(fileURLWithPath: dir)
+        let base = dirURL.appendingPathComponent("native/ios", isDirectory: true)
         guard let en = fm.enumerator(at: base, includingPropertiesForKeys: nil) else { return nil }
         for case let f as URL in en where f.pathExtension == "hbc" { return f.path }
         return nil

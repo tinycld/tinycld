@@ -179,8 +179,12 @@ class Store(private val context: Context) {
         }
     }
 
+    // `dir` is a filesystem path. JS stages from expo-file-system, whose
+    // documentDirectory is a `file://` URI; strip the scheme defensively so a
+    // file:// prefix is never treated as a literal path component (which would
+    // make the .hbc unfindable and silently roll back to embedded).
     private fun locateHbc(dir: String): String? =
-        File(File(dir), "native/android")
+        File(File(dir.removePrefix("file://")), "native/android")
             .walkTopDown()
             .firstOrNull { it.isFile && it.extension == "hbc" }
             ?.path
@@ -202,7 +206,18 @@ class Store(private val context: Context) {
 
     private fun writeJSON(file: File, value: JSONObject) {
         try {
-            file.writeText(value.toString())
+            // Write to a temp file then atomically rename, so a crash/kill
+            // mid-write can't leave a truncated pointer file (which readJSON would
+            // see as corrupt → lose the active/rollback pointer). Mirrors the iOS
+            // store's `.atomic` write. rename within the same dir is atomic.
+            val tmp = File(file.parentFile, "${file.name}.tmp")
+            tmp.writeText(value.toString())
+            if (!tmp.renameTo(file)) {
+                // Fallback if rename fails (e.g. existing target on some FS): a
+                // direct write is still better than dropping the update entirely.
+                file.writeText(value.toString())
+                tmp.delete()
+            }
         } catch (_: Exception) {
             // best-effort persistence; a failed write simply leaves prior state
         }

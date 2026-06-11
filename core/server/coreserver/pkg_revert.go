@@ -23,6 +23,13 @@ func handleRevert(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	if body.BuildID == "" {
 		return re.BadRequestError("buildId is required", nil)
 	}
+	// buildId comes straight from the request and is joined into filesystem
+	// paths (and used to repoint the live `current` symlink) by the revert
+	// pipeline. Constrain it to the only shapes the install pipeline mints so a
+	// `../…` value can't escape the builds dir.
+	if !buildIDPattern.MatchString(body.BuildID) {
+		return re.BadRequestError("Invalid buildId", nil)
+	}
 
 	installMu.Lock()
 	if currentJob != nil {
@@ -66,6 +73,11 @@ func handleDeleteBuild(app *pocketbase.PocketBase, re *core.RequestEvent) error 
 	}
 	if body.BuildID == "" {
 		return re.BadRequestError("buildId is required", nil)
+	}
+	// Validated before buildArchiveFor joins it into a path that gets RemoveAll'd
+	// — a `../…` value must not be able to delete a tree outside builds/.
+	if !buildIDPattern.MatchString(body.BuildID) {
+		return re.BadRequestError("Invalid buildId", nil)
 	}
 
 	record, err := app.FindFirstRecordByFilter(

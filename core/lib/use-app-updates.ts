@@ -17,7 +17,22 @@ const LAUNCH_DELAY_MS = 3000
 // enough to register the message and short enough not to feel sluggish.
 const TOAST_VISIBLE_BEFORE_RELOAD_MS = 1500
 
-async function checkAndApplyUpdate(): Promise<void> {
+// Coalesces overlapping runs. checkAndApplyUpdate fires from the launch timer
+// AND on every AppState→'active' transition; rapid background/foreground churn
+// would otherwise start concurrent downloads into the SAME per-id staging dir
+// (torn writes) and stack reload()s + toasts. While a run is in flight, later
+// calls return the same promise instead of starting another.
+let inFlight: Promise<void> | null = null
+
+function checkAndApplyUpdate(): Promise<void> {
+    if (inFlight) return inFlight
+    inFlight = runUpdateCheck().finally(() => {
+        inFlight = null
+    })
+    return inFlight
+}
+
+async function runUpdateCheck(): Promise<void> {
     if (__DEV__ || Platform.OS === 'web') return
     const platform = Platform.OS === 'ios' ? 'ios' : 'android'
 
@@ -52,10 +67,24 @@ async function checkAndApplyUpdate(): Promise<void> {
                 const parentDir = dest.slice(0, dest.lastIndexOf('/') + 1)
                 await FileSystem.makeDirectoryAsync(parentDir, { intermediates: true })
                 const r = await FileSystem.downloadAsync(url, dest)
+                // downloadAsync resolves (doesn't throw) on a non-2xx response and
+                // writes the error body to dest. Without this check that junk gets
+                // hashed and surfaces as a misleading "hash mismatch"; fail with
+                // the real cause instead.
+                if (r.status < 200 || r.status >= 300) {
+                    throw new Error(`download failed: ${r.status} for ${url}`)
+                }
                 return { uri: r.uri }
             },
             hashFn: sha256HexOfFile,
-            stageBundleFn: (dir, id, hash) => AppUpdater.stageBundle(dir, id, hash),
+            // The download/hash layer is URI-aware (file:// is fine), but the
+            // native module does raw filesystem path ops on `dir`
+            // (URL(fileURLWithPath:) / java.io.File), which treat a file://
+            // prefix as a literal path component and never find the staged .hbc
+            // — silently rolling back to embedded on every update. Hand native a
+            // plain path; keep the file:// tmpDir for the download layer.
+            stageBundleFn: (dir, id, hash) =>
+                AppUpdater.stageBundle(dir.replace(/^file:\/\//, ''), id, hash),
             tmpDir,
         })
 
