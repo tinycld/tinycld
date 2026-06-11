@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,8 +25,26 @@ type SyncResult struct {
 // applied is the current _migrations file set; newSet is the build's set
 // (buildMigrationFiles). DOWN runs newest-first; the caller must have taken a
 // pb_data backup first so a failure can be rolled back.
+//
+// The DOWN set is filtered to migrations REGISTERED in the currently-running
+// binary (pkgMigrationByFile). The applied set legitimately contains migrations
+// this binary can't revert — core's compiled-in Go migrations (e.g.
+// normalize_indexes.go) live in core.AppMigrations but are NOT files in
+// pb_migrations/, so a raw applied−newSet diff would flag every Go migration as
+// "dropped." Those persist across every build and are never reverted by a
+// package operation; a file-based newSet can't list them, so we exclude any
+// unregistered file from DOWN rather than error on it. (A genuine package
+// downgrade's reverted migrations ARE registered — the running binary still has
+// their Down closures — so they pass the filter.)
 func syncMigrations(app core.App, applied, newSet []string) (SyncResult, error) {
-	down := migrationsToRevert(applied, newSet)
+	// A real build always carries core's migrations, so an empty newSet means the
+	// build dir's pb_migrations wasn't populated (generator didn't run / wrong
+	// path). Treat it as a build failure — NOT a signal to revert every applied
+	// migration, which would tear down the whole schema.
+	if len(applied) > 0 && len(newSet) == 0 {
+		return SyncResult{}, fmt.Errorf("new build carries no migrations (empty pb_migrations) — refusing to revert %d applied migrations", len(applied))
+	}
+	down := registeredOnly(migrationsToRevert(applied, newSet))
 	up := migrationsToApply(applied, newSet)
 
 	var reverted []string
@@ -37,6 +56,19 @@ func syncMigrations(app core.App, applied, newSet []string) (SyncResult, error) 
 		reverted = r
 	}
 	return SyncResult{Reverted: reverted, Pending: up}, nil
+}
+
+// registeredOnly keeps only the migration files registered in the running
+// binary (core.AppMigrations via pkgMigrationByFile). Unregistered files can't
+// be reverted by this binary and are not this operation's concern.
+func registeredOnly(files []string) []string {
+	out := files[:0:0]
+	for _, f := range files {
+		if _, ok := pkgMigrationByFile(f); ok {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // buildMigrationFiles returns the sorted *.js migration filenames a built

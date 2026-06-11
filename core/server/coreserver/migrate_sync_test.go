@@ -119,6 +119,30 @@ func TestSyncMigrations_NoChange(t *testing.T) {
 	}
 }
 
+func TestSyncMigrations_SkipsUnregisteredDrop(t *testing.T) {
+	app := newMigrateTestApp(t)
+	// A .go migration is in the applied set but absent from the new build's
+	// (file-based) set and NOT registered in this test binary. It must be
+	// SKIPPED, not error — mirroring core's compiled-in Go migrations.
+	applied := []string{"100_core.go", "200_pkg.js"}
+	newSet := []string{"200_pkg.js"} // 100_core.go "dropped" but unregistered
+	res, err := syncMigrations(app, applied, newSet)
+	if err != nil {
+		t.Fatalf("syncMigrations should skip unregistered drops, got: %v", err)
+	}
+	if len(res.Reverted) != 0 {
+		t.Fatalf("expected nothing reverted (unregistered skipped), got %v", res.Reverted)
+	}
+}
+
+func TestSyncMigrations_RefusesEmptyNewSet(t *testing.T) {
+	app := newMigrateTestApp(t)
+	applied := []string{"100_a.js", "200_b.js"}
+	if _, err := syncMigrations(app, applied, nil); err == nil {
+		t.Fatal("expected error: empty newSet with applied migrations must not revert everything")
+	}
+}
+
 func TestBuildMigrationFiles(t *testing.T) {
 	dir := t.TempDir()
 	mig := filepath.Join(dir, "tinycld", "server", "pb_migrations")
