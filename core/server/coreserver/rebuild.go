@@ -273,7 +273,7 @@ func changedMember(m RebuildManifest, buildDir string) (slug, version string) {
 	for _, ms := range m.Members {
 		if !ms.FromCurrent {
 			s := memberSlugToRegistry(ms.Slug)
-			v := manifestVersionFromBuild(buildDir, ms.Slug)
+			v := changedMemberVersion(buildDir, s, ms.Slug)
 			if v == "" {
 				v = ms.Version
 			}
@@ -369,7 +369,7 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir string) error {
 		// FromCurrent members are unchanged — keep their existing version.
 		version := ms.Version
 		if !ms.FromCurrent {
-			if v := manifestVersionFromBuild(buildDir, ms.Slug); v != "" {
+			if v := changedMemberVersion(buildDir, slug, ms.Slug); v != "" {
 				version = v
 			}
 		}
@@ -413,6 +413,36 @@ func manifestVersionFromBuild(buildDir, slug string) string {
 		return ""
 	}
 	return manifest.Version
+}
+
+// changedMemberVersion returns the semver to store in the registry row `regSlug`
+// for the just-built member `memberSlug`. The base is special: its registry slug
+// is "core" but it ships as the `tinycld` member, and the version users track is
+// CORE's (the nested tinycld/core/package.json), NOT the app shell's
+// tinycld/package.json. Everything else reads its own member manifest.
+func changedMemberVersion(buildDir, regSlug, memberSlug string) string {
+	if regSlug == baseRegistrySlug {
+		if v := packageJSONVersion(filepath.Join(buildDir, baseMemberSlug, "core", "package.json")); v != "" {
+			return v
+		}
+	}
+	return manifestVersionFromBuild(buildDir, memberSlug)
+}
+
+// packageJSONVersion reads the "version" field from a package.json, or "" on any
+// error. A small, dependency-free read (no node subprocess).
+func packageJSONVersion(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return ""
+	}
+	return pkg.Version
 }
 
 // createRegistryRowFromBuild parses the member's manifest out of the build dir
