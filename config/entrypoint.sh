@@ -13,6 +13,18 @@ RUN_AS=tinycld
 # resolveStateDir(); export it so every invocation (serve, health probe) agrees.
 export TINYCLD_STATE_DIR=/workspace
 
+# Trust all git directories for the runtime user. The in-app package operations
+# shell out to git (directly for ls-remote, and via `npm pack` for git specs).
+# A local file:// remote (a self-hosted/air-gapped base, or the integration
+# test's provisioned bare repo) can be owned by a different user, which makes git
+# refuse with "detected dubious ownership" (exit 128). These are server-internal
+# reads of a trusted, operator-configured remote, so trust the dirs globally.
+# GIT_CONFIG_* writes to a process-local config so we don't depend on a writable
+# HOME or a persisted ~/.gitconfig.
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=safe.directory
+export GIT_CONFIG_VALUE_0='*'
+
 # The runnable code tree lives at /workspace/current → /workspace/builds/<id>/tinycld.
 # The image bakes a pristine first build at /opt/tinycld-baked (an UNMOUNTED path so a
 # bind-mounted /workspace/builds can't shadow it); first boot copies it into builds/
