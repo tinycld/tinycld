@@ -195,6 +195,12 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 		failRevert("activate", err)
 		return
 	}
+	// Re-bootstrap the DB pools after the out-of-band backup + migration access so
+	// the registry write + install-log finalize below hit the real tables (see
+	// rebuildWith's recoverDB step).
+	if err := recoverLiveDBAfterExternalWrite(app); err != nil {
+		log.Printf("revert: recoverDB warning: %v", err)
+	}
 	if err := commitRegistry(app, m, filepath.Join(stateBuildsDir(), targetID)); err != nil {
 		log.Printf("revert: commitRegistry warning: %v", err)
 	}

@@ -56,6 +56,10 @@ type rebuildDeps struct {
 	restoreDB func() error
 	syncMig  func(buildDir string) (SyncResult, error)
 	activate func(buildID string) error
+	// recoverDB re-bootstraps the live app's DB pools after the out-of-band DB
+	// access of backupDB + syncMig, so the post-activate registry/build-record
+	// writes see the real tables. Optional (nil-safe).
+	recoverDB func() error
 	// recordBuild persists the pkg_build row (release id + native OTA bundles)
 	// the /api/app/update endpoint and the revert/rollback UI read. Runs after a
 	// successful build, before restart. Optional (nil-safe).
@@ -109,6 +113,17 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	if err := d.activate(m.BuildID); err != nil {
 		restore(d)
 		return d.fail(job, "activate", err)
+	}
+	// backupDatabase (VACUUM INTO) and the migration sync access the SQLite file
+	// out-of-band, which leaves the live app's connection pools pointed at a stale
+	// view (observed: recordBuild/commitRegistry hit "no such table: pkg_registry"
+	// against a detached DB). Re-bootstrap the pools so the post-activate registry
+	// + build-record writes land in the real DB. (The old in-place pipeline did the
+	// same via recoverLiveDBAfterExternalWrite after its migrate subprocess.)
+	if d.recoverDB != nil {
+		if err := d.recoverDB(); err != nil {
+			log.Printf("rebuild: recoverDB warning: %v", err)
+		}
 	}
 	if d.recordBuild != nil {
 		if err := d.recordBuild(out); err != nil {
@@ -196,7 +211,8 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 			}
 			return syncMigrations(app, applied, newSet)
 		},
-		activate: activateBuild,
+		activate:  activateBuild,
+		recoverDB: func() error { return recoverLiveDBAfterExternalWrite(app) },
 		recordBuild: func(out buildOutput) error {
 			return recordRebuildBuild(app, m, out)
 		},
