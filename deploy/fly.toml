@@ -1,0 +1,55 @@
+# Fly.io config — TinyCld on a single Machine with a persistent Volume.
+# https://fly.io/docs/reference/configuration/
+#
+# Fly has no clickable web "deploy" button — it's a CLI flow. From a copy of
+# this directory (edit `app` to a name you own):
+#
+#   fly launch --image ghcr.io/tinycld/tinycld:latest --no-deploy --copy-config
+#   fly volumes create pb_data --size 1     # 1 GB; grow later with `fly volumes extend`
+#   fly deploy
+#
+# Fly terminates TLS at its edge and forwards plain HTTP to the container, so
+# the app runs in plain-HTTP mode (AUTOCERT_ENABLED=false) on :7090.
+#
+# A single Volume is pinned to one host in one region and does NOT replicate —
+# correct for single-writer SQLite, but it is a single point of failure. For
+# multi-region read replicas, layer LiteFS on top; to offload file uploads,
+# point PocketBase at an S3-compatible bucket (e.g. Tigris). Both are optional.
+
+app = "tinycld"            # change to a unique app name you own
+primary_region = "iad"     # pick a region near you: fly platform regions
+
+[build]
+    image = "ghcr.io/tinycld/tinycld:latest"
+
+[env]
+    AUTOCERT_ENABLED = "false"
+    PUBLIC_SCHEME = "https"
+    HTTP_ADDR = "0.0.0.0:7090"
+    # Set after first deploy so the printed setup URL is correct:
+    # TINYCLD_PUBLIC_URL = "https://<your-app>.fly.dev"
+
+[http_service]
+    internal_port = 7090
+    force_https = true
+    auto_stop_machines = "off"   # keep the Machine running — SQLite + a Volume is stateful
+    auto_start_machines = true
+    min_machines_running = 1
+
+    [http_service.http_options.response.headers]
+
+    [[http_service.checks]]
+        interval = "15s"
+        timeout = "2s"
+        grace_period = "30s"
+        method = "GET"
+        path = "/api/health"
+
+# PocketBase data: SQLite DB, file uploads, server private keys.
+[mounts]
+    source = "pb_data"
+    destination = "/workspace/tinycld/pb_data"
+
+[[vm]]
+    size = "shared-cpu-1x"
+    memory = "1gb"

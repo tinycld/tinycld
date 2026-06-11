@@ -1,0 +1,54 @@
+# Render Blueprint — one-click TinyCld deploy
+# https://render.com/docs/blueprint-spec
+#
+# Deploy button (point ?repo= at the repo holding this file):
+#   https://render.com/deploy?repo=https://github.com/tinycld/tinycld
+#
+# Render reads this blueprint, provisions a web service from the public image
+# and attaches a persistent Disk for pb_data. TLS is terminated at Render's
+# edge and forwarded as plain HTTP to the container, so we run in plain-HTTP
+# mode (AUTOCERT_ENABLED=false) bound to :7090.
+#
+# NOTE: a persistent Disk requires a PAID instance plan. Render's free web
+# services cannot attach a Disk and spin down after 15 min of inactivity — the
+# SQLite database lives on the Disk, so a free instance would lose all data.
+
+services:
+    - type: web
+      name: tinycld
+      runtime: image
+      image:
+          url: ghcr.io/tinycld/tinycld:latest
+      plan: starter # smallest paid plan that supports a Disk
+      region: oregon
+      # Don't auto-redeploy every user's instance when the source image moves.
+      # They update on their own schedule by clicking "Manual Deploy".
+      autoDeploy: false
+      healthCheckPath: /api/health
+      envVars:
+          # Plain-HTTP mode: Render terminates TLS at its edge and proxies to
+          # the container, so the app must NOT try to provision its own certs.
+          - key: AUTOCERT_ENABLED
+            value: "false"
+          # The proxy terminates TLS, so the user-facing setup URL is https.
+          - key: PUBLIC_SCHEME
+            value: https
+          # Bind the plain-HTTP listener on the port Render routes to.
+          - key: HTTP_ADDR
+            value: 0.0.0.0:7090
+          # Set this to your Render service URL (or custom domain) after the
+          # first deploy so the printed setup URL is correct, e.g.
+          # https://tinycld.onrender.com
+          - key: TINYCLD_PUBLIC_URL
+            sync: false
+          # --- Optional services (uncomment + fill in, or set in the dashboard) ---
+          # - key: SENTRY_DSN
+          #   sync: false
+          # - key: POSTMARK_SERVER_TOKEN
+          #   sync: false
+      disk:
+          name: pb_data
+          # PocketBase data: SQLite DB, file uploads, server private keys.
+          # This is the one thing that must survive restarts/redeploys.
+          mountPath: /workspace/tinycld/pb_data
+          sizeGB: 10
