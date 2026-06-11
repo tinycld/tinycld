@@ -20,6 +20,18 @@ export TINYCLD_STATE_DIR=/workspace
 BAKED_BUILD=/opt/tinycld-baked
 CURRENT_LINK=/workspace/current
 
+# PocketBase resolves pb_data / migrations / releases relative to the binary
+# unless overridden. Because the binary runs from the per-build
+# /workspace/current tree, WITHOUT these every build would get its own pb_data
+# (state LOST on each swap). Pin the stateful dirs at the persistent mounts so
+# they survive the symlink swap, and migrationsDir at the ACTIVE build's
+# migrations (code, which does travel with the build):
+#   --dir          pb_data → /workspace/pb_data (persistent)
+#   --releasesDir  promoted web bundles → /workspace/releases (persistent)
+#   --migrationsDir → /workspace/current/pb_migrations (active build's migrations)
+PB_DATA_DIR=/workspace/pb_data
+PB_SERVE_DIRS="--dir=${PB_DATA_DIR} --releasesDir=/workspace/releases --migrationsDir=${CURRENT_LINK}/pb_migrations"
+
 echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 
 # Seed the first build on a fresh deployment. When /workspace/current is missing or
@@ -362,7 +374,7 @@ while true; do
     # `|| EXIT_CODE=$?` swallows the non-zero for set -e and records the code;
     # reset to 0 first so a clean exit is captured too.
     EXIT_CODE=0
-    run_tinycld serve "$@" || EXIT_CODE=$?
+    run_tinycld serve $PB_SERVE_DIRS "$@" || EXIT_CODE=$?
 
     if [ $EXIT_CODE -eq 75 ]; then
         echo "[entrypoint] Restart requested (exit code 75)"
@@ -394,9 +406,9 @@ while true; do
         # The probe runs the NEW build's binary via the (just-flipped) current
         # symlink, cd'd into it so its relative lookups resolve in the new tree.
         if [ "$(id -u)" = "0" ]; then
-            PROBE_CMD='cd '"$CURRENT_LINK"' && exec gosu '"$RUN_AS"' ./tinycld serve --http=127.0.0.1:'"${HEALTH_PORT}"
+            PROBE_CMD='cd '"$CURRENT_LINK"' && exec gosu '"$RUN_AS"' ./tinycld serve '"$PB_SERVE_DIRS"' --http=127.0.0.1:'"${HEALTH_PORT}"
         else
-            PROBE_CMD='cd '"$CURRENT_LINK"' && exec ./tinycld serve --http=127.0.0.1:'"${HEALTH_PORT}"
+            PROBE_CMD='cd '"$CURRENT_LINK"' && exec ./tinycld serve '"$PB_SERVE_DIRS"' --http=127.0.0.1:'"${HEALTH_PORT}"
         fi
         setsid sh -c '
             export IMAP_ENABLED=false SMTP_ENABLED=false
