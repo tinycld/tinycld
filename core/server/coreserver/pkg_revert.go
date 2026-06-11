@@ -247,8 +247,27 @@ func runRevertPipeline(app *pocketbase.PocketBase, job *installJob) {
 			return
 		}
 	} else if len(forwardSet) > 0 {
-		// The swapped-in target binary has jsvm re-scan pb_migrations/ on boot, so
-		// only the target's own (currently-pending) migrations apply forward.
+		// Forward revert: the target's schema is AHEAD of live (a later build
+		// downgraded this package, tearing the target's migrations off disk). The
+		// on-disk server/pb_migrations dir reflects that downgraded state, so a bare
+		// forward `migrate` would scan it, see no new files, and report "no new
+		// migrations" — the target's collections would never be recreated. Restore
+		// the target build's archived migration files into server/pb_migrations as
+		// real files first, so the swapped-in binary's jsvm re-scan finds them as
+		// pending (they were torn down, so they're absent from the _migrations
+		// history) and applies them forward. The files are non-canonical (the next
+		// generator regen rewrites the dir from member sources), but they are exactly
+		// what `migrate` needs to reproduce THIS build's schema right now.
+		restored, restoreErr := restoreArchivedMigrations(appDir, arch, forwardSet)
+		if restoreErr != nil {
+			fail("restore migrations", restoreErr)
+			return
+		}
+		rollbackStack = append(rollbackStack, func() {
+			for _, p := range restored {
+				os.Remove(p)
+			}
+		})
 		emitProgress(job, "Restoring migrations", 55,
 			fmt.Sprintf("Re-applying %d migration(s)", len(forwardSet)))
 		migrateOut, mErr := runCmd(appDir, migrateBin, "migrate")
@@ -325,6 +344,39 @@ func runRevertPipeline(app *pocketbase.PocketBase, job *installJob) {
 
 	time.Sleep(2 * time.Second)
 	requestRestart(appDir)
+}
+
+// restoreArchivedMigrations copies the named migration files from the target
+// build's archive (arch.migrations, populated by archiveBuild) into the live
+// server/pb_migrations dir as real files, so the swapped-in binary's `migrate`
+// scan finds them and applies them forward. Returns the absolute paths it wrote
+// (for the rollback stack to remove on failure). A file absent from the archive
+// (an older build archived before migration-file capture, or a defensive skip at
+// archive time) is reported as an error: without it the forward apply can't
+// recreate the target schema, so failing here is the safe choice — the rollback
+// then restores the pre-revert DB + binary.
+func restoreArchivedMigrations(appDir string, arch buildArchive, names []string) ([]string, error) {
+	dstDir := filepath.Join(appDir, "server", "pb_migrations")
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir pb_migrations: %w", err)
+	}
+	written := make([]string, 0, len(names))
+	for _, name := range names {
+		src := filepath.Join(arch.migrations, name)
+		if _, err := os.Stat(src); err != nil {
+			return written, fmt.Errorf("archived migration %s missing; cannot recreate target schema", name)
+		}
+		dst := filepath.Join(dstDir, name)
+		// The existing entry (if any) is a generator symlink pointing at the
+		// downgraded member's files; replace it with the archived real file so jsvm
+		// applies the target's version.
+		os.Remove(dst)
+		if _, err := runCmd(".", "cp", "-aL", src, dst); err != nil {
+			return written, fmt.Errorf("restore migration %s: %w", name, err)
+		}
+		written = append(written, dst)
+	}
+	return written, nil
 }
 
 // plannedMigrationDown sums the migration counts of the newer builds and returns
