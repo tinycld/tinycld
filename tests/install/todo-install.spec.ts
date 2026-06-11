@@ -292,7 +292,17 @@ async function registryVersion(page: Page, slug: string): Promise<string | null>
         return null
     }
     if (!res.ok()) return null
-    const body = (await res.json()) as { items?: Array<{ version?: string }> }
+    // Tolerate a transient non-JSON body (the SPA HTML shell) the same way
+    // collectionExists() tolerates non-200s: during the post-install-restart
+    // window the catch-all can briefly answer an /api/ GET with app.html before
+    // the collection routes are wired. Return null so the caller retries rather
+    // than throwing "Unexpected token '<'" on res.json().
+    let body: { items?: Array<{ version?: string }> }
+    try {
+        body = (await res.json()) as { items?: Array<{ version?: string }> }
+    } catch {
+        return null
+    }
     return body.items?.[0]?.version ?? null
 }
 
