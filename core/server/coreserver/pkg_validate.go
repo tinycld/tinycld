@@ -42,15 +42,16 @@ var goModulePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+(/[a
 
 // gitSpecPattern matches the git/URL forms `npm pack` understands natively:
 // host shorthand (github:owner/repo, gitlab:…, bitbucket:…), bare
-// owner/repo shorthand, and git+https / git+ssh / https URLs (optionally
-// .git-suffixed). Anchored, so the whole string must match — no trailing
-// junk that could smuggle a second argument.
+// owner/repo shorthand, and git+https / git+ssh / git+file / https URLs
+// (optionally .git-suffixed). Anchored, so the whole string must match — no
+// trailing junk that could smuggle a second argument.
 var gitSpecPattern = regexp.MustCompile(
 	`^(` +
 		`(github|gitlab|bitbucket):[\w.-]+/[\w.-]+` + // host:owner/repo
 		`|[a-zA-Z0-9][\w.-]*/[a-zA-Z0-9][\w.-]*` + // owner/repo shorthand (segments start alphanumeric, so no ../)
 		`|git\+https://[\w./@:-]+` + // git+https URL
 		`|git\+ssh://[\w./@:-]+` + // git+ssh URL
+		`|git\+file:///[\w./@:-]+` + // git+file URL (local bare remote — air-gapped/self-hosted base, and the integration test's provisioned remote)
 		`|https://[\w./@:-]+` + // https URL (incl. .git)
 		`)$`,
 )
