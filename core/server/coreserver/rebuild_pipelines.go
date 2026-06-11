@@ -195,7 +195,7 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 		failRevert("activate", err)
 		return
 	}
-	if err := commitRegistry(app, m); err != nil {
+	if err := commitRegistry(app, m, filepath.Join(stateBuildsDir(), targetID)); err != nil {
 		log.Printf("revert: commitRegistry warning: %v", err)
 	}
 	job.Status = "success"

@@ -1,6 +1,8 @@
 package coreserver
 
 import (
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -180,7 +182,7 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 			return syncMigrations(app, applied, newSet)
 		},
 		activate:       activateBuild,
-		commitRegistry: func() error { return commitRegistry(app, m) },
+		commitRegistry: func() error { return commitRegistry(app, m, buildDir) },
 		prune:          pruneBuilds,
 		finalizeLog: func(status, errMsg string) {
 			finalizeInstallLog(app, logRecord, status, errMsg, job.LogLines)
@@ -238,10 +240,15 @@ func buildCurrentMemberSet(app core.App) ([]MemberSpec, error) {
 }
 
 // commitRegistry mirrors the just-activated manifest into pkg_registry so the
-// admin inventory reflects the live build: each present member's version is
-// updated and its status set to installed (bundled rows keep "bundled"), and
-// any registry row absent from the manifest is marked disabled.
-func commitRegistry(app core.App, m RebuildManifest) error {
+// admin inventory reflects the live build:
+//   - existing rows for present members: version/spec updated, status set to
+//     installed (bundled rows keep "bundled");
+//   - present members with NO row yet (a fresh install): a full row is created
+//     from the member's manifest parsed out of the build dir;
+//   - rows absent from the manifest (an uninstall): marked disabled.
+// buildDir is the active build's root, used to parse newly-installed members'
+// manifests for the create path.
+func commitRegistry(app core.App, m RebuildManifest, buildDir string) error {
 	present := map[string]MemberSpec{}
 	for _, ms := range m.Members {
 		present[memberSlugToRegistry(ms.Slug)] = ms
@@ -250,6 +257,7 @@ func commitRegistry(app core.App, m RebuildManifest) error {
 	if err != nil {
 		return err
 	}
+	seen := map[string]bool{}
 	for _, r := range recs {
 		slug := r.GetString("slug")
 		ms, ok := present[slug]
@@ -263,6 +271,7 @@ func commitRegistry(app core.App, m RebuildManifest) error {
 			}
 			continue
 		}
+		seen[slug] = true
 		changed := false
 		if ms.Version != "" && r.GetString("version") != ms.Version {
 			r.Set("version", ms.Version)
@@ -282,7 +291,33 @@ func commitRegistry(app core.App, m RebuildManifest) error {
 			}
 		}
 	}
+	// Create rows for freshly-installed members (no existing row). Parse each
+	// one's manifest from the build dir for the full registry fields.
+	for regSlug, ms := range present {
+		if seen[regSlug] {
+			continue
+		}
+		if err := createRegistryRowFromBuild(app, buildDir, ms); err != nil {
+			return fmt.Errorf("create registry row for %s: %w", ms.Slug, err)
+		}
+	}
 	return nil
+}
+
+// createRegistryRowFromBuild parses the member's manifest out of the build dir
+// and inserts a full pkg_registry row via upsertPkgRegistry (which handles the
+// create path). The member source lives at <buildDir>/<memberSlug>.
+func createRegistryRowFromBuild(app core.App, buildDir string, ms MemberSpec) error {
+	pkgDir := filepath.Join(buildDir, ms.Slug)
+	manifest, err := parseManifestViaNode(pkgDir)
+	if err != nil {
+		return err
+	}
+	mj, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	return upsertPkgRegistry(app, manifest, ms.Spec, mj)
 }
 
 // setDelta is the single mutation applied to the current member set.

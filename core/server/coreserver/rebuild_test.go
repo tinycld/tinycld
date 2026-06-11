@@ -101,7 +101,7 @@ func TestCommitRegistry_MirrorsManifest(t *testing.T) {
 			{Slug: "mail", Version: "0.4.0", Spec: "@tinycld/mail@0.4.0"},
 		},
 	}
-	if err := commitRegistry(app, m); err != nil {
+	if err := commitRegistry(app, m, t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
@@ -124,7 +124,7 @@ func TestCommitRegistry_DisablesDroppedMember(t *testing.T) {
 		BuildID: "build-y",
 		Members: []MemberSpec{{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld"}},
 	}
-	if err := commitRegistry(app, m); err != nil {
+	if err := commitRegistry(app, m, t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
