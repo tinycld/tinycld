@@ -54,12 +54,24 @@ func runBuildPipelineWith(
 	appDir := filepath.Join(buildDir, "tinycld")
 	goDir := filepath.Join(appDir, "server")
 
+	// TRUST BOUNDARY (intentional, not an oversight — see the "Trust model &
+	// security" section of docs/superpowers/specs/2026-06-10-rebuild-from-scratch-design.md).
+	// This step runs the installed members' own build scripts (and, via the
+	// generator postinstall, evaluates their manifest.ts). Installing a package is
+	// therefore equivalent to running its author's code on the host; this is gated
+	// to super-admins at the install endpoint. Do not "harden" this by sandboxing
+	// the build — member Go gets compiled into the server below and runs as the
+	// server at runtime regardless, so a build sandbox would buy no real isolation.
 	emitProgress(job, "Installing dependencies", progPnpmInstall, "pnpm install")
 	if err := timeStep(job, "pnpm install (+ generator postinstall)", func() error {
 		return runPnpmInstall(job, buildDir)
 	}); err != nil {
 		return buildOutput{}, wrapStep("pnpm install", err)
 	}
+	// TRUST BOUNDARY: a member's server/ Go module is compiled INTO this binary and
+	// then runs in-process as the server, on every boot, with full privileges (DB
+	// handle, filesystem, secrets). Installing a package = trusting its author with
+	// the server. By design — see the doc section referenced above.
 	emitProgress(job, "Building server", progGoBuild, "go build")
 	if err := timeStep(job, "go build (server binary)", func() error {
 		_, e := run(goDir, "go", "build", "-o", filepath.Join(appDir, binaryName), ".")

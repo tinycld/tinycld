@@ -119,6 +119,28 @@ class Store(private val context: Context) {
     }
 
     /**
+     * Streaming lowercase-hex SHA-256 of the file at [path], read in 64KB chunks
+     * (mirrors the embedded-hash path) so a large .hbc never lands in memory all
+     * at once. Returns null if the file can't be read — the caller treats null as
+     * a verification failure (rollback), which is the safe direction.
+     */
+    private fun sha256HexOfFile(path: String): String? =
+        try {
+            val digest = MessageDigest.getInstance("SHA-256")
+            File(path).inputStream().use { input ->
+                val buf = ByteArray(1 shl 16)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    digest.update(buf, 0, n)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            null
+        }
+
+    /**
      * Called from the RN host's `getJSBundleFile()` BEFORE the React instance
      * loads. Promotes a pending bundle, applies crash-rollback, and returns the
      * `.hbc` path to load — or `null` to fall back to the embedded bundle.
@@ -129,6 +151,19 @@ class Store(private val context: Context) {
         val id = currentId() ?: return null
         val bundlePath = locateHbc(dir)
         if (bundlePath == null) {
+            rollbackToPrevious()
+            return resolveAfterRollback()
+        }
+        // Defense-in-depth behind the JS-side SHA-256 verify (which runs once,
+        // pre-stage). The staged bundle lives in a writable app-private dir and
+        // isn't re-checked until the next cold launch, so re-hash the .hbc here
+        // and refuse to load it if it no longer matches the hash recorded at stage
+        // time. This catches post-stage tampering / corruption — treat a mismatch
+        // exactly like a missing bundle and roll back rather than load unverified
+        // bytes. (current.json `hash` == the server's bundle_hash == sha256 of
+        // this .hbc; see downloadAndStage + app_native_export.go sha256OfFile.)
+        val want = currentHash()
+        if (!want.isNullOrEmpty() && !sha256HexOfFile(bundlePath).equals(want, ignoreCase = true)) {
             rollbackToPrevious()
             return resolveAfterRollback()
         }

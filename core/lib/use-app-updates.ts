@@ -1,4 +1,8 @@
-import { checkForUpdate, downloadAndStage } from '@tinycld/core/lib/app-updater/client'
+import {
+    checkForUpdate,
+    downloadAndStage,
+    isUpdateTransportAllowed,
+} from '@tinycld/core/lib/app-updater/client'
 import { sha256HexOfFile } from '@tinycld/core/lib/app-updater/hash'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
@@ -39,9 +43,28 @@ async function runUpdateCheck(): Promise<void> {
     try {
         // PB_SERVER_ADDR throws if the app hasn't connected to a server yet, so
         // reading it here is the gate: no update check runs until connected. The
-        // surrounding try/catch swallows that throw as a no-op.
+        // surrounding try/catch swallows that throw as a no-op. Coerce to a plain
+        // string once (it's a lazy Proxy) so we evaluate the transport policy and
+        // fetch against the same resolved address.
+        const serverUrl = String(PB_SERVER_ADDR)
+
+        // Refuse to fetch/verify/stage a bundle over an untrusted transport. The
+        // per-file SHA-256 check is worthless against a MITM on plaintext http://
+        // (the attacker rewrites the bytes AND the manifest hash that arrives over
+        // the same channel). We gate on the scheme of the address the CLIENT
+        // actually connects to — not anything the server reports — because the
+        // server may sit behind a TLS-terminating proxy and only the client knows
+        // its real connection scheme. See isUpdateTransportAllowed for the policy.
+        if (!isUpdateTransportAllowed(serverUrl)) {
+            captureException(
+                'app-updater.insecure-transport',
+                new Error('OTA update blocked: insecure transport')
+            )
+            return
+        }
+
         const manifest = await checkForUpdate({
-            serverUrl: PB_SERVER_ADDR,
+            serverUrl,
             platform,
             runtimeVersion: AppUpdater.getRuntimeVersion(),
             currentId: AppUpdater.getCurrentBundleId(),
@@ -58,7 +81,7 @@ async function runUpdateCheck(): Promise<void> {
         await FileSystem.makeDirectoryAsync(tmpDir, { intermediates: true })
 
         await downloadAndStage(manifest, {
-            serverUrl: PB_SERVER_ADDR,
+            serverUrl,
             platform,
             downloadFn: async (url, dest) => {
                 // Assets keep the server's relative paths (e.g. assets/a), so a

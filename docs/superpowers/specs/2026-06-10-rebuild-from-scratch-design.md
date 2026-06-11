@@ -229,6 +229,73 @@ v2 → downgrade v1 → rollback-to-archived-v2 → delete → core upgrade/down
 `-v` mount flags update to the new `/workspace/<dir>` layout. Run repeatedly to shake
 out bugs.
 
+## Trust model & security
+
+This pipeline runs the installed package's own code. That is **by design**, not a
+flaw — but it defines a trust boundary every operator must understand before
+installing anything.
+
+**Installing a package runs its author's code as your server.** A "package"
+(member) is not inert data the server merely reads. When a build runs:
+
+- `pnpm install` executes the build scripts that the package and its dependency
+  graph carry.
+- The generator **evaluates** the member's `manifest.ts` to read its metadata.
+- `go build` compiles the member's `server/` Go module **into the server binary**.
+- `expo export` bundles the member's JavaScript into the web/native app.
+
+The Go consequence is the sharpest one: a member's compiled-in server code runs
+**in-process as the server**, on **every boot**, with the server's full privileges
+— the PocketBase DB handle, the filesystem, and any secrets/env the process holds.
+It is not sandboxed and could not usefully be: it *is* the server. There is no
+runtime isolation boundary between "core" and an installed member's server code.
+
+**Therefore: installing a package = trusting its author with full control of your
+server and all its data.** Treat the decision exactly like deciding what code to
+run on your own host, or what repo to let a CI runner build — it is the same class
+of trust as `npm install` on a machine you own. **Only install packages you trust.**
+
+**This is not an injection hole.** Package specs are strictly validated
+(`validatePackageSpec` / `validateManifest` in `pkg_validate.go`): leading-dash
+flag injection and shell metacharacters are rejected, paths are checked for
+traversal, and every spec is handed to `npm pack` / `exec.Command` with **no shell**.
+The risk being documented here is not "an attacker smuggles a command through the
+spec" — it is the inherent one that the *legitimately installed* package's own
+code runs with full privilege. The mitigation for that is trust in the source, not
+input sanitization.
+
+**Access is gated to super-admins.** Only a super-admin can reach the Admin console
+and trigger an install/upgrade/core-upgrade; this is enforced server-side on the
+install endpoints, not merely hidden in the UI. A non-super-admin cannot introduce
+code into the build.
+
+**What pnpm's `allowBuilds` covers — and does not.** `pnpm-workspace.yaml` declares
+an `allowBuilds` allowlist (currently `esbuild` and `@sentry/cli`). Under pnpm 11,
+**transitive dependency** install/postinstall scripts are blocked unless explicitly
+allowlisted there — so a malicious *npm dependency pulled in by a member* cannot run
+a postinstall script on its own. That allowlist does **not** cover the member's own
+Go, JavaScript, or `manifest.ts`: those are compiled/bundled/evaluated by design and
+run regardless of `allowBuilds`. `allowBuilds` narrows the dependency-postinstall
+surface; it does nothing to constrain the member code we deliberately build and run.
+
+**Why build-pipeline sandboxing isn't attempted.** Sandboxing the *build* (the
+generator's `vm.runInNewContext` manifest read, or the `pnpm`/`go`/`expo`
+subprocesses) would be security theater here: even a perfectly sandboxed build
+still produces a server binary with the member's Go compiled in, which then runs
+**unsandboxed as the server** at runtime. The trust boundary is at install
+authorization and source selection, not inside the build — so we don't pretend the
+build is a security boundary. (The manifest parser's `vm.runInNewContext` is a
+robustness/scoping convenience, not a security sandbox; Node's `vm` is escapable
+and does not need to be airtight, because member code runs as the server anyway.)
+
+**Deferred mitigation (not yet implemented).** A server-enforced install
+allowlist / scope policy — e.g. refusing any spec outside an operator-configured
+set such as `@tinycld/*` only, enforced authoritatively on the install endpoint —
+is the planned next step to give operators a hard guardrail. It is **not** built in
+this round: today the only signal is the install-time warning for non-`@tinycld/`
+specs (advisory, not enforced). This section documents the accepted trust model in
+the meantime; it is not a bug to be "fixed" by a future reader.
+
 ## Affected files (initial map)
 
 - `core/server/coreserver/pkg_install.go` — `resolveServerDir`, install handler →

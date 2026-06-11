@@ -79,8 +79,16 @@ var versionTokenPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-]*$`)
 // as an npm flag.
 var shellUnsafePattern = regexp.MustCompile(`[\s;&|$<>` + "`" + `(){}\[\]'"\\]`)
 
-// parseManifestViaNode safely parses a manifest.ts by shelling out to Node.
-// It avoids eval() / new Function() — instead uses a targeted regex extraction.
+// parseManifestViaNode parses a manifest.ts by shelling out to Node, extracting
+// the object literal with a targeted regex and evaluating it via vm.runInNewContext.
+//
+// NOTE: the vm context here is NOT a security sandbox. Node's `vm` is escapable
+// and we make no attempt to airtight it — it's used only to evaluate a JS object
+// literal in a clean global scope (scoping/robustness, not isolation). It does not
+// need to be a security boundary: the same package's server/ Go is compiled into
+// and runs AS the server (see runBuildPipelineWith), so member code already runs
+// with full server privileges by design. Installs are gated to super-admins; the
+// trust boundary is install authorization + source selection, not this parse.
 func parseManifestViaNode(packageDir string) (*parsedManifest, error) {
 	script := `
 const fs = require('fs');
@@ -99,7 +107,8 @@ const m = content.match(/(?:export\s+default|module\.exports\s*=)\s*(\{[\s\S]*\}
           content.match(/(?:const|let|var)\s+\w+\s*=\s*(\{[\s\S]*\})\s*(?:;?\s*$)/m);
 if (!m) { console.error('Could not parse manifest object'); process.exit(1); }
 
-// Parse in a sandboxed context with no access to Node globals
+// Evaluate the object literal in a clean global scope (NOT a security sandbox —
+// Node vm is escapable; this only avoids leaking Node globals into the literal).
 try {
     const sandbox = Object.create(null);
     const obj = vm.runInNewContext('(' + m[1] + ')', sandbox, { timeout: 5000 });

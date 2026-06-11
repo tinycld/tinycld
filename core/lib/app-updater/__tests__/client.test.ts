@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkForUpdate, downloadAndStage } from '../client'
+import { checkForUpdate, downloadAndStage, isUpdateTransportAllowed } from '../client'
 import type { UpdateManifest } from '../types'
 
 const MANIFEST: UpdateManifest = {
@@ -149,5 +149,50 @@ describe('downloadAndStage', () => {
         const d = stageDeps({ hashFn })
         await expect(downloadAndStage(manifestWithAsset, d)).rejects.toThrow(/hash mismatch/)
         expect(d.stageBundleFn).not.toHaveBeenCalled()
+    })
+})
+
+describe('isUpdateTransportAllowed', () => {
+    // Pass `env` explicitly so these are hermetic — never touch the real
+    // process.env (which has no bypass flag in CI anyway).
+    const noBypass = {}
+    const withBypass = { EXPO_PUBLIC_ALLOW_INSECURE_UPDATES: '1' }
+
+    it('allows https://', () => {
+        expect(isUpdateTransportAllowed('https://srv.test', noBypass)).toBe(true)
+    })
+
+    it('blocks plaintext http:// without a bypass', () => {
+        expect(isUpdateTransportAllowed('http://srv.test', noBypass)).toBe(false)
+    })
+
+    it('allows http://localhost (dev testing)', () => {
+        expect(isUpdateTransportAllowed('http://localhost:8081', noBypass)).toBe(true)
+    })
+
+    it('allows http://127.0.0.1 (dev testing)', () => {
+        expect(isUpdateTransportAllowed('http://127.0.0.1:8081', noBypass)).toBe(true)
+    })
+
+    it('allows http:// when the bypass env var is set truthy', () => {
+        expect(isUpdateTransportAllowed('http://srv.test', withBypass)).toBe(true)
+    })
+
+    it('treats falsey bypass values as not set', () => {
+        expect(
+            isUpdateTransportAllowed('http://srv.test', { EXPO_PUBLIC_ALLOW_INSECURE_UPDATES: '0' })
+        ).toBe(false)
+        expect(
+            isUpdateTransportAllowed('http://srv.test', {
+                EXPO_PUBLIC_ALLOW_INSECURE_UPDATES: 'false',
+            })
+        ).toBe(false)
+        expect(
+            isUpdateTransportAllowed('http://srv.test', { EXPO_PUBLIC_ALLOW_INSECURE_UPDATES: '' })
+        ).toBe(false)
+    })
+
+    it('fails closed on an unparseable address', () => {
+        expect(isUpdateTransportAllowed('not a url', withBypass)).toBe(false)
     })
 })

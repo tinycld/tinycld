@@ -1,5 +1,54 @@
 import type { CheckDeps, StageDeps, UpdateManifest } from './types'
 
+// Set this env var truthy to let a knowing self-hoster run OTA updates over
+// plaintext http:// (e.g. a server reachable only on a trusted LAN with no TLS).
+// Read at call time, not module load, so tests and runtime config both see the
+// current value.
+const ALLOW_INSECURE_UPDATES_ENV = 'EXPO_PUBLIC_ALLOW_INSECURE_UPDATES'
+
+function isLoopbackHost(host: string): boolean {
+    // host already has any :port stripped by the URL parser's `hostname`.
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1'
+}
+
+function envFlagSet(value: string | undefined): boolean {
+    if (!value) return false
+    const v = value.trim().toLowerCase()
+    return v !== '' && v !== '0' && v !== 'false'
+}
+
+// isUpdateTransportAllowed gates the OTA update path on transport security.
+//
+// The whole integrity guarantee here is the per-file SHA-256 check, but the
+// hash arrives over the SAME channel as the bytes — so a MITM on a plaintext
+// http:// connection can rewrite both and ship arbitrary code that re-hashes
+// clean. We therefore refuse to even check for / download an update unless the
+// transport is trustworthy.
+//
+// Crucially we judge the scheme of the URL the APP ACTUALLY CONNECTS TO
+// (PB_SERVER_ADDR), never anything the server reports about itself: a server
+// often sits behind a TLS-terminating proxy and sees plain http internally, so
+// only the client knows whether its real connection is encrypted.
+//
+// Allowed iff: https://, OR a loopback host (dev testing on http://localhost),
+// OR the explicit env-var bypass is set (a self-hoster opting into plaintext).
+// `env` is injectable for tests; defaults to process.env at call time.
+export function isUpdateTransportAllowed(
+    serverUrl: string,
+    env: { [key: string]: string | undefined } = process.env
+): boolean {
+    let parsed: URL
+    try {
+        parsed = new URL(serverUrl)
+    } catch {
+        // An unparseable address can't be vouched for — fail closed.
+        return false
+    }
+    if (parsed.protocol === 'https:') return true
+    if (isLoopbackHost(parsed.hostname)) return true
+    return envFlagSet(env[ALLOW_INSECURE_UPDATES_ENV])
+}
+
 // checkForUpdate asks the connected server for a newer bundle. Returns the
 // manifest when one is available, or null when the server replies 204 (up to
 // date, runtime mismatch, or no native bundle). Network/parse errors propagate

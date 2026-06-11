@@ -16,6 +16,20 @@ Installed packages appear automatically in:
 - Help (each package can ship its own help topics — like this one)
 - The data layer (each package registers its own PocketBase collections)
 
+## Trust and security
+
+Installing a package runs that package's code on your server with full access to
+your data. A package isn't passive data the app just reads — its server code is
+compiled into the running server and executes in-process, with the same privileges
+as the rest of the deployment, every time the server starts. Installing one is the
+same kind of decision as choosing what code to run on your own machine: only
+install packages from authors you trust, just as you would with `npm install`.
+
+Only super admins can install or update packages, and that restriction is enforced
+on the server. Packages outside the official `@tinycld/` scope show an extra
+caution notice at install time — but the warning is advisory, so the judgment about
+whether to trust a source is yours.
+
 ## Installing a new package
 
 For developers, packages are linked into the app shell with:

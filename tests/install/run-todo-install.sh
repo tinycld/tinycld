@@ -217,6 +217,25 @@ run_phase() {
     ) || { echo "[runner] ${label} phase failed"; dump_logs; exit 1; }
 }
 
+# Asserts the armed-backup rollback protocol committed after a HEALTHY restart
+# (review finding H3). On the success path the rebuild leaves data.db.backup +
+# .db-backup-armed in pb_data ARMED across the exit-75 restart; the entrypoint's
+# in-process loop must DELETE both once the new binary's health probe passes
+# ("commit"). By the time wait_healthy returns, that verdict has already run, so
+# a backup/marker still present here means the commit step never fired — the DB
+# would be left needlessly armed (and a future crash could wrongly roll it back).
+# The DB lives on the host bind-mount (${PB_DATA_DIR}), so check it directly.
+assert_backup_committed() {
+    local label="$1"
+    if [ -f "${PB_DATA_DIR}/.db-backup-armed" ] || [ -f "${PB_DATA_DIR}/data.db.backup" ]; then
+        echo "[runner] ERROR: ${label}: DB backup still armed after a healthy restart — commit step did not fire" >&2
+        ls -la "${PB_DATA_DIR}" 2>&1 | sed 's/^/[runner]   /' || true
+        dump_logs
+        exit 1
+    fi
+    echo "[runner] ${label}: DB backup committed (disarmed) after healthy restart"
+}
+
 # Waits out one install-class exit-75 restart and re-attaches the live log.
 # The restart kills the `docker logs -f` stream, so re-attach after the new
 # binary is healthy again to keep capturing the post-restart boot trace.
@@ -225,6 +244,7 @@ await_restart() {
     echo "[runner] waiting for ${label} restart"
     wait_unhealthy "${label} restart down"   # observe the old server exit first
     wait_healthy "${label} post-restart"     # then wait for the new binary up
+    assert_backup_committed "${label}"        # armed backup must be committed (H3)
     start_live_log                            # re-attach to the restarted container
 }
 

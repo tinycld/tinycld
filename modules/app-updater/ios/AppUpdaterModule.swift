@@ -92,6 +92,28 @@ final class Store {
         return hex
     }
 
+    /// Streaming lowercase-hex SHA-256 of the file at `path`, read in 64KB chunks
+    /// so a large .hbc never lands in memory all at once. Returns nil if the file
+    /// can't be opened/read — the caller treats nil as a verification failure
+    /// (rollback), which is the safe direction.
+    private func sha256HexOfFile(at path: String) -> String? {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            let chunk: Data
+            do {
+                guard let next = try handle.read(upToCount: 1 << 16) else { break }
+                chunk = next
+            } catch {
+                return nil
+            }
+            if chunk.isEmpty { break }
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
     /// Called from the AppDelegate's `bundleURL()` BEFORE the React bridge loads.
     /// Promotes a pending bundle, applies crash-rollback, and returns the `.hbc`
     /// to load — or `nil` to fall back to the embedded `main.jsbundle`.
@@ -99,6 +121,19 @@ final class Store {
         promotePendingIfAny()
         guard let dir = currentDir(), let id = currentId() else { return nil }
         guard let bundlePath = locateHbc(in: dir) else {
+            rollbackToPrevious()
+            return resolveAfterRollback()
+        }
+        // Defense-in-depth behind the JS-side SHA-256 verify (which runs once,
+        // pre-stage). The staged bundle lives in a writable app dir and isn't
+        // re-checked until the next cold launch, so re-hash the .hbc here and
+        // refuse to load it if it no longer matches the hash recorded at stage
+        // time. This catches post-stage tampering / corruption — treat a mismatch
+        // exactly like a missing bundle and roll back rather than load unverified
+        // bytes. (current.json `hash` == the server's bundle_hash == sha256 of
+        // this .hbc; see downloadAndStage + app_native_export.go sha256OfFile.)
+        if let want = currentHash(), !want.isEmpty,
+            sha256HexOfFile(at: bundlePath)?.caseInsensitiveCompare(want) != .orderedSame {
             rollbackToPrevious()
             return resolveAfterRollback()
         }

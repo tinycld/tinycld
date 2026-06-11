@@ -1215,7 +1215,8 @@ function SecurityWarning({ isVisible }: { isVisible: boolean }) {
         <View className="flex-row gap-2 items-start rounded-lg p-3 bg-warning-soft">
             <AlertTriangle size={16} color={warningColor} style={{ marginTop: 1 }} />
             <Text className="text-warning-soft-foreground flex-1" style={{ fontSize: 13 }}>
-                This package is not in the @tinycld/ scope. Only install packages you trust.
+                This package is outside the @tinycld/ scope. Its code will run on your server with
+                full access to your data — only install packages from authors you trust.
             </Text>
         </View>
     )

@@ -64,13 +64,50 @@ func checkGoBuildPrereqs() error {
 	return nil
 }
 
+// dbBackupPath / dbArmedMarkerPath are the deterministic locations the armed-
+// backup rollback protocol shares with the entrypoint (config/entrypoint.sh).
+// Both live under statePbDataDir() so they survive the per-build symlink swap.
+// The entrypoint hard-codes the same paths as $PB_DATA_DIR/data.db.backup and
+// $PB_DATA_DIR/.db-backup-armed — keep the two in sync.
+func dbBackupPath() string      { return filepath.Join(statePbDataDir(), "data.db.backup") }
+func dbArmedMarkerPath() string { return filepath.Join(statePbDataDir(), ".db-backup-armed") }
+
+// armDatabaseBackup records the build id that owns the surviving data.db.backup
+// just before the rebuild success path exits 75. The backup itself is left in
+// place (NOT deleted) so it survives the restart as a rollback snapshot; the
+// marker tells the entrypoint two things it can't otherwise know: (1) the backup
+// is intentionally armed (awaiting a post-boot health verdict), not a stale
+// leftover, and (2) which build it predates — so a SIGKILL mid-rebuild leaves an
+// unambiguous "restore me if `current` already points past this build" signal.
+//
+// Why marker-gated rather than just "leave the file": the file alone can't tell
+// the entrypoint whether the new binary already booted healthy (commit) or never
+// did (rollback). The entrypoint deletes BOTH file and marker on a confirmed-
+// healthy boot ("commit"); restores from the file and clears the marker on a
+// failed probe ("rollback"). Best-effort: a marker write failure is logged, not
+// fatal — the rollback restore still works, only the SIGKILL-recovery heuristic
+// degrades.
+func armDatabaseBackup(buildID string) {
+	if _, err := os.Stat(dbBackupPath()); err != nil {
+		// No backup on disk (e.g. an uninstall rebuild that never migrated, or a
+		// dev run). Nothing to arm; make sure no stale marker lingers.
+		_ = os.Remove(dbArmedMarkerPath())
+		return
+	}
+	if err := os.WriteFile(dbArmedMarkerPath(), []byte(buildID), 0o644); err != nil {
+		log.Printf("[pkg_install] WARNING: failed to arm DB backup marker (rollback still works; SIGKILL-recovery degraded): %v", err)
+		return
+	}
+	log.Printf("[pkg_install] DB backup armed for build %s (entrypoint commits on healthy boot, restores on failed probe)", buildID)
+}
+
 // backupDatabase snapshots the live DB and returns a restore closure. The DB
 // lives under the STATE dir (resolveStateDir()), not the build/binary dir, so
 // it persists across the per-build symlink swap. The legacy appDir parameter
 // is retained for caller compatibility but no longer used for path resolution.
 func backupDatabase(_ string) (rollbackFn func() error, err error) {
 	dbPath := filepath.Join(statePbDataDir(), "data.db")
-	backupPath := filepath.Join(statePbDataDir(), "data.db.backup")
+	backupPath := dbBackupPath()
 
 	// SQLite's VACUUM INTO refuses to overwrite an existing file ("output file
 	// already exists"). A prior install/revert leaves data.db.backup behind, so
@@ -92,6 +129,14 @@ func backupDatabase(_ string) (rollbackFn func() error, err error) {
 	}
 	log.Printf("[pkg_install] database backed up to %s%s (restore-on-failure armed)", backupPath, sizeNote)
 
+	// In-process restore, used ONLY for PRE-activation failures (migrate/activate
+	// fail before the symlink swaps). It restores the live DB and disarms — both
+	// the backup file and any arm marker — because the live `current` never moved,
+	// so there is no post-restart rollback to keep the backup for. The success
+	// path deliberately does NOT call this: it leaves the backup ARMED (via
+	// armDatabaseBackup) so the entrypoint can roll the DB back if the new binary
+	// fails its post-restart health probe (the failure happens in a different
+	// process, so it can't be handled here). See entrypoint.sh's rollback branch.
 	rollbackFn = func() error {
 		log.Printf("pkg_go_build: restoring database from backup")
 		// Use cp for streaming copy to avoid loading entire DB into memory
@@ -99,7 +144,22 @@ func backupDatabase(_ string) (rollbackFn func() error, err error) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to restore backup: %v\n%s", err, out)
 		}
+		// The backup is a VACUUM-INTO snapshot (no WAL). Any data.db-wal/-shm next
+		// to the live DB belong to the now-overwritten (forward-migrated) file; if
+		// left, SQLite would replay those frames over the restored snapshot and
+		// silently undo the restore (or trip "disk image is malformed"). Drop them
+		// — the caller re-bootstraps the pools (recoverDB) so no live connection is
+		// mid-checkpoint against them. Mirrors entrypoint.sh's restore_db_from_backup.
+		dbWAL := dbPath + "-wal"
+		dbSHM := dbPath + "-shm"
+		if err := os.Remove(dbWAL); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to clear stale WAL %s: %w", dbWAL, err)
+		}
+		if err := os.Remove(dbSHM); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to clear stale SHM %s: %w", dbSHM, err)
+		}
 		os.Remove(backupPath)
+		os.Remove(dbArmedMarkerPath())
 		return nil
 	}
 

@@ -79,12 +79,12 @@ const (
 // control flow (ordering, failure handling, rollback) is unit-testable without
 // running a real build.
 type rebuildDeps struct {
-	assemble func(m RebuildManifest, buildDir string) error
-	pipeline func(job *installJob, buildDir string) (buildOutput, error)
-	backupDB func() error
+	assemble  func(m RebuildManifest, buildDir string) error
+	pipeline  func(job *installJob, buildDir string) (buildOutput, error)
+	backupDB  func() error
 	restoreDB func() error
-	syncMig  func(buildDir string) (SyncResult, error)
-	activate func(buildID string) error
+	syncMig   func(buildDir string) (SyncResult, error)
+	activate  func(buildID string) error
 	// recoverDB re-bootstraps the live app's DB pools after the out-of-band DB
 	// access of backupDB + syncMig, so the post-activate registry/build-record
 	// writes see the real tables. Optional (nil-safe).
@@ -217,6 +217,18 @@ func restore(d rebuildDeps) {
 	if d.restoreDB != nil {
 		if err := d.restoreDB(); err != nil {
 			log.Printf("rebuild: DB restore failed: %v", err)
+			return
+		}
+		// The restore overwrote data.db (and cleared its WAL) underneath the still-
+		// running live app, whose connection pool holds a now-stale mmap of the old
+		// WAL index — its next write would fail "disk image is malformed". Re-open
+		// the pools so the live process (which keeps serving after a pre-activation
+		// failure) sees the restored DB cleanly. Post-activation failures restore in
+		// the entrypoint instead (different process), so this only matters here.
+		if d.recoverDB != nil {
+			if err := d.recoverDB(); err != nil {
+				log.Printf("rebuild: DB reconnect after restore failed: %v", err)
+			}
 		}
 	}
 }
@@ -281,6 +293,13 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 			finalizeInstallLog(app, logRecord, status, errMsg, job.LogLines)
 		},
 		restart: func() {
+			// Arm the surviving data.db.backup as a rollback snapshot BEFORE the
+			// restart. This is the post-activation success path: DOWN migrations
+			// already ran against the live DB and the symlink already flipped, so if
+			// the new binary fails its health probe the entrypoint must restore the
+			// DB (not just the symlink). Arming leaves the backup file in place +
+			// drops a marker the entrypoint commits (deletes) on a healthy boot.
+			armDatabaseBackup(m.BuildID)
 			// Flush all pre-restart writes (install-log finalize, registry mirror)
 			// from the WAL into data.db before the hard os.Exit, or the new binary
 			// reads a data.db missing them.
@@ -387,6 +406,7 @@ func buildCurrentMemberSet(app core.App) ([]MemberSpec, error) {
 //   - present members with NO row yet (a fresh install): a full row is created
 //     from the member's manifest parsed out of the build dir;
 //   - rows absent from the manifest (an uninstall): marked disabled.
+//
 // buildDir is the active build's root, used to parse newly-installed members'
 // manifests for the create path.
 func commitRegistry(app core.App, m RebuildManifest, buildDir string) error {

@@ -20,7 +20,7 @@ import { useChunkLoadRecovery } from '@tinycld/core/lib/use-chunk-load-recovery'
 import { useVersionCheck } from '@tinycld/core/lib/use-version-check'
 import { Slot, usePathname } from 'expo-router'
 import { BlankScreen, ConnectSlot, GateFailedScreen } from '~/lib/gate-screens'
-import { useMarkBundleHealthy } from '~/lib/use-mark-bundle-healthy'
+import { MarkBundleHealthy } from '~/lib/use-mark-bundle-healthy'
 import { useServerAddressGate } from '~/lib/use-server-address-gate'
 
 initSentry()
@@ -31,7 +31,6 @@ export default function Layout() {
     useVersionCheck()
     useChunkLoadRecovery()
     useAppUpdates()
-    useMarkBundleHealthy()
 
     if (state.status === 'resolving') return <BlankScreen />
     if (state.status === 'failed') return <GateFailedScreen error={state.error} />
@@ -42,6 +41,7 @@ export default function Layout() {
     const { Providers } = state
     return (
         <Providers>
+            <MarkBundleHealthy />
             <Slot />
             <NewVersionToast />
         </Providers>

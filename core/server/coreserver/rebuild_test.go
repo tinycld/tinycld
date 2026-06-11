@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -182,7 +183,10 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 			seq = append(seq, "assemble")
 			return os.MkdirAll(filepath.Join(dir, "tinycld", "server", "pb_migrations"), 0o755)
 		},
-		pipeline:       func(j *installJob, dir string) (buildOutput, error) { seq = append(seq, "pipeline"); return buildOutput{}, nil },
+		pipeline: func(j *installJob, dir string) (buildOutput, error) {
+			seq = append(seq, "pipeline")
+			return buildOutput{}, nil
+		},
 		backupDB:       func() error { seq = append(seq, "backup"); return nil },
 		syncMig:        func(buildDir string) (SyncResult, error) { seq = append(seq, "sync"); return SyncResult{}, nil },
 		activate:       func(id string) error { seq = append(seq, "activate"); return nil },
@@ -250,6 +254,158 @@ func TestRebuild_PipelineFailure_NoActivateNoRestore(t *testing.T) {
 	// Failure precedes the backup, so restore should not run.
 	if restored {
 		t.Fatal("restore should not run when failure precedes backup")
+	}
+}
+
+// writeFakeBackup drops a stand-in data.db.backup under the state's pb_data dir
+// so the armed-backup helpers have a file to act on without running sqlite3.
+func writeFakeBackup(t *testing.T, state string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(state, "pb_data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(state, "pb_data", "data.db.backup")
+	if err := os.WriteFile(p, []byte("fake-snapshot"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// armDatabaseBackup must LEAVE the backup file in place (it's the armed rollback
+// snapshot) and write the marker recording the build it predates. This is the
+// crux of review finding H3: the success-with-exit-75 path keeps the backup so
+// the entrypoint can restore the DB if the new binary fails its health probe.
+func TestArmDatabaseBackup_LeavesBackupAndWritesMarker(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("TINYCLD_STATE_DIR", state)
+	backup := writeFakeBackup(t, state)
+
+	armDatabaseBackup("build-42")
+
+	if _, err := os.Stat(backup); err != nil {
+		t.Fatalf("armed backup must survive (not be deleted): %v", err)
+	}
+	got, err := os.ReadFile(dbArmedMarkerPath())
+	if err != nil {
+		t.Fatalf("arm marker not written: %v", err)
+	}
+	if string(got) != "build-42" {
+		t.Fatalf("arm marker = %q, want build-42", got)
+	}
+}
+
+// With no backup on disk there's nothing to arm; arming must not create a marker
+// and must clear any stale one (e.g. left by a prior aborted op).
+func TestArmDatabaseBackup_NoBackup_ClearsStaleMarker(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("TINYCLD_STATE_DIR", state)
+	if err := os.MkdirAll(filepath.Join(state, "pb_data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dbArmedMarkerPath(), []byte("stale-build"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	armDatabaseBackup("build-99") // no data.db.backup present
+
+	if _, err := os.Stat(dbArmedMarkerPath()); !os.IsNotExist(err) {
+		t.Fatal("stale arm marker should be cleared when there's no backup to arm")
+	}
+}
+
+// The pre-activation restore closure (used ONLY for migrate/activate failures
+// before the symlink swaps) must DISARM: remove both the backup file and the arm
+// marker, since the live `current` never moved and there's no post-restart
+// rollback to keep the backup for. Contrast with the success path, which arms.
+func TestBackupRestoreClosure_DisarmsMarkerAndBackup(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("TINYCLD_STATE_DIR", state)
+
+	// backupDatabase shells out to sqlite3 (VACUUM INTO); require it here — it's
+	// present in CI + the runtime image, and exercising the REAL restore closure
+	// is the point of the test.
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not on PATH; restore-closure disarm test needs it")
+	}
+	if err := os.MkdirAll(filepath.Join(state, "pb_data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A valid (empty) SQLite db for VACUUM INTO to snapshot. Let sqlite3 create
+	// the file fresh (a non-DB placeholder would fail VACUUM with "file is not a
+	// database").
+	dbFile := filepath.Join(state, "pb_data", "data.db")
+	if out, err := exec.Command("sqlite3", dbFile, "VACUUM;").CombinedOutput(); err != nil {
+		t.Fatalf("init sqlite db: %v\n%s", err, out)
+	}
+	restoreFn, err := backupDatabase(filepath.Join(state, "builds", "x", "tinycld"))
+	if err != nil {
+		t.Fatalf("backupDatabase: %v", err)
+	}
+	// backupDatabase re-creates the backup; re-arm the marker to mimic an armed
+	// state, then prove the restore closure disarms it.
+	if err := os.WriteFile(dbArmedMarkerPath(), []byte("build-7"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Stale WAL/SHM from the forward-migrated DB: the restore must delete these or
+	// SQLite would replay them over the snapshot and undo the restore.
+	dbWAL := dbFile + "-wal"
+	dbSHM := dbFile + "-shm"
+	for _, f := range []string{dbWAL, dbSHM} {
+		if err := os.WriteFile(f, []byte("stale"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := restoreFn(); err != nil {
+		t.Fatalf("restore closure: %v", err)
+	}
+	if _, err := os.Stat(dbBackupPath()); !os.IsNotExist(err) {
+		t.Fatal("restore closure must remove the backup file (disarm)")
+	}
+	if _, err := os.Stat(dbArmedMarkerPath()); !os.IsNotExist(err) {
+		t.Fatal("restore closure must remove the arm marker (disarm)")
+	}
+	if _, err := os.Stat(dbWAL); !os.IsNotExist(err) {
+		t.Fatal("restore closure must remove the stale -wal (else SQLite replays it)")
+	}
+	if _, err := os.Stat(dbSHM); !os.IsNotExist(err) {
+		t.Fatal("restore closure must remove the stale -shm")
+	}
+}
+
+// The happy-path rebuild must NOT invoke the restore closure (so the backup is
+// left armed for the entrypoint), and its restart step must arm the marker.
+func TestRebuild_HappyPath_ArmsBackup_NoRestore(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("TINYCLD_STATE_DIR", state)
+	backup := writeFakeBackup(t, state)
+	var restored bool
+	deps := rebuildDeps{
+		assemble: func(m RebuildManifest, dir string) error {
+			return os.MkdirAll(filepath.Join(dir, "tinycld", "server", "pb_migrations"), 0o755)
+		},
+		pipeline:  func(j *installJob, dir string) (buildOutput, error) { return buildOutput{}, nil },
+		backupDB:  func() error { return nil }, // the fake backup already exists on disk
+		restoreDB: func() error { restored = true; return nil },
+		syncMig:   func(buildDir string) (SyncResult, error) { return SyncResult{}, nil },
+		activate:  func(id string) error { return nil },
+		// Mirror the production restart closure's arming so the test covers the
+		// real success-path behavior (arm marker written, backup left in place).
+		restart: func() { armDatabaseBackup("build-armed") },
+	}
+	job := &installJob{ID: "j", Done: make(chan struct{})}
+	m := RebuildManifest{BuildID: "build-armed", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
+	if err := rebuildWith(job, m, deps); err != nil {
+		t.Fatal(err)
+	}
+	if restored {
+		t.Fatal("happy path must NOT restore the DB — the backup stays armed for the entrypoint")
+	}
+	if _, err := os.Stat(backup); err != nil {
+		t.Fatalf("backup must survive the success path (armed): %v", err)
+	}
+	got, err := os.ReadFile(dbArmedMarkerPath())
+	if err != nil || string(got) != "build-armed" {
+		t.Fatalf("arm marker = %q (err %v), want build-armed", got, err)
 	}
 }
 
