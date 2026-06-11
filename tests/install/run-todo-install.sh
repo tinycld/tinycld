@@ -161,9 +161,19 @@ wait_healthy "first boot"
 # 4. Scrape the first-run bootstrap token from logs. The server prints a
 #    `${url}/admin?token=…` line on first boot; the path doesn't matter here —
 #    we match the `token=` query param, so this is unaffected by /setup→/admin.
-TOKEN=$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'token=[a-f0-9]+' | head -1 | cut -d= -f2 || true)
+#
+#    The setup-token banner is printed AFTER /api/health starts answering (the
+#    banner comes near the very end of boot, once PocketBase finishes the
+#    InstallerFunc check), so a one-shot grep right after wait_healthy races the
+#    banner and can find nothing. Poll the logs for up to 30s instead.
+TOKEN=""
+for i in $(seq 1 30); do
+    TOKEN=$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'token=[a-f0-9]+' | head -1 | cut -d= -f2 || true)
+    [ -n "${TOKEN}" ] && break
+    sleep 1
+done
 if [ -z "${TOKEN}" ]; then
-    echo "[runner] ERROR: no bootstrap token printed in logs" >&2
+    echo "[runner] ERROR: no bootstrap token printed in logs after 30s" >&2
     dump_logs
     exit 1
 fi
