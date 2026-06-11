@@ -94,6 +94,9 @@ func runBuildPipelineWith(
 		if err := stageNativeBundlesIntoRelease(stageDir, bundles); err != nil {
 			return buildOutput{}, wrapStep("stage native bundles", err)
 		}
+		// The per-platform dist-<platform> dirs have been staged into the release;
+		// drop them so the build dir doesn't retain a second copy of every bundle.
+		cleanupNativeExportDirs(bundles)
 	} else {
 		jobLogf(job, "native OTA export skipped (RN toolchain absent) — mobile stays on embedded bundle")
 	}
