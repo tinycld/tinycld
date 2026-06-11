@@ -48,6 +48,34 @@ func TestWriteWorkspaceScaffold(t *testing.T) {
 	}
 }
 
+func TestAssembleBuild_FetchesAllAndScaffolds(t *testing.T) {
+	build := t.TempDir()
+	manifest := RebuildManifest{
+		BuildID: "build-1",
+		Members: []MemberSpec{
+			{Slug: "tinycld", Spec: "git+file:///x/tinycld"},
+			{Slug: "mail", Spec: "@tinycld/mail@1"},
+		},
+	}
+	var fetched []string
+	fakeFetch := func(ms MemberSpec, dir string) error {
+		fetched = append(fetched, ms.Slug)
+		return os.MkdirAll(filepath.Join(dir, ms.Slug), 0o755)
+	}
+	if err := assembleBuildWith(manifest, build, fakeFetch); err != nil {
+		t.Fatal(err)
+	}
+	if len(fetched) != 2 {
+		t.Fatalf("expected 2 fetches, got %v", fetched)
+	}
+	if _, err := os.Stat(filepath.Join(build, "manifest.json")); err != nil {
+		t.Fatalf("manifest.json not written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(build, "pnpm-workspace.yaml")); err != nil {
+		t.Fatalf("scaffold not written: %v", err)
+	}
+}
+
 func TestFetchMember_PlacesExtractedDir(t *testing.T) {
 	build := t.TempDir()
 	// Fake an already-extracted "package" dir as if npm pack + untar ran.

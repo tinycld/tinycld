@@ -133,6 +133,38 @@ func fetchMemberWith(ms MemberSpec, buildDir string, pack packFn) error {
 	return copyDir(extracted, dest)
 }
 
+// fetchFn fetches one member into buildDir. Injectable for tests.
+type fetchFn func(ms MemberSpec, buildDir string) error
+
+// assembleBuild writes the manifest, fetches every member by spec, and writes
+// the workspace scaffold into buildDir. After this the build dir is a complete
+// pre-install workspace; runBuildPipeline turns it into a runnable one.
+func assembleBuild(m RebuildManifest, buildDir string) error {
+	return assembleBuildWith(m, buildDir, fetchMember)
+}
+
+func assembleBuildWith(m RebuildManifest, buildDir string, fetch fetchFn) error {
+	if err := os.MkdirAll(buildDir, 0o755); err != nil {
+		return err
+	}
+	// Write the manifest FIRST so a crashed build is self-describing.
+	mb, err := json.MarshalIndent(m, "", "    ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(buildDir, "manifest.json"), append(mb, '\n'), 0o644); err != nil {
+		return err
+	}
+	members := make([]string, 0, len(m.Members))
+	for _, ms := range m.Members {
+		if err := fetch(ms, buildDir); err != nil {
+			return fmt.Errorf("fetch %s: %w", ms.Slug, err)
+		}
+		members = append(members, ms.Slug)
+	}
+	return writeWorkspaceScaffold(buildDir, members)
+}
+
 // workspacePackages expands the member slug list into the pnpm `packages:`
 // entries: tinycld carries its two nested members (core, package-scripts).
 func workspacePackages(members []string) []string {
