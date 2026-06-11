@@ -221,7 +221,7 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 		activate:  activateBuild,
 		recoverDB: func() error { return recoverLiveDBAfterExternalWrite(app) },
 		recordBuild: func(out buildOutput) error {
-			return recordRebuildBuild(app, m, out)
+			return recordRebuildBuild(app, m, buildDir, out)
 		},
 		commitRegistry: func() error { return commitRegistry(app, m, buildDir) },
 		prune:          pruneBuilds,
@@ -245,11 +245,17 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 // recordBuild() demotes the prior `current` row to `available` in the same
 // transaction. binary_archived is always true — every rebuild compiles a server
 // binary that travels with its build dir.
-func recordRebuildBuild(app core.App, m RebuildManifest, out buildOutput) error {
+func recordRebuildBuild(app core.App, m RebuildManifest, buildDir string, out buildOutput) error {
+	// The build is labeled by the member the operation CHANGED — the one member
+	// that isn't FromCurrent. The rollback UI finds revert targets by
+	// (pkg_slug, version), so this must be the changed package (e.g. "todo"), not
+	// an arbitrary unchanged member. version comes from the built manifest (semver),
+	// not the delta's git tag.
+	slug, version := changedMember(m, buildDir)
 	fields := map[string]any{
 		"build_id":        m.BuildID,
-		"pkg_slug":        rebuildPrimarySlug(m),
-		"version":         rebuildPrimaryVersion(m),
+		"pkg_slug":        slug,
+		"version":         version,
 		"action":          "install",
 		"binary_archived": true,
 		"release_id":      out.releaseID,
@@ -259,28 +265,26 @@ func recordRebuildBuild(app core.App, m RebuildManifest, out buildOutput) error 
 	return err
 }
 
-// rebuildPrimarySlug returns the registry slug that best labels a build for the
-// rollback UI. A build's manifest lists every member; the base (tinycld) is the
-// least informative, so prefer any non-base member, falling back to "core".
-func rebuildPrimarySlug(m RebuildManifest) string {
+// changedMember returns the registry slug + semver of the member the rebuild
+// changed (the single non-FromCurrent member). Falls back to the base when every
+// member is FromCurrent (a pure rebuild). The version is read from the built
+// manifest so it's the package semver, not a git-tag delta string.
+func changedMember(m RebuildManifest, buildDir string) (slug, version string) {
 	for _, ms := range m.Members {
-		if ms.Slug != baseMemberSlug {
-			return ms.Slug
+		if !ms.FromCurrent {
+			s := memberSlugToRegistry(ms.Slug)
+			v := manifestVersionFromBuild(buildDir, ms.Slug)
+			if v == "" {
+				v = ms.Version
+			}
+			return s, v
 		}
 	}
-	return baseRegistrySlug
-}
-
-func rebuildPrimaryVersion(m RebuildManifest) string {
-	for _, ms := range m.Members {
-		if ms.Slug != baseMemberSlug {
-			return ms.Version
-		}
-	}
+	// Every member unchanged — label by the base.
 	if ms, ok := m.MemberBySlug(baseMemberSlug); ok {
-		return ms.Version
+		return baseRegistrySlug, ms.Version
 	}
-	return ""
+	return baseRegistrySlug, ""
 }
 
 // The base platform is the `tinycld` workspace member, but its pkg_registry row
