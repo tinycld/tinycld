@@ -2,8 +2,9 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { AlertTriangle } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
+import { Pressable, Text, TextInput, View } from 'react-native'
 import type { DropReport, PendingChange } from './use-package-versions'
+import { formatVersion } from './version-compare'
 
 // ConfirmChangesModal gates Apply. For an upgrade-only set it is a simple
 // confirm; when the set includes downgrades it loads a drop report for EVERY
@@ -104,7 +105,7 @@ export function ConfirmChangesModal({
     return (
         <Modal isOpen onClose={handleCancel}>
             <ModalBackdrop />
-            <ModalContent className="w-[420px] p-4 gap-3 max-h-[560px]">
+            <ModalContent className="w-[520px] p-4 gap-3">
                 <View className="flex-row gap-2 items-center">
                     {hasDowngrade && <AlertTriangle size={18} color={dangerColor} />}
                     <Text className="text-foreground" style={{ fontSize: 19, fontWeight: '600' }}>
@@ -112,15 +113,17 @@ export function ConfirmChangesModal({
                     </Text>
                 </View>
 
-                <ScrollView className="max-h-[360px]">
-                    <ChangeSummary pendingChanges={pendingChanges} />
-                    <DropReportList
-                        isVisible={hasDowngrade}
-                        loading={loadingReports}
-                        slugs={downgradeSlugs}
-                        reports={reports}
-                    />
-                </ScrollView>
+                <ChangeTable
+                    pendingChanges={pendingChanges}
+                    reports={reports}
+                    loadingReports={loadingReports}
+                />
+
+                {hasDowngrade && (
+                    <Text className="text-muted-foreground" style={{ fontSize: 11 }}>
+                        The database is backed up before the change.
+                    </Text>
+                )}
 
                 {hasDowngrade && (
                     <View className="gap-1">
@@ -172,81 +175,126 @@ export function ConfirmChangesModal({
     )
 }
 
-function ChangeSummary({ pendingChanges }: { pendingChanges: PendingChange[] }) {
-    return (
-        <View className="gap-1 mb-2">
-            {pendingChanges.map(c => (
-                <Text key={c.slug} className="text-foreground" style={{ fontSize: 13 }}>
-                    {c.slug} → v{c.targetVersion}
-                    {c.isDowngrade ? ' (downgrade)' : ''}
-                </Text>
-            ))}
-        </View>
-    )
-}
-
-// DropReportList renders a drop report per downgraded package, so a multi-package
-// downgrade shows every package's data loss — not just the first.
-function DropReportList({
-    isVisible,
-    loading,
-    slugs,
+// ChangeTable lists every staged change as one row: the package + version move
+// on the left, and its data-loss summary on the right — so a multi-package set
+// shows each package's impact inline (not just the first), and a downgrade's
+// dropped schema is read alongside the package it belongs to. Rows render with
+// no inner scroll so no change can hide below a fold.
+function ChangeTable({
+    pendingChanges,
     reports,
+    loadingReports,
 }: {
-    isVisible: boolean
-    loading: boolean
-    slugs: string[]
+    pendingChanges: PendingChange[]
     reports: Record<string, DropReport>
+    loadingReports: boolean
 }) {
-    if (!isVisible) return null
-    if (loading) {
-        return (
-            <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
-                Checking what data will be dropped…
-            </Text>
-        )
-    }
     return (
-        <View className="gap-2">
-            {slugs.map(slug => (
-                <DropReportCard key={slug} slug={slug} report={reports[slug]} />
+        <View className="rounded-lg border border-border overflow-hidden">
+            {pendingChanges.map((change, i) => (
+                <ChangeRow
+                    key={change.slug}
+                    change={change}
+                    report={reports[change.slug]}
+                    loading={loadingReports && change.isDowngrade}
+                    isFirst={i === 0}
+                />
             ))}
-            <Text className="text-muted-foreground" style={{ fontSize: 11 }}>
-                The database is backed up before the change.
-            </Text>
         </View>
     )
 }
 
-function DropReportCard({ slug, report }: { slug: string; report?: DropReport }) {
-    if (!report) return null
-    const nothing = report.droppedCollections.length === 0 && report.droppedFields.length === 0
-    if (nothing) {
+function ChangeRow({
+    change,
+    report,
+    loading,
+    isFirst,
+}: {
+    change: PendingChange
+    report?: DropReport
+    loading: boolean
+    isFirst: boolean
+}) {
+    return (
+        <View className={`flex-row gap-3 px-3 py-2.5 ${isFirst ? '' : 'border-t border-border'}`}>
+            <View className="flex-1 gap-0.5">
+                <Text className="text-foreground" style={{ fontSize: 13, fontWeight: '500' }}>
+                    {change.slug}
+                </Text>
+                <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
+                    → {formatVersion(change.targetVersion)}
+                    {change.isDowngrade ? ' · downgrade' : ''}
+                </Text>
+            </View>
+            <View className="flex-1 items-end">
+                <DropSummary change={change} report={report} loading={loading} />
+            </View>
+        </View>
+    )
+}
+
+// DropSummary is the right-hand cell: only downgrades can drop data, so upgrades
+// show a plain "no data loss". A downgrade shows its loading state, then either
+// "No data loss" or the exact collections + fields it will drop.
+function DropSummary({
+    change,
+    report,
+    loading,
+}: {
+    change: PendingChange
+    report?: DropReport
+    loading: boolean
+}) {
+    if (!change.isDowngrade) {
         return (
             <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
-                {slug}: no collections or fields will be dropped.
+                No data loss
+            </Text>
+        )
+    }
+    if (loading || !report) {
+        return (
+            <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
+                Checking…
+            </Text>
+        )
+    }
+    const dropped = [
+        ...report.droppedCollections.map(c => `collection ${c}`),
+        ...report.droppedFields.map(f => `${f.collection}.${f.field}`),
+    ]
+    if (dropped.length === 0) {
+        return (
+            <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
+                No data loss
             </Text>
         )
     }
     return (
-        <View className="rounded-lg p-3 gap-1 bg-danger-soft">
+        <View className="items-end gap-0.5">
             <Text className="text-danger" style={{ fontSize: 12, fontWeight: '600' }}>
-                Downgrading {slug} will drop:
+                Drops {dropDescription(report)}
             </Text>
-            {report.droppedCollections.map(c => (
-                <Text key={c} className="text-danger" style={{ fontSize: 12 }}>
-                    • collection {c}
-                </Text>
-            ))}
-            {report.droppedFields.map(f => (
+            {dropped.map(line => (
                 <Text
-                    key={`${f.collection}.${f.field}`}
+                    key={line}
                     className="text-danger"
-                    style={{ fontSize: 12 }}
+                    style={{ fontSize: 11, textAlign: 'right' }}
                 >
-                    • {f.collection}.{f.field}
+                    {line}
                 </Text>
             ))}
         </View>
     )
+}
+
+// dropDescription summarizes the counts (e.g. "2 collections, 1 field") for the
+// row header above the itemized list.
+function dropDescription(report: DropReport): string {
+    const parts: string[] = []
+    const cols = report.droppedCollections.length
+    const fields = report.droppedFields.length
+    if (cols > 0) parts.push(`${cols} collection${cols === 1 ? '' : 's'}`)
+    if (fields > 0) parts.push(`${fields} field${fields === 1 ? '' : 's'}`)
+    return parts.join(', ')
 }
