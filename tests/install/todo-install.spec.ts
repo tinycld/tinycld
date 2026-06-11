@@ -57,6 +57,11 @@ const SUPERUSER_PASSWORD = 'TodoSmoke1234!'
 // `<git-spec>#<safe-ref>` and `npm pack` clones the repo at that tag.
 const TODO_SPEC_V1 = 'github:tinycld/todo#v1.0.0'
 
+// Core (base) upgrade target + the baked current version, supplied by the
+// runner (run-todo-install.sh provisions a local base remote with these tags).
+const CORE_CUR = process.env.PW_CORE_CUR ?? '0.0.4'
+const CORE_NEXT = process.env.PW_CORE_NEXT ?? '0.0.5'
+
 const TEST_ORG_NAME = 'Todo Org'
 const TEST_ORG_SLUG = 'todo-org'
 const TEST_ORG_OWNER_NAME = 'Todo Owner'
@@ -897,5 +902,40 @@ test.describe('todo version change', () => {
             await page.waitForTimeout(3_000)
         }
         throw new Error(`todo registry status did not reach 'disabled' within 90s (last=${last})`)
+    })
+
+    test(`upgrade core to v${CORE_NEXT} via the Packages version picker`, async ({ page }) => {
+        test.setTimeout(2_700_000) // 45 min — base rebuild is a full image rebuild
+        await loginAsSuperuserWithRetry(page)
+        const priorId = await latestOpId(page, 'core')
+        // The base row uses the same RowVersion picker as any package.
+        await applyVersionChange(page, 'core', `v${CORE_NEXT}`, { downgrade: false })
+        await waitForOpStatus(page, 'core', 'success', 2_400_000, 'version_change', priorId)
+    })
+
+    test(`core upgrade landed: v${CORE_NEXT} live and base_probe schema present`, async ({
+        page,
+    }) => {
+        test.setTimeout(300_000)
+        await loginAsSuperuserWithRetry(page)
+        await waitForRegistryVersion(page, 'core', CORE_NEXT, 60_000)
+        await waitForCollection(page, 'base_probe', true, 60_000)
+    })
+
+    test(`downgrade core to v${CORE_CUR} via the Packages version picker`, async ({ page }) => {
+        test.setTimeout(2_700_000) // 45 min
+        await loginAsSuperuserWithRetry(page)
+        const priorId = await latestOpId(page, 'core')
+        await applyVersionChange(page, 'core', `v${CORE_CUR}`, { downgrade: true })
+        await waitForOpStatus(page, 'core', 'success', 2_400_000, 'version_change', priorId)
+    })
+
+    test(`core downgrade landed: v${CORE_CUR} live and base_probe schema dropped`, async ({
+        page,
+    }) => {
+        test.setTimeout(300_000)
+        await loginAsSuperuserWithRetry(page)
+        await waitForRegistryVersion(page, 'core', CORE_CUR, 60_000)
+        await waitForCollection(page, 'base_probe', false, 60_000)
     })
 })
