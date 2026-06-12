@@ -434,3 +434,102 @@ func TestRebuild_MigrateFailure_RestoresAndNoActivate(t *testing.T) {
 		t.Fatal("must NOT activate after migration failure")
 	}
 }
+
+// happyDeps returns a rebuildDeps whose every step succeeds, recording into the
+// provided trackers. Individual tests override one field to inject a failure and
+// assert the post-activation invariant (an already-live build is never rolled
+// back; activate failure DOES restore).
+func happyDeps(restored, restarted *bool) rebuildDeps {
+	return rebuildDeps{
+		assemble: func(m RebuildManifest, dir string) error {
+			return os.MkdirAll(filepath.Join(dir, "tinycld", "server", "pb_migrations"), 0o755)
+		},
+		pipeline:       func(j *installJob, dir string) (buildOutput, error) { return buildOutput{}, nil },
+		backupDB:       func() error { return nil },
+		restoreDB:      func() error { *restored = true; return nil },
+		syncMig:        func(buildDir string) (SyncResult, error) { return SyncResult{}, nil },
+		activate:       func(id string) error { return nil },
+		recoverDB:      func() error { return nil },
+		recordBuild:    func(out buildOutput) error { return nil },
+		commitRegistry: func() error { return nil },
+		prune:          func(keep int) error { return nil },
+		finalizeLog:    func(status, errMsg string) {},
+		restart:        func() { *restarted = true },
+	}
+}
+
+func TestRebuild_RecordBuildFailure_StillSucceeds(t *testing.T) {
+	t.Setenv("TINYCLD_STATE_DIR", t.TempDir())
+	var restored, restarted bool
+	deps := happyDeps(&restored, &restarted)
+	deps.recordBuild = func(out buildOutput) error { return fmt.Errorf("record broke") }
+
+	job := &installJob{ID: "j", Done: make(chan struct{})}
+	m := RebuildManifest{BuildID: "build-rb", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
+	if err := rebuildWith(job, m, deps); err != nil {
+		t.Fatalf("recordBuild failure must NOT fail an already-live build: %v", err)
+	}
+	if restored {
+		t.Fatal("must NOT restore the DB after activation on a recordBuild failure")
+	}
+	if !restarted {
+		t.Fatal("a live build must still restart")
+	}
+	if job.Status != "success" {
+		t.Fatalf("job status = %q, want success", job.Status)
+	}
+}
+
+func TestRebuild_CommitRegistryFailure_StillSucceeds(t *testing.T) {
+	t.Setenv("TINYCLD_STATE_DIR", t.TempDir())
+	var restored, restarted bool
+	deps := happyDeps(&restored, &restarted)
+	deps.commitRegistry = func() error { return fmt.Errorf("commit broke") }
+
+	job := &installJob{ID: "j", Done: make(chan struct{})}
+	m := RebuildManifest{BuildID: "build-cr", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
+	if err := rebuildWith(job, m, deps); err != nil {
+		t.Fatalf("commitRegistry failure must NOT fail an already-live build: %v", err)
+	}
+	if restored {
+		t.Fatal("must NOT restore the DB on a commitRegistry failure (new schema is correct)")
+	}
+	if !restarted {
+		t.Fatal("a live build must still restart")
+	}
+}
+
+func TestRebuild_PruneFailure_StillSucceeds(t *testing.T) {
+	t.Setenv("TINYCLD_STATE_DIR", t.TempDir())
+	var restored, restarted bool
+	deps := happyDeps(&restored, &restarted)
+	deps.prune = func(keep int) error { return fmt.Errorf("prune broke") }
+
+	job := &installJob{ID: "j", Done: make(chan struct{})}
+	m := RebuildManifest{BuildID: "build-pr", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
+	if err := rebuildWith(job, m, deps); err != nil {
+		t.Fatalf("prune failure must NOT fail an already-live build: %v", err)
+	}
+	if !restarted {
+		t.Fatal("a live build must still restart even if prune fails")
+	}
+}
+
+func TestRebuild_ActivateFailure_RestoresAndDoesNotRestart(t *testing.T) {
+	t.Setenv("TINYCLD_STATE_DIR", t.TempDir())
+	var restored, restarted bool
+	deps := happyDeps(&restored, &restarted)
+	deps.activate = func(id string) error { return fmt.Errorf("activate broke") }
+
+	job := &installJob{ID: "j", Done: make(chan struct{})}
+	m := RebuildManifest{BuildID: "build-af", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
+	if err := rebuildWith(job, m, deps); err == nil {
+		t.Fatal("expected an error when activate fails")
+	}
+	if !restored {
+		t.Fatal("activate failure (after backup) must restore the DB")
+	}
+	if restarted {
+		t.Fatal("must NOT restart when activation failed")
+	}
+}
