@@ -7,12 +7,14 @@ import appConfig from '../vitest.config'
 // alias of its own — its tests import via `@tinycld/core/*` (covered by the
 // inherited aliases) or relative paths.
 //
-// Core keeps tests in TWO locations: tests/unit/** (general unit tests) and
-// lib/packages/__tests__/** (the runtime package-derivation tests that are the
-// heart of the new architecture). Include both.
+// Core colocates tests freely: tests/unit/**, a `__tests__/` dir beside the
+// code under test (lib/**, file-viewer/**, ui/**, components/**, …), and the
+// occasional loose `<name>.test.ts`. Match all of them anywhere under the
+// package root so a new test is never silently skipped for living outside an
+// enumerated directory (node_modules etc. are excluded by the inherited config).
 export default mergeConfig(appConfig, {
     test: {
         root: __dirname,
-        include: ['tests/**/*.test.{ts,tsx}', 'lib/**/__tests__/**/*.test.{ts,tsx}'],
+        include: ['**/*.test.{ts,tsx}'],
     },
 })

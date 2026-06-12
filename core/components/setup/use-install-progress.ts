@@ -189,6 +189,20 @@ function pollJobOutcome(
             onResolved('success')
             return true
         }
+        // 'rolled_back' is the server's terminal status after a post-activation
+        // health-check rollback (ReconcileRolledBackInstall, written on the new
+        // binary's boot). It only ever appears HERE, across the restart seam, where
+        // the SSE stream is already dead — so the poll must recognize it or the
+        // modal hangs forever on "Installing…". Map it to a failed outcome with a
+        // rollback-specific message, mirroring the SSE complete handler's
+        // anything-but-success → 'failed' convention.
+        if (body?.status === 'rolled_back') {
+            onResolved(
+                'failed',
+                body.error || 'The update failed its health check and was rolled back.'
+            )
+            return true
+        }
         if (body?.status === 'failed') {
             onResolved('failed', body.error)
             return true
