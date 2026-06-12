@@ -16,6 +16,24 @@ The first time a freshly deployed app boots, it also records a **base build** �
 the image's out-of-the-box state — so you can always revert all the way back to
 "before any package was installed live".
 
+## Automatic rollback on a failed install
+
+A build is only saved when an install **succeeds**. If a package can't even be
+built — say it has a code error that fails the web bundle — the install stops
+before anything goes live and your running app is **untouched**; the package shows
+as **failed** in the install history.
+
+If a package builds but then **crashes the app on restart** (for example a broken
+server hook, or a database migration that fails to apply), the app notices that the
+new version never came up healthy and **automatically rolls back**: it restores the
+database and switches back to the build that was running before, then comes back up
+on its own. That attempt is recorded as **rolled back** in the install history, and
+no new build is kept. You don't need to do anything — but the package didn't
+install, so check its source before trying again.
+
+This automatic rollback is the app protecting itself on restart; the manual
+**Revert** below is for deliberately going back to an earlier *working* build.
+
 ## To revert to an earlier build
 
 1. Open **Admin → Build History**.

@@ -135,7 +135,9 @@ entrypoint paths, docker-compose / `deploy.sh`, the path helpers, and the
   `./tinycld` in a fixed dir.
 - The exit-75 health-probe stays. **Rollback-on-probe-failure changes** from binary
   swap (`mv tinycld.prev tinycld`) to **flipping `current` back** to the previous
-  build dir — the whole tree reverts, not just the binary.
+  build dir — the whole tree reverts, not just the binary. The rollback path also
+  writes a `.rollback-pending` breadcrumb so the boot reconciler can mark the
+  stranded install-log row `rolled_back` (see Section 4).
 - `promote_release` keeps working: reads `release-staging` from the now-current
   build dir, promotes into the fixed `/workspace/releases`.
 
@@ -171,6 +173,23 @@ build succeeds, **before** the symlink flip.
    `data.db.backup`, leave `current` on the old build dir, exit. The running server is
    untouched throughout — nothing mutated the live code tree, only `pb_data`, which is
    backed up.
+
+**Surfacing a post-swap rollback in the install log.** The `data.db.backup`
+snapshot is taken *before* the job writes its terminal status, so restoring it on a
+health-probe rollback also reverts the `pkg_install_log` row back to `running`,
+stranding it (the `exit(75)` process is gone and nothing else finalizes it). To
+give the `/admin` UI a clean terminal state, the entrypoint's rollback path writes
+a `pb_data/.rollback-pending` breadcrumb (the rolled-back build id, captured from
+`.db-backup-armed` *before* `restore_db_from_backup` clears it), and a boot-time
+reconciler `ReconcileRolledBackInstall` (registered in the `registerStaticServe`
+OnServe hook, alongside `SeedBaseBuild`) consumes it on the next boot and marks the
+stranded `running` row `rolled_back`. The commit (healthy) path never writes the
+breadcrumb, so a successful boot is never mis-marked. Net: a pre-swap failure ends
+`failed`; a post-swap health-probe rollback ends `rolled_back`. This is what the
+`run-todo-install.sh` buggy-`server`/`migration` fixtures assert (a `Register()`
+panic and a throwing UP migration, respectively, both rolling back to the prior
+healthy build), while the buggy-`fe` fixture (an unresolved import that fails
+`expo export`) asserts the pre-swap `failed` path.
 
 **Rollback / revert-to-archived-build** (explicit `/admin` action). Every prior build
 dir is retained intact, so "revert to build X" is:

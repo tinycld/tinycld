@@ -65,6 +65,14 @@ under `/api/admin/packages` (all require superuser auth):
 | `GET` | `/events/{jobId}` | Server-Sent Events stream of progress for a job (`progress` + `complete` events). Auth via header or `?token=` (EventSource can't send headers). |
 | `GET` | `/status/{slug}` | Last recorded install-log status for a slug. |
 
+`status` is one of `pending` · `running` · `success` · `failed` · `rolled_back`.
+`failed` is a pre-swap abort (validation/build/migration-sync) — the live build
+is untouched. `rolled_back` is a post-swap health-check failure that the
+entrypoint reverted (symlink + DB restored), surfaced by the boot reconciler
+(see [Rollback](#rollback)). The status survives the relaunch because it's read
+from the durable `pkg_install_log` row, not the in-memory job (which the
+`exit(75)` restart discards).
+
 Only **one** install/uninstall job runs at a time; a second request while one is
 in flight returns `409` with the current job's info.
 
@@ -244,17 +252,44 @@ PID 1 entrypoint, looping onto a new server process.
 
 ## Rollback
 
-Failures before the binary swap (validation, download, build) just abort the
-job and run a rollback stack that undoes each completed step (remove the copied
-member dir, restore `package.json`/`pnpm-workspace.yaml`, re-run the generator).
+A rebuild has two failure regimes split by the atomic `current`-symlink swap
+(`activateBuild`):
 
-Failures *after* the swap are caught at relaunch:
+**Before activation** (assemble, `pnpm install`, `go build`, `expo export`, the
+pre-swap DB backup, the DOWN-migration sync) a failure aborts the job in-process:
+the half-built `builds/<id>` dir is discarded, the DB is restored from the
+pre-swap `VACUUM INTO` snapshot if it had already been taken, and the live
+`current` symlink is never touched — the old build keeps serving. The
+`pkg_install_log` row ends `failed`. (A broken package that fails its web build —
+e.g. an unresolved import in a screen — lands here: `expo export` fails, no swap.)
 
-- If the **health-check fails**, the entrypoint restores the previous binary
-  (`mv tinycld tinycld.failed; mv tinycld.prev tinycld`) and continues onto the
-  old binary.
-- The pre-swap **SQLite `VACUUM INTO` backup** (`data.db.backup`) lets the
-  install pipeline's rollback restore the database if a later step fails.
+**After activation** the swap and any DOWN migrations have already hit live
+state, and the job has `exit(75)`'d to relaunch onto the new build, so an
+in-process undo is impossible. Instead the entrypoint renders the verdict
+(`probe_current_build` → `/api/health` on a temp port, 60s budget):
+
+- **Healthy** → `commit_db_backup` deletes the armed snapshot + marker; the new
+  build serves.
+- **Unhealthy** (the new binary panics at bootstrap, a pending UP migration
+  throws at `serve` boot before the HTTP listener binds, or boot hangs) →
+  `restore_db_from_backup` copies the pre-swap snapshot back over `data.db`,
+  `rollback_current_symlink` flips `current` back to the previous build dir (the
+  whole tree reverts, not just the binary), and the loop re-serves the old build.
+
+Because the restore reverts `data.db` to a snapshot taken *before* the job wrote
+its terminal status, the rolled-back install's `pkg_install_log` row would
+otherwise be stranded at `running` forever. To surface a clean outcome, the
+rollback path writes a `pb_data/.rollback-pending` breadcrumb (the rolled-back
+build id, captured from `.db-backup-armed` before the restore clears it); on the
+next boot `ReconcileRolledBackInstall` (registered in the `registerStaticServe`
+OnServe hook) consumes it and marks that stranded row `rolled_back`. So a
+post-restart rollback shows terminal status **`rolled_back`** at
+`GET /api/admin/packages/status/{slug}`, distinct from the pre-swap **`failed`**.
+
+The entrypoint's `recover_interrupted_rebuild` runs the identical verdict on a
+fresh start if the container is killed (OOM, `docker kill`, host reboot) between
+the `exit(75)` and the verdict — the armed marker's presence is the
+"verdict never completed" signal, and it writes the same breadcrumb on rollback.
 
 ## Build history & revert
 

@@ -30,6 +30,11 @@ on the server. Packages outside the official `@tinycld/` scope show an extra
 caution notice at install time — but the warning is advisory, so the judgment about
 whether to trust a source is yours.
 
+As a safety net, a runtime install that fails to build, or that builds but then
+fails to come up healthy on restart, can't take your app down: the app aborts or
+**automatically rolls back** to the build that was running before. See *Build
+history & reverting* for what a failed or rolled-back install looks like.
+
 ## Installing a new package
 
 For developers, packages are linked into the app shell with:
