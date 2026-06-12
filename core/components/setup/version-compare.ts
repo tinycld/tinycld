@@ -38,6 +38,13 @@ export interface PendingChange {
 // unparseable. Leading `v` is tolerated. This is intentionally small — the
 // authoritative comparison runs server-side; this only drives the UI's
 // confirmation gate and the "is this a no-op selection?" check.
+// formatVersion renders a version for display with exactly one leading `v`.
+// Discovered versions can be git tags that already include the `v` (e.g.
+// "v0.0.3"); naively prepending "v" produced "vv0.0.3" in the confirm modal.
+export function formatVersion(version: string): string {
+    return `v${version.replace(/^v/, '')}`
+}
+
 export function compareVersions(a: string, b: string): number | null {
     const parse = (v: string) => {
         const core = v.replace(/^v/, '').split(/[-+]/)[0]

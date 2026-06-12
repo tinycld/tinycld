@@ -1,0 +1,304 @@
+package coreserver
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/pocketbase/pocketbase"
+)
+
+// newBuildID returns a fresh, server-generated build id. Never client-settable.
+func newBuildID() string {
+	return fmt.Sprintf("build-%d", time.Now().UnixMilli())
+}
+
+// finishJob is the deferred cleanup every rebuild-based pipeline shares: clear
+// the single-flight slot and close the job's Done channel so SSE listeners and
+// the handler's caller unblock.
+func finishJob(job *installJob) {
+	installMu.Lock()
+	currentJob = nil
+	installMu.Unlock()
+	close(job.Done)
+}
+
+// resolveInstallSlugVersion packs the install spec just far enough to read its
+// manifest, returning the package slug + version. It mirrors the old install
+// pipeline's validate→pack→parse→validate prologue but performs NO workspace
+// mutation — the real fetch happens again inside the rebuild's assemble step.
+func resolveInstallSlugVersion(app *pocketbase.PocketBase, job *installJob) (slug, version string, err error) {
+	// The resolve pre-flight (pack just far enough to read the manifest) occupies
+	// a tiny band below the assemble band [progAssembleStart, …) so the bar never
+	// jumps backward when assembleBuild re-fetches the member for real.
+	emitProgress(job, "Validating package", 1, "Checking "+job.NpmPkg)
+	if err := validatePackageSpec(job.NpmPkg); err != nil {
+		return "", "", err
+	}
+	tmp, err := os.MkdirTemp("", "tinycld-resolve-*")
+	if err != nil {
+		return "", "", err
+	}
+	defer os.RemoveAll(tmp)
+
+	emitProgress(job, "Downloading package", 2, "npm pack "+job.NpmPkg)
+	if _, err := runCmd(tmp, "npm", "pack", job.NpmPkg, "--pack-destination", tmp); err != nil {
+		return "", "", fmt.Errorf("npm pack: %w", err)
+	}
+	tgz, _ := filepath.Glob(filepath.Join(tmp, "*.tgz"))
+	if len(tgz) == 0 {
+		return "", "", fmt.Errorf("no .tgz after npm pack")
+	}
+	if _, err := runCmd(tmp, "tar", "xzf", tgz[0], "-C", tmp); err != nil {
+		return "", "", err
+	}
+	extractDir := filepath.Join(tmp, "package")
+	manifest, err := parseManifestViaNode(extractDir)
+	if err != nil {
+		return "", "", fmt.Errorf("parse manifest: %w", err)
+	}
+	emitProgress(job, "Manifest parsed", 3, fmt.Sprintf("%s (%s)", manifest.Name, manifest.Slug))
+
+	bundledSlugs := getBundledSlugs(app)
+	hasGoPrereqs := checkGoBuildPrereqs() == nil
+	if err := validateManifest(manifest, hasGoPrereqs, bundledSlugs); err != nil {
+		return "", "", err
+	}
+	return manifest.Slug, manifest.Version, nil
+}
+
+// runInstallRebuild installs a package by computing the desired set (current +
+// the new member) and triggering a full rebuild.
+func runInstallRebuild(app *pocketbase.PocketBase, job *installJob) {
+	defer finishJob(job)
+
+	// Create the install-log row up front (slug falls back to the npm spec until
+	// resolved) so the status endpoint the UI polls has something to report.
+	logRecord := createInstallLog(app, job, "install")
+	jobLogf(job, "INSTALL requested: spec=%s (job %s)", job.NpmPkg, job.ID)
+
+	slug, version, err := resolveInstallSlugVersion(app, job)
+	if err != nil {
+		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
+		_ = failJob(job, "resolve", err)
+		return
+	}
+	job.Slug = slug
+	updateInstallLogSlug(app, logRecord, slug)
+
+	current, err := buildCurrentMemberSet(app)
+	if err != nil {
+		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
+		_ = failJob(job, "registry", err)
+		return
+	}
+	m := desiredSet(newBuildID(), current, setDelta{
+		op: "install", slug: slug, version: version, spec: job.NpmPkg,
+	})
+	if err := rebuild(app, job, m, logRecord); err != nil {
+		job.Status = "failed"
+		job.Error = err.Error()
+	}
+}
+
+// runUninstallRebuild uninstalls a package by computing the desired set (current
+// minus the member) and triggering a full rebuild.
+func runUninstallRebuild(app *pocketbase.PocketBase, job *installJob) {
+	defer finishJob(job)
+
+	logRecord := createInstallLog(app, job, "uninstall")
+	jobLogf(job, "UNINSTALL requested: slug=%s (job %s)", job.Slug, job.ID)
+
+	current, err := buildCurrentMemberSet(app)
+	if err != nil {
+		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
+		_ = failJob(job, "registry", err)
+		return
+	}
+	member := registrySlugToMember(job.Slug)
+	m := desiredSet(newBuildID(), current, setDelta{op: "uninstall", slug: member})
+	if err := rebuild(app, job, m, logRecord); err != nil {
+		job.Status = "failed"
+		job.Error = err.Error()
+	}
+}
+
+// revertTargetSlug returns the pkg_slug recorded for a build (the changed
+// member, e.g. "todo"), so the revert's install-log + status endpoint key on the
+// package the UI polls. Falls back to the build id if the row is missing.
+func revertTargetSlug(app *pocketbase.PocketBase, buildID string) string {
+	rec, err := app.FindFirstRecordByFilter("pkg_build", "build_id = {:id}", map[string]any{"id": buildID})
+	if err != nil || rec == nil {
+		return buildID
+	}
+	if s := rec.GetString("pkg_slug"); s != "" {
+		return s
+	}
+	return buildID
+}
+
+// loadBuildManifest reads builds/<id>/manifest.json for a retained build.
+func loadBuildManifest(buildID string) (RebuildManifest, error) {
+	path := filepath.Join(stateBuildsDir(), buildID, "manifest.json")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return RebuildManifest{}, err
+	}
+	var m RebuildManifest
+	if err := json.Unmarshal(b, &m); err != nil {
+		return RebuildManifest{}, err
+	}
+	return m, nil
+}
+
+// runRevertRebuild reactivates a previously-built, still-retained build dir.
+// No rebuild or re-fetch happens: the target tree already exists complete on
+// disk. We back up the DB, sync the schema to the target build's migration set
+// (reverting any migrations newer builds applied), flip the `current` symlink
+// to the target, mirror its manifest into the registry, and restart.
+func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
+	defer finishJob(job)
+
+	targetID := job.BuildID
+	// The install-log + status endpoint key on pkg_slug. The UI polls
+	// status/<pkg_slug> for revert/success, so the revert must log under the
+	// package the target build represents (e.g. "todo"), NOT the build id.
+	// Resolve it from the target's pkg_build row (labeled by the changed member).
+	job.Slug = revertTargetSlug(app, targetID)
+	logRecord := createInstallLog(app, job, "revert")
+	failRevert := func(step string, err error) {
+		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
+		_ = failJob(job, step, err)
+	}
+
+	revertStart := monoNow()
+	jobLogf(job, "revert starting: reactivating retained build %s (package %s) — NO rebuild", targetID, job.Slug)
+	emitProgress(job, "Validating build", 5, "Checking "+targetID)
+	targetDir := filepath.Join(stateBuildsDir(), targetID, "tinycld")
+	if _, err := os.Stat(targetDir); err != nil {
+		failRevert("validate", fmt.Errorf("build %s not retained on disk: %w", targetID, err))
+		return
+	}
+	m, err := loadBuildManifest(targetID)
+	if err != nil {
+		failRevert("validate", fmt.Errorf("read target manifest: %w", err))
+		return
+	}
+
+	// Revert has no build pipeline (the target tree already exists), so it runs
+	// its own compressed-but-monotonic scale rather than the rebuild constants.
+	emitProgress(job, "Backing up database", 25, "Creating SQLite backup")
+	restoreDB, err := backupDatabase(filepath.Join(stateBuildsDir(), targetID, "tinycld"))
+	if err != nil {
+		failRevert("backup", err)
+		return
+	}
+	// These pre-activation failures leave the live app serving, so after restoring
+	// data.db (which also clears its WAL) we must re-open the pools or the live
+	// connection's stale WAL mmap fails its next write. Mirrors restore()/recoverDB
+	// in rebuildWith; the post-activation path restores in the entrypoint instead.
+	restoreAndRecover := func() {
+		if e := restoreDB(); e != nil {
+			jobLogf(job, "WARNING: revert DB restore failed: %v", e)
+			return
+		}
+		if e := recoverLiveDBAfterExternalWrite(app); e != nil {
+			jobLogf(job, "WARNING: revert DB reconnect after restore failed: %v", e)
+		}
+	}
+
+	emitProgress(job, "Reconciling schema", 50, "Syncing migrations to target build")
+	newSet, err := buildMigrationFiles(filepath.Join(stateBuildsDir(), targetID))
+	if err != nil {
+		restoreAndRecover()
+		failRevert("migrate", err)
+		return
+	}
+	applied, err := appliedMigrationFiles(app)
+	if err != nil {
+		restoreAndRecover()
+		failRevert("migrate", err)
+		return
+	}
+	syncRes, err := syncMigrations(app, applied, newSet)
+	if err != nil {
+		restoreAndRecover()
+		failRevert("migrate", err)
+		return
+	}
+	logSyncResult(job, syncRes)
+
+	emitProgress(job, "Activating build", 80, "Flipping current symlink")
+	if err := activateBuild(targetID); err != nil {
+		restoreAndRecover()
+		failRevert("activate", err)
+		return
+	}
+	// Re-bootstrap the DB pools after the out-of-band backup + migration access so
+	// the registry write + install-log finalize below hit the real tables (see
+	// rebuildWith's recoverDB step).
+	if err := recoverLiveDBAfterExternalWrite(app); err != nil {
+		jobLogf(job, "WARNING: revert recoverDB failed: %v", err)
+	}
+	if err := commitRegistry(app, m, filepath.Join(stateBuildsDir(), targetID)); err != nil {
+		jobLogf(job, "WARNING: revert commitRegistry failed (reconciles on next boot): %v", err)
+	}
+	job.Status = "success"
+	jobLogf(job, "revert succeeded in %s — restarting onto build %s", monoSince(revertStart), targetID)
+	finalizeInstallLog(app, logRecord, "success", "", job.LogLines)
+	emitProgress(job, "Build complete", progRestart, "Restarting to activate reverted build")
+	emitComplete(job, "success", "")
+	// Revert is also a post-activation success path (schema synced + symlink
+	// flipped against the live DB), so arm the surviving backup the same way the
+	// rebuild path does — the entrypoint rolls the DB back if the reverted binary
+	// fails its health probe, commits the backup if it boots healthy.
+	armDatabaseBackup(targetID)
+	checkpointWAL(app) // flush WAL→data.db before the hard os.Exit
+	requestRestart("")
+}
+
+// runVersionChangeRebuild applies one or more version changes (upgrades or
+// downgrades, including the base/core) by folding each change into the current
+// member set, then triggering a single rebuild for the whole set.
+func runVersionChangeRebuild(app *pocketbase.PocketBase, job *installJob) {
+	defer finishJob(job)
+
+	logRecord := createInstallLog(app, job, "version_change")
+	jobLogf(job, "VERSION CHANGE requested: %d change(s) (job %s)", len(job.Changes), job.ID)
+	for _, ch := range job.Changes {
+		jobLogf(job, "  change: %s -> %s", ch.Slug, ch.TargetVersion)
+	}
+
+	current, err := buildCurrentMemberSet(app)
+	if err != nil {
+		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
+		_ = failJob(job, "registry", err)
+		return
+	}
+	buildID := newBuildID()
+	m := RebuildManifest{BuildID: buildID, Members: current}
+	for _, ch := range job.Changes {
+		reg, err := app.FindFirstRecordByFilter("pkg_registry", "slug = {:s}", map[string]any{"s": ch.Slug})
+		if err != nil {
+			finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
+			_ = failJob(job, "registry", fmt.Errorf("unknown package %q: %w", ch.Slug, err))
+			return
+		}
+		spec, err := specForVersion(reg.GetString("npm_package"), ch.TargetVersion)
+		if err != nil {
+			finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
+			_ = failJob(job, "spec", err)
+			return
+		}
+		member := registrySlugToMember(ch.Slug)
+		m = desiredSet(buildID, m.Members, setDelta{
+			op: "version", slug: member, version: ch.TargetVersion, spec: spec,
+		})
+	}
+	if err := rebuild(app, job, m, logRecord); err != nil {
+		job.Status = "failed"
+		job.Error = err.Error()
+	}
+}

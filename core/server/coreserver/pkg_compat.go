@@ -2,7 +2,6 @@ package coreserver
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"sort"
 
@@ -171,31 +170,6 @@ func peerVersionsFromManifest(manifestJSON string) map[string]string {
 // installed manifest declared (the pre-flight gate only sees installed
 // manifests). resolved must already reflect every proposed change. Returns the
 // violations contributed by this package's target manifest (empty if compatible).
-func verifyTargetPeerVersions(
-	slug string,
-	targetManifestJSON string,
-	resolved map[string]string,
-) []compatViolation {
-	peers := peerVersionsFromManifest(targetManifestJSON)
-	if len(peers) == 0 {
-		return nil
-	}
-	return solveCompat(resolved, map[string]map[string]string{slug: peers})
-}
 
 // compatError renders violations into a human-readable multi-line message for
 // pipeline failures (the UI uses the structured list; the pipeline logs prose).
-func compatError(violations []compatViolation) error {
-	if len(violations) == 0 {
-		return nil
-	}
-	msg := "incompatible version set:"
-	for _, v := range violations {
-		found := v.Found
-		if found == "" {
-			found = "(not installed)"
-		}
-		msg += fmt.Sprintf("\n  - %s requires %s %s, but found %s", v.Package, v.Requires, v.Range, found)
-	}
-	return fmt.Errorf("%s", msg)
-}

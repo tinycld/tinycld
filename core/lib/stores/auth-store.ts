@@ -27,6 +27,9 @@ type LoginResult = {
 
 const PRIMARY_ORG_STORAGE_KEY = 'tinycld_primary_org'
 
+// Slug of the singleton demo workspace minted by the server's /api/demo/start.
+const DEMO_ORG_SLUG = 'demo'
+
 async function savePrimaryOrgToStorage(orgSlug: string): Promise<void> {
     try {
         await AsyncStorage.setItem(PRIMARY_ORG_STORAGE_KEY, orgSlug)
@@ -76,6 +79,7 @@ interface AuthStoreState {
         code: string,
         otpId: string
     ) => Promise<VerifyOtpResult>
+    startDemo: (serverAddr: string) => Promise<LoginResult>
 }
 
 export const useAuthStore = create<AuthStoreState>()((set, get) => ({
@@ -273,6 +277,66 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
             return { user: authenticatedUser, error: null }
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to verify code'
+            return { user: null, error: message }
+        }
+    },
+
+    startDemo: async serverAddr => {
+        // The marketing site's "Start a demo" tap routes here on devices with the
+        // app installed (universal/app link). We hit the same unauthenticated
+        // endpoint the web CTA uses and adopt the returned PocketBase envelope.
+        // The server guarantees membership in the org with slug 'demo', so we pin
+        // the primary org rather than re-deriving it.
+        pb.authStore.clear()
+        try {
+            const res = await fetch(`${serverAddr}/api/demo/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            })
+            if (!res.ok) {
+                return { user: null, error: `Server returned HTTP ${res.status}` }
+            }
+
+            const data = (await res.json()) as { token?: string; record?: Users }
+            if (!data.token || !data.record?.id) {
+                return { user: null, error: 'Malformed demo response' }
+            }
+
+            pb.authStore.save(data.token, data.record as never)
+
+            const expanded = await pb.collection('users').getOne<
+                Users & {
+                    expand?: { user_org_via_user?: UserOrgExpanded[] }
+                }
+            >(data.record.id, { expand: 'user_org_via_user.org' })
+
+            const userOrgs = expanded.expand?.user_org_via_user ?? []
+            const demoUserOrg = userOrgs.find(uo => uo.expand?.org?.slug === DEMO_ORG_SLUG)
+            if (!demoUserOrg?.expand?.org) {
+                pb.authStore.clear()
+                return { user: null, error: 'Demo workspace is unavailable' }
+            }
+
+            const authenticatedUser: AuthenticatedUser = {
+                id: data.record.id,
+                name: data.record.name,
+                email: data.record.email,
+                primaryOrgSlug: DEMO_ORG_SLUG,
+                isDemo: true,
+                isBetaTester: false,
+            }
+
+            const { expand: _, ...userOrgRecord } = demoUserOrg
+            await seedUserOrg(data.record, demoUserOrg.expand.org, userOrgRecord)
+
+            await savePrimaryOrgToStorage(DEMO_ORG_SLUG)
+            set({ user: authenticatedUser })
+            await preloadStores()
+
+            return { user: authenticatedUser, error: null }
+        } catch (error) {
+            captureException('demo.start', error)
+            const message = error instanceof Error ? error.message : 'Failed to start demo'
             return { user: null, error: message }
         }
     },

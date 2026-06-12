@@ -31,6 +31,7 @@ func newPkgBuildTestApp(t *testing.T) *tests.TestApp {
 	c.Fields.Add(&core.NumberField{Name: "migrations_applied"})
 	c.Fields.Add(&core.JSONField{Name: "migration_files"})
 	c.Fields.Add(&core.JSONField{Name: "pkg_migration_files"})
+	c.Fields.Add(&core.JSONField{Name: "bundles"})
 	c.Fields.Add(&core.TextField{Name: "reverted_from"})
 	c.Fields.Add(&core.SelectField{
 		Name: "status", Required: true, MaxSelect: 1,
@@ -127,98 +128,5 @@ func addPkgRegistryCollection(t *testing.T, app *tests.TestApp) {
 	})
 	if err := app.Save(c); err != nil {
 		t.Fatalf("save pkg_registry collection: %v", err)
-	}
-}
-
-func makeRegistryRow(t *testing.T, app core.App, slug, status string) {
-	t.Helper()
-	col, err := app.FindCollectionByNameOrId("pkg_registry")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := core.NewRecord(col)
-	r.Set("slug", slug)
-	r.Set("status", status)
-	if err := app.Save(r); err != nil {
-		t.Fatalf("save registry row %s: %v", slug, err)
-	}
-}
-
-func makeBuild(t *testing.T, app core.App, buildID, slug, status string) *core.Record {
-	t.Helper()
-	r, err := app.FindCollectionByNameOrId("pkg_build")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := core.NewRecord(r)
-	rec.Set("build_id", buildID)
-	rec.Set("pkg_slug", slug)
-	rec.Set("action", "install")
-	rec.Set("status", status)
-	if err := app.Save(rec); err != nil {
-		t.Fatalf("save build %s: %v", buildID, err)
-	}
-	return rec
-}
-
-func registryStatus(t *testing.T, app core.App, slug string) string {
-	t.Helper()
-	r, err := app.FindFirstRecordByFilter("pkg_registry", "slug = {:s}", map[string]any{"s": slug})
-	if err != nil {
-		t.Fatalf("registry row %s not found: %v", slug, err)
-	}
-	return r.GetString("status")
-}
-
-func TestDisableRevertedPackages(t *testing.T) {
-	app := newPkgBuildTestApp(t)
-	addPkgRegistryCollection(t, app)
-
-	// Reverting to `target` (a mail build) supersedes newer builds for calc and
-	// drive. calc and drive should be disabled; mail (the target's own package)
-	// stays installed; a bundled package is never touched.
-	target := makeBuild(t, app, "build-1", "mail", "current")
-	supCalc := makeBuild(t, app, "build-2", "calc", "superseded")
-	supDrive := makeBuild(t, app, "build-3", "drive", "superseded")
-
-	makeRegistryRow(t, app, "mail", "installed")
-	makeRegistryRow(t, app, "calc", "installed")
-	makeRegistryRow(t, app, "drive", "installed")
-	makeRegistryRow(t, app, "contacts", "bundled")
-
-	if err := disableRevertedPackages(app, target, []*core.Record{supCalc, supDrive}); err != nil {
-		t.Fatalf("disableRevertedPackages: %v", err)
-	}
-
-	if s := registryStatus(t, app, "calc"); s != "disabled" {
-		t.Errorf("calc status = %q, want disabled", s)
-	}
-	if s := registryStatus(t, app, "drive"); s != "disabled" {
-		t.Errorf("drive status = %q, want disabled", s)
-	}
-	if s := registryStatus(t, app, "mail"); s != "installed" {
-		t.Errorf("mail (target package) status = %q, want installed", s)
-	}
-	if s := registryStatus(t, app, "contacts"); s != "bundled" {
-		t.Errorf("contacts (bundled) status = %q, want bundled (untouched)", s)
-	}
-}
-
-func TestDisableRevertedPackagesKeepsSlugWithSurvivingBuild(t *testing.T) {
-	app := newPkgBuildTestApp(t)
-	addPkgRegistryCollection(t, app)
-
-	// mail has an earlier surviving build (the target) AND a newer superseded
-	// build (e.g. an upgrade that got reverted). The surviving build keeps mail
-	// installed — reverting the upgrade must NOT disable mail.
-	target := makeBuild(t, app, "build-1", "mail", "current")
-	supMailUpgrade := makeBuild(t, app, "build-2", "mail", "superseded")
-	makeRegistryRow(t, app, "mail", "installed")
-
-	if err := disableRevertedPackages(app, target, []*core.Record{supMailUpgrade}); err != nil {
-		t.Fatalf("disableRevertedPackages: %v", err)
-	}
-	if s := registryStatus(t, app, "mail"); s != "installed" {
-		t.Errorf("mail status = %q, want installed (earlier build survives)", s)
 	}
 }

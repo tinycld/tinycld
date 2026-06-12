@@ -43,8 +43,8 @@ Three kinds of code live in the ecosystem:
 
 | Kind | Where it lives | Git | Has `manifest.ts`? | Discovered how |
 |---|---|---|---|---|
-| **App shell** | `tinycld/` | own repo | n/a | it *is* the runner |
-| **`@tinycld/core`** | nested inside the shell repo at `tinycld/core/` | own repo | **no** | wired in explicitly |
+| **App shell** | `tinycld/` (the repo root) | own repo | n/a | it *is* the runner |
+| **`@tinycld/core`** | nested inside the shell repo at `tinycld/core/` | **no separate repo** | **no** | wired in explicitly |
 | **Feature packages** | sibling repos (`mail/`, `contacts/`, `calc/`, `calendar/`, `drive/`, `text/`, `google-takeout-import/`) | each its own repo + remote | **yes** | auto-discovered |
 
 The defining structural rule: **a directory is a feature package iff it
@@ -59,20 +59,21 @@ treated as a library, not a feature.
             mail     -> ../../mail          # pnpm workspace symlink
             contacts -> ../../contacts
             ...
-    tinycld/                          # app shell (the only runnable thing)
-        core/                         # @tinycld/core — nested member (real dir, no manifest.ts)
+    tinycld/                          # app shell = repo root (the only runnable thing)
+        core/                         # @tinycld/core — nested member (own package.json, no manifest.ts)
         node_modules/                 # heavy deps (React/RN/Expo/…) live HERE
-        scripts/generate-packages.ts  # the generator
+        scripts/generate.ts           # the generator (+ gen-*.ts helpers)
         tinycld.packages.ts           # getPackages() — reads workspace members
         tinycld.config.ts             # generated source of truth (gitignored)
+        lib/generated/                # generated runtime artifacts (gitignored)
         server/                       # Go (PocketBase) — module tinycld.org/tinycld
     mail/   contacts/   calc/   ...   # sibling feature repos (workspace members)
 ```
 
 There is **no hand-curated package list.** `tinycld.packages.ts::getPackages()`
 enumerates the workspace member siblings that contain a `manifest.ts`, plus the
-bundled `@tinycld/core`. **The set of workspace members present = the set of
-linked packages.** A fresh clone has only the bundled `@tinycld/core` subtree;
+nested `@tinycld/core`. **The set of workspace members present = the set of
+linked packages.** A fresh clone has only the nested `@tinycld/core` subtree;
 developers clone the siblings they want and re-run `pnpm install`.
 
 > **pnpm-hoisting reality.** With `nodeLinker: hoisted`, pnpm flattens the heavy
@@ -97,7 +98,7 @@ manifest. A real package (e.g. `contacts/`) looks like:
 contacts/
     manifest.ts            # metadata + feature declarations (exported default)
     package.json           # name, exports map, peerDependencies (NO dependencies)
-    tsconfig.json          # extends ../tinycld/tsconfig.json
+    tsconfig.json          # extends @tinycld/core/tsconfig.package-base.json
     .gitignore             # node_modules/, *.tsbuildinfo, lockfiles
     pb-migrations/         # PocketBase migrations (referenced by literal dir name)
     help/                  # in-app help markdown topics
@@ -122,7 +123,7 @@ resolve to `./tinycld/contacts/screens/index.tsx`.
 
 ```jsonc
 {
-    "name": "@tinycld/contacts",       // the canonical identity (npm links by this)
+    "name": "@tinycld/contacts",       // the canonical identity (pnpm links by this)
     "private": true,
     "type": "module",
     "exports": {
@@ -267,7 +268,7 @@ export default manifest
 |---|---|
 | `name` / `slug` / `version` / `description` | Required identifiers. `slug` is the URL segment and collection-name prefix. |
 | `routes.directory` | Each file becomes an org-scoped route under `app/a/[orgSlug]/<slug>/`. |
-| `publicRoutes.directory` | Each file becomes a public route under `app/p/<slug>/<path>` (e.g. drive's `/p/drive/share/[token]`). The `/p/<slug>/` namespacing prevents path collisions across packages. |
+| `publicRoutes.directory` | Each file becomes a public top-level route under `app/<path>` (outside the org-scoped `app/a/[orgSlug]/` tree — e.g. drive's share routes). |
 | `nav` | Adds a nav-rail entry. `shortcut` registers a `t <letter>` jump and must be unique (validated at generate time). |
 | `migrations.directory` | `*.js` migrations symlinked into `server/pb_migrations/`. |
 | `hooks.directory` | PocketBase JS hooks symlinked into `server/pb_hooks/`. |
@@ -280,8 +281,15 @@ export default manifest
 | `seed.script` | Dev sample-data function. |
 | `server` | Go server extension: `package` is the subdir, `module` is its Go module path. |
 | `build.script` | A build script run before bundling (e.g. an embedded webview bundle). |
-| `dependencies[]` | Other package **slugs** — used to topologically order seeds. |
-| `peerVersions` | `{ '<slug or @tinycld/core>': '<semver range>' }` — version-aware compatibility constraints **enforced** by the version-management solver (Setup → Versions). A proposed set of version changes is blocked if it leaves any range unsatisfied. Distinct from `dependencies` (advisory, slug-only). |
+| `dependencies[]` | A **slug-only** list of other packages — **advisory + seed-ordering only.** Used to topologically sort seed execution and as a soft hint; it imposes **no** version constraint and is never a compile-time import. |
+| `peerVersions` | `{ '<slug or @tinycld/core>': '<semver range>' }` (e.g. `{ '@tinycld/core': '>=2.1 <3' }`) — **enforced** semver ranges keyed by slug. See [`dependencies` vs `peerVersions`](#dependencies-vs-peerversions) below. |
+
+### `dependencies` vs `peerVersions`
+
+These two fields look similar but do different jobs — keep them distinct:
+
+- **`dependencies`** is a **slug-only** array (`['drive']`). It is **advisory + seed-ordering only**: the generator uses it to topologically sort seeds (a package's declared deps seed first) and as a soft presence hint. It carries **no** version information, is never enforced, and is **not** a compile-time import (a hard `@tinycld/<slug>` import would break the lean-shell guarantee — see [Cross-package coupling](#cross-package-coupling)).
+- **`peerVersions`** declares **enforced semver ranges** keyed by slug, e.g. `{ '@tinycld/core': '>=2.1 <3' }`. It is checked by the **version-compatibility solver** (Setup → Versions UI): a proposed version change is **blocked** if it would leave any declared range unsatisfied. The check runs in the UI before **Apply**, and again **authoritatively on the server** before the change is actually applied.
 
 A package can contribute **only** a settings panel (no nav, no routes — like
 `@tinycld/google-takeout-import`), or purely `publicRoutes`, or any
@@ -398,11 +406,12 @@ pnpm install
 
 What `pnpm install` does:
 
-1. Reads the workspace-root `package.json` `workspaces` list and the sibling's
-   own `package.json` for its **canonical name** (`@tinycld/contacts`).
-2. Creates the `node_modules/@tinycld/<name>` symlink (scoped names nest under
-   the scope dir) pointing at the sibling, so the package name resolves
-   everywhere.
+1. Reads the `pnpm-workspace.yaml` `packages:` list and the sibling's own
+   `package.json` for its **canonical name** (`@tinycld/contacts`).
+2. The generator runs first (materializing `lib/generated/`), then
+   `link-members.ts` creates the `node_modules/@tinycld/<name>` symlink (scoped
+   names nest under the scope dir) pointing at the sibling — plus
+   `@tinycld/app-generated` — so each package name resolves everywhere.
 3. The generator runs on `postinstall` and materializes the on-disk artifacts
    it still owns (route shims, `tinycld.config.ts`, migration symlinks, Go
    wiring — see [The generator](#the-generator)).
@@ -411,23 +420,26 @@ To **remove** a feature package, delete its sibling clone (or its entry from
 the workspace list) and re-run `pnpm install` at the root.
 
 `getPackages()` now enumerates the workspace members that contain a
-`manifest.ts` (plus bundled core). The set of cloned-and-installed members is
+`manifest.ts` (plus nested core). The set of cloned-and-installed members is
 the source of truth — there is no hand-curated list and nothing to `git add`
-under `node_modules/@tinycld/` (npm owns that tree).
+under `node_modules/@tinycld/` (those symlinks are local-only, created by
+`link-members.ts`).
 
 ---
 
 ## The generator
 
-`scripts/generate-packages.ts` is now **thin**. npm owns package linking, and
-most of what the old generator hand-wrote into `lib/generated/` is now
-**derived at runtime** from a single typed config (see
+`tinycld/scripts/generate.ts` (with its `gen-*.ts` helpers) is now **thin**.
+pnpm owns package linking, and most of what the old generator hand-wrote into
+`lib/generated/` is now **derived at runtime** from a single typed config (see
 [Config & runtime derivations](#config--runtime-derivations) below). The
 generator only emits the artifacts that genuinely have to exist on disk before
 the bundler runs.
 
-It runs on `postinstall`, and automatically before `dev` and `build:web` (via
-the `prebuild:web` and dev startup paths). All output is gitignored.
+It runs on `postinstall` (before `link-members.ts`, so its symlink target
+exists), via `pnpm run packages:generate`, and automatically before `dev` and
+`build:web`. It walks `getPackages()` and, **for every output below, the result
+is gitignored — never commit any of it.**
 
 For each linked package it reads `manifest.ts` and emits **only**:
 
@@ -441,10 +453,11 @@ files on disk, so these can't be derived at runtime:
 export { default } from '@tinycld/contacts/screens/index'
 ```
 
-`publicRoutes` work the same way but land under `app/p/<slug>/<path>` — the
-per-slug namespace means two packages never collide on the same public path,
-and the entire `app/p/*/` tree is gitignored (the hand-written `app/p/_layout.tsx`
-stays tracked).
+`publicRoutes` work the same way but land at the public top level — `app/<path>`
+(e.g. drive's share routes) — rather than under the org-scoped
+`app/a/[orgSlug]/` tree. The generated public-route shims are gitignored; any
+hand-written layout/index files in the public tree stay tracked and are
+force-added despite the gitignore.
 
 ### B. `tinycld.config.ts` (via `scripts/generate-config.ts`)
 
@@ -465,11 +478,23 @@ Seed wiring lives in a **separate** Node-only file, *not* in
 Hermes (iOS) can't bundle — keeping them out of the bundled config is what lets
 the app build for native. The `deriveSeeds` helper consumes this at run time.
 
-### D. `lib/generated/package-help.ts`
+### D. `lib/generated/*`
 
-Parsed help-topic frontmatter + bodies (core included explicitly). Help topics
-are parsed markdown content, so they're still pre-extracted to a generated file
-rather than derived at runtime.
+The generated runtime artifacts that must exist on disk live under
+`tinycld/lib/generated/`. The whole directory is gitignored. It contains:
+
+- **`package.json`** — makes `lib/generated/` itself the `@tinycld/app-generated`
+  package, so member code can import generated output by the stable name
+  `@tinycld/app-generated/*`. (`@tinycld/app-generated` is **not** a workspace
+  member, so pnpm doesn't link it — `link-members.ts` creates that symlink
+  explicitly, which is why the generator must run *before* it.)
+- **`tinycld-config.ts`** — the generated re-export/entry the runtime helpers
+  consume (paired with the top-level `tinycld.config.ts` source of truth).
+- **`package-help.ts`** — parsed help-topic frontmatter + bodies (core included
+  explicitly). Help topics are parsed markdown content, so they're pre-extracted
+  to a generated file rather than derived at runtime.
+- **`package-icons.ts`** — the nav/lucide icon map for installed packages.
+- **`uniwind-sources.css`** — Tailwind v4 `@source` roots (see below).
 
 ### E. CSS source roots → `lib/generated/uniwind-sources.css`
 
@@ -484,10 +509,17 @@ if absent, re-run `pnpm run packages:generate`.
 ### F. PocketBase migrations & hooks → `server/pb_migrations/`, `server/pb_hooks/`
 
 Each package's `pb-migrations/*.js` is **symlinked** into the shared
-`server/pb_migrations/`. Core's migrations are symlinked in via a separate
-explicit pass (core has no manifest, so it doesn't flow through the per-package
-loop). Note the source-dir naming difference: siblings use `pb-migrations`
-(hyphen); core uses `pb_migrations` (underscore).
+`server/pb_migrations/`; `pb-hooks/*` are symlinked into `server/pb_hooks/` the
+same way. Core's migrations are symlinked in via a separate explicit pass (core
+has no manifest, so it doesn't flow through the per-package loop). Note the
+source-dir naming difference: siblings use `pb-migrations` (hyphen); core uses
+`pb_migrations` (underscore).
+
+The on-disk PocketBase migrations are the **source of truth** for the TypeScript
+schema types: `tinycld/core/types/pbSchema.ts` and `pbZodSchema.ts` are
+**generated** (gitignored) from them on every install. Never hand-edit those two
+files — regenerate by re-running the install/generate. (Likewise the per-package
+`core/types/pb*Schema.ts` are generated, not authored.)
 
 ### G. Go server wiring → `server/package_extensions.go` + `server/go.work`
 
@@ -497,8 +529,8 @@ What the generator **no longer** emits: `package-collections.ts`,
 `package-registry.ts`, `package-sidebars.ts`, `package-providers.ts`,
 `package-settings.ts`, and `package-seeds.ts`. Those are all derived at runtime
 from `tinycld.config.ts` / `tinycld.seeds.ts` — see below. It also no longer
-maintains a `node_modules/@tinycld/*` shim: npm's workspace install owns those
-symlinks.
+maintains a `node_modules/@tinycld/*` shim: `link-members.ts` owns those
+symlinks (created right after the generator runs).
 
 ### Config & runtime derivations
 
@@ -665,7 +697,7 @@ Two Go module boundaries, one binary:
 `server/package_extensions.go` (generated, `package main`):
 
 ```go
-// Code generated by scripts/generate-packages.ts. DO NOT EDIT.
+// Code generated by scripts/generate.ts. DO NOT EDIT.
 package main
 
 import (
@@ -700,10 +732,10 @@ coreserver.Register(app, coreserver.Options{
 ```
 
 Core never imports any sibling, so **core typechecks and builds with zero
-siblings linked.** A sibling is wired into Go only when its
-`bundled-packages.json` entry has `hasServer: true` (e.g.
-`google-takeout-import`, `hasServer: false`, is excluded from both `go.work`
-and `package_extensions.go`).
+siblings linked.** A sibling is wired into Go only when its manifest declares a
+`server: { package, module }` field — packages with no `server` field (e.g.
+`google-takeout-import`) are excluded from both `go.work` and
+`package_extensions.go`.
 
 Go server hooks use SDK methods that **bypass PocketBase API rules** — they
 implement authorization manually. When changing API rules on a collection,
@@ -726,7 +758,7 @@ on another being present (e.g. the takeout importer wants to import mail data
 only if mail is linked), use the runtime package registry:
 
 ```ts
-import { usePackages } from '~/lib/packages/use-packages'
+import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 
 const packages = usePackages()
 const mailAvailable = new Set(packages.map((p) => p.slug)).has('mail')
@@ -770,14 +802,19 @@ Where changes go:
 **Never commit generator output.** These paths are gitignored and regenerate
 on every `packages:generate`:
 
-- `tinycld/lib/generated/`
+- `tinycld/lib/generated/` (incl. its `package.json` for `@tinycld/app-generated`,
+  `tinycld-config.ts`, `package-help.ts`, `package-icons.ts`,
+  `uniwind-sources.css`)
 - `tinycld/tinycld.config.ts` and `tinycld/tinycld.seeds.ts`
-- generated routes under `tinycld/app/a/[orgSlug]/*/` and `tinycld/app/share/`
-- `tinycld/server/pb_migrations/` (symlinks), `server/package_extensions.go`,
-  `server/go.work`, `server/bundled-packages.json`
+- generated org-scoped routes under `tinycld/app/a/[orgSlug]/<slug>/**` and the
+  generated public routes under `tinycld/app/<path>`
+- `tinycld/server/pb_migrations/` + `tinycld/server/pb_hooks/` (symlinks),
+  `server/package_extensions.go`, `server/go.work`
+- `tinycld/core/types/pbSchema.ts` and `pbZodSchema.ts` (regenerated from the
+  on-disk PocketBase migrations every install — the source of truth)
 
-(The pnpm workspace symlinks under `node_modules/@tinycld/` are also local-only
-state, owned by npm — never `git add` them. The app-owned files
+(The `node_modules/@tinycld/*` symlinks are also local-only state, created by
+`link-members.ts` — never `git add` them. The app-owned files
 `app/a/[orgSlug]/_layout.tsx` and `app/a/[orgSlug]/settings/*` are force-added
 to git despite living under a gitignored tree.)
 

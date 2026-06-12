@@ -17,6 +17,8 @@ func TestClassifySpec(t *testing.T) {
 		{"mail@latest", sourceNpm, "mail"},
 		{"github:tinycld/todo", sourceGit, "github:tinycld/todo"},
 		{"git+https://github.com/tinycld/todo.git", sourceGit, "git+https://github.com/tinycld/todo.git"},
+		{"git+file:///workspace/base-remote.git", sourceGit, "git+file:///workspace/base-remote.git"},
+		{"git+file:///workspace/base-remote.git#v0.0.5", sourceGit, "git+file:///workspace/base-remote.git"},
 		{"", sourceUnknown, ""},
 	}
 	for _, c := range cases {

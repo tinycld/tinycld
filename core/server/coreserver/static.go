@@ -31,16 +31,14 @@ func DefaultPublicDir() string {
 	return "./public"
 }
 
-// DefaultReleasesDir returns the default releases dir relative to the
-// running executable — "./releases" when running via `go run` (tempdir
-// binary) or next to the installed binary otherwise. The runtime
-// entrypoint promotes per-deploy bundles into this directory; a `current`
-// symlink there points at the active release.
+// DefaultReleasesDir returns the releases dir under the STATE root
+// (resolveStateDir()), which persists across the per-build symlink swap. The
+// runtime entrypoint promotes per-deploy bundles into this directory; a
+// `current` symlink there points at the active release. When TINYCLD_STATE_DIR
+// is unset, stateReleasesDir() falls back to the binary dir (the `go run` /
+// pre-relocation case), preserving the previous "./releases" behavior.
 func DefaultReleasesDir() string {
-	if dir := binaryDir(); dir != "" {
-		return filepath.Join(dir, "releases")
-	}
-	return "./releases"
+	return stateReleasesDir()
 }
 
 // DefaultTypesDir returns the default location the server writes generated
@@ -96,7 +94,15 @@ func StaticWithFallback(dir string, fallbackFile string) func(*core.RequestEvent
 			return e.FileFS(fs, indexPath)
 		}
 
-		if fallbackFile != "" {
+		// Never serve the SPA HTML fallback for API paths. This catch-all is
+		// registered after PocketBase's own /api/* routes, so it only sees an
+		// /api/ request when that route isn't (yet) registered — e.g. during the
+		// post-restart boot window after a package swap, before the collection
+		// routes are wired. Returning app.html there hands API clients
+		// "<!DOCTYPE …" with a 200, which a JSON parse then chokes on
+		// ("Unexpected token '<'"). A JSON 404 lets clients see "not ready" and
+		// retry instead of mis-parsing HTML as JSON.
+		if fallbackFile != "" && !strings.HasPrefix("/"+path, "/api/") {
 			return e.FileFS(fs, fallbackFile)
 		}
 
@@ -135,6 +141,18 @@ func StaticWithDynamicFallback(publicDir, releasesDir string) func(*core.Request
 		if f, err := publicFs.Open(indexPath); err == nil {
 			f.Close()
 			return e.FileFS(publicFs, indexPath)
+		}
+
+		// Never serve the SPA HTML fallback for API paths. This catch-all is
+		// registered after PocketBase's own /api/* routes, so it only sees an
+		// /api/ request when that route isn't (yet) registered — e.g. during the
+		// post-restart boot window after a package swap, before the collection
+		// routes are wired. Returning app.html there hands API clients
+		// "<!DOCTYPE …" with a 200, which a JSON parse then chokes on
+		// ("Unexpected token '<'"). A JSON 404 lets clients see "not ready" and
+		// retry instead of mis-parsing HTML as JSON.
+		if strings.HasPrefix("/"+path, "/api/") {
+			return e.NotFoundError("", nil)
 		}
 
 		// SPA fallback. Set no-store on app.html so a tab reload always

@@ -43,20 +43,3 @@ func TestQueryMigrationsForPackage(t *testing.T) {
 		t.Errorf("unknown slug returned %v, want empty", got)
 	}
 }
-
-func TestIntersectStrings(t *testing.T) {
-	// The install delta narrowed to one package's owned files. Order of `a` is
-	// irrelevant — result is sorted ascending.
-	delta := []string{"1716000000_create_drive.js", "1713000001_add_mail_field.js", "1713000000_create_mail.js"}
-	mailOwned := []string{"1713000000_create_mail.js", "1713000001_add_mail_field.js"}
-
-	got := intersectStrings(delta, mailOwned)
-	want := []string{"1713000000_create_mail.js", "1713000001_add_mail_field.js"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("intersectStrings = %v, want %v", got, want)
-	}
-
-	if got := intersectStrings(nil, mailOwned); len(got) != 0 {
-		t.Errorf("empty a returned %v, want empty", got)
-	}
-}

@@ -1,14 +1,8 @@
-import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Check, CircleAlert, Loader2 } from 'lucide-react-native'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
-
-interface ProgressStep {
-    step: string
-    progress: number
-    message: string
-}
+import { type OperationStatus, type ProgressStep, useInstallProgress } from './use-install-progress'
 
 interface InstallProgressModalProps {
     isVisible: boolean
@@ -30,65 +24,27 @@ export function InstallProgressModal({
     const successColor = useThemeColor('success')
     const dangerColor = useThemeColor('danger')
 
-    const [steps, setSteps] = useState<ProgressStep[]>([])
-    const [status, setStatus] = useState<'running' | 'success' | 'failed'>('running')
-    const [error, setError] = useState<string | null>(null)
+    const { steps, status, error } = useInstallProgress(isVisible, jobId, authToken, onComplete)
     const scrollRef = useRef<ScrollView>(null)
 
-    const handleSSE = useCallback(() => {
-        if (!jobId) return
-
-        const url = `${PB_SERVER_ADDR}/api/admin/packages/events/${jobId}?token=${encodeURIComponent(authToken)}`
-        const eventSource = new EventSource(url)
-
-        eventSource.addEventListener('progress', (event: MessageEvent) => {
-            const data = JSON.parse(event.data) as ProgressStep
-            setSteps(prev => [...prev, data])
-        })
-
-        eventSource.addEventListener('complete', (event: MessageEvent) => {
-            const data = JSON.parse(event.data) as { status: string; error?: string }
-            setStatus(data.status === 'success' ? 'success' : 'failed')
-            if (data.error) setError(data.error)
-            eventSource.close()
-            if (data.status === 'success') onComplete()
-        })
-
-        eventSource.addEventListener('error', () => {
-            eventSource.close()
-        })
-
-        return () => eventSource.close()
-    }, [jobId, authToken, onComplete])
-
+    // Auto-scroll the step log to the bottom as new steps stream in. The effect
+    // reads stepCount so it genuinely depends on it: each appended step bumps the
+    // count, re-runs the effect, and scrolls to the newest line.
+    const stepCount = steps.length
     useEffect(() => {
-        if (!isVisible || !jobId) return
-        setSteps([])
-        setStatus('running')
-        setError(null)
-        return handleSSE()
-    }, [isVisible, jobId, handleSSE])
-
-    // biome-ignore lint/correctness/useExhaustiveDependencies: `steps.length` is the intentional trigger — auto-scroll to the bottom whenever a new progress step arrives
-    useEffect(() => {
-        scrollRef.current?.scrollToEnd({ animated: true })
-    }, [steps.length])
+        if (stepCount > 0) scrollRef.current?.scrollToEnd({ animated: true })
+    }, [stepCount])
 
     if (!isVisible) return null
 
-    const latestStep = steps[steps.length - 1]
-    const progress = latestStep?.progress ?? 0
+    const progress = steps[steps.length - 1]?.progress ?? 0
 
     return (
         <View className="rounded-xl border border-border bg-surface-secondary overflow-hidden">
             <View className="p-4 gap-4">
                 <View className="flex-row justify-between items-center">
                     <Text className="text-base font-semibold text-foreground">
-                        {status === 'running'
-                            ? 'Installing Package...'
-                            : status === 'success'
-                              ? 'Installation Complete'
-                              : 'Installation Failed'}
+                        {titleForStatus(status)}
                     </Text>
                     <StatusIcon
                         status={status}
@@ -134,6 +90,12 @@ export function InstallProgressModal({
     )
 }
 
+function titleForStatus(status: OperationStatus): string {
+    if (status === 'success') return 'Installation Complete'
+    if (status === 'failed') return 'Installation Failed'
+    return 'Installing Package...'
+}
+
 function StatusIcon({
     status,
     successColor,
@@ -166,6 +128,19 @@ function ProgressBar({
     return (
         <View className="h-2 rounded-full bg-border overflow-hidden">
             <View
+                testID="install-progress-fill"
+                // The numeric progress is exposed as ARIA value attributes so e2e can
+                // read it directly off `aria-valuenow` (the visual width is an inline %
+                // style that's awkward to assert on). Proves the SSE stream is advancing.
+                // NOTE: react-native-web 0.21 dropped support for the object form
+                // `accessibilityValue={{ now, min, max }}` — it only forwards the
+                // flattened `aria-value*` props (with a `progressbar` role), so the
+                // object form silently emits no `aria-valuenow` and the e2e read sees
+                // `null`. Pass the flattened props directly.
+                role="progressbar"
+                aria-valuenow={progress}
+                aria-valuemin={0}
+                aria-valuemax={100}
                 className="h-full rounded-full"
                 style={{
                     width: `${progress}%`,

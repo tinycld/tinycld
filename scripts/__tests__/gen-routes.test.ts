@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { emitPublicRoutes, emitRoutes } from '../gen-routes'
+import { emitPublicRoutes, emitRoutes, pruneOrphanRouteDirs } from '../gen-routes'
 
 describe('emitRoutes', () => {
     let tmp: string
@@ -73,5 +73,45 @@ describe('emitPublicRoutes', () => {
             "export { default } from '@tinycld/drive/public-screens/share/[token]'\n"
         )
         expect(written).toEqual([tokenFile])
+    })
+})
+
+describe('pruneOrphanRouteDirs', () => {
+    let base: string
+    beforeEach(() => {
+        base = fs.mkdtempSync(path.join(os.tmpdir(), 'tcld-prune-'))
+        // an orphan package route dir (package since removed)
+        fs.mkdirSync(path.join(base, 'todo'))
+        fs.writeFileSync(path.join(base, 'todo', '[id].tsx'), '')
+        // a present package's route dir
+        fs.mkdirSync(path.join(base, 'mail'))
+        // an app-owned dir
+        fs.mkdirSync(path.join(base, 'admin'))
+        // app-owned files (must never be touched — prune is dir-only)
+        fs.writeFileSync(path.join(base, '_layout.tsx'), '')
+        fs.writeFileSync(path.join(base, 'index.tsx'), '')
+    })
+    afterEach(() => fs.rmSync(base, { recursive: true, force: true }))
+
+    it('removes only orphan package route dirs, sparing present + app-owned + files', () => {
+        const pruned = pruneOrphanRouteDirs(base, new Set(['mail']), new Set(['admin']))
+
+        expect(pruned).toEqual(['todo'])
+        expect(fs.existsSync(path.join(base, 'todo'))).toBe(false)
+        expect(fs.existsSync(path.join(base, 'mail'))).toBe(true)
+        expect(fs.existsSync(path.join(base, 'admin'))).toBe(true)
+        expect(fs.existsSync(path.join(base, '_layout.tsx'))).toBe(true)
+        expect(fs.existsSync(path.join(base, 'index.tsx'))).toBe(true)
+    })
+
+    it('is a no-op when the base dir does not exist', () => {
+        expect(pruneOrphanRouteDirs(path.join(base, 'nope'), new Set(), new Set())).toEqual([])
+    })
+
+    it('prunes nothing when every dir is present or app-owned', () => {
+        expect(pruneOrphanRouteDirs(base, new Set(['mail', 'todo']), new Set(['admin']))).toEqual(
+            []
+        )
+        expect(fs.existsSync(path.join(base, 'todo'))).toBe(true)
     })
 })

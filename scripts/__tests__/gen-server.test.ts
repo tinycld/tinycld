@@ -144,4 +144,31 @@ describe('buildBundledPackages', () => {
             },
         ])
     })
+
+    it('core bundled row is named "TinyCld Base", has a server, and a source spec', () => {
+        const json = buildBundledPackages([
+            {
+                manifest: {
+                    name: 'TinyCld Base',
+                    slug: 'core',
+                    version: '0.0.4',
+                    description: 'The TinyCld base — app shell, core library, and server.',
+                },
+                source: 'github:tinycld/tinycld',
+                hasServer: true,
+            },
+        ])
+        const rows = JSON.parse(json) as Array<{
+            slug: string
+            name: string
+            hasServer: boolean
+            source?: string
+        }>
+        const core = rows.find(r => r.slug === 'core')
+        expect(core).toMatchObject({
+            name: 'TinyCld Base',
+            hasServer: true,
+            source: 'github:tinycld/tinycld',
+        })
+    })
 })

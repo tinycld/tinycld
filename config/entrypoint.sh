@@ -8,7 +8,166 @@ HEALTH_PORT=19876
 # enough to fix bind-mount ownership, then drops to RUN_AS via gosu.
 RUN_AS=tinycld
 
+# Mutable runtime state lives under /workspace (pb_data, releases, builds), OUTSIDE
+# the per-build code tree the `current` symlink swaps. The Go binary reads this via
+# resolveStateDir(); export it so every invocation (serve, health probe) agrees.
+export TINYCLD_STATE_DIR=/workspace
+
+# Trust all git directories for the runtime user. The in-app package operations
+# shell out to git (directly for ls-remote, and via `npm pack` for git specs).
+# A local file:// remote (a self-hosted/air-gapped base, or the integration
+# test's provisioned bare repo) can be owned by a different user, which makes git
+# refuse with "detected dubious ownership" (exit 128). These are server-internal
+# reads of a trusted, operator-configured remote.
+#
+# IMPORTANT: git honors `safe.directory=*` (the wildcard) ONLY from a config
+# FILE — NOT from `-c safe.directory=*` or the GIT_CONFIG_* env vars (a
+# deliberate git restriction so the wildcard can't be injected via the
+# command line / environment). So we must WRITE it to the runtime user's global
+# config. HOME is /workspace (writable by tinycld); run the config write as that
+# user so the file is owned by and read by the git processes the server spawns.
+seed_git_safe_directory() {
+    if [ "$(id -u)" = "0" ]; then
+        gosu "$RUN_AS" git config --global --add safe.directory '*' 2>/dev/null || true
+    else
+        git config --global --add safe.directory '*' 2>/dev/null || true
+    fi
+}
+
+# The runnable code tree lives at /workspace/current → /workspace/builds/<id>/tinycld.
+# The image bakes a pristine first build at /opt/tinycld-baked (an UNMOUNTED path so a
+# bind-mounted /workspace/builds can't shadow it); first boot copies it into builds/
+# and points `current` at it.
+BAKED_BUILD=/opt/tinycld-baked
+CURRENT_LINK=/workspace/current
+
+# PocketBase resolves pb_data / migrations / releases relative to the binary
+# unless overridden. Because the binary runs from the per-build
+# /workspace/current tree, WITHOUT these every build would get its own pb_data
+# (state LOST on each swap). Pin the stateful dirs at the persistent mounts so
+# they survive the symlink swap, and migrationsDir at the ACTIVE build's
+# migrations (code, which does travel with the build):
+#   --dir          pb_data → /workspace/pb_data (persistent)
+#   --releasesDir  promoted web bundles → /workspace/releases (persistent)
+#   --migrationsDir → the active build's server/pb_migrations (the REAL dir the
+#                     generator materializes for every build). We deliberately do
+#                     NOT use the member-root pb_data→server/pb_migrations symlink:
+#                     that symlink is created only by the Dockerfile for the baked
+#                     image, NOT by the generator, so a freshly-assembled in-app
+#                     build lacks it. Pointing at server/pb_migrations directly
+#                     means a newly-installed package's migrations always load and
+#                     apply on the post-swap boot.
+PB_DATA_DIR=/workspace/pb_data
+PB_SERVE_DIRS="--dir=${PB_DATA_DIR} --releasesDir=/workspace/releases --migrationsDir=${CURRENT_LINK}/server/pb_migrations"
+
+# Armed-backup rollback protocol (review finding H3). A package version change
+# runs DOWN migrations against the LIVE db, swaps `current`, then exits 75 so the
+# NEW binary boots and applies UP migrations. If that new binary then fails its
+# health probe, rolling the symlink back is NOT enough — the db is already
+# forward-/partially-migrated and the OLD binary would boot against a schema it
+# doesn't match. So the rebuild job leaves a VACUUM-INTO snapshot (data.db.backup)
+# ARMED across the restart, plus a marker recording the build it predates
+# (armDatabaseBackup in pkg_go_build.go). These paths MUST match that Go code.
+#   - failed probe  → restore data.db from the backup, then re-serve the old build
+#   - healthy boot  → "commit": delete the backup + marker (the new schema stuck)
+# Until the new binary proves healthy the backup stays armed, so a crash anywhere
+# in the window is recoverable.
+DB_BACKUP=${PB_DATA_DIR}/data.db.backup
+DB_BACKUP_MARKER=${PB_DATA_DIR}/.db-backup-armed
+
+# Breadcrumb the Go boot reconciler consumes to mark a stranded pkg_install_log
+# row 'rolled_back'. Written by the rollback path below (write_rollback_pending)
+# with the rolled-back build id; consumed + deleted by the reconciler
+# (coreserver.ReconcileRolledBackInstall) on the next boot. A post-activation
+# rollback restores a DB snapshot taken while that install's log row was still
+# "running", discarding the later "success" write — so without this breadcrumb the
+# row is stranded at "running" forever (no in-process job survives the restart to
+# finalize it). Lives under pb_data so it survives the symlink swap and a crash in
+# the rollback window. The commit (healthy) path never writes it, so a healthy boot
+# is never mis-marked. Keep this path in sync with rollbackPendingMarkerPath() in
+# pkg_rollback_reconcile.go.
+ROLLBACK_PENDING_MARKER=${PB_DATA_DIR}/.rollback-pending
+
+# restore_db_from_backup: copy the armed VACUUM-INTO snapshot back over data.db
+# and clear the arm marker. PocketBase runs SQLite in WAL mode, so data.db is
+# shadowed by data.db-wal / data.db-shm; the snapshot is a CLEAN standalone db
+# (VACUUM INTO emits no WAL), so any stale -wal/-shm left from the
+# forward-migrated db MUST be removed — otherwise SQLite replays those frames
+# onto the restored file on next open and silently un-does the restore (or trips
+# "database disk image is malformed"). Deleting them is safe precisely because
+# the snapshot already contains every committed page. Returns non-zero (without
+# aborting the caller) if the backup is missing or the copy fails.
+restore_db_from_backup() {
+    if [ ! -f "$DB_BACKUP" ]; then
+        echo "[entrypoint] WARN: no armed DB backup at $DB_BACKUP; cannot restore database" >&2
+        return 1
+    fi
+    echo "[entrypoint] restoring database from armed backup $DB_BACKUP"
+    # cp (not mv) so a failed copy leaves the backup intact for a retry.
+    if ! cp "$DB_BACKUP" "${PB_DATA_DIR}/data.db"; then
+        echo "[entrypoint] ERROR: failed to restore database from $DB_BACKUP" >&2
+        return 1
+    fi
+    rm -f "${PB_DATA_DIR}/data.db-wal" "${PB_DATA_DIR}/data.db-shm"
+    rm -f "$DB_BACKUP" "$DB_BACKUP_MARKER"
+    echo "[entrypoint] database restored; stale WAL/SHM cleared; backup disarmed"
+    return 0
+}
+
+# commit_db_backup: the new binary proved healthy, so the forward-migrated schema
+# is the keeper. Drop the armed snapshot + marker so a LATER crash can't mistake
+# this committed db for one needing rollback. Idempotent.
+commit_db_backup() {
+    if [ -f "$DB_BACKUP" ] || [ -f "$DB_BACKUP_MARKER" ]; then
+        echo "[entrypoint] new build healthy — committing migration (disarming DB backup)"
+        rm -f "$DB_BACKUP" "$DB_BACKUP_MARKER"
+    fi
+}
+
+# write_rollback_pending: drop the breadcrumb the Go boot reconciler reads to mark
+# the stranded pkg_install_log row 'rolled_back'. Capture the rolled-back build id
+# from the arm marker BEFORE restore_db_from_backup clears it. Called by both the
+# exit-75 rollback branch and the SIGKILL-recovery rollback branch, always before
+# the restore. Best-effort: never abort the rollback if the write fails.
+write_rollback_pending() {
+    rb_build=$(cat "$DB_BACKUP_MARKER" 2>/dev/null || echo '')
+    printf '%s' "$rb_build" > "$ROLLBACK_PENDING_MARKER" 2>/dev/null || true
+    echo "[entrypoint] wrote rollback-pending breadcrumb (build '$rb_build') for the boot reconciler"
+}
+
 echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
+
+# Seed the first build on a fresh deployment. When /workspace/current is missing or
+# dangling (first boot, or a bind-mounted empty /workspace/builds), copy the pristine
+# baked build into builds/build-baked and point current at it. Idempotent: a healthy
+# current symlink short-circuits.
+seed_baked_build() {
+    if [ -e "$CURRENT_LINK/tinycld" ]; then
+        return 0
+    fi
+    echo "[entrypoint] no live build; seeding from $BAKED_BUILD"
+    if [ ! -d "$BAKED_BUILD/tinycld" ]; then
+        echo "[entrypoint] ERROR: baked build $BAKED_BUILD missing — image is malformed" >&2
+        exit 1
+    fi
+    dest=/workspace/builds/build-baked
+    mkdir -p /workspace/builds
+    if [ ! -e "$dest/tinycld/tinycld" ]; then
+        rm -rf "$dest.tmp"
+        cp -a "$BAKED_BUILD" "$dest.tmp"
+        rm -rf "$dest"
+        mv "$dest.tmp" "$dest"
+    fi
+    ln -sfn "$dest/tinycld" "$CURRENT_LINK.tmp"
+    mv -T "$CURRENT_LINK.tmp" "$CURRENT_LINK"
+    # The runtime user owns the build tree + symlink so a later in-app rebuild can
+    # write sibling build dirs and atomically re-point current. Only when we're root.
+    if [ "$(id -u)" = "0" ]; then
+        chown -R "$RUN_AS:$RUN_AS" /workspace/builds 2>/dev/null || true
+        chown -h "$RUN_AS:$RUN_AS" "$CURRENT_LINK" 2>/dev/null || true
+    fi
+    echo "[entrypoint] seeded current -> $(readlink "$CURRENT_LINK")"
+}
 
 # Ensure the bind-mounted data directories are writable by the runtime user.
 #
@@ -19,6 +178,12 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 # fails with "unable to open database file (14)" and the container crash-loops.
 # Reported in https://github.com/tinycld/app/issues/26.
 #
+# The same applies to ./builds and ./releases when an operator backs them with a
+# persistent volume/bind-mount so installed-package archives and the promoted web
+# bundle (incl. the native OTA bundles staged into each build's release dir)
+# survive container restarts. Without the chown the install pipeline can't write
+# the archive and fails at "archive build".
+#
 # We run this as root (the container's start user) and chown the dirs to the
 # runtime user before dropping privileges. Only runs when we're actually root;
 # if an operator overrode the start user to non-root they're responsible for
@@ -26,7 +191,10 @@ echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 fix_data_dir_ownership() {
     [ "$(id -u)" = "0" ] || return 0
 
-    for dir in /workspace/tinycld/pb_data /workspace/tinycld/core/types; do
+    for dir in \
+        /workspace/pb_data \
+        /workspace/builds \
+        /workspace/releases; do
         mkdir -p "$dir"
         # Skip the (potentially large) recursive chown when the top-level dir is
         # already owned correctly — the steady state after first run, so normal
@@ -49,15 +217,20 @@ fix_data_dir_ownership() {
 # This deliberately does NOT exec: the serve loop below inspects the exit code
 # (75 = in-app package-install restart) and the health check runs a copy in the
 # background, so control must return here.
+# The binary runs from the active build's tinycld dir, reached via the `current`
+# symlink. cd there so its relative code/asset lookups (server/, lib/, app/) resolve
+# inside the active build, while pb_data/releases come from TINYCLD_STATE_DIR.
 run_tinycld() {
     if [ "$(id -u)" = "0" ]; then
-        gosu "$RUN_AS" ./tinycld "$@"
+        gosu "$RUN_AS" sh -c 'cd "$0" && exec ./tinycld "$@"' "$CURRENT_LINK" "$@"
     else
-        ./tinycld "$@"
+        ( cd "$CURRENT_LINK" && exec ./tinycld "$@" )
     fi
 }
 
 fix_data_dir_ownership
+seed_git_safe_directory
+seed_baked_build
 
 # Promote the staged release to /workspace/tinycld/releases/. Runs on every
 # container start; idempotent.
@@ -82,8 +255,8 @@ fix_data_dir_ownership
 # old entries. The Go server serves /_expo/static/ and /assets/ from
 # _static/ directly — there is no per-request release lookup.
 promote_release() {
-    staging_dir=/workspace/tinycld/release-staging
-    releases_dir=/workspace/tinycld/releases
+    staging_dir=/workspace/current/release-staging
+    releases_dir=/workspace/releases
     pool_dir="$releases_dir/_static"
 
     echo "[entrypoint] promote_release: staging=$staging_dir releases=$releases_dir"
@@ -293,6 +466,133 @@ else
     fi
 fi
 
+# probe_current_build: boot the build the `current` symlink points at on a temp
+# HTTP port and return 0 iff /api/health answers within the cold-boot window.
+# Used by BOTH the exit-75 restart verdict and the startup SIGKILL-recovery
+# below, so the "is the new build healthy?" decision is identical in both paths.
+#
+# Disable the mail package's IMAP (:993) and SMTP (:465) listeners FOR THE PROBE
+# ONLY via IMAP_ENABLED/SMTP_ENABLED=false — otherwise the probe binds those
+# fixed ports, and after we kill it the ports aren't released before the real
+# server starts, so it crashes with "listen tcp :993: bind: address already in
+# use". The probe only needs the HTTP listener to answer /api/health.
+#
+# Run the probe in its OWN process group via setsid, so teardown can kill the
+# WHOLE tree. Without setsid, `kill $HEALTH_PID` only kills the subshell — the
+# gosu→tinycld grandchild it spawned SURVIVES, keeping :${HEALTH_PORT} bound.
+# Across the install→upgrade→downgrade sequence (three exit-75 restarts) those
+# leaked probe servers accumulate; the next probe then can't bind and crashes
+# with "listen tcp 127.0.0.1:${HEALTH_PORT}: bind: address already in use", the
+# health check flaps, and the container is declared unhealthy. setsid makes $!
+# the group leader (PID == PGID), so `kill -- -$PGID` reaps gosu + tinycld
+# together. Preserve the same privilege drop as run_tinycld: gosu when root
+# (which also keeps the binary's cap_net_bind_service), direct otherwise. `exec`
+# so the gosu/tinycld process IS the group leader (no extra sh layer left holding
+# the group open). The probe runs the current build's binary via the symlink,
+# cd'd into it so its relative lookups resolve in that tree.
+probe_current_build() {
+    if [ "$(id -u)" = "0" ]; then
+        PROBE_CMD='cd '"$CURRENT_LINK"' && exec gosu '"$RUN_AS"' ./tinycld serve '"$PB_SERVE_DIRS"' --http=127.0.0.1:'"${HEALTH_PORT}"
+    else
+        PROBE_CMD='cd '"$CURRENT_LINK"' && exec ./tinycld serve '"$PB_SERVE_DIRS"' --http=127.0.0.1:'"${HEALTH_PORT}"
+    fi
+    setsid sh -c '
+        export IMAP_ENABLED=false SMTP_ENABLED=false
+        '"$PROBE_CMD"'
+    ' &
+    HEALTH_PID=$!
+
+    # Poll the probe for up to 60s. The probe boots a FULL server — it runs
+    # pending migrations, regenerates the PB schema types, and seeds bundled
+    # packages before /api/health answers. After a version change (especially a
+    # downgrade, which reverts a migration and rebuilds) that cold boot can take
+    # well over 10s, more so under the concurrent load of the install integration
+    # test. A too-short window declares a healthy server "failed", trips the
+    # rollback path, and the container dies right after the probe starts
+    # (observed: post-downgrade restart never reaching the real :7090 serve). 60s
+    # matches the real server's own cold-boot budget.
+    _probe_healthy=false
+    for _ in $(seq 1 60); do
+        if curl -sf http://127.0.0.1:${HEALTH_PORT}/api/health >/dev/null 2>&1; then
+            _probe_healthy=true
+            break
+        fi
+        sleep 1
+    done
+
+    # Kill the probe's entire process group (negative PID), then reap. The group
+    # leader's PID equals the PGID because setsid created the group. The trailing
+    # `|| true` is REQUIRED under `set -e`: if the probe already exited on its own,
+    # BOTH kills return non-zero and the bare compound would abort the entrypoint
+    # (pid 1) → the container dies right here, which looks exactly like a failed
+    # restart. Never let probe teardown kill the script.
+    { kill -- "-${HEALTH_PID}" 2>/dev/null || kill "${HEALTH_PID}" 2>/dev/null; } || true
+    wait "${HEALTH_PID}" 2>/dev/null || true
+
+    # Belt-and-suspenders: wait out the kernel releasing :${HEALTH_PORT} before
+    # the real serve (or a retry probe) tries to bind it. The group kill is
+    # synchronous-ish but the socket close + TIME_WAIT teardown is not; poll until
+    # the port is free (max ~5s) so a fast restart loop can't race the socket.
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        curl -sf http://127.0.0.1:${HEALTH_PORT}/api/health >/dev/null 2>&1 || break
+        sleep 0.5
+    done
+
+    [ "$_probe_healthy" = "true" ]
+}
+
+# rollback_current_symlink: flip `current` back to the previous build dir. The
+# whole build tree swaps via the symlink, so rollback is a symlink flip back to
+# the build recorded by activateBuild in /workspace/.previous-build — not a
+# binary mv. Returns non-zero (without aborting) if there's nothing to roll back
+# to, so the caller can decide how to proceed.
+rollback_current_symlink() {
+    if [ ! -f /workspace/.previous-build ]; then
+        echo "[entrypoint] WARN: no /workspace/.previous-build; cannot roll back symlink" >&2
+        return 1
+    fi
+    prev=$(cat /workspace/.previous-build)
+    if [ ! -d "/workspace/builds/$prev/tinycld" ]; then
+        echo "[entrypoint] WARN: previous build $prev not on disk; cannot roll back symlink" >&2
+        return 1
+    fi
+    ln -sfn "/workspace/builds/$prev/tinycld" "$CURRENT_LINK.tmp"
+    mv -T "$CURRENT_LINK.tmp" "$CURRENT_LINK"
+    echo "[entrypoint] Rolled back current -> $prev"
+    return 0
+}
+
+# recover_interrupted_rebuild: SIGKILL-mid-rebuild recovery (review finding H3,
+# the crash window). A version-change rebuild arms data.db.backup + the marker,
+# exits 75, and the in-process loop below renders the commit/rollback verdict
+# WITHOUT a container restart. But if the whole container is killed in that window
+# (the probe boot OOM-kills it, `docker kill`, host reboot), it comes back here on
+# a FRESH start with the backup still armed and no verdict ever rendered: `current`
+# already points at the new (possibly-broken) build, the db is already
+# forward-migrated, and we don't yet know if the new build is healthy.
+#
+# Rather than guess, render the SAME verdict the loop would have: probe the
+# current build; commit on healthy, restore-DB + roll the symlink back on
+# unhealthy. This never restores a good db on a whim — it only restores after the
+# new build actually fails to boot. The marker's presence on a fresh start is the
+# unambiguous "the verdict never completed" signal (a committed boot deletes it).
+recover_interrupted_rebuild() {
+    [ -f "$DB_BACKUP_MARKER" ] || return 0   # nothing armed → normal start
+    armed_build=$(cat "$DB_BACKUP_MARKER" 2>/dev/null || echo '?')
+    echo "[entrypoint] startup: armed DB backup found (build '$armed_build') — a rebuild was interrupted before its health verdict; rendering it now"
+    if probe_current_build; then
+        echo "[entrypoint] startup: interrupted build is healthy — committing"
+        commit_db_backup
+    else
+        echo "[entrypoint] startup: interrupted build failed health probe — restoring DB + rolling back symlink"
+        write_rollback_pending   # capture build id before restore clears the arm marker
+        restore_db_from_backup || echo "[entrypoint] WARN: DB restore failed during interrupted-rebuild recovery" >&2
+        rollback_current_symlink || true
+    fi
+}
+
+recover_interrupted_rebuild
+
 # Restart loop: exit code 75 signals a package install restart request.
 # Serve args are in $@ (positional params) so a multi-domain list survives
 # without re-splitting.
@@ -305,85 +605,22 @@ while true; do
     # `|| EXIT_CODE=$?` swallows the non-zero for set -e and records the code;
     # reset to 0 first so a clean exit is captured too.
     EXIT_CODE=0
-    run_tinycld serve "$@" || EXIT_CODE=$?
+    run_tinycld serve $PB_SERVE_DIRS "$@" || EXIT_CODE=$?
 
     if [ $EXIT_CODE -eq 75 ]; then
         echo "[entrypoint] Restart requested (exit code 75)"
 
-        # Health check: start the new binary on a temp HTTP port and verify
-        # /api/health responds. Disable the mail package's IMAP (:993) and SMTP
-        # (:465) listeners FOR THE PROBE ONLY via IMAP_ENABLED/SMTP_ENABLED=false
-        # — otherwise the probe binds those fixed ports, and after we kill it the
-        # ports aren't released before the real server restarts, so the restart
-        # crashes with "listen tcp :993: bind: address already in use". The probe
-        # only needs the HTTP listener to answer /api/health. The real serve
-        # below (the `continue`d loop iteration) starts with mail enabled as
-        # normal. Export the vars inside a backgrounded subshell so gosu passes
-        # them to the child and they don't leak to the real server.
-        #
-        # Run the probe in its OWN process group via setsid, so teardown can kill
-        # the WHOLE tree. Without setsid, `kill $HEALTH_PID` only kills the
-        # subshell — the gosu→tinycld grandchild it spawned SURVIVES, keeping
-        # :${HEALTH_PORT} bound. Across the install→upgrade→downgrade sequence
-        # (three exit-75 restarts) those leaked probe servers accumulate; the next
-        # restart's probe then can't bind and crashes with "listen tcp
-        # 127.0.0.1:${HEALTH_PORT}: bind: address already in use", the health check
-        # flaps, and the container is declared unhealthy. setsid makes $! the group
-        # leader (PID == PGID), so `kill -- -$PGID` reaps gosu + tinycld together.
-        # Preserve the same privilege drop as run_tinycld: gosu when root (which
-        # also keeps the binary's cap_net_bind_service), direct otherwise. `exec`
-        # so the gosu/tinycld process IS the group leader (no extra sh layer left
-        # holding the group open).
-        if [ "$(id -u)" = "0" ]; then
-            PROBE_CMD='exec gosu '"$RUN_AS"' ./tinycld serve --http=127.0.0.1:'"${HEALTH_PORT}"
-        else
-            PROBE_CMD='exec ./tinycld serve --http=127.0.0.1:'"${HEALTH_PORT}"
-        fi
-        setsid sh -c '
-            export IMAP_ENABLED=false SMTP_ENABLED=false
-            '"$PROBE_CMD"'
-        ' &
-        HEALTH_PID=$!
-
-        # Poll the probe for up to 60s. The probe boots a FULL server — it runs
-        # pending migrations, regenerates the PB schema types, and seeds bundled
-        # packages before /api/health answers. After a version change (especially a
-        # downgrade, which reverts a migration and rebuilds) that cold boot can take
-        # well over 10s, more so under the concurrent load of the install
-        # integration test. A too-short window declares a healthy server "failed",
-        # trips the rollback path, and the container dies right after the probe
-        # starts (observed: post-downgrade restart never reaching the real :7090
-        # serve). 60s matches the real server's own cold-boot budget.
-        HEALTHY=false
-        for i in $(seq 1 60); do
-            if curl -sf http://127.0.0.1:${HEALTH_PORT}/api/health >/dev/null 2>&1; then
-                HEALTHY=true
-                break
-            fi
-            sleep 1
-        done
-
-        # Kill the probe's entire process group (negative PID), then reap. The
-        # group leader's PID equals the PGID because setsid created the group.
-        # The trailing `|| true` is REQUIRED under `set -e`: if the probe already
-        # exited on its own, BOTH kills return non-zero and the bare compound would
-        # abort the entrypoint (pid 1) → the container dies right here, which looks
-        # exactly like a failed restart. Never let probe teardown kill the script.
-        { kill -- "-${HEALTH_PID}" 2>/dev/null || kill "${HEALTH_PID}" 2>/dev/null; } || true
-        wait "${HEALTH_PID}" 2>/dev/null || true
-
-        # Belt-and-suspenders: wait out the kernel releasing :${HEALTH_PORT} before
-        # the next iteration's probe (or the real serve) tries to bind it. The
-        # group kill is synchronous-ish but the socket close + TIME_WAIT teardown
-        # is not; poll until the port is free (max ~5s) so a fast restart loop
-        # can't race the previous probe's socket.
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            curl -sf http://127.0.0.1:${HEALTH_PORT}/api/health >/dev/null 2>&1 || break
-            sleep 0.5
-        done
-
-        if [ "$HEALTHY" = "true" ]; then
+        # Health check: boot the new build on a temp port and verify /api/health.
+        # The real serve below (the `continue`d loop iteration) starts with mail
+        # enabled as normal — the probe disables it (see probe_current_build).
+        if probe_current_build; then
             echo "[entrypoint] Health check passed, restarting server"
+            # The new build proved healthy, so the migration it applied is the
+            # keeper: COMMIT the armed DB backup (delete the snapshot + marker) so a
+            # later crash can't mistake this good DB for one needing rollback. Until
+            # this point the backup stayed armed — the whole window from exit-75 to
+            # a confirmed-healthy boot is DB-rollback-safe.
+            commit_db_backup
             # Re-promote before re-serving. The in-app installer / version-change /
             # revert pipelines build a new web bundle and leave it in
             # release-staging/<id>, relying on promote_release to point
@@ -397,11 +634,19 @@ while true; do
             continue
         else
             echo "[entrypoint] Health check failed, attempting rollback"
-            if [ -f ./tinycld.prev ]; then
-                mv ./tinycld ./tinycld.failed
-                mv ./tinycld.prev ./tinycld
-                echo "[entrypoint] Rolled back to previous binary"
-            fi
+            # ROLLBACK. The failed rebuild ran its DOWN migrations against the LIVE
+            # DB before exiting 75, then the new binary (whose probe just failed) may
+            # have applied UP migrations on top — so the on-disk schema is forward-/
+            # partially-migrated and the OLD binary we're about to re-serve does NOT
+            # match it. The in-process restore in rebuild.go only runs for
+            # PRE-activation failures, never after a successful activate + exit(75),
+            # so we MUST restore the DB here from the armed VACUUM-INTO snapshot the
+            # rebuild left behind (review finding H3). Restore the DB FIRST, then flip
+            # the `current` symlink back to the previous build — order so the old
+            # binary never momentarily boots against the migrated schema.
+            write_rollback_pending   # capture build id before restore clears the arm marker
+            restore_db_from_backup || echo "[entrypoint] WARN: DB restore failed; rolling back code anyway (schema may be ahead of the old binary)" >&2
+            rollback_current_symlink || true
             continue
         fi
     fi

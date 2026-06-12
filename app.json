@@ -7,10 +7,6 @@
         "platforms": ["ios", "android", "web"],
         "userInterfaceStyle": "automatic",
         "runtimeVersion": { "policy": "appVersion" },
-        "updates": {
-            "url": "https://u.expo.dev/ac921362-6d8a-49a4-b0a5-d5867617bc4d",
-            "fallbackToCacheTimeout": 0
-        },
         "plugins": [
             [
                 "expo-router",
@@ -34,7 +30,8 @@
                     "organization": "argosity",
                     "project": "tinycld"
                 }
-            ]
+            ],
+            "./plugins/with-app-updater.cjs"
         ],
         "icon": "./assets/app-icon.png",
         "splash": {
@@ -46,13 +43,22 @@
             "bundleIdentifier": "org.tinycld.app",
             "buildNumber": "1",
             "supportsTablet": true,
+            "associatedDomains": ["applinks:tinycld.org"],
             "infoPlist": {
                 "ITSAppUsesNonExemptEncryption": false,
                 "NSPhotoLibraryAddUsageDescription": "Allow TinyCld to save downloaded images to your Photos library."
             }
         },
         "android": {
-            "package": "org.tinycld.app"
+            "package": "org.tinycld.app",
+            "intentFilters": [
+                {
+                    "action": "VIEW",
+                    "autoVerify": true,
+                    "data": [{ "scheme": "https", "host": "tinycld.org", "pathPrefix": "/demo" }],
+                    "category": ["BROWSABLE", "DEFAULT"]
+                }
+            ]
         },
         "web": {
             "bundler": "metro",
@@ -62,10 +68,7 @@
             "typedRoutes": true
         },
         "extra": {
-            "router": {},
-            "eas": {
-                "projectId": "ac921362-6d8a-49a4-b0a5-d5867617bc4d"
-            }
+            "router": {}
         },
         "owner": "nathanstitt"
     }

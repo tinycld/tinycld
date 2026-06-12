@@ -69,6 +69,17 @@ export function buildMemberGoWork(coreRelPath: string): string {
 
 interface BundledPkgInput {
     manifest: PackageManifest
+    // Canonical git spec (e.g. `github:tinycld/mail`) the in-app upgrader fetches
+    // newer versions of this member from. Seeded into pkg_registry.npm_package so
+    // version-discovery + the version-change pipeline treat the package like an
+    // installed one. core carries it too (`github:tinycld/tinycld`): the whole
+    // base is upgradeable from its own repo through the same per-package flow.
+    source?: string
+    // Explicit override for the seeded `hasServer` flag. core is server-bearing
+    // (core/server/go.mod) but its synthetic manifest carries no `server` field,
+    // so the `!!manifest.server` derivation would wrongly report false — pass
+    // true here. Feature rows omit it and fall back to the manifest derivation.
+    hasServer?: boolean
 }
 
 // Emit server/bundled-packages.json — consumed by core's Go
@@ -86,9 +97,10 @@ export function buildBundledPackages(features: BundledPkgInput[]): string {
         version: f.manifest.version,
         icon: f.manifest.nav?.icon ?? '',
         description: f.manifest.description ?? '',
-        hasServer: !!f.manifest.server,
+        hasServer: f.hasServer ?? !!f.manifest.server,
         navOrder: f.manifest.nav?.order ?? 0,
         manifestJson: JSON.stringify(f.manifest),
+        ...(f.source ? { source: f.source } : {}),
     }))
     return `${JSON.stringify(rows, null, 2)}\n`
 }

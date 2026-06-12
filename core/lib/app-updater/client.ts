@@ -1,0 +1,109 @@
+import type { CheckDeps, StageDeps, UpdateManifest } from './types'
+
+// Set this env var truthy to let a knowing self-hoster run OTA updates over
+// plaintext http:// (e.g. a server reachable only on a trusted LAN with no TLS).
+// Read at call time, not module load, so tests and runtime config both see the
+// current value.
+const ALLOW_INSECURE_UPDATES_ENV = 'EXPO_PUBLIC_ALLOW_INSECURE_UPDATES'
+
+function isLoopbackHost(host: string): boolean {
+    // host already has any :port stripped by the URL parser's `hostname`.
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1'
+}
+
+function envFlagSet(value: string | undefined): boolean {
+    if (!value) return false
+    const v = value.trim().toLowerCase()
+    return v !== '' && v !== '0' && v !== 'false'
+}
+
+// isUpdateTransportAllowed gates the OTA update path on transport security.
+//
+// The whole integrity guarantee here is the per-file SHA-256 check, but the
+// hash arrives over the SAME channel as the bytes — so a MITM on a plaintext
+// http:// connection can rewrite both and ship arbitrary code that re-hashes
+// clean. We therefore refuse to even check for / download an update unless the
+// transport is trustworthy.
+//
+// Crucially we judge the scheme of the URL the APP ACTUALLY CONNECTS TO
+// (PB_SERVER_ADDR), never anything the server reports about itself: a server
+// often sits behind a TLS-terminating proxy and sees plain http internally, so
+// only the client knows whether its real connection is encrypted.
+//
+// Allowed iff: https://, OR a loopback host (dev testing on http://localhost),
+// OR the explicit env-var bypass is set (a self-hoster opting into plaintext).
+// `env` is injectable for tests; defaults to process.env at call time.
+export function isUpdateTransportAllowed(
+    serverUrl: string,
+    env: { [key: string]: string | undefined } = process.env
+): boolean {
+    let parsed: URL
+    try {
+        parsed = new URL(serverUrl)
+    } catch {
+        // An unparseable address can't be vouched for — fail closed.
+        return false
+    }
+    if (parsed.protocol === 'https:') return true
+    if (isLoopbackHost(parsed.hostname)) return true
+    return envFlagSet(env[ALLOW_INSECURE_UPDATES_ENV])
+}
+
+// checkForUpdate asks the connected server for a newer bundle. Returns the
+// manifest when one is available, or null when the server replies 204 (up to
+// date, runtime mismatch, or no native bundle). Network/parse errors propagate
+// to the caller, which captures them.
+export async function checkForUpdate(deps: CheckDeps): Promise<UpdateManifest | null> {
+    const { serverUrl, platform, runtimeVersion, currentId, currentHash, fetchFn } = deps
+    const url =
+        `${serverUrl}/api/app/update?platform=${platform}` +
+        `&runtimeVersion=${encodeURIComponent(runtimeVersion)}` +
+        `&currentId=${encodeURIComponent(currentId)}` +
+        `&currentHash=${encodeURIComponent(currentHash)}`
+    const res = await fetchFn(url)
+    if (res.status === 204) return null
+    if (!res.ok) throw new Error(`update check failed: ${res.status}`)
+    return (await res.json()) as UpdateManifest
+}
+
+// relativePathFromUrl extracts the bundle-relative path the server encoded after
+// the `/<platform>/` segment of a bundle/asset URL — e.g.
+// `/api/app/bundle/build-200/ios/_expo/static/js/ios/index.hbc` → with platform
+// `ios` → `_expo/static/js/ios/index.hbc`. The native module reconstructs the
+// runtime layout from these paths, so we must preserve them under the staged dir.
+function relativePathFromUrl(url: string, platform: string): string {
+    const marker = `/${platform}/`
+    const i = url.indexOf(marker)
+    if (i === -1) throw new Error(`malformed bundle/asset url (no /${platform}/ segment): ${url}`)
+    return url.slice(i + marker.length)
+}
+
+// downloadAndStage fetches the bundle + every asset into
+// `<tmpDir>native/<platform>/<relative-path>` — the exact layout the native
+// module's locateHbc walks — verifies each SHA-256 against the manifest, and
+// hands tmpDir to the native module to stage as pending. Any hash mismatch
+// aborts BEFORE staging so a corrupt/MITM'd bundle never loads. The download
+// layout MUST match the native search path (`native/<platform>/`); otherwise the
+// staged bundle is never found and the update silently rolls back to embedded.
+export async function downloadAndStage(manifest: UpdateManifest, deps: StageDeps): Promise<void> {
+    const { serverUrl, platform, downloadFn, hashFn, stageBundleFn, tmpDir } = deps
+    const nativeRoot = `${tmpDir}native/${platform}/`
+
+    const bundleRel = relativePathFromUrl(manifest.bundleUrl, platform)
+    const got = await downloadFn(`${serverUrl}${manifest.bundleUrl}`, `${nativeRoot}${bundleRel}`)
+    const bundleHash = await hashFn(got.uri)
+    if (bundleHash !== manifest.bundleHash) {
+        throw new Error(`bundle hash mismatch: got ${bundleHash}, want ${manifest.bundleHash}`)
+    }
+
+    for (const asset of manifest.assets) {
+        const assetRel = relativePathFromUrl(asset.url, platform)
+        const a = await downloadFn(`${serverUrl}${asset.url}`, `${nativeRoot}${assetRel}`)
+        const h = await hashFn(a.uri)
+        if (h !== asset.hash) {
+            throw new Error(`asset hash mismatch for ${asset.key}: got ${h}, want ${asset.hash}`)
+        }
+    }
+
+    await stageBundleFn(tmpDir, manifest.id, manifest.bundleHash)
+}

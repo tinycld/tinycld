@@ -22,6 +22,7 @@ This is the operator/agent-facing reference for the mechanics. For the package
 - [The big picture](#the-big-picture)
 - [Entry points](#entry-points)
 - [The install pipeline, stage by stage](#the-install-pipeline-stage-by-stage)
+- [Native OTA bundles](#native-ota-bundles)
 - [How relaunch works](#how-relaunch-works)
 - [Rollback](#rollback)
 - [Build history & revert](#build-history--revert)
@@ -63,6 +64,14 @@ under `/api/admin/packages` (all require superuser auth):
 | `POST` | `/uninstall` | Body `{ "slug": "<slug>" }` — start an uninstall job. |
 | `GET` | `/events/{jobId}` | Server-Sent Events stream of progress for a job (`progress` + `complete` events). Auth via header or `?token=` (EventSource can't send headers). |
 | `GET` | `/status/{slug}` | Last recorded install-log status for a slug. |
+
+`status` is one of `pending` · `running` · `success` · `failed` · `rolled_back`.
+`failed` is a pre-swap abort (validation/build/migration-sync) — the live build
+is untouched. `rolled_back` is a post-swap health-check failure that the
+entrypoint reverted (symlink + DB restored), surfaced by the boot reconciler
+(see [Rollback](#rollback)). The status survives the relaunch because it's read
+from the durable `pkg_install_log` row, not the in-memory job (which the
+`exit(75)` restart discards).
 
 Only **one** install/uninstall job runs at a time; a second request while one is
 in flight returns `409` with the current job's info.
@@ -112,6 +121,7 @@ stdout (visible in `docker logs`).
 | 80–83 | Running migrations | `<binary> migrate` — applies the package's `pb-migrations` |
 | 85–88 | Building web app | `npx expo export --platform web` |
 | 90–92 | Staging release | Move `dist/` → `release-staging/<id>/`, rename `index.html` → `app.html` |
+| 93–94 | Building native bundles | `npx expo export --platform ios` then `--platform android`, **sequential, after web staging**. Each bundle + its assets are copied into the staged release's `native/<platform>/`. Skipped (`93`, no further work) when the RN toolchain is absent (web-only image) — mobile then stays on its embedded bundle. See [Native OTA bundles](#native-ota-bundles). |
 | 95–97 | Updating database | Upsert the `pkg_registry` record (status `installed`) |
 | 98–99 | Archiving build | Copy the now-live binary + staged bundle into `builds/<build_id>/`, write `build.json`, and record a `pkg_build` row (status `current`) capturing how many migrations this install applied (see [Build history & revert](#build-history--revert)) |
 | 99 | Requesting restart | `os.Exit(75)` — hands off to the entrypoint (see next section) |
@@ -133,6 +143,46 @@ runtime jsvm plugin reads `/workspace/app/pb_migrations`, which the image makes
 a **symlink** to `server/pb_migrations` — so build-time (bundled), runtime, and
 installer-added migrations all share one directory and the **Running
 migrations** step actually applies the new package's migrations.
+
+## Native OTA bundles
+
+Alongside the web bundle, the install pipeline exports **native JavaScript
+bundles** (iOS + Android Hermes bytecode + assets) so mobile apps can update
+over-the-air from this server — replacing Expo/EAS Update. The bundle a mobile
+app loads is a property of the **server it is connected to**, not the org: every
+org on a server shares the server's installed-package set and therefore the same
+bundle.
+
+- **Build.** After the web bundle is staged, the pipeline runs `expo export
+  --platform ios` then `--platform android` (sequential — parallel Metro
+  processes risk OOM) and copies each result into the staged release. Each
+  export's `metadata.json` is parsed into per-platform metadata (`bundle_id` =
+  `build-<ts>-<platform>`, `bundle_hash` = hex SHA-256 of the `.hbc`,
+  `runtime_version` = the app version under the `appVersion` policy, and the
+  asset list). This metadata is persisted in the `pkg_build` row's `bundles` JSON
+  field and the files are copied into `release/native/<platform>/`. Each staged
+  file's existence is re-checked after copy, so the `bundles` row never advertises
+  a bundle the archive doesn't actually contain.
+- **Runtime version is required.** `runtime_version` comes from `app.json`'s
+  `expo.version` (the `appVersion` runtimeVersion policy). If it can't be read,
+  native export **fails the install** rather than producing bundles no device can
+  match — every client reports a concrete app version, so an empty one is
+  permanently undeliverable. (Changing the `runtimeVersion.policy` away from
+  `appVersion` would silently break matching — keep it `appVersion`.)
+- **Toolchain skip.** A web-only deploy image without the RN toolchain
+  (`node_modules/expo`) skips native export entirely; the update endpoint then
+  returns `204` for mobile and apps keep their embedded bundle.
+- **Serving.** `GET /api/app/update?platform=&runtimeVersion=&currentId=&currentHash=`
+  (public, no auth — the app calls it pre-login) reads the current `pkg_build` row
+  and returns a JSON manifest (`id`, `bundleUrl`, `bundleHash`, `assets[]`) when a
+  newer bundle exists for that platform+runtime, or `204` when up to date / no
+  match. "Up to date" matches on EITHER `currentId` (the running bundle id) OR
+  `currentHash` (its hex SHA-256) — the hash check spares a fresh App Store install
+  (whose id is `embedded-<version>`, never a server `build-<ts>` id) from
+  re-downloading a byte-identical bundle on first foreground. `GET
+  /api/app/bundle/...` and `/api/app/asset/...` serve the files from the build
+  archive. Revert restores an older build's `bundles` pointer along with everything
+  else, so reverting a package change reverts the mobile bundle.
 
 ## How relaunch works
 
@@ -202,17 +252,44 @@ PID 1 entrypoint, looping onto a new server process.
 
 ## Rollback
 
-Failures before the binary swap (validation, download, build) just abort the
-job and run a rollback stack that undoes each completed step (remove the copied
-member dir, restore `package.json`/`pnpm-workspace.yaml`, re-run the generator).
+A rebuild has two failure regimes split by the atomic `current`-symlink swap
+(`activateBuild`):
 
-Failures *after* the swap are caught at relaunch:
+**Before activation** (assemble, `pnpm install`, `go build`, `expo export`, the
+pre-swap DB backup, the DOWN-migration sync) a failure aborts the job in-process:
+the half-built `builds/<id>` dir is discarded, the DB is restored from the
+pre-swap `VACUUM INTO` snapshot if it had already been taken, and the live
+`current` symlink is never touched — the old build keeps serving. The
+`pkg_install_log` row ends `failed`. (A broken package that fails its web build —
+e.g. an unresolved import in a screen — lands here: `expo export` fails, no swap.)
 
-- If the **health-check fails**, the entrypoint restores the previous binary
-  (`mv tinycld tinycld.failed; mv tinycld.prev tinycld`) and continues onto the
-  old binary.
-- The pre-swap **SQLite `VACUUM INTO` backup** (`data.db.backup`) lets the
-  install pipeline's rollback restore the database if a later step fails.
+**After activation** the swap and any DOWN migrations have already hit live
+state, and the job has `exit(75)`'d to relaunch onto the new build, so an
+in-process undo is impossible. Instead the entrypoint renders the verdict
+(`probe_current_build` → `/api/health` on a temp port, 60s budget):
+
+- **Healthy** → `commit_db_backup` deletes the armed snapshot + marker; the new
+  build serves.
+- **Unhealthy** (the new binary panics at bootstrap, a pending UP migration
+  throws at `serve` boot before the HTTP listener binds, or boot hangs) →
+  `restore_db_from_backup` copies the pre-swap snapshot back over `data.db`,
+  `rollback_current_symlink` flips `current` back to the previous build dir (the
+  whole tree reverts, not just the binary), and the loop re-serves the old build.
+
+Because the restore reverts `data.db` to a snapshot taken *before* the job wrote
+its terminal status, the rolled-back install's `pkg_install_log` row would
+otherwise be stranded at `running` forever. To surface a clean outcome, the
+rollback path writes a `pb_data/.rollback-pending` breadcrumb (the rolled-back
+build id, captured from `.db-backup-armed` before the restore clears it); on the
+next boot `ReconcileRolledBackInstall` (registered in the `registerStaticServe`
+OnServe hook) consumes it and marks that stranded row `rolled_back`. So a
+post-restart rollback shows terminal status **`rolled_back`** at
+`GET /api/admin/packages/status/{slug}`, distinct from the pre-swap **`failed`**.
+
+The entrypoint's `recover_interrupted_rebuild` runs the identical verdict on a
+fresh start if the container is killed (OOM, `docker kill`, host reboot) between
+the `exit(75)` and the verdict — the armed marker's presence is the
+"verdict never completed" signal, and it writes the same breadcrumb on rollback.
 
 ## Build history & revert
 
@@ -231,6 +308,7 @@ directory:
 builds/<build_id>/
     tinycld          # the server binary that was live after this install (server packages only)
     release/         # a copy of the staged web bundle (app.html + assets + release-id.txt)
+        native/      #   per-platform OTA bundles: native/ios/**, native/android/** (when built)
     build.json       # mirror of the pkg_build record, for offline restore
 ```
 

@@ -199,23 +199,6 @@ func sortedCopy(files []string) []string {
 	return out
 }
 
-// intersectStrings returns the members of a that also appear in b, sorted
-// ascending. Used to narrow a global migration delta to one package's own files.
-func intersectStrings(a, b []string) []string {
-	set := make(map[string]bool, len(b))
-	for _, x := range b {
-		set[x] = true
-	}
-	out := make([]string, 0)
-	for _, x := range a {
-		if set[x] {
-			out = append(out, x)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // ---------- downgrade drop report ----------
 
 // DropReport describes the schema a downgrade would destroy, so the UI can warn

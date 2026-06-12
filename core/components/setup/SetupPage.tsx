@@ -1,5 +1,7 @@
 import { ChangeServerLink } from '@tinycld/core/components/ChangeServerLink'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
+import { pb as appPb } from '@tinycld/core/lib/pocketbase'
+import { useIsSuperAdmin } from '@tinycld/core/lib/use-is-super-admin'
 import { useSuperUserPB } from '@tinycld/core/lib/use-superuser-pb'
 import { useEffect, useState } from 'react'
 import { ScrollView, Text, View } from 'react-native'
@@ -14,6 +16,7 @@ interface SetupPageProps {
 
 export function SetupPage({ token }: SetupPageProps) {
     const { pb, login, isAuthenticated, error, isLoading } = useSuperUserPB()
+    const isSuperAdmin = useIsSuperAdmin()
     const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
 
     useEffect(() => {
@@ -54,6 +57,21 @@ export function SetupPage({ token }: SetupPageProps) {
         )
     }
 
+    // A super-admin app user reaches the console with their normal session — the
+    // server's admin endpoints accept their token (see requireAdmin), so we skip
+    // the separate _superusers login entirely and drive the dashboard with the
+    // app's authenticated pb client.
+    if (isSuperAdmin) {
+        return (
+            <GestureHandlerRootView className="flex-1">
+                <SetupDashboard pb={appPb} />
+            </GestureHandlerRootView>
+        )
+    }
+
+    // Fallback for anyone who isn't a super-admin app user (e.g. a raw PB
+    // superuser doing recovery, or a fresh deploy before the first grant):
+    // authenticate against _superusers directly.
     if (!isAuthenticated) {
         return (
             <View className="flex-1 items-center justify-center gap-4">

@@ -121,36 +121,6 @@ func mintInviteToken(app core.App, user *core.Record, org *core.Record, role str
 	return token, nil
 }
 
-func sendNewInviteEmail(app core.App, user *core.Record, org *core.Record, role, token string) {
-	appURL := strings.TrimRight(app.Settings().Meta.AppURL, "/")
-	link := fmt.Sprintf("%s/accept-invite/%s", appURL, token)
-
-	orgName := org.GetString("name")
-	userEmail := user.GetString("email")
-	userName := user.GetString("name")
-	if userName == "" {
-		userName = userEmail
-	}
-
-	subject := fmt.Sprintf("You've been invited to %s", orgName)
-	htmlBody := buildInviteEmailHTML(inviteEmailData{
-		Greeting:   greeting(userName),
-		OrgName:    orgName,
-		Role:       role,
-		CTALabel:   "Set your password",
-		CTALink:    link,
-		Intro:      fmt.Sprintf("You've been invited to join <strong>%s</strong> as a <strong>%s</strong>. To get started, set a password for your account.", htmlEscape(orgName), htmlEscape(role)),
-		Footer:     "If you weren't expecting this invitation, you can safely ignore this email. The link expires in 7 days.",
-		CopyPrompt: "Or copy this link into your browser:",
-	})
-	text := fmt.Sprintf(
-		"%s,\n\nYou've been invited to join %s as a %s.\n\nSet your password: %s\n\nThe link expires in 7 days. If you weren't expecting this invitation, you can safely ignore this email.\n",
-		greeting(userName), orgName, role, link,
-	)
-
-	send(app, userName, userEmail, subject, htmlBody, text)
-}
-
 func sendExistingMemberEmail(app core.App, user *core.Record, org *core.Record, role string) {
 	appURL := strings.TrimRight(app.Settings().Meta.AppURL, "/")
 	slug := org.GetString("slug")

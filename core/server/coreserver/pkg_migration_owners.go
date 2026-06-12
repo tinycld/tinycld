@@ -27,8 +27,7 @@ var (
 
 // loadMigrationOwners reads and caches the file→slug map. A missing file yields
 // an empty map (dev layouts / partial assemblies); callers degrade gracefully.
-// The cache is reloadable via resetMigrationOwnersCache — the version-change
-// pipeline regenerates the map mid-run, so a one-shot cache would go stale.
+// The map is cached for the process lifetime (loaded once on first use).
 func loadMigrationOwners() map[string]string {
 	migrationOwnersMu.Lock()
 	defer migrationOwnersMu.Unlock()
@@ -51,15 +50,6 @@ func loadMigrationOwners() map[string]string {
 	return migrationOwnersMap
 }
 
-// resetMigrationOwnersCache forces the next loadMigrationOwners to re-read the
-// owner map from disk. Called after the generator rewrites it during a version
-// change so subsequent migrationsForPackage lookups reflect the new file set.
-func resetMigrationOwnersCache() {
-	migrationOwnersMu.Lock()
-	migrationOwnersLoaded = false
-	migrationOwnersMu.Unlock()
-}
-
 // parseMigrationOwners decodes the file→slug JSON, returning ok=false on invalid
 // JSON. Pure (no I/O) so the query helpers can be exercised in tests.
 func parseMigrationOwners(data []byte) (map[string]string, bool) {
@@ -70,9 +60,8 @@ func parseMigrationOwners(data []byte) (map[string]string, bool) {
 	return parsed, true
 }
 
-// queryMigrationsForPackage / queryPackageForMigration are the pure cores of the
-// exported helpers, taking an explicit owner map so tests don't depend on the
-// process-global cache.
+// queryMigrationsForPackage is the pure core of migrationsForPackage, taking an
+// explicit owner map so it can be exercised without the process-global cache.
 func queryMigrationsForPackage(owners map[string]string, slug string) []string {
 	out := make([]string, 0)
 	for file, owner := range owners {
@@ -111,15 +100,25 @@ func findMigrationOwnersJSON() string {
 	return ""
 }
 
-// packageForMigration returns the owning package slug for a migration filename,
-// or "" if unknown.
-func packageForMigration(file string) string {
-	return loadMigrationOwners()[file]
-}
-
 // migrationsForPackage returns the migration filenames owned by the given slug,
 // sorted ascending (timestamp order). Empty if the slug owns none or the map is
 // unavailable.
 func migrationsForPackage(slug string) []string {
 	return queryMigrationsForPackage(loadMigrationOwners(), slug)
+}
+
+// setMigrationOwnersForTest installs an explicit owner map into the process
+// cache and returns a restore func. Tests use it to exercise the owner-map code
+// paths (migrationsForPackage / currentBuildMigrations) without an on-disk
+// pb_migrations_owner.json.
+func setMigrationOwnersForTest(owners map[string]string) func() {
+	migrationOwnersMu.Lock()
+	prevMap, prevLoaded := migrationOwnersMap, migrationOwnersLoaded
+	migrationOwnersMap, migrationOwnersLoaded = owners, true
+	migrationOwnersMu.Unlock()
+	return func() {
+		migrationOwnersMu.Lock()
+		migrationOwnersMap, migrationOwnersLoaded = prevMap, prevLoaded
+		migrationOwnersMu.Unlock()
+	}
 }

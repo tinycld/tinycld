@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query'
 import { DragHandle } from '@tinycld/core/components/DragHandle'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
@@ -21,7 +22,7 @@ import {
     X,
 } from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
     ActivityIndicator,
     Pressable,
@@ -82,8 +83,6 @@ interface PackageManagerProps {
 }
 
 export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
-    const [packages, setPackages] = useState<PkgRecord[]>([])
-    const [isLoading, setIsLoading] = useState(true)
     const [showRegister, setShowRegister] = useState(false)
     const [showInstall, setShowInstall] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
@@ -95,23 +94,20 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     const vm = usePackageVersions(pb, isVisible)
     const versionBySlug = new Map(vm.versions.map(v => [v.slug, v]))
 
-    const fetchPackages = useCallback(async () => {
-        setIsLoading(true)
-        try {
-            const records = await pb
-                .collection('pkg_registry')
-                .getFullList<PkgRecord>({ sort: 'nav_order,name' })
-            setPackages(records)
-        } catch (err) {
-            captureException('Failed to fetch packages', err)
-        } finally {
-            setIsLoading(false)
-        }
-    }, [pb])
-
-    useEffect(() => {
-        fetchPackages()
-    }, [fetchPackages])
+    // The setup console is a raw-pb surface (not the org-scoped pbtsdb store the
+    // app uses), so the registry list is a useQuery read rather than a live
+    // collection query. refetch() (aliased fetchPackages) is invoked after every
+    // mutation — install/uninstall/apply completion, register, edit, reorder.
+    const {
+        data: packages = [],
+        isLoading,
+        isError,
+        refetch: fetchPackages,
+    } = useQuery({
+        queryKey: ['admin', 'pkg-registry'],
+        queryFn: () =>
+            pb.collection('pkg_registry').getFullList<PkgRecord>({ sort: 'nav_order,name' }),
+    })
 
     const handleInstallStarted = useCallback((jobId: string) => {
         setShowInstall(false)
@@ -121,6 +117,35 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     const handleUninstallStarted = useCallback((jobId: string) => {
         setInstallJobId(jobId)
     }, [])
+
+    // Install/uninstall and apply (upgrade/downgrade) each start a background job,
+    // but only ONE runs at a time (server single-flight). Collapse both sources
+    // into a single active descriptor so the progress panel renders in ONE place
+    // with the handlers appropriate to whichever started it — previously two
+    // separate panels (one above the list, one below) made the position flip
+    // between install and upgrade.
+    const activeProgress = installJobId
+        ? {
+              jobId: installJobId,
+              onClose: () => {
+                  setInstallJobId(null)
+                  fetchPackages()
+              },
+              onComplete: fetchPackages,
+          }
+        : vm.applyJobId
+          ? {
+                jobId: vm.applyJobId,
+                onClose: () => {
+                    vm.onApplyComplete()
+                    fetchPackages()
+                },
+                onComplete: () => {
+                    vm.refresh()
+                    fetchPackages()
+                },
+            }
+          : null
 
     return (
         <View className="gap-6">
@@ -149,14 +174,11 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
             />
 
             <InstallProgressModal
-                isVisible={installJobId !== null}
-                jobId={installJobId}
+                isVisible={activeProgress !== null}
+                jobId={activeProgress?.jobId ?? null}
                 authToken={pb.authStore.token}
-                onClose={() => {
-                    setInstallJobId(null)
-                    fetchPackages()
-                }}
-                onComplete={fetchPackages}
+                onClose={() => activeProgress?.onClose()}
+                onComplete={() => activeProgress?.onComplete()}
             />
 
             <RegisterPackageModal
@@ -182,6 +204,7 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
                     <PackageList
                         packages={packages}
                         isLoading={isLoading}
+                        isError={isError}
                         pb={pb}
                         editingId={editingId}
                         onEdit={setEditingId}
@@ -213,20 +236,6 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
                     setConfirmOpen(false)
                 }}
             />
-
-            <InstallProgressModal
-                isVisible={vm.applyJobId !== null}
-                jobId={vm.applyJobId}
-                authToken={pb.authStore.token}
-                onClose={() => {
-                    vm.onApplyComplete()
-                    fetchPackages()
-                }}
-                onComplete={() => {
-                    vm.refresh()
-                    fetchPackages()
-                }}
-            />
         </View>
     )
 }
@@ -234,6 +243,7 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
 function PackageList({
     packages,
     isLoading,
+    isError,
     pb,
     editingId,
     onEdit,
@@ -245,6 +255,7 @@ function PackageList({
 }: {
     packages: PkgRecord[]
     isLoading: boolean
+    isError: boolean
     pb: PocketBase
     editingId: string | null
     onEdit: (id: string | null) => void
@@ -281,6 +292,13 @@ function PackageList({
         const pkg = pkgMap.get(item.id) ?? item
         const info = versionBySlug.get(pkg.slug)
         const target = targets[pkg.slug]
+        // The `core` row is the TinyCld base (app shell + core + server). It
+        // upgrades through the same version-change pipeline as any package, so it
+        // gets the normal version picker and update-available badge. Only a narrow
+        // set of traits stay special: a distinct `base` status badge, no
+        // drag/reorder (the base has no nav position), and no lifecycle controls
+        // (it can't be disabled or uninstalled).
+        const isBase = pkg.slug === 'core'
         // A row with a staged version change locks its lifecycle controls
         // (toggle/drag/uninstall) until the change is applied or cleared, so an
         // immediate mutation can't collide with the pending transaction.
@@ -302,7 +320,7 @@ function PackageList({
                     <View className="flex-row items-center gap-3 px-4 py-3.5">
                         <DragHandle
                             drag={drag}
-                            disabled={isActive || isStaged}
+                            disabled={isActive || isStaged || isBase}
                             color={mutedColor}
                         />
                         <View className="w-10 h-10 rounded-xl items-center justify-center bg-surface border border-border">
@@ -320,7 +338,7 @@ function PackageList({
                                 >
                                     {pkg.name}
                                 </Text>
-                                <PackageStatusBadge status={pkg.status} />
+                                <PackageStatusBadge status={isBase ? 'base' : pkg.status} />
                                 {info?.hasUpdate && !isStaged ? (
                                     <PackageStatusBadge status="update-available" />
                                 ) : null}
@@ -342,6 +360,7 @@ function PackageList({
                         <PackageActions
                             pkg={pkg}
                             pb={pb}
+                            isBase={isBase}
                             isEditing={editingId === pkg.id}
                             isLocked={isStaged}
                             onEdit={() => onEdit(editingId === pkg.id ? null : pkg.id)}
@@ -371,6 +390,19 @@ function PackageList({
         )
     }
 
+    // A failed load must not read as "no packages installed" on the package-
+    // management screen — that would look like the packages vanished.
+    if (isError) {
+        return (
+            <View className="p-8 items-center gap-2">
+                <CircleX size={32} color={`${mutedColor}60`} />
+                <Text className="text-danger" style={{ fontSize: 15 }}>
+                    Couldn't load packages. Check your connection and try again.
+                </Text>
+            </View>
+        )
+    }
+
     if (packages.length === 0) {
         return (
             <View className="p-8 items-center gap-2">
@@ -395,8 +427,8 @@ function PackageList({
 }
 
 // RowVersion is the per-row version cell. A package with >1 available version
-// gets the interactive picker + change flag; a bundled / single-version package
-// (Core, unmanaged sources) shows just its static version, no dropdown — there's
+// gets the interactive picker + change flag; a single-version package
+// (unmanaged sources) shows just its static version, no dropdown — there's
 // nothing to stage.
 function RowVersion({
     info,
@@ -443,6 +475,7 @@ function RowVersion({
 function PackageActions({
     pkg,
     pb,
+    isBase,
     isEditing,
     isLocked,
     onEdit,
@@ -451,6 +484,10 @@ function PackageActions({
 }: {
     pkg: PkgRecord
     pb: PocketBase
+    // The TinyCld base row: no toggle (can't disable the platform), no uninstall,
+    // no metadata edit (its name/description are generator-owned and reset on the
+    // next build). Upgraded via its version picker like any package.
+    isBase: boolean
     isEditing: boolean
     // True when this package has a staged version change — its toggle and
     // uninstall are disabled until the change is applied or cleared, so an
@@ -498,6 +535,12 @@ function PackageActions({
         }
         setShowUninstall(false)
         onUninstallStarted(data.jobId)
+    }
+
+    // The base row carries no lifecycle controls — it's upgraded via its version
+    // picker like any package, just never disabled, edited, or uninstalled.
+    if (isBase) {
+        return null
     }
 
     return (
@@ -1196,7 +1239,8 @@ function SecurityWarning({ isVisible }: { isVisible: boolean }) {
         <View className="flex-row gap-2 items-start rounded-lg p-3 bg-warning-soft">
             <AlertTriangle size={16} color={warningColor} style={{ marginTop: 1 }} />
             <Text className="text-warning-soft-foreground flex-1" style={{ fontSize: 13 }}>
-                This package is not in the @tinycld/ scope. Only install packages you trust.
+                This package is outside the @tinycld/ scope. Its code will run on your server with
+                full access to your data — only install packages from authors you trust.
             </Text>
         </View>
     )

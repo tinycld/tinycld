@@ -19,6 +19,7 @@ import Animated, {
     withTiming,
 } from 'react-native-reanimated'
 import { MAX_VISIBLE_TABS } from './MobileTabBar'
+import { MoreDrawerAdminItem } from './MoreDrawerAdminItem'
 import { getIcon } from './package-icon-map'
 import { useUserOrgs } from './useUserOrgs'
 
@@ -171,6 +172,8 @@ export function MoreDrawer() {
                                 Settings
                             </Text>
                         </Pressable>
+
+                        <MoreDrawerAdminItem onNavigate={handleNav} />
 
                         {orgs.length > 1 ? (
                             <>

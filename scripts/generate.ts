@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { getPackages } from '../../tinycld.packages'
@@ -6,7 +7,7 @@ import { type BuildPkg, runPackageBuilds } from './gen-build'
 import { buildConfigSource, buildSeedsSource, type ConfigPkg } from './gen-config'
 import { buildHelpSource, type HelpGroupInput, parseFrontmatter } from './gen-help'
 import { buildPackageIconsSource } from './gen-icons'
-import { emitPublicRoutes, emitRoutes } from './gen-routes'
+import { emitPublicRoutes, emitRoutes, pruneOrphanRouteDirs } from './gen-routes'
 import {
     buildBundledPackages,
     buildGoWork,
@@ -113,18 +114,54 @@ function cleanDir(dir: string) {
 type Feature = { name: string; dir: string; manifest: PackageManifest }
 
 // --- 3. routes: re-export each package's screens into app/a/[orgSlug]/<slug> -
-// Do NOT cleanDir(ROUTES_BASE) — app-owned files live here (_layout.tsx,
-// index.tsx, settings/**). Clean only each linked package's own slug dir.
-// KNOWN TRADEOFF: a package unlinked since the last run leaves an orphan
-// ROUTES_BASE/<old-slug>/ dir behind (the old full-wipe removed those). Fine
-// while the linked set is stable; revisit (e.g. a generated-slugs manifest)
-// if packages get unlinked frequently.
+// We still don't cleanDir(ROUTES_BASE) before emitting — app-owned files and
+// dirs live here (_layout.tsx, index.tsx, admin/, help/, settings/**) and a
+// full wipe would take them out. Instead, each present package re-creates its
+// own slug dir (emitOrgRoutes/emitFeaturePublicRoutes rm+recreate it), and then
+// AFTER the emit loop pruneOrphanRouteDirs removes any leftover slug dir whose
+// package is no longer present. This closes the old KNOWN TRADEOFF: a package
+// unlinked since the last run (e.g. an uninstall) used to leave an orphan
+// ROUTES_BASE/<old-slug>/ dir behind whose re-export points at a now-absent
+// package, breaking the next `expo export` ("Unable to resolve module ...").
+// The prune is dir-only and allowlist-guarded so app-owned entries are never
+// touched (see APP_OWNED_ORG_ROUTE_DIRS / APP_OWNED_PUBLIC_ROUTE_DIRS).
+
+// Direct children of ROUTES_BASE the app owns — NOT package route slugs, never
+// pruned. (Files like _layout.tsx/index.tsx are already safe since prune only
+// touches directories; this guards the app-owned DIRS.)
+const APP_OWNED_ORG_ROUTE_DIRS = new Set(['admin', 'help', 'settings'])
+// app/p/ has no app-owned directories — only app-owned files (_layout.tsx,
+// demo.tsx) plus per-package public-route dirs — so the allowlist is empty.
+const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>()
+
 function emitFeatureRoutes(features: Feature[]) {
     fs.mkdirSync(ROUTES_BASE, { recursive: true })
     fs.mkdirSync(PUBLIC_ROUTES_BASE, { recursive: true })
     for (const f of features) {
         if (f.manifest.routes?.directory) emitOrgRoutes(f)
         if (f.manifest.publicRoutes?.directory) emitFeaturePublicRoutes(f)
+    }
+
+    const presentOrgSlugs = new Set(
+        features.filter(f => f.manifest.routes?.directory).map(f => f.manifest.slug)
+    )
+    for (const name of pruneOrphanRouteDirs(
+        ROUTES_BASE,
+        presentOrgSlugs,
+        APP_OWNED_ORG_ROUTE_DIRS
+    )) {
+        console.log(`[generate] pruned orphan route dir for removed package '${name}'`)
+    }
+
+    const presentPublicSlugs = new Set(
+        features.filter(f => f.manifest.publicRoutes?.directory).map(f => f.manifest.slug)
+    )
+    for (const name of pruneOrphanRouteDirs(
+        PUBLIC_ROUTES_BASE,
+        presentPublicSlugs,
+        APP_OWNED_PUBLIC_ROUTE_DIRS
+    )) {
+        console.log(`[generate] pruned orphan public route dir for removed package '${name}'`)
     }
 }
 
@@ -288,6 +325,41 @@ function linkDirContents(
     }
 }
 
+// resolveGitSource returns the canonical `github:owner/repo` spec the in-app
+// upgrader fetches newer versions of this member from. It reads the member's
+// actual `origin` remote (so a fork / non-tinycld org is honored) and normalizes
+// the URL to the `github:` shorthand the Go server's classifySpec understands;
+// if there's no resolvable remote it falls back to the deterministic
+// `github:tinycld/<slug>` (matching utils/lib/packages.ts and bootstrap's clone
+// URLs). Non-github remotes (gitlab/bitbucket/self-hosted) are passed through as
+// a normalized git URL, which classifySpec also accepts.
+function resolveGitSource(dir: string, slug: string): string {
+    let remote = ''
+    try {
+        remote = execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], {
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim()
+    } catch {
+        // no git remote (e.g. a not-yet-pushed member, or CI assembly without a
+        // checkout) — fall through to the deterministic default below.
+    }
+    const normalized = normalizeGitRemote(remote)
+    return normalized ?? `github:tinycld/${slug}`
+}
+
+// normalizeGitRemote turns a github remote URL into the `github:owner/repo`
+// shorthand; returns the URL unchanged for other hosts, and null when there's
+// nothing usable. Mirrors the inverse of the server's gitRemoteURL expansion.
+function normalizeGitRemote(remote: string): string | null {
+    if (!remote) return null
+    // git@github.com:owner/repo(.git) | https://github.com/owner/repo(.git);
+    // strip a trailing slash first so it never leaks into the repo segment.
+    const gh = remote.replace(/\/$/, '').match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?$/)
+    if (gh) return `github:${gh[1]}/${gh[2]}`
+    return remote
+}
+
 // buildCoreManifest synthesizes a minimal manifest for @tinycld/core (which has
 // no manifest.ts) so it can be seeded into pkg_registry. Only the fields the
 // registry seed + compatibility solver read are populated: name, slug, version,
@@ -300,10 +372,16 @@ function buildCoreManifest(): PackageManifest {
     )
     const peerVersions = corePkgJson.tinycld?.peerVersions as Record<string, string> | undefined
     return {
-        name: '@tinycld/core',
+        // User-facing label for the platform row in the admin packages list. This
+        // row represents the whole TinyCld base (app shell + core library + Go
+        // server), not just the core package — it's updated via the base-update
+        // flow, not the per-package upgrade. The `slug` stays 'core': it's the
+        // stable internal key the compatibility solver (corePackageKey) and the
+        // migration-owner map depend on.
+        name: 'TinyCld Base',
         slug: 'core',
         version: corePkgJson.version ?? '',
-        description: 'Shared core library',
+        description: 'The TinyCld base — app shell, core library, and server.',
         ...(peerVersions ? { peerVersions } : {}),
     }
 }
@@ -453,8 +531,19 @@ async function main() {
     fs.writeFileSync(
         path.join(SERVER_DIR, 'bundled-packages.json'),
         buildBundledPackages([
-            { manifest: coreManifest },
-            ...features.map(f => ({ manifest: f.manifest })),
+            // core is a server-bearing package (core/server, module
+            // tinycld.org/core) that's upgradeable from its own repo, so it
+            // carries a `source` git spec and an explicit hasServer — its
+            // synthetic manifest has no `server` field to derive that from.
+            {
+                manifest: coreManifest,
+                source: 'github:tinycld/tinycld',
+                hasServer: true,
+            },
+            ...features.map(f => ({
+                manifest: f.manifest,
+                source: resolveGitSource(f.dir, f.manifest.slug),
+            })),
         ])
     )
 

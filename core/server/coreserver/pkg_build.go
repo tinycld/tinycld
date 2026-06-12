@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -19,13 +18,13 @@ import (
 // recorded in the pkg_build collection. See app/docs/live-install.md.
 
 // buildsDirName is the per-build archive root under appDir.
-const buildsDirName = "builds"
 
 // buildArchive captures the on-disk paths for one build's archive.
 type buildArchive struct {
-	root    string // <appDir>/builds/<build_id>
-	binary  string // <root>/tinycld (server packages only)
-	release string // <root>/release/
+	root       string // <appDir>/builds/<build_id>
+	binary     string // <root>/tinycld (server packages only)
+	release    string // <root>/release/
+	migrations string // <root>/pb_migrations/ (this build's owned migration files)
 }
 
 // buildArchiveFor resolves a build's on-disk archive paths. buildID is always
@@ -34,12 +33,16 @@ type buildArchive struct {
 // stored build_id — it is never taken from user input, so joining it into a path
 // here is not a traversal vector. Keep it that way: do not make build_id
 // client-settable.
-func buildArchiveFor(appDir, buildID string) buildArchive {
-	root := filepath.Join(appDir, buildsDirName, buildID)
+func buildArchiveFor(_ string, buildID string) buildArchive {
+	// builds/ lives under the STATE root so archives persist across the
+	// per-build symlink swap. The legacy appDir param is retained for caller
+	// compatibility but no longer used for path resolution.
+	root := filepath.Join(stateBuildsDir(), buildID)
 	return buildArchive{
-		root:    root,
-		binary:  filepath.Join(root, binaryName),
-		release: filepath.Join(root, "release"),
+		root:       root,
+		binary:     filepath.Join(root, binaryName),
+		release:    filepath.Join(root, "release"),
+		migrations: filepath.Join(root, "pb_migrations"),
 	}
 }
 
@@ -58,66 +61,6 @@ func appliedMigrationFiles(app core.App) ([]string, error) {
 		return nil, fmt.Errorf("query _migrations: %w", err)
 	}
 	return files, nil
-}
-
-// newMigrationFiles returns the entries in after that are not in before — the
-// migrations applied between the two snapshots. Order follows after (newest
-// first).
-func newMigrationFiles(before, after []string) []string {
-	seen := make(map[string]bool, len(before))
-	for _, f := range before {
-		seen[f] = true
-	}
-	out := make([]string, 0)
-	for _, f := range after {
-		if !seen[f] {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
-// archiveBuild copies the now-live binary (server packages) and the staged web
-// bundle into <appDir>/builds/<build_id>/ and writes build.json. stageDir is the
-// release-staging/<id> directory produced by stageRelease. Returns the archive
-// and a cleanup func for the install pipeline's rollback stack.
-func archiveBuild(appDir, buildID, stageDir string, hasServer bool, meta map[string]any) (buildArchive, func(), error) {
-	arch := buildArchiveFor(appDir, buildID)
-	if err := os.MkdirAll(arch.root, 0o755); err != nil {
-		return arch, nil, fmt.Errorf("create build dir: %w", err)
-	}
-	cleanup := func() {
-		os.RemoveAll(arch.root)
-		log.Printf("pkg_build: rollback — removed archive %s", buildID)
-	}
-
-	if hasServer {
-		// Copy (not move) the live binary so the running server keeps its file.
-		if _, err := runCmd(".", "cp", "-a", filepath.Join(appDir, binaryName), arch.binary); err != nil {
-			cleanup()
-			return arch, nil, fmt.Errorf("archive binary: %w", err)
-		}
-	}
-
-	// Copy the staged release bundle (app.html + assets + release-id.txt). The
-	// staged dir is still on disk here — the entrypoint only consumes it on the
-	// next boot — so a copy is safe and leaves the original for promotion.
-	if err := copyDir(stageDir, arch.release); err != nil {
-		cleanup()
-		return arch, nil, fmt.Errorf("archive release: %w", err)
-	}
-
-	// build.json is an advisory mirror of the pkg_build record for offline
-	// inspection — the DB record is the source of truth — so a marshal error on
-	// this flat string/number/[]string map (which can't realistically fail) is
-	// ignored; the write error is not.
-	metaJSON, _ := json.MarshalIndent(meta, "", "  ")
-	if err := os.WriteFile(filepath.Join(arch.root, "build.json"), metaJSON, 0o644); err != nil {
-		cleanup()
-		return arch, nil, fmt.Errorf("write build.json: %w", err)
-	}
-
-	return arch, cleanup, nil
 }
 
 // ---------- pkg_build record helpers ----------
@@ -170,16 +113,6 @@ func recordBuild(app core.App, fields map[string]any) (*core.Record, error) {
 // siblings; the only residual ambiguity is a same-millisecond build that is
 // actually *older*, which can't happen here (installs are an operator action
 // seconds-to-minutes apart, and build_id embeds a monotonic UnixMilli).
-func buildsNewerThan(app core.App, target *core.Record) ([]*core.Record, error) {
-	return app.FindRecordsByFilter(
-		"pkg_build",
-		"created >= {:ts} && id != {:id}",
-		"-created",
-		0,
-		0,
-		dbx.Params{"ts": target.GetString("created"), "id": target.Id},
-	)
-}
 
 // ---------- base build (initial deploy) ----------
 
@@ -217,7 +150,7 @@ func SeedBaseBuild(app core.App) {
 		// No binary on disk to archive (dev / `go run`): skip.
 		return
 	}
-	currentRelease := filepath.Join(appDir, "releases", "current")
+	currentRelease := filepath.Join(stateReleasesDir(), "current")
 	if _, err := os.Stat(filepath.Join(currentRelease, "app.html")); err != nil {
 		// No promoted web bundle to archive: skip.
 		return

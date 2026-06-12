@@ -199,8 +199,8 @@ func decodeJSONBody(re *core.RequestEvent, dst any) error {
 	return json.NewDecoder(re.Request.Body).Decode(dst)
 }
 
-// sendInviteEmailTo builds the same invite email body sendNewInviteEmail uses,
-// but addresses it to an arbitrary email instead of the user's account email.
+// sendInviteEmailTo builds the invite email body and addresses it to an
+// arbitrary email instead of the user's account email.
 func sendInviteEmailTo(app core.App, toEmail string, user *core.Record, org *core.Record, role, token string) error {
 	link := buildInviteURL(app, token)
 

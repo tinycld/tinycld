@@ -2,6 +2,7 @@ import { Text, View } from 'react-native'
 
 type StatusVariant =
     | 'bundled'
+    | 'base'
     | 'installed'
     | 'available'
     | 'disabled'
@@ -14,6 +15,7 @@ type StatusVariant =
 
 const classNames: Record<StatusVariant, { bg: string; text: string }> = {
     bundled: { bg: 'bg-info', text: 'text-info-foreground' },
+    base: { bg: 'bg-primary', text: 'text-primary-foreground' },
     installed: { bg: 'bg-success-soft', text: 'text-success-soft-foreground' },
     available: { bg: 'bg-muted', text: 'text-muted-foreground' },
     disabled: { bg: 'bg-danger-soft', text: 'text-danger-soft-foreground' },
@@ -28,6 +30,7 @@ const classNames: Record<StatusVariant, { bg: string; text: string }> = {
 // Friendly labels for the multi-word / non-obvious variants. Single-word legacy
 // variants (bundled, installed, …) read fine as their key, so they fall through.
 const labels: Partial<Record<StatusVariant, string>> = {
+    base: 'Base',
     'update-available': 'Update',
     updating: 'Updating',
     current: 'Current',

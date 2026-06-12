@@ -138,6 +138,8 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	RegisterAuditHooks(app)
 	RegisterOrgPkgEnabledHooks(app)
 	RegisterPackageInstallEndpoints(app)
+	RegisterSuperAdminEndpoints(app)
+	RegisterAppUpdateEndpoints(app)
 	RegisterSetupBootstrap(app)
 	RegisterAccountDelete(app)
 	userorg.Register(app)
@@ -243,6 +245,7 @@ func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
 			GenerateSchemas(e.App, opts.TypesDir)
 			SyncBundledPackages(e.App)
 			SeedBaseBuild(e.App)
+			ReconcileRolledBackInstall(e.App)
 
 			// Per-route asset handlers, registered before the catch-all so
 			// the asset prefixes win. Both paths read from the cross-release

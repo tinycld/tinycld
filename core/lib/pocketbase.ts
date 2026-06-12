@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { QueryClient } from '@tanstack/react-query'
+import { QueryCache, QueryClient } from '@tanstack/react-query'
 import { type MergedPackageSchema, tinycldConfig } from '@tinycld/app-generated/tinycld-config'
+import { captureException } from '@tinycld/core/lib/errors'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
 import type { Orgs, Schema, UserOrg, Users } from '@tinycld/core/types/pbSchema'
 import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
@@ -136,7 +137,17 @@ setLogger({
     },
 })
 
-const queryClient = new QueryClient()
+// A global query-error handler so failed reads are observable in Sentry — useQuery
+// surfaces errors via state rather than throwing, so without this a read failure is
+// silent (the component shows its own error UI, but nothing is logged). The queryKey
+// is the grouping context. Mutations report via their own onError/handleMutationErrorsWithForm.
+const queryClient = new QueryClient({
+    queryCache: new QueryCache({
+        onError: (error, query) => {
+            captureException('query.error', error, { queryKey: query.queryKey })
+        },
+    }),
+})
 
 const newCollection = createCollection<MergedSchema>(pb, queryClient)
 
@@ -207,6 +218,12 @@ const org_pkg_enabled = newCollection('org_pkg_enabled', {
     ...indexing,
 })
 
+const super_admins = newCollection('super_admins', {
+    omitOnInsert: ['created', 'updated'],
+    expand: { user: users },
+    ...indexing,
+})
+
 const audit_logs = newCollection('audit_logs', {
     omitOnInsert: ['created', 'updated'],
     expand: { actor: users },
@@ -248,6 +265,7 @@ const coreStores = {
     audit_logs,
     pkg_install_log,
     notifications,
+    super_admins,
 }
 export type CoreStores = typeof coreStores
 
@@ -291,6 +309,7 @@ export async function preloadStores() {
         stores.org_pkg_access.preload(),
         stores.pkg_registry.preload(),
         stores.org_pkg_enabled.preload(),
+        stores.super_admins.preload(),
     ])
 }
 

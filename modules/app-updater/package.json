@@ -1,0 +1,7 @@
+{
+    "name": "app-updater",
+    "version": "0.0.1",
+    "description": "Local Expo native module for self-hosted OTA bundle staging/reload.",
+    "main": "index.ts",
+    "private": true
+}
