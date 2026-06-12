@@ -144,4 +144,32 @@ test.describe('first-run install', () => {
         await expect(page.getByText(TEST_ORG_SLUG, { exact: true })).toBeVisible()
         await expect(page.getByText(TEST_ORG_OWNER_EMAIL, { exact: true })).toBeVisible()
     })
+
+    test('superuser can grant another user super admin', async ({ page }) => {
+        await loginAsSuperuser(page)
+
+        // Regression test for the grant 500: a PB-superuser grantor carries a
+        // non-nil auth identity whose id lives in _superusers, NOT users. The
+        // handler stamped that id into super_admins.created_by (a users relation),
+        // which failed relation validation and returned a 500 the dev console
+        // never surfaced (it only reached Sentry/the _logs DB). Granting while
+        // logged in as the superuser — the common /admin path — is exactly this.
+        //
+        // Grant the org owner created by the previous (serial) test; that user
+        // already exists, so this exercises the grant-an-existing-user path.
+        await page.getByText('Super Admins', { exact: true }).first().click()
+
+        // Wait for the section to mount (the grant CTA) before interacting.
+        await expect(page.getByRole('button', { name: 'Grant access' })).toBeVisible()
+
+        await page.getByRole('button', { name: 'Grant access' }).click()
+        await page.getByPlaceholder('person@example.com').fill(TEST_ORG_OWNER_EMAIL)
+        await page.getByRole('button', { name: 'Grant super admin' }).click()
+
+        // On success the form closes, the roster refetches, and the granted user
+        // appears as a row. Before the fix this never happened — the POST 500'd
+        // and the email surfaced as an inline form error instead. Asserting the
+        // owner's row (not just "not empty") makes the regression signal precise.
+        await expect(page.getByText(TEST_ORG_OWNER_EMAIL, { exact: true })).toBeVisible()
+    })
 })
