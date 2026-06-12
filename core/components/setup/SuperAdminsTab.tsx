@@ -21,7 +21,11 @@ const grantSchema = z.object({
     email: z.email(),
 })
 
-async function adminFetch(pb: PocketBase, path: string, init?: RequestInit) {
+async function adminFetch<T = unknown>(
+    pb: PocketBase,
+    path: string,
+    init?: RequestInit
+): Promise<T> {
     const response = await fetch(`${PB_SERVER_ADDR}/api/admin/super-admins${path}`, {
         ...init,
         headers: {
@@ -30,7 +34,7 @@ async function adminFetch(pb: PocketBase, path: string, init?: RequestInit) {
             ...init?.headers,
         },
     })
-    const data = await response.json().catch(() => ({}))
+    const data = (await response.json().catch(() => ({}))) as T & { error?: string }
     if (!response.ok) {
         throw new Error(data.error ?? 'Request failed')
     }
@@ -51,7 +55,7 @@ export function SuperAdminsTab({ isVisible, pb }: { isVisible: boolean; pb: Pock
     } = useQuery({
         queryKey: ['admin', 'super-admins'],
         queryFn: async (): Promise<SuperAdminRow[]> => {
-            const data = await adminFetch(pb, '')
+            const data = await adminFetch<{ superAdmins?: SuperAdminRow[] }>(pb, '')
             return data.superAdmins ?? []
         },
         enabled: isVisible,
@@ -119,7 +123,7 @@ function GrantSection({
 
     const onSubmit = handleSubmit(async values => {
         try {
-            await adminFetch(pb, '', {
+            await adminFetch<SuperAdminRow>(pb, '', {
                 method: 'POST',
                 body: JSON.stringify({ email: values.email }),
             })
@@ -221,7 +225,7 @@ function SuperAdminRowItem({
     const revoke = async () => {
         setIsRevoking(true)
         try {
-            await adminFetch(pb, `/${admin.userId}`, { method: 'DELETE' })
+            await adminFetch<{ ok: boolean }>(pb, `/${admin.userId}`, { method: 'DELETE' })
             onRevoked()
         } catch (err) {
             captureException('superAdmins.revoke', err, { userId: admin.userId })

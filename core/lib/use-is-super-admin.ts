@@ -10,11 +10,16 @@ import { useStore } from '@tinycld/core/lib/pocketbase'
  * the signed-in user is a super admin. Reflects grants/revokes without a
  * re-login (the store is preloaded and subscribed). Returns false when anon.
  */
-export function useIsSuperAdmin(): boolean {
-    const { user, isLoggedIn } = useAuth({ throwIfAnon: false })
+
+// useSuperAdminStatus returns BOTH whether the current user is a super admin and
+// whether the answer has settled (auth resolved + the super_admins live query
+// loaded), so a redirect guard can wait for a definitive answer instead of acting
+// on the transient initial `false`.
+export function useSuperAdminStatus(): { isSuperAdmin: boolean; isReady: boolean } {
+    const { user, isLoggedIn, isInitializing } = useAuth({ throwIfAnon: false })
     const [superAdminsCollection] = useStore('super_admins')
 
-    const { data } = useLiveQuery(
+    const { data, isReady: queryReady } = useLiveQuery(
         query =>
             query
                 .from({ super_admin: superAdminsCollection })
@@ -22,5 +27,13 @@ export function useIsSuperAdmin(): boolean {
         [user?.id]
     )
 
-    return isLoggedIn && (data?.length ?? 0) > 0
+    // Settled once auth is no longer initializing AND the live query has reached
+    // its `ready` status (TanStack DB surfaces this as isReady). An anon user has
+    // no query to wait on, so it's settled-and-not-admin as soon as auth resolves.
+    const isReady = !isInitializing && (queryReady || !isLoggedIn)
+    return { isSuperAdmin: isLoggedIn && (data?.length ?? 0) > 0, isReady }
+}
+
+export function useIsSuperAdmin(): boolean {
+    return useSuperAdminStatus().isSuperAdmin
 }
