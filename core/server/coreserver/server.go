@@ -245,6 +245,7 @@ func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
 			GenerateSchemas(e.App, opts.TypesDir)
 			SyncBundledPackages(e.App)
 			SeedBaseBuild(e.App)
+			ReconcileRolledBackInstall(e.App)
 
 			// Per-route asset handlers, registered before the catch-all so
 			// the asset prefixes win. Both paths read from the cross-release

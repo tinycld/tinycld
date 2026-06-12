@@ -75,6 +75,19 @@ PB_SERVE_DIRS="--dir=${PB_DATA_DIR} --releasesDir=/workspace/releases --migratio
 DB_BACKUP=${PB_DATA_DIR}/data.db.backup
 DB_BACKUP_MARKER=${PB_DATA_DIR}/.db-backup-armed
 
+# Breadcrumb the Go boot reconciler consumes to mark a stranded pkg_install_log
+# row 'rolled_back'. Written by the rollback path below (write_rollback_pending)
+# with the rolled-back build id; consumed + deleted by the reconciler
+# (coreserver.ReconcileRolledBackInstall) on the next boot. A post-activation
+# rollback restores a DB snapshot taken while that install's log row was still
+# "running", discarding the later "success" write — so without this breadcrumb the
+# row is stranded at "running" forever (no in-process job survives the restart to
+# finalize it). Lives under pb_data so it survives the symlink swap and a crash in
+# the rollback window. The commit (healthy) path never writes it, so a healthy boot
+# is never mis-marked. Keep this path in sync with rollbackPendingMarkerPath() in
+# pkg_rollback_reconcile.go.
+ROLLBACK_PENDING_MARKER=${PB_DATA_DIR}/.rollback-pending
+
 # restore_db_from_backup: copy the armed VACUUM-INTO snapshot back over data.db
 # and clear the arm marker. PocketBase runs SQLite in WAL mode, so data.db is
 # shadowed by data.db-wal / data.db-shm; the snapshot is a CLEAN standalone db
@@ -109,6 +122,17 @@ commit_db_backup() {
         echo "[entrypoint] new build healthy — committing migration (disarming DB backup)"
         rm -f "$DB_BACKUP" "$DB_BACKUP_MARKER"
     fi
+}
+
+# write_rollback_pending: drop the breadcrumb the Go boot reconciler reads to mark
+# the stranded pkg_install_log row 'rolled_back'. Capture the rolled-back build id
+# from the arm marker BEFORE restore_db_from_backup clears it. Called by both the
+# exit-75 rollback branch and the SIGKILL-recovery rollback branch, always before
+# the restore. Best-effort: never abort the rollback if the write fails.
+write_rollback_pending() {
+    rb_build=$(cat "$DB_BACKUP_MARKER" 2>/dev/null || echo '')
+    printf '%s' "$rb_build" > "$ROLLBACK_PENDING_MARKER" 2>/dev/null || true
+    echo "[entrypoint] wrote rollback-pending breadcrumb (build '$rb_build') for the boot reconciler"
 }
 
 echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
@@ -561,6 +585,7 @@ recover_interrupted_rebuild() {
         commit_db_backup
     else
         echo "[entrypoint] startup: interrupted build failed health probe — restoring DB + rolling back symlink"
+        write_rollback_pending   # capture build id before restore clears the arm marker
         restore_db_from_backup || echo "[entrypoint] WARN: DB restore failed during interrupted-rebuild recovery" >&2
         rollback_current_symlink || true
     fi
@@ -619,6 +644,7 @@ while true; do
             # rebuild left behind (review finding H3). Restore the DB FIRST, then flip
             # the `current` symlink back to the previous build — order so the old
             # binary never momentarily boots against the migrated schema.
+            write_rollback_pending   # capture build id before restore clears the arm marker
             restore_db_from_backup || echo "[entrypoint] WARN: DB restore failed; rolling back code anyway (schema may be ahead of the old binary)" >&2
             rollback_current_symlink || true
             continue
