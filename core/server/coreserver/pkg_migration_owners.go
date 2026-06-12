@@ -60,9 +60,8 @@ func parseMigrationOwners(data []byte) (map[string]string, bool) {
 	return parsed, true
 }
 
-// queryMigrationsForPackage / queryPackageForMigration are the pure cores of the
-// exported helpers, taking an explicit owner map so tests don't depend on the
-// process-global cache.
+// queryMigrationsForPackage is the pure core of migrationsForPackage, taking an
+// explicit owner map so it can be exercised without the process-global cache.
 func queryMigrationsForPackage(owners map[string]string, slug string) []string {
 	out := make([]string, 0)
 	for file, owner := range owners {
