@@ -49,16 +49,43 @@ import { expect, type Page, test } from '@playwright/test'
 // the installed package.json version and `available` from git tags, so the tag
 // names MUST match the package.json versions for upgrade/downgrade direction to
 // resolve correctly. `main` mirrors v2.0.0.
+//
+// BUGGY FIXTURES (rollback / build-failure coverage): three additional tags are
+// side commits branched off the v1.0.0 commit (NOT on `main`'s lineage, so a
+// normal clone never gets them), each version "0.0.1":
+//   - v0.0.1-pre-buggy-server    — panics in server/register.go's Register() at
+//        bootstrap (before app.Start) → new binary crashes on boot → /api/health
+//        never answers → entrypoint ROLLS BACK to the prior healthy build.
+//   - v0.0.1-pre-buggy-migration — adds a new migration whose UP throws. It is
+//        pending (not run during the rebuild); the new binary applies it on its
+//        serve boot (RunAllMigrations, fatal before the HTTP bind) → ROLLS BACK.
+//   - v0.0.1-pre-buggy-fe        — a non-existent import in screens/_layout.tsx
+//        fails `expo export` in the pipeline, BEFORE the symlink swap → install
+//        ends 'failed', current build untouched, NO restart/rollback.
 const RUN_INSTALL_TEST = process.env.RUN_TODO_INSTALL_TEST === '1'
 
 const SETUP_TOKEN = process.env.PW_TODO_SETUP_TOKEN
 
-const SUPERUSER_EMAIL = 'todo-smoke@example.com'
-const SUPERUSER_PASSWORD = 'TodoSmoke1234!'
+// The superuser this test bootstraps + logs in as. Read from the workspace .env
+// (ADMIN_USER_LOGIN / ADMIN_USER_PW — loaded by playwright.config.ts and
+// forwarded into the runner's sandbox), falling back to fixed smoke values when
+// unset (CI / a bare run). The same constants drive BOTH the /admin wizard that
+// CREATES the account and every later login, so a .env override stays consistent.
+// `||` (not `??`) so an empty-string env var falls back too — the runner
+// forwards ADMIN_USER_LOGIN="" when the .env key is absent, and that empty value
+// must not override the fallback. Mirrors tests/playwright-global-setup.ts.
+const SUPERUSER_EMAIL = process.env.ADMIN_USER_LOGIN || 'todo-smoke@example.com'
+const SUPERUSER_PASSWORD = process.env.ADMIN_USER_PW || 'TodoSmoke1234!'
 
 // Install pinned to a git TAG via the #ref suffix. validatePackageSpec accepts
 // `<git-spec>#<safe-ref>` and `npm pack` clones the repo at that tag.
 const TODO_SPEC_V1 = 'github:tinycld/todo#v1.0.0'
+
+// Buggy fixture tags (see FIXTURE CONTRACT above). server + migration roll back
+// post-restart; fe fails at expo export (no restart).
+const TODO_SPEC_BUGGY_SERVER = 'github:tinycld/todo#v0.0.1-pre-buggy-server'
+const TODO_SPEC_BUGGY_MIGRATION = 'github:tinycld/todo#v0.0.1-pre-buggy-migration'
+const TODO_SPEC_BUGGY_FE = 'github:tinycld/todo#v0.0.1-pre-buggy-fe'
 
 // Core (base) upgrade target + the baked current version, supplied by the
 // runner (run-todo-install.sh provisions a local base remote with these tags).
@@ -120,13 +147,29 @@ async function superuserToken(page: Page): Promise<string> {
     // retry transient server errors a few times rather than throwing — the same
     // resilience the polling helpers apply to the mid-restart window. A genuine
     // auth failure (4xx) still throws immediately.
+    //
+    // The POST is also wrapped in try/catch: an exit-75 restart (install / version
+    // change / revert) drops in-flight connections, so this auth can throw a
+    // network-level `read ECONNRESET` / connection-refused that is NOT an HTTP
+    // response (so the status checks below never see it). superuserToken is called
+    // by the polling helpers precisely during those restart windows, so a thrown
+    // reset must be treated as transient (back off + retry), exactly like a 5xx —
+    // otherwise it escapes the retry loop and fails the test on a momentary blip.
     let lastStatus = 0
     let lastBody = ''
     for (let attempt = 0; attempt < 8; attempt++) {
-        const res = await page.request.post('/api/collections/_superusers/auth-with-password', {
-            data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
-            failOnStatusCode: false,
-        })
+        let res: Awaited<ReturnType<typeof page.request.post>>
+        try {
+            res = await page.request.post('/api/collections/_superusers/auth-with-password', {
+                data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
+                failOnStatusCode: false,
+            })
+        } catch (err) {
+            // Connection reset/refused during the restart window — transient.
+            lastBody = String(err)
+            await page.waitForTimeout(750)
+            continue
+        }
         if (res.ok()) {
             const body = (await res.json()) as { token?: string }
             if (!body.token) throw new Error('superuser auth returned no token')
@@ -289,6 +332,78 @@ async function waitForOpStatus(
     throw new Error(
         `${slug} did not reach ${wantAction ?? ''}/${wantStatus} within ${timeoutMs}ms (last=${last})`
     )
+}
+
+// pollInstallTerminal waits until the slug's most-recent install-class row reaches
+// `wantStatus` (one of the terminal failure states 'rolled_back' / 'failed') —
+// states the regular waitForOpStatus deliberately THROWS on. Here we WAIT for the
+// expected one and throw only if the op unexpectedly ends 'success' or times out.
+// It keys on action === 'install' with the notId stale-row guard so a prior op's
+// row doesn't satisfy it. Connection resets / 401s during the rollback-restart
+// window are expected and retried (the same resilience waitForOpStatus applies).
+async function pollInstallTerminal(
+    page: Page,
+    slug: string,
+    wantStatus: 'rolled_back' | 'failed',
+    timeoutMs: number,
+    notId?: string | null
+) {
+    const url = `/api/admin/packages/status/${slug}`
+    const deadline = Date.now() + timeoutMs
+    let token = await superuserToken(page)
+    let last = 'no-response-yet'
+    while (Date.now() < deadline) {
+        let res: Awaited<ReturnType<typeof page.request.get>>
+        try {
+            res = await page.request.get(url, {
+                headers: { Authorization: token },
+                failOnStatusCode: false,
+            })
+        } catch {
+            await page.waitForTimeout(3_000)
+            continue // ECONNRESET / refused during the restart-rollback window — retry
+        }
+        if (res.status() === 401 || res.status() === 403) {
+            token = await superuserToken(page).catch(() => token)
+        }
+        if (res.ok()) {
+            const body = (await res.json().catch(() => null)) as {
+                id?: string
+                status?: string
+                action?: string
+                error?: string
+            } | null
+            if (body && body.action === 'install') {
+                last = `${body.action}/${body.status ?? '?'}`
+                const isStale = notId != null && body.id === notId
+                if (!isStale && body.status === wantStatus) return
+                if (!isStale && body.status === 'success') {
+                    throw new Error(`${slug} install reached 'success' — expected '${wantStatus}'`)
+                }
+            }
+        }
+        await page.waitForTimeout(3_000)
+    }
+    throw new Error(
+        `${slug} did not reach install/${wantStatus} within ${timeoutMs}ms (last=${last})`
+    )
+}
+
+// Waits for a post-restart rollback to surface on the install-log row (the boot
+// reconciler marks the stranded 'running' row 'rolled_back').
+async function waitForRolledBack(
+    page: Page,
+    slug: string,
+    timeoutMs: number,
+    notId?: string | null
+) {
+    await pollInstallTerminal(page, slug, 'rolled_back', timeoutMs, notId)
+}
+
+// Waits for a build-pipeline failure (e.g. expo export) that aborts BEFORE the
+// symlink swap to surface as a 'failed' install-log row.
+async function waitForFailed(page: Page, slug: string, timeoutMs: number, notId?: string | null) {
+    await pollInstallTerminal(page, slug, 'failed', timeoutMs, notId)
 }
 
 // Reads pkg_registry.version for a slug via the superuser API — the
@@ -693,6 +808,130 @@ test.describe('todo version change', () => {
         // Before that poll existed the modal hung forever on "Installing Package…";
         // this assertion is the regression guard for that hang.
         await expect(page.getByText('Installation Complete')).toBeVisible({ timeout: 120_000 })
+    })
+
+    // --- Rollback / build-failure fixtures -------------------------------------
+    // These run right after the healthy v1.0.0 install so every rollback has a
+    // known-good build (v1.0.0) to roll back TO. Each rollback restores the DB +
+    // flips the symlink back to v1.0.0, leaving the registry at 1.0.0 — transparent
+    // to the later phases. Titles match the run-todo-install.sh phase greps.
+
+    test('buggy-server install rolls back to the healthy build', async ({ page }) => {
+        // Build + activate succeed; the new binary then PANICS in todo.Register at
+        // bootstrap (before app.Start), so its health probe never answers and the
+        // entrypoint restores the DB + flips current back to the v1.0.0 build. The
+        // boot reconciler marks this install's stranded log row 'rolled_back'.
+        test.setTimeout(2_700_000) // 45 min — full go build + expo export before the failed probe
+
+        await loginAsSuperuserWithRetry(page)
+        // Snapshot the prior todo row (the v1 install's success row) so the wait
+        // ignores it until the buggy install's row lands.
+        const priorId = await latestOpId(page, 'todo')
+
+        await page.getByRole('button', { name: 'Install package' }).click()
+        await page
+            .getByRole('textbox', { name: 'Package source', exact: true })
+            .fill(TODO_SPEC_BUGGY_SERVER)
+        await page.getByRole('button', { name: 'Install', exact: true }).click()
+
+        // Ground truth: the install builds, activates, exit-75 restarts onto the
+        // buggy build, whose probe fails → rollback → the reconciler surfaces
+        // 'rolled_back' on the install-log row.
+        await waitForRolledBack(page, 'todo', 2_400_000, priorId)
+    })
+
+    test('buggy-server rolled back: v1.0.0 restored and app healthy', async ({ page }) => {
+        test.setTimeout(300_000)
+        await loginAsSuperuserWithRetry(page)
+
+        // The rollback reverted the DB + symlink to the v1.0.0 build, so the
+        // registry version is unchanged at 1.0.0 (the buggy build's commitRegistry
+        // never ran — the restore reverted that write away).
+        await waitForRegistryVersion(page, 'todo', '1.0.0', 60_000)
+        // v1 schema only — the rollback discarded any buggy-build effect.
+        await waitForCollection(page, 'tags', false, 30_000)
+        await waitForCollection(page, 'todo_tags', false, 30_000)
+
+        // The most-recent todo install row is the rolled-back one (proof the
+        // reconciler ran). Read it directly (waitForOpStatus throws on rolled_back).
+        const token = await superuserToken(page)
+        const res = await page.request.get('/api/admin/packages/status/todo', {
+            headers: { Authorization: token },
+            failOnStatusCode: false,
+        })
+        expect(res.ok()).toBeTruthy()
+        const body = (await res.json()) as { status?: string; action?: string }
+        expect(body.action).toBe('install')
+        expect(body.status, 'the boot reconciler must mark the stranded row rolled_back').toBe(
+            'rolled_back'
+        )
+    })
+
+    test('buggy-migration install rolls back to the healthy build', async ({ page }) => {
+        // Build + activate succeed; the new binary then fails its `serve` boot when
+        // PocketBase applies the pending UP migration (RunAllMigrations, fatal
+        // before the HTTP listener binds), so /api/health never answers and the
+        // entrypoint rolls back to v1.0.0. The reconciler marks the row 'rolled_back'.
+        test.setTimeout(2_700_000) // 45 min
+
+        await loginAsSuperuserWithRetry(page)
+        const priorId = await latestOpId(page, 'todo')
+
+        await page.getByRole('button', { name: 'Install package' }).click()
+        await page
+            .getByRole('textbox', { name: 'Package source', exact: true })
+            .fill(TODO_SPEC_BUGGY_MIGRATION)
+        await page.getByRole('button', { name: 'Install', exact: true }).click()
+
+        await waitForRolledBack(page, 'todo', 2_400_000, priorId)
+    })
+
+    test('buggy-migration rolled back: v1.0.0 restored and app healthy', async ({ page }) => {
+        test.setTimeout(300_000)
+        await loginAsSuperuserWithRetry(page)
+
+        await waitForRegistryVersion(page, 'todo', '1.0.0', 60_000)
+        // The buggy migration threw before committing, so no schema effect lands;
+        // v1 schema only.
+        await waitForCollection(page, 'tags', false, 30_000)
+        await waitForCollection(page, 'todo_tags', false, 30_000)
+
+        const token = await superuserToken(page)
+        const res = await page.request.get('/api/admin/packages/status/todo', {
+            headers: { Authorization: token },
+            failOnStatusCode: false,
+        })
+        expect(res.ok()).toBeTruthy()
+        const body = (await res.json()) as { status?: string; action?: string }
+        expect(body.action).toBe('install')
+        expect(
+            body.status,
+            'a failing UP migration at serve boot must roll back and mark the row rolled_back'
+        ).toBe('rolled_back')
+    })
+
+    test('buggy-fe install fails at expo export, current build untouched', async ({ page }) => {
+        // A broken screens/_layout.tsx makes `expo export --platform web` fail in
+        // the pipeline, BEFORE the DB backup / symlink swap. Expect status 'failed'
+        // at the expo-export step, NO restart, current build untouched, server up.
+        test.setTimeout(2_700_000) // 45 min — pnpm + go build run before expo export fails
+
+        await loginAsSuperuserWithRetry(page)
+        const priorId = await latestOpId(page, 'todo')
+
+        await page.getByRole('button', { name: 'Install package' }).click()
+        await page
+            .getByRole('textbox', { name: 'Package source', exact: true })
+            .fill(TODO_SPEC_BUGGY_FE)
+        await page.getByRole('button', { name: 'Install', exact: true }).click()
+
+        // The pipeline fails at expo export → the job marks the row 'failed'.
+        await waitForFailed(page, 'todo', 1_800_000, priorId) // up to 30 min
+
+        // No restart happened — the server is still up on the unchanged build and
+        // the registry version is still 1.0.0.
+        expect(await registryVersion(page, 'todo')).toBe('1.0.0')
+        await waitForCollection(page, 'tags', false, 20_000) // still v1 schema
     })
 
     test('v1.0.0 is live, has no tags schema, and an org exists', async ({ page }) => {

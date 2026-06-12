@@ -16,6 +16,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 WS_ROOT="$(cd "${APP_DIR}/.." && pwd)"
 
+# Load admin credentials from the workspace-root .env so a real run uses the
+# operator's superuser instead of the hardcoded fallbacks baked into the spec.
+# The spec runs in an isolated /tmp sandbox (so its TS loader can't reach the app
+# tsconfig — see the sandbox build below), which also puts it out of reach of the
+# `loadEnv` upward .env walk; so the runner reads the keys here and forwards them
+# into the sandbox via run_phase, the same way it forwards PW_BASE_URL etc.
+# Precedence matches @tinycld/core/lib/load-env: an already-exported shell var
+# wins over the .env file value (so CI / an explicit `ADMIN_USER_LOGIN=… ./run…`
+# still takes effect). Both keys are optional — the spec falls back when unset.
+if [ -f "${WS_ROOT}/.env" ]; then
+    for _k in ADMIN_USER_LOGIN ADMIN_USER_PW; do
+        # Only pull from .env when the var isn't already set in the environment.
+        if [ -z "$(eval "printf '%s' \"\${${_k}:-}\"")" ]; then
+            _v=$(grep -E "^${_k}=" "${WS_ROOT}/.env" | tail -1 | cut -d= -f2-)
+            [ -n "${_v}" ] && export "${_k}=${_v}"
+        fi
+    done
+    unset _k _v
+fi
+
 CONTAINER=tinycld-todo-test
 BASE_URL="${PW_BASE_URL:-http://localhost:7090}"
 LOG_DIR="${SCRIPT_DIR}/todo-install-logs"
@@ -72,14 +92,22 @@ dump_logs() {
 
 wait_healthy() {
     local label="$1"
-    for i in $(seq 1 120); do
+    # Optional second arg: timeout in seconds (default 120). The FIRST cold boot
+    # does the most work before /api/health answers — schema-type generation,
+    # bundled-package seeding, and base-build archiving — so it gets a wider budget
+    # than the per-restart waits, which only re-serve an already-built tree. Under
+    # a loaded host (back-to-back image builds) the cold boot can exceed 120s; that
+    # is a slow-but-healthy boot, not a failure, so don't declare the container dead
+    # prematurely.
+    local timeout="${2:-120}"
+    for i in $(seq 1 "${timeout}"); do
         if curl -sf "${BASE_URL}/api/health" >/dev/null 2>&1; then
             echo "[runner] ${label}: healthy after ${i}s"
             return 0
         fi
         sleep 1
     done
-    echo "[runner] ERROR: ${label}: container never became healthy" >&2
+    echo "[runner] ERROR: ${label}: container never became healthy (waited ${timeout}s)" >&2
     dump_logs
     return 1
 }
@@ -155,8 +183,10 @@ docker run -d --name "${CONTAINER}" -p 7090:7090 \
 # full install trace live even if a later step hangs.
 start_live_log
 
-# 3. Wait for first-boot health.
-wait_healthy "first boot"
+# 3. Wait for first-boot health. The cold boot (schema gen + bundled-package seed
+# + base-build archive) is the heaviest startup and can run past the default 120s
+# on a loaded host, so give it a wider budget — a slow boot here is not a failure.
+wait_healthy "first boot" 300
 
 # 4. Scrape the first-run bootstrap token from logs. The server prints a
 #    `${url}/admin?token=…` line on first boot; the path doesn't matter here —
@@ -211,6 +241,8 @@ run_phase() {
         PW_TODO_SETUP_TOKEN="${TOKEN}" \
         PW_CORE_CUR="${CORE_CUR:-}" \
         PW_CORE_NEXT="${CORE_NEXT:-}" \
+        ADMIN_USER_LOGIN="${ADMIN_USER_LOGIN:-}" \
+        ADMIN_USER_PW="${ADMIN_USER_PW:-}" \
         RUN_TODO_INSTALL_TEST=1 \
         CI=true FORCE_COLOR=0 \
         ./node_modules/.bin/playwright test --reporter=line,list -g "${grep_expr}"
@@ -248,6 +280,37 @@ await_restart() {
     start_live_log                            # re-attach to the restarted container
 }
 
+# Waits out an install-class exit-75 restart whose NEW build FAILS its health
+# probe and gets ROLLED BACK by the entrypoint. Differs from await_restart: the
+# OLD (rolled-back-to) binary is what comes back up, and we must NOT call
+# assert_backup_committed (whose message is about a healthy commit). After the
+# buggy build's probe boot we assert the rollback actually happened on disk:
+#   - the armed backup is GONE — restore_db_from_backup consumed it (same disarmed
+#     end-state as a commit, but reached via restore, not deletion). A LEFTOVER
+#     armed backup here would mean neither commit nor rollback fired.
+#   - /workspace/.previous-build exists (the symlink was flipped back to it).
+# The .rollback-pending breadcrumb is written and then consumed by the boot
+# reconciler on the SAME boot, so by the time wait_healthy returns it is already
+# gone — do NOT assert it here (it would be racy); the spec asserts the durable
+# 'rolled_back' op status instead.
+await_rollback() {
+    local label="$1"
+    echo "[runner] waiting for ${label} rollback"
+    wait_unhealthy "${label} rollback down"   # the buggy build's probe boot / old server exit
+    wait_healthy "${label} post-rollback"     # the OLD (rolled-back-to) binary comes back up
+    if [ -f "${PB_DATA_DIR}/.db-backup-armed" ] || [ -f "${PB_DATA_DIR}/data.db.backup" ]; then
+        echo "[runner] ERROR: ${label}: armed DB backup still present after rollback — restore did not disarm" >&2
+        ls -la "${PB_DATA_DIR}" 2>&1 | sed 's/^/[runner]   /' || true
+        dump_logs
+        exit 1
+    fi
+    if ! docker exec "${CONTAINER}" test -f /workspace/.previous-build; then
+        echo "[runner] WARN: ${label}: /workspace/.previous-build absent after rollback" >&2
+    fi
+    echo "[runner] ${label}: rollback landed (DB restored + disarmed, serving the prior build)"
+    start_live_log                            # re-attach to the restarted container
+}
+
 # The flow has THREE install-class restarts (install-v1, upgrade-v2,
 # downgrade-v1). Phases that don't trigger a restart (the verify/tag steps) run
 # in the same invocation as the step before them where possible, but here each
@@ -256,6 +319,41 @@ await_restart() {
 # Phase 1 — bootstrap the superuser, then install todo pinned to v1.0.0.
 run_phase 'bootstrap|install @tinycld/todo' 'bootstrap + install v1.0.0'
 await_restart "post-install"
+
+# --- Rollback / build-failure fixtures -----------------------------------------
+# These run right after the healthy v1.0.0 install so every rollback has a known-
+# good build (v1.0.0) to roll back TO. Each rollback restores the DB + flips the
+# symlink back to v1.0.0, so the registry stays at 1.0.0 and the later phases
+# (verify v1.0.0, upgrade, …) are unaffected. See run-todo-install design notes.
+
+# Phase 1a — server-panic rollback fixture. The new binary panics in todo.Register
+# at bootstrap (before app.Start), so /api/health never answers and the entrypoint
+# rolls back to v1.0.0. The boot reconciler then marks the stranded install-log row
+# 'rolled_back'.
+run_phase 'buggy-server install rolls back' 'buggy-server rollback'
+await_rollback "post-buggy-server"
+
+# Phase 1b — verify the server-panic rollback landed: rolled_back status, v1.0.0
+# still live, app healthy. (Title avoids the substring 'rollback landed' so the
+# existing Phase 8 grep doesn't also select it.)
+run_phase 'buggy-server rolled back' 'verify buggy-server rollback'
+
+# Phase 1c — failing-UP-migration rollback fixture. The build activates and exits
+# 75; the new binary fails its serve boot when PocketBase applies the pending UP
+# migration (RunAllMigrations, fatal before the HTTP listener binds) → health probe
+# never answers → entrypoint rolls back to v1.0.0.
+run_phase 'buggy-migration install rolls back' 'buggy-migration rollback'
+await_rollback "post-buggy-migration"
+
+# Phase 1d — verify the migration rollback landed: rolled_back, v1.0.0 still live,
+# the buggy migration left no schema effect. (Title avoids 'rollback landed'.)
+run_phase 'buggy-migration rolled back' 'verify buggy-migration rollback'
+
+# Phase 1e — fe build-failure fixture. A broken screens/_layout.tsx makes
+# `expo export --platform web` fail in the pipeline, BEFORE the symlink swap → op
+# status 'failed', current build untouched, NO restart.
+run_phase 'buggy-fe install fails at expo export' 'buggy-fe build-failure'
+# (no await_* — a build-time failure never swaps/restarts.)
 
 # Phase 2 — verify v1.0.0 is live (no tags schema) and seed an org + a todo.
 run_phase 'v1.0.0 is live' 'verify v1.0.0'

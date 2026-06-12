@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { defineConfig, devices } from '@playwright/test'
 
 // Self-contained Playwright config for the docker-image smoke test. Talks
@@ -9,6 +10,21 @@ import { defineConfig, devices } from '@playwright/test'
 // BASE_URL: where the container's HTTP listener is reachable.
 // SETUP_TOKEN: scraped from `docker logs <container>` and exported as
 //   PW_SETUP_TOKEN before invoking playwright.
+
+// Pull workspace .env (ADMIN_USER_LOGIN / ADMIN_USER_PW, …) into process.env for
+// a DIRECT local run of this config (`npx playwright test` from tests/install/),
+// where @tinycld/core resolves and the cwd is inside the workspace so loadEnv's
+// upward .env walk reaches the root. Best-effort: when this config is copied into
+// the runner's isolated /tmp sandbox the helper isn't installed, so the require
+// throws and we skip it — there the runner forwards the vars itself (see
+// run-todo-install.sh). loadEnv never overwrites an already-set var, so a
+// forwarded value still wins.
+try {
+    createRequire(import.meta.url)('@tinycld/core/lib/load-env').loadEnv()
+} catch {
+    // Sandbox (helper absent) or any load error — fall through to env/fallbacks.
+}
+
 const BASE_URL = process.env.PW_BASE_URL ?? 'http://localhost:7090'
 
 export default defineConfig({
