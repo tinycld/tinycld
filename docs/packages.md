@@ -44,7 +44,7 @@ Three kinds of code live in the ecosystem:
 | Kind | Where it lives | Git | Has `manifest.ts`? | Discovered how |
 |---|---|---|---|---|
 | **App shell** | `tinycld/` (the repo root) | own repo | n/a | it *is* the runner |
-| **`@tinycld/core`** | nested inside the shell at `tinycld/core/` | **no separate repo** | **no** | wired in explicitly |
+| **`@tinycld/core`** | nested inside the shell repo at `tinycld/core/` | **no separate repo** | **no** | wired in explicitly |
 | **Feature packages** | sibling repos (`mail/`, `contacts/`, `calc/`, `calendar/`, `drive/`, `text/`, `google-takeout-import/`) | each its own repo + remote | **yes** | auto-discovered |
 
 The defining structural rule: **a directory is a feature package iff it
@@ -55,12 +55,12 @@ treated as a library, not a feature.
 ~/code/tinycld/                       # pnpm workspace root (package.json + pnpm-workspace.yaml)
     node_modules/
         @tinycld/
-            core     -> ../../tinycld/core    # symlink (link-members.ts, local-only)
-            mail     -> ../../mail            # symlink
+            core     -> ../../tinycld/core  # pnpm workspace symlink
+            mail     -> ../../mail          # pnpm workspace symlink
             contacts -> ../../contacts
             ...
     tinycld/                          # app shell = repo root (the only runnable thing)
-        core/                         # @tinycld/core — nested library (own package.json, no manifest.ts)
+        core/                         # @tinycld/core — nested member (own package.json, no manifest.ts)
         node_modules/                 # heavy deps (React/RN/Expo/…) live HERE
         scripts/generate.ts           # the generator (+ gen-*.ts helpers)
         tinycld.packages.ts           # getPackages() — reads workspace members
@@ -171,22 +171,25 @@ Three rules enforced here:
 
 ### `tsconfig.json`
 
-Siblings extend core's package base tsconfig and declare **only** their own
-source self-alias. `@tinycld/core/*`, `@tinycld/app-generated/*`, and any
-cross-sibling deps all resolve **by package name** through the
-`node_modules/@tinycld/*` symlinks plus each package's `exports` map under
-`moduleResolution: bundler` — so no sibling tsconfig needs a `paths` entry for
-any `@tinycld/*` dependency:
+Siblings extend `@tinycld/core/tsconfig.package-base.json` (resolved by package
+name) and declare only their own `~/tinycld/<slug>/*` self-alias. Every
+`@tinycld/*` dependency — `@tinycld/core`, `@tinycld/app-generated`, and any
+cross-sibling dep — resolves **by package name** through the
+`node_modules/@tinycld/*` symlinks + each package's `exports` map under
+`moduleResolution: bundler`, so **no sibling tsconfig needs a `paths` entry for
+any `@tinycld/*` dep**:
 
 ```jsonc
 {
-    "extends": "@tinycld/core/tsconfig.package-base.json",   // by name, via the symlink
+    "extends": "@tinycld/core/tsconfig.package-base.json",
     "compilerOptions": {
-        "baseUrl": ".", "rootDir": "..", "noEmit": true, "preserveSymlinks": false,
+        "baseUrl": ".",
         "paths": {
-            "~/tinycld/contacts/*": ["./tinycld/contacts/*"]   // own source — the ONLY path entry needed
+            "~/tinycld/contacts/*": ["./tinycld/contacts/*"] // own source only
         }
-    }
+    },
+    "include": ["tinycld/**/*.ts", "tinycld/**/*.tsx"],
+    "exclude": ["node_modules", "server", "pb-migrations", "tests/**/*.spec.ts"]
 }
 ```
 
@@ -793,8 +796,8 @@ Where changes go:
 | Change | Repo to edit |
 |---|---|
 | A feature's behavior | that sibling repo (`mail/`, `calc/`, …) — commit & push there |
-| Shared lib / UI / providers | `tinycld/core/` (nested `@tinycld/core`, in the shell repo) |
-| Bundler config, scripts, generator, `app/` tree, provider wiring | `tinycld/` (app shell repo root) |
+| Shared lib / UI / providers | `tinycld/core/` (`@tinycld/core`, nested in the shell repo) |
+| Bundler config, scripts, generator, `app/` tree, provider wiring | `tinycld/` (app shell) |
 
 **Never commit generator output.** These paths are gitignored and regenerate
 on every `packages:generate`:

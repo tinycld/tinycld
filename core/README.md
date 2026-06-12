@@ -1,8 +1,8 @@
 # @tinycld/core
 
-The shared runtime + UI library for the TinyCld ecosystem. A standalone git
-repo, cloned as a workspace member sibling of the app shell and the feature
-packages (it is no longer bundled inside the app shell).
+The shared runtime + UI library for the TinyCld ecosystem. A nested member
+at `tinycld/core/` inside the `tinycld` app shell repo — its own package,
+imported as `@tinycld/core`.
 
 It exposes the app-facing surface of core via `@tinycld/core/*` subpaths:
 `~/lib/*`, `~/ui/*`, `~/components/*`, `~/types/*`, the top-level `Providers`,
@@ -15,12 +15,12 @@ thumbnails, render, realtime, sharelink) and core's PocketBase migrations.
 
 ## Layout
 
-Clone the workspace members as siblings under one root:
+Core is nested inside the `tinycld` shell repo; feature packages are sibling
+repos under the same workspace root:
 
 ```sh
-git clone <app-remote>            ~/code/tinycld/app       # the app shell (member "app")
-git clone git@github.com:tinycld/core.git  ~/code/tinycld/core   # this repo
-git clone git@github.com:tinycld/contacts.git ~/code/tinycld/contacts  # any feature package
+git clone git@github.com:tinycld/tinycld.git    ~/code/tinycld/tinycld    # app shell — core lives at tinycld/core/ (this repo)
+git clone git@github.com:tinycld/contacts.git   ~/code/tinycld/contacts   # any feature package
 ```
 
 ## Public surface
