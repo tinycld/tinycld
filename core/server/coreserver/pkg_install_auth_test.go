@@ -74,6 +74,24 @@ func newGuardUser(t *testing.T, app core.App, email string) *core.Record {
 	return user
 }
 
+// newSuperuserRecord creates a PB superuser and returns the record, for tests
+// that need to set re.Auth to a superuser identity (whose id lives in the
+// _superusers collection, not users).
+func newSuperuserRecord(t *testing.T, app core.App, email string) *core.Record {
+	t.Helper()
+	supers, err := app.FindCollectionByNameOrId(core.CollectionNameSuperusers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	su := core.NewRecord(supers)
+	su.SetEmail(email)
+	su.SetPassword("Superuser1234!")
+	if err := app.Save(su); err != nil {
+		t.Fatalf("save superuser: %v", err)
+	}
+	return su
+}
+
 // grantSuperAdmin inserts a super_admins row for the given user.
 func grantSuperAdmin(t *testing.T, app core.App, userID string) {
 	t.Helper()

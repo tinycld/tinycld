@@ -108,9 +108,11 @@ func handleGrantSuperAdmin(app core.App, re *core.RequestEvent) error {
 
 	record := core.NewRecord(collection)
 	record.Set("user", user.Id)
-	// re.Auth is nil for a PB-superuser request (no app-user identity); leave
-	// created_by empty in that case rather than recording a non-user id.
-	if re.Auth != nil {
+	// created_by is a relation into the users collection. A PB-superuser request
+	// still carries a non-nil re.Auth (its id lives in _superusers, not users),
+	// so recording it here fails the relation validation with a 500. Only stamp
+	// created_by for an app-user grantor; leave it empty for a superuser.
+	if re.Auth != nil && !re.Auth.IsSuperuser() {
 		record.Set("created_by", re.Auth.Id)
 	}
 	if err := app.Save(record); err != nil {

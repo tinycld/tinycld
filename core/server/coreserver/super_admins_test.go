@@ -66,6 +66,63 @@ func TestHandleGrantSuperAdmin_ByEmail(t *testing.T) {
 	}
 }
 
+// TestHandleGrantSuperAdmin_AsSuperuserGrantor is the regression guard for the
+// grant 500: when the request is authenticated as a PB superuser, re.Auth is
+// non-nil (its id lives in _superusers, NOT users), so blindly stamping it into
+// created_by — a relation into users — fails relation validation and 500s. The
+// handler must skip created_by for a superuser grantor. The /admin console logs
+// in as the PB superuser, so this is the common path the bug report hit.
+func TestHandleGrantSuperAdmin_AsSuperuserGrantor(t *testing.T) {
+	app, _ := newSuperAdminsTestApp(t)
+	user := newGuardUser(t, app, "grantedbysuper@test.local")
+
+	re := newJSONRequestEvent(app, "POST", `{"email":"grantedbysuper@test.local"}`)
+	re.Auth = newSuperuserRecord(t, app, "granting-super@test.local")
+
+	if err := handleGrantSuperAdmin(app, re); err != nil {
+		t.Fatalf("grant by a superuser grantor returned error (the 500 regression): %v", err)
+	}
+	if !isSuperAdmin(app, user.Id) {
+		t.Fatal("user should be a super admin after a superuser-initiated grant")
+	}
+
+	// created_by must be empty — the superuser's id is not a valid users relation.
+	rec, err := app.FindFirstRecordByFilter(
+		"super_admins", "user = {:user}", map[string]any{"user": user.Id})
+	if err != nil {
+		t.Fatalf("find granted row: %v", err)
+	}
+	if got := rec.GetString("created_by"); got != "" {
+		t.Fatalf("created_by should be empty for a superuser grantor, got %q", got)
+	}
+}
+
+// TestHandleGrantSuperAdmin_AsAppUserGrantor pins the complementary case: an
+// app-user grantor (an existing super admin minting another) IS recorded in
+// created_by, since their id is a valid users relation.
+func TestHandleGrantSuperAdmin_AsAppUserGrantor(t *testing.T) {
+	app, _ := newSuperAdminsTestApp(t)
+	grantor := newGuardUser(t, app, "appgrantor@test.local")
+	grantSuperAdmin(t, app, grantor.Id)
+	target := newGuardUser(t, app, "appgranted@test.local")
+
+	re := newJSONRequestEvent(app, "POST", `{"email":"appgranted@test.local"}`)
+	re.Auth = grantor
+
+	if err := handleGrantSuperAdmin(app, re); err != nil {
+		t.Fatalf("grant by an app-user grantor returned error: %v", err)
+	}
+
+	rec, err := app.FindFirstRecordByFilter(
+		"super_admins", "user = {:user}", map[string]any{"user": target.Id})
+	if err != nil {
+		t.Fatalf("find granted row: %v", err)
+	}
+	if got := rec.GetString("created_by"); got != grantor.Id {
+		t.Fatalf("created_by = %q, want grantor id %q", got, grantor.Id)
+	}
+}
+
 func TestHandleGrantSuperAdmin_DuplicateRejected(t *testing.T) {
 	app, _ := newSuperAdminsTestApp(t)
 	user := newGuardUser(t, app, "dupe@test.local")
