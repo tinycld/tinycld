@@ -1,8 +1,29 @@
 #!/bin/sh
 
-# Build the image from your PR branch (so the server has your Go changes):
+set -e
 
-docker build -t tinycld:testing-build -f Dockerfile ..   # context = workspace root
+IMAGE=tinycld:testing-build
+CONTAINER=tinycld-testing
+
+# Stop the container (in case it outlives `docker run`) and remove the locally
+# built image, so Ctrl-C leaves nothing behind. Best-effort: every step is
+# guarded so a missing container/image doesn't make cleanup itself fail.
+cleanup() {
+    echo
+    echo "[local-docker] cleaning up…"
+    docker stop "$CONTAINER" >/dev/null 2>&1 || true
+    docker rm "$CONTAINER" >/dev/null 2>&1 || true
+    docker rmi "$IMAGE" >/dev/null 2>&1 || true
+}
+
+# EXIT covers a clean stop; INT/TERM cover Ctrl-C and `kill` (the trap on EXIT
+# still runs afterwards, so cleanup happens exactly once via the EXIT handler).
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Build the image from your PR branch (so the server has your Go changes):
+docker build -t "$IMAGE" -f Dockerfile ..   # context = workspace root
 
 # Run it on plain HTTP for local testing.
 #
@@ -16,8 +37,10 @@ docker build -t tinycld:testing-build -f Dockerfile ..   # context = workspace r
 # runtime user, so fresh root-owned mounts are fixed up automatically.
 mkdir -p /tmp/tinycld-pb_data /tmp/tinycld-builds /tmp/tinycld-releases
 
+# Foreground run so Ctrl-C is forwarded to the container; --rm drops the
+# container, and the EXIT trap then removes the image.
 docker run --rm -p 7090:7090 \
-    -v /tmp/tinycld-pb_data:/workspace/tinycld/pb_data \
-    -v /tmp/tinycld-builds:/workspace/tinycld/builds \
-    -v /tmp/tinycld-releases:/workspace/tinycld/releases \
-    --name tinycld-testing tinycld:testing-build
+    -v /tmp/tinycld-pb_data:/workspace/pb_data \
+    -v /tmp/tinycld-builds:/workspace/builds \
+    -v /tmp/tinycld-releases:/workspace/releases \
+    --name "$CONTAINER" "$IMAGE"

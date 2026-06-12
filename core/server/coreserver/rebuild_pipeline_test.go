@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunBuildPipeline_StepOrder(t *testing.T) {
@@ -112,6 +113,81 @@ func TestPnpmLineProgress(t *testing.T) {
 		if pct < progPnpmInstall || pct >= progGoBuild {
 			t.Errorf("pnpm milestone %d outside install band [%d,%d)", pct, progPnpmInstall, progGoBuild)
 		}
+	}
+}
+
+// TestPnpmProgressThrottle_Allow checks the bare throttle window: the first call
+// passes, calls inside the window are dropped, and a call once the window has
+// elapsed passes and re-arms the window.
+func TestPnpmProgressThrottle_Allow(t *testing.T) {
+	base := time.Unix(0, 0)
+	th := newPnpmProgressThrottle()
+
+	if !th.allow(base) {
+		t.Fatal("first call should always pass")
+	}
+	if th.allow(base.Add(pnpmProgressInterval - time.Nanosecond)) {
+		t.Fatal("call just inside the window should be dropped")
+	}
+	if !th.allow(base.Add(pnpmProgressInterval)) {
+		t.Fatal("call once the window elapsed should pass")
+	}
+	// The pass above re-armed the window from base+interval, so another call a
+	// hair later is dropped again.
+	if th.allow(base.Add(pnpmProgressInterval + time.Second)) {
+		t.Fatal("window should re-arm from the last passed call")
+	}
+}
+
+// TestReportPnpmProgress_Throttled asserts the throttle applies ONLY to the
+// high-frequency "Progress:" lines: a burst within one window forwards just the
+// first, while other milestones ("Packages:", "Done") always pass even while a
+// Progress window is still open.
+func TestReportPnpmProgress_Throttled(t *testing.T) {
+	now := time.Unix(0, 0)
+	prev := nowFunc
+	nowFunc = func() time.Time { return now }
+	defer func() { nowFunc = prev }()
+
+	job := &installJob{ID: "j", Done: make(chan struct{})}
+	throttle := newPnpmProgressThrottle()
+
+	// Five "Progress:" lines arriving within one second — only the first passes.
+	for i := 0; i < 5; i++ {
+		now = now.Add(200 * time.Millisecond)
+		reportPnpmProgress(job, "Progress: resolved 1324, reused 1142, downloaded 43, added 1250", throttle)
+	}
+	if got := len(job.LogLines); got != 1 {
+		t.Fatalf("Progress: burst within window forwarded %d updates, want 1", got)
+	}
+
+	// Non-"Progress:" milestones are NOT throttled — they forward even though the
+	// Progress window opened above is still wide open.
+	reportPnpmProgress(job, "Packages: +42", throttle)
+	reportPnpmProgress(job, "Done in 807ms using pnpm v11.3.0", throttle)
+	if got := len(job.LogLines); got != 3 {
+		t.Fatalf("non-Progress milestones were throttled; total = %d, want 3", got)
+	}
+
+	// A further Progress: line is still gated (its window never re-armed because
+	// the milestones above don't touch the throttle).
+	now = now.Add(time.Second)
+	reportPnpmProgress(job, "Progress: resolved 1400, reused 1200, downloaded 60, added 1300", throttle)
+	if got := len(job.LogLines); got != 3 {
+		t.Fatalf("Progress: line within window forwarded; total = %d, want 3", got)
+	}
+
+	// Cross the window — the next Progress: line forwards.
+	now = now.Add(pnpmProgressInterval)
+	reportPnpmProgress(job, "Progress: resolved 1500, reused 1300, downloaded 80, added 1400", throttle)
+	if got := len(job.LogLines); got != 4 {
+		t.Fatalf("Progress: line past window dropped; total = %d, want 4", got)
+	}
+
+	// Non-milestone lines never forward.
+	reportPnpmProgress(job, "some postinstall noise", throttle)
+	if got := len(job.LogLines); got != 4 {
+		t.Fatalf("non-milestone line forwarded; total = %d, want 4", got)
 	}
 }
 

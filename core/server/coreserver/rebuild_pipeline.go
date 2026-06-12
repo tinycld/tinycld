@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // cmdRunner runs a command in dir; injectable for tests. Mirrors runCmd.
@@ -18,6 +19,14 @@ type streamingRunner func(onLine func(string), dir, name string, args ...string)
 // tests can stub the long real install while still exercising runPnpmInstall's
 // progress parsing.
 var pnpmStream streamingRunner = runCmdStreaming
+
+// pnpmProgressInterval is the minimum gap between forwarded "Progress:" lines.
+// pnpm's non-TTY reporter emits one every few hundred ms on a large graph, which
+// floods the SSE stream and makes the bar look busier than the install actually
+// is; we forward at most one per window so the UI reflects real pace. The first
+// one always passes (so the bar starts moving promptly). Other, lower-frequency
+// milestones are not throttled.
+const pnpmProgressInterval = 10 * time.Second
 
 // stageReleaseFn moves the exported dist/ into release-staging/<id>/ and returns
 // the staged dir; injectable so the pipeline step-order test stays filesystem-free.
@@ -142,11 +151,34 @@ func wrapStep(step string, err error) error {
 // generator + link-members run via the workspace postinstall, so their output
 // streams here too.
 func runPnpmInstall(job *installJob, buildDir string) error {
+	throttle := newPnpmProgressThrottle()
 	_, err := pnpmStream(
-		func(line string) { reportPnpmProgress(job, line) },
+		func(line string) { reportPnpmProgress(job, line, throttle) },
 		buildDir, "pnpm", "install", "--no-frozen-lockfile",
 	)
 	return err
+}
+
+// pnpmProgressThrottle rate-limits forwarded "Progress:" lines to one per
+// pnpmProgressInterval. It is not safe for concurrent use; runCmdStreaming
+// invokes the line callback serially from a single reader goroutine.
+type pnpmProgressThrottle struct {
+	last    time.Time
+	started bool
+}
+
+func newPnpmProgressThrottle() *pnpmProgressThrottle { return &pnpmProgressThrottle{} }
+
+// allow reports whether a milestone reached at time now may be forwarded. The
+// first call always passes (so the bar starts moving immediately); afterwards a
+// call passes only once pnpmProgressInterval has elapsed since the last pass.
+func (t *pnpmProgressThrottle) allow(now time.Time) bool {
+	if t.started && now.Sub(t.last) < pnpmProgressInterval {
+		return false
+	}
+	t.started = true
+	t.last = now
+	return true
 }
 
 // reportPnpmProgress maps a single pnpm output line onto the install progress
@@ -155,7 +187,13 @@ func runPnpmInstall(job *installJob, buildDir string) error {
 // +N" / "Done" markers; we nudge the bar a little on each so it visibly moves,
 // and surface the raw line in the step log. Unrecognized lines (postinstall /
 // generator output) advance nothing but still log.
-func reportPnpmProgress(job *installJob, line string) {
+//
+// Only the high-frequency "Progress:" lines are throttle-gated (pnpm emits one
+// every few hundred ms on a large graph, flooding the SSE stream); they forward
+// at most one update per pnpmProgressInterval. The lower-frequency milestones
+// ("Packages: +N", "Done", generator) always pass so they never get swallowed by
+// a still-open Progress window.
+func reportPnpmProgress(job *installJob, line string, throttle *pnpmProgressThrottle) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return
@@ -163,6 +201,9 @@ func reportPnpmProgress(job *installJob, line string) {
 	pct := pnpmLineProgress(line)
 	if pct == 0 {
 		return // not a milestone line — keep the bar where it is
+	}
+	if strings.HasPrefix(line, "Progress:") && !throttle.allow(nowFunc()) {
+		return // a "Progress:" line still inside the throttle window — drop it
 	}
 	emitProgress(job, "Installing dependencies", pct, line)
 }
