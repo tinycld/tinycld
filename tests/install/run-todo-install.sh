@@ -2,7 +2,14 @@
 # Local runner for the todo-install integration test. Builds a TinyCld
 # image from the CURRENT working tree (so the git-spec validation change is
 # present), boots it, scrapes the first-run /admin bootstrap token, runs the
-# Playwright spec in a standalone sandbox, and tears the container down.
+# Playwright spec straight from this directory against the assembled local
+# workspace, and tears the container down.
+#
+# The Playwright spec runs locally with the workspace's own `playwright`
+# (`pnpm exec playwright`) and config — no isolated /tmp sandbox. A fully
+# assembled workspace already has @playwright/test (and @expo, which the spec's
+# tsconfig chain reaches) hoisted at the root, so the loader-walk hang that the
+# bare CI sandbox in smoke-test-image.yml works around does not occur here.
 #
 # Env knobs:
 #   IMAGE=<tag>   Skip the build and test an existing image tag.
@@ -18,13 +25,13 @@ WS_ROOT="$(cd "${APP_DIR}/.." && pwd)"
 
 # Load admin credentials from the workspace-root .env so a real run uses the
 # operator's superuser instead of the hardcoded fallbacks baked into the spec.
-# The spec runs in an isolated /tmp sandbox (so its TS loader can't reach the app
-# tsconfig — see the sandbox build below), which also puts it out of reach of the
-# `loadEnv` upward .env walk; so the runner reads the keys here and forwards them
-# into the sandbox via run_phase, the same way it forwards PW_BASE_URL etc.
-# Precedence matches @tinycld/core/lib/load-env: an already-exported shell var
-# wins over the .env file value (so CI / an explicit `ADMIN_USER_LOGIN=… ./run…`
-# still takes effect). Both keys are optional — the spec falls back when unset.
+# playwright.config.ts also calls loadEnv() and, run from inside the workspace,
+# its upward .env walk reaches this same root — so this block is mostly a no-op
+# now. It is kept for explicit precedence: reading the keys here lets the runner
+# forward them through run_phase, and matches @tinycld/core/lib/load-env, where
+# an already-exported shell var wins over the .env file value (so CI / an explicit
+# `ADMIN_USER_LOGIN=… ./run…` still takes effect). Both keys are optional — the
+# spec falls back when unset.
 if [ -f "${WS_ROOT}/.env" ]; then
     for _k in ADMIN_USER_LOGIN ADMIN_USER_PW; do
         # Only pull from .env when the var isn't already set in the environment.
@@ -209,34 +216,29 @@ if [ -z "${TOKEN}" ]; then
 fi
 echo "[runner] scraped bootstrap token (${#TOKEN} chars)"
 
-# 5. Build the standalone Playwright sandbox (mirrors smoke-test-image.yml):
-#    @playwright/test installed locally + the spec + config copied in + a
-#    minimal tsconfig so the TS loader doesn't walk up to app/tsconfig.json.
-PW_VER=$(node -e "console.log(require('${APP_DIR}/package.json').devDependencies['@playwright/test'].replace(/^[\^~>=<]+/, ''))")
-PW_ROOT=$(mktemp -d)
-echo "[runner] sandbox at ${PW_ROOT} (playwright ${PW_VER})"
-(
-    cd "${PW_ROOT}"
-    npm init -y >/dev/null
-    npm install --ignore-scripts "@playwright/test@${PW_VER}" >/dev/null 2>&1
-    cat > tsconfig.json <<'TSCFG'
-{ "compilerOptions": { "target": "es2022", "module": "commonjs", "moduleResolution": "node", "esModuleInterop": true, "strict": false, "skipLibCheck": true } }
-TSCFG
-    cp "${SCRIPT_DIR}/playwright.config.ts" .
-    cp "${SCRIPT_DIR}/todo-install.spec.ts" .
-    ./node_modules/.bin/playwright install --with-deps chromium >/dev/null
-)
+# 5. Ensure the Playwright browser binary is present. The spec and its config
+#    run in place from ${SCRIPT_DIR} via the workspace's own `playwright`; the
+#    only host-side prerequisite is the chromium download, which is a no-op once
+#    cached. Run it from the app member so `pnpm exec` resolves the hoisted CLI.
+echo "[runner] ensuring chromium is installed for playwright"
+(cd "${APP_DIR}" && pnpm exec playwright install chromium >/dev/null)
 
 # Runs a subset of the serial spec, selected by a title grep. The first phase
 # needs the bootstrap token (for the first-run /admin wizard); later phases
-# don't. Each
-# call shares the container's persisted state from the prior phase. $1 is the
-# title grep, $2 a human label for failure messages.
+# don't. Each call shares the container's persisted state from the prior phase.
+# $1 is the title grep, $2 a human label for failure messages. Runs from
+# ${SCRIPT_DIR} so the config's `testDir: '.'` resolves to this directory.
+#
+# The spec is passed by filename as a positional filter so ONLY todo-install.spec
+# is loaded — the sibling setup-and-packages.spec.ts in this dir shares a
+# 'bootstrap superuser via /admin wizard' test title, and without this filter the
+# `bootstrap` grep in phase 1 would also select it and run it against the same
+# container with the wrong setup token.
 run_phase() {
     local grep_expr="$1" label="$2"
     echo "[runner] running ${label}"
     (
-        cd "${PW_ROOT}"
+        cd "${SCRIPT_DIR}"
         PW_BASE_URL="${BASE_URL}" \
         PW_TODO_SETUP_TOKEN="${TOKEN}" \
         PW_CORE_CUR="${CORE_CUR:-}" \
@@ -245,7 +247,7 @@ run_phase() {
         ADMIN_USER_PW="${ADMIN_USER_PW:-}" \
         RUN_TODO_INSTALL_TEST=1 \
         CI=true FORCE_COLOR=0 \
-        ./node_modules/.bin/playwright test --reporter=line,list -g "${grep_expr}"
+        pnpm exec playwright test todo-install.spec.ts --reporter=line,list -g "${grep_expr}"
     ) || { echo "[runner] ${label} phase failed"; dump_logs; exit 1; }
 }
 
