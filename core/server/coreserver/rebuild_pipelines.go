@@ -248,7 +248,7 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 	job.Status = "success"
 	jobLogf(job, "revert succeeded in %s — restarting onto build %s", monoSince(revertStart), targetID)
 	finalizeInstallLog(app, logRecord, "success", "", job.LogLines)
-	emitProgress(job, "Restarting", progRestart, "Activating reverted build")
+	emitProgress(job, "Build complete", progRestart, "Restarting to activate reverted build")
 	emitComplete(job, "success", "")
 	// Revert is also a post-activation success path (schema synced + symlink
 	// flipped against the live DB), so arm the surviving backup the same way the

@@ -19,6 +19,14 @@ type TerminalStatus = Exclude<OperationStatus, 'running'>
 
 const POLL_INTERVAL_MS = 2_000
 
+// The durable job-status poll only needs to run near the END of an operation —
+// the window where the SSE stream can't deliver the verdict. We arm it once the
+// live stream has carried the bar to within this band of the finish (the restart
+// that drops the stream always follows the final pre-restart steps), or
+// immediately if the stream dies. Polling the whole multi-minute build is wasted
+// requests: the stream covers progress fine until the restart seam.
+const POLL_ARM_PROGRESS = 90
+
 // useInstallProgress tracks a background package operation from two sources that
 // each cover the other's blind spot:
 //
@@ -28,6 +36,11 @@ const POLL_INTERVAL_MS = 2_000
 //   - the job-status endpoint (backed by pkg_install_log, finalized BEFORE the
 //     restart) is the durable TERMINAL truth, polled by the unique job id so a
 //     re-run for the same package can never resolve against a stale row.
+//
+// The poll is the safety net for the restart seam, not a parallel live source, so
+// it's DEFERRED: it starts only once the stream has reached POLL_ARM_PROGRESS or
+// the stream has errored out (the restart killed it). Until then the SSE stream
+// alone drives the UI, so the early/middle stages don't double up requests.
 //
 // Whichever source reports a terminal state first resolves the modal; later
 // reports are ignored. Returns the accumulated steps + resolved status + error.
@@ -40,6 +53,10 @@ export function useInstallProgress(
     const [steps, setSteps] = useState<ProgressStep[]>([])
     const [status, setStatus] = useState<OperationStatus>('running')
     const [error, setError] = useState<string | null>(null)
+    // Set once the stream dies (restart) — arms the poll AND is itself a poll
+    // trigger, distinct from the progress-band arm so a stream that drops before
+    // 90% still starts the poll promptly.
+    const [streamGone, setStreamGone] = useState(false)
 
     // Keep the success callback fresh without retriggering the source effects
     // when the caller passes a new closure each render. The ref read inside
@@ -67,6 +84,7 @@ export function useInstallProgress(
         setSteps([])
         setStatus('running')
         setError(null)
+        setStreamGone(false)
     }, [isActive, jobId])
 
     useEffect(() => {
@@ -74,13 +92,20 @@ export function useInstallProgress(
         return subscribeProgressStream(jobId, authToken, {
             onStep: step => setSteps(prev => [...prev, step]),
             onResolved: resolve,
+            onStreamGone: () => setStreamGone(true),
         })
     }, [isActive, jobId, authToken, resolve])
 
+    // Arm the durable poll only at the restart seam: once the live bar crosses
+    // POLL_ARM_PROGRESS, or the stream has dropped. Before that the SSE stream is
+    // the sole source, so we don't poll job-status during the long build.
+    const maxProgress = steps.length > 0 ? steps[steps.length - 1].progress : 0
+    const pollArmed = streamGone || maxProgress >= POLL_ARM_PROGRESS
+
     useEffect(() => {
-        if (!isActive || !jobId) return
+        if (!isActive || !jobId || !pollArmed) return
         return pollJobOutcome(jobId, authToken, resolve)
-    }, [isActive, jobId, authToken, resolve])
+    }, [isActive, jobId, authToken, resolve, pollArmed])
 
     return { steps, status, error }
 }
@@ -88,14 +113,20 @@ export function useInstallProgress(
 interface StreamHandlers {
     onStep: (step: ProgressStep) => void
     onResolved: (status: TerminalStatus, error?: string) => void
+    // Fired once when the stream is truly CLOSED before delivering a terminal
+    // event — i.e. the restart (or a genuine drop) killed it. It does NOT resolve
+    // the modal; it hands off to the durable job-status poll, which is the
+    // authoritative arbiter of success/failure across the restart seam.
+    onStreamGone: () => void
 }
 
 // subscribeProgressStream wires the SSE EventSource to the live progress
 // handlers and returns an unsubscribe. A transient drop auto-reconnects (the
-// server replays history + any terminal event); only a connection that's truly
-// CLOSED before any terminal event is surfaced as a failure — and even then the
-// job-status poll is the authoritative arbiter, so this is the fast path, not
-// the safety net.
+// server replays history + any terminal event). A connection that's truly CLOSED
+// before any terminal event hands off to the poll via onStreamGone rather than
+// resolving — every successful install-class op ends by restarting the server,
+// which drops the stream, so a closed stream is the EXPECTED path to the verdict,
+// not a failure. The job-status poll then reports the real outcome.
 function subscribeProgressStream(
     jobId: string,
     authToken: string,
@@ -119,14 +150,12 @@ function subscribeProgressStream(
     source.addEventListener('error', () => {
         // Ignore reconnect blips (CONNECTING/OPEN) and any post-terminal close —
         // a stalled-but-open stream is indistinguishable from "still running", so
-        // acting early would freeze the bar. A genuinely dead stream is reported,
-        // but the job-status poll resolves the modal either way.
+        // acting early would freeze the bar. A genuinely CLOSED stream means the
+        // restart dropped it: arm the poll (onStreamGone) and let it arbitrate,
+        // rather than resolving 'failed' here and racing the poll's success.
         if (terminal || source.readyState !== EventSource.CLOSED) return
         terminal = true
-        handlers.onResolved(
-            'failed',
-            'Lost connection to the install stream — check the server logs for the outcome.'
-        )
+        handlers.onStreamGone()
     })
 
     return () => source.close()

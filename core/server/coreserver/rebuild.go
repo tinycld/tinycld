@@ -72,7 +72,11 @@ const (
 	progSyncMig       = 93
 	progActivate      = 96
 	progCommit        = 98
-	progRestart       = 99
+	// The final milestone: the new build is fully assembled and recorded, and the
+	// only thing left is the exit-75 relaunch onto it. Emitting 100 here lets the
+	// bar read "done" before the restart drops the stream; the durable job-status
+	// poll then confirms success across the relaunch.
+	progRestart = 100
 )
 
 // rebuildDeps holds the orchestrator's steps as injectable functions so the
@@ -207,7 +211,7 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	if d.finalizeLog != nil {
 		d.finalizeLog("success", "")
 	}
-	emitProgress(job, "Restarting", progRestart, "Activating new build")
+	emitProgress(job, "Build complete", progRestart, "Restarting to activate build")
 	emitComplete(job, "success", "")
 	d.restart()
 	return nil
