@@ -69,11 +69,10 @@ export function useInstallProgress(
     // applies the FIRST terminal outcome and is a no-op afterward (status leaves
     // 'running' exactly once).
     const resolve = useRef((resolved: TerminalStatus, errMsg?: string) => {
-        setStatus(prev => {
-            if (prev !== 'running') return prev
-            if (resolved === 'success') onSuccessRef.current()
-            return resolved
-        })
+        // Keep this updater pure — the success side-effect (onSuccess) runs in the
+        // status-watching effect below, not here, so StrictMode's double-invoke of
+        // the updater can't fire it twice. status leaves 'running' exactly once.
+        setStatus(prev => (prev === 'running' ? resolved : prev))
         if (resolved === 'failed') {
             setError(prev => prev ?? errMsg ?? 'The operation failed — check the server logs.')
         }
@@ -106,6 +105,14 @@ export function useInstallProgress(
         if (!isActive || !jobId || !pollArmed) return
         return pollJobOutcome(jobId, authToken, resolve)
     }, [isActive, jobId, authToken, resolve, pollArmed])
+
+    // Fire the success callback exactly once when the operation resolves
+    // successfully. Kept out of the resolve() updater so it stays pure (no
+    // double-fire under StrictMode); status only ever transitions to 'success'
+    // once, so this effect runs the callback a single time.
+    useEffect(() => {
+        if (status === 'success') onSuccessRef.current()
+    }, [status])
 
     return { steps, status, error }
 }
