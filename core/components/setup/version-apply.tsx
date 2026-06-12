@@ -2,7 +2,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { AlertTriangle } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
-import { Pressable, Text, TextInput, View } from 'react-native'
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 import type { DropReport, PendingChange } from './use-package-versions'
 import { formatVersion } from './version-compare'
 
@@ -105,7 +105,7 @@ export function ConfirmChangesModal({
     return (
         <Modal isOpen onClose={handleCancel}>
             <ModalBackdrop />
-            <ModalContent className="w-[520px] p-4 gap-3">
+            <ModalContent className="w-[520px] max-h-[560px] p-4 gap-3">
                 <View className="flex-row gap-2 items-center">
                     {hasDowngrade && <AlertTriangle size={18} color={dangerColor} />}
                     <Text className="text-foreground" style={{ fontSize: 19, fontWeight: '600' }}>
@@ -113,11 +113,16 @@ export function ConfirmChangesModal({
                     </Text>
                 </View>
 
-                <ChangeTable
-                    pendingChanges={pendingChanges}
-                    reports={reports}
-                    loadingReports={loadingReports}
-                />
+                {/* Only the (potentially long) change list scrolls; the confirm
+                    input + action buttons below stay pinned so a large
+                    multi-package downgrade can never push them off-screen. */}
+                <ScrollView className="max-h-[340px]">
+                    <ChangeTable
+                        pendingChanges={pendingChanges}
+                        reports={reports}
+                        loadingReports={loadingReports}
+                    />
+                </ScrollView>
 
                 {hasDowngrade && (
                     <Text className="text-muted-foreground" style={{ fontSize: 11 }}>
@@ -178,8 +183,9 @@ export function ConfirmChangesModal({
 // ChangeTable lists every staged change as one row: the package + version move
 // on the left, and its data-loss summary on the right — so a multi-package set
 // shows each package's impact inline (not just the first), and a downgrade's
-// dropped schema is read alongside the package it belongs to. Rows render with
-// no inner scroll so no change can hide below a fold.
+// dropped schema is read alongside the package it belongs to. The caller wraps
+// this list in a bounded ScrollView so a long set scrolls without pushing the
+// confirm controls off-screen.
 function ChangeTable({
     pendingChanges,
     reports,
