@@ -166,6 +166,17 @@ func TestResolveGrantTarget_PrefersIDThenEmail(t *testing.T) {
 	if err != nil || got.Id != user.Id {
 		t.Fatalf("resolve by email failed: got=%v err=%v", got, err)
 	}
+	// When BOTH an id and a (different user's) email are supplied, the id must
+	// win — resolveGrantTarget checks UserID before Email. Pin that precedence,
+	// since the test name promises it.
+	other := newGuardUser(t, app, "other@test.local")
+	got, err = resolveGrantTarget(app, grantSuperAdminRequest{UserID: user.Id, Email: "other@test.local"})
+	if err != nil {
+		t.Fatalf("resolve by id+email errored: %v", err)
+	}
+	if got.Id != user.Id {
+		t.Fatalf("id should win over email: got %s (other=%s), want %s", got.Id, other.Id, user.Id)
+	}
 	if _, err := resolveGrantTarget(app, grantSuperAdminRequest{}); err == nil {
 		t.Fatal("resolve with neither id nor email should error")
 	}
