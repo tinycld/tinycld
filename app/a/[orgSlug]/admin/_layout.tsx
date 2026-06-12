@@ -1,4 +1,5 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
+import { SkeletonLayout } from '@tinycld/core/components/workspace/SkeletonLayout'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useSuperAdminStatus } from '@tinycld/core/lib/use-is-super-admin'
 import { Redirect, Slot } from 'expo-router'
@@ -15,9 +16,9 @@ export default function AdminLayout() {
     // Wait for the answer to settle before redirecting — acting on the transient
     // initial `false` would bounce a legitimate super admin who deep-links here on
     // a cold load (the previous safety relied implicitly on auth-store preload
-    // ordering). Render nothing until then.
+    // ordering). Show the skeleton until then, matching the parent/sibling guards.
     if (!isReady) {
-        return null
+        return <SkeletonLayout />
     }
     if (!isSuperAdmin) {
         return <Redirect href={orgHref('')} />
