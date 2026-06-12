@@ -184,6 +184,16 @@ class Store(private val context: Context) {
     private fun promotePendingIfAny() {
         val pending = readJSON(pendingFile) ?: return
         if (!pending.has("id") || !pending.has("dir")) return
+        val pendingId = pending.optString("id")
+        // Idempotency guard for the crash window — see the iOS module for the full
+        // rationale. This runs before the bridge loads; a kill after `current` is
+        // written but before `pending` is deleted would otherwise re-run promote on
+        // the next boot and clobber `previous` (the rollback target). If pending
+        // already equals current, the promote completed: clear pending and return.
+        if (pendingId == readJSON(currentFile)?.optString("id")) {
+            pendingFile.delete()
+            return
+        }
         readJSON(currentFile)?.let { writeJSON(previousFile, it) }
         writeJSON(currentFile, pending)
         pendingFile.delete()

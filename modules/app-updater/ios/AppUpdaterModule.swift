@@ -150,7 +150,20 @@ final class Store {
     }
 
     private func promotePendingIfAny() {
-        guard let p = readJSON(pendingURL), p["id"] is String, p["dir"] is String else { return }
+        guard let p = readJSON(pendingURL),
+            let pendingId = p["id"] as? String, p["dir"] is String else { return }
+        // Idempotency guard for the crash window. This runs before the React bridge
+        // loads, so the OS can kill us mid-promote. The three writes below are not
+        // atomic as a set and `pending` is removed LAST — without this guard, a kill
+        // after `current` is written but before `pending` is removed would, on the
+        // next boot, re-run promote and overwrite `previous` (the good rollback
+        // target) with the bundle we just promoted, destroying the safety net. If
+        // the pending id already equals current, the promote already completed: just
+        // clear the leftover pending pointer and return.
+        if pendingId == (readJSON(currentURL)?["id"] as? String) {
+            try? fm.removeItem(at: pendingURL)
+            return
+        }
         if let cur = readJSON(currentURL) { writeJSON(previousURL, cur) }
         writeJSON(currentURL, p)
         try? fm.removeItem(at: pendingURL)
