@@ -9,7 +9,7 @@ export function redirectSystemPath({ path }: { path: string; initial: boolean })
         // path (/demo), depending on platform and whether it's the cold-start
         // initial URL. Normalize to the pathname.
         const pathname = path.startsWith('http') ? new URL(path).pathname : path
-        if (pathname === '/demo') {
+        if (pathname === '/demo' || pathname.startsWith('/demo/')) {
             return '/p/demo'
         }
     } catch {

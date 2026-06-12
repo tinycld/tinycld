@@ -53,9 +53,16 @@ final class Store {
     // healthy bundle.
     private let rollbackAfterLaunches = 3
 
-    func currentId() -> String? { readJSON(currentURL)?["id"] as? String }
-    private func currentDir() -> String? { readJSON(currentURL)?["dir"] as? String }
-    private func currentHash() -> String? { readJSON(currentURL)?["hash"] as? String }
+    /// Reads a string field from current.json, treating an empty string as nil —
+    /// matching the Android store's `optString(...).ifEmpty { null }`, so an empty
+    /// pointer field is uniformly "absent" across platforms.
+    private func currentString(_ key: String) -> String? {
+        guard let v = readJSON(currentURL)?[key] as? String, !v.isEmpty else { return nil }
+        return v
+    }
+    func currentId() -> String? { currentString("id") }
+    private func currentDir() -> String? { currentString("dir") }
+    private func currentHash() -> String? { currentString("hash") }
 
     func stagePending(dir: String, id: String, hash: String) throws {
         writeJSON(pendingURL, ["id": id, "dir": dir, "hash": hash])

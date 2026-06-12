@@ -27,8 +27,7 @@ var (
 
 // loadMigrationOwners reads and caches the file→slug map. A missing file yields
 // an empty map (dev layouts / partial assemblies); callers degrade gracefully.
-// The cache is reloadable via resetMigrationOwnersCache — the version-change
-// pipeline regenerates the map mid-run, so a one-shot cache would go stale.
+// The map is cached for the process lifetime (loaded once on first use).
 func loadMigrationOwners() map[string]string {
 	migrationOwnersMu.Lock()
 	defer migrationOwnersMu.Unlock()
@@ -50,10 +49,6 @@ func loadMigrationOwners() map[string]string {
 	}
 	return migrationOwnersMap
 }
-
-// resetMigrationOwnersCache forces the next loadMigrationOwners to re-read the
-// owner map from disk. Called after the generator rewrites it during a version
-// change so subsequent migrationsForPackage lookups reflect the new file set.
 
 // parseMigrationOwners decodes the file→slug JSON, returning ok=false on invalid
 // JSON. Pure (no I/O) so the query helpers can be exercised in tests.
@@ -105,9 +100,6 @@ func findMigrationOwnersJSON() string {
 	}
 	return ""
 }
-
-// packageForMigration returns the owning package slug for a migration filename,
-// or "" if unknown.
 
 // migrationsForPackage returns the migration filenames owned by the given slug,
 // sorted ascending (timestamp order). Empty if the slug owns none or the map is
