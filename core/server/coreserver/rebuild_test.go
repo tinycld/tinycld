@@ -510,6 +510,9 @@ func TestRebuild_PruneFailure_StillSucceeds(t *testing.T) {
 	if err := rebuildWith(job, m, deps); err != nil {
 		t.Fatalf("prune failure must NOT fail an already-live build: %v", err)
 	}
+	if restored {
+		t.Fatal("must NOT restore the DB on a prune failure (build is already live)")
+	}
 	if !restarted {
 		t.Fatal("a live build must still restart even if prune fails")
 	}
