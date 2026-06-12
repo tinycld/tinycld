@@ -45,6 +45,14 @@ func createSuperAdminsCollection(t *testing.T, app core.App, usersID string) {
 	c.Fields.Add(&core.RelationField{
 		Name: "created_by", CollectionId: usersID, MaxSelect: 1,
 	})
+	// Mirror the migration's autodate fields so handlers that sort by -created
+	// (handleListSuperAdmins) resolve a real column rather than erroring with
+	// invalid sort field "created".
+	c.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+	c.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
+	// Mirror the migration's unique index on user so duplicate grants are
+	// rejected at the DB layer too, not only by the handler's isSuperAdmin check.
+	c.AddIndex("idx_super_admins_user", true, "user", "")
 	if err := app.Save(c); err != nil {
 		t.Fatalf("save super_admins collection: %v", err)
 	}
