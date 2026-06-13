@@ -119,6 +119,44 @@ func TestStageNativeBundlesIntoRelease(t *testing.T) {
 	}
 }
 
+// TestArchiveNativeBundlesToRelease guards the install-pipeline fix that promotes
+// staged native bundles into the durable build archive's release dir — the exact
+// path /api/app/bundle (serveBuildFile) reads. Before this, the manifest
+// advertised a bundle URL whose file 404'd (the natives sat only in the transient
+// release-staging dir), so a mobile client found an update but could never
+// download it. The relative layout under native/<platform>/ must be preserved so
+// the recorded bundle_file/asset paths resolve.
+func TestArchiveNativeBundlesToRelease(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("TINYCLD_STATE_DIR", state)
+	buildID := "build-123"
+
+	// Lay out a staged release dir as the pipeline does: <stageDir>/native/<plat>/...
+	stageDir := t.TempDir()
+	staged := filepath.Join(stageDir, "native", "ios", "_expo/static/js/ios")
+	if err := os.MkdirAll(staged, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staged, "entry.hbc"), []byte("BUNDLE"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := archiveNativeBundlesToRelease(buildID, stageDir); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	// The file must now live where serveBuildFile reads it:
+	// buildArchiveFor(buildID).release/native/<platform>/<bundle_file>.
+	want := filepath.Join(buildArchiveFor("", buildID).release, "native", "ios", "_expo/static/js/ios/entry.hbc")
+	got, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatalf("expected archived bundle at %s: %v", want, err)
+	}
+	if string(got) != "BUNDLE" {
+		t.Fatalf("archived bundle content = %q, want %q", got, "BUNDLE")
+	}
+}
+
 // TestSerializeBundlesRoundTripsToResolveManifest is the write→read contract
 // test for native OTA bundles: the install pipeline writes serializeBundles()
 // output into the pkg_build `bundles` JSON field, and the /api/app/update
