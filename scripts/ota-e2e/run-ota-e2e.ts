@@ -9,6 +9,11 @@ const SERVER_URL = process.env.OTA_E2E_SERVER_URL ?? 'http://localhost:7200'
 const SUPERUSER_EMAIL = process.env.OTA_E2E_SUPERUSER_EMAIL
 const SUPERUSER_PASSWORD = process.env.OTA_E2E_SUPERUSER_PASSWORD
 const SIM_UDID = process.env.IPHONE_SIMULATOR_UDID
+// When set, skip the Release build/boot + seed and only run precheck + poll. The
+// shell driver (run-ota-dry-run.sh) sets this because it already built, booted,
+// and pointed the app at the server itself — this script is then just the
+// assertion step. Run standalone (unset) it builds the sim itself.
+const SKIP_BUILD = process.env.OTA_E2E_SKIP_BUILD === '1'
 // `|| <default>` covers unset, empty, non-numeric (NaN), and 0 in one expression —
 // a bare Number(...) of a non-numeric override would yield NaN and fire setTimeout
 // almost immediately, producing a confusing instant "timeout".
@@ -81,24 +86,28 @@ async function main() {
         },
     })
 
-    if (!SIM_UDID) fail('IPHONE_SIMULATOR_UDID is not set (in .env or the environment).')
-    console.log(
-        `[ota-e2e] building + booting Release on ${SIM_UDID} (app must already be connected to ${SERVER_URL} — see README)…`
-    )
-    buildChild = spawn('scripts/ios-simulator.sh', ['--prod'], {
-        cwd: APP_DIR,
-        stdio: 'inherit',
-        env: { ...process.env },
-    })
-    const child = buildChild
-    // spawn emits 'error' (not an exit code) when the script is missing or not
-    // executable — without this listener Node would throw it unhandled and crash
-    // past our friendly fail().
-    child.on('error', err => fail(`could not spawn ios-simulator.sh: ${(err as Error).message}`))
-    child.on('exit', code => {
-        if (code !== 0) fail(`ios-simulator.sh --prod exited ${code} (build/boot failed).`)
-        console.log('[ota-e2e] app installed + launched; waiting for OTA reload…')
-    })
+    if (SKIP_BUILD) {
+        console.log('[ota-e2e] OTA_E2E_SKIP_BUILD=1 — app already built/booted/connected; polling…')
+    } else {
+        if (!SIM_UDID) fail('IPHONE_SIMULATOR_UDID is not set (in .env or the environment).')
+        console.log(
+            `[ota-e2e] building + booting Release on ${SIM_UDID} (app must already be connected to ${SERVER_URL} — see README)…`
+        )
+        buildChild = spawn('scripts/ios-simulator.sh', ['--prod'], {
+            cwd: APP_DIR,
+            stdio: 'inherit',
+            env: { ...process.env },
+        })
+        const child = buildChild
+        // spawn emits 'error' (not an exit code) when the script is missing or not
+        // executable — without this listener Node would throw it unhandled and crash
+        // past our friendly fail().
+        child.on('error', err => fail(`could not spawn ios-simulator.sh: ${(err as Error).message}`))
+        child.on('exit', code => {
+            if (code !== 0) fail(`ios-simulator.sh --prod exited ${code} (build/boot failed).`)
+            console.log('[ota-e2e] app installed + launched; waiting for OTA reload…')
+        })
+    }
 
     try {
         const observed = await reloaded
