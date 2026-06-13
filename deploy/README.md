@@ -87,6 +87,17 @@ with Docker (Hetzner CX-class ≈ €4/mo and up). That file is the source of tr
 for the self-host path and the
 [installation guide](https://tinycld.org/docs/installation).
 
+### Without Docker (bare-metal systemd)
+
+Prefer a single long-lived box with **no container runtime**? See
+[`bare-metal/`](./bare-metal/README.md) — a `systemd` service built from source on
+the host, with the app terminating TLS itself via autocert (no reverse proxy):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/tinycld/tinycld/main/deploy/bare-metal/install.sh \
+  | DOMAIN=tinycld.example.com bash
+```
+
 ## Optional: offload file uploads to S3
 
 The SQLite database always needs the volume above, but **file uploads** can be
