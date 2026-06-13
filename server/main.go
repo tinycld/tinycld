@@ -12,7 +12,7 @@ import (
 )
 
 // defaultHTTPAddr is the loopback address tinycld serves on in dev when no
-// --http flag is given. The local-ssl-proxy in `bun run dev` listens on 7090
+// --http flag is given. The local-ssl-proxy in `pnpm run dev` listens on 7090
 // and forwards here, so this needs to match the SSL proxy's --target port.
 const defaultHTTPAddr = "127.0.0.1:7090"
 
@@ -31,7 +31,7 @@ func main() {
 	// explicit address and no domain args. PocketBase's autocert needs
 	// :80/:443 when domain args are present, so we don't override there.
 	// PB's own default for `serve` is 127.0.0.1:8090 — we override to 7090
-	// to match the SSL proxy in `bun run dev`. Injecting through os.Args
+	// to match the SSL proxy in `pnpm run dev`. Injecting through os.Args
 	// (rather than registering a flag default) keeps PB's flag schema
 	// untouched and lets explicit `--http :8090` overrides still work.
 	if coreserver.HasSubcommand("serve") && !coreserver.HasFlag("--http") && !coreserver.HasDomainArgs() {
