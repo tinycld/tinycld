@@ -327,6 +327,17 @@ func recordRebuildBuild(app core.App, m RebuildManifest, buildDir string, out bu
 	// an arbitrary unchanged member. version comes from the built manifest (semver),
 	// not the delta's git tag.
 	slug, version := changedMember(m, buildDir)
+
+	// Promote the staged native OTA bundles into the durable build archive so
+	// /api/app/bundle can serve them (see archiveNativeBundlesToRelease). Done
+	// before recording the row so a failed archive aborts BEFORE we advertise a
+	// bundle URL that would 404.
+	if len(out.bundles) > 0 {
+		if err := archiveNativeBundlesToRelease(m.BuildID, out.stageDir); err != nil {
+			return err
+		}
+	}
+
 	fields := map[string]any{
 		"build_id":        m.BuildID,
 		"pkg_slug":        slug,
@@ -338,6 +349,29 @@ func recordRebuildBuild(app core.App, m RebuildManifest, buildDir string, out bu
 	}
 	_, err := recordBuild(app, fields)
 	return err
+}
+
+// archiveNativeBundlesToRelease copies the staged native OTA bundles from the
+// transient release-staging dir (stageDir/native/) into the durable build
+// archive's release dir (buildArchiveFor(buildID).release/native/).
+//
+// This closes a gap in the install pipeline: the pipeline stages native bundles
+// into release-staging/<id>/native/ for the entrypoint's web promote_release, but
+// /api/app/bundle (serveBuildFile) and the revert/rollback path read from the
+// build archive's release/native/ — which nothing else populates for an install
+// build (only the base seed copies a release dir). Without this step the OTA
+// manifest advertises a bundle URL whose file 404s, so the app finds an update,
+// fails to download it, and never reloads. The relative layout under native/ is
+// preserved so the bundle_file/asset paths recorded in pkg_build resolve.
+func archiveNativeBundlesToRelease(buildID, stageDir string) error {
+	archiveRelease := buildArchiveFor("", buildID).release
+	if err := os.MkdirAll(archiveRelease, 0o755); err != nil {
+		return fmt.Errorf("create build archive release dir: %w", err)
+	}
+	if err := copyDir(filepath.Join(stageDir, "native"), filepath.Join(archiveRelease, "native")); err != nil {
+		return fmt.Errorf("archive native OTA bundles into release: %w", err)
+	}
+	return nil
 }
 
 // changedMember returns the registry slug + semver of the member the rebuild
