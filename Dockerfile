@@ -1,3 +1,11 @@
+# syntax=docker/dockerfile:1.7
+#
+# Requires BuildKit (the RUN --mount=type=cache lines below are BuildKit-only).
+# The deploy path (dokku) builds with BuildKit on. debug-docker-build.sh sets
+# DOCKER_BUILDKIT=1 to match — never build this with DOCKER_BUILDKIT=0, or the
+# cache mounts are silently ignored AND the `# syntax` directive is treated as a
+# plain comment (no error, just no caching).
+#
 # Build pipeline assumes the build context is the ASSEMBLED WORKSPACE ROOT:
 #
 #   <context>/                 # the pnpm workspace root (NOT a git repo)
@@ -64,7 +72,9 @@ FROM golang:1.25-trixie AS types-binary-builder
 WORKDIR /src
 COPY tinycld/core/server/ ./core/server/
 WORKDIR /src/core/server
-RUN CGO_ENABLED=0 go build -o /out/export-types ./cmd/export-types/
+RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    CGO_ENABLED=0 go build -o /out/export-types ./cmd/export-types/
 
 # Node stage: install the workspace (runs the generator), build the web app.
 FROM node:22-bookworm-slim AS web-builder
@@ -151,7 +161,17 @@ RUN printf 'fetchTimeout: 60000\nfetchRetries: 2\nfetchRetryMaxtimeout: 30000\n'
 # pnpm version pinned in package.json; --frozen-lockfile enforces the pinned
 # pnpm-lock.yaml for a reproducible image. The store lands in /workspace/.pnpm-store
 # (storeDir above), ready to be copied into the runtime image.
-RUN corepack enable && pnpm install --frozen-lockfile
+#
+# CACHE-MOUNT CAVEAT: we deliberately do NOT cache-mount /workspace/.pnpm-store
+# itself — that store is a REAL on-disk dir copied into the runtime image
+# (line ~440) so the in-app installer can relink offline. A cache mount is not
+# part of the layer filesystem, so mounting it there would make the later
+# `COPY --from=web-builder /workspace/.pnpm-store` copy an EMPTY dir and silently
+# defeat the whole reuse mechanism. Instead we cache-mount pnpm's separate
+# metadata/network cache (~/.cache/pnpm), which speeds the verify/metadata fetch
+# across rebuilds while leaving the real store intact for the runtime COPY.
+RUN --mount=type=cache,target=/root/.cache/pnpm,sharing=locked \
+    corepack enable && pnpm install --frozen-lockfile
 
 # Resolve the migration/hook symlinks the generator wrote under
 # tinycld/server/{pb_migrations,pb_hooks} into real files. They point at member
@@ -235,9 +255,18 @@ RUN set -eu \
 FROM golang:1.25-trixie AS go-builder
 
 # Install CGo dependencies for mupdf (thumbnail generation via go-fitz).
-RUN apt-get update \
-    && apt-get install -y libmupdf-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Cache-mount apt's archive + lists so repeated builds skip the re-download.
+# The mounts keep /var/cache/apt and /var/lib/apt/lists OUT of the image layer.
+# Debian's base image ships /etc/apt/apt.conf.d/docker-clean, which deletes
+# downloaded .debs in a post-invoke hook — that would empty the cache mount on
+# every run, so disable it for the duration of this RUN. The keep-downloaded-
+# packages line stops apt from auto-pruning the archive after install.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
+    && apt-get update \
+    && apt-get install -y libmupdf-dev
 
 WORKDIR /ws
 
@@ -257,8 +286,12 @@ COPY --from=web-builder /ws/go-mod-staging/ ./
 
 WORKDIR /ws/tinycld/server
 # Warm the module cache. Reused on every rebuild as long as none of the
-# go.mod/go.sum/go.work files copied above changed.
-RUN go mod download
+# go.mod/go.sum/go.work files copied above changed. The cache mount persists the
+# downloaded modules across builds even when the go.* manifests DO change (only
+# the delta re-downloads). Go's module cache is build-time only — the runtime
+# stage copies just the compiled binary + the toolchain dir, never this cache.
+RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
+    go mod download
 
 # Now bring in the full member trees the Go workspace spans: the merged member
 # (app server + nested core's Go module — the replace target), and each
@@ -280,11 +313,17 @@ WORKDIR /ws/tinycld/server
 # web-builder generated package_extensions.go and go.work but had no Go
 # toolchain to populate go.sum entries; `go work sync` does that now, offline
 # (module cache is warm from `go mod download` above) and only costs cycles
-# when go.work or any sibling go.mod changed.
-RUN if [ -f go.work ]; then go work sync; fi
+# when go.work or any sibling go.mod changed. Same module-cache mount as above so
+# any new go.sum entries it fetches persist.
+RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
+    if [ -f go.work ]; then go work sync; fi
 
-# Build the server binary.
-RUN CGO_ENABLED=1 GOOS=linux go build -o tinycld .
+# Build the server binary. Mount both the module cache (read) and the compiled-
+# object build cache (/root/.cache/go-build) so an unchanged-source rebuild is a
+# near-instant cache hit instead of a full CGO recompile against mupdf.
+RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
+    --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
+    CGO_ENABLED=1 GOOS=linux go build -o tinycld .
 
 
 # Final runtime stage
@@ -328,13 +367,20 @@ ENV FZ_VERSION="1.25.1"
 # swapping in the rebuilt binary. The Go server embeds a SQLite driver so the CLI
 # was never otherwise required; without it the install fails at "Backing up
 # database" with `exec: "sqlite3": not found`.
-RUN apt-get update \
+# Cache-mount apt's archive + lists across builds (see go-builder block for the
+# docker-clean / Keep-Downloaded-Packages rationale). Because the mounts keep the
+# archive OUT of the image layer, the trailing `apt-get clean` / `rm -rf lists`
+# are no longer needed to keep the layer small — autoremove still runs to drop
+# transitional build deps the install pulled in.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl git gcc g++ sqlite3 gnupg gosu \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && apt-get autoremove -y \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get autoremove -y
 
 # Make `pnpm` available on PATH for the in-app package installer, which runs
 # `pnpm install` at the workspace root (step 7 of the install pipeline). Node
@@ -394,12 +440,12 @@ WORKDIR /opt/tinycld-baked/tinycld
 # Compiled server binary, placed at the member root (resolveServerDir() returns
 # the binary's own dir; the in-app rebuild writes the live binary at
 # <buildDir>/tinycld/tinycld and runs the Go toolchain in <buildDir>/tinycld/server).
-COPY --from=go-builder /ws/tinycld/server/tinycld ./tinycld
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/server/tinycld ./tinycld
 
 # Per-release web bundle, staged by the web-builder. The entrypoint promotes
 # this on container start to /workspace/releases/. The public/ directory is
 # reserved for the marketing website.
-COPY --from=web-builder /ws/tinycld/release-staging /opt/tinycld-baked/tinycld/release-staging
+COPY --from=web-builder --chown=tinycld:tinycld /ws/tinycld/release-staging /opt/tinycld-baked/tinycld/release-staging
 RUN mkdir -p /opt/tinycld-baked/tinycld/public
 
 # Workspace-root files for the runtime scripts + in-app package-install pipeline.
@@ -409,11 +455,11 @@ RUN mkdir -p /opt/tinycld-baked/tinycld/public
 # in-app installer's postinstall re-runs it). They sit at /workspace (one
 # directory above /workspace/tinycld) so the symlinks
 # (node_modules/@tinycld/<x> → ../../<x>) still point at the members copied below.
-COPY --from=web-builder /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /opt/tinycld-baked/
-COPY --from=web-builder /ws/tinycld.packages.ts /opt/tinycld-baked/tinycld.packages.ts
-COPY --from=web-builder /ws/scripts /opt/tinycld-baked/scripts
-COPY --from=web-builder /ws/tests /opt/tinycld-baked/tests
-COPY --from=web-builder /ws/node_modules /opt/tinycld-baked/node_modules
+COPY --from=web-builder --chown=tinycld:tinycld /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /opt/tinycld-baked/
+COPY --from=web-builder --chown=tinycld:tinycld /ws/tinycld.packages.ts /opt/tinycld-baked/tinycld.packages.ts
+COPY --from=web-builder --chown=tinycld:tinycld /ws/scripts /opt/tinycld-baked/scripts
+COPY --from=web-builder --chown=tinycld:tinycld /ws/tests /opt/tinycld-baked/tests
+COPY --from=web-builder --chown=tinycld:tinycld /ws/node_modules /opt/tinycld-baked/node_modules
 
 # The pnpm content-addressable store, populated by the web-builder's
 # `pnpm install` (pinned to /workspace/.pnpm-store via the storeDir append in that
@@ -421,23 +467,23 @@ COPY --from=web-builder /ws/node_modules /opt/tinycld-baked/node_modules
 # Carrying it into the image is what lets the in-app installer's `pnpm install`
 # relink from the store (reused N, downloaded 0) instead of re-downloading the
 # whole dependency graph from the network on every package install/upgrade — the
-# root cause of the todo-install upgrade phase appearing to hang. The whole-tree
-# `chown -R tinycld:tinycld /workspace` below makes it readable+writable by the
-# runtime user (pnpm adds newly-fetched packages here on a genuine version bump).
-COPY --from=web-builder /workspace/.pnpm-store /workspace/.pnpm-store
+# root cause of the todo-install upgrade phase appearing to hang. The COPY's
+# --chown makes it readable+writable by the runtime user at copy time (pnpm adds
+# newly-fetched packages here on a genuine version bump).
+COPY --from=web-builder --chown=tinycld:tinycld /workspace/.pnpm-store /workspace/.pnpm-store
 
 # Feature siblings at /workspace/<x>. seed-db.ts (run by the reset-demo cron)
 # imports ../tinycld.seeds → each @tinycld/<feature>/seed, resolved through the
 # node_modules symlinks (node_modules/@tinycld/<x> → ../../<x>) into these member
 # dirs. They sit at /workspace so the symlinks resolve
 # (/workspace/node_modules/@tinycld/<x> → /workspace/<x>).
-COPY --from=web-builder /ws/contacts /opt/tinycld-baked/contacts
-COPY --from=web-builder /ws/mail /opt/tinycld-baked/mail
-COPY --from=web-builder /ws/calendar /opt/tinycld-baked/calendar
-COPY --from=web-builder /ws/drive /opt/tinycld-baked/drive
-COPY --from=web-builder /ws/calc /opt/tinycld-baked/calc
-COPY --from=web-builder /ws/text /opt/tinycld-baked/text
-COPY --from=web-builder /ws/google-takeout-import /opt/tinycld-baked/google-takeout-import
+COPY --from=web-builder --chown=tinycld:tinycld /ws/contacts /opt/tinycld-baked/contacts
+COPY --from=web-builder --chown=tinycld:tinycld /ws/mail /opt/tinycld-baked/mail
+COPY --from=web-builder --chown=tinycld:tinycld /ws/calendar /opt/tinycld-baked/calendar
+COPY --from=web-builder --chown=tinycld:tinycld /ws/drive /opt/tinycld-baked/drive
+COPY --from=web-builder --chown=tinycld:tinycld /ws/calc /opt/tinycld-baked/calc
+COPY --from=web-builder --chown=tinycld:tinycld /ws/text /opt/tinycld-baked/text
+COPY --from=web-builder --chown=tinycld:tinycld /ws/google-takeout-import /opt/tinycld-baked/google-takeout-import
 
 # The merged member's sub-trees the runtime + in-app installer need (everything
 # inside tinycld/ EXCEPT the binary and release-staging, which were placed above
@@ -454,31 +500,31 @@ COPY --from=web-builder /ws/google-takeout-import /opt/tinycld-baked/google-take
 # (node_modules/@tinycld/core → ../../core, …/mail → ../../../mail), so they must
 # be present at /workspace/tinycld/node_modules for the runtime in-app installer's
 # `expo export` to resolve @tinycld/* before its own pnpm install re-links them.
-COPY --from=go-builder /ws/tinycld/node_modules/ ./node_modules/
-COPY --from=go-builder /ws/tinycld/server/ ./server/
-COPY --from=go-builder /ws/tinycld/core/ ./core/
-COPY --from=go-builder /ws/tinycld/package-scripts/ ./package-scripts/
-COPY --from=go-builder /ws/tinycld/scripts/ ./scripts/
-COPY --from=go-builder /ws/tinycld/lib/ ./lib/
-COPY --from=go-builder /ws/tinycld/app/ ./app/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/node_modules/ ./node_modules/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/server/ ./server/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/core/ ./core/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/package-scripts/ ./package-scripts/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/scripts/ ./scripts/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/lib/ ./lib/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/app/ ./app/
 # plugins/ and modules/ are needed by the in-app installer's `expo export`:
 # app.json lists `./plugins/with-app-updater.cjs`, which getConfig() resolves
 # (a missing file fails config resolution before bundling even starts), and
 # metro.config.cjs maps the `app-updater` specifier to modules/app-updater/
 # (its web stub on web, index.ts on native) — so both subtrees must ship in the
 # runtime image, not just the dev tree.
-COPY --from=go-builder /ws/tinycld/plugins/ ./plugins/
-COPY --from=go-builder /ws/tinycld/modules/ ./modules/
-COPY --from=go-builder /ws/tinycld/public/ ./public/
-COPY --from=go-builder /ws/tinycld/assets/ ./assets/
-COPY --from=go-builder /ws/tinycld/tinycld.config.ts /ws/tinycld/tinycld.seeds.ts ./
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/plugins/ ./plugins/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/modules/ ./modules/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/public/ ./public/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/assets/ ./assets/
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/tinycld.config.ts /ws/tinycld/tinycld.seeds.ts ./
 # tsconfig.package-base.json is NOT at the merged-member root post-merge — it
 # lives in core (core/tsconfig.package-base.json, surfaced via @tinycld/core's
 # exports) and arrives with the `core/` COPY above. Members extend it by package
 # name, so no root copy is needed.
-COPY --from=go-builder /ws/tinycld/package.json /ws/tinycld/tsconfig.json ./
-COPY --from=go-builder /ws/tinycld/metro.config.cjs /ws/tinycld/babel.config.cjs ./
-COPY --from=go-builder /ws/tinycld/app.json /ws/tinycld/global.css /ws/tinycld/uniwind-types.d.ts /ws/tinycld/expo-env.d.ts ./
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/package.json /ws/tinycld/tsconfig.json ./
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/metro.config.cjs /ws/tinycld/babel.config.cjs ./
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/app.json /ws/tinycld/global.css /ws/tinycld/uniwind-types.d.ts /ws/tinycld/expo-env.d.ts ./
 
 # Point the runtime migrations dir at the generator/installer's migrations dir.
 # jsvm reads /workspace/tinycld/pb_migrations; the generator (and the in-app
@@ -490,12 +536,13 @@ COPY --from=go-builder /ws/tinycld/app.json /ws/tinycld/global.css /ws/tinycld/u
 # never run. Build-time (bundled) migrations live in server/pb_migrations too
 # (resolved real files from the go-builder COPY above), so this unifies build +
 # runtime + installer on one directory.
-RUN rm -rf ./pb_migrations && ln -s server/pb_migrations ./pb_migrations
+RUN rm -rf ./pb_migrations && ln -s server/pb_migrations ./pb_migrations \
+    && chown -h tinycld:tinycld ./pb_migrations
 
 # bundled-packages.json so core's coreserver.SyncBundledPackages can find it at
 # startup. Generated at tinycld/server/bundled-packages.json; the binary reads it
 # relative to its own dir, so place a copy at /workspace/tinycld for the boot-time seed.
-COPY --from=go-builder /ws/tinycld/server/bundled-packages.json ./bundled-packages.json
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/server/bundled-packages.json ./bundled-packages.json
 
 # Mutable state dirs at the workspace state root (resolveStateDir()==/workspace):
 # pb_data (the live DB), releases (promoted web bundles), builds (per-build trees).
@@ -503,24 +550,27 @@ COPY --from=go-builder /ws/tinycld/server/bundled-packages.json ./bundled-packag
 # symlink flip. The generated-types dir is code-adjacent and stays in the build
 # tree (coreserver.DefaultTypesDir() → <binaryDir>/core/types).
 RUN mkdir -p /workspace/pb_data /workspace/releases /workspace/builds \
-    && mkdir -p /opt/tinycld-baked/tinycld/core/types
+    && mkdir -p /opt/tinycld-baked/tinycld/core/types \
+    && chown tinycld:tinycld /workspace/pb_data /workspace/releases /workspace/builds \
+        /opt/tinycld-baked/tinycld/core/types
 
 # The entrypoint lives at a FIXED path outside the swapped tree so it survives a
 # `current` flip and isn't part of any build dir.
-COPY tinycld/config/entrypoint.sh /opt/entrypoint.sh
-RUN chmod +x /opt/entrypoint.sh
+COPY --chown=tinycld:tinycld --chmod=0755 tinycld/config/entrypoint.sh /opt/entrypoint.sh
 
-# Hand the workspace + baked tree to the tinycld user with a single build-time
-# chown. Because these are ordinary subdirectories (not the overlay mount root /),
-# the chown PERSISTS through the layer commit — unlike a chown of / which reverts
-# to root:root. So no runtime chown is needed for these paths; only bind-mounted
-# data dirs (/workspace/pb_data, /workspace/builds, /workspace/releases) need
-# fixing at runtime when Docker creates them owned by root.
+# Ownership note: there is deliberately NO `chown -R tinycld:tinycld /workspace
+# /opt/tinycld-baked` here. Every tree that lands in the runtime image is already
+# owned by tinycld at COPY time via `--chown=tinycld:tinycld` on each COPY above,
+# and the few root-created paths (the pb_data/releases/builds/types dirs and the
+# pb_migrations symlink) are chown'd inline where they're made. A recursive chown
+# over the ~2GB baked tree + .pnpm-store re-walked every file and committed a full
+# duplicate layer — the single slowest, largest step in the runtime stage. Setting
+# ownership during the copy is effectively free and avoids the duplicate layer.
 #
-# Must run BEFORE setcap below — chown strips file capabilities (it resets the
-# security.capability xattr along with ownership), so setcap'ing first then
-# chown'ing would silently wipe the cap.
-RUN chown -R tinycld:tinycld /workspace /opt/tinycld-baked /opt/entrypoint.sh
+# setcap-ordering invariant preserved: chown strips a file's capability xattr, so
+# the binary must be owned BEFORE setcap runs. It is — the binary arrives already
+# owned by tinycld (its COPY uses --chown), and nothing chowns it afterward, so
+# the setcap below sticks.
 
 # Grant cap_net_bind_service so the non-root user can bind :80/:443 when
 # autocert is on (AUTOCERT_ENABLED=true with PRIMARY_DOMAIN set). The plain-HTTP
