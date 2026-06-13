@@ -102,7 +102,9 @@ async function main() {
         // spawn emits 'error' (not an exit code) when the script is missing or not
         // executable — without this listener Node would throw it unhandled and crash
         // past our friendly fail().
-        child.on('error', err => fail(`could not spawn ios-simulator.sh: ${(err as Error).message}`))
+        child.on('error', err =>
+            fail(`could not spawn ios-simulator.sh: ${(err as Error).message}`)
+        )
         child.on('exit', code => {
             if (code !== 0) fail(`ios-simulator.sh --prod exited ${code} (build/boot failed).`)
             console.log('[ota-e2e] app installed + launched; waiting for OTA reload…')
