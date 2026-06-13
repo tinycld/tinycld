@@ -75,13 +75,24 @@ services:
       - "465:465"
 
     volumes:
-      # Persistent data: PocketBase records, uploads, migrations state.
-      # Everything stateful lives here — back this directory up.
+      # Persistent data: PocketBase records, uploads, the rollback-backup +
+      # markers. Everything stateful lives here — back this directory up.
       #
-      # These dirs are created owned by root the first time Docker mounts them;
-      # the container fixes their ownership on startup (it boots as root, chown's
-      # them to its unprivileged runtime user, then drops privileges), so no
-      # manual `chown` is needed before the first `docker compose up`.
-      - ./pb_data:/workspace/tinycld/pb_data
-      # Generated TypeScript types (pbSchema, pbZodSchema). Small, regenerated on migrations.
-      - ./types:/workspace/tinycld/core/types
+      # Must mount at /workspace/pb_data: the server's state root is /workspace
+      # (TINYCLD_STATE_DIR in entrypoint.sh), and it opens the DB at
+      # /workspace/pb_data/data.db (--dir flag) with the rollback snapshot +
+      # markers alongside it. Mounting anywhere else (an earlier layout used
+      # /workspace/tinycld/pb_data) leaves the DB on the container's writable
+      # layer — silently ephemeral, lost on every `docker compose up` recreate.
+      #
+      # Created owned by root the first time Docker mounts it; the container fixes
+      # ownership on startup (boots as root, chown's it to the unprivileged
+      # runtime user, then drops privileges), so no manual `chown` is needed
+      # before the first `docker compose up`.
+      - ./pb_data:/workspace/pb_data
+      # NOTE: there is deliberately no core/types mount. pbSchema.ts/pbZodSchema.ts
+      # are derived artifacts the server regenerates from the migrations on every
+      # boot, written inside the active build tree
+      # (/workspace/builds/<id>/tinycld/core/types) — never read by the running
+      # server, never needing host persistence. A bind mount there would pin stale
+      # types over a freshly-built tree after an in-app package upgrade.

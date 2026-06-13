@@ -171,12 +171,13 @@ seed_baked_build() {
 
 # Ensure the bind-mounted data directories are writable by the runtime user.
 #
-# When a host bind-mount target (./pb_data → /workspace/tinycld/pb_data and
-# ./types → /workspace/tinycld/core/types in docker-compose.yml) doesn't exist
-# yet, the Docker daemon creates it owned by root:root. The
-# unprivileged tinycld user then can't open the SQLite database — PocketBase
-# fails with "unable to open database file (14)" and the container crash-loops.
-# Reported in https://github.com/tinycld/app/issues/26.
+# When a host bind-mount target (./pb_data → /workspace/pb_data in
+# docker-compose.yml) doesn't exist yet, the Docker daemon creates it owned by
+# root:root. The unprivileged tinycld user then can't open the SQLite database —
+# PocketBase fails with "unable to open database file (14)" and the container
+# crash-loops. Reported in https://github.com/tinycld/app/issues/26.
+# (core/types is NOT bind-mounted — it's regenerated inside each build tree on
+# boot, so it never needs an ownership fix-up here.)
 #
 # The same applies to ./builds and ./releases when an operator backs them with a
 # persistent volume/bind-mount so installed-package archives and the promoted web
