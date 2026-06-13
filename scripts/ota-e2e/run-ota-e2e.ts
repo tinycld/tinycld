@@ -1,17 +1,19 @@
 import { spawn } from 'node:child_process'
-import { createReadStream, existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { classifyBundleId, embeddedIdForVersion } from './identity'
-import { waitForCurrentId } from './log-watcher'
+import { fetchAppUpdateCurrentIds, pollForBundleId, superuserToken } from './logs-poller'
 import { precheckNewerBundle } from './server-bundle'
 
 const SERVER_URL = process.env.OTA_E2E_SERVER_URL ?? 'http://localhost:7200'
-const SERVER_LOG = process.env.OTA_E2E_SERVER_LOG
+const SUPERUSER_EMAIL = process.env.OTA_E2E_SUPERUSER_EMAIL
+const SUPERUSER_PASSWORD = process.env.OTA_E2E_SUPERUSER_PASSWORD
 const SIM_UDID = process.env.IPHONE_SIMULATOR_UDID
-// `|| 180_000` covers unset, empty, non-numeric (NaN), and 0 in one expression —
+// `|| <default>` covers unset, empty, non-numeric (NaN), and 0 in one expression —
 // a bare Number(...) of a non-numeric override would yield NaN and fire setTimeout
 // almost immediately, producing a confusing instant "timeout".
 const RELOAD_TIMEOUT_MS = Number(process.env.OTA_E2E_TIMEOUT_MS) || 180_000
+const POLL_INTERVAL_MS = Number(process.env.OTA_E2E_POLL_INTERVAL_MS) || 3_000
 
 const APP_DIR = path.resolve(import.meta.dirname, '..', '..')
 
@@ -38,10 +40,12 @@ async function main() {
     const embeddedId = embeddedIdForVersion(appVersion)
     console.log(`[ota-e2e] app version ${appVersion} → embedded id ${embeddedId}`)
 
-    if (!SERVER_LOG || !existsSync(SERVER_LOG)) {
+    // Guard creds before any network so an offline misconfigured run fails fast
+    // and deterministically, never spawning a build.
+    if (!SUPERUSER_EMAIL || !SUPERUSER_PASSWORD) {
         fail(
-            `OTA_E2E_SERVER_LOG must point at the file capturing the server's stdout ` +
-                `(got ${SERVER_LOG ?? '<unset>'}). See scripts/ota-e2e/README.md.`
+            'OTA_E2E_SUPERUSER_EMAIL and OTA_E2E_SUPERUSER_PASSWORD must be set — they ' +
+                'authenticate the PB superuser used to read /api/logs. See scripts/ota-e2e/README.md.'
         )
     }
 
@@ -56,12 +60,25 @@ async function main() {
     }
     console.log(`[ota-e2e] server offers new bundle ${newId}`)
 
-    // Start watching BEFORE booting so the app's first check isn't missed.
-    const logStream = createReadStream(SERVER_LOG, { encoding: 'utf8' })
-    const reloaded = waitForCurrentId(logStream, {
-        predicate: id => id === newId,
+    let token: string
+    try {
+        token = await superuserToken(SERVER_URL, SUPERUSER_EMAIL, SUPERUSER_PASSWORD)
+    } catch (err) {
+        return fail(
+            `superuser auth failed (server down or bad OTA_E2E_SUPERUSER_* creds): ${(err as Error).message}`
+        )
+    }
+
+    // Start polling BEFORE booting so the app's first check isn't missed. A fresh
+    // PB token outlives a <=180s run, so no refresh logic is needed.
+    const reloaded = pollForBundleId({
+        fetchCurrentIds: () => fetchAppUpdateCurrentIds(SERVER_URL, token),
+        target: newId,
         timeoutMs: RELOAD_TIMEOUT_MS,
-        onSeen: id => console.log(`[ota-e2e]   client reported currentId=${id}`),
+        intervalMs: POLL_INTERVAL_MS,
+        onPoll: ids => {
+            if (ids.length) console.log(`[ota-e2e]   _logs currentIds: ${ids.join(', ')}`)
+        },
     })
 
     if (!SIM_UDID) fail('IPHONE_SIMULATOR_UDID is not set (in .env or the environment).')
