@@ -243,7 +243,7 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 		span := progNativeEnd - progNativeStart
 		pct := progNativeStart + (span*i)/len(platforms)
 		emitProgress(job, "Building "+string(p)+" bundle", pct, "Running expo export --platform "+string(p))
-		if cmdOut, err := runCmd(appDir, "npx", "expo", "export", "--platform", string(p), "--output-dir", outDir); err != nil {
+		if cmdOut, err := runCmd(appDir, "pnpm", "exec", "expo", "export", "--platform", string(p), "--output-dir", outDir); err != nil {
 			return nil, fmt.Errorf("expo export %s: %v: %s", p, err, cmdOut)
 		}
 		bm, err := parseExportMetadata(outDir, p, buildID, runtimeVersion)

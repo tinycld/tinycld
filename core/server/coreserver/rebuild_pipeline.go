@@ -90,7 +90,7 @@ func runBuildPipelineWith(
 	}
 	emitProgress(job, "Exporting web bundle", progExpoWeb, "expo export")
 	if err := timeStep(job, "expo export (web bundle)", func() error {
-		_, e := run(appDir, "npx", "expo", "export", "--platform", "web")
+		_, e := run(appDir, "pnpm", "exec", "expo", "export", "--platform", "web")
 		return e
 	}); err != nil {
 		return buildOutput{}, wrapStep("expo export", err)
