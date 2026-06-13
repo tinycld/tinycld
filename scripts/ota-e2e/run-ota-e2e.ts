@@ -82,11 +82,13 @@ async function main() {
     })
 
     if (!SIM_UDID) fail('IPHONE_SIMULATOR_UDID is not set (in .env or the environment).')
-    console.log(`[ota-e2e] building + booting Release on ${SIM_UDID}, pointed at ${SERVER_URL}…`)
+    console.log(
+        `[ota-e2e] building + booting Release on ${SIM_UDID} (app must already be connected to ${SERVER_URL} — see README)…`
+    )
     buildChild = spawn('scripts/ios-simulator.sh', ['--prod'], {
         cwd: APP_DIR,
         stdio: 'inherit',
-        env: { ...process.env, EXPO_PUBLIC_PB_SERVER_ADDR: SERVER_URL },
+        env: { ...process.env },
     })
     const child = buildChild
     // spawn emits 'error' (not an exit code) when the script is missing or not

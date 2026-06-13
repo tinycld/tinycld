@@ -1,23 +1,35 @@
 # OTA happy-path native E2E (local-only, iOS)
 
 Proves the over-the-air update pipe end-to-end on an iOS simulator: a **Release**
-build launches on its embedded JS bundle, auto-checks the connected server, and
-reloads into a newer server-served bundle. The harness observes the flip via the
-server's structured `_logs` (`app-update: request` records) over the API — no
-app/server changes, no Maestro/Detox.
+build launches on its embedded JS bundle, auto-checks **its cached/connected
+server** (established by the manual connect pre-step below), and reloads into a
+newer server-served bundle. The harness observes the flip via the server's
+structured `_logs` (`app-update: request` records) over the API — no app/server
+changes, no Maestro/Detox.
 
 ## What it does
 
 1. Reads the embedded bundle id from `app.json` (`embedded-<version>`).
 2. Prechecks `GET /api/app/update` — the server must already offer a newer iOS
    bundle (`build-<ts>-ios`). Fails loudly if not (status 204).
-3. Builds + boots a Release sim via `scripts/ios-simulator.sh --prod`, pointed at
-   the server through `EXPO_PUBLIC_PB_SERVER_ADDR`.
+3. Builds + boots a Release sim via `scripts/ios-simulator.sh --prod`. The app
+   resolves its server from its own cached value (established by the manual
+   connect pre-step), not from the harness.
 4. Polls the server's structured `_logs` (`GET /api/logs`) and passes when a
    logged `app-update: request` reports `q.currentId` equal to the new bundle id.
 
 ## Prerequisites (manual, one-time per run)
 
+- **One-time per fresh simulator: connect the app to the test server manually.**
+  The app does not accept a server address via env — it resolves a server from
+  its own cached value (AsyncStorage) or the in-app `/connect` screen. So before
+  the first run on a given simulator:
+    1. Boot the sim and open TinyCld.
+    2. On the `/connect` screen, enter the test server URL **explicitly** —
+       `http://localhost:7200` (the on-screen prefill is `http://localhost:7100`,
+       a DIFFERENT port; do not use it unless that's actually your server).
+    3. Once connected, the address is cached in AsyncStorage and reused by the
+       Release rebuild the harness boots. You only redo this if you wipe the sim.
 - A booted iOS simulator; its UDID in the workspace-root `.env` as
   `IPHONE_SIMULATOR_UDID` (same var `ios-simulator.sh` uses).
 - Xcode + the iOS toolchain (Release build runs `expo run:ios`).
@@ -45,7 +57,7 @@ pnpm run test:e2e:ota
 
 | Var | Default | Meaning |
 |---|---|---|
-| `OTA_E2E_SERVER_URL` | `http://localhost:7200` | Server the sim connects to (must be loopback for plaintext). |
+| `OTA_E2E_SERVER_URL` | `http://localhost:7200` | Server the harness prechecks + polls `_logs` on. Must match the server the app was manually connected to (the harness does not set the app's server). |
 | `OTA_E2E_SUPERUSER_EMAIL` | _(required)_ | PB superuser identity used to read `/api/logs`. |
 | `OTA_E2E_SUPERUSER_PASSWORD` | _(required)_ | PB superuser password. |
 | `IPHONE_SIMULATOR_UDID` | from `.env` | Target simulator. |
@@ -61,6 +73,11 @@ pnpm run test:e2e:ota
 - **timed out, last-seen ids show only `embedded-…`** → the app never reloaded.
   Check: build is genuinely Release (not Debug/Metro), server host is loopback
   (transport gating), `__DEV__`/web guards aren't active.
+- **timed out, and `_logs` shows no `app-update: request` records at all** → the
+  app never reached the server (most often: it's still on the `/connect` screen —
+  do the manual connect pre-step), OR the server's `Logs.MinLevel` was raised above
+  Info so the request isn't persisted to `_logs` (default settings persist Info —
+  only an issue if someone changed it).
 - **build/boot exited non-zero** → an `expo run:ios --configuration Release`
   failure; see the inline build output.
 
