@@ -120,7 +120,7 @@ func runDemoReset(app *pocketbase.PocketBase) {
 		return
 	}
 
-	cmd := exec.CommandContext(ctx, "bun", "run", "scripts/reset-demo.ts", "--url", url)
+	cmd := exec.CommandContext(ctx, "pnpm", "exec", "tsx", "scripts/reset-demo.ts", "--url", url)
 	cmd.Dir = scriptDir
 	// Pass through env so ADMIN_USER_LOGIN / ADMIN_USER_PW configured for the
 	// container reach the script. The bound URL is passed via --url because
