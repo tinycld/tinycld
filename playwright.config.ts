@@ -26,18 +26,12 @@ export default defineConfig({
     // which tests have finished and that the run is progressing. Inherited by
     // every package's playwright.config.ts.
     reporter: 'list',
-    // Retry failed specs on CI only. The 2-core ubuntu runner pays a cold
-    // Metro lazy-chunk compile on each worker's first navigation into a
-    // package route; under parallel load that compile occasionally blows
-    // past the per-test budget (e.g. a beforeEach waiting for the package
-    // sidebar to mount, or a post-reload route re-mount), failing an
-    // otherwise-correct test. Retries re-run only the failed spec — with a
-    // now-warm chunk cache — so a one-off cold-compile timeout self-heals,
-    // while a genuine regression still fails all attempts. Trace/video are
-    // retain-on-failure, so the final failing attempt is always captured.
-    // 0 retries locally keeps `reuseExistingServer` runs fast and surfaces
-    // real failures immediately. Inherited by every package's config.
-    retries: process.env.CI ? 2 : 0,
+    // No retries. A test must pass on its first attempt; a flake is a bug in the
+    // test (or the code) to fix at the source, not to paper over by re-running
+    // until it's green. Trace/video are retain-on-failure, so the failing
+    // attempt is always captured for diagnosis. Inherited by every package's
+    // config.
+    retries: 0,
     // Scoped to tests/e2e/ specifically. The tests/install/ tree has
     // its own playwright.config.ts and is invoked separately by the
     // docker smoke-test workflow — leaving testDir at the playwright

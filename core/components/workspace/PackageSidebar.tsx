@@ -2,8 +2,8 @@ import { packageSidebars } from '@tinycld/core/lib/packages/derive-components'
 import { usePackage } from '@tinycld/core/lib/packages/use-packages'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Suspense } from 'react'
 import { Platform, View } from 'react-native'
+import { LazySidebarBoundary } from './LazySidebarBoundary'
 import { SkeletonSidebar } from './SkeletonLayout'
 
 interface PackageSidebarProps {
@@ -36,7 +36,11 @@ export function PackageSidebar({ width }: PackageSidebarProps) {
         >
             <View style={{ width, flex: 1, minHeight: 0 }}>
                 {SidebarComponent ? (
-                    <Suspense fallback={<SkeletonSidebar width={width} />}>
+                    // LazySidebarBoundary owns the Suspense + recovery: it
+                    // retries the lazy import if it rejects, and remounts if the
+                    // boundary gets wedged in the skeleton without ever
+                    // committing (seen under heavy CI contention). See that file.
+                    <LazySidebarBoundary fallback={<SkeletonSidebar width={width} />}>
                         {/*
                             testID="package-sidebar-mounted" is the
                             stable signal e2e helpers use to know the
@@ -55,7 +59,7 @@ export function PackageSidebar({ width }: PackageSidebarProps) {
                         >
                             <SidebarComponent isCollapsed={false} />
                         </View>
-                    </Suspense>
+                    </LazySidebarBoundary>
                 ) : null}
             </View>
         </View>
