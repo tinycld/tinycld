@@ -1,5 +1,7 @@
+import { captureException } from '@tinycld/core/lib/errors'
 import {
     Component,
+    type ErrorInfo,
     type ReactNode,
     Suspense,
     useCallback,
@@ -9,11 +11,27 @@ import {
 } from 'react'
 import { nextAttempt, shouldRetryOnTimeout } from './lazy-sidebar-retry'
 
+// Copious logging around sidebar-mount failures: when this boundary has to
+// recover, the next person debugging CI (or a user report) needs to see exactly
+// what happened — which slug, which failure mode, which attempt — not a silent
+// retry. `pkgSlug` is threaded in so every line names the package.
+function logSidebar(slug: string | undefined, msg: string, extra?: Record<string, unknown>) {
+    // __DEV__-guarded per house rule (no unguarded console). CI runs the dev
+    // bundle (Development-level warnings: ON), so these lines DO surface in CI
+    // failure logs — which is exactly where a wedged sidebar gets diagnosed.
+    // Production reporting goes through captureException at the call sites.
+    if (!__DEV__) return
+    const tag = `[sidebar-boundary${slug ? `:${slug}` : ''}]`
+    console.warn(tag, msg, extra ?? '')
+}
+
 interface LazySidebarBoundaryProps {
     /** Skeleton shown while the lazy chunk loads (Suspense fallback). */
     fallback: ReactNode
     /** The lazy sidebar subtree. */
     children: ReactNode
+    /** Package slug, for log/Sentry context (which sidebar failed). */
+    slug?: string
     /** How long to wait in the fallback before forcing a remount (ms). */
     stuckTimeoutMs?: number
     /** Max remount attempts before giving up and surfacing the error/skeleton. */
@@ -31,7 +49,7 @@ interface ErrorState {
  * the parent to remount (which re-invokes the import).
  */
 class SidebarErrorBoundary extends Component<
-    { onError: () => void; children: ReactNode },
+    { onError: (error: Error, info: ErrorInfo) => void; children: ReactNode },
     ErrorState
 > {
     state: ErrorState = { hasError: false }
@@ -40,8 +58,8 @@ class SidebarErrorBoundary extends Component<
         return { hasError: true }
     }
 
-    componentDidCatch() {
-        this.props.onError()
+    componentDidCatch(error: Error, info: ErrorInfo) {
+        this.props.onError(error, info)
     }
 
     render() {
@@ -72,6 +90,7 @@ class SidebarErrorBoundary extends Component<
 export function LazySidebarBoundary({
     fallback,
     children,
+    slug,
     stuckTimeoutMs = 15_000,
     maxRetries = 3,
 }: LazySidebarBoundaryProps) {
@@ -80,13 +99,60 @@ export function LazySidebarBoundary({
     // watchdog only remounts while still false (i.e. still showing the skeleton).
     const mountedRef = useRef(false)
 
-    const retry = useCallback(() => {
-        setAttempt(a => nextAttempt(a, maxRetries))
-    }, [maxRetries])
+    const retry = useCallback(
+        (reason: string) => {
+            setAttempt(a => {
+                const next = nextAttempt(a, maxRetries)
+                if (next === a) {
+                    // Cap hit: stop retrying. This is the user-visible broken
+                    // state (sidebar stays a skeleton) — shout about it.
+                    logSidebar(slug, `giving up after ${a} attempt(s) — ${reason}`, {
+                        attempt: a,
+                        maxRetries,
+                    })
+                    captureException('workspace.sidebar.mount-failed', new Error(reason), {
+                        slug,
+                        attempts: a,
+                        maxRetries,
+                    })
+                } else {
+                    logSidebar(slug, `retrying (attempt ${next}/${maxRetries}) — ${reason}`, {
+                        from: a,
+                        to: next,
+                    })
+                }
+                return next
+            })
+        },
+        [maxRetries, slug]
+    )
 
     const onMounted = useCallback(() => {
         mountedRef.current = true
-    }, [])
+        if (attempt > 0) {
+            logSidebar(slug, `recovered: sidebar mounted on attempt ${attempt}`, { attempt })
+        }
+    }, [attempt, slug])
+
+    // Surface the actual error a rejecting lazy import threw, with React's
+    // component stack — this is the single most useful artifact when a sidebar
+    // chunk fails to load/evaluate.
+    const onError = useCallback(
+        (error: Error, info: ErrorInfo) => {
+            logSidebar(slug, 'lazy sidebar threw while mounting', {
+                error: String(error?.stack || error),
+                componentStack: info?.componentStack,
+                attempt,
+            })
+            captureException('workspace.sidebar.lazy-threw', error, {
+                slug,
+                attempt,
+                componentStack: info?.componentStack,
+            })
+            retry(`import threw: ${error?.message ?? error}`)
+        },
+        [slug, attempt, retry]
+    )
 
     useEffect(() => {
         mountedRef.current = false
@@ -94,13 +160,20 @@ export function LazySidebarBoundary({
         // Watchdog: if we're still in the fallback after the timeout, remount to
         // re-trigger the lazy import. Re-armed each attempt.
         const id = setTimeout(() => {
-            if (shouldRetryOnTimeout(mountedRef.current, attempt, maxRetries)) retry()
+            if (shouldRetryOnTimeout(mountedRef.current, attempt, maxRetries)) {
+                logSidebar(
+                    slug,
+                    `still on skeleton after ${stuckTimeoutMs}ms — chunk loaded but never committed; remounting`,
+                    { attempt }
+                )
+                retry(`stuck on skeleton for ${stuckTimeoutMs}ms`)
+            }
         }, stuckTimeoutMs)
         return () => clearTimeout(id)
-    }, [attempt, maxRetries, stuckTimeoutMs, retry])
+    }, [attempt, maxRetries, stuckTimeoutMs, retry, slug])
 
     return (
-        <SidebarErrorBoundary key={attempt} onError={retry}>
+        <SidebarErrorBoundary key={attempt} onError={onError}>
             <Suspense fallback={fallback}>
                 <MountedSignal onMounted={onMounted}>{children}</MountedSignal>
             </Suspense>

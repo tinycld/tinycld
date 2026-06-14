@@ -40,7 +40,10 @@ export function PackageSidebar({ width }: PackageSidebarProps) {
                     // retries the lazy import if it rejects, and remounts if the
                     // boundary gets wedged in the skeleton without ever
                     // committing (seen under heavy CI contention). See that file.
-                    <LazySidebarBoundary fallback={<SkeletonSidebar width={width} />}>
+                    <LazySidebarBoundary
+                        slug={pkg.slug}
+                        fallback={<SkeletonSidebar width={width} />}
+                    >
                         {/*
                             testID="package-sidebar-mounted" is the
                             stable signal e2e helpers use to know the
