@@ -115,8 +115,22 @@ function MenuRoot({
     className,
 }: MenuProps) {
     const [internalOpen, setInternalOpen] = useState(false)
+    const isControlled = controlledOpen !== undefined
     const isOpen = controlledOpen ?? internalOpen
-    const onOpenChange = controlledOnChange ?? setInternalOpen
+    // When controlled (an `isOpen` prop is supplied), the parent owns the open
+    // state and `onOpenChange` just notifies it. When uncontrolled, the menu
+    // owns the state: drive `internalOpen` AND still fire the consumer's
+    // `onOpenChange` as a side-effect listener. Treating a bare `onOpenChange`
+    // (no `isOpen`) as fully controlled — the old behaviour — left the internal
+    // state stuck closed, so tap-triggered menus (DriveItemMenuButton) never
+    // opened.
+    const onOpenChange = useCallback(
+        (next: boolean) => {
+            if (!isControlled) setInternalOpen(next)
+            controlledOnChange?.(next)
+        },
+        [isControlled, controlledOnChange]
+    )
     const triggerRef = useRef<View | null>(null)
     const [internalLayout, setInternalLayout] = useState<{
         x: number

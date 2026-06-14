@@ -1,5 +1,9 @@
 import { Platform } from 'react-native'
-import { pb } from './pocketbase'
+
+// `pb` is imported lazily (not at module top level) to break the require cycle
+// pocketbase → errors → notify → … → web-push → pocketbase. web-push only needs
+// pb at call time inside these async actions, so a dynamic import is free here
+// and matches the same cycle-breaking pattern used in pocketbase.ts.
 
 export function isPushSupported(): boolean {
     return (
@@ -31,6 +35,7 @@ export async function subscribeToPush(userId: string): Promise<boolean> {
 
     const subscriptionJSON = subscription.toJSON()
 
+    const { pb } = await import('./pocketbase')
     await pb.collection('push_subscriptions').create({
         user: userId,
         endpoint: subscriptionJSON.endpoint,
@@ -53,6 +58,7 @@ export async function unsubscribeFromPush(userId: string): Promise<void> {
     if (subscription) {
         await subscription.unsubscribe()
 
+        const { pb } = await import('./pocketbase')
         const records = await pb.collection('push_subscriptions').getFullList({
             filter: `user = "${userId}" && endpoint = "${subscription.endpoint}"`,
         })

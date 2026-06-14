@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { DragHandle } from '@tinycld/core/components/DragHandle'
+import { SortableDragHandle, SortableList } from '@tinycld/core/components/SortableList'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -31,10 +31,6 @@ import {
     Text,
     View,
 } from 'react-native'
-import DraggableFlatList, {
-    type RenderItemParams,
-    ScaleDecorator,
-} from 'react-native-draggable-flatlist'
 import { PageHeader, SectionLabel, SlugTag } from './console-ui'
 import { InstallProgressModal } from './InstallProgressModal'
 import { PackageStatusBadge } from './PackageStatusBadge'
@@ -272,8 +268,8 @@ function PackageList({
 
     const pkgMap = new Map(packages.map(p => [p.id, p]))
 
-    const handleDragEnd = useCallback(
-        async ({ data }: { data: PkgRecord[] }) => {
+    const handleReorder = useCallback(
+        async (data: PkgRecord[]) => {
             try {
                 await Promise.all(
                     data.map((pkg, i) =>
@@ -288,7 +284,16 @@ function PackageList({
         [pb, onUpdated]
     )
 
-    function renderItem({ item, drag, isActive }: RenderItemParams<PkgRecord>) {
+    // The base (`core`) row and any row with a staged version change are pinned:
+    // the base has no nav position, and a staged change locks lifecycle controls
+    // until applied so a reorder can't collide with the pending transaction.
+    const isRowDraggable = (pkg: PkgRecord) => {
+        if (pkg.slug === 'core') return false
+        const info = versionBySlug.get(pkg.slug)
+        return info ? stagedDirection(info, targets[pkg.slug]) === 'none' : true
+    }
+
+    function renderItem({ item }: { item: PkgRecord; index: number }) {
         const pkg = pkgMap.get(item.id) ?? item
         const info = versionBySlug.get(pkg.slug)
         const target = targets[pkg.slug]
@@ -305,78 +310,67 @@ function PackageList({
         const isStaged = info ? stagedDirection(info, target) !== 'none' : false
 
         return (
-            <ScaleDecorator activeScale={1}>
-                <View
-                    style={{
-                        backgroundColor: isActive
-                            ? `${accentColor}20`
-                            : isStaged
-                              ? `${accentColor}1f`
-                              : surfaceBg,
-                        borderBottomWidth: StyleSheet.hairlineWidth,
-                        borderColor,
-                    }}
-                >
-                    <View className="flex-row items-center gap-3 px-4 py-3.5">
-                        <DragHandle
-                            drag={drag}
-                            disabled={isActive || isStaged || isBase}
-                            color={mutedColor}
-                        />
-                        <View className="w-10 h-10 rounded-xl items-center justify-center bg-surface border border-border">
-                            <Package size={18} color={mutedColor} />
-                        </View>
-                        <View className="flex-1 gap-0.5">
-                            <View className="flex-row gap-2 items-center">
-                                <Text
-                                    style={{
-                                        fontSize: 15,
-                                        fontWeight: '600',
-                                        color: isActive ? mutedColor : undefined,
-                                    }}
-                                    className="text-foreground"
-                                >
-                                    {pkg.name}
-                                </Text>
-                                <PackageStatusBadge status={isBase ? 'base' : pkg.status} />
-                                {info?.hasUpdate && !isStaged ? (
-                                    <PackageStatusBadge status="update-available" />
-                                ) : null}
-                            </View>
-                            <View className="flex-row gap-2 items-center flex-wrap">
-                                <SlugTag>{pkg.slug}</SlugTag>
-                                {pkg.description ? (
-                                    <Text
-                                        className="text-muted-foreground"
-                                        style={{ fontSize: 13 }}
-                                        numberOfLines={1}
-                                    >
-                                        {pkg.description}
-                                    </Text>
-                                ) : null}
-                            </View>
-                        </View>
-                        <RowVersion info={info} target={target} onSetTarget={onSetTarget} />
-                        <PackageActions
-                            pkg={pkg}
-                            pb={pb}
-                            isBase={isBase}
-                            isEditing={editingId === pkg.id}
-                            isLocked={isStaged}
-                            onEdit={() => onEdit(editingId === pkg.id ? null : pkg.id)}
-                            onUpdated={onUpdated}
-                            onUninstallStarted={onUninstallStarted}
-                        />
+            <View
+                style={{
+                    backgroundColor: isStaged ? `${accentColor}1f` : surfaceBg,
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    borderColor,
+                }}
+            >
+                <View className="flex-row items-center gap-3 px-4 py-3.5">
+                    <SortableDragHandle disabled={isStaged || isBase} color={mutedColor} />
+                    <View className="w-10 h-10 rounded-xl items-center justify-center bg-surface border border-border">
+                        <Package size={18} color={mutedColor} />
                     </View>
-                    <EditPackageForm
-                        isVisible={editingId === pkg.id && !isStaged}
+                    <View className="flex-1 gap-0.5">
+                        <View className="flex-row gap-2 items-center">
+                            <Text
+                                style={{
+                                    fontSize: 15,
+                                    fontWeight: '600',
+                                }}
+                                className="text-foreground"
+                            >
+                                {pkg.name}
+                            </Text>
+                            <PackageStatusBadge status={isBase ? 'base' : pkg.status} />
+                            {info?.hasUpdate && !isStaged ? (
+                                <PackageStatusBadge status="update-available" />
+                            ) : null}
+                        </View>
+                        <View className="flex-row gap-2 items-center flex-wrap">
+                            <SlugTag>{pkg.slug}</SlugTag>
+                            {pkg.description ? (
+                                <Text
+                                    className="text-muted-foreground"
+                                    style={{ fontSize: 13 }}
+                                    numberOfLines={1}
+                                >
+                                    {pkg.description}
+                                </Text>
+                            ) : null}
+                        </View>
+                    </View>
+                    <RowVersion info={info} target={target} onSetTarget={onSetTarget} />
+                    <PackageActions
                         pkg={pkg}
                         pb={pb}
-                        onClose={() => onEdit(null)}
+                        isBase={isBase}
+                        isEditing={editingId === pkg.id}
+                        isLocked={isStaged}
+                        onEdit={() => onEdit(editingId === pkg.id ? null : pkg.id)}
                         onUpdated={onUpdated}
+                        onUninstallStarted={onUninstallStarted}
                     />
                 </View>
-            </ScaleDecorator>
+                <EditPackageForm
+                    isVisible={editingId === pkg.id && !isStaged}
+                    pkg={pkg}
+                    pb={pb}
+                    onClose={() => onEdit(null)}
+                    onUpdated={onUpdated}
+                />
+            </View>
         )
     }
 
@@ -415,13 +409,12 @@ function PackageList({
     }
 
     return (
-        <DraggableFlatList
+        <SortableList
             data={packages}
             keyExtractor={keyExtractor}
-            onDragEnd={handleDragEnd}
+            onReorder={handleReorder}
             renderItem={renderItem}
-            scrollEnabled={false}
-            activationDistance={1}
+            isDraggable={isRowDraggable}
         />
     )
 }

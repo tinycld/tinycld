@@ -1,8 +1,12 @@
 import type { DispatchInput, NotifyChannel } from '@tinycld/core/lib/notify/channels/types'
 import { getNotifyContext } from '@tinycld/core/lib/notify/context'
-import { notificationsCollection } from '@tinycld/core/lib/pocketbase'
 import { captureExceptionToSentry as captureException } from '@tinycld/core/lib/sentry'
 import { newRecordId } from 'pbtsdb/core'
+
+// pocketbase is imported lazily inside dispatch() to break a require cycle:
+// pocketbase → errors → notify/dispatcher → bell → pocketbase. dispatch() is
+// already async, and the bell channel only writes a record at call time, so
+// deferring the import keeps pocketbase out of the notify graph's load order.
 
 export const bellChannel: NotifyChannel = {
     name: 'bell',
@@ -16,6 +20,7 @@ export const bellChannel: NotifyChannel = {
             return
         }
 
+        const { notificationsCollection } = await import('@tinycld/core/lib/pocketbase')
         const tx = notificationsCollection.insert({
             id: newRecordId(),
             user: ctx.userId,
