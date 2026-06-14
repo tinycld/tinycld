@@ -12,6 +12,7 @@ import { useConnectivityDetector } from '@tinycld/core/lib/use-connectivity-dete
 import { useThemePreference } from '@tinycld/core/lib/use-theme-preference'
 import { GluestackUIProvider } from '@tinycld/core/ui/gluestack-ui-provider'
 import type { ReactNode } from 'react'
+import { DraxProvider } from 'react-native-drax'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
@@ -33,19 +34,21 @@ function ThemeAwareGluestackProvider({ children }: { children: ReactNode }) {
 export function Providers({ children }: { children: ReactNode }) {
     return (
         <GestureHandlerRootView className="flex-1">
-            <SafeAreaProvider>
-                <QueryClientProvider client={queryClient}>
-                    <PBTSDBProvider>
-                        <AuthProvider>
-                            <ShortcutsProvider>
-                                <ThemeAwareGluestackProvider>
-                                    {children}
-                                </ThemeAwareGluestackProvider>
-                            </ShortcutsProvider>
-                        </AuthProvider>
-                    </PBTSDBProvider>
-                </QueryClientProvider>
-            </SafeAreaProvider>
+            <DraxProvider style={{ flex: 1 }}>
+                <SafeAreaProvider>
+                    <QueryClientProvider client={queryClient}>
+                        <PBTSDBProvider>
+                            <AuthProvider>
+                                <ShortcutsProvider>
+                                    <ThemeAwareGluestackProvider>
+                                        {children}
+                                    </ThemeAwareGluestackProvider>
+                                </ShortcutsProvider>
+                            </AuthProvider>
+                        </PBTSDBProvider>
+                    </QueryClientProvider>
+                </SafeAreaProvider>
+            </DraxProvider>
         </GestureHandlerRootView>
     )
 }

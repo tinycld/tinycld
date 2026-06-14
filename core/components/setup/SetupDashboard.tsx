@@ -3,6 +3,7 @@ import { Building2, History, type LucideIcon, Package, ShieldCheck } from 'lucid
 import type PocketBase from 'pocketbase'
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
+import { DraxProvider } from 'react-native-drax'
 import { BuildHistoryTab } from './BuildHistoryTab'
 import { OrganizationsTab } from './OrganizationsTab'
 import { PackageManager } from './PackageManager'
@@ -36,21 +37,28 @@ export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardPr
     const crumb = NAV.find(n => n.tab === activeTab)?.crumb ?? activeTab
 
     return (
-        <View className="flex-1 flex-row">
-            <SetupRail activeTab={activeTab} onSelect={setActiveTab} />
+        // DraxProvider here (not just at the app root) because the setup
+        // dashboard mounts under its own GestureHandlerRootView in the
+        // pre-org/superuser flows, outside the app-root Providers tree — the
+        // package reorder list needs Drax context regardless of how setup was
+        // reached.
+        <DraxProvider style={{ flex: 1 }}>
+            <View className="flex-1 flex-row">
+                <SetupRail activeTab={activeTab} onSelect={setActiveTab} />
 
-            <View className="flex-1">
-                <SetupTopBar crumb={crumb} />
-                <ScrollView className="flex-1">
-                    <View className="w-full self-center p-8 gap-6" style={{ maxWidth: 1040 }}>
-                        <OrganizationsTab isVisible={activeTab === 'organizations'} pb={pb} />
-                        <PackagesTab isVisible={activeTab === 'packages'} pb={pb} />
-                        <BuildHistoryTab isVisible={activeTab === 'builds'} pb={pb} />
-                        <SuperAdminsTab isVisible={activeTab === 'super-admins'} pb={pb} />
-                    </View>
-                </ScrollView>
+                <View className="flex-1">
+                    <SetupTopBar crumb={crumb} />
+                    <ScrollView className="flex-1">
+                        <View className="w-full self-center p-8 gap-6" style={{ maxWidth: 1040 }}>
+                            <OrganizationsTab isVisible={activeTab === 'organizations'} pb={pb} />
+                            <PackagesTab isVisible={activeTab === 'packages'} pb={pb} />
+                            <BuildHistoryTab isVisible={activeTab === 'builds'} pb={pb} />
+                            <SuperAdminsTab isVisible={activeTab === 'super-admins'} pb={pb} />
+                        </View>
+                    </ScrollView>
+                </View>
             </View>
-        </View>
+        </DraxProvider>
     )
 }
 

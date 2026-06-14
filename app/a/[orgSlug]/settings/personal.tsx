@@ -1,5 +1,5 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
-import { DragHandle } from '@tinycld/core/components/DragHandle'
+import { SortableDragHandle, SortableList } from '@tinycld/core/components/SortableList'
 import { AboutSection } from '@tinycld/core/components/settings/AboutSection'
 import { DeleteAccountSection } from '@tinycld/core/components/settings/DeleteAccountSection'
 import { DisconnectServerSection } from '@tinycld/core/components/settings/DisconnectServerSection'
@@ -37,10 +37,6 @@ import {
     Text,
     View,
 } from 'react-native'
-import DraggableFlatList, {
-    type RenderItemParams,
-    ScaleDecorator,
-} from 'react-native-draggable-flatlist'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 const profileSchema = z.object({
@@ -476,7 +472,6 @@ function deriveOrder(packages: PackageManifest[], savedOrder: string[]): string[
 function NavigationSection() {
     const foregroundColor = useThemeColor('foreground')
     const surfaceBg = useThemeColor('surface-secondary')
-    const accentColor = useThemeColor('accent')
     const packages = useAccessiblePackages()
     const [savedOrder, setSavedOrder] = useUserPreference('core', 'pkg_order', [] as string[])
     const localOrder = useMemo(() => deriveOrder(packages, savedOrder), [packages, savedOrder])
@@ -485,7 +480,7 @@ function NavigationSection() {
     const isCustomized = savedOrder.length > 0
 
     const handleDragEnd = useCallback(
-        ({ data }: { data: string[] }) => {
+        (data: string[]) => {
             setSavedOrder(data)
         },
         [setSavedOrder]
@@ -495,27 +490,25 @@ function NavigationSection() {
         setSavedOrder([] as string[])
     }
 
-    function renderItem({ item, drag, isActive }: RenderItemParams<string>) {
+    function renderItem({ item }: { item: string; index: number }) {
         const pkg = pkgMap.get(item)
         if (!pkg) return null
         const Icon = getIcon(pkg.nav?.icon ?? '')
 
         return (
-            <ScaleDecorator>
-                <View
-                    className="flex-row items-center justify-between px-4 py-3.5 border-border"
-                    style={{
-                        borderBottomWidth: StyleSheet.hairlineWidth,
-                        backgroundColor: isActive ? `${accentColor}20` : surfaceBg,
-                    }}
-                >
-                    <View className="flex-row items-center gap-3">
-                        <DragHandle drag={drag} disabled={isActive} />
-                        <Icon size={20} color={foregroundColor} />
-                        <Text className="text-base text-foreground">{pkg.nav?.label}</Text>
-                    </View>
+            <View
+                className="flex-row items-center justify-between px-4 py-3.5 border-border"
+                style={{
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    backgroundColor: surfaceBg,
+                }}
+            >
+                <View className="flex-row items-center gap-3">
+                    <SortableDragHandle />
+                    <Icon size={20} color={foregroundColor} />
+                    <Text className="text-base text-foreground">{pkg.nav?.label}</Text>
                 </View>
-            </ScaleDecorator>
+            </View>
         )
     }
 
@@ -530,13 +523,11 @@ function NavigationSection() {
             </Text>
 
             <View className="rounded-xl border border-border overflow-hidden">
-                <DraggableFlatList
+                <SortableList
                     data={localOrder}
                     keyExtractor={keyExtractor}
-                    onDragEnd={handleDragEnd}
+                    onReorder={handleDragEnd}
                     renderItem={renderItem}
-                    scrollEnabled={false}
-                    activationDistance={1}
                 />
             </View>
 
