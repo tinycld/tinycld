@@ -4,6 +4,7 @@
     "private": true,
     "type": "module",
     "main": "expo-router/entry",
+    "packageManager": "pnpm@11.3.0+sha512.2c403d6594527287672b1f7056343a1f7c3634036a67ffabfcc2b3d7595d843768f8787148d1b57cf7956c90606bbd192857c363af19e96d2d0ec9ec5741d215",
     "scripts": {
         "packages:generate": "tsx scripts/generate.ts && tsx scripts/export-types.ts",
         "assets:copy-pdfjs": "tsx scripts/copy-pdfjs-assets.ts",
@@ -29,7 +30,7 @@
         "export:web": "expo export --platform web",
         "export:ios": "expo export --platform ios",
         "export:android": "expo export --platform android",
-        "eas-build-post-install": "export EXPO_PUBLIC_GIT_COMMIT=$EAS_BUILD_GIT_COMMIT_HASH && ./scripts/eas-install-packages.sh && pnpm run packages:generate && pnpm run assets:copy-pdfjs",
+        "eas-build-pre-install": "corepack enable && export EXPO_PUBLIC_GIT_COMMIT=$EAS_BUILD_GIT_COMMIT_HASH && ./scripts/eas-install-packages.sh && pnpm run packages:generate && pnpm run assets:copy-pdfjs",
         "eas:build:ios": "eas build --platform ios",
         "eas:build:ios:local": "EAS_NO_VCS=1 EAS_PROJECT_ROOT=\"$(cd .. && pwd)\" NODE_OPTIONS=--max-old-space-size=8192 eas build --platform ios --local --output ./tmp/build.ipa",
         "eas:submit:ios": "eas submit --platform ios",
