@@ -86,4 +86,25 @@ export default defineConfig({
     // resolves a relative globalSetup against the INHERITING config's dir —
     // so a relative './tests/...' would break for contacts/etc. Pin it here.
     globalSetup: path.join(import.meta.dirname, 'tests', 'playwright-global-setup.ts'),
+    // outputDir — where Playwright writes its per-test scratch
+    // (.playwright-artifacts-N/, live video/screenshot buffers) AND the
+    // retain-on-failure artifacts.
+    //
+    // LOCAL (macOS): write OUTSIDE the watched workspace tree. Playwright's
+    // transient artifact churn during every run (even passing tests buffer
+    // video/screenshots live, then discard) floods macOS FSEvents; the kernel
+    // drops events (UserDropped), forcing Watchman to recrawl the ~100k-file
+    // monorepo — which is what makes `expo query` stall for 60s. Relocating the
+    // scratch off the watched filesystem removes the flood at its source.
+    // ignore_dirs in .watchmanconfig can't fix this: it stops Watchman INDEXING
+    // those paths, not the kernel FSEvents stream that overflows.
+    //
+    // CI: leave Playwright's default (<inheriting-config-dir>/test-results) so
+    // the per-package workflows' upload-artifact steps (which read
+    // ws/<pkg>/test-results/ + playwright-report/) keep working with NO changes.
+    // CI runs on Linux (inotify, and Watchman typically absent on the runners),
+    // so it does not hit the macOS FSEvents recrawl this guards against.
+    ...(process.env.CI
+        ? {}
+        : { outputDir: path.join('/tmp', 'tinycld-pw-artifacts') }),
 })

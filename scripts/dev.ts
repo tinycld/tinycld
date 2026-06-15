@@ -91,6 +91,14 @@ function resolveUseSsl(): boolean {
 // returns 503 for any request targeted at Expo until you start one
 // yourself, so the app keeps working as soon as you do.
 const skipExpo = process.argv.includes('--no-expo')
+
+// --clear (alias --reset-cache) wipes Metro's transform cache on startup by
+// passing `expo start --clear`. OPT-IN: a normal start reuses the persistent
+// Metro cache (in $TMPDIR/metro-cache), so the bundler doesn't rebuild from
+// scratch — and you don't pay the "Bundler cache is empty, rebuilding" minute —
+// every launch. Reach for this only after a dep/transformer change or when
+// chasing a stale-cache bug.
+const clearCache = process.argv.includes('--clear') || process.argv.includes('--reset-cache')
 const skipPbWatch = process.argv.includes('--no-pb-watch')
 
 const useSsl = resolveUseSsl()
@@ -466,7 +474,12 @@ function spawnExpo(expoPort: number, onReady: () => void): ChildProcess {
     const nodeOptions = existingNodeOptions.includes('--max-old-space-size')
         ? existingNodeOptions
         : `${existingNodeOptions} ${heapFlag}`.trim()
-    const child = spawn('npx', ['expo', 'start', '--clear', '--port', String(expoPort)], {
+    // --clear is opt-in (see `clearCache` above): omit it so Metro reuses its
+    // persistent cache across restarts. Pass --clear/--reset-cache to the dev
+    // script to force a cold rebuild.
+    const expoArgs = ['expo', 'start', '--port', String(expoPort)]
+    if (clearCache) expoArgs.splice(2, 0, '--clear')
+    const child = spawn('npx', expoArgs, {
         cwd: ROOT,
         stdio: ['inherit', 'pipe', 'pipe'],
         env: { ...process.env, NODE_OPTIONS: nodeOptions },
