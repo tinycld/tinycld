@@ -27,11 +27,14 @@ import { getPackages } from '../tinycld.packages'
 
 const WS_ROOT = path.resolve(import.meta.dirname, '..')
 
-// The app shell's dir name. Normally 'tinycld', but EAS cloud builds clone the
-// shell into a dir named 'build', so the EAS install script exports
-// TINYCLD_APP_DIR to point at the real name. core/, package-scripts/, and the
-// generated output all live under this dir.
-const APP_DIR = process.env.TINYCLD_APP_DIR ?? 'tinycld'
+// Absolute path to the app shell dir, which holds the nested core/,
+// package-scripts/, and the generated output. Normally <WS_ROOT>/tinycld, but
+// EAS cloud builds clone the shell into a dir named 'build', so the EAS install
+// script exports TINYCLD_APP_DIR. Resolved as an absolute path to match the
+// generator's scripts/paths.ts contract for the same env var.
+const APP_DIR = process.env.TINYCLD_APP_DIR
+    ? path.resolve(process.env.TINYCLD_APP_DIR)
+    : path.join(WS_ROOT, 'tinycld')
 
 // Map a member's package name to its on-disk sibling dir by scanning the
 // workspace root (the dir name need not equal the package name — e.g.
@@ -55,7 +58,7 @@ function memberDirsByName(): Map<string, string> {
     // the top-level scan won't find it. Register it explicitly so the
     // node_modules/@tinycld/core symlink is still created.
     if (!index.has('@tinycld/core')) {
-        const nestedCore = path.join(WS_ROOT, APP_DIR, 'core')
+        const nestedCore = path.join(APP_DIR, 'core')
         try {
             const name = JSON.parse(
                 fs.readFileSync(path.join(nestedCore, 'package.json'), 'utf8')
@@ -155,10 +158,7 @@ function main(): void {
     const names = getPackages() // ['@tinycld/core', '@tinycld/calc', ...]
     const dirs = memberDirsByName()
     syncGitignore()
-    const targets = [
-        path.join(WS_ROOT, 'node_modules'),
-        path.join(WS_ROOT, APP_DIR, 'node_modules'),
-    ]
+    const targets = [path.join(WS_ROOT, 'node_modules'), path.join(APP_DIR, 'node_modules')]
 
     let linked = 0
     for (const name of names) {
@@ -181,7 +181,7 @@ function main(): void {
     // `@tinycld/app-generated/*` imports resolve by name from any consumer that
     // pulls core in via its exports map. Skip if the generated dir doesn't exist
     // yet (generator runs in the same postinstall, but ordering/partial runs vary).
-    const appGeneratedDir = path.join(WS_ROOT, APP_DIR, 'lib', 'generated')
+    const appGeneratedDir = path.join(APP_DIR, 'lib', 'generated')
     if (fs.existsSync(appGeneratedDir)) {
         for (const nm of targets) {
             if (fs.existsSync(nm)) linkInto(nm, 'app-generated', appGeneratedDir)

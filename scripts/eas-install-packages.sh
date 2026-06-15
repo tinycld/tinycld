@@ -140,7 +140,9 @@ fi
 # repo's packageManager field) — NOT `corepack pnpm`, which re-fetches a pinned
 # pnpm and crashes with ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING under Node 20.19.
 # --no-frozen-lockfile because the reconstructed root has no committed lockfile.
-# Export TINYCLD_APP_DIR so link-members.ts (run by the postinstall) resolves the
-# nested core / generated dirs under the real app dir name (EAS uses "build").
+# Export TINYCLD_APP_DIR (absolute path to the app dir) so link-members.ts AND
+# the generator's scripts/paths.ts both resolve the nested core / generated dirs
+# under the real app dir — EAS clones it as "build", not "tinycld". Both consumers
+# treat this env var as an absolute path (path.resolve).
 echo "==> Installing workspace from ${WORKSPACE_ROOT}"
-(cd "${WORKSPACE_ROOT}" && TINYCLD_APP_DIR="${APP_DIR_NAME}" pnpm install --no-frozen-lockfile)
+(cd "${WORKSPACE_ROOT}" && TINYCLD_APP_DIR="${SHELL_DIR}" pnpm install --no-frozen-lockfile)
