@@ -104,7 +104,5 @@ export default defineConfig({
     // ws/<pkg>/test-results/ + playwright-report/) keep working with NO changes.
     // CI runs on Linux (inotify, and Watchman typically absent on the runners),
     // so it does not hit the macOS FSEvents recrawl this guards against.
-    ...(process.env.CI
-        ? {}
-        : { outputDir: path.join('/tmp', 'tinycld-pw-artifacts') }),
+    ...(process.env.CI ? {} : { outputDir: path.join('/tmp', 'tinycld-pw-artifacts') }),
 })
