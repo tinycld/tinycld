@@ -1,6 +1,6 @@
 {
     "name": "tinycld",
-    "version": "0.1.0",
+    "version": "2.0.0",
     "private": true,
     "type": "module",
     "main": "expo-router/entry",
@@ -30,13 +30,10 @@
         "export:web": "expo export --platform web",
         "export:ios": "expo export --platform ios",
         "export:android": "expo export --platform android",
-        "eas-build-pre-install": "export EXPO_PUBLIC_GIT_COMMIT=$EAS_BUILD_GIT_COMMIT_HASH && ./scripts/eas-install-packages.sh",
-        "eas:build:ios": "eas build --platform ios",
-        "eas:build:ios:local": "EAS_NO_VCS=1 EAS_PROJECT_ROOT=\"$(cd .. && pwd)\" NODE_OPTIONS=--max-old-space-size=8192 eas build --platform ios --local --output ./tmp/build.ipa",
-        "eas:submit:ios": "eas submit --platform ios",
-        "eas:submit:ios:local": "eas submit --platform ios --path ./tmp/build.ipa",
-        "eas:release:ios": "pnpm run eas:build:ios && pnpm run eas:submit:ios",
-        "eas:release:ios:local": "pnpm run eas:build:ios:local && pnpm run eas:submit:ios:local"
+        "eas-build-post-install": "export EXPO_PUBLIC_GIT_COMMIT=$EAS_BUILD_GIT_COMMIT_HASH && pnpm run packages:generate && pnpm run assets:copy-pdfjs",
+        "build:ios": "EAS_NO_VCS=1 EAS_PROJECT_ROOT=\"$(cd .. && pwd)\" NODE_OPTIONS=--max-old-space-size=8192 eas build --platform ios --local --output ./tmp/build.ipa",
+        "submit:ios": "eas submit --platform ios --path ./tmp/build.ipa",
+        "release:ios": "pnpm run build:ios && pnpm run submit:ios"
     },
     "dependencies": {
         "@10play/tentap-editor": "^1.0.1",
