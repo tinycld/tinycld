@@ -145,25 +145,4 @@ fi
 # under the real app dir — EAS clones it as "build", not "tinycld". Both consumers
 # treat this env var as an absolute path (path.resolve).
 echo "==> Installing workspace from ${WORKSPACE_ROOT}"
-# TEMP: don't let the postinstall's generate failure abort before diagnostics run.
-set +e
 (cd "${WORKSPACE_ROOT}" && TINYCLD_APP_DIR="${SHELL_DIR}" pnpm install --no-frozen-lockfile)
-install_rc=$?
-set -e
-
-# --- TEMP DIAGNOSTIC: dump @tinycld resolution state so we can see why tsx fails
-# to resolve @tinycld/core from the text member during the generator's build.
-echo "==> [diag] install_rc=${install_rc} WORKSPACE_ROOT=${WORKSPACE_ROOT} SHELL_DIR=${SHELL_DIR}"
-echo "==> [diag] ${WORKSPACE_ROOT}/node_modules/@tinycld:"
-ls -la "${WORKSPACE_ROOT}/node_modules/@tinycld" 2>&1 || echo "   (none)"
-echo "==> [diag] ${SHELL_DIR}/node_modules/@tinycld:"
-ls -la "${SHELL_DIR}/node_modules/@tinycld" 2>&1 || echo "   (none)"
-echo "==> [diag] ${WORKSPACE_ROOT}/text/node_modules (exists?):"
-ls -la "${WORKSPACE_ROOT}/text/node_modules" 2>&1 | head -20 || echo "   (none)"
-echo "==> [diag] resolve @tinycld/core from text build.ts location:"
-(cd "${WORKSPACE_ROOT}/text/tinycld/text/webview-editor" && node -e "try{console.log(require.resolve('@tinycld/core/package.json'))}catch(e){console.log('RESOLVE FAIL:',e.code,e.message.slice(0,160))}" 2>&1) || true
-echo "==> [diag] tsx resolve attempt from text dir:"
-(cd "${WORKSPACE_ROOT}/text" && node -e "console.log('cwd',process.cwd()); const fs=require('fs'); ['node_modules/@tinycld','../node_modules/@tinycld'].forEach(p=>{try{console.log(p,'->',fs.readdirSync(p))}catch(e){console.log(p,'MISSING')}})" 2>&1) || true
-
-# Re-raise the install failure now that diagnostics have printed.
-[ "${install_rc}" -eq 0 ] || exit "${install_rc}"

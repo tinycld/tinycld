@@ -48,6 +48,24 @@ export function getPackages(): string[] {
             }
             if (hasManifest(dir)) features.push(name)
         }
+
+        // @tinycld/core moved INSIDE the app shell (at <appDir>/core/); the
+        // top-level scan above won't see it. Look for it explicitly so it is
+        // still listed first. The app dir is normally <wsRoot>/tinycld, but EAS
+        // cloud builds clone the shell into a dir named 'build' and export
+        // TINYCLD_APP_DIR (absolute path) — honor it to match scripts/paths.ts.
+        if (!core) {
+            const appDir = process.env.TINYCLD_APP_DIR
+                ? path.resolve(process.env.TINYCLD_APP_DIR)
+                : path.join(wsRoot, 'tinycld')
+            const nestedCorePkg = path.join(appDir, 'core', 'package.json')
+            try {
+                const name = JSON.parse(fs.readFileSync(nestedCorePkg, 'utf8')).name
+                if (name === CORE_NAME) core = name
+            } catch {
+                // no nested core present — fine for feature-only test trees
+            }
+        }
     }
 
     features.sort()
