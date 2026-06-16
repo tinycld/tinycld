@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { APP_DIR } from './paths'
+import { APP_DIR, WS_ROOT } from './paths'
 
 // Resolve a manifest `build.script` value to a concrete on-disk file. Prefers
 // an exports-map entry; falls back to <script>.{ts,mjs,js} then the bare path.
@@ -51,11 +51,11 @@ export function runPackageBuilds(wsRoot: string, builds: BuildPkg[]): void {
     if (builds.length === 0) return
     const tsx = tsxBinary(wsRoot)
     // Package build scripts (e.g. text's webview-editor bundler) point esbuild
-    // at the app shell's node_modules to resolve the deps they bundle (@tiptap,
-    // yjs, react, …). Pass the app dir explicitly so they don't fall back to a
-    // guessed relative path — under pnpm those deps are scoped to app/node_modules
-    // (not flat-hoisted to the workspace root), so the path must be exact.
-    const appDir = APP_DIR
+    // at our node_modules to resolve the deps they bundle (@tiptap, yjs, react,
+    // …). Pass both roots explicitly so they don't rely on esbuild's walk-up
+    // (which breaks when a member is reached via a symlink, as in EAS cloud
+    // builds): TINYCLD_APP_ROOT is the app dir; TINYCLD_WS_ROOT is the workspace
+    // root, where `nodeLinker: hoisted` actually places the third-party deps.
     for (const b of builds) {
         const scriptPath = resolveBuildScriptPath(b.packageDir, b.script)
         console.log(
@@ -64,7 +64,7 @@ export function runPackageBuilds(wsRoot: string, builds: BuildPkg[]): void {
         execFileSync(tsx, [scriptPath], {
             cwd: b.packageDir,
             stdio: 'inherit',
-            env: { ...process.env, TINYCLD_APP_ROOT: appDir },
+            env: { ...process.env, TINYCLD_APP_ROOT: APP_DIR, TINYCLD_WS_ROOT: WS_ROOT },
         })
     }
 }
