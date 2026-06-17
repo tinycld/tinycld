@@ -21,6 +21,6 @@
             "@tinycld/core/*": ["./core/*"]
         }
     },
-    "exclude": ["node_modules", ".expo", "dist", "scripts/eas-workspace-files"],
+    "exclude": ["node_modules", ".expo", "dist"],
     "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }
