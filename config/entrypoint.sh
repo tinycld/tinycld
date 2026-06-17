@@ -137,20 +137,56 @@ write_rollback_pending() {
 
 echo "[entrypoint] starting; pwd=$(pwd) user=$(id -un) uid=$(id -u)"
 
-# Seed the first build on a fresh deployment. When /workspace/current is missing or
-# dangling (first boot, or a bind-mounted empty /workspace/builds), copy the pristine
-# baked build into builds/build-baked and point current at it. Idempotent: a healthy
-# current symlink short-circuits.
+# Adopt the image's baked build when it's newer than what's on the volume.
+#
+# Two situations both flow through here:
+#   1. First boot / empty volume — no live `current`, so we must seed.
+#   2. Image redeploy (`deploy.sh` → Dokku rebuild) — the volume already has a
+#      `current` from the prior image (or an in-app install), but the NEW image
+#      carries a NEWER baked build that must supersede it. A plain redeploy does
+#      NOT otherwise re-point `current`, so without this the server keeps running
+#      the OLD binary + serving the OLD web bundle (the image change is a no-op).
+#
+# The baked build is tagged with a unique release id (deploy.sh writes
+# tinycld/.release-id; the Dockerfile stages it at
+# /opt/tinycld-baked/tinycld/release-staging/<rid>/release-id.txt). We record the
+# id we last adopted in /workspace/.baked-release-id and re-adopt only when the
+# image's baked id differs — so this fires exactly once per new image and leaves
+# in-app-installed builds (whose boots see an UNCHANGED baked id) untouched.
+BAKED_MARKER=/workspace/.baked-release-id
+
+baked_release_id() {
+    # The staging dir holds exactly one <rid>/ with a release-id.txt.
+    for f in "$BAKED_BUILD"/tinycld/release-staging/*/release-id.txt; do
+        [ -f "$f" ] && { tr -d '[:space:]' < "$f"; return 0; }
+    done
+    return 1
+}
+
 seed_baked_build() {
-    if [ -e "$CURRENT_LINK/tinycld" ]; then
-        return 0
-    fi
-    echo "[entrypoint] no live build; seeding from $BAKED_BUILD"
     if [ ! -d "$BAKED_BUILD/tinycld" ]; then
         echo "[entrypoint] ERROR: baked build $BAKED_BUILD missing — image is malformed" >&2
         exit 1
     fi
-    dest=/workspace/builds/build-baked
+
+    baked_id=$(baked_release_id || true)
+    adopted_id=$(cat "$BAKED_MARKER" 2>/dev/null || echo '')
+
+    # Already on a live build AND this image's baked build is the one we adopted
+    # (or an in-app install built on top of it) → nothing to do.
+    if [ -e "$CURRENT_LINK/tinycld" ] && [ -n "$baked_id" ] && [ "$baked_id" = "$adopted_id" ]; then
+        return 0
+    fi
+
+    if [ -e "$CURRENT_LINK/tinycld" ]; then
+        echo "[entrypoint] new image detected (baked='$baked_id' adopted='$adopted_id'); adopting baked build over the volume's current"
+    else
+        echo "[entrypoint] no live build; seeding from $BAKED_BUILD (baked='$baked_id')"
+    fi
+
+    # Name the build dir by its baked id so successive images coexist (and the
+    # Go pruneBuilds can manage them). Fall back to build-baked when id is absent.
+    dest="/workspace/builds/build-baked-${baked_id:-unknown}"
     mkdir -p /workspace/builds
     if [ ! -e "$dest/tinycld/tinycld" ]; then
         rm -rf "$dest.tmp"
@@ -158,13 +194,25 @@ seed_baked_build() {
         rm -rf "$dest"
         mv "$dest.tmp" "$dest"
     fi
+
+    # Record the outgoing build id so the exit-75 rollback path has a target.
+    prev_dest=$(readlink "$CURRENT_LINK" 2>/dev/null || echo '')
+    if [ -n "$prev_dest" ]; then
+        prev_id=$(basename "$(dirname "$prev_dest")")
+        [ -n "$prev_id" ] && [ "$prev_id" != "build-baked-${baked_id:-unknown}" ] && \
+            printf '%s' "$prev_id" > /workspace/.previous-build 2>/dev/null || true
+    fi
+
     ln -sfn "$dest/tinycld" "$CURRENT_LINK.tmp"
     mv -T "$CURRENT_LINK.tmp" "$CURRENT_LINK"
+    [ -n "$baked_id" ] && printf '%s' "$baked_id" > "$BAKED_MARKER" 2>/dev/null || true
+
     # The runtime user owns the build tree + symlink so a later in-app rebuild can
     # write sibling build dirs and atomically re-point current. Only when we're root.
     if [ "$(id -u)" = "0" ]; then
         chown -R "$RUN_AS:$RUN_AS" /workspace/builds 2>/dev/null || true
         chown -h "$RUN_AS:$RUN_AS" "$CURRENT_LINK" 2>/dev/null || true
+        chown "$RUN_AS:$RUN_AS" "$BAKED_MARKER" 2>/dev/null || true
     fi
     echo "[entrypoint] seeded current -> $(readlink "$CURRENT_LINK")"
 }
