@@ -284,15 +284,6 @@ function PackageList({
         [pb, onUpdated]
     )
 
-    // The base (`core`) row and any row with a staged version change are pinned:
-    // the base has no nav position, and a staged change locks lifecycle controls
-    // until applied so a reorder can't collide with the pending transaction.
-    const isRowDraggable = (pkg: PkgRecord) => {
-        if (pkg.slug === 'core') return false
-        const info = versionBySlug.get(pkg.slug)
-        return info ? stagedDirection(info, targets[pkg.slug]) === 'none' : true
-    }
-
     function renderItem({ item }: { item: PkgRecord; index: number }) {
         const pkg = pkgMap.get(item.id) ?? item
         const info = versionBySlug.get(pkg.slug)
@@ -318,7 +309,7 @@ function PackageList({
                 }}
             >
                 <View className="flex-row items-center gap-3 px-4 py-3.5">
-                    <SortableDragHandle disabled={isStaged || isBase} color={mutedColor} />
+                    <SortableDragHandle color={mutedColor} />
                     <View className="w-10 h-10 rounded-xl items-center justify-center bg-surface border border-border">
                         <Package size={18} color={mutedColor} />
                     </View>
@@ -414,7 +405,6 @@ function PackageList({
             keyExtractor={keyExtractor}
             onReorder={handleReorder}
             renderItem={renderItem}
-            isDraggable={isRowDraggable}
         />
     )
 }
