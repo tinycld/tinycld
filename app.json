@@ -2,11 +2,12 @@
     "expo": {
         "name": "TinyCld",
         "slug": "tinycld",
-        "version": "1.13.7",
         "scheme": "tinycld",
         "platforms": ["ios", "android", "web"],
         "userInterfaceStyle": "automatic",
-        "runtimeVersion": { "policy": "appVersion" },
+        "runtimeVersion": {
+            "policy": "appVersion"
+        },
         "plugins": [
             [
                 "expo-router",
@@ -55,10 +56,17 @@
                 {
                     "action": "VIEW",
                     "autoVerify": true,
-                    "data": [{ "scheme": "https", "host": "tinycld.org", "pathPrefix": "/demo" }],
+                    "data": [
+                        {
+                            "scheme": "https",
+                            "host": "tinycld.org",
+                            "pathPrefix": "/demo"
+                        }
+                    ],
                     "category": ["BROWSABLE", "DEFAULT"]
                 }
-            ]
+            ],
+            "permissions": ["android.permission.RECORD_AUDIO"]
         },
         "web": {
             "bundler": "metro",
@@ -68,7 +76,15 @@
             "typedRoutes": true
         },
         "extra": {
-            "router": {}
+            "router": {
+                "asyncRoutes": {
+                    "web": "production",
+                    "default": false
+                }
+            },
+            "eas": {
+                "projectId": "ac921362-6d8a-49a4-b0a5-d5867617bc4d"
+            }
         },
         "owner": "nathanstitt"
     }
