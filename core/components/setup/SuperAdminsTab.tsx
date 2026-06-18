@@ -70,6 +70,7 @@ export function SuperAdminsTab({ isVisible, pb }: { isVisible: boolean; pb: Pock
                 subtitle="Users granted the cross-org admin console. A super admin can manage packages, organizations, versions, and grant other super admins."
                 actions={
                     <Button
+                        testID="super-admin-grant-toggle"
                         onPress={() => setShowGrantForm(v => !v)}
                         size="sm"
                         variant={showGrantForm ? 'outline' : 'default'}
@@ -151,7 +152,12 @@ function GrantSection({
                 keyboardType="email-address"
             />
             <View className="flex-row justify-end">
-                <Button onPress={onSubmit} size="sm" isDisabled={isSubmitting}>
+                <Button
+                    testID="super-admin-grant-submit"
+                    onPress={onSubmit}
+                    size="sm"
+                    isDisabled={isSubmitting}
+                >
                     <ButtonIcon as={ShieldCheck} />
                     <ButtonText>Grant super admin</ButtonText>
                 </Button>
@@ -234,7 +240,10 @@ function SuperAdminRowItem({
     }
 
     return (
-        <View className="flex-row items-center gap-3 p-3 rounded-xl bg-surface-secondary border border-border">
+        <View
+            testID={`super-admin-row-${admin.email || admin.userId}`}
+            className="flex-row items-center gap-3 p-3 rounded-xl bg-surface-secondary border border-border"
+        >
             <RowIcon Icon={ShieldCheck} accent />
             <View className="flex-1">
                 <Text className="text-foreground" style={{ fontSize: 14, fontWeight: '600' }}>
@@ -247,6 +256,7 @@ function SuperAdminRowItem({
                 ) : null}
             </View>
             <Pressable
+                testID={`super-admin-revoke-${admin.email || admin.userId}`}
                 onPress={revoke}
                 disabled={isRevoking}
                 accessibilityLabel="Revoke super admin"

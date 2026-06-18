@@ -212,7 +212,24 @@ const pkg_registry = newCollection('pkg_registry', {
     ...indexing,
 })
 
+// Build-history catalog for the Admin panel's Builds tab. Read-only from the
+// client (the build pipeline writes it server-side); registered so the tab can
+// read it via the pbtsdb store instead of the raw PocketBase client.
+const pkg_build = newCollection('pkg_build', {
+    omitOnInsert: ['created', 'updated'],
+    ...indexing,
+})
+
 const org_pkg_enabled = newCollection('org_pkg_enabled', {
+    omitOnInsert: ['created', 'updated'],
+    expand: { org: orgs },
+    ...indexing,
+})
+
+// Intent signal core emits on admin org-create so feature packages (mail) can
+// provision their own per-org data without core depending on them. See the
+// create_org_provisioning migration.
+const org_provisioning = newCollection('org_provisioning', {
     omitOnInsert: ['created', 'updated'],
     expand: { org: orgs },
     ...indexing,
@@ -261,7 +278,9 @@ const coreStores = {
     label_assignments,
     org_pkg_access,
     pkg_registry,
+    pkg_build,
     org_pkg_enabled,
+    org_provisioning,
     audit_logs,
     pkg_install_log,
     notifications,

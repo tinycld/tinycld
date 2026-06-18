@@ -67,6 +67,7 @@ interface SortableDragHandleProps {
     disabled?: boolean
     color?: string
     size?: number
+    testID?: string
 }
 
 /**
@@ -74,21 +75,28 @@ interface SortableDragHandleProps {
  * within a row produced by SortableList's renderItem. When disabled it renders
  * a greyed-out grip and does not attach the drag gesture.
  */
-export function SortableDragHandle({ disabled, color, size = 18 }: SortableDragHandleProps) {
+export function SortableDragHandle({
+    disabled,
+    color,
+    size = 18,
+    testID,
+}: SortableDragHandleProps) {
     const mutedColor = useThemeColor('muted-foreground')
     const iconColor = color ?? mutedColor
 
     if (disabled) {
         return (
-            <View className="pr-3" style={{ opacity: 0.4 }}>
+            <View testID={testID} className="pr-3" style={{ opacity: 0.4 }}>
                 <GripVertical size={size} color={iconColor} />
             </View>
         )
     }
 
     return (
-        <DraxHandle style={{ paddingRight: 12 }}>
-            <GripVertical size={size} color={iconColor} />
-        </DraxHandle>
+        <View testID={testID}>
+            <DraxHandle style={{ paddingRight: 12 }}>
+                <GripVertical size={size} color={iconColor} />
+            </DraxHandle>
+        </View>
     )
 }

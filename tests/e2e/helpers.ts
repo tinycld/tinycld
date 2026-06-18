@@ -77,3 +77,19 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
 export async function clickSidebarItem(page: Page, label: string) {
     await page.getByText(label, { exact: true }).click()
 }
+
+// Enter the in-shell Admin console (super-admin only) and land on a section.
+// Requires a logged-in super-admin session (the e2e seed grants the test user
+// super_admins). Clicks the rail entry rather than page.goto so the SPA + its
+// lazy chunks stay warm, then clicks the section in the AdminSidebar.
+//
+// `section` is one of: 'organizations' | 'packages' | 'builds' | 'super-admins'.
+export async function navigateToAdmin(page: Page, section: string, sectionLabel: string) {
+    const rail = page.getByTestId('nav-admin')
+    await rail.waitFor({ state: 'visible', timeout: 15_000 })
+    await rail.click()
+    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/admin`))
+    // The index redirects to /admin/packages; click the section in the sidebar.
+    await page.getByText(sectionLabel, { exact: true }).click()
+    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/admin/${section}`))
+}

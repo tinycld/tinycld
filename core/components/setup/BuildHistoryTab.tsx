@@ -1,11 +1,13 @@
+import { useLiveQuery } from '@tanstack/react-db'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
+import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
 import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { History, RotateCcw, ShieldCheck, Trash2 } from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import { PageHeader, SlugTag } from './console-ui'
 import { InstallProgressModal } from './InstallProgressModal'
@@ -37,27 +39,19 @@ function formatWhen(iso: string) {
 
 export function BuildHistoryTab({ isVisible, pb }: { isVisible: boolean; pb: PocketBase }) {
     const mutedColor = useThemeColor('muted-foreground')
-    const [builds, setBuilds] = useState<BuildRecord[]>([])
-    const [isLoading, setIsLoading] = useState(true)
     const [jobId, setJobId] = useState<string | null>(null)
 
-    const fetchBuilds = useCallback(async () => {
-        setIsLoading(true)
-        try {
-            const records = await pb
-                .collection('pkg_build')
-                .getFullList<BuildRecord>({ sort: '-created' })
-            setBuilds(records)
-        } catch (err) {
-            captureException('setup.buildHistory.fetch', err)
-        } finally {
-            setIsLoading(false)
-        }
-    }, [pb])
-
-    useEffect(() => {
-        if (isVisible) fetchBuilds()
-    }, [isVisible, fetchBuilds])
+    // Live pbtsdb query: build rows are written server-side by the install/revert
+    // pipeline, and pbtsdb's realtime subscription propagates those here — so a
+    // revert or delete reflects without a manual refetch.
+    const [pkgBuildCollection] = useStore('pkg_build')
+    const { data: rows = [], isLoading } = useLiveQuery(
+        query => query.from({ pkg_build: pkgBuildCollection }),
+        []
+    )
+    const builds = [...(rows as BuildRecord[])].sort((a, b) =>
+        (b.created ?? '').localeCompare(a.created ?? '')
+    )
 
     if (!isVisible) return null
 
@@ -77,11 +71,8 @@ export function BuildHistoryTab({ isVisible, pb }: { isVisible: boolean; pb: Poc
                 isVisible={jobId !== null}
                 jobId={jobId}
                 authToken={pb.authStore.token}
-                onClose={() => {
-                    setJobId(null)
-                    fetchBuilds()
-                }}
-                onComplete={fetchBuilds}
+                onClose={() => setJobId(null)}
+                onComplete={() => {}}
             />
 
             <BuildTimeline
@@ -91,7 +82,6 @@ export function BuildHistoryTab({ isVisible, pb }: { isVisible: boolean; pb: Poc
                 pb={pb}
                 newerThan={newerThan}
                 onJobStarted={setJobId}
-                onChanged={fetchBuilds}
             />
         </View>
     )
@@ -104,7 +94,6 @@ function BuildTimeline({
     pb,
     newerThan,
     onJobStarted,
-    onChanged,
 }: {
     builds: BuildRecord[]
     isLoading: boolean
@@ -112,7 +101,6 @@ function BuildTimeline({
     pb: PocketBase
     newerThan: (b: BuildRecord) => BuildRecord[]
     onJobStarted: (jobId: string) => void
-    onChanged: () => void
 }) {
     if (isLoading) {
         return (
@@ -143,7 +131,6 @@ function BuildTimeline({
                     invalidates={newerThan(build)}
                     pb={pb}
                     onJobStarted={onJobStarted}
-                    onChanged={onChanged}
                 />
             ))}
         </View>
@@ -156,14 +143,12 @@ function BuildTimelineItem({
     invalidates,
     pb,
     onJobStarted,
-    onChanged,
 }: {
     build: BuildRecord
     isLast: boolean
     invalidates: BuildRecord[]
     pb: PocketBase
     onJobStarted: (jobId: string) => void
-    onChanged: () => void
 }) {
     const mutedColor = useThemeColor('muted-foreground')
     const successColor = useThemeColor('success')
@@ -202,7 +187,7 @@ function BuildTimelineItem({
         const data = await res.json()
         if (!res.ok) throw new Error(data.error ?? 'Failed to delete build')
         setShowDelete(false)
-        onChanged()
+        // The list reflects the deletion via pbtsdb realtime — no manual refetch.
     }
 
     // node colors: current = filled success w/ ring; superseded/revert = hollow muted.
@@ -211,7 +196,7 @@ function BuildTimelineItem({
     const dimmed = isSuperseded || isRevertMarker
 
     return (
-        <View className="flex-row gap-4">
+        <View testID={`build-row-${build.build_id}`} className="flex-row gap-4">
             <View className="items-center" style={{ width: 16 }}>
                 <View
                     style={{

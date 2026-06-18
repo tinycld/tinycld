@@ -58,6 +58,65 @@ func TestValidatePackageSpec(t *testing.T) {
 	}
 }
 
+func TestValidateManifest(t *testing.T) {
+	base := func() *parsedManifest {
+		return &parsedManifest{Name: "Cal Slots", Slug: "calendar-slots", Version: "0.1.0"}
+	}
+	cases := []struct {
+		name        string
+		m           *parsedManifest
+		allowServer bool
+		bundled     map[string]bool
+		wantErr     bool
+	}{
+		// A slot-only contributor (no nav, no routes) is valid — it contributes
+		// purely via sidebarContributions. This is the regression that the old
+		// unconditional `nav` requirement wrongly rejected.
+		{"slot-only no nav no routes", base(), false, nil, false},
+		// Full-featured package with nav + routes.
+		{
+			"nav and routes",
+			&parsedManifest{
+				Name: "Cal", Slug: "calendar", Version: "1.0.0",
+				Routes: &manifestRoutes{Directory: "screens"},
+				Nav:    &manifestNav{Label: "Calendar", Icon: "calendar"},
+			},
+			false, nil, false,
+		},
+		// Identity fields are still required.
+		{"missing name", &parsedManifest{Slug: "x", Version: "1.0.0"}, false, nil, true},
+		{"missing slug", &parsedManifest{Name: "X", Version: "1.0.0"}, false, nil, true},
+		{"missing version", &parsedManifest{Name: "X", Slug: "x"}, false, nil, true},
+		// Slug shape is enforced (feeds path construction).
+		{"bad slug", &parsedManifest{Name: "X", Slug: "Bad_Slug", Version: "1.0.0"}, false, nil, true},
+		// Path traversal in an optional routes dir is rejected.
+		{
+			"routes traversal",
+			&parsedManifest{Name: "X", Slug: "x", Version: "1.0.0", Routes: &manifestRoutes{Directory: "../etc"}},
+			false, nil, true,
+		},
+		// Env gate: a server package can't install where the Go toolchain is absent.
+		{
+			"server rejected without toolchain",
+			&parsedManifest{Name: "X", Slug: "x", Version: "1.0.0", HasServer: true, Server: &manifestServer{Package: "server", Module: "tinycld.org/x"}},
+			false, nil, true,
+		},
+		{
+			"server allowed with toolchain",
+			&parsedManifest{Name: "X", Slug: "x", Version: "1.0.0", HasServer: true, Server: &manifestServer{Package: "server", Module: "tinycld.org/x"}},
+			true, nil, false,
+		},
+		// Env gate: slug collision with a bundled package.
+		{"bundled slug collision", base(), false, map[string]bool{"calendar-slots": true}, true},
+	}
+	for _, tc := range cases {
+		err := validateManifest(tc.m, tc.allowServer, tc.bundled)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%s: validateManifest got err=%v, wantErr=%v", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
 func TestIsTrustedScope(t *testing.T) {
 	trusted := []string{"@tinycld/mail", "@tinycld/todo"}
 	untrusted := []string{

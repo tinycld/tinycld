@@ -142,7 +142,21 @@ try {
 	return &manifest, nil
 }
 
-// validateManifest checks that a parsed manifest meets all requirements.
+// validateManifest performs the minimal pre-flight checks the install pipeline
+// needs *before* it commits to a build: it confirms the manifest carries the
+// identity fields the pipeline reads up front (name/slug/version), and enforces
+// the env-specific gates the generator cannot make (slug shape + path-traversal
+// safety since the slug feeds path construction, the no-server-toolchain gate,
+// and slug collision with a bundled package).
+//
+// It deliberately does NOT re-validate manifest *shape* (nav, routes, settings,
+// slots, …). Those fields are all optional and their well-formedness is the
+// authority of the assemble step (`pnpm run packages:generate` → loadManifest →
+// manifestToConfigPkg), which runs before the DB backup — so a malformed
+// manifest fails assembly with live state untouched. Duplicating those rules
+// here only let this copy drift out of sync (it once wrongly required `nav`,
+// rejecting valid slot-only contributor packages).
+//
 // If allowServer is false (Phase 2), packages with server fields are rejected.
 func validateManifest(m *parsedManifest, allowServer bool, bundledSlugs map[string]bool) error {
 	if m.Name == "" {
@@ -157,24 +171,12 @@ func validateManifest(m *parsedManifest, allowServer bool, bundledSlugs map[stri
 	if m.Version == "" {
 		return fmt.Errorf("manifest missing required field: version")
 	}
-	if m.Routes == nil || m.Routes.Directory == "" {
-		return fmt.Errorf("manifest missing required field: routes.directory")
-	}
-	if m.Nav == nil {
-		return fmt.Errorf("manifest missing required field: nav")
-	}
-	if m.Nav.Label == "" {
-		return fmt.Errorf("manifest missing required field: nav.label")
-	}
-	if m.Nav.Icon == "" {
-		return fmt.Errorf("manifest missing required field: nav.icon")
-	}
 
-	// Check for path traversal
-	for _, dir := range []string{m.Routes.Directory} {
-		if strings.Contains(dir, "..") {
-			return fmt.Errorf("path traversal detected in directory: %s", dir)
-		}
+	// routes is optional (a slot-only / settings-only / publicRoutes-only
+	// package declares none), but if present its directory feeds path
+	// construction, so guard against traversal.
+	if m.Routes != nil && strings.Contains(m.Routes.Directory, "..") {
+		return fmt.Errorf("path traversal detected in directory: %s", m.Routes.Directory)
 	}
 
 	// Phase 2: reject packages with server components
