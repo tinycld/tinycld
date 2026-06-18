@@ -22,10 +22,19 @@
             "env": {
                 "EXPO_PUBLIC_ENV": "production",
                 "NODE_OPTIONS": "--max-old-space-size=8192"
+            },
+            "android": {
+                "buildType": "app-bundle"
             }
         }
     },
     "submit": {
-        "production": {}
+        "production": {
+            "android": {
+                "serviceAccountKeyPath": "../google-play-service-account.json",
+                "track": "internal",
+                "releaseStatus": "draft"
+            }
+        }
     }
 }

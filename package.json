@@ -33,7 +33,10 @@
         "eas-build-post-install": "export EXPO_PUBLIC_GIT_COMMIT=$EAS_BUILD_GIT_COMMIT_HASH && pnpm run packages:generate && pnpm run assets:copy-pdfjs",
         "build:ios": "EAS_NO_VCS=1 EAS_PROJECT_ROOT=\"$(cd .. && pwd)\" NODE_OPTIONS=--max-old-space-size=8192 eas build --platform ios --local --output ./tmp/build.ipa",
         "submit:ios": "eas submit --platform ios --path ./tmp/build.ipa",
-        "release:ios": "pnpm run build:ios && pnpm run submit:ios"
+        "release:ios": "pnpm run build:ios && pnpm run submit:ios",
+        "build:android": "bash -c 'export JAVA_HOME=\"$(/usr/libexec/java_home -v 17 2>/dev/null || echo \"$JAVA_HOME\")\" && export PATH=\"$JAVA_HOME/bin:$PATH\" && export EAS_LOCAL_BUILD_WORKINGDIR=\"$HOME/.cache/tinycld-eas-build\" && mkdir -p \"$EAS_LOCAL_BUILD_WORKINGDIR\" && EAS_NO_VCS=1 EAS_PROJECT_ROOT=\"$(cd .. && pwd)\" NODE_OPTIONS=--max-old-space-size=8192 eas build --platform android --profile production --local --output ./tmp/build.aab'",
+        "submit:android": "eas submit --platform android --path ./tmp/build.aab",
+        "release:android": "pnpm run build:android && pnpm run submit:android"
     },
     "dependencies": {
         "@10play/tentap-editor": "^1.0.1",
