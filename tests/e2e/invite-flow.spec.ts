@@ -1,6 +1,52 @@
-import { expect, test } from '@playwright/test'
+import { expect, type Page, test } from '@playwright/test'
 import { clearEmailLog, waitForEmailTo } from './email-log-helpers'
-import { login, ORG_SLUG, TEST_USER_EMAIL, TEST_USER_PASSWORD } from './helpers'
+import { isPackageLinked, login, ORG_SLUG, TEST_USER_EMAIL, TEST_USER_PASSWORD } from './helpers'
+
+// Reads the logged-in PocketBase auth token from the web auth store (the
+// AsyncStorage→localStorage 'pb_auth' entry, JSON.stringify({ token, record })).
+async function authTokenFromStore(page: Page): Promise<string> {
+    const raw = await page.evaluate(() => window.localStorage.getItem('pb_auth'))
+    if (!raw) throw new Error('no pb_auth in localStorage — user not logged in?')
+    const token = (JSON.parse(raw) as { token?: string }).token
+    if (!token) throw new Error('pb_auth has no token')
+    return token
+}
+
+// Asserts the freshly-accepted invitee got a personal mailbox under a verified
+// org domain — proving mail's user_org → handleUserOrgCreated hook fired. Queries
+// as the invitee themselves (the mail RLS lets a member read their own mailbox +
+// org domain), so no superuser creds are needed. Skipped when mail isn't linked.
+async function verifyInviteeMailbox(page: Page) {
+    const token = await authTokenFromStore(page)
+    const headers = { Authorization: token }
+    const get = async <T>(path: string): Promise<T> => {
+        const res = await page.request.get(path, { headers, failOnStatusCode: false })
+        if (!res.ok()) throw new Error(`${path} → ${res.status()} ${await res.text()}`)
+        return (await res.json()) as T
+    }
+
+    // The invitee's owner membership in this org's personal mailbox.
+    const members = await get<{ items: { mailbox: string }[] }>(
+        '/api/collections/mail_mailbox_members/records?perPage=1'
+    )
+    expect(members.items.length, 'invitee should have a mailbox membership').toBeGreaterThan(0)
+    const mailboxId = members.items[0].mailbox
+    expect(mailboxId, 'membership links a mailbox').toBeTruthy()
+
+    // The mailbox carries a valid address and links a domain.
+    const mb = await get<{ address?: string; domain?: string }>(
+        `/api/collections/mail_mailboxes/records/${mailboxId}`
+    )
+    expect(mb.address, 'mailbox has an address').toBeTruthy()
+    expect(mb.domain, 'mailbox links a domain').toBeTruthy()
+
+    // The linked domain exists, belongs to this org, and is verified.
+    const dom = await get<{ org?: string; verified?: boolean }>(
+        `/api/collections/mail_domains/records/${mb.domain}`
+    )
+    expect(dom.org, 'domain belongs to an org').toBeTruthy()
+    expect(dom.verified, 'domain is verified').toBe(true)
+}
 
 // End-to-end invite flow:
 //   1. Owner signs in and invites a fresh user via Settings → Members.
@@ -57,6 +103,14 @@ test.describe('Invite flow', () => {
 
         // Auto-login + router.replace should land us on /a/{slug}.
         await invitee.waitForURL(new RegExp(`/a/${ORG_SLUG}`), { timeout: 15_000 })
+
+        // Joining the org fires mail's user_org hook, which provisions a personal
+        // mailbox under the org's verified domain. Verify it landed (mail only).
+        if (isPackageLinked('mail')) {
+            await expect(async () => {
+                await verifyInviteeMailbox(invitee)
+            }).toPass({ timeout: 10_000 })
+        }
 
         // --- 4. Sign out, sign back in with the new password ---
         // The user menu lives in the sidebar; it exposes a "Sign out" menu item.
