@@ -631,6 +631,13 @@ func stageRelease(appDir string) (string, error) {
 // ---------- pkg_registry helpers ----------
 
 func upsertPkgRegistry(app core.App, m *parsedManifest, npmPkg string, manifestJSON []byte) error {
+	// nav is optional — a slot-only / settings-only contributor declares none, so
+	// it has no nav-rail entry. Map a missing nav to an empty icon + order 0.
+	navIcon, navOrder := "", 0
+	if m.Nav != nil {
+		navIcon, navOrder = m.Nav.Icon, m.Nav.Order
+	}
+
 	existing, err := app.FindFirstRecordByFilter(
 		"pkg_registry",
 		"slug = {:slug}",
@@ -643,7 +650,7 @@ func upsertPkgRegistry(app core.App, m *parsedManifest, npmPkg string, manifestJ
 		existing.Set("version", m.Version)
 		existing.Set("npm_package", npmPkg)
 		existing.Set("description", m.Description)
-		existing.Set("icon", m.Nav.Icon)
+		existing.Set("icon", navIcon)
 		existing.Set("has_server", m.HasServer)
 		// Preserve bundled status across an in-app version change: a bundled
 		// feature that's been upgraded is still bundled (so the uninstall guard
@@ -667,11 +674,11 @@ func upsertPkgRegistry(app core.App, m *parsedManifest, npmPkg string, manifestJ
 	record.Set("version", m.Version)
 	record.Set("npm_package", npmPkg)
 	record.Set("description", m.Description)
-	record.Set("icon", m.Nav.Icon)
+	record.Set("icon", navIcon)
 	record.Set("has_server", m.HasServer)
 	record.Set("status", "installed")
 	record.Set("manifest_json", json.RawMessage(manifestJSON))
-	record.Set("nav_order", m.Nav.Order)
+	record.Set("nav_order", navOrder)
 	return app.Save(record)
 }
 

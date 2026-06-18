@@ -189,8 +189,12 @@ func addPkgRegistryWithManifest(t *testing.T, app *tests.TestApp) {
 	t.Helper()
 	c := core.NewBaseCollection("pkg_registry")
 	c.Fields.Add(&core.TextField{Name: "slug", Required: true})
+	c.Fields.Add(&core.TextField{Name: "name"})
+	c.Fields.Add(&core.TextField{Name: "description"})
+	c.Fields.Add(&core.TextField{Name: "icon"})
 	c.Fields.Add(&core.TextField{Name: "version"})
 	c.Fields.Add(&core.TextField{Name: "npm_package"})
+	c.Fields.Add(&core.NumberField{Name: "nav_order"})
 	c.Fields.Add(&core.JSONField{Name: "manifest_json"})
 	c.Fields.Add(&core.SelectField{
 		Name: "status", Required: true, MaxSelect: 1,

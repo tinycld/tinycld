@@ -1,7 +1,9 @@
-import { useQuery } from '@tanstack/react-query'
+import { useLiveQuery } from '@tanstack/react-db'
 import { SortableDragHandle, SortableList } from '@tinycld/core/components/SortableList'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
+import { mutation, useMutation } from '@tinycld/core/lib/mutations'
+import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
 import { Divider } from '@tinycld/core/ui/divider'
@@ -21,6 +23,7 @@ import {
     Trash2,
     X,
 } from 'lucide-react-native'
+import { newRecordId } from 'pbtsdb/core'
 import type PocketBase from 'pocketbase'
 import { useCallback, useState } from 'react'
 import {
@@ -90,20 +93,19 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     const vm = usePackageVersions(pb, isVisible)
     const versionBySlug = new Map(vm.versions.map(v => [v.slug, v]))
 
-    // The setup console is a raw-pb surface (not the org-scoped pbtsdb store the
-    // app uses), so the registry list is a useQuery read rather than a live
-    // collection query. refetch() (aliased fetchPackages) is invoked after every
-    // mutation — install/uninstall/apply completion, register, edit, reorder.
-    const {
-        data: packages = [],
-        isLoading,
-        isError,
-        refetch: fetchPackages,
-    } = useQuery({
-        queryKey: ['admin', 'pkg-registry'],
-        queryFn: () =>
-            pb.collection('pkg_registry').getFullList<PkgRecord>({ sort: 'nav_order,name' }),
-    })
+    // The registry list is a live pbtsdb query: pbtsdb subscribes to PocketBase
+    // realtime, so client mutations (reorder/toggle/edit/register/delete) AND the
+    // server-side build jobs (install/uninstall/version-apply, which write
+    // pkg_registry from Go) both propagate here automatically — no manual refetch.
+    const [pkgRegistryCollection] = useStore('pkg_registry')
+    const { data: rows = [], isLoading } = useLiveQuery(
+        query => query.from({ pkg_registry: pkgRegistryCollection }),
+        []
+    )
+    const packages = [...(rows as PkgRecord[])].sort(
+        (a, b) =>
+            (a.nav_order ?? 0) - (b.nav_order ?? 0) || (a.name ?? '').localeCompare(b.name ?? '')
+    )
 
     const handleInstallStarted = useCallback((jobId: string) => {
         setShowInstall(false)
@@ -117,29 +119,21 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     // Install/uninstall and apply (upgrade/downgrade) each start a background job,
     // but only ONE runs at a time (server single-flight). Collapse both sources
     // into a single active descriptor so the progress panel renders in ONE place
-    // with the handlers appropriate to whichever started it — previously two
-    // separate panels (one above the list, one below) made the position flip
-    // between install and upgrade.
+    // with the handlers appropriate to whichever started it. The package list
+    // refreshes itself via pbtsdb realtime, so these callbacks only dismiss the
+    // progress panel and refresh the version-discovery view (a separate server
+    // query, not a pbtsdb store).
     const activeProgress = installJobId
         ? {
               jobId: installJobId,
-              onClose: () => {
-                  setInstallJobId(null)
-                  fetchPackages()
-              },
-              onComplete: fetchPackages,
+              onClose: () => setInstallJobId(null),
+              onComplete: () => {},
           }
         : vm.applyJobId
           ? {
                 jobId: vm.applyJobId,
-                onClose: () => {
-                    vm.onApplyComplete()
-                    fetchPackages()
-                },
-                onComplete: () => {
-                    vm.refresh()
-                    fetchPackages()
-                },
+                onClose: () => vm.onApplyComplete(),
+                onComplete: () => vm.refresh(),
             }
           : null
 
@@ -179,12 +173,8 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
 
             <RegisterPackageModal
                 isOpen={showRegister}
-                pb={pb}
                 onClose={() => setShowRegister(false)}
-                onCreated={() => {
-                    setShowRegister(false)
-                    fetchPackages()
-                }}
+                onCreated={() => setShowRegister(false)}
             />
 
             <View className="gap-3">
@@ -200,11 +190,9 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
                     <PackageList
                         packages={packages}
                         isLoading={isLoading}
-                        isError={isError}
                         pb={pb}
                         editingId={editingId}
                         onEdit={setEditingId}
-                        onUpdated={fetchPackages}
                         onUninstallStarted={handleUninstallStarted}
                         versionBySlug={versionBySlug}
                         targets={vm.targets}
@@ -239,11 +227,9 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
 function PackageList({
     packages,
     isLoading,
-    isError,
     pb,
     editingId,
     onEdit,
-    onUpdated,
     onUninstallStarted,
     versionBySlug,
     targets,
@@ -251,11 +237,9 @@ function PackageList({
 }: {
     packages: PkgRecord[]
     isLoading: boolean
-    isError: boolean
     pb: PocketBase
     editingId: string | null
     onEdit: (id: string | null) => void
-    onUpdated: () => void
     onUninstallStarted: (jobId: string) => void
     versionBySlug: Map<string, PackageVersionInfo>
     targets: Record<string, string>
@@ -265,24 +249,22 @@ function PackageList({
     const accentColor = useThemeColor('accent')
     const borderColor = useThemeColor('border')
     const mutedColor = useThemeColor('muted-foreground')
+    const [pkgRegistryCollection] = useStore('pkg_registry')
 
     const pkgMap = new Map(packages.map(p => [p.id, p]))
 
-    const handleReorder = useCallback(
-        async (data: PkgRecord[]) => {
-            try {
-                await Promise.all(
-                    data.map((pkg, i) =>
-                        pb.collection('pkg_registry').update(pkg.id, { nav_order: i * 10 })
-                    )
-                )
-                onUpdated()
-            } catch (err) {
-                captureException('Failed to save package order', err)
-            }
-        },
-        [pb, onUpdated]
-    )
+    const reorder = useMutation({
+        mutationFn: mutation(function* (data: PkgRecord[]) {
+            yield data.map((pkg, i) =>
+                pkgRegistryCollection.update(pkg.id, draft => {
+                    draft.nav_order = i * 10
+                })
+            )
+        }),
+        onError: err => captureException('Failed to save package order', err),
+    })
+
+    const handleReorder = useCallback((data: PkgRecord[]) => reorder.mutate(data), [reorder])
 
     function renderItem({ item }: { item: PkgRecord; index: number }) {
         const pkg = pkgMap.get(item.id) ?? item
@@ -302,6 +284,7 @@ function PackageList({
 
         return (
             <View
+                testID={`pkg-row-${pkg.slug}`}
                 style={{
                     backgroundColor: isStaged ? `${accentColor}1f` : surfaceBg,
                     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -309,7 +292,7 @@ function PackageList({
                 }}
             >
                 <View className="flex-row items-center gap-3 px-4 py-3.5">
-                    <SortableDragHandle color={mutedColor} />
+                    <SortableDragHandle color={mutedColor} testID={`pkg-drag-${pkg.slug}`} />
                     <View className="w-10 h-10 rounded-xl items-center justify-center bg-surface border border-border">
                         <Package size={18} color={mutedColor} />
                     </View>
@@ -350,16 +333,13 @@ function PackageList({
                         isEditing={editingId === pkg.id}
                         isLocked={isStaged}
                         onEdit={() => onEdit(editingId === pkg.id ? null : pkg.id)}
-                        onUpdated={onUpdated}
                         onUninstallStarted={onUninstallStarted}
                     />
                 </View>
                 <EditPackageForm
                     isVisible={editingId === pkg.id && !isStaged}
                     pkg={pkg}
-                    pb={pb}
                     onClose={() => onEdit(null)}
-                    onUpdated={onUpdated}
                 />
             </View>
         )
@@ -371,19 +351,6 @@ function PackageList({
         return (
             <View className="p-8 items-center">
                 <ActivityIndicator size="large" color={mutedColor} />
-            </View>
-        )
-    }
-
-    // A failed load must not read as "no packages installed" on the package-
-    // management screen — that would look like the packages vanished.
-    if (isError) {
-        return (
-            <View className="p-8 items-center gap-2">
-                <CircleX size={32} color={`${mutedColor}60`} />
-                <Text className="text-danger" style={{ fontSize: 15 }}>
-                    Couldn't load packages. Check your connection and try again.
-                </Text>
             </View>
         )
     }
@@ -462,7 +429,6 @@ function PackageActions({
     isEditing,
     isLocked,
     onEdit,
-    onUpdated,
     onUninstallStarted,
 }: {
     pkg: PkgRecord
@@ -477,31 +443,27 @@ function PackageActions({
     // immediate mutation can't race the pending transaction.
     isLocked: boolean
     onEdit: () => void
-    onUpdated: () => void
     onUninstallStarted: (jobId: string) => void
 }) {
     const mutedColor = useThemeColor('muted-foreground')
     const dangerColor = useThemeColor('danger')
     const primaryBg = useThemeColor('primary')
-    const [isToggling, setIsToggling] = useState(false)
     const [showUninstall, setShowUninstall] = useState(false)
+    const [pkgRegistryCollection] = useStore('pkg_registry')
 
     const isEnabled = pkg.status !== 'disabled'
     const isInstalled = pkg.status === 'installed'
 
-    const toggleStatus = async () => {
-        setIsToggling(true)
-        try {
+    const toggle = useMutation({
+        mutationFn: mutation(function* () {
             const isBundled = pkg.status === 'bundled'
             const newStatus = isEnabled ? 'disabled' : isBundled ? 'bundled' : 'installed'
-            await pb.collection('pkg_registry').update(pkg.id, { status: newStatus })
-            onUpdated()
-        } catch (err) {
-            captureException('Failed to toggle package status', err)
-        } finally {
-            setIsToggling(false)
-        }
-    }
+            yield pkgRegistryCollection.update(pkg.id, draft => {
+                draft.status = newStatus
+            })
+        }),
+        onError: err => captureException('Failed to toggle package status', err),
+    })
 
     const handleUninstall = async () => {
         const response = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/uninstall`, {
@@ -533,8 +495,8 @@ function PackageActions({
         >
             <Switch
                 value={isEnabled}
-                onValueChange={toggleStatus}
-                disabled={isToggling || isLocked}
+                onValueChange={() => toggle.mutate()}
+                disabled={toggle.isPending || isLocked}
             />
             <Pressable
                 onPress={onEdit}
@@ -838,32 +800,27 @@ const editSchema = z.object({
 function EditPackageForm({
     isVisible,
     pkg,
-    pb,
     onClose,
-    onUpdated,
 }: {
     isVisible: boolean
     pkg: PkgRecord
-    pb: PocketBase
     onClose: () => void
-    onUpdated: () => void
 }) {
     const mutedColor = useThemeColor('muted-foreground')
     const dangerColor = useThemeColor('danger')
     const borderColor = useThemeColor('border')
-    const [isSaving, setIsSaving] = useState(false)
     const [saveError, setSaveError] = useState<string | null>(null)
     const [confirmRemove, setConfirmRemove] = useState(false)
+    const [pkgRegistryCollection] = useStore('pkg_registry')
 
-    const handleRemove = async () => {
-        try {
-            await pb.collection('pkg_registry').delete(pkg.id)
-            onClose()
-            onUpdated()
-        } catch (err) {
-            setSaveError(err instanceof Error ? err.message : 'Failed to remove')
-        }
-    }
+    const remove = useMutation({
+        mutationFn: mutation(function* () {
+            yield pkgRegistryCollection.delete(pkg.id)
+        }),
+        onSuccess: () => onClose(),
+        onError: err => setSaveError(err instanceof Error ? err.message : 'Failed to remove'),
+    })
+    const handleRemove = () => remove.mutate()
 
     const {
         control,
@@ -880,28 +837,27 @@ function EditPackageForm({
         mode: 'onChange',
     })
 
-    const onSave = handleSubmit(async data => {
-        setSaveError(null)
-        setIsSaving(true)
-        try {
-            await pb.collection('pkg_registry').update(pkg.id, {
-                name: data.name,
-                description: data.description,
-                icon: data.icon,
-                nav_order: Number(data.nav_order) || 0,
+    const save = useMutation({
+        mutationFn: mutation(function* (data: z.infer<typeof editSchema>) {
+            yield pkgRegistryCollection.update(pkg.id, draft => {
+                draft.name = data.name
+                draft.description = data.description
+                draft.icon = data.icon
+                draft.nav_order = Number(data.nav_order) || 0
             })
-            onClose()
-            onUpdated()
-        } catch (err) {
-            setSaveError(err instanceof Error ? err.message : 'Failed to update')
-        } finally {
-            setIsSaving(false)
-        }
+        }),
+        onSuccess: () => onClose(),
+        onError: err => setSaveError(err instanceof Error ? err.message : 'Failed to update'),
+    })
+
+    const onSave = handleSubmit(data => {
+        setSaveError(null)
+        save.mutate(data)
     })
 
     if (!isVisible) return null
 
-    const saveEnabled = isDirty && !isSaving
+    const saveEnabled = isDirty && !save.isPending
 
     return (
         <View
@@ -974,7 +930,7 @@ function EditPackageForm({
                         </Text>
                     </Pressable>
                     <Button onPress={onSave} isDisabled={!saveEnabled} size="sm">
-                        <ButtonText>{isSaving ? 'Saving…' : 'Save'}</ButtonText>
+                        <ButtonText>{save.isPending ? 'Saving…' : 'Save'}</ButtonText>
                     </Button>
                 </View>
             </View>
@@ -986,17 +942,15 @@ const registerDefaults = { name: '', slug: '', npm_package: '', description: '' 
 
 function RegisterPackageModal({
     isOpen,
-    pb,
     onClose,
     onCreated,
 }: {
     isOpen: boolean
-    pb: PocketBase
     onClose: () => void
     onCreated: () => void
 }) {
     const [submitError, setSubmitError] = useState<string | null>(null)
-    const [isCreating, setIsCreating] = useState(false)
+    const [pkgRegistryCollection] = useStore('pkg_registry')
 
     const {
         control,
@@ -1015,22 +969,35 @@ function RegisterPackageModal({
         onClose()
     }
 
-    const onSubmit = handleSubmit(async data => {
-        setSubmitError(null)
-        setIsCreating(true)
-        try {
-            await pb.collection('pkg_registry').create({
-                ...data,
+    const create = useMutation({
+        mutationFn: mutation(function* (data: z.infer<typeof registerSchema>) {
+            yield pkgRegistryCollection.insert({
+                id: newRecordId(),
+                name: data.name,
+                slug: data.slug,
+                npm_package: data.npm_package,
+                description: data.description,
                 status: 'available',
                 nav_order: 0,
+                // The install pipeline fills these in when the source is installed;
+                // a freshly-registered, never-installed source has no version/icon
+                // and no compiled manifest yet.
+                version: '',
+                icon: '',
+                manifest_json: '',
+                has_server: false,
             })
+        }),
+        onSuccess: () => {
             reset(registerDefaults)
             onCreated()
-        } catch (err) {
-            setSubmitError(err instanceof Error ? err.message : 'Failed to register')
-        } finally {
-            setIsCreating(false)
-        }
+        },
+        onError: err => setSubmitError(err instanceof Error ? err.message : 'Failed to register'),
+    })
+
+    const onSubmit = handleSubmit(data => {
+        setSubmitError(null)
+        create.mutate(data)
     })
 
     if (!isOpen) return null
@@ -1092,13 +1059,13 @@ function RegisterPackageModal({
                 </View>
 
                 <View className="flex-row gap-3 justify-end">
-                    <Pressable onPress={close} className="px-3 py-2" disabled={isCreating}>
+                    <Pressable onPress={close} className="px-3 py-2" disabled={create.isPending}>
                         <Text className="text-foreground" style={{ fontSize: 13 }}>
                             Cancel
                         </Text>
                     </Pressable>
-                    <Button onPress={onSubmit} isDisabled={isCreating} size="sm">
-                        <ButtonText>{isCreating ? 'Registering…' : 'Register'}</ButtonText>
+                    <Button onPress={onSubmit} isDisabled={create.isPending} size="sm">
+                        <ButtonText>{create.isPending ? 'Registering…' : 'Register'}</ButtonText>
                     </Button>
                 </View>
             </ModalContent>
