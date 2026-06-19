@@ -1,7 +1,12 @@
 import { expect, test } from '@playwright/test'
-import { login, navigateToPackage } from './helpers'
+import { login, navigateToPackage, skipWithoutShortcutStub } from './helpers'
 
 test.describe('Offline overlay', () => {
+    // Drives the shortcut-stub package as a stable navigation target; needs it
+    // scaffolded. Skip on a plain dev workspace where it isn't present (CI's scaffold
+    // step makes it mandatory there — see skipWithoutShortcutStub).
+    test.skip(skipWithoutShortcutStub(), 'shortcut-stub not scaffolded in this workspace')
+
     test('appears when the browser goes offline and dismisses on recovery', async ({
         page,
         context,
