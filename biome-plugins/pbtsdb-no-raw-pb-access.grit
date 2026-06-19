@@ -1,0 +1,42 @@
+// Flags raw PocketBase access that bypasses pbtsdb's store. A pbtsdb collection
+// (from useStore()) is read with `useLiveQuery`/`useOrgLiveQuery` and mutated
+// with `.insert()/.update()/.delete()` on the collection variable; the raw PB
+// client is reached via `pb.collection('x')` and exposes `.create/.update/
+// .delete` (writes) and `.getFullList/.getFirstListItem/.getOne/.getList`
+// (reads). Matching the `.collection(...)` accessor with one of those methods
+// catches the raw path without flagging pbtsdb usage.
+//
+// Why reads count too: a raw read always hits the network and ignores records
+// the pbtsdb store may already hold (loaded by a mounted useLiveQuery, a prior
+// read, or preload()). In a component/hook, read with useLiveQuery; in a
+// non-React context (a mutationFn/queryFn callback, an imperative util), use
+// readCollectionCached/findCollectionCached from
+// @tinycld/core/lib/read-collection-cached, which reads through the store cache.
+// Writes still go through a useMutation generator (@tinycld/core/lib/mutations).
+//
+// Legitimate exceptions (seed scripts, test fixtures) are excluded by the
+// plugin's `includes` globs in biome.json. Per-site exceptions — a multipart
+// FormData upload pbtsdb can't carry, a bootstrap read that seeds the store
+// before it exists, deliberate server-side pagination — use an inline
+// `// biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: <why>` with the reason.
+//
+// See CLAUDE.md → "Data Queries & Mutations".
+// Match the `.collection(...).method` member access itself (not `.method(args)`)
+// so a call with a type argument — `pb.collection('x').getOne<T>(id)` — is still
+// caught; the args-form pattern silently misses generic calls.
+`$obj.collection($name).$method` where {
+    $method <: or {
+        `create`,
+        `update`,
+        `delete`,
+        `getFullList`,
+        `getFirstListItem`,
+        `getOne`,
+        `getList`
+    },
+    register_diagnostic(
+        span = $method,
+        message = "Raw PocketBase access via pb.collection(...) bypasses the pbtsdb store. Read with useLiveQuery (component/hook) or readCollectionCached (non-React); write with a useMutation generator from @tinycld/core/lib/mutations.",
+        severity = "error"
+    )
+}

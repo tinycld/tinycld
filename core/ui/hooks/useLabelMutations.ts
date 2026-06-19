@@ -1,7 +1,7 @@
 import { and, eq } from '@tanstack/db'
 import { captureException } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
-import { pb, useStore } from '@tinycld/core/lib/pocketbase'
+import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
@@ -11,6 +11,17 @@ export function useLabelMutations() {
     const [labelsCollection, assignmentsCollection] = useStore('labels', 'label_assignments')
     const { orgId } = useOrgInfo()
     const { userOrgId } = useCurrentRole()
+
+    // This user-org's assignments, so unassignLabel can resolve a (label,
+    // record, collection) tuple to its row id through pbtsdb instead of a raw
+    // pb.collection(...).getFirstListItem/delete.
+    const { data: myAssignments = [] } = useOrgLiveQuery(
+        (query, { userOrgId: uoId }) =>
+            query
+                .from({ label_assignments: assignmentsCollection })
+                .where(({ label_assignments }) => eq(label_assignments.user_org, uoId)),
+        []
+    )
 
     const onError = (error: unknown) => {
         captureException('Label action failed', error)
@@ -74,12 +85,8 @@ export function useLabelMutations() {
         onError,
     })
 
-    const unassignLabel = useMutation<
-        void,
-        Error,
-        { labelId: string; recordId: string; collection: string }
-    >({
-        mutationFn: async ({
+    const unassignLabel = useMutation({
+        mutationFn: mutation(function* ({
             labelId,
             recordId,
             collection,
@@ -87,14 +94,12 @@ export function useLabelMutations() {
             labelId: string
             recordId: string
             collection: string
-        }) => {
-            const record = await pb
-                .collection('label_assignments')
-                .getFirstListItem(
-                    `label = "${labelId}" && record_id = "${recordId}" && collection = "${collection}"`
-                )
-            await pb.collection('label_assignments').delete(record.id)
-        },
+        }) {
+            const assignment = myAssignments.find(
+                a => a.label === labelId && a.record_id === recordId && a.collection === collection
+            )
+            if (assignment) yield assignmentsCollection.delete(assignment.id)
+        }),
         onError,
     })
 

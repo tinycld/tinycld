@@ -22,6 +22,7 @@ function logSidebar(slug: string | undefined, msg: string, extra?: Record<string
     // Production reporting goes through captureException at the call sites.
     if (!__DEV__) return
     const tag = `[sidebar-boundary${slug ? `:${slug}` : ''}]`
+    // biome-ignore lint/suspicious/noConsole: intentional __DEV__-only sidebar-wedge trace for CI diagnosis (see comment above); production reporting goes through captureException at the call sites.
     console.warn(tag, msg, extra ?? '')
 }
 
