@@ -171,10 +171,20 @@ function MenuRoot({
     // Content via measureInWindow coords that share the raw-window space, so
     // the parent's corrected absolute position carries through.
     const rawTriggerLayout = triggerPosition ?? internalLayout
-    const triggerLayout =
-        rawTriggerLayout && ANDROID_STATUS_BAR_OFFSET
-            ? { ...rawTriggerLayout, y: rawTriggerLayout.y + ANDROID_STATUS_BAR_OFFSET }
-            : rawTriggerLayout
+    // Memoize the offset-adjusted layout so its object identity is stable
+    // across renders when the coordinates haven't changed. Returning a fresh
+    // object every render would make Content.positionStyle (memoized on
+    // triggerLayout) recompute every render, re-firing its publishLayout
+    // effect → setContentLayout → re-render → infinite loop.
+    const rawX = rawTriggerLayout?.x
+    const rawY = rawTriggerLayout?.y
+    const rawW = rawTriggerLayout?.width
+    const rawH = rawTriggerLayout?.height
+    const triggerLayout = React.useMemo(() => {
+        if (rawX == null || rawY == null || rawW == null || rawH == null) return null
+        if (!ANDROID_STATUS_BAR_OFFSET) return { x: rawX, y: rawY, width: rawW, height: rawH }
+        return { x: rawX, y: rawY + ANDROID_STATUS_BAR_OFFSET, width: rawW, height: rawH }
+    }, [rawX, rawY, rawW, rawH])
 
     // Reset which submenu is open whenever the root menu closes, so a
     // reopened menu doesn't flash a stale submenu from the prior session.
