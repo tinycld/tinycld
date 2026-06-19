@@ -1,5 +1,6 @@
-// Base module for TypeScript resolution. Metro picks provider.web.tsx on web
-// and provider.native.tsx on iOS/Android at bundle time.
+// Base module for TypeScript resolution. At bundle time Metro picks
+// provider.web.tsx on web, provider.android.tsx on Android, and
+// provider.native.tsx on every other native platform (iOS today).
 import type { ReactNode } from 'react'
 
 export interface ShortcutsProviderProps {

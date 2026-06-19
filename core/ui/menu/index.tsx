@@ -7,10 +7,11 @@ import React, {
     useCallback,
     useContext,
     useEffect,
+    useId,
     useRef,
     useState,
 } from 'react'
-import { Dimensions, Platform, Pressable, Text, View } from 'react-native'
+import { Dimensions, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
 
 // MenuContextValue carries root menu state. `contentLayout` is the
 // measured rect of <Menu.Content> in window coordinates — submenus
@@ -39,6 +40,11 @@ interface MenuContextValue {
             height: number
         } | null
     ) => void
+    // Which submenu (by stable id) is currently open. Only one sibling
+    // submenu may be open at a time, so opening one closes the others —
+    // each <Menu.Sub> derives its `isOpen` from `activeSubId === myId`.
+    activeSubId: string | null
+    setActiveSubId: React.Dispatch<React.SetStateAction<string | null>>
 }
 
 const MenuContext = createContext<MenuContextValue | null>(null)
@@ -144,8 +150,15 @@ function MenuRoot({
         width: number
         height: number
     } | null>(null)
+    const [activeSubId, setActiveSubId] = useState<string | null>(null)
 
     const triggerLayout = triggerPosition ?? internalLayout
+
+    // Reset which submenu is open whenever the root menu closes, so a
+    // reopened menu doesn't flash a stale submenu from the prior session.
+    useEffect(() => {
+        if (!isOpen) setActiveSubId(null)
+    }, [isOpen])
 
     return (
         <MenuContext.Provider
@@ -157,6 +170,8 @@ function MenuRoot({
                 setTriggerLayout: setInternalLayout,
                 contentLayout,
                 setContentLayout,
+                activeSubId,
+                setActiveSubId,
             }}
         >
             <View className={className}>{children}</View>
@@ -256,13 +271,48 @@ function Trigger({ children, disableClick }: TriggerProps) {
 function Portal({ children }: { children: React.ReactNode }) {
     const ctx = useMenuContext()
 
+    // On native, render the overlay inside a real RN Modal
+    // (statusBarTranslucent + transparent). Without it gluestack drops the
+    // content into a plain absolutely-positioned portal host View, which
+    // caused three native-only bugs:
+    //   1. No full-screen layer behind the menu, so the backdrop Pressable
+    //      couldn't catch outside taps — menus stayed open forever.
+    //   2. Parent menu and submenu shared one stacking context, so on
+    //      Android (which ignores zIndex without elevation) the parent's
+    //      text painted through the submenu.
+    //   3. The portal host's origin excluded the status-bar inset while
+    //      measureInWindow includes it, so menus rendered too high (above
+    //      the trigger) on Android.
+    // A statusBarTranslucent Modal is full-screen and shares measureInWindow's
+    // coordinate space, fixing all three. animationPreset='none' keeps the
+    // snappy, animation-free feel the JS overlay had. Web ignores these
+    // props (gluestack's web Overlay has no Modal path).
     return (
         <GluestackOverlay
             isOpen={ctx.isOpen}
             isKeyboardDismissable
+            useRNModalOnAndroid
+            useRNModal={Platform.OS === 'ios'}
+            animationPreset="none"
             onRequestClose={() => ctx.onOpenChange(false)}
         >
-            <MenuContext.Provider value={ctx}>{children}</MenuContext.Provider>
+            <MenuContext.Provider value={ctx}>
+                {/* Native-only dismiss backdrop. On web, menus close via a
+                 * document-level outside-click handler and a backdrop here
+                 * would swallow clicks on sibling triggers (breaking the
+                 * menubar hover/click swap). On native there's no such
+                 * handler, and menubar menus render no <Menu.Overlay> of
+                 * their own — so without this, File/Edit/View etc. could
+                 * never be tapped closed. Rendered first so it sits behind
+                 * the menu content. */}
+                {Platform.OS !== 'web' && (
+                    <Pressable
+                        style={StyleSheet.absoluteFill}
+                        onPress={() => ctx.onOpenChange(false)}
+                    />
+                )}
+                {children}
+            </MenuContext.Provider>
         </GluestackOverlay>
     )
 }
@@ -524,9 +574,26 @@ function Separator({ className }: { className?: string }) {
 // ── Sub ──
 
 function Sub({ children }: { children: React.ReactNode }) {
-    const [isOpen, setOpen] = useState(false)
+    // Open state is owned by the root menu (activeSubId), so only one
+    // sibling submenu is open at a time — clicking/hovering a second
+    // SubTrigger closes the first. triggerLayout stays local since each
+    // submenu anchors off its own trigger row.
+    const id = useId()
+    const { activeSubId, setActiveSubId } = useMenuContext()
+    const isOpen = activeSubId === id
     const [triggerLayout, setTriggerLayout] = useState<MenuSubContextValue['triggerLayout']>(null)
     const hoverIntentRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    const setOpen = useCallback(
+        (next: boolean) => {
+            // Only clear the active id if *we* are the active submenu — a
+            // delayed hover-close from this submenu must not stomp a sibling
+            // that just opened.
+            if (next) setActiveSubId(id)
+            else setActiveSubId(prev => (prev === id ? null : prev))
+        },
+        [id, setActiveSubId]
+    )
 
     useEffect(() => {
         return () => {
@@ -717,6 +784,15 @@ const SubContent = forwardRef<View, SubContentProps>(function SubContent(
 
         pos.left = leftWindow - contentLayout.x
         pos.top = topWindow - contentLayout.y
+
+        // SubContent is an absolutely-positioned child of the parent
+        // Menu.Content, so it shares the parent's stacking context. Parent
+        // rows *after* the SubTrigger (e.g. "Bullets & numbering", "Table")
+        // come later in DOM order and would paint over the submenu without
+        // an explicit lift. zIndex covers web; elevation covers Android
+        // (which ignores zIndex on its own).
+        pos.zIndex = 50
+        pos.elevation = 24
 
         return pos
     }, [isOpen, contentLayout, triggerLayout, contentSize, windowDim])

@@ -2,9 +2,15 @@
 // the user-facing port that routes /api and /_ to PB and everything else to
 // Expo.
 //
-// SSL: enabled by default if assets/localhost*.pem are present, disabled
-// if absent. Override with --ssl (force on, errors if certs missing) or
-// --no-ssl (force off). The proxy listens with TLS when enabled.
+// SSL: OFF by default — the proxy serves cleartext on the user-facing
+// port. Pass --ssl to serve TLS (errors if assets/localhost*.pem are
+// missing). --no-ssl is accepted as an explicit no-op for back-compat.
+//
+// Why default off: every dev target works over plain http. The Android
+// emulator can't trust the mkcert cert and reaches the host over cleartext
+// http (10.0.2.2); the iOS simulator reaches localhost over http via the
+// ATS NSAllowsLocalNetworking exception; web works over http on localhost.
+// Pass --ssl only when you specifically want TLS in dev.
 //
 // Defaults: proxy 7100, PB 7101, Expo 7102. If any port in the block is
 // taken we shift the whole block by +10 and re-probe so they stay grouped.
@@ -69,8 +75,8 @@ function resolvePbDataDir(): string | null {
     return path.isAbsolute(raw) ? raw : path.join(ROOT, raw)
 }
 
-// SSL is on when both cert files exist, unless explicitly disabled with
-// --no-ssl. --ssl forces it on (and fails if certs are missing).
+// SSL is OFF by default. --ssl forces it on (and fails if certs are
+// missing); --no-ssl is an explicit no-op kept for back-compat.
 function resolveUseSsl(): boolean {
     if (process.argv.includes('--no-ssl')) return false
     if (process.argv.includes('--ssl')) {
@@ -79,7 +85,7 @@ function resolveUseSsl(): boolean {
         }
         return true
     }
-    return fs.existsSync(CERT_PATH) && fs.existsSync(KEY_PATH)
+    return false
 }
 
 // --no-expo skips spawning Expo so the dev script runs only PB + proxy.
