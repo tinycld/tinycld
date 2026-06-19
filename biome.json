@@ -104,7 +104,7 @@
     "linter": {
         "enabled": true,
         "rules": {
-            "recommended": true,
+            "preset": "recommended",
             "style": {
                 "useConst": "error",
                 "useTemplate": "error",
