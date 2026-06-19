@@ -20,6 +20,32 @@ export function isPackageLinked(slug: string): boolean {
     )
 }
 
+// The keyboard-shortcut and offline-overlay specs drive a minimal stub package
+// (shortcut-stub) scaffolded by tests/scripts/scaffold-shortcut-stub.ts. The scaffold
+// writes the package at <workspaceRoot>/shortcut-stub (sibling of tinycld/).
+export function shortcutStubInstalled(): boolean {
+    // tinycld/tests/e2e/helpers.ts → tinycld/tests → tinycld → workspace root → shortcut-stub/
+    const stubDir = path.resolve(import.meta.dirname, '..', '..', '..', 'shortcut-stub')
+    return fs.existsSync(stubDir)
+}
+
+// Guard for the stub-dependent specs. A plain dev workspace usually hasn't
+// scaffolded shortcut-stub, so those specs skip (their nav entry + landing route
+// are absent and they'd otherwise hang). On CI the scaffold step is mandatory
+// (ci.yml "Scaffold shortcut-stub package" runs before e2e) — so we DON'T allow a
+// silent skip there: if the stub is missing on CI the scaffold step regressed, and
+// the specs should fail loudly rather than vanish into a green run. Returns the
+// `test.skip` condition (true = skip); throws on CI when the stub is absent.
+export function skipWithoutShortcutStub(): boolean {
+    if (shortcutStubInstalled()) return false
+    if (process.env.CI) {
+        throw new Error(
+            'shortcut-stub is not scaffolded but CI is set — the "Scaffold shortcut-stub package" step must run before e2e. Refusing to silently skip stub-dependent specs on CI.'
+        )
+    }
+    return true
+}
+
 export async function login(page: Page) {
     await page.goto('/')
     await page.getByTestId('identifier').fill(TEST_USER_EMAIL)

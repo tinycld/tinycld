@@ -75,47 +75,60 @@ export function OrganizationsTab({ isVisible, pb }: { isVisible: boolean; pb: Po
     const [expandedOrgId, setExpandedOrgId] = useState<string | null>(null)
     const [showCreateForm, setShowCreateForm] = useState(false)
 
-    // Live pbtsdb queries. The orgs/user_org/users collections grant super-admins
+    // Live pbtsdb query. The orgs/user_org/users collections grant super-admins
     // cross-org read access (see the super_admin_rules migration), so the panel
     // reads them directly through the stores — no custom list endpoint. Each org's
-    // owner comes from its role=owner user_org row, with the user expanded.
-    const [orgsCollection, userOrgCollection] = useStore('orgs', 'user_org')
-    const { data: orgRows = [], isLoading: orgsLoading } = useLiveQuery(
-        query => query.from({ orgs: orgsCollection }),
-        []
+    // owner is its role=owner user_org row's user; we left-join orgs → user_org →
+    // users and select a flat row so the owner is part of the org row in one shaped
+    // result. Joining the local `users` collection (rather than reading
+    // `user_org.expand.user`) means an optimistically-created owner resolves
+    // immediately, instead of reading "No owner assigned" until PB redelivered the
+    // expanded record — a gap the edit form (its schema requires owner name/email)
+    // then failed to save against.
+    const [orgsCollection, userOrgCollection, usersCollection] = useStore(
+        'orgs',
+        'user_org',
+        'users'
     )
-    const { data: ownerRows = [], isLoading: ownersLoading } = useLiveQuery(
-        query =>
-            query
-                .from({ user_org: userOrgCollection })
-                .where(({ user_org }) => eq(user_org.role, 'owner')),
-        []
-    )
+    const { data: orgRows = [], isLoading: orgsLoading } = useLiveQuery(query => {
+        // role=owner is filtered in a subquery, not in the join's `on` —
+        // TanStack DB requires each join condition to be a single equality
+        // expression, so the non-equality predicate can't sit alongside the
+        // org↔user_org equality.
+        const owners = query.from({ uo: userOrgCollection }).where(({ uo }) => eq(uo.role, 'owner'))
+        return query
+            .from({ orgs: orgsCollection })
+            .join({ owner_uo: owners }, ({ orgs, owner_uo }) => eq(owner_uo.org, orgs.id), 'left')
+            .join(
+                { owner: usersCollection },
+                ({ owner_uo, owner }) => eq(owner_uo.user, owner.id),
+                'left'
+            )
+            .select(({ orgs, owner }) => ({
+                id: orgs.id,
+                name: orgs.name,
+                slug: orgs.slug,
+                created: orgs.created,
+                ownerId: owner?.id,
+                ownerName: owner?.name,
+                ownerEmail: owner?.email,
+            }))
+    }, [])
 
-    const ownerByOrg = new Map(
-        ownerRows.map(uo => {
-            const user = (uo.expand as { user?: { id?: string; email?: string; name?: string } })
-                ?.user
-            return [uo.org, user]
-        })
-    )
     // `created` is unset on an optimistically-inserted row until the server
     // round-trips its autodate, so guard the comparison against undefined.
     const orgs: OrgEntry[] = [...orgRows]
         .sort((a, b) => (b.created ?? '').localeCompare(a.created ?? ''))
-        .map(org => {
-            const owner = ownerByOrg.get(org.id)
-            return {
-                id: org.id,
-                name: org.name,
-                slug: org.slug,
-                ownerEmail: owner?.email ?? null,
-                ownerId: owner?.id ?? null,
-                ownerName: owner?.name ?? null,
-                created: org.created,
-            }
-        })
-    const isLoadingOrgs = orgsLoading || ownersLoading
+        .map(row => ({
+            id: row.id,
+            name: row.name,
+            slug: row.slug,
+            ownerEmail: row.ownerEmail ?? null,
+            ownerId: row.ownerId ?? null,
+            ownerName: row.ownerName ?? null,
+            created: row.created,
+        }))
+    const isLoadingOrgs = orgsLoading
 
     if (!isVisible) return null
 
@@ -300,7 +313,12 @@ function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEn
         formState: { errors, isSubmitted, isDirty },
     } = useForm({
         resolver: zodResolver(editOrgSchema),
-        defaultValues: {
+        // `values` (not `defaultValues`) so the form re-syncs when the owner
+        // relation resolves after mount — the row's edit form mounts as soon as
+        // the org appears, which can be a render before the joined owner lands.
+        // defaultValues snapshot once at mount and would lock in empty owner
+        // fields, failing the schema's owner name/email requirement on save.
+        values: {
             name: org.name,
             ownerName: org.ownerName ?? '',
             ownerEmail: org.ownerEmail ?? '',
