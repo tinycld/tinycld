@@ -1,14 +1,18 @@
+import { eq } from '@tanstack/db'
+import { useLiveQuery } from '@tanstack/react-db'
 import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import { captureException } from '@tinycld/core/lib/errors'
+import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
-import { pb as appPb } from '@tinycld/core/lib/pocketbase'
+import { pb as appPb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
 import { Divider } from '@tinycld/core/ui/divider'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { Building2, ChevronDown, ChevronRight, ExternalLink, Plus, X } from 'lucide-react-native'
+import { newRecordId } from 'pbtsdb/core'
 import type PocketBase from 'pocketbase'
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import { PageHeader, RowIcon, SectionLabel, SlugTag } from './console-ui'
 
@@ -22,6 +26,12 @@ const setupSchema = z.object({
         .max(15, 'Max 15 characters')
         .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'Lowercase letters, numbers, and hyphens only'),
     ownerName: z.string().min(1, 'Name is required'),
+    ownerUsername: z
+        .string()
+        .regex(
+            /^[a-z0-9][a-z0-9_-]{0,31}$/,
+            'Lowercase letters, numbers, _ or -, starting with a letter or number'
+        ),
     email: z.email(),
     password: z.string().min(8, 'Min 8 characters'),
     mailDomain: mailInstalled
@@ -62,57 +72,63 @@ interface OrgEntry {
 }
 
 export function OrganizationsTab({ isVisible, pb }: { isVisible: boolean; pb: PocketBase }) {
-    const [orgs, setOrgs] = useState<OrgEntry[]>([])
-    const [isLoadingOrgs, setIsLoadingOrgs] = useState(true)
     const [expandedOrgId, setExpandedOrgId] = useState<string | null>(null)
     const [showCreateForm, setShowCreateForm] = useState(false)
 
-    const fetchOrgs = useCallback(async () => {
-        setIsLoadingOrgs(true)
-        try {
-            const orgRecords = await pb.collection('orgs').getFullList({ sort: '-created' })
-            const entries: OrgEntry[] = await Promise.all(
-                orgRecords.map(async org => {
-                    let ownerEmail: string | null = null
-                    let ownerId: string | null = null
-                    let ownerName: string | null = null
-                    try {
-                        const userOrg = await pb
-                            .collection('user_org')
-                            .getFirstListItem(`org="${org.id}" && role="owner"`, {
-                                expand: 'user',
-                            })
-                        const expanded = userOrg.expand as
-                            | Record<string, { id?: string; email?: string; name?: string }>
-                            | undefined
-                        ownerEmail = expanded?.user?.email ?? null
-                        ownerId = expanded?.user?.id ?? null
-                        ownerName = expanded?.user?.name ?? null
-                    } catch {
-                        // no owner found
-                    }
-                    return {
-                        id: org.id,
-                        name: org.name as string,
-                        slug: org.slug as string,
-                        ownerEmail,
-                        ownerId,
-                        ownerName,
-                        created: org.created as string,
-                    }
-                })
+    // Live pbtsdb query. The orgs/user_org/users collections grant super-admins
+    // cross-org read access (see the super_admin_rules migration), so the panel
+    // reads them directly through the stores — no custom list endpoint. Each org's
+    // owner is its role=owner user_org row's user; we left-join orgs → user_org →
+    // users and select a flat row so the owner is part of the org row in one shaped
+    // result. Joining the local `users` collection (rather than reading
+    // `user_org.expand.user`) means an optimistically-created owner resolves
+    // immediately, instead of reading "No owner assigned" until PB redelivered the
+    // expanded record — a gap the edit form (its schema requires owner name/email)
+    // then failed to save against.
+    const [orgsCollection, userOrgCollection, usersCollection] = useStore(
+        'orgs',
+        'user_org',
+        'users'
+    )
+    const { data: orgRows = [], isLoading: orgsLoading } = useLiveQuery(query => {
+        // role=owner is filtered in a subquery, not in the join's `on` —
+        // TanStack DB requires each join condition to be a single equality
+        // expression, so the non-equality predicate can't sit alongside the
+        // org↔user_org equality.
+        const owners = query.from({ uo: userOrgCollection }).where(({ uo }) => eq(uo.role, 'owner'))
+        return query
+            .from({ orgs: orgsCollection })
+            .join({ owner_uo: owners }, ({ orgs, owner_uo }) => eq(owner_uo.org, orgs.id), 'left')
+            .join(
+                { owner: usersCollection },
+                ({ owner_uo, owner }) => eq(owner_uo.user, owner.id),
+                'left'
             )
-            setOrgs(entries)
-        } catch (err) {
-            captureException('Failed to fetch orgs', err)
-        } finally {
-            setIsLoadingOrgs(false)
-        }
-    }, [pb])
+            .select(({ orgs, owner }) => ({
+                id: orgs.id,
+                name: orgs.name,
+                slug: orgs.slug,
+                created: orgs.created,
+                ownerId: owner?.id,
+                ownerName: owner?.name,
+                ownerEmail: owner?.email,
+            }))
+    }, [])
 
-    useEffect(() => {
-        fetchOrgs()
-    }, [fetchOrgs])
+    // `created` is unset on an optimistically-inserted row until the server
+    // round-trips its autodate, so guard the comparison against undefined.
+    const orgs: OrgEntry[] = [...orgRows]
+        .sort((a, b) => (b.created ?? '').localeCompare(a.created ?? ''))
+        .map(row => ({
+            id: row.id,
+            name: row.name,
+            slug: row.slug,
+            ownerEmail: row.ownerEmail ?? null,
+            ownerId: row.ownerId ?? null,
+            ownerName: row.ownerName ?? null,
+            created: row.created,
+        }))
+    const isLoadingOrgs = orgsLoading
 
     if (!isVisible) return null
 
@@ -127,6 +143,7 @@ export function OrganizationsTab({ isVisible, pb }: { isVisible: boolean; pb: Po
                 subtitle="Tenants on this deployment. Each org has one owner — create, edit, or impersonate them here."
                 actions={
                     <Button
+                        testID="org-new-toggle"
                         onPress={() => setShowCreateForm(v => !v)}
                         size="sm"
                         variant={showCreateForm ? 'outline' : 'default'}
@@ -139,11 +156,7 @@ export function OrganizationsTab({ isVisible, pb }: { isVisible: boolean; pb: Po
 
             <CreateOrgSection
                 isVisible={showCreateForm}
-                pb={pb}
-                onCreated={() => {
-                    setShowCreateForm(false)
-                    fetchOrgs()
-                }}
+                onCreated={() => setShowCreateForm(false)}
             />
 
             <OrgList
@@ -152,7 +165,6 @@ export function OrganizationsTab({ isVisible, pb }: { isVisible: boolean; pb: Po
                 expandedOrgId={expandedOrgId}
                 onToggleExpanded={toggleExpanded}
                 pb={pb}
-                onUpdated={fetchOrgs}
             />
         </View>
     )
@@ -164,14 +176,12 @@ function OrgList({
     expandedOrgId,
     onToggleExpanded,
     pb,
-    onUpdated,
 }: {
     orgs: OrgEntry[]
     isLoading: boolean
     expandedOrgId: string | null
     onToggleExpanded: (id: string) => void
     pb: PocketBase
-    onUpdated: () => void
 }) {
     const mutedColor = useThemeColor('muted-foreground')
 
@@ -203,7 +213,6 @@ function OrgList({
                         isExpanded={expandedOrgId === org.id}
                         onToggle={() => onToggleExpanded(org.id)}
                         pb={pb}
-                        onUpdated={onUpdated}
                     />
                 </View>
             ))}
@@ -216,24 +225,29 @@ function OrgRow({
     isExpanded,
     onToggle,
     pb,
-    onUpdated,
 }: {
     org: OrgEntry
     isExpanded: boolean
     onToggle: () => void
     pb: PocketBase
-    onUpdated: () => void
 }) {
     const mutedColor = useThemeColor('muted-foreground')
     const warningColor = useThemeColor('warning')
     const hasOwner = org.ownerId !== null
 
+    // Impersonation mints an auth token for the org owner — a superuser-level
+    // action with no collection-rule equivalent, so it goes through the
+    // requireAdmin-guarded endpoint (which a super-admin can reach) rather than
+    // pb.collection('users').impersonate() (PB-superuser-only).
     const visit = async (e: { stopPropagation: () => void }) => {
         e.stopPropagation()
         if (!org.ownerId) return
         try {
-            const impersonated = await pb.collection('users').impersonate(org.ownerId, 3600)
-            appPb.authStore.save(impersonated.authStore.token, impersonated.authStore.record)
+            const { token, owner } = await pb.send<{
+                token: string
+                owner: { id: string; name: string; email: string }
+            }>(`/api/admin/orgs/${org.id}/impersonate`, { method: 'POST' })
+            appPb.authStore.save(token, { id: owner.id, email: owner.email } as never)
             if (typeof window !== 'undefined') {
                 window.location.href = `/a/${org.slug}`
             }
@@ -243,8 +257,12 @@ function OrgRow({
     }
 
     return (
-        <View>
-            <Pressable onPress={onToggle} className="flex-row items-center gap-4 px-5 py-4">
+        <View testID={`org-row-${org.slug}`}>
+            <Pressable
+                testID={`org-row-toggle-${org.slug}`}
+                onPress={onToggle}
+                className="flex-row items-center gap-4 px-5 py-4"
+            >
                 <RowIcon Icon={Building2} />
                 <View className="flex-1 gap-1">
                     <View className="flex-row gap-2 items-center">
@@ -262,7 +280,12 @@ function OrgRow({
                 </View>
                 <View className="flex-row gap-2.5 items-center">
                     {hasOwner ? (
-                        <Button onPress={visit} size="sm" variant="ghost">
+                        <Button
+                            testID={`org-visit-${org.slug}`}
+                            onPress={visit}
+                            size="sm"
+                            variant="ghost"
+                        >
                             <ButtonText>Visit</ButtonText>
                             <ButtonIcon as={ExternalLink} />
                         </Button>
@@ -275,24 +298,14 @@ function OrgRow({
                 </View>
             </Pressable>
 
-            <OrgExpandedDetails isVisible={isExpanded} org={org} pb={pb} onUpdated={onUpdated} />
+            <OrgExpandedDetails isVisible={isExpanded} org={org} />
         </View>
     )
 }
 
-function OrgExpandedDetails({
-    isVisible,
-    org,
-    pb,
-    onUpdated,
-}: {
-    isVisible: boolean
-    org: OrgEntry
-    pb: PocketBase
-    onUpdated: () => void
-}) {
-    const [isSaving, setIsSaving] = useState(false)
+function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEntry }) {
     const [saveError, setSaveError] = useState<string | null>(null)
+    const [orgsCollection, usersCollection] = useStore('orgs', 'users')
 
     const {
         control,
@@ -300,7 +313,12 @@ function OrgExpandedDetails({
         formState: { errors, isSubmitted, isDirty },
     } = useForm({
         resolver: zodResolver(editOrgSchema),
-        defaultValues: {
+        // `values` (not `defaultValues`) so the form re-syncs when the owner
+        // relation resolves after mount — the row's edit form mounts as soon as
+        // the org appears, which can be a render before the joined owner lands.
+        // defaultValues snapshot once at mount and would lock in empty owner
+        // fields, failing the schema's owner name/email requirement on save.
+        values: {
             name: org.name,
             ownerName: org.ownerName ?? '',
             ownerEmail: org.ownerEmail ?? '',
@@ -309,28 +327,27 @@ function OrgExpandedDetails({
         mode: 'onChange',
     })
 
-    const onSave = handleSubmit(async data => {
-        setSaveError(null)
-        setIsSaving(true)
-        try {
-            await pb.collection('orgs').update(org.id, { name: data.name })
+    const save = useMutation({
+        mutationFn: mutation(function* (data: z.infer<typeof editOrgSchema>) {
+            yield orgsCollection.update(org.id, draft => {
+                draft.name = data.name
+            })
             if (org.ownerId) {
-                const userUpdate: Record<string, string> = {
-                    name: data.ownerName,
-                    email: data.ownerEmail,
-                }
-                if (data.ownerPassword) {
-                    userUpdate.password = data.ownerPassword
-                    userUpdate.passwordConfirm = data.ownerPassword
-                }
-                await pb.collection('users').update(org.ownerId, userUpdate)
+                yield usersCollection.update(org.ownerId, draft => {
+                    draft.name = data.ownerName
+                    draft.email = data.ownerEmail
+                    if (data.ownerPassword) {
+                        ;(draft as { password?: string }).password = data.ownerPassword
+                    }
+                })
             }
-            onUpdated()
-        } catch (err) {
-            setSaveError(err instanceof Error ? err.message : 'Failed to update')
-        } finally {
-            setIsSaving(false)
-        }
+        }),
+        onError: err => setSaveError(err instanceof Error ? err.message : 'Failed to update'),
+    })
+
+    const onSave = handleSubmit(data => {
+        setSaveError(null)
+        save.mutate(data)
     })
 
     if (!isVisible) return null
@@ -343,7 +360,7 @@ function OrgExpandedDetails({
           })
         : null
 
-    const saveEnabled = isDirty && !isSaving
+    const saveEnabled = isDirty && !save.isPending
 
     return (
         <View className="px-4 pb-4 gap-4">
@@ -422,24 +439,23 @@ function OrgExpandedDetails({
                 )}
             </View>
 
-            <Button onPress={onSave} isDisabled={!saveEnabled} size="sm" className="self-start">
-                <ButtonText>{isSaving ? 'Saving…' : 'Save changes'}</ButtonText>
+            <Button
+                testID={`org-save-${org.slug}`}
+                onPress={onSave}
+                isDisabled={!saveEnabled}
+                size="sm"
+                className="self-start"
+            >
+                <ButtonText>{save.isPending ? 'Saving…' : 'Save changes'}</ButtonText>
             </Button>
         </View>
     )
 }
 
-function CreateOrgSection({
-    isVisible,
-    pb,
-    onCreated,
-}: {
-    isVisible: boolean
-    pb: PocketBase
-    onCreated: () => void
-}) {
+function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCreated: () => void }) {
     const [submitError, setSubmitError] = useState<string | null>(null)
-    const [isCreating, setIsCreating] = useState(false)
+    const [orgsCollection, usersCollection, userOrgCollection, orgProvisioningCollection] =
+        useStore('orgs', 'users', 'user_org', 'org_provisioning')
 
     const {
         control,
@@ -454,6 +470,7 @@ function CreateOrgSection({
             orgName: '',
             orgSlug: '',
             ownerName: '',
+            ownerUsername: '',
             email: '',
             password: '',
             mailDomain: '',
@@ -463,7 +480,11 @@ function CreateOrgSection({
 
     const orgName = watch('orgName')
     const orgSlug = watch('orgSlug')
+    const email = watch('email')
+    const ownerUsername = watch('ownerUsername')
 
+    // Auto-suggest the slug from the org name and the username from the email —
+    // both stop auto-tracking once the admin edits them by hand.
     useEffect(() => {
         const prev = deriveSlug(orgName.slice(0, -1))
         if (!orgSlug || orgSlug === prev) {
@@ -471,85 +492,65 @@ function CreateOrgSection({
         }
     }, [orgName, orgSlug, setValue])
 
-    const onSubmit = handleSubmit(async data => {
-        setSubmitError(null)
-        setIsCreating(true)
+    useEffect(() => {
+        const prev = deriveUsername(email.slice(0, -1))
+        if (!ownerUsername || ownerUsername === prev) {
+            setValue('ownerUsername', deriveUsername(email))
+        }
+    }, [email, ownerUsername, setValue])
 
-        let userId: string | null = null
-        let orgId: string | null = null
-
-        try {
-            const base = deriveUsername(data.email)
-            let user: { id: string } | null = null
-            let lastErr: unknown = null
-            for (let i = 0; i < 20; i++) {
-                const candidate = i === 0 ? base : `${base}${i + 1}`
-                try {
-                    user = await pb.collection('users').create({
-                        username: candidate,
-                        email: data.email,
-                        password: data.password,
-                        passwordConfirm: data.password,
-                        name: data.ownerName,
-                        emailVisibility: true,
-                        verified: true,
-                    })
-                    break
-                } catch (err) {
-                    lastErr = err
-                    const validation = (err as { response?: { data?: Record<string, unknown> } })
-                        ?.response?.data
-                    const usernameErr = validation?.username as { code?: string } | undefined
-                    if (usernameErr?.code === 'validation_not_unique') continue
-                    throw err
-                }
-            }
-            if (!user) throw lastErr ?? new Error('Failed to allocate a unique username')
-            userId = user.id
-
-            const org = await pb.collection('orgs').create({
+    // The admin picks the owner username; a collision surfaces as a mutation
+    // error they can fix and retry. pbtsdb yields run as one optimistic
+    // transaction, so a mid-sequence failure rolls back the earlier inserts.
+    const create = useMutation({
+        mutationFn: mutation(function* (data: z.infer<typeof setupSchema>) {
+            const ownerId = newRecordId()
+            const orgId = newRecordId()
+            yield usersCollection.insert({
+                id: ownerId,
+                username: data.ownerUsername,
+                email: data.email,
+                password: data.password,
+                passwordConfirm: data.password,
+                name: data.ownerName,
+                emailVisibility: true,
+                // Admin-created owners are pre-verified so they can sign in
+                // immediately. Setting `verified` on an auth record requires the
+                // users manageRule, which the super_admin_rules migration grants
+                // to super-admins.
+                verified: true,
+            } as never)
+            yield orgsCollection.insert({
+                id: orgId,
                 name: data.orgName,
                 slug: data.orgSlug,
-            })
-            orgId = org.id
-
-            if (mailInstalled && data.mailDomain) {
-                await pb.collection('mail_domains').create({
-                    org: orgId,
-                    domain: data.mailDomain.trim().toLowerCase(),
-                    verified: true,
-                })
-            }
-
-            await pb.collection('user_org').create({
-                user: userId,
+            } as never)
+            yield userOrgCollection.insert({
+                id: newRecordId(),
+                user: ownerId,
                 org: orgId,
                 role: 'owner',
-            })
-
+            } as never)
+            // Don't write mail's collection from core — emit an org_provisioning
+            // intent and let the mail package's server hook create the domain.
+            if (mailInstalled && data.mailDomain) {
+                yield orgProvisioningCollection.insert({
+                    id: newRecordId(),
+                    org: orgId,
+                    mail_domain: data.mailDomain.trim().toLowerCase(),
+                } as never)
+            }
+        }),
+        onSuccess: () => {
             reset()
             onCreated()
-        } catch (err) {
-            const message = err instanceof Error ? err.message : 'Failed to create org'
-            setSubmitError(message)
+        },
+        onError: err => setSubmitError(err instanceof Error ? err.message : 'Failed to create org'),
+    })
 
-            if (orgId) {
-                try {
-                    await pb.collection('orgs').delete(orgId)
-                } catch (cleanupErr) {
-                    captureException('Cleanup failed: could not delete org', cleanupErr)
-                }
-            }
-            if (userId) {
-                try {
-                    await pb.collection('users').delete(userId)
-                } catch (cleanupErr) {
-                    captureException('Cleanup failed: could not delete user', cleanupErr)
-                }
-            }
-        } finally {
-            setIsCreating(false)
-        }
+    const onSubmit = handleSubmit(data => {
+        setSubmitError(null)
+        create.mutate(data)
     })
 
     if (!isVisible) return null
@@ -619,6 +620,16 @@ function CreateOrgSection({
                         <View className="flex-1 min-w-[200px]">
                             <TextInput
                                 control={control}
+                                name="ownerUsername"
+                                label="Username"
+                                placeholder="jane"
+                                autoCapitalize="none"
+                                hint="Must be unique — suggested from the email"
+                            />
+                        </View>
+                        <View className="flex-1 min-w-[200px]">
+                            <TextInput
+                                control={control}
                                 name="password"
                                 label="Password"
                                 placeholder="At least 8 characters"
@@ -649,8 +660,16 @@ function CreateOrgSection({
                     </>
                 )}
 
-                <Button onPress={onSubmit} isDisabled={isCreating} size="sm" className="self-start">
-                    <ButtonText>{isCreating ? 'Creating…' : 'Create organization'}</ButtonText>
+                <Button
+                    testID="org-create-submit"
+                    onPress={onSubmit}
+                    isDisabled={create.isPending}
+                    size="sm"
+                    className="self-start"
+                >
+                    <ButtonText>
+                        {create.isPending ? 'Creating…' : 'Create organization'}
+                    </ButtonText>
                 </Button>
             </View>
         </View>

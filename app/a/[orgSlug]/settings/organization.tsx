@@ -438,6 +438,7 @@ function LogoSection({ org }: { org: { id: string; name: string; logo?: string }
             }
             const fd = new FormData()
             fd.append('logo', picked as unknown as Blob)
+            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: multipart FormData file upload — pbtsdb's optimistic transaction can't carry a file blob.
             await pb.collection('orgs').update(org.id, fd)
         },
         onError: (err: Error) => setError(err.message),
@@ -447,6 +448,7 @@ function LogoSection({ org }: { org: { id: string; name: string; logo?: string }
     const remove = useRawMutation({
         mutationFn: async () => {
             if (!org?.id) throw new Error('No organization context')
+            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: pairs with the FormData logo upload above as one raw LogoSection mutation; kept in the same style.
             await pb.collection('orgs').update(org.id, { logo: null })
         },
         onError: (err: Error) => setError(err.message),

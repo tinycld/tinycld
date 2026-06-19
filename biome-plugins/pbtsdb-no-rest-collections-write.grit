@@ -1,0 +1,19 @@
+// Flags writes to PocketBase's REST collections API (`/api/collections/...`) via
+// a request client (`page.request.post(...)`, `fetch(..., { method: 'POST' })`,
+// etc.) — these bypass pbtsdb. A read-only GET against /api/collections is
+// allowed (the assertion pattern in invite-flow.spec.ts), so only the write verbs
+// post/patch/put/delete are matched.
+//
+// Tests/seeds/scripts are excluded by the plugin's `includes` globs in biome.json;
+// this rule mainly guards runtime app code from hand-rolling REST writes.
+//
+// See CLAUDE.md → "Data Queries & Mutations".
+`$req.$method($args)` where {
+    $method <: or { `post`, `patch`, `put`, `delete` },
+    $args <: some bubble r".*/api/collections/.*",
+    register_diagnostic(
+        span = $method,
+        message = "Write to /api/collections bypasses pbtsdb. Drive the UI (which uses useMutation); raw REST is read-only (GET) for assertions only.",
+        severity = "error"
+    )
+}
