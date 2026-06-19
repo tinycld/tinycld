@@ -18,8 +18,8 @@ const pkg = { name: 'with-app-updater', version: '1.0.0' }
  * Three native modifications:
  *   iOS:     AppDelegate.bundleURL() consults AppUpdaterBundle.stagedBundleURL();
  *            Info.plist stamps the embedded identity.
- *   Android: the RN host's getJSBundleFile() consults
- *            AppUpdaterBundle.stagedBundlePath(); strings.xml stamps identity.
+ *   Android: ExpoReactHostFactory.getDefaultReactHost(jsBundleFilePath = ...)
+ *            is fed AppUpdaterBundle.stagedBundlePath(); strings.xml stamps identity.
  *
  * Every mod throws if its injection marker is absent — a silent no-op would ship
  * an app that never loads OTA bundles with no signal.
@@ -112,25 +112,37 @@ function withIosIdentity(config) {
     })
 }
 
-// --- Android: RN host getJSBundleFile() -------------------------------------
+// --- Android: ExpoReactHostFactory jsBundleFilePath -------------------------
 
-// Anchor on the host object's OPENING BRACE rather than a sibling override.
-// The SDK 55 / RN 0.83 MainApplication.kt template declares the host as
-// `object : DefaultReactNativeHost(this) {` — a stable, single-line structural
-// point. Earlier this anchored on `getJSMainModuleName(): String =`, but the
-// template renders that as an expression body whose value can sit on the NEXT
-// line, so inserting after the `=` line split the expression and produced
-// uncompilable Kotlin. Injecting right after the object's `{` always lands as
-// the first member, valid regardless of how the other overrides are formatted.
-// We use a regex so whitespace between the ctor call and `{` doesn't matter.
-const ANDROID_HOST_OPEN_RE = /object\s*:\s*DefaultReactNativeHost\([^)]*\)\s*\{/
+// RN 0.83 / Expo SDK 55 went bridgeless: MainApplication.kt no longer declares
+// an `object : DefaultReactNativeHost(...)` with an overridable getJSBundleFile()
+// (the old seam). Instead the host is built by a factory call:
+//
+//   override val reactHost: ReactHost by lazy {
+//     ExpoReactHostFactory.getDefaultReactHost(
+//       context = applicationContext,
+//       packageList = PackageList(this).packages.apply { ... }
+//     )
+//   }
+//
+// `getDefaultReactHost` takes a `jsBundleFilePath: String? = null` parameter
+// (expo/android/.../ExpoReactHostFactory.kt). Its ExpoReactHostDelegate resolves
+// that path through `JSBundleLoader.createFileLoader(path)` when non-null and
+// falls back to the embedded `assets://index.android.bundle` when null — exactly
+// `AppUpdaterBundle.stagedBundlePath()`'s contract (absolute path, or null =
+// embedded). So we inject it as a named argument. Named args are order-
+// independent in Kotlin, so we land it as the FIRST argument, immediately after
+// the call's `(`. (expo-updates itself uses a sibling seam — a
+// ReactNativeHostHandler.getJSBundleFile() that takes precedence over this
+// argument — but for a plugin already editing MainApplication.kt the named arg
+// is the simpler, equivalent hook.)
+const ANDROID_HOST_FACTORY_RE = /ExpoReactHostFactory\.getDefaultReactHost\(/
 
-// Block-body (not expression-body) override so there's no next-line ambiguity.
-const ANDROID_BUNDLE_OVERRIDE =
-    '\n          override fun getJSBundleFile(): String? {\n' +
-    '            return org.tinycld.appupdater.AppUpdaterBundle.stagedBundlePath(applicationContext)\n' +
-    '              ?: super.getJSBundleFile()\n' +
-    '          }\n'
+// Leading newline + indentation so the injected arg reads as the first line
+// inside the call; the existing `context = ...,` follows on the next line.
+const ANDROID_BUNDLE_ARG =
+    '\n      jsBundleFilePath =\n' +
+    '        org.tinycld.appupdater.AppUpdaterBundle.stagedBundlePath(applicationContext),'
 
 function withAndroidBundleSeam(config) {
     return withMainApplication(config, cfg => {
@@ -138,18 +150,18 @@ function withAndroidBundleSeam(config) {
         if (src.includes('AppUpdaterBundle.stagedBundlePath')) {
             return cfg // already wired (idempotent re-run)
         }
-        const match = ANDROID_HOST_OPEN_RE.exec(src)
+        const match = ANDROID_HOST_FACTORY_RE.exec(src)
         if (!match) {
             throw new Error(
-                '[with-app-updater] Android: could not find the RN host opener ' +
-                    '`object : DefaultReactNativeHost(...) {` in MainApplication.kt. ' +
-                    'The SDK 55 template may have changed — update plugins/with-app-updater.js.'
+                '[with-app-updater] Android: could not find the host factory call ' +
+                    '`ExpoReactHostFactory.getDefaultReactHost(` in MainApplication.kt. ' +
+                    'The SDK 55 template may have changed — update plugins/with-app-updater.cjs.'
             )
         }
-        // Insert immediately after the matched `{` as the first object member.
+        // Insert immediately after the matched `(` as the first named argument.
         const insertAt = match.index + match[0].length
         cfg.modResults.contents =
-            src.slice(0, insertAt) + ANDROID_BUNDLE_OVERRIDE + src.slice(insertAt)
+            src.slice(0, insertAt) + ANDROID_BUNDLE_ARG + src.slice(insertAt)
         return cfg
     })
 }
