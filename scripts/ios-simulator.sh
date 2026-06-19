@@ -83,10 +83,10 @@ else
     # that routes /api and /_ to PocketBase. --port 7100 also tells the
     # (skipped) bundler to use that port if --no-bundler is removed.
     #
-    # Important: the simulator speaks plain HTTP. dev.ts runs the proxy with
-    # TLS by default when assets/localhost*.pem exist — run `npm start --
-    # --no-ssl` (or delete the certs) when using the simulator, otherwise
-    # the bundle fetch fails with a TLS handshake error.
+    # The simulator speaks plain HTTP, which matches dev.ts's default
+    # (cleartext proxy). If you launch the dev server with --ssl instead,
+    # the bundle fetch + API calls fail the TLS handshake here — drop --ssl
+    # when targeting the simulator.
     export EXPO_PACKAGER_PROXY_URL=http://localhost:7102
     npx expo run:ios --device "$UDID" --no-bundler "${EXTRA_ARGS[@]}"
 fi

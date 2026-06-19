@@ -82,6 +82,10 @@ function isTextInputFocused(): boolean {
     return currentlyFocused != null
 }
 
+// Default native implementation (iOS today; also any future RN platform such as
+// Windows/macOS). Android is the one exception — it resolves provider.android.tsx
+// (a passthrough; see that file for why KeyboardExtendedView can't wrap the app
+// root on Android). Web resolves provider.web.tsx.
 export function ShortcutsProvider({ children }: ShortcutsProviderProps) {
     const matcherRef = useRef(createMatcher())
 
