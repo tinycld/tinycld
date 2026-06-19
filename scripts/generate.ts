@@ -41,41 +41,96 @@ function resolveExportDir(packageDir: string, subpath: string): string | null {
     return exp.replace(/^\.\//, '').replace(/\/\*\.[^.]+$/, '')
 }
 
-// Write the workspace-root biome.json. Biome only searches UPWARD for config,
-// and the canonical biome.json lives at <ws-root>/tinycld/ — a SIBLING of the
-// feature members, never an ancestor. Without a root config, running biome from
-// inside a member (or via the editor/LSP) finds nothing and falls back to
-// biome's built-in defaults (wrong indent/quotes/semicolons), flooding output
-// with bogus reformatting. This minimal root config makes the canonical config
-// resolvable from anywhere: it's the one `root: true` config, and it `extends`
-// the canonical one (which is `root: false`). Members may drop their own
-// `root: false` biome.json that extends canonical to override rules; most don't.
+// Re-root a single biome `files.includes` (or plugin `includes`) glob written
+// against the canonical config's dir (<ws-root>/tinycld/) so it means the same
+// thing from the workspace root. `**`-anchored globs (`**/*.ts`, `!**/server`)
+// already match at any depth and are left as-is; only bare relative segments
+// (`!lib/generated`, `!app/a/[orgSlug]/mail`, `!server`) need the appDir prefix
+// so they keep pointing into the app shell rather than the workspace root.
+function rerootGlob(glob: string, appDirName: string): string {
+    const negated = glob.startsWith('!')
+    const body = negated ? glob.slice(1) : glob
+    if (body.startsWith('**') || body.startsWith('/')) return glob
+    const rerooted = `${appDirName}/${body}`
+    return negated ? `!${rerooted}` : rerooted
+}
+
+// Prefix a plugin path written relative to the canonical's dir (`./biome-plugins/
+// x.grit`) so it resolves from the workspace root (`./tinycld/biome-plugins/
+// x.grit`). Absolute paths are passed through.
+function rerootPluginPath(p: string, appDirName: string): string {
+    if (path.isAbsolute(p)) return p
+    return `./${appDirName}/${p.replace(/^\.\//, '')}`
+}
+
+type PluginEntry = string | { path: string; includes?: string[] }
+
+function rerootPlugins(plugins: PluginEntry[], appDirName: string): PluginEntry[] {
+    return plugins.map((entry) =>
+        typeof entry === 'string'
+            ? rerootPluginPath(entry, appDirName)
+            : { ...entry, path: rerootPluginPath(entry.path, appDirName) }
+    )
+}
+
+// Write the workspace-root biome.json by INLINING the canonical config. Biome
+// only searches UPWARD for config, and the canonical biome.json lives at
+// <ws-root>/tinycld/ — a SIBLING of the feature members, never an ancestor.
+// Without a root config above the members, running biome from inside a sibling
+// (or via the editor/LSP / `pnpm run lint`'s `../mail …` targets) finds nothing
+// and falls back to biome's built-in defaults (wrong indent/quotes/semicolons),
+// flooding output with bogus reformatting. This `root: true` config is what
+// governs every sibling member.
 //
-// Written every install (not just on bootstrap assemble) so it self-heals: the
-// canonical config's `root: false` ships via the tinycld repo, and a non-root
-// config with no root above it breaks `pnpm run lint` — emitting this here means
-// the same install that pulls `root: false` also lays down the root config.
-// Bootstrap-owned (gitignored at the ws-root); content is static, so always
-// rewrite.
+// Why inline instead of `extends: ['./tinycld/biome.json']` (the old form):
+// Biome 2.5.0 silently DROPS the entire `plugins` array from any config reached
+// through a file-path `extends` (biome #8488, only partially fixed by #8524 —
+// which covers `extends: "//"` but not a root extending a sibling file). The
+// failure is silent: rules still load, so the GritQL pbtsdb guards just never
+// run. `extends: "//"` works, but a `root: true` config can't extend itself, so
+// the root config must carry rules + plugins directly. We derive them from the
+// canonical (still the single committed source of truth, shipped via the tinycld
+// repo) every install, so the two never drift. Members that need to override a
+// rule add their own `{ root: false, extends: "//" }` biome.json — `extends:"//"`
+// DOES inherit these plugins.
 //
-// `vcs.root` points at the app member dir (tinycld/), NOT the workspace root:
-// the canonical config relies on `.gitignore` to exclude generated/build
-// artifacts (ios/, .expo, tinycld.config.ts, Podspecs, …), and the only
-// .gitignore that lists them is tinycld/.gitignore. Once canonical is
-// `root: false`, EVERY invocation under the workspace root (including
-// `pnpm run lint` from tinycld/) resolves THIS config as the root and inherits
-// its vcs settings — so this is where useIgnoreFile must be anchored. The bare
-// workspace root has no .gitignore (and in a fresh bootstrap/CI assemble isn't
-// even a git repo), so pointing biome there would make it error
+// `files.includes` and plugin paths are re-rooted (see helpers above): the
+// canonical writes them relative to tinycld/, and inlining moves them up one dir.
+// For app-shell files the nested canonical (discovered directly when biome runs
+// from tinycld/) still governs with its own un-rerooted paths; this rerooted copy
+// governs the siblings.
+//
+// Written every install so it self-heals (the canonical's `root: false` ships via
+// the tinycld repo and breaks `pnpm run lint` with no root above it). Gitignored
+// at the ws-root.
+//
+// `vcs.root` points at the app member dir (tinycld/), NOT the workspace root: the
+// canonical relies on `.gitignore` to exclude generated/build artifacts (ios/,
+// .expo, tinycld.config.ts, Podspecs, …) and the only .gitignore listing them is
+// tinycld/.gitignore. Every invocation under the workspace root resolves THIS
+// config as the root and inherits its vcs settings, so useIgnoreFile must anchor
+// here. The bare workspace root has no .gitignore (and in a fresh bootstrap/CI
+// assemble isn't even a git repo), so pointing biome there would error
 // "couldn't find an ignore file".
 function writeRootBiomeConfig() {
     const appDirName = path.basename(APP_DIR)
+    const canonical = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'biome.json'), 'utf8'))
+
     const config = {
-        $schema: 'https://biomejs.dev/schemas/2.4.16/schema.json',
+        ...canonical,
+        $schema: 'https://biomejs.dev/schemas/2.5.0/schema.json',
         root: true,
-        extends: [`./${appDirName}/biome.json`],
         vcs: { enabled: true, clientKind: 'git', useIgnoreFile: true, root: appDirName },
     }
+    delete config.extends
+    if (config.files?.includes) {
+        config.files = {
+            ...config.files,
+            includes: config.files.includes.map((g: string) => rerootGlob(g, appDirName)),
+        }
+    }
+    if (config.plugins) config.plugins = rerootPlugins(config.plugins, appDirName)
+
     fs.writeFileSync(path.join(WS_ROOT, 'biome.json'), `${JSON.stringify(config, null, 4)}\n`)
 }
 
