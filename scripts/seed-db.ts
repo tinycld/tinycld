@@ -609,6 +609,19 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
         })
     }
 
+    // Grant the seeded test user super-admin so e2e can drive the /admin console
+    // (organizations, super-admins, builds). The seed runs as a PB superuser, so
+    // it can write the superuser-only super_admins collection. Idempotent.
+    if (await hasCollection(pb, 'super_admins')) {
+        try {
+            await pb.collection('super_admins').getFirstListItem(`user = "${user.id}"`)
+            log('Found existing super_admins grant')
+        } catch {
+            log('Granting super_admins to', config.userEmail)
+            await pb.collection('super_admins').create({ user: user.id })
+        }
+    }
+
     const seedContext = {
         user: { id: user.id, email: config.userEmail, name: config.userName },
         org,

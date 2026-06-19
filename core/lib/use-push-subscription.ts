@@ -13,6 +13,7 @@ export function usePushSubscription() {
     const { data: subscriptions } = useQuery({
         queryKey,
         queryFn: () =>
+            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: push_subscriptions is device-notification state cached via React Query (queryKey + invalidateQueries below), not a pbtsdb store collection.
             pb.collection('push_subscriptions').getFullList({
                 filter: `user = "${userId}"`,
             }),

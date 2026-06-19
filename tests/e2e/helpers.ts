@@ -20,6 +20,32 @@ export function isPackageLinked(slug: string): boolean {
     )
 }
 
+// The keyboard-shortcut and offline-overlay specs drive a minimal stub package
+// (shortcut-stub) scaffolded by tests/scripts/scaffold-shortcut-stub.ts. The scaffold
+// writes the package at <workspaceRoot>/shortcut-stub (sibling of tinycld/).
+export function shortcutStubInstalled(): boolean {
+    // tinycld/tests/e2e/helpers.ts → tinycld/tests → tinycld → workspace root → shortcut-stub/
+    const stubDir = path.resolve(import.meta.dirname, '..', '..', '..', 'shortcut-stub')
+    return fs.existsSync(stubDir)
+}
+
+// Guard for the stub-dependent specs. A plain dev workspace usually hasn't
+// scaffolded shortcut-stub, so those specs skip (their nav entry + landing route
+// are absent and they'd otherwise hang). On CI the scaffold step is mandatory
+// (ci.yml "Scaffold shortcut-stub package" runs before e2e) — so we DON'T allow a
+// silent skip there: if the stub is missing on CI the scaffold step regressed, and
+// the specs should fail loudly rather than vanish into a green run. Returns the
+// `test.skip` condition (true = skip); throws on CI when the stub is absent.
+export function skipWithoutShortcutStub(): boolean {
+    if (shortcutStubInstalled()) return false
+    if (process.env.CI) {
+        throw new Error(
+            'shortcut-stub is not scaffolded but CI is set — the "Scaffold shortcut-stub package" step must run before e2e. Refusing to silently skip stub-dependent specs on CI.'
+        )
+    }
+    return true
+}
+
 export async function login(page: Page) {
     await page.goto('/')
     await page.getByTestId('identifier').fill(TEST_USER_EMAIL)
@@ -76,4 +102,20 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
 
 export async function clickSidebarItem(page: Page, label: string) {
     await page.getByText(label, { exact: true }).click()
+}
+
+// Enter the in-shell Admin console (super-admin only) and land on a section.
+// Requires a logged-in super-admin session (the e2e seed grants the test user
+// super_admins). Clicks the rail entry rather than page.goto so the SPA + its
+// lazy chunks stay warm, then clicks the section in the AdminSidebar.
+//
+// `section` is one of: 'organizations' | 'packages' | 'builds' | 'super-admins'.
+export async function navigateToAdmin(page: Page, section: string, sectionLabel: string) {
+    const rail = page.getByTestId('nav-admin')
+    await rail.waitFor({ state: 'visible', timeout: 15_000 })
+    await rail.click()
+    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/admin`))
+    // The index redirects to /admin/packages; click the section in the sidebar.
+    await page.getByText(sectionLabel, { exact: true }).click()
+    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/admin/${section}`))
 }

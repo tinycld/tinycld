@@ -205,6 +205,37 @@ func TestUpsertPkgRegistryPreservesBundledStatus(t *testing.T) {
 	}
 }
 
+// A slot-only / settings-only contributor declares no nav. upsertPkgRegistry
+// must not deref a nil m.Nav (it once panicked here) and should record an empty
+// icon + nav_order 0.
+func TestUpsertPkgRegistryNavless(t *testing.T) {
+	app := newRegistryOnlyApp(t)
+
+	navless := &parsedManifest{
+		Name: "Calendar Slots", Slug: "calendar-slots", Version: "0.1.0",
+		Description: "Adds booking pages to the calendar sidebar",
+		// Nav intentionally nil.
+	}
+	if err := upsertPkgRegistry(app, navless,
+		"github:stefnnn/tinycld-calendar-slots", []byte(`{"slug":"calendar-slots"}`)); err != nil {
+		t.Fatalf("upsert navless: %v", err)
+	}
+
+	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'calendar-slots'", nil)
+	if err != nil {
+		t.Fatalf("navless row not found: %v", err)
+	}
+	if got := rec.GetString("icon"); got != "" {
+		t.Errorf("navless icon = %q, want empty", got)
+	}
+	if got := rec.GetInt("nav_order"); got != 0 {
+		t.Errorf("navless nav_order = %d, want 0", got)
+	}
+	if got := rec.GetString("status"); got != "installed" {
+		t.Errorf("navless status = %q, want installed", got)
+	}
+}
+
 // ---- helpers ----
 
 func newRegistryOnlyApp(t *testing.T) *tests.TestApp {

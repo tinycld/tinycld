@@ -36,6 +36,7 @@ export async function subscribeToPush(userId: string): Promise<boolean> {
     const subscriptionJSON = subscription.toJSON()
 
     const { pb } = await import('./pocketbase')
+    // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker/PushManager util (not a React hook), so useMutation/pbtsdb can't apply; pb is lazy-imported to break a require cycle.
     await pb.collection('push_subscriptions').create({
         user: userId,
         endpoint: subscriptionJSON.endpoint,
@@ -59,10 +60,12 @@ export async function unsubscribeFromPush(userId: string): Promise<void> {
         await subscription.unsubscribe()
 
         const { pb } = await import('./pocketbase')
+        // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker unsubscribe util (not a React hook); pb is lazy-imported to break a require cycle.
         const records = await pb.collection('push_subscriptions').getFullList({
             filter: `user = "${userId}" && endpoint = "${subscription.endpoint}"`,
         })
         for (const record of records) {
+            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker unsubscribe util (not a React hook); pairs with subscribeToPush above.
             await pb.collection('push_subscriptions').delete(record.id)
         }
     }
