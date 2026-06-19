@@ -20,8 +20,7 @@ import { Dimensions, Platform, Pressable, StatusBar, StyleSheet, Text, View } fr
 // by the status-bar height on Android, which made menus render that much too
 // high (covering their trigger). Add the inset back to every measured Y so
 // trigger coordinates live in the Modal's coordinate space. iOS/web: 0.
-const ANDROID_STATUS_BAR_OFFSET =
-    Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0
+const ANDROID_STATUS_BAR_OFFSET = Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0
 
 // MenuContextValue carries root menu state. `contentLayout` is the
 // measured rect of <Menu.Content> in window coordinates — submenus
