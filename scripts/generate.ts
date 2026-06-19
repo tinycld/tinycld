@@ -66,7 +66,7 @@ function rerootPluginPath(p: string, appDirName: string): string {
 type PluginEntry = string | { path: string; includes?: string[] }
 
 function rerootPlugins(plugins: PluginEntry[], appDirName: string): PluginEntry[] {
-    return plugins.map((entry) =>
+    return plugins.map(entry =>
         typeof entry === 'string'
             ? rerootPluginPath(entry, appDirName)
             : { ...entry, path: rerootPluginPath(entry.path, appDirName) }

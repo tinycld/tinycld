@@ -64,7 +64,7 @@
     },
     "plugins": [
         {
-            "path": "./biome-plugins/pbtsdb-no-raw-pb-write.grit",
+            "path": "./biome-plugins/pbtsdb-no-raw-pb-access.grit",
             "includes": [
                 "**/*.ts",
                 "**/*.tsx",
@@ -78,9 +78,7 @@
                 "!**/seed-db.ts",
                 "!**/*.seed.ts",
                 "!**/core/lib/mutations.ts",
-                "!**/core/lib/pocketbase.ts",
-                "!**/drive/lib/copy-drive-item.ts",
-                "!**/drive/lib/save-to-drive.ts"
+                "!**/core/lib/pocketbase.ts"
             ]
         },
         {
