@@ -1,5 +1,5 @@
 {
-    "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+    "$schema": "https://biomejs.dev/schemas/2.5.0/schema.json",
     "root": false,
     "vcs": {
         "enabled": true,
@@ -62,6 +62,41 @@
             "!**/webview-editor/build/**/*"
         ]
     },
+    "plugins": [
+        {
+            "path": "./biome-plugins/pbtsdb-no-raw-pb-write.grit",
+            "includes": [
+                "**/*.ts",
+                "**/*.tsx",
+                "!**/*.spec.ts",
+                "!**/*.test.ts",
+                "!**/*.test.tsx",
+                "!**/tests/**",
+                "!**/__tests__/**",
+                "!**/scripts/**",
+                "!**/seed.ts",
+                "!**/seed-db.ts",
+                "!**/*.seed.ts",
+                "!**/core/lib/mutations.ts",
+                "!**/core/lib/pocketbase.ts",
+                "!**/drive/lib/copy-drive-item.ts",
+                "!**/drive/lib/save-to-drive.ts"
+            ]
+        },
+        {
+            "path": "./biome-plugins/pbtsdb-no-rest-collections-write.grit",
+            "includes": [
+                "**/*.ts",
+                "**/*.tsx",
+                "!**/*.spec.ts",
+                "!**/*.test.ts",
+                "!**/*.test.tsx",
+                "!**/tests/**",
+                "!**/__tests__/**",
+                "!**/scripts/**"
+            ]
+        }
+    ],
     "formatter": {
         "enabled": true,
         "indentStyle": "space",
