@@ -11,7 +11,17 @@ import React, {
     useRef,
     useState,
 } from 'react'
-import { Dimensions, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import { Dimensions, Platform, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native'
+
+// The menu overlay renders inside a statusBarTranslucent RN Modal whose
+// content origin is the true top of the screen (behind the status bar).
+// But the app's own window is NOT edge-to-edge, so triggerRef.measureInWindow
+// reports Y relative to the below-status-bar origin. Those two origins differ
+// by the status-bar height on Android, which made menus render that much too
+// high (covering their trigger). Add the inset back to every measured Y so
+// trigger coordinates live in the Modal's coordinate space. iOS/web: 0.
+const ANDROID_STATUS_BAR_OFFSET =
+    Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0
 
 // MenuContextValue carries root menu state. `contentLayout` is the
 // measured rect of <Menu.Content> in window coordinates — submenus
@@ -152,7 +162,19 @@ function MenuRoot({
     } | null>(null)
     const [activeSubId, setActiveSubId] = useState<string | null>(null)
 
-    const triggerLayout = triggerPosition ?? internalLayout
+    // Shift the trigger Y by the Android status-bar inset so the menu —
+    // which renders in a statusBarTranslucent Modal whose origin is the true
+    // screen top — lines up with a trigger measured in the (non-edge-to-edge)
+    // app window. Applied once here so it covers both measured triggers and
+    // externally-supplied triggerPosition (e.g. native context-menu press
+    // coords). Submenus stay correct: they position relative to the parent
+    // Content via measureInWindow coords that share the raw-window space, so
+    // the parent's corrected absolute position carries through.
+    const rawTriggerLayout = triggerPosition ?? internalLayout
+    const triggerLayout =
+        rawTriggerLayout && ANDROID_STATUS_BAR_OFFSET
+            ? { ...rawTriggerLayout, y: rawTriggerLayout.y + ANDROID_STATUS_BAR_OFFSET }
+            : rawTriggerLayout
 
     // Reset which submenu is open whenever the root menu closes, so a
     // reopened menu doesn't flash a stale submenu from the prior session.
