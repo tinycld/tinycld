@@ -10,6 +10,7 @@ import { SkeletonLayout } from '@tinycld/core/components/workspace/SkeletonLayou
 import { WorkspaceLayout } from '@tinycld/core/components/workspace/WorkspaceLayout'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { useHelpSearchShortcut } from '@tinycld/core/lib/help/use-help-search-shortcut'
+import { markNavMilestone } from '@tinycld/core/lib/nav-perf'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { OrgSlugProvider } from '@tinycld/core/lib/use-org-slug'
@@ -66,6 +67,7 @@ function ActivePkgSync() {
         const match = pathname.match(/^\/a\/[^/]+\/([^/?]+)/)
         const slug = match?.[1] ?? null
         const nextSlug = slug === 'settings' || slug === 'help' ? null : slug
+        if (nextSlug) markNavMilestone(nextSlug, 'route-committed')
 
         const state = useWorkspaceStore.getState()
         if (state.isDrawerOpen) state.setDrawerOpen(false)
