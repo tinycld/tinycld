@@ -2,6 +2,7 @@ import { DemoBanner } from '@tinycld/core/components/DemoBanner'
 import { NotificationDrawer } from '@tinycld/core/components/NotificationDrawer'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { memo } from 'react'
 import { Platform, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { FrozenStack } from './FrozenStack'
@@ -10,7 +11,12 @@ import { MobileTabBar } from './MobileTabBar'
 import { MoreDrawer } from './MoreDrawer'
 import { PackageProviderWrapper } from './PackageProviderWrapper'
 
-export function MobileLayout({ isReady = true }: { isReady?: boolean }) {
+// Memoized: the only prop is the stable `isReady` bool. Without this, the
+// parent WorkspaceLayout re-rendering (it subscribes to activePkgSlug, which
+// ActivePkgSync rewrites after every nav) would re-render this whole subtree —
+// PackageProviderWrapper, FrozenStack, and every frozen screen — a second time
+// per tab switch. memo() lets that parent re-render stop here.
+export const MobileLayout = memo(function MobileLayout({ isReady = true }: { isReady?: boolean }) {
     const isDrawerOpen = useWorkspaceStore(s => s.isDrawerOpen)
     const insets = useSafeAreaInsets()
     const bgColor = useThemeColor('background')
@@ -38,4 +44,4 @@ export function MobileLayout({ isReady = true }: { isReady?: boolean }) {
             </View>
         </PackageProviderWrapper>
     )
-}
+})
