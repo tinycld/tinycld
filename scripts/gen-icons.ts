@@ -108,10 +108,16 @@ export function buildPackageIconsSource(features: IconFeatureInput[]): string {
         return lines.join('\n')
     }
 
-    lines.push('import {')
-    for (const p of pascalNames) lines.push(`    ${p},`)
-    lines.push('    type LucideIcon,')
-    lines.push("} from 'lucide-react-native'")
+    // Per-icon deep imports (not the `{ ... } from 'lucide-react-native'`
+    // barrel): the barrel drags all ~1700 icons into the bundle since Metro
+    // doesn't tree-shake. `lucide-react-native/icons/<kebab>` is remapped to the
+    // single icon module by metro.config.cjs (lucide's exports map blocks the
+    // bare deep path). `type LucideIcon` stays a type-only import from the root —
+    // erased at compile, so it costs nothing at runtime.
+    lines.push("import type { LucideIcon } from 'lucide-react-native'")
+    for (let i = 0; i < used.length; i++) {
+        lines.push(`import ${pascalNames[i]} from 'lucide-react-native/icons/${used[i].kebab}'`)
+    }
     lines.push('')
     lines.push('export const packageIcons: Record<string, LucideIcon> = {')
     for (let i = 0; i < used.length; i++) {

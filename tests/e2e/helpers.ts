@@ -85,16 +85,45 @@ export async function login(page: Page) {
 //
 // `pkg` is the lowercase slug (mail, calendar, drive, ...).
 export async function navigateToPackage(page: Page, pkg: string, options?: { waitFor?: Locator }) {
-    // Match by URL prefix rather than exact href: some packages (calc,
-    // text, …) rewrite their rail link to deep-link the user's last
-    // visited file (e.g. /a/<org>/calc/<id>), so the rail anchor no
-    // longer matches the bare /a/<org>/<pkg> URL. Prefix match keeps
-    // this working regardless of whether the rail item is bare or
-    // deep-linked.
-    const railLink = page.locator(`a[href^="/a/${ORG_SLUG}/${pkg}"]`).first()
-    await railLink.waitFor({ state: 'visible' })
-    await railLink.click()
-    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/${pkg}(/|$|\\?)`))
+    const onTarget = new RegExp(`/a/${ORG_SLUG}/${pkg}(/|$|\\?)`)
+    // Skip the rail-click when we're already on (or already redirecting to) the
+    // target package. login() returns the moment the URL hits /a/<org>, but the
+    // org index then <Redirect>s to the first nav package — which IS this package
+    // when it's the only/first one installed (e.g. drive in its own CI, where no
+    // other nav package exists). Clicking the rail in that window fires a SECOND
+    // navigation to the same route while the first is still streaming its lazy
+    // chunks, and that interruption wedges the screen/sidebar chunk in Metro
+    // ("loaded but never committed" → the sidebar watchdog remounts for ~45s →
+    // the list lands scrolled and double-clicks misfire). When we're already
+    // headed there, wait for the route + the caller's element instead of
+    // re-navigating.
+    let alreadyThere = onTarget.test(page.url())
+    // Only when sitting on the bare org index (/a/<org> with no package segment)
+    // might an auto-redirect to this package be in flight — wait briefly to catch
+    // it. Anywhere else we're not auto-heading here, so skip the wait (no latency
+    // penalty on the common cross-package navigation) and click the rail.
+    if (!alreadyThere && new RegExp(`/a/${ORG_SLUG}(/|$|\\?)?$`).test(page.url())) {
+        await page
+            .waitForURL(onTarget, { timeout: 2000 })
+            .then(() => {
+                alreadyThere = true
+            })
+            .catch(() => {
+                /* redirect went elsewhere; fall through to the rail click */
+            })
+    }
+    if (!alreadyThere) {
+        // Match by URL prefix rather than exact href: some packages (calc,
+        // text, …) rewrite their rail link to deep-link the user's last
+        // visited file (e.g. /a/<org>/calc/<id>), so the rail anchor no
+        // longer matches the bare /a/<org>/<pkg> URL. Prefix match keeps
+        // this working regardless of whether the rail item is bare or
+        // deep-linked.
+        const railLink = page.locator(`a[href^="/a/${ORG_SLUG}/${pkg}"]`).first()
+        await railLink.waitFor({ state: 'visible' })
+        await railLink.click()
+        await page.waitForURL(onTarget)
+    }
     if (options?.waitFor) {
         await options.waitFor.waitFor({ state: 'visible' })
     }
