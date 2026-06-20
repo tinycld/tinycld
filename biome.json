@@ -165,6 +165,16 @@
                     }
                 }
             }
+        },
+        {
+            "includes": ["**/core/lib/nav-perf.ts"],
+            "linter": {
+                "rules": {
+                    "suspicious": {
+                        "noConsole": "off"
+                    }
+                }
+            }
         }
     ],
     "assist": {

@@ -1,3 +1,4 @@
+import { markNavMilestone, markNavPress } from '@tinycld/core/lib/nav-perf'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useOrgSlug } from '@tinycld/core/lib/use-org-slug'
@@ -17,6 +18,7 @@ export function MobileTabBar() {
     const indicatorColor = useThemeColor('active-indicator')
     const sorted = useSortedPackages()
     const activePkgSlug = useWorkspaceStore(s => s.activePkgSlug)
+    const setActivePkgSlug = useWorkspaceStore(s => s.setActivePkgSlug)
     const isMoreOpen = useWorkspaceStore(s => s.isMoreOpen)
     const setMoreOpen = useWorkspaceStore(s => s.setMoreOpen)
     const router = useRouter()
@@ -37,6 +39,7 @@ export function MobileTabBar() {
             {visiblePkgs.map(pkg => {
                 const Icon = getIcon(pkg.nav?.icon ?? '')
                 const isActive = activePkgSlug === pkg.slug
+                if (isActive) markNavMilestone(pkg.slug, 'tabbar-indicator-rendered')
                 const color = isActive ? railActive : railText
                 return (
                     <Pressable
@@ -44,8 +47,38 @@ export function MobileTabBar() {
                         testID={`nav-${pkg.slug}`}
                         className="flex-1 items-center justify-center gap-1 py-1 relative"
                         onPress={() => {
+                            // Light the tab up immediately, then defer the actual
+                            // navigation to the next frame. setActivePkgSlug +
+                            // router.navigate in the same tick batches the cheap
+                            // indicator repaint together with the target screen's
+                            // (heavy) first render, so the highlight only moves
+                            // once that work yields. Splitting them lets the
+                            // indicator commit on its own frame first — the tap
+                            // feels instant regardless of how slow the target
+                            // screen is to mount. ActivePkgSync re-affirms the
+                            // slug once the route settles.
+                            markNavPress(pkg.slug)
                             setMoreOpen(false)
-                            router.push(`/a/${orgSlug}/${pkg.slug}`)
+                            setActivePkgSlug(pkg.slug)
+                            // One rAF lets the indicator repaint commit on its
+                            // own frame before navigation kicks off the target
+                            // screen's render — enough to decouple the highlight
+                            // without the longer wait runAfterInteractions imposes.
+                            requestAnimationFrame(() => {
+                                markNavMilestone(pkg.slug, 'navigate-called')
+                                // dangerouslySingular gives the route a stable id
+                                // ('mail', 'calendar', …) so the org-level <Stack>
+                                // REUSES the existing frozen screen's route key on
+                                // return instead of allocating a new key
+                                // (`mail-<nanoid>`) and remounting the whole
+                                // package subtree. A plain navigate() only reuses
+                                // the *current* route — returning to a different,
+                                // already-mounted tab would otherwise rebuild it
+                                // from scratch, defeating freezeOnBlur.
+                                router.navigate(`/a/${orgSlug}/${pkg.slug}`, {
+                                    dangerouslySingular: true,
+                                })
+                            })
                         }}
                         accessibilityLabel={pkg.nav?.label}
                     >
