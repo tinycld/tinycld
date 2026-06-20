@@ -4,6 +4,9 @@ module.exports = function (api) {
         presets: [['babel-preset-expo', { unstable_transformImportMeta: true }]],
         plugins: [
             stripImportMetaInNodeModules,
+            // Split lucide-react-native barrel imports into per-icon deep imports
+            // so Metro (no tree-shaking) doesn't bundle all ~1700 icons.
+            './scripts/babel-plugin-lucide-deep-imports.cjs',
             'react-native-reanimated/plugin',
         ],
     }

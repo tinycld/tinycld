@@ -39,7 +39,8 @@ export function PackageSidebar({ width }: PackageSidebarProps) {
                     // LazySidebarBoundary owns the Suspense + recovery: it
                     // retries the lazy import if it rejects, and remounts if the
                     // boundary gets wedged in the skeleton without ever
-                    // committing (seen under heavy CI contention). See that file.
+                    // committing (e.g. when an in-flight chunk load is
+                    // interrupted by another navigation). See that file.
                     <LazySidebarBoundary
                         slug={pkg.slug}
                         fallback={<SkeletonSidebar width={width} />}

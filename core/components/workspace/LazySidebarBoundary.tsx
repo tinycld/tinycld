@@ -74,15 +74,19 @@ class SidebarErrorBoundary extends Component<
 /**
  * Resilient wrapper for a lazily-loaded package sidebar.
  *
- * Two failure modes are handled, both observed under heavy CI contention where
- * the sidebar's Suspense boundary otherwise stays stuck on its skeleton forever:
+ * Two failure modes are handled, both of which otherwise leave the sidebar's
+ * Suspense boundary stuck on its skeleton forever:
  *
  *   1. The lazy `import()` REJECTS → SidebarErrorBoundary catches it and we
  *      remount to retry the import.
  *   2. The chunk loads (HTTP 200) but the boundary never commits the child — the
- *      Suspense sits in the fallback indefinitely. An error boundary can't see
- *      this (nothing threw), so a watchdog remounts the subtree if we're still
- *      showing the fallback after `stuckTimeoutMs`, re-triggering resolution.
+ *      Suspense sits in the fallback indefinitely. This shows up when an
+ *      in-flight chunk load is interrupted (e.g. a second navigation to the same
+ *      route fires while the first is still streaming the chunk, as happens when
+ *      a post-login redirect and an explicit nav race). An error boundary can't
+ *      see this (nothing threw), so a watchdog remounts the subtree if we're
+ *      still showing the fallback after `stuckTimeoutMs`, re-triggering
+ *      resolution.
  *
  * Each remount bumps `attempt`, which is the React key on the Suspense subtree —
  * a new key forces a fresh mount (and a fresh `import()` attempt). Retries are

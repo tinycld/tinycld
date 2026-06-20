@@ -28,8 +28,8 @@ describe('buildPackageIconsSource', () => {
             { name: '@tinycld/mail', manifest: { nav: { icon: 'mail' } } },
             { name: '@tinycld/drive', manifest: { nav: { icon: 'hard-drive' } } },
         ])
-        expect(src).toContain('Mail,')
-        expect(src).toContain('HardDrive,')
+        expect(src).toContain("import Mail from 'lucide-react-native/icons/mail'")
+        expect(src).toContain("import HardDrive from 'lucide-react-native/icons/hard-drive'")
         expect(src).toContain("'hard-drive': HardDrive")
         expect(src).toContain('mail: Mail')
         // sorted alphabetically: hard-drive (h) before mail (m)
@@ -41,8 +41,9 @@ describe('buildPackageIconsSource', () => {
             { name: '@tinycld/a', manifest: { nav: { icon: 'mail' } } },
             { name: '@tinycld/b', manifest: { nav: { icon: 'mail' } } },
         ])
-        // One indented import line, one indented map entry.
-        const importMatches = src.match(/^ {4}Mail,$/gm) ?? []
+        // One per-icon deep import, one indented map entry.
+        const importMatches =
+            src.match(/^import Mail from 'lucide-react-native\/icons\/mail'$/gm) ?? []
         const mapMatches = src.match(/^ {4}mail: Mail,$/gm) ?? []
         expect(importMatches.length).toBe(1)
         expect(mapMatches.length).toBe(1)
@@ -53,7 +54,7 @@ describe('buildPackageIconsSource', () => {
             { name: '@tinycld/settings-only', manifest: {} },
             { name: '@tinycld/mail', manifest: { nav: { icon: 'mail' } } },
         ])
-        expect(src).toContain('Mail,')
+        expect(src).toContain("import Mail from 'lucide-react-native/icons/mail'")
         expect(src).toContain('mail: Mail')
     })
 
