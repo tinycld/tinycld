@@ -112,26 +112,30 @@ jobs:
         working-directory: ws
         run: corepack enable && pnpm install --no-frozen-lockfile
       # Warm go.work.sum before E2E so the webServer (which builds PB via
-      # pnpm run expo:test → reset-dev-db) doesn't fail verifying a transitive
+      # pnpm run e2e:serve → reset-dev-db) doesn't fail verifying a transitive
       # dep reached through go.work's `use ../core/server`.
       - name: Go mod download
         working-directory: ws/tinycld/server
         run: go mod download
-      # Composite action: installs watchman so Metro doesn't fall back to
-      # the fs.watch polling that has correlated with a blank-page-after-
-      # reload flake under Playwright multi-worker load. Lives in this
-      # repo and is also consumed by sibling repos via
-      # `tinycld/tinycld/.github/actions/configure-test-env@main`.
-      - name: Configure test env
-        uses: ./ws/tinycld/.github/actions/configure-test-env
+      # Scaffold the stub BEFORE the bundle build below — its routes must be in
+      # the assembled workspace when the shared action runs `expo export`, or
+      # the keyboard-shortcut spec's package wouldn't be in the served bundle.
       - name: Scaffold shortcut-stub package
         working-directory: ws
         run: pnpm exec tsx tinycld/tests/scripts/scaffold-shortcut-stub.ts
-      - name: Install Playwright browsers
-        working-directory: ws/tinycld
-        run: pnpm exec playwright install --with-deps chromium
+      # Shared e2e prep: installs the Playwright browser and pre-builds the
+      # static web bundle (expo export + sourcemaps). The E2E step's
+      # TINYCLD_E2E_SKIP_EXPORT=1 makes the webServer reuse this dist/ instead
+      # of rebuilding. (Replaces the old per-job watchman install + browser
+      # install — there's no Metro at runtime anymore.)
+      - name: Configure test env
+        uses: ./ws/tinycld/.github/actions/configure-test-env
       - name: E2E
         working-directory: ws/tinycld
+        env:
+          # The bundle was built by the action above; reuse it (seed + promote
+          # + serve still run, just not a second export).
+          TINYCLD_E2E_SKIP_EXPORT: '1'
         run: pnpm exec tinycld-pkg test:e2e
       # Capture Playwright's per-failure artifacts (trace, screenshot,
       # video, error-context.md) so a CI failure can be diagnosed

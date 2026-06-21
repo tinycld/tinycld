@@ -1,37 +1,34 @@
 name: 'Configure tinycld test environment'
 description: >-
-  System-level setup that every tinycld e2e job needs before booting
-  the dev server. Today: installs watchman so Metro's file watcher
-  doesn't fall back to polling. Extensible — append steps here when
-  another OS-level prerequisite emerges (fontconfig caches, kernel
-  inotify limits, additional binaries, etc.). Filesystem and env-var
-  setup that depends on the assembled workspace lives in playwright's
-  globalSetup, not here.
+  Shared e2e prep every tinycld package's e2e job needs, in one place: install
+  the Playwright browser and pre-build the static web bundle (`expo export`
+  with external sourcemaps). The e2e webServer (scripts/e2e-serve.ts) then
+  reuses that bundle via TINYCLD_E2E_SKIP_EXPORT instead of rebuilding it, so
+  the (multi-minute) export happens exactly once per job as a visible,
+  shared step — not hidden inside the webServer and duplicated per package.
+  Run this AFTER `pnpm install` (the bundle build needs the linked workspace +
+  generated config). Filesystem/env setup that depends on per-test state lives
+  in playwright's globalSetup, not here.
 
 runs:
   using: 'composite'
   steps:
-    # Metro warns "Watchman was not found in PATH" without this and
-    # falls back to fs.watch polling. Under Playwright multi-worker
-    # e2e load that's been correlated with Metro going silent for
-    # 70+s on `page.reload()`-triggered bundle re-fetches, surfacing
-    # as a blank-page-after-reload flake. See drive#13 for the trace
-    # evidence (post-reload entry.bundle request status=-1 after 70s
-    # of WebServer silence).
-    #
-    # Watchman ships only as rpm or Linux zip via GitHub releases.
-    # Pin to a known-working tag rather than `latest` so a future
-    # release that drops or restructures the zip can't silently
-    # break CI. The zip bundles libgflags/libglog/libsnappy, so the
-    # binary resolves at runtime via ldconfig.
-    - name: Install watchman
+    # The tinycld member root, relative to this action's own location
+    # (ws/tinycld/.github/actions/configure-test-env → ../../.. = ws/tinycld).
+    # A composite action's steps do NOT inherit the calling job's
+    # working-directory, so resolve it explicitly from $GITHUB_ACTION_PATH.
+    - name: Install Playwright browser (chromium)
       shell: bash
       run: |
-        curl -fsSL -o /tmp/watchman.zip https://github.com/facebook/watchman/releases/download/v2026.05.11.00/watchman-v2026.05.11.00-linux.zip
-        unzip -q /tmp/watchman.zip -d /tmp/watchman
-        sudo mv /tmp/watchman/watchman-v2026.05.11.00-linux/bin/* /usr/local/bin/
-        sudo mv /tmp/watchman/watchman-v2026.05.11.00-linux/lib/* /usr/local/lib/
-        sudo ldconfig
-        sudo mkdir -p /usr/local/var/run/watchman
-        sudo chmod 2777 /usr/local/var/run/watchman
-        watchman --version
+        cd "$GITHUB_ACTION_PATH/../../.."
+        pnpm exec playwright install --with-deps chromium
+
+    # Pre-build the static web bundle once. e2e-serve.ts runs with
+    # TINYCLD_E2E_SKIP_EXPORT=1 (set on the E2E job step) and reuses this dist/.
+    # The build runs from the assembled workspace, so a package's own screens
+    # (mail, drive, …) are included exactly as they would be in production.
+    - name: Build web bundle (expo export, with sourcemaps)
+      shell: bash
+      run: |
+        cd "$GITHUB_ACTION_PATH/../../.."
+        pnpm exec tsx scripts/export-web.ts
