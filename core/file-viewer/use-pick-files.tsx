@@ -1,19 +1,11 @@
 import { notify } from '@tinycld/core/lib/notify'
-import {
-    Actionsheet,
-    ActionsheetBackdrop,
-    ActionsheetContent,
-    ActionsheetDragIndicator,
-    ActionsheetDragIndicatorWrapper,
-    ActionsheetIcon,
-    ActionsheetItem,
-    ActionsheetItemText,
-} from '@tinycld/core/ui/actionsheet'
+import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { BottomDrawer } from '@tinycld/core/ui/bottom-drawer'
 import * as DocumentPicker from 'expo-document-picker'
 import * as ImagePicker from 'expo-image-picker'
-import { Camera, FileIcon, ImageIcon } from 'lucide-react-native'
+import { Camera, FileIcon, ImageIcon, type LucideIcon } from 'lucide-react-native'
 import { useCallback, useMemo, useState } from 'react'
-import { Platform } from 'react-native'
+import { Platform, Pressable, Text, View } from 'react-native'
 import {
     documentAssetToPickedFile,
     imageAssetToPickedFile,
@@ -98,36 +90,56 @@ export function usePickFiles() {
         const isOpen = pending !== null
         const sources = pending?.options.sources ?? []
         return (
-            <Actionsheet isOpen={isOpen} onClose={handleClose} snapPoints={[35]}>
-                <ActionsheetBackdrop />
-                <ActionsheetContent>
-                    <ActionsheetDragIndicatorWrapper>
-                        <ActionsheetDragIndicator />
-                    </ActionsheetDragIndicatorWrapper>
+            <BottomDrawer isOpen={isOpen} onClose={handleClose}>
+                <View className="px-2 pb-4">
                     {sources.includes('photoLibrary') && (
-                        <ActionsheetItem onPress={() => handleSourceSelected('photoLibrary')}>
-                            <ActionsheetIcon as={ImageIcon} />
-                            <ActionsheetItemText>Photo library</ActionsheetItemText>
-                        </ActionsheetItem>
+                        <PickerRow
+                            icon={ImageIcon}
+                            label="Photo library"
+                            onPress={() => handleSourceSelected('photoLibrary')}
+                        />
                     )}
                     {sources.includes('camera') && (
-                        <ActionsheetItem onPress={() => handleSourceSelected('camera')}>
-                            <ActionsheetIcon as={Camera} />
-                            <ActionsheetItemText>Take a photo</ActionsheetItemText>
-                        </ActionsheetItem>
+                        <PickerRow
+                            icon={Camera}
+                            label="Take a photo"
+                            onPress={() => handleSourceSelected('camera')}
+                        />
                     )}
                     {sources.includes('documents') && (
-                        <ActionsheetItem onPress={() => handleSourceSelected('documents')}>
-                            <ActionsheetIcon as={FileIcon} />
-                            <ActionsheetItemText>Documents</ActionsheetItemText>
-                        </ActionsheetItem>
+                        <PickerRow
+                            icon={FileIcon}
+                            label="Documents"
+                            onPress={() => handleSourceSelected('documents')}
+                        />
                     )}
-                </ActionsheetContent>
-            </Actionsheet>
+                </View>
+            </BottomDrawer>
         )
     }, [pending, handleClose, handleSourceSelected])
 
     return { pickFiles, ActionSheetElement }
+}
+
+function PickerRow({
+    icon: Icon,
+    label,
+    onPress,
+}: {
+    icon: LucideIcon
+    label: string
+    onPress: () => void
+}) {
+    const foreground = useThemeColor('foreground')
+    return (
+        <Pressable
+            onPress={onPress}
+            className="flex-row items-center gap-3 px-3 py-3.5 rounded-md data-[hover=true]:bg-accent"
+        >
+            <Icon size={20} color={foreground} />
+            <Text className="text-foreground text-base">{label}</Text>
+        </Pressable>
+    )
 }
 
 function openWebFileInput(options: {
