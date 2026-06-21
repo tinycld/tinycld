@@ -35,6 +35,8 @@ tsconfig.tsbuildinfo
 # Local PocketBase data
 server/pb_data/
 server/pb_test_data/
+# Promoted web bundle the e2e static-serve flow (scripts/e2e-serve.ts) builds.
+server/pb_test_releases/
 
 # Copied by `pnpm run assets:copy-pdfjs` from node_modules at install time.
 /public/workers/

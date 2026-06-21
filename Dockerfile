@@ -240,7 +240,7 @@ RUN set -eu \
     fi \
     && rm -f .release-id \
     && export EXPO_PUBLIC_RELEASE_ID="$rid" \
-    && pnpm exec expo export --platform web \
+    && pnpm exec expo export --platform web --source-maps external \
     && mkdir -p /ws/tinycld/release-staging \
     && mv /ws/tinycld/dist "/ws/tinycld/release-staging/$rid" \
     && printf '%s' "$rid" > "/ws/tinycld/release-staging/$rid/release-id.txt" \

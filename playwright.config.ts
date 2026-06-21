@@ -1,9 +1,11 @@
 import path from 'node:path'
 import { defineConfig, devices } from '@playwright/test'
 
-// App shell owns the canonical Playwright config: the webServer (the real dev
-// stack via `pnpm run expo:test`, which resets the test DB then boots PB+Expo
-// behind a proxy on PORT) and the browser project. Package-scoped configs
+// App shell owns the canonical Playwright config: the webServer (the static
+// serve stack via `pnpm run e2e:serve`, which resets the test DB, runs
+// `expo export`, promotes the bundle into a prod-shaped releases dir, then
+// serves it off a single PocketBase listener on PORT — no Metro, no proxy,
+// exactly like production) and the browser project. Package-scoped configs
 // inherit this and override `testDir` to point at one package's tests/e2e
 // through the node_modules symlink, so @playwright/test resolves against the
 // app shell's install.
@@ -12,7 +14,7 @@ const PORT = Number(process.env.E2E_PORT ?? 7200)
 // delivery off). Pointing TINYCLD_EMAIL_LOG at the same tmp/emails.log file
 // the globalSetup truncates lets tests assert on emails without scraping
 // stdout. The Go LogSender appends one JSONL record per send to this path.
-// app/scripts/dev.ts spawns PB inheriting process.env, so PB and the test
+// scripts/e2e-serve.ts spawns PB inheriting process.env, so PB and the test
 // process both see the same path resolved from this file's directory.
 const EMAIL_LOG_PATH = path.join(import.meta.dirname, 'tmp', 'emails.log')
 
@@ -37,7 +39,7 @@ export default defineConfig({
     // docker smoke-test workflow — leaving testDir at the playwright
     // default (this file's dir) would pull both into the same run, and
     // the install spec's EXPECTED_BUNDLED assertions would trip when
-    // run against the regular expo:test webServer.
+    // run against the regular e2e:serve webServer.
     testDir: path.join(import.meta.dirname, 'tests', 'e2e'),
     testMatch: '**/*.spec.ts',
     // Per-failure artifacts: trace, screenshot, video. retain-on-failure
@@ -55,10 +57,12 @@ export default defineConfig({
         video: 'retain-on-failure',
     },
     webServer: {
-        command: 'pnpm run expo:test',
+        command: 'pnpm run e2e:serve',
         cwd: import.meta.dirname,
-        // expo:test resets the DB then boots PB+Expo behind the proxy on PORT;
-        // /api/health proxies to PB, so wait on that (not the Expo bundle).
+        // e2e:serve resets the DB, exports + promotes the web bundle, then
+        // serves it (and /api/*) off one PocketBase listener on PORT. The
+        // health gate only goes green AFTER the bundle is fully built and
+        // promoted on disk, so tests never race a cold bundle.
         url: `http://localhost:${PORT}/api/health`,
         reuseExistingServer: !process.env.CI,
         timeout: 240_000,
