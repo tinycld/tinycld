@@ -1,9 +1,9 @@
 import { expect, type Page, test } from '@playwright/test'
 
-// The webServer started by playwright.config.ts is a dev.ts proxy on this
-// port; it forwards /api/* to PocketBase and everything else to Expo. The
-// test fires against the absolute URL because page.request runs outside
-// the page's origin, but the proxy itself bridges to PB transparently.
+// The webServer started by playwright.config.ts serves the SPA and /api/*
+// from a single PocketBase listener on this port (static serve, no proxy).
+// The test fires against the absolute URL because page.request runs outside
+// the page's origin; PocketBase answers /api/* directly.
 const PB_TEST_URL = 'http://127.0.0.1:7200'
 
 // AsyncAuthStore (configured in packages/@tinycld/core/lib/pocketbase.ts) persists the
