@@ -52,17 +52,6 @@ export async function login(page: Page) {
     await page.getByPlaceholder('Password').fill(TEST_USER_PASSWORD)
     await page.getByText('Sign in', { exact: true }).last().click()
     await page.waitForURL(/\/a\//, { timeout: 15_000 })
-    // Sign-in lands on /a/<org>, which immediately <Redirect>s to the first nav
-    // package (a potentially heavy screen whose lazy chunk starts streaming).
-    // Wait for that redirect to SETTLE on a package sub-route before returning —
-    // otherwise the next step (often navigateToPackage to a different package)
-    // clicks a rail mid-redirect, and the two contending lazy-chunk loads wedge
-    // in Metro: the target screen never commits and the test times out. When no
-    // package is installed (core's own standalone CI) there's no redirect, so
-    // tolerate staying on the bare org index rather than hanging.
-    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/[^/?#]+`), { timeout: 30_000 }).catch(() => {
-        /* no nav package to redirect to (standalone core CI) — stay put */
-    })
 }
 
 // Navigate to a package's org-scoped route via the rail link in the app
