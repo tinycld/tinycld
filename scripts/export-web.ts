@@ -36,6 +36,13 @@ export function exportWeb(releaseId?: string): void {
     const env: NodeJS.ProcessEnv = {
         ...process.env,
         EXPO_PUBLIC_ENV: 'web',
+        // E2E-only build tweaks (this script builds the e2e bundle; production
+        // is built by the Dockerfile's own `expo export`). Shrink @tinycld/text's
+        // suggestion-grouping idle window from 30s to 1s so the bulk-resolve
+        // spec can mint distinct suggestions in seconds instead of sleeping out
+        // two 30s windows. Honor a caller-set value if present.
+        EXPO_PUBLIC_TEXT_SUGGESTION_IDLE_MS:
+            process.env.EXPO_PUBLIC_TEXT_SUGGESTION_IDLE_MS ?? '1000',
         // The full-graph cold export can exceed Node's default old-space ceiling;
         // match dev.ts / the EAS build at 8GB. Preserve a caller-set value.
         NODE_OPTIONS: process.env.NODE_OPTIONS?.includes('--max-old-space-size')
