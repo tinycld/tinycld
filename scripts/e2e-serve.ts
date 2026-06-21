@@ -30,10 +30,11 @@
 // package.json script). dev.ts is intentionally left untouched — dev keeps
 // Metro + HMR; only e2e switches to static serving.
 
-import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { type ChildProcess, spawn } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
+import { exportWeb } from './export-web'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const PB_BINARY = path.join(ROOT, 'server', 'app')
@@ -134,39 +135,22 @@ async function seed(dataDir: string, port: number): Promise<void> {
     ])
 }
 
-// Phase 2 — build the static web bundle. Mirrors the Dockerfile's web-builder:
-// EXPO_PUBLIC_ENV=web + an EXPO_PUBLIC_RELEASE_ID inlined into the bundle. The
-// same id is written to release-id.txt in promote() so the in-app version
-// poll sees boot-id == served-id and never flags a "new version" (the poll
-// interval is an hour anyway). The 8GB heap matches dev.ts / the EAS build —
-// a cold export of the whole dependency graph can exceed Node's default
-// old-space ceiling.
-function exportWeb(releaseId: string): void {
+// Phase 2 — build the static web bundle (delegates to scripts/export-web.ts so
+// the export flags/env live in ONE place, shared with the CI action that
+// pre-builds the bundle). --skip-export reuses an existing dist/ — set in CI
+// (the action already built it) and for local fast iteration.
+function buildBundle(releaseId: string): void {
     if (skipExport) {
         log('phase 2/3: --skip-export set, reusing existing dist/')
         if (!fs.existsSync(path.join(ROOT, 'dist', 'index.html'))) {
             throw new Error(
-                'e2e-serve: --skip-export but dist/index.html is missing; run once without --skip-export first'
+                'e2e-serve: --skip-export but dist/index.html is missing; run once without --skip-export first (or let the CI action build it)'
             )
         }
         return
     }
     log(`phase 2/3: expo export (releaseId=${releaseId})`)
-    const result = spawnSync('pnpm', ['exec', 'expo', 'export', '--platform', 'web'], {
-        cwd: ROOT,
-        stdio: 'inherit',
-        env: {
-            ...process.env,
-            EXPO_PUBLIC_ENV: 'web',
-            EXPO_PUBLIC_RELEASE_ID: releaseId,
-            NODE_OPTIONS: process.env.NODE_OPTIONS?.includes('--max-old-space-size')
-                ? process.env.NODE_OPTIONS
-                : `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=8192`.trim(),
-        },
-    })
-    if (result.status !== 0) {
-        throw new Error(`expo export exited ${result.status}`)
-    }
+    exportWeb(releaseId)
 }
 
 // Phase 3a — promote dist/ into the releases layout the Go server reads.
@@ -257,7 +241,7 @@ async function main() {
     const releaseId = `e2e-${Date.now()}`
 
     await seed(dataDir, port)
-    exportWeb(releaseId)
+    buildBundle(releaseId)
     promote(distDir, releasesDir, releaseId)
 
     const pb = serve({ port, dataDir, releasesDir })
