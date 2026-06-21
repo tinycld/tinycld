@@ -13,6 +13,7 @@ import '~/lib/polyfill-crypto'
 // static-import graph sees the registered config on its first read.
 import '~/lib/configure-core'
 import '~/global.css'
+import { AppErrorBoundary } from '@tinycld/core/components/AppErrorBoundary'
 import { NewVersionToast } from '@tinycld/core/components/NewVersionToast'
 import { initSentry } from '@tinycld/core/lib/sentry'
 import { useAppUpdates } from '@tinycld/core/lib/use-app-updates'
@@ -24,6 +25,12 @@ import { MarkBundleHealthy } from '~/lib/use-mark-bundle-healthy'
 import { useServerAddressGate } from '~/lib/use-server-address-gate'
 
 initSentry()
+
+// Expo Router renders a route module's exported `ErrorBoundary` (wrapping its
+// subtree in <Try>) whenever a descendant throws during render. Exporting it
+// from the ROOT layout makes the whole app's <Slot /> fall back here instead of
+// white-screening; AppErrorBoundary also reports the error to Sentry.
+export { AppErrorBoundary as ErrorBoundary }
 
 export default function Layout() {
     const pathname = usePathname()

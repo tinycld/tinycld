@@ -117,19 +117,25 @@ jobs:
       - name: Go mod download
         working-directory: ws/tinycld/server
         run: go mod download
-      # No watchman step: e2e serves a pre-built static bundle (expo export →
-      # promote → PocketBase --releasesDir), so there is no Metro file watcher
-      # to keep off fs.watch polling. (The configure-test-env composite action
-      # stays in the repo; sibling repos still consume it until their e2e is
-      # migrated to static serving too.)
+      # Scaffold the stub BEFORE the bundle build below — its routes must be in
+      # the assembled workspace when the shared action runs `expo export`, or
+      # the keyboard-shortcut spec's package wouldn't be in the served bundle.
       - name: Scaffold shortcut-stub package
         working-directory: ws
         run: pnpm exec tsx tinycld/tests/scripts/scaffold-shortcut-stub.ts
-      - name: Install Playwright browsers
-        working-directory: ws/tinycld
-        run: pnpm exec playwright install --with-deps chromium
+      # Shared e2e prep: installs the Playwright browser and pre-builds the
+      # static web bundle (expo export + sourcemaps). The E2E step's
+      # TINYCLD_E2E_SKIP_EXPORT=1 makes the webServer reuse this dist/ instead
+      # of rebuilding. (Replaces the old per-job watchman install + browser
+      # install — there's no Metro at runtime anymore.)
+      - name: Configure test env
+        uses: ./ws/tinycld/.github/actions/configure-test-env
       - name: E2E
         working-directory: ws/tinycld
+        env:
+          # The bundle was built by the action above; reuse it (seed + promote
+          # + serve still run, just not a second export).
+          TINYCLD_E2E_SKIP_EXPORT: '1'
         run: pnpm exec tinycld-pkg test:e2e
       # Capture Playwright's per-failure artifacts (trace, screenshot,
       # video, error-context.md) so a CI failure can be diagnosed
