@@ -3,6 +3,7 @@ import type { ComponentType, ReactNode } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
 import type { TextInputProps as RNTextInputProps } from 'react-native'
 import { TextInput as RNTextInput, Text, View, type ViewProps } from 'react-native'
+import { iosInputCenteringStyle } from './ios-input-style'
 
 function LabelRow({
     label,
@@ -82,6 +83,7 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
                     secureTextEntry={inputProps.secureTextEntry}
                     placeholderTextColor={placeholderColor}
                     className={`flex-1 border rounded-lg px-3 py-2.5 text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}
+                    style={iosInputCenteringStyle(16)}
                 />
                 {addon}
             </View>
