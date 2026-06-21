@@ -18,6 +18,7 @@ import Animated, {
     SlideOutRight,
     SlideOutUp,
 } from 'react-native-reanimated'
+import { useCloseOnNavigate } from './use-close-on-navigate'
 
 const SCOPE = 'MODAL'
 
@@ -227,6 +228,7 @@ const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProp
     ref
 ) {
     useDrawerEscape(props.isOpen, props.onClose)
+    useCloseOnNavigate(props.isOpen, props.onClose)
 
     // Don't mount the gluestack Modal at all while closed. GlueStack's exit
     // handshake runs through RN Animated with useNativeDriver:true, whose
