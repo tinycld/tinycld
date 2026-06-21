@@ -112,18 +112,16 @@ jobs:
         working-directory: ws
         run: corepack enable && pnpm install --no-frozen-lockfile
       # Warm go.work.sum before E2E so the webServer (which builds PB via
-      # pnpm run expo:test → reset-dev-db) doesn't fail verifying a transitive
+      # pnpm run e2e:serve → reset-dev-db) doesn't fail verifying a transitive
       # dep reached through go.work's `use ../core/server`.
       - name: Go mod download
         working-directory: ws/tinycld/server
         run: go mod download
-      # Composite action: installs watchman so Metro doesn't fall back to
-      # the fs.watch polling that has correlated with a blank-page-after-
-      # reload flake under Playwright multi-worker load. Lives in this
-      # repo and is also consumed by sibling repos via
-      # `tinycld/tinycld/.github/actions/configure-test-env@main`.
-      - name: Configure test env
-        uses: ./ws/tinycld/.github/actions/configure-test-env
+      # No watchman step: e2e serves a pre-built static bundle (expo export →
+      # promote → PocketBase --releasesDir), so there is no Metro file watcher
+      # to keep off fs.watch polling. (The configure-test-env composite action
+      # stays in the repo; sibling repos still consume it until their e2e is
+      # migrated to static serving too.)
       - name: Scaffold shortcut-stub package
         working-directory: ws
         run: pnpm exec tsx tinycld/tests/scripts/scaffold-shortcut-stub.ts
