@@ -5,22 +5,14 @@ import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import type { Notifications } from '@tinycld/core/types/pbSchema'
+import { BottomDrawer } from '@tinycld/core/ui/bottom-drawer'
 import { useRouter } from 'expo-router'
 import { Bell, Calendar, Check, File, Mail, Shield, X } from 'lucide-react-native'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
-import { Gesture, GestureDetector } from 'react-native-gesture-handler'
-import Animated, {
-    runOnJS,
-    useAnimatedStyle,
-    useSharedValue,
-    withSpring,
-    withTiming,
-} from 'react-native-reanimated'
+import { useEffect, useMemo, useState } from 'react'
+import { Pressable, ScrollView, Text, View } from 'react-native'
 
 const DRAWER_WIDTH = 340
 const RAIL_WIDTH = 64
-const SPRING_CONFIG = { damping: 28, stiffness: 220, mass: 0.8 }
 
 const PACKAGE_ICONS: Record<string, typeof Bell> = {
     calendar: Calendar,
@@ -102,80 +94,11 @@ function DesktopNotificationPanel() {
 function MobileNotificationSheet() {
     const isOpen = useWorkspaceStore(s => s.isNotificationsOpen)
     const setOpen = useWorkspaceStore(s => s.setNotificationsOpen)
-    const overlayBg = useThemeColor('overlay-backdrop')
-
-    const sheetHeight = useSharedValue(600)
-    const translateY = useSharedValue(600)
-    const backdropOpacity = useSharedValue(0)
-    const [mounted, setMounted] = useState(false)
-
-    const close = useCallback(() => setOpen(false), [setOpen])
-
-    useEffect(() => {
-        if (isOpen) {
-            setMounted(true)
-            translateY.value = withSpring(0, SPRING_CONFIG)
-            backdropOpacity.value = withTiming(1, { duration: 200 })
-        } else if (mounted) {
-            translateY.value = withSpring(sheetHeight.value, SPRING_CONFIG)
-            backdropOpacity.value = withTiming(0, { duration: 150 })
-            const timeout = setTimeout(() => setMounted(false), 300)
-            return () => clearTimeout(timeout)
-        }
-    }, [isOpen, translateY, backdropOpacity, mounted, sheetHeight])
-
-    const panGesture = Gesture.Pan()
-        .activeOffsetY(10)
-        .onUpdate(e => {
-            translateY.value = Math.max(0, e.translationY)
-        })
-        .onEnd(e => {
-            if (e.translationY > 100 || e.velocityY > 500) {
-                translateY.value = withSpring(sheetHeight.value, SPRING_CONFIG)
-                backdropOpacity.value = withTiming(0, { duration: 150 })
-                runOnJS(close)()
-            } else {
-                translateY.value = withSpring(0, SPRING_CONFIG)
-            }
-        })
-
-    const sheetStyle = useAnimatedStyle(() => ({
-        transform: [{ translateY: translateY.value }],
-    }))
-
-    const backdropStyle = useAnimatedStyle(() => ({
-        opacity: backdropOpacity.value,
-    }))
-
-    if (!mounted) return null
 
     return (
-        <View
-            className="absolute top-0 left-0 right-0 bottom-0 z-[5]"
-            pointerEvents={isOpen ? 'auto' : 'none'}
-        >
-            <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]}>
-                <Pressable
-                    style={[StyleSheet.absoluteFill, { backgroundColor: overlayBg }]}
-                    onPress={close}
-                />
-            </Animated.View>
-
-            <GestureDetector gesture={panGesture}>
-                <Animated.View
-                    onLayout={e => {
-                        sheetHeight.value = e.nativeEvent.layout.height
-                    }}
-                    className="absolute left-0 right-0 bottom-0 max-h-[85%] rounded-t-2xl border-t border-border bg-background"
-                    style={sheetStyle}
-                >
-                    <View className="items-center py-2.5">
-                        <View className="w-9 h-1 rounded-sm bg-border" />
-                    </View>
-                    <NotificationContent />
-                </Animated.View>
-            </GestureDetector>
-        </View>
+        <BottomDrawer isOpen={isOpen} onClose={() => setOpen(false)}>
+            <NotificationContent />
+        </BottomDrawer>
     )
 }
 

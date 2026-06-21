@@ -50,7 +50,6 @@
         "@gluestack-ui/utils": ">=5.0.5-alpha.0 <6.0.0-0",
         "@gorhom/bottom-sheet": "^5.2.9",
         "@hookform/resolvers": "^5.2.2",
-        "@legendapp/motion": "^2.5.3",
         "@react-aria/checkbox": "^3.17.0",
         "@react-aria/dialog": "^3.6.0",
         "@react-aria/focus": "^3.22.0",
