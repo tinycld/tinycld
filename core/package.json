@@ -62,7 +62,6 @@
         "@gluestack-ui/core": ">=5.0.5-alpha.0 <6.0.0-0",
         "@gluestack-ui/utils": ">=5.0.5-alpha.0 <6.0.0-0",
         "@hookform/resolvers": "^5.2.2",
-        "@legendapp/motion": "^2.5.3",
         "@react-native-async-storage/async-storage": "2.2.0",
         "@react-native-community/netinfo": "11.5.2",
         "@sentry/react-native": "~7.11.0",
