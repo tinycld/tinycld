@@ -1,6 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
 import { Pressable, TextInput as RNTextInput, Text, View, type ViewProps } from 'react-native'
+import { iosInputCenteringStyle } from './ios-input-style'
 
 export type NumberInputProps<T extends FieldValues = Record<string, unknown>> = {
     name: Path<T>
@@ -87,6 +88,7 @@ export function NumberInput<T extends FieldValues = Record<string, unknown>>({
                     testID={name}
                     placeholderTextColor={placeholderColor}
                     className={`flex-1 border rounded-lg px-3 py-2.5 text-center text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}
+                    style={iosInputCenteringStyle(16)}
                 />
                 <Pressable
                     onPress={handleIncrement}
