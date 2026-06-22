@@ -66,6 +66,26 @@ export async function checkForUpdate(deps: CheckDeps): Promise<UpdateManifest | 
     return (await res.json()) as UpdateManifest
 }
 
+// reportBadBundle tells the server a bundle crash-looped on this device so it
+// stops advertising that bundle to the rest of the fleet (POST
+// /api/app/update/report-bad). Best-effort: a failure is swallowed by the caller
+// — the device has already locally rolled back, this is just fleet-wide signal.
+export async function reportBadBundle(deps: {
+    serverUrl: string
+    platform: 'ios' | 'android'
+    id: string
+    hash: string
+    error?: string
+    fetchFn: typeof fetch
+}): Promise<void> {
+    const { serverUrl, platform, id, hash, error, fetchFn } = deps
+    await fetchFn(`${serverUrl}/api/app/update/report-bad`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, hash, platform, error: error ?? '' }),
+    })
+}
+
 // relativePathFromUrl extracts the bundle-relative path the server encoded after
 // the `/<platform>/` segment of a bundle/asset URL — e.g.
 // `/api/app/bundle/build-200/ios/_expo/static/js/ios/index.hbc` → with platform

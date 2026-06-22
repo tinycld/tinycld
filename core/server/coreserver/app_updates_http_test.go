@@ -53,7 +53,7 @@ func newAppUpdateTestApp(t *testing.T) *tests.TestApp {
 			if buildID == "" {
 				return re.NoContent(http.StatusNoContent)
 			}
-			m, status := resolveManifest(bundles, platform, runtime, currentID, currentHash)
+			m, status := resolveNoBad(bundles, platform, runtime, currentID, currentHash)
 			if status != manifestNew {
 				return re.NoContent(http.StatusNoContent)
 			}
