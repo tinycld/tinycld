@@ -47,6 +47,7 @@ func main() {
 	app := pocketbase.New()
 	coreserver.Register(app, coreserver.Options{
 		PublicDir:      coreserver.DefaultPublicDir(),
+		WebsiteDir:     coreserver.DefaultWebsiteDir(),
 		ReleasesDir:    coreserver.DefaultReleasesDir(),
 		FallbackFile:   "app.html",
 		TypesDir:       coreserver.DefaultTypesDir(),
