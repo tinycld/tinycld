@@ -14,9 +14,11 @@ func TestRunBuildPipeline_StepOrder(t *testing.T) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		return "", nil
 	}
-	// pnpm install runs via the streaming runner — stub it to record the call
-	// alongside the buffered ones so the step-order check still sees "pnpm install".
+	// pnpm install and expo export run via the streaming runners — stub both to
+	// record their calls alongside the buffered ones so the step-order check still
+	// sees "pnpm install" and "expo".
 	defer stubPnpmStream(&calls)()
+	defer stubExpoStream(&calls)()
 	staged := false
 	stage := func(appDir string) (string, error) {
 		staged = true
@@ -85,6 +87,17 @@ func stubPnpmStream(calls *[]string) func() {
 		return "", nil
 	}
 	return func() { pnpmStream = prev }
+}
+
+// stubExpoStream replaces the expo streaming runner with a no-op that records the
+// "pnpm exec expo export …" invocation into calls, and returns a restore func.
+func stubExpoStream(calls *[]string) func() {
+	prev := expoStream
+	expoStream = func(_ func(string), _, name string, args ...string) (string, error) {
+		*calls = append(*calls, name+" "+strings.Join(args, " "))
+		return "", nil
+	}
+	return func() { expoStream = prev }
 }
 
 // TestPnpmLineProgress locks the parser to pnpm's real non-TTY reporter lines
@@ -188,6 +201,99 @@ func TestReportPnpmProgress_Throttled(t *testing.T) {
 	reportPnpmProgress(job, "some postinstall noise", throttle)
 	if got := len(job.LogLines); got != 4 {
 		t.Fatalf("non-milestone line forwarded; total = %d, want 4", got)
+	}
+}
+
+// TestExpoLineFraction locks the parser to Metro's real non-TTY bundling lines
+// (captured from `expo export` without a TTY) so the bar tracks the running
+// percentage and ignores the surrounding asset/file dump.
+func TestExpoLineFraction(t *testing.T) {
+	cases := []struct {
+		line     string
+		wantFrac float64
+		wantOK   bool
+	}{
+		{"Web node_modules/expo-router/entry.js ░░░░░░░░░░░░░░░░  0.0% (0/1)", 0, true},
+		{"Web node_modules/expo-router/entry.js ▓▓▓▓▓░░░░░░░░░░░ 34.5% (1252/2155)", 0.345, true},
+		{"Web node_modules/expo-router/entry.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 99.9% (4343/4343)", 0.999, true},
+		{"Web Bundled 10768ms node_modules/expo-router/entry.js (4343 modules)", 0, false},
+		{"Exported: /tmp/dist", 0, false},
+		{"_expo/static/js/web/entry-abc.js (1.3MB)", 0, false}, // size, not a percentage
+		{"", 0, false},
+	}
+	for _, c := range cases {
+		frac, ok := expoLineFraction(c.line)
+		if ok != c.wantOK {
+			t.Errorf("expoLineFraction(%q) ok = %v, want %v", c.line, ok, c.wantOK)
+			continue
+		}
+		if ok && (frac < c.wantFrac-0.001 || frac > c.wantFrac+0.001) {
+			t.Errorf("expoLineFraction(%q) = %v, want ~%v", c.line, frac, c.wantFrac)
+		}
+	}
+}
+
+// TestBandPct checks the fraction→band mapping stays within [lo, hi): 0 maps to
+// lo, a full bundle parks at hi-1 (never hi — the next milestone owns it), and
+// midpoints land proportionally.
+func TestBandPct(t *testing.T) {
+	lo, hi := 60, 72
+	cases := []struct {
+		frac float64
+		want int
+	}{
+		{0, 60},
+		{0.5, 66},
+		{0.999, 71},
+		{1.0, 71},  // clamped below hi
+		{-0.5, 60}, // clamped at lo
+		{2.0, 71},  // clamped below hi
+	}
+	for _, c := range cases {
+		if got := bandPct(lo, hi, c.frac); got != c.want {
+			t.Errorf("bandPct(%d,%d,%v) = %d, want %d", lo, hi, c.frac, got, c.want)
+		}
+	}
+}
+
+// TestReportExpoProgress mirrors the pnpm throttle test: high-frequency
+// percentage lines forward at most one per window and land in-band, while the
+// terminal "Bundled"/"Exported" markers always pass and park at hi-1.
+func TestReportExpoProgress(t *testing.T) {
+	now := time.Unix(0, 0)
+	prev := nowFunc
+	nowFunc = func() time.Time { return now }
+	defer func() { nowFunc = prev }()
+
+	lo, hi := 60, 72
+	job := &installJob{ID: "j", Done: make(chan struct{})}
+	throttle := newPnpmProgressThrottle()
+
+	// A burst of percentage lines within one window — only the first forwards.
+	for i := 0; i < 5; i++ {
+		now = now.Add(200 * time.Millisecond)
+		reportExpoProgress(job, "Web entry.js ▓▓░░ 40.0% (800/2000)", "Exporting web bundle", lo, hi, throttle)
+	}
+	if got := len(job.LogLines); got != 1 {
+		t.Fatalf("percentage burst forwarded %d updates, want 1", got)
+	}
+	if got := job.Progress; got != bandPct(lo, hi, 0.4) {
+		t.Fatalf("first percentage forwarded progress %d, want %d", got, bandPct(lo, hi, 0.4))
+	}
+
+	// The "Bundled" marker is not throttled and parks at hi-1.
+	reportExpoProgress(job, "Web Bundled 10768ms entry.js (4343 modules)", "Exporting web bundle", lo, hi, throttle)
+	if got := len(job.LogLines); got != 2 {
+		t.Fatalf("Bundled marker was throttled; total = %d, want 2", got)
+	}
+	if got := job.Progress; got != hi-1 {
+		t.Fatalf("Bundled marker progress %d, want %d", got, hi-1)
+	}
+
+	// Non-signal lines (the per-file dump) never forward.
+	reportExpoProgress(job, "_expo/static/js/web/entry-abc.js (1.3MB)", "Exporting web bundle", lo, hi, throttle)
+	if got := len(job.LogLines); got != 2 {
+		t.Fatalf("asset listing line forwarded; total = %d, want 2", got)
 	}
 }
 
