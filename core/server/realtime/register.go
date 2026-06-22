@@ -109,8 +109,46 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		e.Router.GET("/api/realtime/{roomKind}/{roomID}", func(re *core.RequestEvent) error {
 			return handleConnect(broker, opts, re)
 		})
+		e.Router.POST("/api/realtime/{roomKind}/{roomID}/flush", handleForceFlush)
 		return e.Next()
 	})
+}
+
+// handleForceFlush synchronously persists a room's live state to durable
+// storage. Surfaces that read the stored blob (drive's "Export as
+// template" / "Make a copy") call this first so they don't copy a blob
+// that trails the in-room edits by up to the save debounce window.
+//
+// Authorization reuses the room kind's authenticated Authorize handler —
+// the same gate that admits a WebSocket editor — so only a user allowed
+// to edit the room can force its flush. Anonymous share-session visitors
+// (including read-only link viewers) are rejected: a flush mutates
+// durable storage and must not be reachable without a PB identity.
+func handleForceFlush(re *core.RequestEvent) error {
+	if re.Auth == nil {
+		return re.UnauthorizedError("Authentication required", nil)
+	}
+	kind := re.Request.PathValue("roomKind")
+	roomID := re.Request.PathValue("roomID")
+	if kind == "" || roomID == "" {
+		return re.BadRequestError("roomKind and roomID required", nil)
+	}
+
+	opts, err := optionsFor(kind)
+	if err != nil {
+		return re.NotFoundError(err.Error(), nil)
+	}
+	if opts.ForceFlush == nil {
+		// Kind has no server-side persistence — nothing to flush.
+		return re.NotFoundError("room kind does not support flush", nil)
+	}
+	if err := opts.Authorize(re.Auth, roomID); err != nil {
+		return re.ForbiddenError("Not authorized for this room", err)
+	}
+	if err := opts.ForceFlush(roomID); err != nil {
+		return re.InternalServerError("flush failed", err)
+	}
+	return re.JSON(200, map[string]bool{"flushed": true})
 }
 
 func handleConnect(broker *Broker, opts Options, re *core.RequestEvent) error {

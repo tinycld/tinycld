@@ -82,6 +82,14 @@ export default defineConfig({
                 find: /^expo-clipboard$/,
                 replacement: path.join(APP_DIR, '..', 'tests', 'expo-clipboard-stub.ts'),
             },
+            // expo-image pulls in expo-modules-core the same way (its Platform
+            // module reads the global __DEV__ at load). A package unit test that
+            // imports a component rendering a Thumbnail / <Image> would crash at
+            // collect time; the stub renders a harmless placeholder.
+            {
+                find: /^expo-image$/,
+                replacement: path.join(APP_DIR, '..', 'tests', 'expo-image-stub.tsx'),
+            },
             // ~/* — package source. Resolved relative to the package's own dir
             // at invocation time via the test root, so we map it dynamically below.
         ],

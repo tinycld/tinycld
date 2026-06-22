@@ -444,6 +444,64 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 	}
 }
 
+// FlushNow runs a synchronous flush for the room identified by
+// driveItemID and returns only once the flush has completed (or failed).
+// Unlike the timer-driven triggerSave, it ignores the debounce/ceiling
+// schedule and the dirty flag — callers use it to guarantee the durable
+// blob reflects live edits before reading it (e.g. "Export as template"
+// and "Make a copy", which copy the stored drive_items.file).
+//
+// If the room is not open (no live editor since the last flush), the
+// stored blob is already current, so this is a no-op success. If a
+// timer-driven save is already in flight for the room, FlushNow waits
+// for it to finish rather than running a second concurrent flush — the
+// coordinator never invokes FlushFn for the same room twice in parallel.
+func (c *SaveCoordinator) FlushNow(driveItemID string) error {
+	c.mu.Lock()
+	rs := c.rooms[driveItemID]
+	c.mu.Unlock()
+	if rs == nil {
+		// No open room: the last flush (or teardown) already wrote the
+		// current state to durable storage. Nothing to do.
+		return nil
+	}
+
+	// Wait out any in-flight timer-driven save, then claim the in-flight
+	// slot ourselves so a concurrent triggerSave coalesces behind us
+	// instead of racing the same FlushFn. Spin with a short sleep rather
+	// than a condition variable to keep the existing lock discipline —
+	// flushes are infrequent and brief.
+	for {
+		rs.mu.Lock()
+		if rs.closed {
+			rs.mu.Unlock()
+			return nil
+		}
+		if rs.saveInFlight {
+			rs.mu.Unlock()
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+		rs.saveInFlight = true
+		rs.dirty = false
+		handle := rs.handle
+		rs.mu.Unlock()
+
+		err := c.flush(driveItemID, handle)
+
+		rs.mu.Lock()
+		rs.saveInFlight = false
+		if err != nil {
+			// Leave the room marked dirty so the normal retry path picks
+			// it up; FlushNow itself doesn't retry — it reports the error
+			// to its caller, who decides whether to proceed.
+			rs.dirty = true
+		}
+		rs.mu.Unlock()
+		return err
+	}
+}
+
 // giveUpDetail is the full set of facts captured when the coordinator
 // abandons the automatic retry loop for a room. Everything here goes to
 // Sentry so an operator can identify the stuck document and the failing
