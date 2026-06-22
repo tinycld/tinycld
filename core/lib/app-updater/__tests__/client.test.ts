@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkForUpdate, downloadAndStage, isUpdateTransportAllowed } from '../client'
+import {
+    checkForUpdate,
+    downloadAndStage,
+    isUpdateTransportAllowed,
+    reportBadBundle,
+} from '../client'
 import type { UpdateManifest } from '../types'
 
 const MANIFEST: UpdateManifest = {
@@ -149,6 +154,31 @@ describe('downloadAndStage', () => {
         const d = stageDeps({ hashFn })
         await expect(downloadAndStage(manifestWithAsset, d)).rejects.toThrow(/hash mismatch/)
         expect(d.stageBundleFn).not.toHaveBeenCalled()
+    })
+})
+
+describe('reportBadBundle', () => {
+    it('POSTs the bundle id/hash/platform/error to report-bad', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+        await reportBadBundle({
+            serverUrl: 'https://srv.test',
+            platform: 'ios',
+            id: 'build-200-ios',
+            hash: 'HASH',
+            error: 'rolled back',
+            fetchFn,
+        })
+        expect(fetchFn).toHaveBeenCalledWith(
+            'https://srv.test/api/app/update/report-bad',
+            expect.objectContaining({ method: 'POST' })
+        )
+        const [, opts] = fetchFn.mock.calls[0]
+        expect(JSON.parse(opts.body)).toEqual({
+            id: 'build-200-ios',
+            hash: 'HASH',
+            platform: 'ios',
+            error: 'rolled back',
+        })
     })
 })
 

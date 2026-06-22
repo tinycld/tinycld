@@ -2,6 +2,7 @@ import {
     checkForUpdate,
     downloadAndStage,
     isUpdateTransportAllowed,
+    reportBadBundle,
 } from '@tinycld/core/lib/app-updater/client'
 import { sha256HexOfFile } from '@tinycld/core/lib/app-updater/hash'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
@@ -128,9 +129,39 @@ async function runUpdateCheck(): Promise<void> {
     }
 }
 
+// reportRevertedBundle runs once on boot: if the native side rolled a bundle
+// back (this device crash-looped on it and recovered), tell the server so it
+// stops advertising that bundle to the rest of the fleet. Best-effort — the
+// local rollback already protected THIS device; this is fleet-wide signal, so any
+// failure (offline, server down) is swallowed. Runs in the RECOVERED (good)
+// bundle, the only place a network call can reliably complete.
+async function reportRevertedBundle(): Promise<void> {
+    if (__DEV__ || Platform.OS === 'web') return
+    const reverted = AppUpdater.takeRevertedBundle()
+    if (!reverted) return
+    try {
+        const serverUrl = String(PB_SERVER_ADDR)
+        if (!isUpdateTransportAllowed(serverUrl)) return
+        await reportBadBundle({
+            serverUrl,
+            platform: Platform.OS === 'ios' ? 'ios' : 'android',
+            id: reverted.id,
+            hash: reverted.hash,
+            error: 'client rolled back: bundle failed to reach healthy',
+            fetchFn: fetch,
+        })
+    } catch (error) {
+        captureException('use-app-updates.report-bad', error, { id: reverted.id })
+    }
+}
+
 export function useAppUpdates(): void {
     useEffect(() => {
         if (__DEV__ || Platform.OS === 'web') return
+
+        // Report a bundle this device just rolled back, before checking for new
+        // ones — so the server can stop serving it to others right away.
+        void reportRevertedBundle()
 
         const launchTimer = setTimeout(checkAndApplyUpdate, LAUNCH_DELAY_MS)
 
