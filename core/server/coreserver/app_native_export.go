@@ -245,7 +245,13 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 		hi := progNativeStart + (span*(i+1))/len(platforms)
 		step := "Building " + string(p) + " bundle"
 		emitProgress(job, step, lo, "Running expo export --platform "+string(p))
-		if cmdOut, err := runExportWithProgress(job, lo, hi, step, appDir, "--platform", string(p), "--output-dir", outDir); err != nil {
+		// --source-maps external emits a <bundle>.hbc.map next to each .hbc so we can
+		// upload it to Sentry below (mirrors the web export's --source-maps external
+		// in the Dockerfile). Without it an OTA-bundle crash arrives as unsymbolicated
+		// minified frames — the gap that made this incident's crash unreadable.
+		// runExportWithProgress streams Metro's per-module progress onto [lo, hi).
+		if cmdOut, err := runExportWithProgress(job, lo, hi, step, appDir,
+			"--platform", string(p), "--source-maps", "external", "--output-dir", outDir); err != nil {
 			return nil, fmt.Errorf("expo export %s: %v: %s", p, err, cmdOut)
 		}
 		bm, err := parseExportMetadata(outDir, p, buildID, runtimeVersion)
@@ -253,9 +259,63 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 			return nil, fmt.Errorf("parse %s export: %w", p, err)
 		}
 		bm.distDir = outDir
+		// Upload this bundle's sourcemaps to Sentry keyed by dist = bundle_id, so a
+		// crash in this OTA bundle symbolicates. The client tags the same release +
+		// dist (see sentry.ts). Best-effort: a failed/skipped upload must NOT fail
+		// the install — the bundle is still deliverable, just harder to debug.
+		uploadBundleSourcemaps(job, outDir, runtimeVersion, bm.BundleID)
 		out = append(out, bm)
 	}
 	return out, nil
+}
+
+// envOr returns the environment variable named key, or def when it is unset/empty.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// sentryReleaseFor returns the Sentry `release` for an OTA bundle. It must match
+// what the running app reports in sentry.ts EXACTLY or symbolication silently
+// fails — both sides derive it the SAME way: "tinycld@<app-version>". We
+// deliberately do NOT include the native build number (the server doesn't know
+// it, and EAS auto-increments it); per-bundle disambiguation is carried by `dist`
+// (the bundle id), not the release.
+func sentryReleaseFor(runtimeVersion string) string {
+	return "tinycld@" + runtimeVersion
+}
+
+// uploadBundleSourcemaps uploads the .hbc + .map under outDir to Sentry via
+// sentry-cli, keyed by (release, dist). No-op (logs) when SENTRY_AUTH_TOKEN is
+// unset — self-hosters without Sentry build normally. Never returns an error:
+// the install succeeds whether or not the upload does.
+func uploadBundleSourcemaps(job *installJob, outDir, runtimeVersion, bundleID string) {
+	if os.Getenv("SENTRY_AUTH_TOKEN") == "" {
+		jobLogf(job, "sourcemap upload skipped for %s (SENTRY_AUTH_TOKEN unset)", bundleID)
+		return
+	}
+	release := sentryReleaseFor(runtimeVersion)
+	// org/project: ios/sentry.properties is prebuild output and is NOT in the
+	// server's build tree, so sentry-cli can't discover them — pass explicitly.
+	// Env-overridable (SENTRY_ORG/SENTRY_PROJECT) but defaulted to the known
+	// argosity/tinycld project so a standard deploy needs only the auth token.
+	org := envOr("SENTRY_ORG", "argosity")
+	project := envOr("SENTRY_PROJECT", "tinycld")
+	// sentry-cli reads SENTRY_AUTH_TOKEN from the env. Point it at the JS output
+	// dir; it pairs each minified file with its sibling .map.
+	jsDir := filepath.Join(outDir, "_expo", "static", "js")
+	out, err := runCmd(outDir, "pnpm", "exec", "sentry-cli", "sourcemaps", "upload",
+		"--org", org, "--project", project,
+		"--release", release, "--dist", bundleID, jsDir)
+	if err != nil {
+		// Surface to the job log AND Sentry-less stderr, but swallow: a debugging
+		// aid failing must never brick a working install.
+		jobLogf(job, "sourcemap upload FAILED for %s (release=%s): %v: %s", bundleID, release, err, out)
+		return
+	}
+	jobLogf(job, "uploaded sourcemaps for %s (release=%s)", bundleID, release)
 }
 
 // cleanupNativeExportDirs removes the per-platform `dist-<platform>` export dirs
