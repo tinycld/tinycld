@@ -522,3 +522,42 @@ func TestSaveCoordinatorTruncateErrorIsLoggedAndIgnored(t *testing.T) {
 		t.Fatalf("truncates = %d; want 1 (single attempt, no retry)", got)
 	}
 }
+
+// TestFlushNowNoRoomIsNoop: FlushNow on an unknown room returns nil
+// without invoking the flush — the durable blob is already current.
+func TestFlushNowNoRoomIsNoop(t *testing.T) {
+	fc := newFastCoord(t)
+	if err := fc.c.FlushNow("never-opened"); err != nil {
+		t.Fatalf("FlushNow on missing room = %v; want nil", err)
+	}
+	if got := fc.callCount(); got != 0 {
+		t.Fatalf("flush calls = %d; want 0", got)
+	}
+}
+
+// TestFlushNowRunsFlush: FlushNow on an open room runs the flush
+// synchronously and returns once it has completed.
+func TestFlushNowRunsFlush(t *testing.T) {
+	fc := newFastCoord(t)
+	fc.c.OnRoomCreate("open-room", &stubHandle{}, nil)
+	if err := fc.c.FlushNow("open-room"); err != nil {
+		t.Fatalf("FlushNow = %v; want nil", err)
+	}
+	if got := fc.callCount(); got != 1 {
+		t.Fatalf("flush calls = %d; want 1 (synchronous flush)", got)
+	}
+}
+
+// TestFlushNowPropagatesError: a failing flush surfaces its error to the
+// FlushNow caller and leaves the room dirty for the normal retry path.
+func TestFlushNowPropagatesError(t *testing.T) {
+	flush := func(_ string, _ DocHandle) error {
+		return errors.New("synthetic flush failure")
+	}
+	c := NewSaveCoordinator(flush)
+	c.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.OnRoomCreate("flaky-room", &stubHandle{}, nil)
+	if err := c.FlushNow("flaky-room"); err == nil {
+		t.Fatal("FlushNow = nil; want the flush error")
+	}
+}

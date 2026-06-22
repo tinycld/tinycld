@@ -144,6 +144,16 @@ type RoomKindOptions struct {
 	// this callback.
 	OnEmpty func(roomID string)
 
+	// ForceFlush, if non-nil, synchronously persists the current state of
+	// the given room to durable storage, returning only when the write
+	// has landed (or failed). Wired to SaveCoordinator.FlushNow. The
+	// realtime broker exposes it via POST /api/realtime/{kind}/{id}/flush
+	// so other surfaces (e.g. drive's "Export as template" / "Make a
+	// copy") can guarantee the stored blob reflects live edits before
+	// they read it. Nil for kinds without server-side persistence — the
+	// flush route then 404s for that kind.
+	ForceFlush func(roomID string) error
+
 	// OnConnect, if non-nil, is invoked once per joining client after
 	// MsgAssignID and before sync. The returned bytes are delivered as
 	// a MsgServerHello frame to that client only — useful for
