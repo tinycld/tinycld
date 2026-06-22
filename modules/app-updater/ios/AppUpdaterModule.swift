@@ -17,6 +17,16 @@ public class AppUpdaterModule: Module {
 
         Function("markBundleHealthy") { Store.shared.markHealthy() }
 
+        // Mark the active OTA bundle bad so the NEXT bundleURL() reverts to the
+        // previous bundle. Called from the JS global fatal handler when a
+        // not-yet-healthy bundle throws fatally — paired with reload() it recovers
+        // in-session instead of waiting for the crash-launch counter to trip.
+        Function("markBundleBad") { Store.shared.markBad() }
+
+        // Read-once: returns { id, hash } of a bundle rolled back since the last
+        // call (or nil). JS reports it to the server's report-bad endpoint on boot.
+        Function("takeRevertedBundle") { Store.shared.takeRevertedBundle() }
+
         AsyncFunction("reload") {
             DispatchQueue.main.async { Store.shared.requestReload() }
         }
@@ -44,13 +54,22 @@ final class Store {
     private var pendingURL: URL { root.appendingPathComponent("pending.json") }
     private var previousURL: URL { root.appendingPathComponent("previous.json") }
     private var bootURL: URL { root.appendingPathComponent("boot.json") }
+    private var revertURL: URL { root.appendingPathComponent("revert.json") }
+    private var revertedURL: URL { root.appendingPathComponent("reverted.json") }
     private var embeddedHashURL: URL { root.appendingPathComponent("embedded-hash.json") }
 
-    // A promoted OTA bundle is only rolled back after this many consecutive boots
-    // that never reach the JS "healthy" signal. 3 (i.e. two fully-failed boots)
-    // leaves margin for a boot that renders but is force-quit before markHealthy
-    // fires, which a threshold of 2 would mis-read as a crash and roll back a
-    // healthy bundle.
+    // Crash-launch rollback thresholds: a promoted OTA bundle is rolled back after
+    // this many launches that never reach the JS "healthy" signal.
+    //
+    // A freshly-promoted bundle is on TRIAL until its first markHealthy: it rolls
+    // back after the 2nd un-healthy launch (i.e. ONE visible crash, then recovery
+    // on the next launch). This is the "roll back on first crash" backstop behind
+    // the JS fatal handler's in-session revert.
+    //
+    // A bundle that was ALREADY healthy at least once keeps the more generous
+    // threshold so a normal boot that's force-quit before markHealthy (slow first
+    // paint) isn't mis-read as a crash and rolled back.
+    private let rollbackAfterTrialLaunches = 2
     private let rollbackAfterLaunches = 3
 
     /// Reads a string field from current.json, treating an empty string as nil —
@@ -71,7 +90,31 @@ final class Store {
     /// Marks the active OTA bundle healthy so crash-rollback won't revert it.
     /// Called from JS after the app reaches a stable state — the earlier it runs,
     /// the smaller the window in which a healthy bundle could be mis-rolled-back.
+    /// Removing boot.json also clears the trial flag, so a later post-healthy crash
+    /// falls under the generous (non-trial) threshold rather than the trial one.
     func markHealthy() { try? fm.removeItem(at: bootURL) }
+
+    /// Flags the active OTA bundle for revert on the next bundleURL(). The JS
+    /// global fatal handler calls this (then reload()) when a not-yet-healthy
+    /// bundle throws fatally, so recovery happens within the same reload cycle
+    /// instead of waiting for the crash-launch counter. Records the current id so
+    /// promotePendingIfAny only honors a revert that still targets that bundle.
+    func markBad() {
+        guard let id = currentId() else { return }
+        writeJSON(revertURL, ["id": id])
+    }
+
+    /// Returns `[id, hash]` of a bundle that was rolled back since the last call,
+    /// then clears it (read-once). The recovered bundle calls this on boot and, if
+    /// non-nil, POSTs report-bad so the server stops advertising the bad bundle to
+    /// the fleet. Returns nil when nothing was rolled back.
+    func takeRevertedBundle() -> [String: String]? {
+        guard let r = readJSON(revertedURL) else { return nil }
+        try? fm.removeItem(at: revertedURL)
+        let id = r["id"] as? String ?? ""
+        if id.isEmpty { return nil }
+        return ["id": id, "hash": r["hash"] as? String ?? ""]
+    }
 
     /// Hex SHA-256 of the bundle the app is currently running. For a promoted OTA
     /// bundle this is the hash recorded at stage time (matches the server's
@@ -126,6 +169,18 @@ final class Store {
     /// to load — or `nil` to fall back to the embedded `main.jsbundle`.
     func resolveBundleURL() -> URL? {
         promotePendingIfAny()
+        // A JS fatal handler may have flagged the current bundle bad (markBad) just
+        // before triggering this reload. Honor it FIRST — if the flag still targets
+        // the current bundle, revert to previous before doing anything else, so an
+        // in-session recovery never even loads the bad bundle again. A stale flag
+        // (id no longer current) is cleared and ignored.
+        if let revertId = readJSON(revertURL)?["id"] as? String {
+            try? fm.removeItem(at: revertURL)
+            if revertId == currentId() {
+                rollbackToPrevious()
+                return resolveAfterRollback()
+            }
+        }
         guard let dir = currentDir(), let id = currentId() else { return nil }
         guard let bundlePath = locateHbc(in: dir) else {
             rollbackToPrevious()
@@ -144,10 +199,13 @@ final class Store {
             rollbackToPrevious()
             return resolveAfterRollback()
         }
-        var boot = readJSON(bootURL) ?? ["id": id, "launchCount": 0]
-        if (boot["id"] as? String) != id { boot = ["id": id, "launchCount": 0] }
+        var boot = readJSON(bootURL) ?? ["id": id, "launchCount": 0, "trial": true]
+        if (boot["id"] as? String) != id { boot = ["id": id, "launchCount": 0, "trial": true] }
         let count = (boot["launchCount"] as? Int ?? 0) + 1
-        if count >= rollbackAfterLaunches {
+        // A bundle that has never been marked healthy is on trial → roll back after
+        // one un-healthy crash; an already-healthy bundle keeps the generous margin.
+        let threshold = (boot["trial"] as? Bool ?? false) ? rollbackAfterTrialLaunches : rollbackAfterLaunches
+        if count >= threshold {
             rollbackToPrevious()
             return resolveAfterRollback()
         }
@@ -174,14 +232,25 @@ final class Store {
         if let cur = readJSON(currentURL) { writeJSON(previousURL, cur) }
         writeJSON(currentURL, p)
         try? fm.removeItem(at: pendingURL)
-        try? fm.removeItem(at: bootURL)
+        // Fresh promote: reset the crash tracker AS A TRIAL (rolls back after one
+        // un-healthy crash) and clear any stale revert flag from a prior bundle.
+        writeJSON(bootURL, ["id": p["id"] as? String ?? "", "launchCount": 0, "trial": true])
+        try? fm.removeItem(at: revertURL)
     }
 
     private func rollbackToPrevious() {
+        // Record the bundle being rolled back (id + hash) so the recovered bundle
+        // can report it bad to the server on the next boot — takeRevertedBundle().
+        // The crash handler can't report at crash time (the process is dying), so
+        // we stash it and let the good bundle POST it once it's safely running.
+        if let cur = readJSON(currentURL) {
+            writeJSON(revertedURL, ["id": cur["id"] as? String ?? "", "hash": cur["hash"] as? String ?? ""])
+        }
         if let prev = readJSON(previousURL) { writeJSON(currentURL, prev) }
         else { try? fm.removeItem(at: currentURL) }
         try? fm.removeItem(at: previousURL)
         try? fm.removeItem(at: bootURL)
+        try? fm.removeItem(at: revertURL)
     }
     private func resolveAfterRollback() -> URL? {
         guard let dir = currentDir() else { return nil }

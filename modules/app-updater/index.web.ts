@@ -17,6 +17,8 @@ const AppUpdater: AppUpdaterModuleType = {
     getRuntimeVersion: () => '',
     stageBundle: async () => {},
     markBundleHealthy: () => {},
+    markBundleBad: () => {},
+    takeRevertedBundle: () => null,
     reload: async () => {},
 }
 
