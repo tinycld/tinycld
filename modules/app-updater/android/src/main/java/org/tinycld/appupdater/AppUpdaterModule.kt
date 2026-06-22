@@ -30,6 +30,16 @@ class AppUpdaterModule : Module() {
 
         Function("markBundleHealthy") { Store(context).markHealthy() }
 
+        // Mark the active OTA bundle bad so the next getJSBundleFile() reverts to
+        // the previous bundle. Called from the JS global fatal handler (paired with
+        // reload()) so a not-yet-healthy bundle that throws fatally recovers
+        // in-session instead of waiting for the crash-launch counter. Mirrors iOS.
+        Function("markBundleBad") { Store(context).markBad() }
+
+        // Read-once: { id, hash } of a bundle rolled back since the last call (or
+        // null). JS reports it to the server's report-bad endpoint on boot.
+        Function("takeRevertedBundle") { Store(context).takeRevertedBundle() }
+
         AsyncFunction("reload") { Store(context).requestReload() }
     }
 }
@@ -52,13 +62,17 @@ class Store(private val context: Context) {
     private val pendingFile = File(root, "pending.json")
     private val previousFile = File(root, "previous.json")
     private val bootFile = File(root, "boot.json")
+    private val revertFile = File(root, "revert.json")
+    private val revertedFile = File(root, "reverted.json")
     private val embeddedHashFile = File(root, "embedded-hash.json")
 
-    // A promoted OTA bundle is only rolled back after this many consecutive boots
-    // that never reach the JS "healthy" signal. 3 (i.e. two fully-failed boots)
-    // leaves margin for a boot that renders but is force-quit before markHealthy
-    // fires, which a threshold of 2 would mis-read as a crash and roll back a
-    // healthy bundle.
+    // Crash-launch rollback thresholds (mirrors iOS). A freshly-promoted bundle is
+    // on TRIAL until its first markHealthy: it rolls back after the 2nd un-healthy
+    // launch (ONE visible crash, then recovery) — the backstop behind the JS fatal
+    // handler's in-session revert. A bundle that was already healthy keeps the more
+    // generous threshold so a slow first paint that's force-quit before markHealthy
+    // isn't mis-read as a crash.
+    private val rollbackAfterTrialLaunches = 2
     private val rollbackAfterLaunches = 3
 
     fun embeddedId(): String = resString("tinycld_bundle_id") ?: "embedded"
@@ -81,7 +95,34 @@ class Store(private val context: Context) {
      * the smaller the window in which a healthy bundle could be mis-rolled-back.
      */
     fun markHealthy() {
+        // Clearing boot.json also clears the trial flag, so a later post-healthy
+        // crash falls under the generous (non-trial) threshold, not the trial one.
         bootFile.delete()
+    }
+
+    /**
+     * Flags the active OTA bundle for revert on the next getJSBundleFile(). The JS
+     * global fatal handler calls this (then reload()) when a not-yet-healthy bundle
+     * throws fatally, so recovery happens within the same reload cycle instead of
+     * waiting for the crash-launch counter. Records the current id so promote only
+     * honors a revert that still targets that bundle. Mirrors iOS markBad().
+     */
+    fun markBad() {
+        val id = currentId() ?: return
+        writeJSON(revertFile, JSONObject().put("id", id))
+    }
+
+    /**
+     * Returns a map { id, hash } of a bundle rolled back since the last call, then
+     * clears it (read-once). The recovered bundle calls this on boot and, if
+     * non-null, POSTs report-bad so the server stops advertising the bad bundle to
+     * the fleet. Returns null when nothing was rolled back. Mirrors iOS.
+     */
+    fun takeRevertedBundle(): Map<String, String>? {
+        val r = readJSON(revertedFile) ?: return null
+        revertedFile.delete()
+        val id = r.optString("id").ifEmpty { return null }
+        return mapOf("id" to id, "hash" to r.optString("hash"))
     }
 
     /**
@@ -147,6 +188,17 @@ class Store(private val context: Context) {
      */
     fun resolveBundlePath(): String? {
         promotePendingIfAny()
+        // A JS fatal handler may have flagged the current bundle bad (markBad) just
+        // before triggering this reload. Honor it FIRST — if the flag still targets
+        // the current bundle, revert before loading anything, so an in-session
+        // recovery never reloads the bad bundle. A stale flag is cleared + ignored.
+        readJSON(revertFile)?.optString("id")?.ifEmpty { null }?.let { revertId ->
+            revertFile.delete()
+            if (revertId == currentId()) {
+                rollbackToPrevious()
+                return resolveAfterRollback()
+            }
+        }
         val dir = currentDir() ?: return null
         val id = currentId() ?: return null
         val bundlePath = locateHbc(dir)
@@ -169,10 +221,13 @@ class Store(private val context: Context) {
         }
         var boot = readJSON(bootFile)
         if (boot == null || boot.optString("id") != id) {
-            boot = JSONObject().put("id", id).put("launchCount", 0)
+            boot = JSONObject().put("id", id).put("launchCount", 0).put("trial", true)
         }
         val count = boot.optInt("launchCount", 0) + 1
-        if (count >= rollbackAfterLaunches) {
+        // A bundle that has never been marked healthy is on trial → roll back after
+        // one un-healthy crash; an already-healthy bundle keeps the generous margin.
+        val threshold = if (boot.optBoolean("trial", false)) rollbackAfterTrialLaunches else rollbackAfterLaunches
+        if (count >= threshold) {
             rollbackToPrevious()
             return resolveAfterRollback()
         }
@@ -197,7 +252,10 @@ class Store(private val context: Context) {
         readJSON(currentFile)?.let { writeJSON(previousFile, it) }
         writeJSON(currentFile, pending)
         pendingFile.delete()
-        bootFile.delete()
+        // Fresh promote: reset the crash tracker AS A TRIAL (rolls back after one
+        // un-healthy crash) and clear any stale revert flag from a prior bundle.
+        writeJSON(bootFile, JSONObject().put("id", pending.optString("id")).put("launchCount", 0).put("trial", true))
+        revertFile.delete()
     }
 
     /**
@@ -206,10 +264,16 @@ class Store(private val context: Context) {
      * twice would loop forever instead of falling through to embedded.
      */
     private fun rollbackToPrevious() {
+        // Record the rolled-back bundle (id + hash) so the recovered bundle can
+        // report it bad to the server on the next boot — see takeRevertedBundle().
+        readJSON(currentFile)?.let {
+            writeJSON(revertedFile, JSONObject().put("id", it.optString("id")).put("hash", it.optString("hash")))
+        }
         val prev = readJSON(previousFile)
         if (prev != null) writeJSON(currentFile, prev) else currentFile.delete()
         previousFile.delete()
         bootFile.delete()
+        revertFile.delete()
     }
 
     private fun resolveAfterRollback(): String? {
