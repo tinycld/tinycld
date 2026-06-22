@@ -344,6 +344,20 @@ ENV AUTOCERT_ENABLED=""
 ENV PUBLIC_SCHEME=""
 ENV FZ_VERSION="1.25.1"
 
+# Heap limit for the Node processes the in-app package installer spawns —
+# primarily `expo export` (web + the native OTA bundles). The full-ecosystem
+# bundle (every member's screens/sidebars) plus `--source-maps external` blows
+# past Node's default old-space ceiling and OOM-aborts the export (SIGABRT,
+# "Ineffective mark-compacts near heap limit"); dev.ts and the EAS production
+# build already run this same export at 8192 for that reason. The web-builder
+# stage sets its own NODE_OPTIONS, which does NOT carry into this runtime stage,
+# so the runtime installer previously ran with no limit. 4096 fits the bundle on
+# a typical server container; raise it (or lower to match a smaller box) via
+# `dokku config:set <app> NODE_OPTIONS=--max-old-space-size=<MB>`, which overrides
+# this default. Must be <= the container's memory limit or the kernel OOM-kills
+# the process before V8's soft limit ever applies.
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
 # Install runtime dependencies + Node for runtime tasks. Cron jobs in bin/
 # invoke `pnpm exec tsx scripts/<x>.ts` (reset-demo, seed-db), so Node must be on
 # PATH. libcap2-bin (setcap) is needed at image build time below; we keep it
