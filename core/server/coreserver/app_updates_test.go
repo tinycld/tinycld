@@ -2,6 +2,12 @@ package coreserver
 
 import "testing"
 
+// resolveNoBad calls resolveManifest with no reported-bad bundles — the common
+// case for tests that don't exercise the bad-bundle skip.
+func resolveNoBad(bundles []any, platform, runtime, currentID, currentHash string) (clientManifest, manifestStatus) {
+	return resolveManifest(bundles, platform, runtime, currentID, currentHash, nil, nil)
+}
+
 func bundlesFixture() []any {
 	return []any{
 		map[string]any{
@@ -13,7 +19,7 @@ func bundlesFixture() []any {
 }
 
 func TestResolveManifestNewBundle(t *testing.T) {
-	m, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "build-100-ios", "")
+	m, status := resolveNoBad(bundlesFixture(), "ios", "1.13.7", "build-100-ios", "")
 	if status != manifestNew {
 		t.Fatalf("status = %v, want manifestNew", status)
 	}
@@ -23,7 +29,7 @@ func TestResolveManifestNewBundle(t *testing.T) {
 }
 
 func TestResolveManifestUpToDate(t *testing.T) {
-	_, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "build-200-ios", "")
+	_, status := resolveNoBad(bundlesFixture(), "ios", "1.13.7", "build-200-ios", "")
 	if status != manifestUpToDate {
 		t.Fatalf("status = %v, want manifestUpToDate", status)
 	}
@@ -34,7 +40,7 @@ func TestResolveManifestUpToDate(t *testing.T) {
 // must then report up-to-date so the app doesn't download + reload on every first
 // foreground after a store update.
 func TestResolveManifestUpToDateByHash(t *testing.T) {
-	_, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "embedded-1.13.7", "HASH")
+	_, status := resolveNoBad(bundlesFixture(), "ios", "1.13.7", "embedded-1.13.7", "HASH")
 	if status != manifestUpToDate {
 		t.Fatalf("status = %v, want manifestUpToDate (hash match across embedded→server boundary)", status)
 	}
@@ -43,23 +49,52 @@ func TestResolveManifestUpToDateByHash(t *testing.T) {
 // A non-matching hash with a non-matching id must still offer the update — the
 // hash short-circuit only suppresses, never blocks, a genuinely newer bundle.
 func TestResolveManifestNewWhenHashDiffers(t *testing.T) {
-	_, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "embedded-1.13.7", "OTHERHASH")
+	_, status := resolveNoBad(bundlesFixture(), "ios", "1.13.7", "embedded-1.13.7", "OTHERHASH")
 	if status != manifestNew {
 		t.Fatalf("status = %v, want manifestNew", status)
 	}
 }
 
 func TestResolveManifestRuntimeMismatch(t *testing.T) {
-	_, status := resolveManifest(bundlesFixture(), "ios", "1.14.0", "build-100-ios", "")
+	_, status := resolveNoBad(bundlesFixture(), "ios", "1.14.0", "build-100-ios", "")
 	if status != manifestNoMatch {
 		t.Fatalf("status = %v, want manifestNoMatch", status)
 	}
 }
 
 func TestResolveManifestPlatformMissing(t *testing.T) {
-	_, status := resolveManifest(bundlesFixture(), "android", "1.13.7", "x", "")
+	_, status := resolveNoBad(bundlesFixture(), "android", "1.13.7", "x", "")
 	if status != manifestNoMatch {
 		t.Fatalf("status = %v, want manifestNoMatch", status)
+	}
+}
+
+// A bundle a client reported bad must be skipped: by id, and independently by
+// hash. With the only matching bundle skipped, the result is manifestNoMatch
+// (nothing to offer) rather than pushing the known-bricking bundle again.
+func TestResolveManifestSkipsBadBundleByID(t *testing.T) {
+	badIDs := map[string]bool{"build-200-ios": true}
+	_, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "build-100-ios", "", badIDs, nil)
+	if status != manifestNoMatch {
+		t.Fatalf("status = %v, want manifestNoMatch (bad bundle skipped by id)", status)
+	}
+}
+
+func TestResolveManifestSkipsBadBundleByHash(t *testing.T) {
+	badHashes := map[string]bool{"HASH": true}
+	_, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "build-100-ios", "", nil, badHashes)
+	if status != manifestNoMatch {
+		t.Fatalf("status = %v, want manifestNoMatch (bad bundle skipped by hash)", status)
+	}
+}
+
+// A non-bad bundle is still offered normally when an unrelated id is in the bad
+// set — the skip must be specific, not a blanket "any bad bundle blocks updates".
+func TestResolveManifestUnrelatedBadDoesNotBlock(t *testing.T) {
+	badIDs := map[string]bool{"build-999-ios": true}
+	_, status := resolveManifest(bundlesFixture(), "ios", "1.13.7", "build-100-ios", "", badIDs, nil)
+	if status != manifestNew {
+		t.Fatalf("status = %v, want manifestNew (unrelated bad id must not block)", status)
 	}
 }
 
