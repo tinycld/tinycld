@@ -227,3 +227,28 @@ func TestSerializeBundlesRoundTripsToResolveManifest(t *testing.T) {
 		t.Fatalf("expected manifestNoMatch for mismatched runtime, got %v", s)
 	}
 }
+
+// TestSentryReleaseFor locks the Sentry release string format. This MUST stay in
+// lockstep with the client (core/lib/sentry.ts → sentryReleaseAndDist), which
+// reports `tinycld@<version>` for a promoted OTA bundle. If these two ever
+// diverge, OTA-bundle crashes upload under one release and report under another,
+// and symbolication silently fails — so this test is the canary for that drift.
+func TestSentryReleaseFor(t *testing.T) {
+	if got := sentryReleaseFor("2.0.0"); got != "tinycld@2.0.0" {
+		t.Fatalf("sentryReleaseFor(2.0.0) = %q, want tinycld@2.0.0", got)
+	}
+	if got := sentryReleaseFor("1.13.7"); got != "tinycld@1.13.7" {
+		t.Fatalf("sentryReleaseFor(1.13.7) = %q, want tinycld@1.13.7", got)
+	}
+}
+
+func TestEnvOr(t *testing.T) {
+	t.Setenv("TINYCLD_ENVOR_TEST", "")
+	if got := envOr("TINYCLD_ENVOR_TEST", "fallback"); got != "fallback" {
+		t.Fatalf("empty env should yield fallback, got %q", got)
+	}
+	t.Setenv("TINYCLD_ENVOR_TEST", "set-value")
+	if got := envOr("TINYCLD_ENVOR_TEST", "fallback"); got != "set-value" {
+		t.Fatalf("set env should win, got %q", got)
+	}
+}
