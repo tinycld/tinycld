@@ -38,7 +38,7 @@
         "eas-build-post-install": "export EXPO_PUBLIC_GIT_COMMIT=$EAS_BUILD_GIT_COMMIT_HASH && pnpm run packages:generate && pnpm run assets:copy-pdfjs",
         "//clean:native": "Remove the gitignored prebuilt ios/ + android/ dirs so the next local EAS build does a CLEAN managed prebuild from app.json/app.config.ts + config plugins. A stale dir makes EAS build from old native code (ignoring app config: bundleId, version, and any config-plugin changes like with-app-updater) and emit 'an ios directory was detected' / 'without VCS' warnings.",
         "clean:native": "rm -rf ios android",
-        "build:ios": "pnpm run clean:native && EAS_NO_VCS=1 EAS_PROJECT_ROOT=\"$(cd .. && pwd)\" NODE_OPTIONS=--max-old-space-size=8192 eas build --platform ios --local --output ./tmp/build.ipa",
+        "build:ios": "pnpm run clean:native && EAS_NO_VCS=1 EAS_PROJECT_ROOT=\"$(cd .. && pwd)\" NODE_OPTIONS=--max-old-space-size=8192 eas build --platform ios --profile production --local --output ./tmp/build.ipa",
         "submit:ios": "eas submit --platform ios --path ./tmp/build.ipa",
         "release:ios": "pnpm run build:ios && pnpm run submit:ios",
         "build:android": "pnpm run clean:native && bash -c 'export JAVA_HOME=\"$(/usr/libexec/java_home -v 17 2>/dev/null || echo \"$JAVA_HOME\")\" && export PATH=\"$JAVA_HOME/bin:$PATH\" && export EAS_LOCAL_BUILD_WORKINGDIR=\"$HOME/.cache/tinycld-eas-build\" && mkdir -p \"$EAS_LOCAL_BUILD_WORKINGDIR\" && EAS_NO_VCS=1 EAS_PROJECT_ROOT=\"$(cd .. && pwd)\" NODE_OPTIONS=--max-old-space-size=8192 eas build --platform android --profile production --local --output ./tmp/build.aab'",
