@@ -237,13 +237,15 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 	for i, p := range platforms {
 		outDir := filepath.Join(appDir, fmt.Sprintf("dist-%s", p))
 		os.RemoveAll(outDir) // clean any prior export
-		// Spread the per-platform exports across the native band
-		// [progNativeStart, progNativeEnd) so the bar advances per platform
-		// without ever exceeding the build pipeline's native ceiling.
+		// Carve the native band [progNativeStart, progNativeEnd) into one
+		// sub-band per platform so each export climbs its own slice from Metro's
+		// bundling progress, without ever exceeding the pipeline's native ceiling.
 		span := progNativeEnd - progNativeStart
-		pct := progNativeStart + (span*i)/len(platforms)
-		emitProgress(job, "Building "+string(p)+" bundle", pct, "Running expo export --platform "+string(p))
-		if cmdOut, err := runCmd(appDir, "pnpm", "exec", "expo", "export", "--platform", string(p), "--output-dir", outDir); err != nil {
+		lo := progNativeStart + (span*i)/len(platforms)
+		hi := progNativeStart + (span*(i+1))/len(platforms)
+		step := "Building " + string(p) + " bundle"
+		emitProgress(job, step, lo, "Running expo export --platform "+string(p))
+		if cmdOut, err := runExportWithProgress(job, lo, hi, step, appDir, "--platform", string(p), "--output-dir", outDir); err != nil {
 			return nil, fmt.Errorf("expo export %s: %v: %s", p, err, cmdOut)
 		}
 		bm, err := parseExportMetadata(outDir, p, buildID, runtimeVersion)
