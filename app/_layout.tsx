@@ -15,6 +15,7 @@ import '~/lib/configure-core'
 import '~/global.css'
 import { AppErrorBoundary } from '@tinycld/core/components/AppErrorBoundary'
 import { NewVersionToast } from '@tinycld/core/components/NewVersionToast'
+import { installFatalRollbackHandler } from '@tinycld/core/lib/install-fatal-rollback'
 import { initSentry } from '@tinycld/core/lib/sentry'
 import { useAppUpdates } from '@tinycld/core/lib/use-app-updates'
 import { useChunkLoadRecovery } from '@tinycld/core/lib/use-chunk-load-recovery'
@@ -25,6 +26,10 @@ import { MarkBundleHealthy } from '~/lib/use-mark-bundle-healthy'
 import { useServerAddressGate } from '~/lib/use-server-address-gate'
 
 initSentry()
+// Install AFTER initSentry so the fatal handler chains Sentry's global handler
+// rather than clobbering it. Catches non-render fatals (which the ErrorBoundary
+// can't see) → reports to Sentry + reverts a not-yet-healthy crashing OTA bundle.
+installFatalRollbackHandler()
 
 // Expo Router renders a route module's exported `ErrorBoundary` (wrapping its
 // subtree in <Try>) whenever a descendant throws during render. Exporting it
