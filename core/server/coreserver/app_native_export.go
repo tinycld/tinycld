@@ -268,11 +268,18 @@ func cleanupNativeExportDirs(bundles []bundleMeta) {
 	}
 }
 
-// appVersionFromManifest reads the Expo app version (app.json → expo.version),
-// which is the runtimeVersion under the appVersion policy. app.json may sit at
-// appDir in the runtime image or one level up in dev — try appDir then parent.
+// appVersionFromManifest resolves the Expo app version, which is the
+// runtimeVersion under the appVersion policy. The app's single source of truth
+// is package.json → version: app.config.ts injects it over a static app.json
+// that intentionally carries no expo.version (see app.config.ts). We mirror that
+// here rather than evaluate the TS config — read expo.version from app.json
+// first (in case a build pins it statically), then fall back to package.json's
+// version. Each file may sit at appDir in the runtime image or one level up in
+// dev, so try appDir then its parent for both.
 func appVersionFromManifest(appDir string) string {
-	for _, base := range []string{appDir, filepath.Dir(appDir)} {
+	bases := []string{appDir, filepath.Dir(appDir)}
+
+	for _, base := range bases {
 		raw, err := os.ReadFile(filepath.Join(base, "app.json"))
 		if err != nil {
 			continue
@@ -286,6 +293,22 @@ func appVersionFromManifest(appDir string) string {
 			return cfg.Expo.Version
 		}
 	}
+
+	// app.json had no expo.version — the normal case here, since the version
+	// lives in package.json and is merged in by app.config.ts at config time.
+	for _, base := range bases {
+		raw, err := os.ReadFile(filepath.Join(base, "package.json"))
+		if err != nil {
+			continue
+		}
+		var pkg struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal(raw, &pkg) == nil && pkg.Version != "" {
+			return pkg.Version
+		}
+	}
+
 	return ""
 }
 
