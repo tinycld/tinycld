@@ -227,3 +227,57 @@ func TestSerializeBundlesRoundTripsToResolveManifest(t *testing.T) {
 		t.Fatalf("expected manifestNoMatch for mismatched runtime, got %v", s)
 	}
 }
+
+func TestAppVersionFromManifest(t *testing.T) {
+	writeJSON := func(t *testing.T, dir, name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The production shape: app.json carries no expo.version (app.config.ts
+	// injects it from package.json), so the resolver must fall back to
+	// package.json's version.
+	t.Run("falls back to package.json when app.json has no expo.version", func(t *testing.T) {
+		dir := t.TempDir()
+		writeJSON(t, dir, "app.json", `{"expo":{"name":"TinyCld"}}`)
+		writeJSON(t, dir, "package.json", `{"name":"@tinycld/app","version":"2.0.0"}`)
+		if got := appVersionFromManifest(dir); got != "2.0.0" {
+			t.Fatalf("got %q, want 2.0.0", got)
+		}
+	})
+
+	// A statically-pinned expo.version still wins (don't break a build that sets it).
+	t.Run("prefers expo.version when present", func(t *testing.T) {
+		dir := t.TempDir()
+		writeJSON(t, dir, "app.json", `{"expo":{"version":"9.9.9"}}`)
+		writeJSON(t, dir, "package.json", `{"version":"2.0.0"}`)
+		if got := appVersionFromManifest(dir); got != "9.9.9" {
+			t.Fatalf("got %q, want 9.9.9", got)
+		}
+	})
+
+	// Dev layout: manifests live one dir above appDir.
+	t.Run("reads package.json from the parent dir", func(t *testing.T) {
+		parent := t.TempDir()
+		writeJSON(t, parent, "package.json", `{"version":"3.1.4"}`)
+		appDir := filepath.Join(parent, "tinycld")
+		if err := os.MkdirAll(appDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if got := appVersionFromManifest(appDir); got != "3.1.4" {
+			t.Fatalf("got %q, want 3.1.4", got)
+		}
+	})
+
+	// Neither source has a version → empty (the caller turns this into a loud error).
+	t.Run("returns empty when no version anywhere", func(t *testing.T) {
+		dir := t.TempDir()
+		writeJSON(t, dir, "app.json", `{"expo":{"name":"x"}}`)
+		writeJSON(t, dir, "package.json", `{"name":"x"}`)
+		if got := appVersionFromManifest(dir); got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+}
