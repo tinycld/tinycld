@@ -33,10 +33,18 @@ vi.mock('@tinycld/core/lib/app-updater/client', () => ({
 }))
 
 const captureException = vi.fn()
-vi.mock('@tinycld/core/lib/errors', () => ({ captureException: (...a: unknown[]) => captureException(...a) }))
+vi.mock('@tinycld/core/lib/errors', () => ({
+    captureException: (...a: unknown[]) => captureException(...a),
+}))
 vi.mock('@tinycld/core/lib/app-updater/hash', () => ({ sha256HexOfFile: vi.fn() }))
-vi.mock('@tinycld/core/lib/stores/toast-store', () => ({ useToastStore: { getState: () => ({ addToast: vi.fn() }) } }))
-vi.mock('expo-file-system/legacy', () => ({ documentDirectory: 'file:///', makeDirectoryAsync: vi.fn(), downloadAsync: vi.fn() }))
+vi.mock('@tinycld/core/lib/stores/toast-store', () => ({
+    useToastStore: { getState: () => ({ addToast: vi.fn() }) },
+}))
+vi.mock('expo-file-system/legacy', () => ({
+    documentDirectory: 'file:///',
+    makeDirectoryAsync: vi.fn(),
+    downloadAsync: vi.fn(),
+}))
 vi.mock('react-native', () => ({
     Platform: { OS: 'ios' },
     AppState: { addEventListener: () => ({ remove: () => {} }) },
