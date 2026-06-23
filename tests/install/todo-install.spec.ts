@@ -186,6 +186,57 @@ async function superuserToken(page: Page): Promise<string> {
     throw new Error(`superuser auth failed after retries: ${lastStatus} ${lastBody}`)
 }
 
+// Re-authenticate the APP's persistent PocketBase client (`appPb`, the one
+// `lib/pocketbase.ts` exports with the `pb_auth` AsyncStorage backing) as the
+// superuser, by minting a fresh token and writing it into localStorage, then
+// reloading so the app rehydrates it on boot (authStoreReady).
+//
+// Why this is needed: the /admin login form authenticates `useSuperUserPB` — a
+// SEPARATE PocketBase instance with an IN-MEMORY auth store — not `appPb`. The
+// admin console screens read fine from useSuperUserPB, but OrganizationsTab
+// performs its org-owner create through `appPb` (pbtsdb's collections via `useStore`).
+// `appPb` only ever got a superuser token from the one-time bootstrap wizard, and
+// the rollback fixtures restart the server several times in between, leaving
+// `appPb`'s persisted token stale/unauthorized. The create then goes out without
+// superuser auth, so setting the managed `verified` field is rejected
+// ("validation_values_mismatch") and the org is never created. Refreshing
+// `pb_auth` here makes the create carry a valid superuser token again.
+async function reauthAppPb(page: Page) {
+    // Mint a fresh superuser auth (token + record) the same resilient way
+    // superuserToken does, but keep the record so we can serialize the store.
+    let auth: { token: string; record: unknown } | null = null
+    for (let attempt = 0; attempt < 8; attempt++) {
+        try {
+            const res = await page.request.post(
+                '/api/collections/_superusers/auth-with-password',
+                { data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD }, failOnStatusCode: false }
+            )
+            if (res.ok()) {
+                const body = (await res.json()) as { token?: string; record?: unknown }
+                if (body.token) {
+                    auth = { token: body.token, record: body.record ?? {} }
+                    break
+                }
+            } else if (res.status() < 500) {
+                throw new Error(`superuser auth failed: ${res.status()} ${await res.text()}`)
+            }
+        } catch (err) {
+            if (err instanceof Error && /superuser auth failed/.test(err.message)) throw err
+            // transient (restart window) — back off and retry
+        }
+        await page.waitForTimeout(750)
+    }
+    if (!auth) throw new Error('reauthAppPb: could not mint a superuser token')
+
+    // Write the token into the app's persistent auth key (the shape
+    // authStoreReady parses), then reload so appPb picks it up on boot.
+    await page.evaluate(
+        ({ token, record }) => localStorage.setItem('pb_auth', JSON.stringify({ token, record })),
+        auth
+    )
+    await page.reload()
+}
+
 // Reads the id of the slug's most-recent pkg_install_log row (via the status
 // endpoint), or null if there's no row yet / the server isn't reachable. Used to
 // snapshot the prior operation's row id BEFORE kicking off a new operation, so
@@ -946,6 +997,13 @@ test.describe('todo version change', () => {
         // 2. v1 ships no tagging — the tags/todo_tags collections must NOT exist.
         await waitForCollection(page, 'tags', false, 30_000)
         await waitForCollection(page, 'todo_tags', false, 30_000)
+
+        // The org create writes through `appPb` (see reauthAppPb), whose persisted
+        // superuser token is left stale by the preceding rollback-fixture restarts.
+        // Refresh it (reloads the page), then re-establish the /admin UI session
+        // before driving the form.
+        await reauthAppPb(page)
+        await loginAsSuperuserWithRetry(page)
 
         // 3. Create an org to log into — the superuser dashboard isn't the app
         //    shell; the nav rail lives in the org-scoped app.
