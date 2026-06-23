@@ -102,7 +102,7 @@ func TestCommitRegistry_MirrorsManifest(t *testing.T) {
 			{Slug: "mail", Version: "0.4.0", Spec: "@tinycld/mail@0.4.0"},
 		},
 	}
-	if err := commitRegistry(app, m, t.TempDir()); err != nil {
+	if err := commitRegistry(app, m, t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
 	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
@@ -114,18 +114,19 @@ func TestCommitRegistry_MirrorsManifest(t *testing.T) {
 	}
 }
 
+// A member absent from the build but NOT explicitly uninstalled (uninstalledSlug
+// == "") — e.g. reverted past — is disabled, not deleted, so it can be restored.
 func TestCommitRegistry_DisablesDroppedMember(t *testing.T) {
 	app := newMigrateTestApp(t)
 	addPkgRegistryCollection(t, app)
 	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
 	setRegistryRow(t, app, "mail", "installed", "0.3.1", "@tinycld/mail@0.3.1")
 
-	// Desired set drops mail (uninstall).
 	m := RebuildManifest{
 		BuildID: "build-y",
 		Members: []MemberSpec{{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld"}},
 	}
-	if err := commitRegistry(app, m, t.TempDir()); err != nil {
+	if err := commitRegistry(app, m, t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
 	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
@@ -134,6 +135,32 @@ func TestCommitRegistry_DisablesDroppedMember(t *testing.T) {
 	}
 	if mail.GetString("status") != "disabled" {
 		t.Fatalf("mail status = %s, want disabled", mail.GetString("status"))
+	}
+}
+
+// A user-initiated uninstall (uninstalledSlug == the dropped slug) DELETES the
+// registry row so the package leaves the admin list entirely — the fix for
+// "delete only deactivates / can't re-enable".
+func TestCommitRegistry_DeletesUninstalledMember(t *testing.T) {
+	app := newMigrateTestApp(t)
+	addPkgRegistryCollection(t, app)
+	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
+	setRegistryRow(t, app, "mail", "installed", "0.3.1", "@tinycld/mail@0.3.1")
+
+	m := RebuildManifest{
+		BuildID: "build-z",
+		Members: []MemberSpec{{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld"}},
+	}
+	// uninstalledSlug = "mail" → its row should be removed, not disabled.
+	if err := commitRegistry(app, m, t.TempDir(), "mail"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil); err == nil {
+		t.Fatal("mail row still exists; expected it to be deleted on uninstall")
+	}
+	// The base must be untouched.
+	if _, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'core'", nil); err != nil {
+		t.Fatalf("core row should remain: %v", err)
 	}
 }
 
