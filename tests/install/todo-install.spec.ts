@@ -1,5 +1,14 @@
+import { createRequire } from 'node:module'
 import { expect, type Page, test } from '@playwright/test'
-import { version as APP_VERSION } from '../../package.json'
+
+// Read the app version via createRequire rather than a static ESM JSON import:
+// under Node's ESM loader (which Playwright drives the spec through) a plain
+// `import … from '../../package.json'` is rejected with "needs an import
+// attribute of type: json", and the import-attribute form isn't reliably
+// preserved through Playwright's transpile. createRequire is the same pattern
+// playwright.config.ts already uses to reach workspace modules from ESM.
+const APP_VERSION = (createRequire(import.meta.url)('../../package.json') as { version: string })
+    .version
 
 // Integration test for the per-package VERSION-CHANGE flow in /admin, driven
 // through the real in-app installer + Versions tab against an already-running
@@ -208,10 +217,10 @@ async function reauthAppPb(page: Page) {
     let auth: { token: string; record: unknown } | null = null
     for (let attempt = 0; attempt < 8; attempt++) {
         try {
-            const res = await page.request.post(
-                '/api/collections/_superusers/auth-with-password',
-                { data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD }, failOnStatusCode: false }
-            )
+            const res = await page.request.post('/api/collections/_superusers/auth-with-password', {
+                data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
+                failOnStatusCode: false,
+            })
             if (res.ok()) {
                 const body = (await res.json()) as { token?: string; record?: unknown }
                 if (body.token) {
@@ -713,6 +722,17 @@ async function applyVersionChange(
     targetLabel: string,
     opts: { downgrade: boolean; expectDrops?: string[] }
 ) {
+    // The Packages list reads pkg_registry through pbtsdb (`appPb`), now gated by
+    // super-admin API rules — so the rows render ONLY when appPb carries a valid
+    // superuser token. The /admin login form authenticates the separate in-memory
+    // `useSuperUserPB`, not appPb, and the rollback-fixture restarts leave appPb's
+    // persisted token stale, so the list comes back empty ("No packages installed
+    // yet") and the slug cell below never appears. Refresh appPb (reloads the page)
+    // and re-establish the admin UI session before driving the picker — the same
+    // sequence the verify-v1 test uses before its appPb-backed org create.
+    await reauthAppPb(page)
+    await loginAsSuperuserWithRetry(page)
+
     // Scope every action to the TARGET package's row. In a full assembly the
     // Packages list shows ~9 rows, each with its own `v… (current)` picker, so a
     // global `.first()` would grab the wrong row. The row renders the bare slug in
@@ -1242,11 +1262,17 @@ test.describe('todo version change', () => {
         await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'uninstall', priorId)
     })
 
-    test('delete landed: todo registry row is disabled', async ({ page }) => {
+    test('delete landed: todo registry row is removed', async ({ page }) => {
         test.setTimeout(300_000)
         await loginAsSuperuserWithRetry(page)
-        // The registry keeps the row but marks it disabled (the uninstall pipeline's
-        // final state). Poll the row's status via the superuser API.
+        // A user-initiated uninstall DELETES the registry row outright (commitRegistry
+        // in rebuild.go, covered by TestCommitRegistry_DeletesUninstalledMember) so the
+        // package leaves the admin list entirely. It is NOT kept as a `disabled` row:
+        // a disabled row couldn't be re-enabled — toggling it back to installed never
+        // returns the code uninstall removed — which was the "can't re-enable / still
+        // shows up" bug. So success here is the row being GONE. Poll via the superuser
+        // API, tolerating the post-restart window where a read transiently returns the
+        // row before the delete propagates (only an empty result set counts).
         const deadline = Date.now() + 90_000
         let last = 'none'
         while (Date.now() < deadline) {
@@ -1261,18 +1287,18 @@ test.describe('todo version change', () => {
                     .catch(() => null)
                 if (res?.ok()) {
                     const body = (await res.json()) as { items?: Array<{ status?: string }> }
-                    last = body.items?.[0]?.status ?? 'no-row'
-                    if (last === 'disabled') return
+                    if ((body.items?.length ?? 0) === 0) return
+                    last = body.items?.[0]?.status ?? 'present'
                 }
             }
             await page.waitForTimeout(3_000)
         }
-        throw new Error(`todo registry status did not reach 'disabled' within 90s (last=${last})`)
+        throw new Error(`todo registry row was not removed within 90s (last status seen=${last})`)
     })
 
     // REGRESSION GUARD: uninstall must run the package's DOWN migrations so its
     // tables/data are removed — not just rebuild without the member. The prior
-    // uninstall coverage only checked the job succeeded + the row went disabled,
+    // uninstall coverage only checked the job succeeded + the registry row was gone,
     // so an uninstall that left every collection behind passed green (the observed
     // bug: tables persisted after delete). At this point todo is at v2.0.0 (the
     // rollback-landed test just verified tags/todo_tags ARE present), so uninstall

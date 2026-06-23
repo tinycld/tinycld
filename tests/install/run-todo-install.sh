@@ -388,7 +388,7 @@ run_phase 'rollback landed' 'verify rollback'
 run_phase 'uninstalling todo succeeds' 'delete (uninstall) todo'
 await_restart "post-delete"
 
-# Phase 10 — verify the delete landed: todo registry row marked disabled.
+# Phase 10 — verify the delete landed: todo registry row removed + collections dropped.
 run_phase 'delete landed' 'verify delete'
 
 # --- Core (base) upgrade/downgrade phases -------------------------------------
