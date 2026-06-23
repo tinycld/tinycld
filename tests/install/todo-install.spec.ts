@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { version as APP_VERSION } from '../../package.json'
 
 // Integration test for the per-package VERSION-CHANGE flow in /admin, driven
 // through the real in-app installer + Versions tab against an already-running
@@ -579,10 +580,13 @@ async function postAdminPackageOp(page: Page, path: string, payload: Record<stri
     }
 }
 
-// The app version (app.json → expo.version) the native bundles are stamped with.
-// /api/app/update keys updates by runtimeVersion, so the OTA check must send the
-// same value a real device on this build reports. Bump here if app.json changes.
-const RUNTIME_VERSION = '1.13.7'
+// The app version the native bundles are stamped with as their runtimeVersion
+// (app.config.ts injects package.json's version; the server's appVersionFromManifest
+// reads the same). /api/app/update keys updates by runtimeVersion, so the OTA check
+// must send the same value a real device on this build reports. Derived from the
+// app's package.json (NOT a hardcoded literal) so it never drifts when the version
+// is bumped — a stale literal here made the OTA assertion 204 (runtime mismatch).
+const RUNTIME_VERSION = APP_VERSION
 
 // Polls the public OTA endpoint /api/app/update until it advertises a new bundle
 // (HTTP 200 + manifest) for the given platform, or throws. After every package
