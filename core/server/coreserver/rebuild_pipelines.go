@@ -242,7 +242,9 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 	if err := recoverLiveDBAfterExternalWrite(app); err != nil {
 		jobLogf(job, "WARNING: revert recoverDB failed: %v", err)
 	}
-	if err := commitRegistry(app, m, filepath.Join(stateBuildsDir(), targetID)); err != nil {
+	// "" — revert is not a user uninstall; keep the disable-on-absence behavior so a
+	// package the reverted-to build lacks is disabled, not deleted.
+	if err := commitRegistry(app, m, filepath.Join(stateBuildsDir(), targetID), ""); err != nil {
 		jobLogf(job, "WARNING: revert commitRegistry failed (reconciles on next boot): %v", err)
 	}
 	job.Status = "success"
