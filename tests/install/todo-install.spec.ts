@@ -1208,6 +1208,23 @@ test.describe('todo version change', () => {
         throw new Error(`todo registry status did not reach 'disabled' within 90s (last=${last})`)
     })
 
+    // REGRESSION GUARD: uninstall must run the package's DOWN migrations so its
+    // tables/data are removed — not just rebuild without the member. The prior
+    // uninstall coverage only checked the job succeeded + the row went disabled,
+    // so an uninstall that left every collection behind passed green (the observed
+    // bug: tables persisted after delete). At this point todo is at v2.0.0 (the
+    // rollback-landed test just verified tags/todo_tags ARE present), so uninstall
+    // must drop the package's tagging collections. If the DOWN migrations don't run
+    // on uninstall, these still exist and this fails — exactly the reported bug.
+    // (tags/todo_tags are the collections the spec already tracks by name and just
+    // confirmed present, so they're the reliable witnesses for "the schema is gone".)
+    test('delete landed: todo collections are dropped after uninstall', async ({ page }) => {
+        test.setTimeout(300_000)
+        await loginAsSuperuserWithRetry(page)
+        await waitForCollection(page, 'tags', false, 60_000)
+        await waitForCollection(page, 'todo_tags', false, 60_000)
+    })
+
     test(`upgrade core to v${CORE_NEXT} via the Packages version picker`, async ({ page }) => {
         test.setTimeout(2_700_000) // 45 min — base rebuild is a full image rebuild
         await loginAsSuperuserWithRetry(page)
