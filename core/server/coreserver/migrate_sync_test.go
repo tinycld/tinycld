@@ -133,6 +133,11 @@ func TestSyncMigrations_SkipsUnregisteredDrop(t *testing.T) {
 	if len(res.Reverted) != 0 {
 		t.Fatalf("expected nothing reverted (unregistered skipped), got %v", res.Reverted)
 	}
+	// The skipped drop must be reported so the operator can SEE that a DOWN
+	// candidate was not reverted (the "uninstalled but tables remain" diagnosis).
+	if len(res.SkippedUnregistered) != 1 || res.SkippedUnregistered[0] != "100_core.go" {
+		t.Fatalf("expected SkippedUnregistered=[100_core.go], got %v", res.SkippedUnregistered)
+	}
 }
 
 func TestSyncMigrations_RefusesEmptyNewSet(t *testing.T) {
