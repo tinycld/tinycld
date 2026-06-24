@@ -340,6 +340,33 @@ func RegisterAppUpdateEndpoints(app *pocketbase.PocketBase) {
 			return re.JSON(http.StatusOK, map[string]any{"ok": true, "reports": count})
 		})
 
+		// A freshly-booted bundle's JS posts here once the real provider tree has
+		// mounted (BundleSentinel) — the proof the new bundle EXECUTED and rendered, not
+		// just that the native loader promoted it. Public, like the rest of /api/app
+		// (the app may post pre-auth). Logged at Info so the OTA e2e can read the beacon
+		// from _logs; console.log can't be observed in a Release build, which is why this
+		// server beacon exists.
+		g.POST("/boot", func(re *core.RequestEvent) error {
+			var body struct {
+				ID       string `json:"id"`
+				Platform string `json:"platform"`
+				Hash     string `json:"hash"`
+			}
+			if err := re.BindBody(&body); err != nil {
+				return re.BadRequestError("invalid body", err)
+			}
+			if body.ID == "" {
+				return re.BadRequestError("id is required", nil)
+			}
+			app.Logger().Info("app-boot: rendered",
+				"q.bundleId", body.ID,
+				"q.platform", body.Platform,
+				"q.hash", body.Hash,
+				"remoteAddr", re.Request.RemoteAddr,
+			)
+			return re.JSON(http.StatusOK, map[string]any{"ok": true})
+		})
+
 		g.GET("/bundle/{buildId}/{platform}/{path...}", func(re *core.RequestEvent) error {
 			return serveBuildFile(re)
 		})
