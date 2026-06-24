@@ -1,35 +1,53 @@
-import { bootLogLine, formatSentinelLabel, shortHash } from '@tinycld/core/lib/bundle-sentinel'
-import { describe, expect, it, vi } from 'vitest'
+// @vitest-environment happy-dom
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// bundle-sentinel.tsx imports the native `app-updater` module (Metro-resolved, no
-// node_modules symlink), so stub it for the unit graph. These pure-helper tests
-// don't touch the updater; the stub just lets the module load.
+const postBootBeacon = vi.hoisted(() => vi.fn())
+const getResolvedAddress = vi.hoisted(() => vi.fn<() => string | null>())
+vi.mock('@tinycld/core/lib/app-updater/client', () => ({
+    postBootBeacon,
+    isUpdateTransportAllowed: (url: string) =>
+        url.startsWith('https://') || url.startsWith('http://localhost'),
+}))
+vi.mock('@tinycld/core/lib/server-address', () => ({
+    getResolvedAddress: () => getResolvedAddress(),
+}))
+vi.mock('@tinycld/core/lib/errors', () => ({ captureException: vi.fn() }))
 vi.mock('app-updater', () => ({
     default: {
-        getCurrentBundleId: () => 'build-test-ios',
-        getCurrentBundleHash: () => 'deadbeefcafe0000',
+        getCurrentBundleId: () => 'build-9-ios',
+        getCurrentBundleHash: () => 'deadbeefcafe',
     },
 }))
+// The react-native unit stub reports Platform.OS === 'web', which would make the
+// hook early-return and never post. Override Platform to 'ios' so these tests
+// genuinely exercise the beacon path.
+vi.mock('react-native', () => ({ Platform: { OS: 'ios' } }))
 
-describe('shortHash', () => {
-    it('takes the first 12 chars', () => {
-        expect(shortHash('abcdef0123456789aaaa')).toBe('abcdef012345')
-    })
-    it('returns empty for an empty hash', () => {
-        expect(shortHash('')).toBe('')
-    })
-})
+import { renderHook } from '@testing-library/react'
+import { useBundleSentinel } from '@tinycld/core/lib/bundle-sentinel'
 
-describe('formatSentinelLabel', () => {
-    it('prefixes the bundle id with bundle:', () => {
-        expect(formatSentinelLabel('build-123-ios')).toBe('bundle:build-123-ios')
+describe('useBundleSentinel', () => {
+    beforeEach(() => {
+        postBootBeacon.mockReset().mockResolvedValue(undefined)
+        getResolvedAddress.mockReset()
     })
-})
 
-describe('bootLogLine', () => {
-    it('emits the stable, scrapeable boot line with id and short hash', () => {
-        expect(bootLogLine('build-123-ios', 'abcdef0123456789')).toBe(
-            '[tinycld] app-boot: rendered bundle id=build-123-ios hash=abcdef012345'
+    it('posts a boot beacon with the running bundle id once the server address is resolved', () => {
+        getResolvedAddress.mockReturnValue('http://localhost:7090')
+        renderHook(() => useBundleSentinel())
+        expect(postBootBeacon).toHaveBeenCalledOnce()
+        expect(postBootBeacon).toHaveBeenCalledWith(
+            expect.objectContaining({
+                serverUrl: 'http://localhost:7090',
+                id: 'build-9-ios',
+                hash: 'deadbeefcafe',
+            })
         )
+    })
+
+    it('does not post when no server address is resolved', () => {
+        getResolvedAddress.mockReturnValue(null)
+        renderHook(() => useBundleSentinel())
+        expect(postBootBeacon).not.toHaveBeenCalled()
     })
 })
