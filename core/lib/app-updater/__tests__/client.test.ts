@@ -3,6 +3,7 @@ import {
     checkForUpdate,
     downloadAndStage,
     isUpdateTransportAllowed,
+    postBootBeacon,
     reportBadBundle,
 } from '../client'
 import type { UpdateManifest } from '../types'
@@ -179,6 +180,37 @@ describe('reportBadBundle', () => {
             platform: 'ios',
             error: 'rolled back',
         })
+    })
+})
+
+describe('postBootBeacon', () => {
+    it('POSTs the bundle id/platform/hash to /api/app/boot', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+        await postBootBeacon({
+            serverUrl: 'https://srv.test',
+            platform: 'ios',
+            id: 'build-200-ios',
+            hash: 'HASH',
+            fetchFn,
+        })
+        expect(fetchFn).toHaveBeenCalledWith('https://srv.test/api/app/boot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: 'build-200-ios', platform: 'ios', hash: 'HASH' }),
+        })
+    })
+
+    it('throws on a non-ok response', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+        await expect(
+            postBootBeacon({
+                serverUrl: 'https://srv.test',
+                platform: 'ios',
+                id: 'x',
+                hash: 'h',
+                fetchFn,
+            })
+        ).rejects.toThrow(/500/)
     })
 })
 
