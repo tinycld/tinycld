@@ -5,7 +5,6 @@ import {
     reportBadBundle,
 } from '@tinycld/core/lib/app-updater/client'
 import { sha256HexOfFile } from '@tinycld/core/lib/app-updater/hash'
-import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
@@ -43,12 +42,16 @@ async function runUpdateCheck(): Promise<void> {
     const platform = Platform.OS === 'ios' ? 'ios' : 'android'
 
     try {
-        // PB_SERVER_ADDR throws if the app hasn't connected to a server yet, so
-        // reading it here is the gate: no update check runs until connected. The
-        // surrounding try/catch swallows that throw as a no-op. Coerce to a plain
-        // string once (it's a lazy Proxy) so we evaluate the transport policy and
-        // fetch against the same resolved address.
-        const serverUrl = String(PB_SERVER_ADDR)
+        // Gate on the resolved address WITHOUT throwing. This check fires from the
+        // launch timer AND from handleAppStateChange (every foreground), either of
+        // which can run before the _layout.tsx server-address gate has resolved —
+        // e.g. on a cold boot, or in a build where EXPO_PUBLIC_ENV didn't seed an
+        // address. Reading String(PB_SERVER_ADDR) there THROWS ("accessed before
+        // resolved"); the catch below then reports it to Sentry on every such
+        // foreground — noise, not a bug. Use the non-throwing getResolvedAddress()
+        // and bail as a clean no-op until connected, exactly like reportRevertedBundle.
+        const serverUrl = getResolvedAddress()
+        if (!serverUrl) return
 
         // Refuse to fetch/verify/stage a bundle over an untrusted transport. The
         // per-file SHA-256 check is worthless against a MITM on plaintext http://

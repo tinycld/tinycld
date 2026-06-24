@@ -217,7 +217,7 @@ class Store(private val context: Context) {
         readJSON(revertFile)?.optString("id")?.ifEmpty { null }?.let { revertId ->
             revertFile.delete()
             if (revertId == currentId()) {
-                rollbackToPrevious()
+                rollbackToPrevious("js-fatal markBad")
                 return resolveAfterRollback()
             }
         }
@@ -225,7 +225,7 @@ class Store(private val context: Context) {
         val id = currentId() ?: return null
         val bundlePath = locateHbc(dir)
         if (bundlePath == null) {
-            rollbackToPrevious()
+            rollbackToPrevious("staged .hbc missing")
             return resolveAfterRollback()
         }
         // Defense-in-depth behind the JS-side SHA-256 verify (which runs once,
@@ -238,7 +238,7 @@ class Store(private val context: Context) {
         // this .hbc; see downloadAndStage + app_native_export.go sha256OfFile.)
         val want = currentHash()
         if (!want.isNullOrEmpty() && !sha256HexOfFile(bundlePath).equals(want, ignoreCase = true)) {
-            rollbackToPrevious()
+            rollbackToPrevious("hash mismatch")
             return resolveAfterRollback()
         }
         var boot = readJSON(bootFile)
@@ -250,7 +250,7 @@ class Store(private val context: Context) {
         // one un-healthy crash; an already-healthy bundle keeps the generous margin.
         val threshold = if (boot.optBoolean("trial", false)) rollbackAfterTrialLaunches else rollbackAfterLaunches
         if (count >= threshold) {
-            rollbackToPrevious()
+            rollbackToPrevious("crash-launch counter tripped")
             return resolveAfterRollback()
         }
         boot.put("launchCount", count)
@@ -285,11 +285,33 @@ class Store(private val context: Context) {
      * previous.json is critical: without it a rollback target that ALSO crashes
      * twice would loop forever instead of falling through to embedded.
      */
-    private fun rollbackToPrevious() {
+    /**
+     * Rolls the active OTA bundle back to the previous one. `reason` names which
+     * path fired so the report-bad upload always carries WHY — most rollbacks
+     * happen here at native boot, BEFORE any JS runs, so without this the detail
+     * field is empty and the server only learns "a bundle rolled back". Mirrors iOS.
+     */
+    private fun rollbackToPrevious(reason: String) {
         // Record the rolled-back bundle (id + hash) so the recovered bundle can
         // report it bad to the server on the next boot — see takeRevertedBundle().
         readJSON(currentFile)?.let {
-            writeJSON(revertedFile, JSONObject().put("id", it.optString("id")).put("hash", it.optString("hash")))
+            val curId = it.optString("id")
+            writeJSON(revertedFile, JSONObject().put("id", curId).put("hash", it.optString("hash")))
+            // Ensure error.json carries a detail for the upload. Prefer a richer
+            // JS-supplied detail already recorded for THIS bundle (regex pattern +
+            // Hermes message); otherwise stamp the native rollback reason.
+            val existing = readJSON(errorFile)
+            val jsDetail = existing?.optString("detail") ?: ""
+            val jsId = existing?.optString("id") ?: ""
+            if (jsDetail.isEmpty() || (jsId.isNotEmpty() && jsId != curId)) {
+                val launches = readJSON(bootFile)?.optInt("launchCount") ?: 0
+                writeJSON(
+                    errorFile,
+                    JSONObject()
+                        .put("detail", "native rollback: $reason (launches=$launches)")
+                        .put("id", curId)
+                )
+            }
         }
         val prev = readJSON(previousFile)
         if (prev != null) writeJSON(currentFile, prev) else currentFile.delete()
