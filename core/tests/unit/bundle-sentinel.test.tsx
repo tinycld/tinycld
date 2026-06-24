@@ -39,6 +39,7 @@ describe('useBundleSentinel', () => {
         expect(postBootBeacon).toHaveBeenCalledWith(
             expect.objectContaining({
                 serverUrl: 'http://localhost:7090',
+                platform: 'ios',
                 id: 'build-9-ios',
                 hash: 'deadbeefcafe',
             })
@@ -47,6 +48,14 @@ describe('useBundleSentinel', () => {
 
     it('does not post when no server address is resolved', () => {
         getResolvedAddress.mockReturnValue(null)
+        renderHook(() => useBundleSentinel())
+        expect(postBootBeacon).not.toHaveBeenCalled()
+    })
+
+    it('does not post when the transport is not allowed', () => {
+        // A non-loopback http:// address fails the transport gate (the mocked
+        // isUpdateTransportAllowed only permits https:// or http://localhost).
+        getResolvedAddress.mockReturnValue('http://192.168.1.10:7090')
         renderHook(() => useBundleSentinel())
         expect(postBootBeacon).not.toHaveBeenCalled()
     })
