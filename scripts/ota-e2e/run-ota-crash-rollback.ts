@@ -59,7 +59,10 @@ async function main() {
     )
 
     // Race the two terminal outcomes. Whichever resolves first decides the result;
-    // we then check it against EXPECT.
+    // we then check it against EXPECT. Note: a transient fetch error inside EITHER
+    // poller also settles the race (the pollers reject, they don't swallow), so a
+    // flaky server can surface as a FAIL even when the other outcome was imminent —
+    // re-run rather than trusting a lone network-error FAIL.
     const healthy = pollForBundleId({
         fetchCurrentIds: () => fetchAppUpdateCurrentIds(SERVER_URL, token),
         target: newId,
@@ -94,6 +97,8 @@ async function main() {
     } else {
         if (outcome.kind === 'rollback') {
             // The crux: the rollback must carry a CAPTURED reason, not the generic string.
+            // This literal mirrors the server-side fallback in coreserver recordBadBundle —
+            // keep them in sync, or this guard silently stops catching the no-reason case.
             const generic = 'client rolled back: bundle failed to reach healthy'
             if (outcome.row.lastError === generic) {
                 fail(
