@@ -1,6 +1,49 @@
 # OTA "Update-Is-Live" Assertion — Design
 
 **Date:** 2026-06-24
+**Status:** v1 implemented + real-run-tested; REVISED after the real run exposed a
+Release-build observability gap (see "Real-run findings & revision" below).
+
+## Real-run findings & revision (2026-06-24, post-implementation)
+
+The first real simulator run (happy-path driver) proved, via the native updater's
+on-disk state, that the OTA reload **works end-to-end and is healthy**:
+- `current.json` = the new `build-<ts>-ios` (hash distinct from embedded), and
+- **`boot.json` is absent**, which can only happen if `markHealthy()` ran — i.e.
+  the new bundle's JS executed, the real provider tree committed, and
+  `<MarkBundleHealthy/>` fired. (See `AppUpdaterModule.swift`: `resolveBundleURL()`
+  always writes `boot.json` for a trial bundle; only `markHealthy()` removes it.)
+
+But the `assertUpdateIsLive` assertion FAILED — because **both v1 observation
+channels are blind in a Release build**, the only build type OTA runs in:
+1. **boot-log via `console.log`** — React Native does NOT route JS `console.*` to
+   `os_log` in Release, so `simctl log show` sees nothing. (Verified: zero JS
+   console lines from the running process.)
+2. **on-screen sentinel via `idb`** — the `opacity:0` sentinel View is not surfaced
+   in the iOS accessibility tree, so `idb ui describe-all` can't find it.
+
+Two red herrings were ruled out during the investigation, worth recording so they
+aren't re-tried: the About panel's `· dev` does NOT indicate the running bundle —
+`config.release` comes from a `fetch('/api/release')` **server** call
+(`use-release-manifest.ts`), not the JS bundle; and `reverted.json` named an older
+build from a prior run (written before the promote), not a rollback of the new one.
+
+**Revision:** replace the Release-blind `console.log` boot signal with a **server
+boot beacon** — the channel proven to work in Release (it is how the `currentId`
+flip itself is observed). `BundleSentinel` POSTs to a new minimal
+`POST /api/app/boot` endpoint on mount; the server logs `app-boot: rendered` with
+the `bundle_id`; the harness reads it from `_logs` (a tiny variant of the existing
+`fetchAppUpdateCurrentIds`). The console.log + the `opacity:0` a11y sentinel are
+dropped as machine-asserted signals (the a11y sentinel may be revisited separately
+for a true on-screen check, but the boot beacon is the reliable proof of
+JS-executed-and-mounted). The boot-log-scraper / a11y-sentinel modules from v1 are
+superseded by a `boot-beacon-poller` reading `_logs`.
+
+---
+
+**Original design (v1) follows; superseded where it conflicts with the revision above.**
+
+**Date:** 2026-06-24
 **Status:** Approved (brainstorm), pending implementation plan
 
 ## Problem
