@@ -12,7 +12,7 @@
 
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { fetchBadBundles, pollForBadBundle } from './bad-bundle-poller'
+import { collectionExists, fetchBadBundles, pollForBadBundle } from './bad-bundle-poller'
 import { classifyBundleId, embeddedIdForVersion } from './identity'
 import { fetchAppUpdateCurrentIds, pollForBundleId, superuserToken } from './logs-poller'
 import { precheckNewerBundle } from './server-bundle'
@@ -33,6 +33,29 @@ function fail(msg: string): never {
 function readAppVersion(): string {
     const raw = readFileSync(path.join(APP_DIR, 'app.json'), 'utf8')
     return (JSON.parse(raw) as { expo: { version: string } }).expo.version
+}
+
+// After a HEALTHY install, verify the install actually created the package's
+// schema — the "booking tables sometimes not created" bug surfaces as a healthy
+// install with MISSING collections. Tolerate a brief post-restart window by
+// retrying each collection a few times before failing.
+async function assertBookingTables(serverUrl: string, token: string): Promise<void> {
+    const required = ['booking_pages', 'booking_slot_types', 'booking_availability', 'bookings']
+    for (const name of required) {
+        let exists: boolean | null = null
+        for (let i = 0; i < 10; i++) {
+            exists = await collectionExists(serverUrl, token, name)
+            if (exists === true) break
+            await new Promise(r => setTimeout(r, 2_000))
+        }
+        if (exists !== true) {
+            fail(
+                `booking table '${name}' was NOT created by the calendar-slots install (exists=${exists}) ` +
+                    `— the table-creation bug reproduced.`
+            )
+        }
+    }
+    console.log(`[ota-rollback] booking tables present: ${required.join(', ')}`)
 }
 
 async function main() {
@@ -90,7 +113,11 @@ async function main() {
 
     if (EXPECT === 'healthy') {
         if (outcome.kind === 'healthy') {
-            console.log('\n[ota-rollback] PASS: app reloaded healthily into the new bundle.\n')
+            console.log(
+                '[ota-rollback] app reloaded healthily into the new bundle; checking schema…'
+            )
+            await assertBookingTables(SERVER_URL, token)
+            console.log('\n[ota-rollback] PASS: healthy update with all booking tables present.\n')
             process.exit(0)
         }
         fail(`expected a healthy update but the bundle rolled back: ${JSON.stringify(outcome)}`)
