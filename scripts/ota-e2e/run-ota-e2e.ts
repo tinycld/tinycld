@@ -4,6 +4,7 @@ import path from 'node:path'
 import { classifyBundleId, embeddedIdForVersion } from './identity'
 import { fetchAppUpdateCurrentIds, pollForBundleId, superuserToken } from './logs-poller'
 import { precheckNewerBundle } from './server-bundle'
+import { assertUpdateIsLive } from './update-is-live'
 
 const SERVER_URL = process.env.OTA_E2E_SERVER_URL ?? 'http://localhost:7200'
 const SUPERUSER_EMAIL = process.env.OTA_E2E_SUPERUSER_EMAIL
@@ -114,6 +115,11 @@ async function main() {
     try {
         const observed = await reloaded
         console.log(`\n[ota-e2e] PASS: app reloaded into ${observed} (was ${embeddedId}).\n`)
+        if (!SIM_UDID) {
+            console.log('[ota-e2e] IPHONE_SIMULATOR_UDID unset — skipping update-is-live assertion')
+        } else {
+            await assertUpdateIsLive(SIM_UDID, newId, fail, m => console.log(`[ota-e2e] ${m}`))
+        }
         process.exit(0)
     } catch (err) {
         fail((err as Error).message)
