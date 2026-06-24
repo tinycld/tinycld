@@ -167,7 +167,7 @@
             }
         },
         {
-            "includes": ["**/core/lib/nav-perf.ts", "**/core/lib/bundle-sentinel.tsx"],
+            "includes": ["**/core/lib/nav-perf.ts"],
             "linter": {
                 "rules": {
                     "suspicious": {
