@@ -86,6 +86,27 @@ export async function reportBadBundle(deps: {
     })
 }
 
+// postBootBeacon tells the server that the running bundle's JS has mounted the
+// real provider tree — the proof it actually EXECUTED, which the OTA e2e reads
+// from _logs (console.log is not observable in a Release build). Mirrors
+// reportBadBundle. Throws on a non-ok response so the caller (BundleSentinel) can
+// capture it; the beacon is best-effort, so the caller swallows the throw.
+export async function postBootBeacon(deps: {
+    serverUrl: string
+    platform: 'ios' | 'android'
+    id: string
+    hash: string
+    fetchFn: typeof fetch
+}): Promise<void> {
+    const { serverUrl, platform, id, hash, fetchFn } = deps
+    const res = await fetchFn(`${serverUrl}/api/app/boot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, platform, hash }),
+    })
+    if (!res.ok) throw new Error(`postBootBeacon failed: ${res.status}`)
+}
+
 // relativePathFromUrl extracts the bundle-relative path the server encoded after
 // the `/<platform>/` segment of a bundle/asset URL — e.g.
 // `/api/app/bundle/build-200/ios/_expo/static/js/ios/index.hbc` → with platform
