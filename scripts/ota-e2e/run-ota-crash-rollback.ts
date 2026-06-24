@@ -32,9 +32,13 @@ function fail(msg: string): never {
     process.exit(1)
 }
 
+// Read the app version from package.json — the SAME source app.config.ts uses for
+// expo.version / expo.runtimeVersion (app.json has no version key). Reading
+// expo.version from app.json yields undefined and the precheck 204s on a
+// runtimeVersion mismatch. Mirrors tests/install/todo-install.spec.ts.
 function readAppVersion(): string {
-    const raw = readFileSync(path.join(APP_DIR, 'app.json'), 'utf8')
-    return (JSON.parse(raw) as { expo: { version: string } }).expo.version
+    const raw = readFileSync(path.join(APP_DIR, 'package.json'), 'utf8')
+    return (JSON.parse(raw) as { version: string }).version
 }
 
 // After a HEALTHY install, verify the install actually created the package's

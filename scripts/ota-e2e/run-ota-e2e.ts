@@ -27,12 +27,15 @@ const APP_DIR = path.resolve(import.meta.dirname, '..', '..')
 // timeout calls process.exit while a long xcodebuild keeps running orphaned.
 let buildChild: import('node:child_process').ChildProcess | null = null
 
-// Read expo.version from app.json without a JSON module import (which the
-// project tsconfig may reject) — a plain read keeps the script tsconfig-agnostic.
+// Read the app version from package.json — the SAME source app.config.ts uses
+// for expo.version / expo.runtimeVersion (app.json has no version key, so reading
+// expo.version there yields undefined and the precheck 204s on a runtimeVersion
+// mismatch). A plain read (no JSON module import) keeps the script
+// tsconfig-agnostic; mirrors how tests/install/todo-install.spec.ts derives it.
 function readAppVersion(): string {
-    const raw = readFileSync(path.join(APP_DIR, 'app.json'), 'utf8')
-    const parsed = JSON.parse(raw) as { expo: { version: string } }
-    return parsed.expo.version
+    const raw = readFileSync(path.join(APP_DIR, 'package.json'), 'utf8')
+    const parsed = JSON.parse(raw) as { version: string }
+    return parsed.version
 }
 
 function fail(msg: string): never {
