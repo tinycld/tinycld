@@ -26,7 +26,7 @@
 - `core/server/coreserver/app_updates_test.go` (MODIFY/CREATE) — Go test: POST to `/api/app/boot` returns 200 and the row/log is recorded.
 
 **App shell:**
-- `core/lib/bundle-sentinel.tsx` (MODIFY) — replace the `console.log` boot line with a `postBootBeacon(serverUrl, …)` POST on mount (web/address gated). Keep the a11y sentinel View (harmless; may aid a future on-screen check) but it is no longer machine-asserted.
+- `core/lib/bundle-sentinel.tsx` (MODIFY) — replace the `console.log` boot line with a `postBootBeacon(serverUrl, …)` POST on mount (web/address gated). DECIDED during execution: drop the a11y sentinel View entirely (it was only there for the now-removed idb assertion; the user-facing "what's running" need is met by the new About-panel Bundle row). `BundleSentinel` becomes behavior-only (returns null), mirroring `MarkBundleHealthy`.
 - `core/lib/app-updater/client.ts` (MODIFY, if that's where checkForUpdate/reportBadBundle live) — add a `postBootBeacon` client fn mirroring `reportBadBundle`.
 - `core/tests/unit/bundle-sentinel.test.tsx` (MODIFY) — update tests: assert `postBootBeacon` is called with the bundle id on mount; drop the `bootLogLine`/console expectations (or keep `bootLogLine` only if still used).
 
@@ -141,7 +141,7 @@ export async function postBootBeacon(opts: {
 
 - [ ] **Step 2: Run, confirm FAIL.**
 
-- [ ] **Step 3: Rewrite `useBundleSentinel`** to post the beacon, gated like `reportRevertedBundle` (web no-op; resolved-address gate via `getResolvedAddress()`; transport gate via `isUpdateTransportAllowed`); NO `__DEV__`-only gate (must run in prod Release). Swallow errors via `captureException` (boot beacon is best-effort, like report-bad). Keep the `BundleSentinel` a11y View (it's harmless and may aid a future on-screen check) but it is no longer the asserted signal.
+- [ ] **Step 3: Rewrite `useBundleSentinel`** to post the beacon, gated like `reportRevertedBundle` (web no-op; resolved-address gate via `getResolvedAddress()`; transport gate via `isUpdateTransportAllowed`); NO `__DEV__`-only gate (must run in prod Release). Swallow errors via `captureException` (boot beacon is best-effort, like report-bad). DECIDED: drop the a11y View — `BundleSentinel` returns null (behavior-only), since the View was only for the removed idb check and the About-panel Bundle row covers the user-facing need.
 
 ```tsx
 import { getResolvedAddress } from '@tinycld/core/lib/...'      // same source reportRevertedBundle uses
