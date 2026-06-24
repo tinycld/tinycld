@@ -93,7 +93,8 @@ asserting which one happened:
 - **HEALTHY** — the app reloads into the new bundle and stays up. The harness then
   asserts the install actually created all four booking collections
   (`booking_pages`, `booking_slot_types`, `booking_availability`, `bookings`) —
-  guarding the "booking tables sometimes not created on install" bug.
+  guarding the "booking tables sometimes not created on install" bug — and runs the
+  **update-is-live assertion** (below).
 - **ROLLBACK** — the app crash-loops the new bundle and reverts to embedded; the
   server records a `pkg_bad_bundle` row whose `last_error` carries a **captured
   reason** (the native rollback reason / regex detail). An empty or the generic
@@ -129,7 +130,40 @@ connected — it is poll-only and never builds. (The driver passes
 `OTA_E2E_SKIP_BUILD=1` for parity with the happy-path runner, but this runner
 ignores it.)
 
+## Update-is-live assertion (boot-log + on-screen sentinel)
+
+Both runners (the happy-path `run-ota-e2e.ts` and the crash-rollback runner's
+HEALTHY outcome) verify the update is genuinely *live* — not merely that the
+native `currentId` flipped. The native id comes from a read of which bundle
+directory is promoted; it does **not** prove the new bundle's JS executed or that
+anything rendered. Two checks close that gap, both keyed to the new
+`build-<ts>-ios` id:
+
+- **boot-log proof** — the app's `BundleSentinel` (`core/lib/bundle-sentinel.tsx`)
+  logs `[tinycld] app-boot: rendered bundle id=<id> hash=<…>` to the console, but
+  only after the **real provider tree mounts** (it is mounted next to
+  `MarkBundleHealthy` inside `<Providers>`). The harness scrapes the device console
+  (`xcrun simctl spawn <udid> log show`) and requires the new id. This proves the
+  new bundle's JS executed and mounted. It is **not** `__DEV__`-gated (the OTA path
+  runs only in Release builds, where `__DEV__` is stripped) and no-ops on web.
+
+- **on-screen sentinel proof** — `BundleSentinel` also renders a visually-negligible
+  element (`testID="ota-bundle-sentinel"`, `accessibilityLabel="bundle:<id>"`). The
+  harness reads the iOS accessibility tree with [`idb`](https://fbidb.io/)
+  (`idb ui describe-all --json`) and requires the new id. This proves the update is
+  on screen.
+
+**`idb` is an OPTIONAL dependency.** It ships at `~/.local/bin/idb` (with
+`idb_companion` from `brew install idb-companion`; the Python CLI via
+`pipx install fb-idb`). When `idb` is absent the harness logs a skip and relies on
+the boot-log proof alone — it never fails for a missing `idb`. Both checks retry
+(up to ~30s) to tolerate first render lagging the `currentId` flip.
+
+Each runner skips the whole assertion (with a log) when `IPHONE_SIMULATOR_UDID` is
+unset.
+
 ## Not covered (future work)
 
-Healthy-mark persistence across relaunch, Android, and on-screen UI assertions. See
-`docs/superpowers/specs/2026-06-12-ota-native-e2e-design.md`.
+Healthy-mark persistence across relaunch and Android. See
+`docs/superpowers/specs/2026-06-12-ota-native-e2e-design.md` and
+`docs/superpowers/specs/2026-06-24-ota-update-visible-assertion-design.md`.
