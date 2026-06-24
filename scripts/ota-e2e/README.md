@@ -81,8 +81,53 @@ pnpm run test:e2e:ota
 - **build/boot exited non-zero** → an `expo run:ios --configuration Release`
   failure; see the inline build output.
 
+## Crash-rollback E2E (`test:e2e:ota:rollback`)
+
+A sibling harness that exercises the *unhappy* OTA path. Instead of the happy-path
+`todo` install, it installs **`@tinycld/calendar-slots`** (an external `github:`
+package, via the in-app installer UI driven by
+`tests/install/calendar-slots-install.spec.ts`), which mints a `build-<ts>-ios`
+bundle. It then boots the Release sim and races **two** terminal outcomes,
+asserting which one happened:
+
+- **HEALTHY** — the app reloads into the new bundle and stays up. The harness then
+  asserts the install actually created all four booking collections
+  (`booking_pages`, `booking_slot_types`, `booking_availability`, `bookings`) —
+  guarding the "booking tables sometimes not created on install" bug.
+- **ROLLBACK** — the app crash-loops the new bundle and reverts to embedded; the
+  server records a `pkg_bad_bundle` row whose `last_error` carries a **captured
+  reason** (the native rollback reason / regex detail). An empty or the generic
+  `last_error` is a FAILURE — that's exactly the gap the manual repro hit.
+
+`OTA_E2E_EXPECT` selects which outcome is the pass (default `rollback`, the case
+we're chasing). The driver mirrors the happy-path one but uses a **distinct**
+container name (`tinycld-ota-rollback-server`), port (`7091`), and log dir
+(`ota-crash-rollback-logs`) so a `KEEP=1` dry-run and a `KEEP=1` rollback run can
+coexist.
+
+```sh
+cd ~/code/tinycld/tinycld
+# Full automated driver (Docker + sim): builds the image, installs calendar-slots,
+# boots the Release sim, and runs the assertion.
+KEEP=1 OTA_E2E_EXPECT=rollback bash scripts/ota-e2e/run-ota-crash-rollback.sh
+# Healthy variant (also asserts the booking tables exist):
+KEEP=1 OTA_E2E_EXPECT=healthy bash scripts/ota-e2e/run-ota-crash-rollback.sh
+```
+
+Additional env knobs (on top of the happy-path ones above):
+
+| Var | Default | Meaning |
+|---|---|---|
+| `OTA_E2E_EXPECT` | `rollback` | Which terminal outcome is the pass: `healthy` or `rollback`. |
+| `PKG_SPEC` | `github:stefnnn/tinycld-calendar-slots` | The package whose OTA crash we reproduce (overridable for a fork/tag). |
+| `CONTAINER` | `tinycld-ota-rollback-server` | Container name (distinct from the dry-run's). |
+| `SERVER_PORT` | `7091` | Host port (distinct from the dry-run's `7090`). |
+
+The TS assertion runner (`run-ota-crash-rollback.ts`) can also be invoked directly
+with `OTA_E2E_SKIP_BUILD=1` (the driver does this) once a bundle is staged and the
+sim is booted + connected.
+
 ## Not covered (future work)
 
-Healthy-mark persistence across relaunch, crash-rollback + server reconcile,
-Android, and on-screen UI assertions. See
+Healthy-mark persistence across relaunch, Android, and on-screen UI assertions. See
 `docs/superpowers/specs/2026-06-12-ota-native-e2e-design.md`.
