@@ -27,6 +27,9 @@ export async function assertUpdateIsLive(
                 if (ids.length) log(`  boot beacons seen: ${ids.join(', ')}`)
             },
         })
+        // Inside the try so the proof is logged ONLY on success — not relying on
+        // fail()'s never-return to keep it off the failure path.
+        log(`boot-beacon proof: new bundle JS executed + mounted (id=${newId})`)
     } catch {
         fail(
             `boot-beacon proof missing: the app never POSTed an 'app-boot: rendered' beacon for ` +
@@ -35,5 +38,4 @@ export async function assertUpdateIsLive(
                 `reach the server to report. Check the device + server _logs.`
         )
     }
-    log(`boot-beacon proof: new bundle JS executed + mounted (id=${newId})`)
 }
