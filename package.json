@@ -22,6 +22,7 @@
         "test": "tinycld-pkg test",
         "test:e2e": "tinycld-pkg test:e2e",
         "test:e2e:ota": "tsx scripts/ota-e2e/run-ota-e2e.ts",
+        "test:e2e:ota:rollback": "tsx scripts/ota-e2e/run-ota-crash-rollback.ts",
         "test:server": "tsx scripts/test-server-api.ts",
         "check": "tinycld-pkg check",
         "pkg:test:unit": "tinycld-pkg test --all",
