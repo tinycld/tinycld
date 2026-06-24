@@ -86,3 +86,26 @@ export async function fetchBadBundles(serverUrl: string, token: string): Promise
     }
     return extractBadBundles((await res.json()) as BadBundleResponse)
 }
+
+// Existence probe for a collection: PocketBase returns 200 for a known
+// collection's records endpoint (even when empty) and 404 for an unknown one.
+// Any other status (transient mid-restart) returns null so the caller retries.
+// Mirrors tests/install/todo-install.spec.ts collectionExists.
+export async function collectionExists(
+    serverUrl: string,
+    token: string,
+    name: string,
+    fetchFn: typeof fetch = fetch
+): Promise<boolean | null> {
+    let res: Response
+    try {
+        res = await fetchFn(`${serverUrl}/api/collections/${name}/records?perPage=1`, {
+            headers: { Authorization: token },
+        })
+    } catch {
+        return null
+    }
+    if (res.status === 200) return true
+    if (res.status === 404) return false
+    return null
+}

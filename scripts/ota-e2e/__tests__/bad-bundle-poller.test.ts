@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { type BadBundleRow, extractBadBundles, pollForBadBundle } from '../bad-bundle-poller'
+import {
+    type BadBundleRow,
+    collectionExists,
+    extractBadBundles,
+    pollForBadBundle,
+} from '../bad-bundle-poller'
 
 describe('extractBadBundles', () => {
     it('returns rows with bundle_id, reports, and last_error', () => {
@@ -67,5 +72,20 @@ describe('pollForBadBundle', () => {
                 sleep: noSleep,
             })
         ).rejects.toThrow(/timed out.*build-9-ios/)
+    })
+})
+
+describe('collectionExists', () => {
+    it('returns true on HTTP 200 (known collection)', async () => {
+        const fetchFn = vi.fn(() => Promise.resolve({ status: 200, ok: true } as Response))
+        expect(await collectionExists('http://x', 'tok', 'booking_pages', fetchFn)).toBe(true)
+    })
+    it('returns false on HTTP 404 (unknown collection)', async () => {
+        const fetchFn = vi.fn(() => Promise.resolve({ status: 404, ok: false } as Response))
+        expect(await collectionExists('http://x', 'tok', 'booking_pages', fetchFn)).toBe(false)
+    })
+    it('returns null on any other status (transient)', async () => {
+        const fetchFn = vi.fn(() => Promise.resolve({ status: 503, ok: false } as Response))
+        expect(await collectionExists('http://x', 'tok', 'booking_pages', fetchFn)).toBeNull()
     })
 })
