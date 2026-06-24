@@ -1,5 +1,15 @@
 import { bootLogLine, formatSentinelLabel, shortHash } from '@tinycld/core/lib/bundle-sentinel'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// bundle-sentinel.tsx imports the native `app-updater` module (Metro-resolved, no
+// node_modules symlink), so stub it for the unit graph. These pure-helper tests
+// don't touch the updater; the stub just lets the module load.
+vi.mock('app-updater', () => ({
+    default: {
+        getCurrentBundleId: () => 'build-test-ios',
+        getCurrentBundleHash: () => 'deadbeefcafe0000',
+    },
+}))
 
 describe('shortHash', () => {
     it('takes the first 12 chars', () => {

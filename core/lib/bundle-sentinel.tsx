@@ -1,3 +1,8 @@
+import AppUpdater from 'app-updater'
+import type { ReactNode } from 'react'
+import { useEffect } from 'react'
+import { Platform, Text, View } from 'react-native'
+
 // BundleSentinel emits, on every real-tree mount (production included), a proof
 // that the running bundle's JS actually executed and rendered — closing the gap
 // where the native currentId flip alone does not prove the new JS ran/rendered.
@@ -25,4 +30,38 @@ export function formatSentinelLabel(bundleId: string): string {
 // scripts/ota-e2e/boot-log-scraper.ts parses exactly this shape.
 export function bootLogLine(bundleId: string, hash: string): string {
     return `[tinycld] app-boot: rendered bundle id=${bundleId} hash=${shortHash(hash)}`
+}
+
+// Logs the boot line exactly once per mount. Production-included (no __DEV__
+// guard); no-ops on web where the native updater is stubbed and there is no OTA.
+export function useBundleSentinel(): void {
+    useEffect(() => {
+        if (Platform.OS === 'web') return
+        // console.log (not console.debug): `simctl log show` captures the default
+        // os_log level; debug is filtered out unless verbose logging is enabled.
+        console.log(bootLogLine(AppUpdater.getCurrentBundleId(), AppUpdater.getCurrentBundleHash()))
+    }, [])
+}
+
+// BundleSentinel logs the boot proof and renders a visually-negligible,
+// accessibility-visible element carrying the running bundle id, so a harness can
+// assert the update is live on screen. Renders nothing on web. testID maps to the
+// iOS accessibilityIdentifier that `idb ui describe-all` reports as AXIdentifier.
+export function BundleSentinel(): ReactNode {
+    useBundleSentinel()
+    if (Platform.OS === 'web') return null
+    const label = formatSentinelLabel(AppUpdater.getCurrentBundleId())
+    // opacity:0 keeps it out of the visible UI while remaining in the iOS a11y
+    // tree; pointerEvents:none so it never intercepts touches. If a future iOS
+    // prunes fully-transparent nodes, bump opacity to 0.01.
+    return (
+        <View
+            testID="ota-bundle-sentinel"
+            accessibilityLabel={label}
+            pointerEvents="none"
+            style={{ position: 'absolute', top: 0, left: 0, width: 1, height: 1, opacity: 0 }}
+        >
+            <Text accessibilityLabel={label}>{label}</Text>
+        </View>
+    )
 }
