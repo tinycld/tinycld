@@ -202,13 +202,13 @@ final class Store {
         if let revertId = readJSON(revertURL)?["id"] as? String {
             try? fm.removeItem(at: revertURL)
             if revertId == currentId() {
-                rollbackToPrevious()
+                rollbackToPrevious(reason: "js-fatal markBad")
                 return resolveAfterRollback()
             }
         }
         guard let dir = currentDir(), let id = currentId() else { return nil }
         guard let bundlePath = locateHbc(in: dir) else {
-            rollbackToPrevious()
+            rollbackToPrevious(reason: "staged .hbc missing")
             return resolveAfterRollback()
         }
         // Defense-in-depth behind the JS-side SHA-256 verify (which runs once,
@@ -221,7 +221,7 @@ final class Store {
         // this .hbc; see downloadAndStage + app_native_export.go sha256OfFile.)
         if let want = currentHash(), !want.isEmpty,
             sha256HexOfFile(at: bundlePath)?.caseInsensitiveCompare(want) != .orderedSame {
-            rollbackToPrevious()
+            rollbackToPrevious(reason: "hash mismatch")
             return resolveAfterRollback()
         }
         var boot = readJSON(bootURL) ?? ["id": id, "launchCount": 0, "trial": true]
@@ -231,7 +231,7 @@ final class Store {
         // one un-healthy crash; an already-healthy bundle keeps the generous margin.
         let threshold = (boot["trial"] as? Bool ?? false) ? rollbackAfterTrialLaunches : rollbackAfterLaunches
         if count >= threshold {
-            rollbackToPrevious()
+            rollbackToPrevious(reason: "crash-launch counter tripped")
             return resolveAfterRollback()
         }
         boot["launchCount"] = count
@@ -263,13 +263,34 @@ final class Store {
         try? fm.removeItem(at: revertURL)
     }
 
-    private func rollbackToPrevious() {
+    /// Rolls the active OTA bundle back to the previous one. `reason` names which
+    /// path fired (crash-counter, missing-hbc, hash-mismatch, js-fatal) so the
+    /// report-bad upload always carries WHY — most rollbacks happen here at native
+    /// boot, BEFORE any JS runs, so without this the detail field is empty and the
+    /// server only learns "a bundle rolled back", not why.
+    private func rollbackToPrevious(reason: String) {
         // Record the bundle being rolled back (id + hash) so the recovered bundle
         // can report it bad to the server on the next boot — takeRevertedBundle().
         // The crash handler can't report at crash time (the process is dying), so
         // we stash it and let the good bundle POST it once it's safely running.
         if let cur = readJSON(currentURL) {
-            writeJSON(revertedURL, ["id": cur["id"] as? String ?? "", "hash": cur["hash"] as? String ?? ""])
+            let curId = cur["id"] as? String ?? ""
+            writeJSON(revertedURL, ["id": curId, "hash": cur["hash"] as? String ?? ""])
+            // Ensure error.json carries a detail for the upload. Prefer a richer
+            // JS-supplied detail already recorded for THIS bundle (the regex
+            // pattern + Hermes message from the fatal handler); otherwise stamp the
+            // native rollback reason. Either way the report-bad row is meaningful.
+            let existing = readJSON(errorURL)
+            let jsDetail = existing?["detail"] as? String
+            let jsId = existing?["id"] as? String
+            if jsDetail == nil || jsDetail!.isEmpty || (jsId != nil && jsId != curId) {
+                let boot = readJSON(bootURL)
+                let launches = boot?["launchCount"] as? Int ?? 0
+                writeJSON(
+                    errorURL,
+                    ["detail": "native rollback: \(reason) (launches=\(launches))", "id": curId]
+                )
+            }
         }
         if let prev = readJSON(previousURL) { writeJSON(currentURL, prev) }
         else { try? fm.removeItem(at: currentURL) }
