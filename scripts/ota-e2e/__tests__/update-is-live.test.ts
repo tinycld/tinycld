@@ -20,12 +20,15 @@ describe('assertUpdateIsLive', () => {
         expect(logs.some(l => l.includes('boot-beacon proof'))).toBe(true)
     })
 
-    it('fails when the beacon never arrives (poll rejects)', async () => {
+    it('fails when the beacon never arrives (poll rejects) and never logs the proof', async () => {
         pollForBundleId.mockImplementation(async () => {
             throw new Error('timed out')
         })
         const fail = vi.fn<(msg: string) => never>()
-        await assertUpdateIsLive('http://s', 'tok', 'build-9-ios', fail, () => {})
+        const logs: string[] = []
+        await assertUpdateIsLive('http://s', 'tok', 'build-9-ios', fail, m => logs.push(m))
         expect(fail).toHaveBeenCalledWith(expect.stringMatching(/boot-beacon proof missing/))
+        // The success "proof" line lives inside the try, so it must NOT fire here.
+        expect(logs.some(l => l.includes('boot-beacon proof:'))).toBe(false)
     })
 })
