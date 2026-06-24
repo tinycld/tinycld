@@ -30,6 +30,12 @@ class AppUpdaterModule : Module() {
 
         Function("markBundleHealthy") { Store(context).markHealthy() }
 
+        // Persist a crash-detail string (the offending regex pattern + Hermes
+        // error) next to the rollback markers, so the rolled-back NEXT launch can
+        // upload it via report-bad. The JS-layer Sentry event often can't flush
+        // before the process aborts; this on-disk record survives. Mirrors iOS.
+        Function("recordBundleError") { detail: String -> Store(context).recordError(detail) }
+
         // Mark the active OTA bundle bad so the next getJSBundleFile() reverts to
         // the previous bundle. Called from the JS global fatal handler (paired with
         // reload()) so a not-yet-healthy bundle that throws fatally recovers
@@ -65,6 +71,7 @@ class Store(private val context: Context) {
     private val revertFile = File(root, "revert.json")
     private val revertedFile = File(root, "reverted.json")
     private val embeddedHashFile = File(root, "embedded-hash.json")
+    private val errorFile = File(root, "error.json")
 
     // Crash-launch rollback thresholds (mirrors iOS). A freshly-promoted bundle is
     // on TRIAL until its first markHealthy: it rolls back after the 2nd un-healthy
@@ -98,6 +105,18 @@ class Store(private val context: Context) {
         // Clearing boot.json also clears the trial flag, so a later post-healthy
         // crash falls under the generous (non-trial) threshold, not the trial one.
         bootFile.delete()
+        // Drop any stale recorded crash detail — once a bundle is healthy, a prior
+        // fatal's detail must not attach to a future unrelated rollback.
+        errorFile.delete()
+    }
+
+    /**
+     * Records a crash-detail string (the offending regex pattern + Hermes error,
+     * built by the JS fatal handler) for the active bundle, to be uploaded on the
+     * next (rolled-back) launch. Overwrites any prior record. Mirrors iOS.
+     */
+    fun recordError(detail: String) {
+        writeJSON(errorFile, JSONObject().put("detail", detail).put("id", currentId() ?: ""))
     }
 
     /**
@@ -122,7 +141,10 @@ class Store(private val context: Context) {
         val r = readJSON(revertedFile) ?: return null
         revertedFile.delete()
         val id = r.optString("id").ifEmpty { return null }
-        return mapOf("id" to id, "hash" to r.optString("hash"))
+        // Drain the recorded crash detail (read-once, paired with the revert).
+        val detail = readJSON(errorFile)?.optString("detail") ?: ""
+        errorFile.delete()
+        return mapOf("id" to id, "hash" to r.optString("hash"), "error" to detail)
     }
 
     /**

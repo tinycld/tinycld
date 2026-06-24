@@ -246,9 +246,24 @@ func pnpmLineProgress(line string) int {
 // export …`. Returns the buffered output + error like runCmd.
 func runExportWithProgress(job *installJob, lo, hi int, step, dir string, args ...string) (string, error) {
 	throttle := newPnpmProgressThrottle()
+	// Match the EAS `production` profile's env (eas.json) so the OTA bundle is
+	// built identically to the embedded one EAS ships. The embedded build sets
+	// EXPO_PUBLIC_ENV=production; without it the OTA bundle takes different
+	// EXPO_PUBLIC_* branches (e.g. server-address.ts reads EXPO_PUBLIC_ENV) — a
+	// real embedded-vs-OTA divergence. Scope the vars to THIS command via `env`
+	// (not os.Setenv) so other pipeline steps are unaffected. Operator overrides
+	// already in the server environment win (env applies left-to-right, but expo
+	// reads the last value; we set our defaults only — callers can export their
+	// own before starting the server to override). NODE_ENV defaults to production
+	// for `expo export` already; we set it explicitly for parity.
+	exportArgs := append([]string{
+		"EXPO_PUBLIC_ENV=" + envOr("EXPO_PUBLIC_ENV", "production"),
+		"NODE_ENV=production",
+		"pnpm", "exec", "expo", "export",
+	}, args...)
 	return expoStream(
 		func(line string) { reportExpoProgress(job, line, step, lo, hi, throttle) },
-		dir, "pnpm", append([]string{"exec", "expo", "export"}, args...)...,
+		dir, "env", exportArgs...,
 	)
 }
 

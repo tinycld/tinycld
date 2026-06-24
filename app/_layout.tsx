@@ -1,3 +1,10 @@
+// diagnose-regexp must run FIRST — it wraps the global RegExp constructor to
+// record the exact pattern compiled before a fatal. A regex Hermes can't handle
+// aborts the process (RCTFatal/SIGABRT) before any handler sees which pattern,
+// and the native crash report only shows `regExpConstructor` with no source.
+// This shim is the primary diagnostic for the OTA-update crash; its captures are
+// read by the global fatal handler + the report-bad upload. No-op on web/non-Hermes.
+import '~/lib/diagnose-regexp'
 // polyfill-dom-shim must run before anything that pulls in prosemirror-view
 // (tentap → @tiptap/core → @tiptap/pm/view). Something in our Expo SDK 55
 // stack now installs a partial `document` on Hermes that breaks
