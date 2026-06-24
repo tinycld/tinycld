@@ -127,6 +127,10 @@ async function waitForProgressAdvance(page: Page, minPct: number, timeoutMs: num
 // op until it reaches `wantStatus`, throwing if it ends 'failed'/'rolled_back'.
 // The job ends by restarting the server (exit 75), so connection resets and 401s
 // mid-poll are EXPECTED and retried; the token is re-minted on auth failure.
+// Note: the todo-install version takes a `notId` stale-row guard for multi-op
+// scenarios; this spec does a SINGLE install, so there's no prior row to skip and
+// the parameter is intentionally omitted — don't copy this helper into a
+// multi-operation spec without restoring it.
 async function waitForOpStatus(
     page: Page,
     slug: string,
