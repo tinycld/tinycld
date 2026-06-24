@@ -248,7 +248,10 @@ mint_ios_bundle() {
 # ---------------------------------------------------------------------------
 precheck_bundle() {
     local version embedded code
-    version="$(node -p "require('${APP_DIR}/app.json').expo.version")"
+    # Read from package.json — the source app.config.ts derives expo.version /
+    # expo.runtimeVersion from (app.json has no version key, so reading expo.version
+    # there yields undefined and the server 204s on a runtimeVersion mismatch).
+    version="$(node -p "require('${APP_DIR}/package.json').version")"
     embedded="embedded-${version}"
     code="$(curl -s -o /dev/null -w '%{http_code}' \
         "${SERVER_URL}/api/app/update?platform=ios&runtimeVersion=${version}&currentId=${embedded}&currentHash=")"
