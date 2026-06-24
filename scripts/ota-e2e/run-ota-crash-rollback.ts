@@ -124,8 +124,11 @@ async function main() {
     } else {
         if (outcome.kind === 'rollback') {
             // The crux: the rollback must carry a CAPTURED reason, not the generic string.
-            // This literal mirrors the server-side fallback in coreserver recordBadBundle —
-            // keep them in sync, or this guard silently stops catching the no-reason case.
+            // This literal mirrors the CLIENT-side fallback in core/lib/use-app-updates.ts
+            // (reportRevertedBundle, used when the native rollback wrote no error detail) —
+            // the server's recordBadBundle stores body.Error verbatim, so this string is
+            // what the client sends. Keep the two in sync, or this guard silently stops
+            // catching the no-reason case.
             const generic = 'client rolled back: bundle failed to reach healthy'
             if (outcome.row.lastError === generic) {
                 fail(

@@ -124,8 +124,10 @@ Additional env knobs (on top of the happy-path ones above):
 | `SERVER_PORT` | `7091` | Host port (distinct from the dry-run's `7090`). |
 
 The TS assertion runner (`run-ota-crash-rollback.ts`) can also be invoked directly
-with `OTA_E2E_SKIP_BUILD=1` (the driver does this) once a bundle is staged and the
-sim is booted + connected.
+(`pnpm run test:e2e:ota:rollback`) once a bundle is staged and the sim is booted +
+connected — it is poll-only and never builds. (The driver passes
+`OTA_E2E_SKIP_BUILD=1` for parity with the happy-path runner, but this runner
+ignores it.)
 
 ## Not covered (future work)
 
