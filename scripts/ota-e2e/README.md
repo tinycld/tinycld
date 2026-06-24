@@ -150,8 +150,8 @@ anything rendered. Two checks close that gap, both keyed to the new
 - **on-screen sentinel proof** — `BundleSentinel` also renders a visually-negligible
   element (`testID="ota-bundle-sentinel"`, `accessibilityLabel="bundle:<id>"`). The
   harness reads the iOS accessibility tree with [`idb`](https://fbidb.io/)
-  (`idb ui describe-all --json`) and requires the new id. This proves the update is
-  on screen.
+  (`idb ui describe-all --udid <udid> --json`) and requires the new id. This proves
+  the update is on screen.
 
 **`idb` is an OPTIONAL dependency.** It ships at `~/.local/bin/idb` (with
 `idb_companion` from `brew install idb-companion`; the Python CLI via
