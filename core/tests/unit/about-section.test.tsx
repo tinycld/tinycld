@@ -23,12 +23,22 @@ vi.mock('@tinycld/core/lib/server-address', () => ({ getResolvedAddress: () => n
 // field AboutSection reads.
 vi.mock('expo-constants', () => ({ default: { expoConfig: { version: '1.0.0' } } }))
 
+// expo-application is a native module (no value under Node). Stub the build
+// number; individual tests override it via the mock to cover null (web/dev).
+const nativeBuildVersion = vi.hoisted(() => ({ current: '48' as string | null }))
+vi.mock('expo-application', () => ({
+    get nativeBuildVersion() {
+        return nativeBuildVersion.current
+    },
+}))
+
 import { AboutSection } from '../../components/settings/AboutSection'
 
 afterEach(() => {
     cleanup()
     useReleaseManifest.mockReset()
     useReleaseManifest.mockReturnValue({ data: undefined })
+    nativeBuildVersion.current = '48'
 })
 
 const MANIFEST: ReleaseManifest = {
@@ -40,6 +50,32 @@ const MANIFEST: ReleaseManifest = {
         { name: 'calendar', repo: 'tinycld/calendar', tag: 'v0.2.1', sha: '2222222bbbb' },
     ],
 }
+
+describe('AboutSection — version row', () => {
+    it('shows version, native build number, and short commit when a build number exists', () => {
+        nativeBuildVersion.current = '48'
+        const { getByText } = render(<AboutSection />)
+        // config is mocked null → commit falls back to "dev".slice(0,7) = "dev".
+        expect(getByText('1.0.0 (48) · dev')).toBeTruthy()
+    })
+
+    it('omits the build number on web/dev where it is null', () => {
+        nativeBuildVersion.current = null
+        const { getByText } = render(<AboutSection />)
+        expect(getByText('1.0.0 (dev)')).toBeTruthy()
+    })
+})
+
+describe('AboutSection — bundle row', () => {
+    // Unit tests run under the react-native web stub (Platform.OS === 'web'), where
+    // bundleRowValue() returns null — so the Bundle row is hidden, matching real web
+    // behavior (no native updater). The native-rendered value (build-<ts>-ios · hash)
+    // is exercised by the OTA e2e on a real Release sim, not here.
+    it('omits the Bundle row on web (no native updater)', () => {
+        const { queryByText } = render(<AboutSection />)
+        expect(queryByText('Bundle')).toBeNull()
+    })
+})
 
 describe('AboutSection — included packages', () => {
     it('lists each package with its version and short SHA when a manifest is present', () => {

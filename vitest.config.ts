@@ -27,6 +27,13 @@ export default defineConfig({
                 find: /^react-native$/,
                 replacement: path.join(APP_DIR, 'tests', 'react-native-stub.cjs'),
             },
+            // app-updater is Metro-resolved (no node_modules entry), so Vite's
+            // import-analysis can't resolve the bare specifier — stub it so any
+            // module importing it loads in unit tests (any env).
+            {
+                find: /^app-updater$/,
+                replacement: path.join(APP_DIR, 'tests', 'app-updater-stub.cjs'),
+            },
             // @react-native-async-storage/async-storage requires the RN native
             // bridge; redirect to an in-memory stub so unit tests run without it.
             {
