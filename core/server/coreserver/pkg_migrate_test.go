@@ -347,3 +347,185 @@ func containsStr(s []string, v string) bool {
 	}
 	return false
 }
+
+// TestPkgMigrate_CalendarSlots_OrderingCreatesAllTables models the two
+// calendar-slots migrations (a create migration for the four booking
+// collections, plus a dependent migration that adds fields to booking_pages via
+// findCollectionByNameOrId). It pins the guarantee that applying both — in any
+// caller-supplied order, since applyNamedMigrations sorts ascending — creates
+// all four collections without error. Because the runner sorts by filename and
+// wraps the batch in a single transaction, this is EXPECTED TO PASS: the
+// reported "booking tables sometimes not created" bug is therefore NOT a pure
+// ordering/atomicity issue at the unit level.
+func TestPkgMigrate_CalendarSlots_OrderingCreatesAllTables(t *testing.T) {
+	app := newMigrateTestApp(t)
+
+	bookingCollections := []string{
+		"booking_pages",
+		"booking_slot_types",
+		"booking_availability",
+		"bookings",
+	}
+
+	createFile := "1800000000_create_calendar-slots.js"
+	addFieldFile := "1800000001_calendar-slots-booking-config.js"
+
+	withTestMigrations(t, []*core.Migration{
+		{
+			File: createFile,
+			Up: func(txApp core.App) error {
+				for _, name := range bookingCollections {
+					c := core.NewBaseCollection(name)
+					c.Fields.Add(&core.TextField{Name: "title"})
+					if err := txApp.Save(c); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Down: func(txApp core.App) error {
+				for _, name := range bookingCollections {
+					c, err := txApp.FindCollectionByNameOrId(name)
+					if err != nil {
+						continue
+					}
+					if err := txApp.Delete(c); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			File: addFieldFile,
+			Up: func(txApp core.App) error {
+				c, err := txApp.FindCollectionByNameOrId("booking_pages")
+				if err != nil {
+					return err
+				}
+				c.Fields.Add(&core.TextField{Name: "config"})
+				return txApp.Save(c)
+			},
+			Down: func(txApp core.App) error {
+				c, err := txApp.FindCollectionByNameOrId("booking_pages")
+				if err != nil {
+					return err
+				}
+				if c.Fields.GetByName("config") != nil {
+					c.Fields.RemoveByName("config")
+				}
+				return txApp.Save(c)
+			},
+		},
+	})
+
+	applied, err := applyNamedMigrations(app, []string{createFile, addFieldFile})
+	if err != nil {
+		t.Fatalf("applyNamedMigrations: %v", err)
+	}
+	if len(applied) != 2 {
+		t.Fatalf("applied %d migrations, want 2", len(applied))
+	}
+
+	for _, name := range bookingCollections {
+		if !collectionExists(t, app, name) {
+			t.Fatalf("booking collection %s not created", name)
+		}
+	}
+
+	pages, _ := app.FindCollectionByNameOrId("booking_pages")
+	if pages.Fields.GetByName("config") == nil {
+		t.Fatalf("config field not added to booking_pages")
+	}
+}
+
+// TestPkgMigrate_CalendarSlots_DependentMigrationAloneFailsAtomically is the
+// adversarial complement: it applies ONLY the dependent (add-fields) migration,
+// without the create migration that defines booking_pages. The dependent Up
+// calls FindCollectionByNameOrId("b_booking_pages") and returns the
+// not-found error. We assert the apply fails LOUDLY (non-nil error) and leaves
+// NO half-built schema (atomic rollback) — proving the unit-level apply path is
+// safe and that the reported missing-tables bug must be boot-timing-induced.
+//
+// Uses distinct filenames and collection names from Test A because
+// core.AppMigrations registrations persist for the whole test binary.
+func TestPkgMigrate_CalendarSlots_DependentMigrationAloneFailsAtomically(t *testing.T) {
+	app := newMigrateTestApp(t)
+
+	bookingCollections := []string{
+		"b_booking_pages",
+		"b_booking_slot_types",
+		"b_booking_availability",
+		"b_bookings",
+	}
+
+	createFile := "1800000010_create_calendar-slots.js"
+	addFieldFile := "1800000011_calendar-slots-booking-config.js"
+
+	withTestMigrations(t, []*core.Migration{
+		{
+			File: createFile,
+			Up: func(txApp core.App) error {
+				for _, name := range bookingCollections {
+					c := core.NewBaseCollection(name)
+					c.Fields.Add(&core.TextField{Name: "title"})
+					if err := txApp.Save(c); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+			Down: func(txApp core.App) error {
+				for _, name := range bookingCollections {
+					c, err := txApp.FindCollectionByNameOrId(name)
+					if err != nil {
+						continue
+					}
+					if err := txApp.Delete(c); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			File: addFieldFile,
+			Up: func(txApp core.App) error {
+				c, err := txApp.FindCollectionByNameOrId("b_booking_pages")
+				if err != nil {
+					return err
+				}
+				c.Fields.Add(&core.TextField{Name: "config"})
+				return txApp.Save(c)
+			},
+			Down: func(txApp core.App) error {
+				c, err := txApp.FindCollectionByNameOrId("b_booking_pages")
+				if err != nil {
+					return err
+				}
+				if c.Fields.GetByName("config") != nil {
+					c.Fields.RemoveByName("config")
+				}
+				return txApp.Save(c)
+			},
+		},
+	})
+
+	// Apply ONLY the dependent migration — booking_pages was never created.
+	applied, err := applyNamedMigrations(app, []string{addFieldFile})
+	if err == nil {
+		t.Fatalf("applyNamedMigrations succeeded, want a non-nil error (dependent migration ran without its create migration); applied=%v", applied)
+	}
+
+	// Atomic rollback: no booking collection should exist afterward.
+	for _, name := range bookingCollections {
+		if collectionExists(t, app, name) {
+			t.Fatalf("collection %s exists after failed apply — rollback was not atomic", name)
+		}
+	}
+
+	// The dependent migration must not be recorded as applied.
+	if ok, _ := migrationApplied(app, addFieldFile); ok {
+		t.Fatalf("dependent migration %s recorded as applied after failure", addFieldFile)
+	}
+}
