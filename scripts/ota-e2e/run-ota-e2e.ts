@@ -120,13 +120,9 @@ async function main() {
         console.log(
             `[ota-e2e] app reloaded into ${observed} (was ${embeddedId}); verifying it's live…`
         )
-        // Assert update-is-live BEFORE printing PASS — otherwise a sentinel/boot-log
-        // mismatch would log "PASS" then "FAIL".
-        if (!SIM_UDID) {
-            console.log('[ota-e2e] IPHONE_SIMULATOR_UDID unset — skipping update-is-live assertion')
-        } else {
-            await assertUpdateIsLive(SIM_UDID, newId, fail, m => console.log(`[ota-e2e] ${m}`))
-        }
+        // Assert update-is-live BEFORE printing PASS — otherwise a missing
+        // boot-beacon proof would log "PASS" then "FAIL".
+        await assertUpdateIsLive(SERVER_URL, token, newId, fail, m => console.log(`[ota-e2e] ${m}`))
         console.log(`\n[ota-e2e] PASS: app reloaded into ${observed} (was ${embeddedId}).\n`)
         process.exit(0)
     } catch (err) {
