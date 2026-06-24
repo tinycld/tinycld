@@ -16,6 +16,7 @@ import { collectionExists, fetchBadBundles, pollForBadBundle } from './bad-bundl
 import { classifyBundleId, embeddedIdForVersion } from './identity'
 import { fetchAppUpdateCurrentIds, pollForBundleId, superuserToken } from './logs-poller'
 import { precheckNewerBundle } from './server-bundle'
+import { assertUpdateIsLive } from './update-is-live'
 
 const SERVER_URL = process.env.OTA_E2E_SERVER_URL ?? 'http://localhost:7200'
 const SUPERUSER_EMAIL = process.env.OTA_E2E_SUPERUSER_EMAIL
@@ -23,6 +24,7 @@ const SUPERUSER_PASSWORD = process.env.OTA_E2E_SUPERUSER_PASSWORD
 const EXPECT = (process.env.OTA_E2E_EXPECT ?? 'rollback') as 'healthy' | 'rollback'
 const TIMEOUT_MS = Number(process.env.OTA_E2E_TIMEOUT_MS) || 240_000
 const POLL_INTERVAL_MS = Number(process.env.OTA_E2E_POLL_INTERVAL_MS) || 3_000
+const SIM_UDID = process.env.IPHONE_SIMULATOR_UDID
 const APP_DIR = path.resolve(import.meta.dirname, '..', '..')
 
 function fail(msg: string): never {
@@ -117,6 +119,15 @@ async function main() {
                 '[ota-rollback] app reloaded healthily into the new bundle; checking schema…'
             )
             await assertBookingTables(SERVER_URL, token)
+            if (!SIM_UDID) {
+                console.log(
+                    '[ota-rollback] IPHONE_SIMULATOR_UDID unset — skipping update-is-live assertion'
+                )
+            } else {
+                await assertUpdateIsLive(SIM_UDID, newId, fail, m =>
+                    console.log(`[ota-rollback] ${m}`)
+                )
+            }
             console.log('\n[ota-rollback] PASS: healthy update with all booking tables present.\n')
             process.exit(0)
         }
