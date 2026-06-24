@@ -130,37 +130,34 @@ connected — it is poll-only and never builds. (The driver passes
 `OTA_E2E_SKIP_BUILD=1` for parity with the happy-path runner, but this runner
 ignores it.)
 
-## Update-is-live assertion (boot-log + on-screen sentinel)
+## Update-is-live assertion (server boot beacon)
 
 Both runners (the happy-path `run-ota-e2e.ts` and the crash-rollback runner's
 HEALTHY outcome) verify the update is genuinely *live* — not merely that the
 native `currentId` flipped. The native id comes from a read of which bundle
 directory is promoted; it does **not** prove the new bundle's JS executed or that
-anything rendered. Two checks close that gap, both keyed to the new
-`build-<ts>-ios` id:
+the real app tree mounted (a bundle could promote, then crash before its JS runs,
+and still report the new `currentId` natively).
 
-- **boot-log proof** — the app's `BundleSentinel` (`core/lib/bundle-sentinel.tsx`)
-  logs `[tinycld] app-boot: rendered bundle id=<id> hash=<…>` to the console, but
-  only after the **real provider tree mounts** (it is mounted next to
-  `MarkBundleHealthy` inside `<Providers>`). The harness scrapes the device console
-  (`xcrun simctl spawn <udid> log show`) and requires the new id. This proves the
-  new bundle's JS executed and mounted. It is **not** `__DEV__`-gated (the OTA path
-  runs only in Release builds, where `__DEV__` is stripped) and no-ops on web.
+The proof: the app's `BundleSentinel` (`core/lib/bundle-sentinel.tsx`) **POSTs a
+boot beacon** to `POST /api/app/boot` — but only after the **real provider tree
+commits** (it is mounted next to `MarkBundleHealthy` inside `<Providers>`, so it
+can't fire from the blank gate placeholder). The server logs `app-boot: rendered`
+with the bundle id; the harness polls `_logs` (`boot-beacon-poller.ts`) until the
+new `build-<ts>-ios` id appears, and fails if it never does within 60s. This
+proves the new bundle's JS executed and mounted.
 
-- **on-screen sentinel proof** — `BundleSentinel` also renders a visually-negligible
-  element (`testID="ota-bundle-sentinel"`, `accessibilityLabel="bundle:<id>"`). The
-  harness reads the iOS accessibility tree with [`idb`](https://fbidb.io/)
-  (`idb ui describe-all --udid <udid> --json`) and requires the new id. This proves
-  the update is on screen.
+**Why a server beacon and not a device-side signal.** The OTA path runs only in a
+**Release** build, and a real-sim run proved both obvious device-side signals are
+unobservable there: React Native does **not** route `console.log` to `os_log` in
+Release (so `simctl log show` sees nothing), and a visually-hidden (`opacity:0`)
+accessibility sentinel isn't surfaced by `idb`. The server channel is the one that
+works in Release — it's the same `_logs` channel the `currentId`-flip assertion
+already uses. The beacon is **not** `__DEV__`-gated (it must fire in Release), and
+no-ops on web / until the server address resolves.
 
-**`idb` is an OPTIONAL dependency.** It ships at `~/.local/bin/idb` (with
-`idb_companion` from `brew install idb-companion`; the Python CLI via
-`pipx install fb-idb`). When `idb` is absent the harness logs a skip and relies on
-the boot-log proof alone — it never fails for a missing `idb`. Both checks retry
-(up to ~30s) to tolerate first render lagging the `currentId` flip.
-
-Each runner skips the whole assertion (with a log) when `IPHONE_SIMULATOR_UDID` is
-unset.
+The running bundle id is also shown to users in **Settings → About** (a "Bundle"
+row), independent of this harness — a human-facing "what's running" indicator.
 
 ## Not covered (future work)
 
