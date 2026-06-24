@@ -154,12 +154,20 @@ export async function reportRevertedBundle(): Promise<void> {
     const reverted = AppUpdater.takeRevertedBundle()
     if (!reverted) return
     try {
+        // Prefer the detail the fatal handler persisted (the offending regex
+        // pattern + Hermes error) so the report-bad row names WHY the bundle
+        // crashed — not just that it did. Older binaries return no `error`; fall
+        // back to the generic reason then.
+        const detail =
+            'error' in reverted && reverted.error
+                ? reverted.error
+                : 'client rolled back: bundle failed to reach healthy'
         await reportBadBundle({
             serverUrl,
             platform: Platform.OS === 'ios' ? 'ios' : 'android',
             id: reverted.id,
             hash: reverted.hash,
-            error: 'client rolled back: bundle failed to reach healthy',
+            error: detail,
             fetchFn: fetch,
         })
     } catch (error) {

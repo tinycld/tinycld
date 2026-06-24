@@ -17,6 +17,12 @@ public class AppUpdaterModule: Module {
 
         Function("markBundleHealthy") { Store.shared.markHealthy() }
 
+        // Persist a crash-detail string (e.g. the offending regex pattern + the
+        // Hermes error) next to the rollback markers, so the rolled-back NEXT
+        // launch can upload it via report-bad. The JS-layer Sentry event often
+        // can't flush before the process aborts; this on-disk record survives.
+        Function("recordBundleError") { (detail: String) in Store.shared.recordError(detail) }
+
         // Mark the active OTA bundle bad so the NEXT bundleURL() reverts to the
         // previous bundle. Called from the JS global fatal handler when a
         // not-yet-healthy bundle throws fatally — paired with reload() it recovers
@@ -57,6 +63,7 @@ final class Store {
     private var revertURL: URL { root.appendingPathComponent("revert.json") }
     private var revertedURL: URL { root.appendingPathComponent("reverted.json") }
     private var embeddedHashURL: URL { root.appendingPathComponent("embedded-hash.json") }
+    private var errorURL: URL { root.appendingPathComponent("error.json") }
 
     // Crash-launch rollback thresholds: a promoted OTA bundle is rolled back after
     // this many launches that never reach the JS "healthy" signal.
@@ -92,7 +99,12 @@ final class Store {
     /// the smaller the window in which a healthy bundle could be mis-rolled-back.
     /// Removing boot.json also clears the trial flag, so a later post-healthy crash
     /// falls under the generous (non-trial) threshold rather than the trial one.
-    func markHealthy() { try? fm.removeItem(at: bootURL) }
+    /// Also drop any stale recorded crash detail — once a bundle is healthy, a
+    /// prior fatal's detail must not attach to a future unrelated rollback.
+    func markHealthy() {
+        try? fm.removeItem(at: bootURL)
+        try? fm.removeItem(at: errorURL)
+    }
 
     /// Flags the active OTA bundle for revert on the next bundleURL(). The JS
     /// global fatal handler calls this (then reload()) when a not-yet-healthy
@@ -104,16 +116,29 @@ final class Store {
         writeJSON(revertURL, ["id": id])
     }
 
-    /// Returns `[id, hash]` of a bundle that was rolled back since the last call,
-    /// then clears it (read-once). The recovered bundle calls this on boot and, if
-    /// non-nil, POSTs report-bad so the server stops advertising the bad bundle to
-    /// the fleet. Returns nil when nothing was rolled back.
+    /// Records a crash-detail string (the offending regex pattern + Hermes error,
+    /// built by the JS fatal handler) for the active bundle, to be uploaded on the
+    /// next (rolled-back) launch. Overwrites any prior record — the most recent
+    /// fatal is the relevant one. Best-effort; a write failure is non-fatal.
+    func recordError(_ detail: String) {
+        writeJSON(errorURL, ["detail": detail, "id": currentId() ?? ""])
+    }
+
+    /// Returns `[id, hash, error]` of a bundle that was rolled back since the last
+    /// call, then clears it (read-once). The recovered bundle calls this on boot
+    /// and, if non-nil, POSTs report-bad so the server stops advertising the bad
+    /// bundle to the fleet. `error` carries the persisted crash detail (e.g. the
+    /// regex pattern that aborted Hermes) when one was recorded, else "". Returns
+    /// nil when nothing was rolled back.
     func takeRevertedBundle() -> [String: String]? {
         guard let r = readJSON(revertedURL) else { return nil }
         try? fm.removeItem(at: revertedURL)
         let id = r["id"] as? String ?? ""
         if id.isEmpty { return nil }
-        return ["id": id, "hash": r["hash"] as? String ?? ""]
+        // Drain the recorded crash detail (read-once, paired with the revert).
+        let detail = (readJSON(errorURL)?["detail"] as? String) ?? ""
+        try? fm.removeItem(at: errorURL)
+        return ["id": id, "hash": r["hash"] as? String ?? "", "error": detail]
     }
 
     /// Hex SHA-256 of the bundle the app is currently running. For a promoted OTA
