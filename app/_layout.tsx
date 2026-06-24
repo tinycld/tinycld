@@ -22,6 +22,7 @@ import '~/lib/configure-core'
 import '~/global.css'
 import { AppErrorBoundary } from '@tinycld/core/components/AppErrorBoundary'
 import { NewVersionToast } from '@tinycld/core/components/NewVersionToast'
+import { BundleSentinel } from '@tinycld/core/lib/bundle-sentinel'
 import { installFatalRollbackHandler } from '@tinycld/core/lib/install-fatal-rollback'
 import { initSentry } from '@tinycld/core/lib/sentry'
 import { useAppUpdates } from '@tinycld/core/lib/use-app-updates'
@@ -61,6 +62,7 @@ export default function Layout() {
     return (
         <Providers>
             <MarkBundleHealthy />
+            <BundleSentinel />
             <Slot />
             <NewVersionToast />
         </Providers>
