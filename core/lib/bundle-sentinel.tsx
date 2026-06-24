@@ -53,15 +53,19 @@ export function BundleSentinel(): ReactNode {
     const label = formatSentinelLabel(AppUpdater.getCurrentBundleId())
     // opacity:0 keeps it out of the visible UI while remaining in the iOS a11y
     // tree; pointerEvents:none so it never intercepts touches. If a future iOS
-    // prunes fully-transparent nodes, bump opacity to 0.01.
+    // prunes fully-transparent nodes, bump opacity to 0.01. `accessible` makes the
+    // View itself the single a11y element idb reports (testID → AXIdentifier,
+    // accessibilityLabel → AXLabel) — the Text is a visual-only child with no label
+    // of its own, so the harness reads exactly one node.
     return (
         <View
+            accessible
             testID="ota-bundle-sentinel"
             accessibilityLabel={label}
             pointerEvents="none"
             style={{ position: 'absolute', top: 0, left: 0, width: 1, height: 1, opacity: 0 }}
         >
-            <Text accessibilityLabel={label}>{label}</Text>
+            <Text>{label}</Text>
         </View>
     )
 }
