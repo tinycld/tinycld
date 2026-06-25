@@ -9,6 +9,7 @@ import { ImportNotifier } from '@tinycld/core/components/workspace/ImportNotifie
 import { SkeletonLayout } from '@tinycld/core/components/workspace/SkeletonLayout'
 import { WorkspaceLayout } from '@tinycld/core/components/workspace/WorkspaceLayout'
 import { useAuth } from '@tinycld/core/lib/auth'
+import { trace } from '@tinycld/core/lib/debug-trace'
 import { useHelpSearchShortcut } from '@tinycld/core/lib/help/use-help-search-shortcut'
 import { markNavMilestone } from '@tinycld/core/lib/nav-perf'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
@@ -19,6 +20,8 @@ import { useEffect } from 'react'
 
 export default function OrgLayout() {
     const { orgSlug = '' } = useGlobalSearchParams<{ orgSlug: string }>()
+
+    trace('OrgLayout mount', { orgSlug })
 
     return (
         <OrgSlugProvider slug={orgSlug}>
