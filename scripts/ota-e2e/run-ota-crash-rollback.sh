@@ -216,13 +216,19 @@ mint_ios_bundle() {
     # and the token is one-shot. On a fresh container we run bootstrap+install; on a
     # reused (already-bootstrapped) container we run install-only. Pick the right
     # test set by probing for the user.
+    # The install spec is a serial lifecycle: prove the compat gate rejects
+    # calendar-slots without calendar, install calendar, install calendar-slots
+    # (this is what mints the ios bundle via expo export), then uninstall +
+    # reinstall to exercise the _migrations row-purge. Match them all so they run
+    # in file order; the bootstrap step is added only on a fresh container.
+    local lifecycle='compat gate|install calendar \(calendar-slots prerequisite\)|install calendar-slots succeeds with calendar present|drops all booking tables|reinstall recreates all booking tables'
     local grep_expr
     if superuser_exists; then
         log "superuser already exists — running install-only (skipping the one-shot bootstrap)"
-        grep_expr='install @tinycld/calendar-slots through the installer UI'
+        grep_expr="${lifecycle}"
     else
         log "fresh container — running bootstrap + install"
-        grep_expr='bootstrap superuser via /admin wizard|install @tinycld/calendar-slots through the installer UI'
+        grep_expr="bootstrap superuser via /admin wizard|${lifecycle}"
     fi
 
     log "installing ${PKG_SPEC} (mints the ios bundle via expo export — several minutes)…"

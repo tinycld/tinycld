@@ -95,6 +95,56 @@ func syncMigrations(app core.App, applied, newSet []string) (SyncResult, error) 
 	return SyncResult{Reverted: reverted, Pending: up, SkippedUnregistered: skipped}, nil
 }
 
+// purgeUnregisteredPackageRows deletes the _migrations history rows for an
+// uninstalled package's migrations that syncMigrations could NOT revert because
+// they weren't registered in the running binary (the SkippedUnregistered set).
+//
+// Why this is needed: an uninstall runs DOWN only for migrations still registered
+// in core.AppMigrations (registeredOnly). When the active build no longer carries
+// a package's JS migrations (e.g. after a prior failed-install rollback), they're
+// unregistered, so their Down is skipped AND their _migrations rows are left
+// behind. A later REINSTALL then sees those rows as "already applied" and skips
+// the Up entirely — so the package's tables are never (re)created even though the
+// install reports success. Clearing the stranded rows lets a reinstall re-run the
+// Up cleanly. We only touch rows OWNED by the uninstalled slug (per the migration
+// owner map) AND in the skipped set, so no other package's (or core's) history is
+// affected. Schema the skipped Down would have dropped may persist (we have no
+// Down to run) — that's logged separately; the row purge is what unblocks
+// reinstall, which is the reported symptom.
+func purgeUnregisteredPackageRows(app core.App, slug string, skipped []string) ([]string, error) {
+	if slug == "" || len(skipped) == 0 {
+		return nil, nil
+	}
+	owned := make(map[string]bool)
+	for _, f := range migrationsForPackage(slug) {
+		owned[f] = true
+	}
+	purged := []string{}
+	for _, f := range skipped {
+		// Prefer the authoritative owner map; fall back to a slug-substring match on
+		// the filename when the map is stale/absent (e.g. the active build already
+		// dropped this package), so a deeply-stranded row is still recoverable. The
+		// convention is `<ts>_<...slug...>.js`, so requiring the slug in the name
+		// avoids touching unrelated files.
+		if !owned[f] && !strings.Contains(f, slug) {
+			continue
+		}
+		applied, err := migrationApplied(app, f)
+		if err != nil {
+			return purged, err
+		}
+		if !applied {
+			continue
+		}
+		if err := deleteMigrationRow(app, f); err != nil {
+			return purged, err
+		}
+		purged = append(purged, f)
+	}
+	sort.Strings(purged)
+	return purged, nil
+}
+
 // unregisteredOnly is the complement of registeredOnly: the files NOT resolvable
 // in the running binary's core.AppMigrations. For an uninstall these are the
 // dropped package's migrations whose Down can't run — diagnostic only.

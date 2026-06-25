@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
@@ -284,7 +285,23 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 			if err != nil {
 				return SyncResult{}, err
 			}
-			return syncMigrations(app, applied, newSet)
+			res, err := syncMigrations(app, applied, newSet)
+			if err != nil {
+				return res, err
+			}
+			// On uninstall, clear any of the package's history rows whose Down was
+			// skipped (unregistered) so a future reinstall isn't blocked by stale
+			// "already applied" rows. Best-effort: a failure here is logged, not
+			// fatal — the build is already correct schema-wise.
+			if job.Action == "uninstall" && len(res.SkippedUnregistered) > 0 {
+				purged, pErr := purgeUnregisteredPackageRows(app, job.Slug, res.SkippedUnregistered)
+				if pErr != nil {
+					jobLogf(job, "WARNING: purging stranded %s migration rows failed (reinstall may skip its Up): %v", job.Slug, pErr)
+				} else if len(purged) > 0 {
+					jobLogf(job, "purged %d stranded %s _migrations row(s) whose Down was unregistered: %s", len(purged), job.Slug, strings.Join(purged, ", "))
+				}
+			}
+			return res, nil
 		},
 		activate:  activateBuild,
 		recoverDB: func() error { return recoverLiveDBAfterExternalWrite(app) },

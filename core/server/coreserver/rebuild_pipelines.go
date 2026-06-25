@@ -66,6 +66,17 @@ func resolveInstallSlugVersion(app *pocketbase.PocketBase, job *installJob) (slu
 	if err := validateManifest(manifest, hasGoPrereqs, bundledSlugs); err != nil {
 		return "", "", err
 	}
+	// Gate on the package's declared peerVersions before any workspace mutation or
+	// migration runs. Without this a package with a hard dependency (e.g. a
+	// relation field into another package's collection) installs against an absent
+	// dependency, its create migration throws and rolls back, and the install
+	// reports success with no tables created. Failing here surfaces the missing
+	// dependency as a clear error instead. The slug is now known, so the caller has
+	// already keyed the install-log row to it (updateInstallLogSlug) — a violation
+	// is therefore observable via /status/<slug>.
+	if err := checkInstallCompat(app, manifest); err != nil {
+		return manifest.Slug, manifest.Version, err
+	}
 	return manifest.Slug, manifest.Version, nil
 }
 
@@ -80,13 +91,19 @@ func runInstallRebuild(app *pocketbase.PocketBase, job *installJob) {
 	jobLogf(job, "INSTALL requested: spec=%s (job %s)", job.NpmPkg, job.ID)
 
 	slug, version, err := resolveInstallSlugVersion(app, job)
+	// resolveInstallSlugVersion returns the slug as soon as the manifest parses,
+	// even when it then fails (e.g. the compat gate). Key the install-log row to
+	// that slug BEFORE finalizing, so a resolve/compat failure is observable via
+	// /status/<slug> rather than only under the raw npm spec.
+	if slug != "" {
+		job.Slug = slug
+		updateInstallLogSlug(app, logRecord, slug)
+	}
 	if err != nil {
 		finalizeInstallLog(app, logRecord, "failed", err.Error(), job.LogLines)
 		_ = failJob(job, "resolve", err)
 		return
 	}
-	job.Slug = slug
-	updateInstallLogSlug(app, logRecord, slug)
 
 	current, err := buildCurrentMemberSet(app)
 	if err != nil {
