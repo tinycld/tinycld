@@ -1,8 +1,9 @@
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
+import { getResolvedAddress } from '@tinycld/core/lib/server-address'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import PocketBase from 'pocketbase'
 import { useRef, useState } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SetupDashboard } from './SetupDashboard'
 
@@ -34,7 +35,14 @@ export function SetupWizard({ token }: SetupWizardProps) {
     const [submitError, setSubmitError] = useState<string | null>(null)
     const [isSubmitting, setIsSubmitting] = useState(false)
 
-    const defaultAppUrl = typeof window !== 'undefined' ? window.location.origin : PB_SERVER_ADDR
+    // On web the app is served same-origin, so window.location.origin is the app
+    // URL. On native there is no window.location (RN defines a partial `window`
+    // WITHOUT `location`, so a `typeof window` check wrongly takes the web branch
+    // and throws "Cannot read property 'origin' of undefined") — use the resolved
+    // server address instead. getResolvedAddress() may be null pre-connect; fall
+    // back to '' so the field is simply empty rather than crashing render.
+    const defaultAppUrl =
+        Platform.OS === 'web' ? window.location.origin : (getResolvedAddress() ?? '')
 
     const {
         control,
