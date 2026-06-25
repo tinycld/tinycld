@@ -2,8 +2,10 @@ package coreserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/pocketbase/pocketbase"
@@ -164,12 +166,58 @@ func peerVersionsFromManifest(manifestJSON string) map[string]string {
 	return parsed.PeerVersions
 }
 
-// verifyTargetPeerVersions re-checks ONE changing package's freshly-fetched
-// target peerVersions against the resolved post-change version set. This catches
-// a target version that tightens its own requirements beyond what its currently
-// installed manifest declared (the pre-flight gate only sees installed
-// manifests). resolved must already reflect every proposed change. Returns the
-// violations contributed by this package's target manifest (empty if compatible).
+// compatError renders violations into a single human-readable error for pipeline
+// failures (the UI uses the structured list; the pipeline surfaces prose). Returns
+// nil for an empty slice so callers can `return compatError(v)` unconditionally.
+func compatError(violations []compatViolation) error {
+	if len(violations) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(violations))
+	for _, v := range violations {
+		found := v.Found
+		if found == "" {
+			found = "not installed"
+		}
+		lines = append(lines, fmt.Sprintf(
+			"%s requires %s %s (found: %s)", v.Package, v.Requires, v.Range, found,
+		))
+	}
+	return fmt.Errorf(
+		"package compatibility check failed:\n  %s", strings.Join(lines, "\n  "),
+	)
+}
 
-// compatError renders violations into a human-readable multi-line message for
-// pipeline failures (the UI uses the structured list; the pipeline logs prose).
+// checkInstallCompat gates a fresh install on the incoming package's declared
+// peerVersions BEFORE any workspace mutation or migration. It resolves the
+// currently-installed version set from pkg_registry, overlays the incoming
+// package at its own version, and runs the same solver the Versions UI uses —
+// but here it also evaluates the NOT-yet-installed package's own requirements,
+// which the install path never checked before (so a package with a hard relation
+// into an absent dependency could install and silently roll its migration back,
+// leaving no tables). A requirement on an absent package resolves to Found="" and
+// is a violation. Returns nil when compatible.
+func checkInstallCompat(app core.App, m *parsedManifest) error {
+	if len(m.PeerVersions) == 0 {
+		return nil
+	}
+
+	records, err := app.FindRecordsByFilter("pkg_registry", "id != ''", "slug", 0, 0)
+	if err != nil {
+		return fmt.Errorf("load package registry for compat check: %w", err)
+	}
+
+	resolved := map[string]string{}
+	for _, rec := range records {
+		resolved[rec.GetString("slug")] = rec.GetString("version")
+	}
+	// Overlay the incoming package at its own version so a self-referential or
+	// reflexive constraint resolves rather than reporting itself absent.
+	resolved[m.Slug] = m.Version
+	if coreVer, ok := resolved["core"]; ok {
+		resolved[corePackageKey] = coreVer
+	}
+
+	violations := solveCompat(resolved, map[string]map[string]string{m.Slug: m.PeerVersions})
+	return compatError(violations)
+}
