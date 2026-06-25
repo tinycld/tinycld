@@ -246,18 +246,27 @@ func pnpmLineProgress(line string) int {
 // export …`. Returns the buffered output + error like runCmd.
 func runExportWithProgress(job *installJob, lo, hi int, step, dir string, args ...string) (string, error) {
 	throttle := newPnpmProgressThrottle()
-	// Match the EAS `production` profile's env (eas.json) so the OTA bundle is
-	// built identically to the embedded one EAS ships. The embedded build sets
-	// EXPO_PUBLIC_ENV=production; without it the OTA bundle takes different
-	// EXPO_PUBLIC_* branches (e.g. server-address.ts reads EXPO_PUBLIC_ENV) — a
-	// real embedded-vs-OTA divergence. Scope the vars to THIS command via `env`
-	// (not os.Setenv) so other pipeline steps are unaffected. Operator overrides
-	// already in the server environment win (env applies left-to-right, but expo
-	// reads the last value; we set our defaults only — callers can export their
-	// own before starting the server to override). NODE_ENV defaults to production
-	// for `expo export` already; we set it explicitly for parity.
+	// EXPO_PUBLIC_* vars are inlined into the bundle at export time, so they must
+	// be correct for the TARGET platform — NOT inherited from the container env.
+	// The runtime image sets ENV EXPO_PUBLIC_ENV=web (for the baked web build), and
+	// that value persists into this in-app rebuild. A NATIVE bundle exported with
+	// EXPO_PUBLIC_ENV=web drives server-address.ts down the web branch
+	// (webShortcut → window.location.origin), which throws on a device (RN has no
+	// window.location) → the OTA bundle crashed at configureCore() module-init
+	// before any screen rendered. So derive the env from --platform: the web export
+	// keeps `web`; native (ios/android) is forced to `production` (the EAS profile
+	// the embedded build ships), regardless of the container's EXPO_PUBLIC_ENV.
+	// Scope the vars to THIS command via `env` so other pipeline steps are
+	// unaffected. NODE_ENV defaults to production for `expo export`; set explicitly
+	// for parity.
+	publicEnv := "production"
+	for i, a := range args {
+		if a == "--platform" && i+1 < len(args) && args[i+1] == "web" {
+			publicEnv = "web"
+		}
+	}
 	exportArgs := append([]string{
-		"EXPO_PUBLIC_ENV=" + envOr("EXPO_PUBLIC_ENV", "production"),
+		"EXPO_PUBLIC_ENV=" + publicEnv,
 		"NODE_ENV=production",
 		"pnpm", "exec", "expo", "export",
 	}, args...)
