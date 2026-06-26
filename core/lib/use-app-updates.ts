@@ -2,10 +2,11 @@ import {
     checkForUpdate,
     downloadAndStage,
     isUpdateTransportAllowed,
+    reportBadBundle,
 } from '@tinycld/core/lib/app-updater/client'
 import { sha256HexOfFile } from '@tinycld/core/lib/app-updater/hash'
-import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
+import { getResolvedAddress } from '@tinycld/core/lib/server-address'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import AppUpdater from 'app-updater'
 import * as FileSystem from 'expo-file-system/legacy'
@@ -41,12 +42,16 @@ async function runUpdateCheck(): Promise<void> {
     const platform = Platform.OS === 'ios' ? 'ios' : 'android'
 
     try {
-        // PB_SERVER_ADDR throws if the app hasn't connected to a server yet, so
-        // reading it here is the gate: no update check runs until connected. The
-        // surrounding try/catch swallows that throw as a no-op. Coerce to a plain
-        // string once (it's a lazy Proxy) so we evaluate the transport policy and
-        // fetch against the same resolved address.
-        const serverUrl = String(PB_SERVER_ADDR)
+        // Gate on the resolved address WITHOUT throwing. This check fires from the
+        // launch timer AND from handleAppStateChange (every foreground), either of
+        // which can run before the _layout.tsx server-address gate has resolved —
+        // e.g. on a cold boot, or in a build where EXPO_PUBLIC_ENV didn't seed an
+        // address. Reading String(PB_SERVER_ADDR) there THROWS ("accessed before
+        // resolved"); the catch below then reports it to Sentry on every such
+        // foreground — noise, not a bug. Use the non-throwing getResolvedAddress()
+        // and bail as a clean no-op until connected, exactly like reportRevertedBundle.
+        const serverUrl = getResolvedAddress()
+        if (!serverUrl) return
 
         // Refuse to fetch/verify/stage a bundle over an untrusted transport. The
         // per-file SHA-256 check is worthless against a MITM on plaintext http://
@@ -128,14 +133,66 @@ async function runUpdateCheck(): Promise<void> {
     }
 }
 
+// reportRevertedBundle runs on boot (and again on each foreground): if the native
+// side rolled a bundle back (this device crash-looped on it and recovered), tell
+// the server so it stops advertising that bundle to the rest of the fleet.
+// Best-effort — the local rollback already protected THIS device; this is
+// fleet-wide signal, so any failure (offline, server down) is swallowed. Runs in
+// the RECOVERED (good) bundle, the only place a network call can reliably complete.
+// Exported for unit testing (the gate-ordering invariant below is the regression
+// guard for a crash where it consumed the marker then threw pre-gate).
+export async function reportRevertedBundle(): Promise<void> {
+    if (__DEV__ || Platform.OS === 'web') return
+
+    // Gate on the resolved address WITHOUT consuming the reverted marker. Reading
+    // it via getResolvedAddress() (not String(PB_SERVER_ADDR)) avoids the throw
+    // that proxy raises pre-gate — this effect fires on the layout's first commit,
+    // which can beat the server-address gate. Bailing BEFORE takeRevertedBundle()
+    // (read-once) leaves the marker intact so the next foreground retries; the old
+    // order consumed it then threw, both losing the report AND spamming Sentry with
+    // a non-bug.
+    const serverUrl = getResolvedAddress()
+    if (!serverUrl || !isUpdateTransportAllowed(serverUrl)) return
+
+    const reverted = AppUpdater.takeRevertedBundle()
+    if (!reverted) return
+    try {
+        // Prefer the detail the fatal handler persisted (the offending regex
+        // pattern + Hermes error) so the report-bad row names WHY the bundle
+        // crashed — not just that it did. Older binaries return no `error`; fall
+        // back to the generic reason then.
+        const detail =
+            'error' in reverted && reverted.error
+                ? reverted.error
+                : 'client rolled back: bundle failed to reach healthy'
+        await reportBadBundle({
+            serverUrl,
+            platform: Platform.OS === 'ios' ? 'ios' : 'android',
+            id: reverted.id,
+            hash: reverted.hash,
+            error: detail,
+            fetchFn: fetch,
+        })
+    } catch (error) {
+        captureException('use-app-updates.report-bad', error, { id: reverted.id })
+    }
+}
+
 export function useAppUpdates(): void {
     useEffect(() => {
         if (__DEV__ || Platform.OS === 'web') return
+
+        // Report a bundle this device just rolled back, before checking for new
+        // ones — so the server can stop serving it to others right away. No-ops
+        // (keeping the marker) until the server-address gate resolves, so it's also
+        // re-attempted on each foreground below until it gets through.
+        void reportRevertedBundle()
 
         const launchTimer = setTimeout(checkAndApplyUpdate, LAUNCH_DELAY_MS)
 
         const handleAppStateChange = (next: AppStateStatus) => {
             if (next === 'active') {
+                void reportRevertedBundle()
                 checkAndApplyUpdate()
             }
         }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -23,7 +24,15 @@ const postinstallScript = "tsx scripts/link-members.ts && cd tinycld && pnpm run
 // manifests) a build needs but that aren't fetched per-member: the link-members
 // script, the package-enumeration helper, the shared test stubs, and .npmrc.
 // They are copied verbatim from the active build's root.
-var scaffoldExtras = []string{".npmrc", "tinycld.packages.ts", "scripts", "tests"}
+var scaffoldExtras = []string{".npmrc", "tinycld.packages.ts", "scripts", "tests", overridesFile}
+
+// overridesFile is the workspace-root data file holding the framework/native/
+// styling version pins. writePnpmWorkspaceYAML transcribes it into the pnpm
+// `overrides:` key so a `pnpm install --no-frozen-lockfile` (the OTA rebuild's
+// install) can't drift these deps off the embedded native binary. It is copied
+// verbatim from the active build into each new build (via scaffoldExtras), the
+// same single source bootstrap's assemble-workspace.ts reads on a dev machine.
+const overridesFile = "pnpm-overrides.json"
 
 // writeWorkspaceScaffold writes the workspace-root manifests into buildDir and
 // copies the static scaffold extras from srcRoot (the active build's root).
@@ -45,10 +54,13 @@ func writeWorkspaceScaffoldFrom(buildDir string, members []string, srcRoot strin
 	if err := writeRootPackageJSON(buildDir, members); err != nil {
 		return err
 	}
-	if err := writePnpmWorkspaceYAML(buildDir, members); err != nil {
+	// Copy the scaffold extras FIRST: writePnpmWorkspaceYAML reads
+	// pnpm-overrides.json (a scaffold extra) to emit the `overrides:` block, so
+	// the file must already be in buildDir when the YAML is generated.
+	if err := copyScaffoldExtras(srcRoot, buildDir); err != nil {
 		return err
 	}
-	return copyScaffoldExtras(srcRoot, buildDir)
+	return writePnpmWorkspaceYAML(buildDir, members)
 }
 
 // copyScaffoldExtras copies each scaffoldExtras entry from srcRoot to buildDir.
@@ -259,6 +271,10 @@ func writeRootPackageJSON(buildDir string, members []string) error {
 }
 
 func writePnpmWorkspaceYAML(buildDir string, members []string) error {
+	overrides, err := readOverrides(buildDir)
+	if err != nil {
+		return err
+	}
 	var sb strings.Builder
 	sb.WriteString("nodeLinker: hoisted\n")
 	sb.WriteString("linkWorkspacePackages: true\n")
@@ -273,5 +289,51 @@ func writePnpmWorkspaceYAML(buildDir string, members []string) error {
 	sb.WriteString("\nallowBuilds:\n")
 	sb.WriteString("  esbuild: true\n")
 	sb.WriteString("  '@sentry/cli': true\n")
+	sb.WriteString(renderOverridesBlock(overrides))
 	return os.WriteFile(filepath.Join(buildDir, "pnpm-workspace.yaml"), []byte(sb.String()), 0o644)
+}
+
+// readOverrides loads the version pins from pnpm-overrides.json in buildDir
+// (copied there as a scaffold extra). The pins force the framework/native/
+// styling stack to the embedded-binary versions so the OTA rebuild's
+// `pnpm install --no-frozen-lockfile` can't drift them. The file is required in
+// a real build (it's baked into the image and copied from the active build); a
+// missing or malformed file is a hard error rather than a silently-unpinned
+// install that recompiles classNames wrong on every device.
+func readOverrides(buildDir string) (map[string]string, error) {
+	raw, err := os.ReadFile(filepath.Join(buildDir, overridesFile))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", overridesFile, err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", overridesFile, err)
+	}
+	delete(m, "//") // documentation key, not a package
+	if len(m) == 0 {
+		return nil, fmt.Errorf("%s has no version pins", overridesFile)
+	}
+	return m, nil
+}
+
+// renderOverridesBlock formats the pins as a pnpm `overrides:` YAML block,
+// sorted for a stable, diff-friendly output. A package name containing a
+// character YAML would otherwise interpret (the leading @ of a scope) is single-
+// quoted; plain names are emitted bare, matching the hand-written committed root.
+func renderOverridesBlock(overrides map[string]string) string {
+	names := make([]string, 0, len(overrides))
+	for name := range overrides {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var sb strings.Builder
+	sb.WriteString("\noverrides:\n")
+	for _, name := range names {
+		key := name
+		if strings.HasPrefix(name, "@") {
+			key = "'" + name + "'"
+		}
+		sb.WriteString(fmt.Sprintf("  %s: %s\n", key, overrides[name]))
+	}
+	return sb.String()
 }

@@ -5,9 +5,6 @@
         "scheme": "tinycld",
         "platforms": ["ios", "android", "web"],
         "userInterfaceStyle": "automatic",
-        "runtimeVersion": {
-            "policy": "appVersion"
-        },
         "plugins": [
             [
                 "expo-router",
@@ -42,7 +39,6 @@
         },
         "ios": {
             "bundleIdentifier": "org.tinycld.app",
-            "buildNumber": "1",
             "supportsTablet": true,
             "associatedDomains": ["applinks:tinycld.org"],
             "infoPlist": {

@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkForUpdate, downloadAndStage, isUpdateTransportAllowed } from '../client'
+import {
+    checkForUpdate,
+    downloadAndStage,
+    isUpdateTransportAllowed,
+    postBootBeacon,
+    reportBadBundle,
+} from '../client'
 import type { UpdateManifest } from '../types'
 
 const MANIFEST: UpdateManifest = {
@@ -149,6 +155,62 @@ describe('downloadAndStage', () => {
         const d = stageDeps({ hashFn })
         await expect(downloadAndStage(manifestWithAsset, d)).rejects.toThrow(/hash mismatch/)
         expect(d.stageBundleFn).not.toHaveBeenCalled()
+    })
+})
+
+describe('reportBadBundle', () => {
+    it('POSTs the bundle id/hash/platform/error to report-bad', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+        await reportBadBundle({
+            serverUrl: 'https://srv.test',
+            platform: 'ios',
+            id: 'build-200-ios',
+            hash: 'HASH',
+            error: 'rolled back',
+            fetchFn,
+        })
+        expect(fetchFn).toHaveBeenCalledWith(
+            'https://srv.test/api/app/update/report-bad',
+            expect.objectContaining({ method: 'POST' })
+        )
+        const [, opts] = fetchFn.mock.calls[0]
+        expect(JSON.parse(opts.body)).toEqual({
+            id: 'build-200-ios',
+            hash: 'HASH',
+            platform: 'ios',
+            error: 'rolled back',
+        })
+    })
+})
+
+describe('postBootBeacon', () => {
+    it('POSTs the bundle id/platform/hash to /api/app/boot', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({ ok: true, status: 200 })
+        await postBootBeacon({
+            serverUrl: 'https://srv.test',
+            platform: 'ios',
+            id: 'build-200-ios',
+            hash: 'HASH',
+            fetchFn,
+        })
+        expect(fetchFn).toHaveBeenCalledWith('https://srv.test/api/app/boot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: 'build-200-ios', platform: 'ios', hash: 'HASH' }),
+        })
+    })
+
+    it('throws on a non-ok response', async () => {
+        const fetchFn = vi.fn().mockResolvedValue({ ok: false, status: 500 })
+        await expect(
+            postBootBeacon({
+                serverUrl: 'https://srv.test',
+                platform: 'ios',
+                id: 'x',
+                hash: 'h',
+                fetchFn,
+            })
+        ).rejects.toThrow(/500/)
     })
 })
 

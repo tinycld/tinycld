@@ -20,6 +20,12 @@ type streamingRunner func(onLine func(string), dir, name string, args ...string)
 // progress parsing.
 var pnpmStream streamingRunner = runCmdStreaming
 
+// expoStream is the streaming runner the expo-export steps (web + native) use, so
+// Metro's per-module bundling progress reaches the bar instead of the step sitting
+// frozen for the minutes a cold bundle takes. A package var for the same
+// test-stubbing reason as pnpmStream.
+var expoStream streamingRunner = runCmdStreaming
+
 // pnpmProgressInterval is the minimum gap between forwarded "Progress:" lines.
 // pnpm's non-TTY reporter emits one every few hundred ms on a large graph, which
 // floods the SSE stream and makes the bar look busier than the install actually
@@ -88,9 +94,13 @@ func runBuildPipelineWith(
 	}); err != nil {
 		return buildOutput{}, wrapStep("go build", err)
 	}
-	emitProgress(job, "Exporting web bundle", progExpoWeb, "expo export")
+	// The web bundle owns [progGoBuild, progExpoWeb): runExportWithProgress climbs
+	// the bar through it from Metro's per-module progress so a cold (multi-minute)
+	// bundle visibly advances instead of parking at one value.
+	emitProgress(job, "Exporting web bundle", progGoBuild, "expo export --platform web")
 	if err := timeStep(job, "expo export (web bundle)", func() error {
-		_, e := run(appDir, "pnpm", "exec", "expo", "export", "--platform", "web")
+		_, e := runExportWithProgress(job, progGoBuild, progExpoWeb,
+			"Exporting web bundle", appDir, "--platform", "web")
 		return e
 	}); err != nil {
 		return buildOutput{}, wrapStep("expo export", err)
@@ -227,4 +237,120 @@ func pnpmLineProgress(line string) int {
 	default:
 		return 0
 	}
+}
+
+// runExportWithProgress runs an `expo export` invocation through the streaming
+// runner, forwarding Metro's bundling progress onto the [lo, hi) band so the bar
+// climbs through the (minutes-long, on a cold cache) bundle instead of sitting
+// frozen at lo. step is the SSE step label; args are passed to `pnpm exec expo
+// export …`. Returns the buffered output + error like runCmd.
+func runExportWithProgress(job *installJob, lo, hi int, step, dir string, args ...string) (string, error) {
+	throttle := newPnpmProgressThrottle()
+	// EXPO_PUBLIC_* vars are inlined into the bundle at export time, so they must
+	// be correct for the TARGET platform — NOT inherited from the container env.
+	// The runtime image sets ENV EXPO_PUBLIC_ENV=web (for the baked web build), and
+	// that value persists into this in-app rebuild. A NATIVE bundle exported with
+	// EXPO_PUBLIC_ENV=web drives server-address.ts down the web branch
+	// (webShortcut → window.location.origin), which throws on a device (RN has no
+	// window.location) → the OTA bundle crashed at configureCore() module-init
+	// before any screen rendered. So derive the env from --platform: the web export
+	// keeps `web`; native (ios/android) is forced to `production` (the EAS profile
+	// the embedded build ships), regardless of the container's EXPO_PUBLIC_ENV.
+	// Scope the vars to THIS command via `env` so other pipeline steps are
+	// unaffected. NODE_ENV defaults to production for `expo export`; set explicitly
+	// for parity.
+	publicEnv := "production"
+	for i, a := range args {
+		if a == "--platform" && i+1 < len(args) && args[i+1] == "web" {
+			publicEnv = "web"
+		}
+	}
+	exportArgs := append([]string{
+		"EXPO_PUBLIC_ENV=" + publicEnv,
+		"NODE_ENV=production",
+		"pnpm", "exec", "expo", "export",
+	}, args...)
+	return expoStream(
+		func(line string) { reportExpoProgress(job, line, step, lo, hi, throttle) },
+		dir, "env", exportArgs...,
+	)
+}
+
+// reportExpoProgress maps one `expo export` output line onto the [lo, hi) band.
+// Metro's non-TTY reporter prints per-module bundling lines carrying a running
+// percentage ("Web …entry.js ▓▓░░ 34.5% (1252/2155)"), then a "… Bundled <ms> …"
+// line and a final "Exported: <dir>". We translate the percentage linearly into
+// the band so the bar tracks the actual bundle, and park near the top on the
+// terminal markers. Lines without a recognizable signal keep the bar where it is.
+//
+// The high-frequency percentage lines are throttle-gated (one update per
+// pnpmProgressInterval) exactly like pnpm's "Progress:" lines; the low-frequency
+// "Bundled"/"Exported" markers always pass.
+func reportExpoProgress(job *installJob, line, step string, lo, hi int, throttle *pnpmProgressThrottle) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	frac, isPct := expoLineFraction(line)
+	switch {
+	case isPct:
+		if !throttle.allow(nowFunc()) {
+			return // a percentage line still inside the throttle window — drop it
+		}
+		emitProgress(job, step, bandPct(lo, hi, frac), line)
+	case strings.Contains(line, "Bundled "), strings.HasPrefix(line, "Exported:"):
+		// Bundle finished / written — park just below hi (staging owns hi).
+		emitProgress(job, step, hi-1, line)
+	default:
+		// Asset listings, the per-file output dump, warnings — keep the bar put.
+	}
+}
+
+// expoLineFraction extracts the bundling fraction (0..1) from a Metro progress
+// line of the form "… <NN.N>% (n/total)". Returns ok=false when the line carries
+// no such percentage. Parsed by hand (no regexp) against Metro's stable shape:
+// find "% (" and read the float immediately before the percent sign.
+func expoLineFraction(line string) (float64, bool) {
+	i := strings.Index(line, "% (")
+	if i <= 0 {
+		return 0, false
+	}
+	// Walk back over the number (digits and a single dot) preceding '%'.
+	start := i
+	for start > 0 {
+		c := line[start-1]
+		if (c >= '0' && c <= '9') || c == '.' {
+			start--
+			continue
+		}
+		break
+	}
+	num := line[start:i]
+	if num == "" || num == "." {
+		return 0, false
+	}
+	var pct float64
+	if _, err := fmt.Sscanf(num, "%f", &pct); err != nil {
+		return 0, false
+	}
+	if pct < 0 {
+		pct = 0
+	} else if pct > 100 {
+		pct = 100
+	}
+	return pct / 100, true
+}
+
+// bandPct maps a fraction (0..1) onto [lo, hi), clamped to never reach hi (the
+// next milestone owns hi) so the bar stays monotonic across phase boundaries.
+func bandPct(lo, hi int, frac float64) int {
+	span := hi - lo
+	p := lo + int(frac*float64(span))
+	if p >= hi {
+		p = hi - 1
+	}
+	if p < lo {
+		p = lo
+	}
+	return p
 }

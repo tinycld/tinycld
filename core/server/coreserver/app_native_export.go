@@ -237,13 +237,21 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 	for i, p := range platforms {
 		outDir := filepath.Join(appDir, fmt.Sprintf("dist-%s", p))
 		os.RemoveAll(outDir) // clean any prior export
-		// Spread the per-platform exports across the native band
-		// [progNativeStart, progNativeEnd) so the bar advances per platform
-		// without ever exceeding the build pipeline's native ceiling.
+		// Carve the native band [progNativeStart, progNativeEnd) into one
+		// sub-band per platform so each export climbs its own slice from Metro's
+		// bundling progress, without ever exceeding the pipeline's native ceiling.
 		span := progNativeEnd - progNativeStart
-		pct := progNativeStart + (span*i)/len(platforms)
-		emitProgress(job, "Building "+string(p)+" bundle", pct, "Running expo export --platform "+string(p))
-		if cmdOut, err := runCmd(appDir, "pnpm", "exec", "expo", "export", "--platform", string(p), "--output-dir", outDir); err != nil {
+		lo := progNativeStart + (span*i)/len(platforms)
+		hi := progNativeStart + (span*(i+1))/len(platforms)
+		step := "Building " + string(p) + " bundle"
+		emitProgress(job, step, lo, "Running expo export --platform "+string(p))
+		// --source-maps external emits a <bundle>.hbc.map next to each .hbc so we can
+		// upload it to Sentry below (mirrors the web export's --source-maps external
+		// in the Dockerfile). Without it an OTA-bundle crash arrives as unsymbolicated
+		// minified frames — the gap that made this incident's crash unreadable.
+		// runExportWithProgress streams Metro's per-module progress onto [lo, hi).
+		if cmdOut, err := runExportWithProgress(job, lo, hi, step, appDir,
+			"--platform", string(p), "--source-maps", "external", "--output-dir", outDir); err != nil {
 			return nil, fmt.Errorf("expo export %s: %v: %s", p, err, cmdOut)
 		}
 		bm, err := parseExportMetadata(outDir, p, buildID, runtimeVersion)
@@ -251,9 +259,63 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 			return nil, fmt.Errorf("parse %s export: %w", p, err)
 		}
 		bm.distDir = outDir
+		// Upload this bundle's sourcemaps to Sentry keyed by dist = bundle_id, so a
+		// crash in this OTA bundle symbolicates. The client tags the same release +
+		// dist (see sentry.ts). Best-effort: a failed/skipped upload must NOT fail
+		// the install — the bundle is still deliverable, just harder to debug.
+		uploadBundleSourcemaps(job, outDir, runtimeVersion, bm.BundleID)
 		out = append(out, bm)
 	}
 	return out, nil
+}
+
+// envOr returns the environment variable named key, or def when it is unset/empty.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// sentryReleaseFor returns the Sentry `release` for an OTA bundle. It must match
+// what the running app reports in sentry.ts EXACTLY or symbolication silently
+// fails — both sides derive it the SAME way: "tinycld@<app-version>". We
+// deliberately do NOT include the native build number (the server doesn't know
+// it, and EAS auto-increments it); per-bundle disambiguation is carried by `dist`
+// (the bundle id), not the release.
+func sentryReleaseFor(runtimeVersion string) string {
+	return "tinycld@" + runtimeVersion
+}
+
+// uploadBundleSourcemaps uploads the .hbc + .map under outDir to Sentry via
+// sentry-cli, keyed by (release, dist). No-op (logs) when SENTRY_AUTH_TOKEN is
+// unset — self-hosters without Sentry build normally. Never returns an error:
+// the install succeeds whether or not the upload does.
+func uploadBundleSourcemaps(job *installJob, outDir, runtimeVersion, bundleID string) {
+	if os.Getenv("SENTRY_AUTH_TOKEN") == "" {
+		jobLogf(job, "sourcemap upload skipped for %s (SENTRY_AUTH_TOKEN unset)", bundleID)
+		return
+	}
+	release := sentryReleaseFor(runtimeVersion)
+	// org/project: ios/sentry.properties is prebuild output and is NOT in the
+	// server's build tree, so sentry-cli can't discover them — pass explicitly.
+	// Env-overridable (SENTRY_ORG/SENTRY_PROJECT) but defaulted to the known
+	// argosity/tinycld project so a standard deploy needs only the auth token.
+	org := envOr("SENTRY_ORG", "argosity")
+	project := envOr("SENTRY_PROJECT", "tinycld")
+	// sentry-cli reads SENTRY_AUTH_TOKEN from the env. Point it at the JS output
+	// dir; it pairs each minified file with its sibling .map.
+	jsDir := filepath.Join(outDir, "_expo", "static", "js")
+	out, err := runCmd(outDir, "pnpm", "exec", "sentry-cli", "sourcemaps", "upload",
+		"--org", org, "--project", project,
+		"--release", release, "--dist", bundleID, jsDir)
+	if err != nil {
+		// Surface to the job log AND Sentry-less stderr, but swallow: a debugging
+		// aid failing must never brick a working install.
+		jobLogf(job, "sourcemap upload FAILED for %s (release=%s): %v: %s", bundleID, release, err, out)
+		return
+	}
+	jobLogf(job, "uploaded sourcemaps for %s (release=%s)", bundleID, release)
 }
 
 // cleanupNativeExportDirs removes the per-platform `dist-<platform>` export dirs
@@ -268,11 +330,18 @@ func cleanupNativeExportDirs(bundles []bundleMeta) {
 	}
 }
 
-// appVersionFromManifest reads the Expo app version (app.json → expo.version),
-// which is the runtimeVersion under the appVersion policy. app.json may sit at
-// appDir in the runtime image or one level up in dev — try appDir then parent.
+// appVersionFromManifest resolves the Expo app version, which is the
+// runtimeVersion under the appVersion policy. The app's single source of truth
+// is package.json → version: app.config.ts injects it over a static app.json
+// that intentionally carries no expo.version (see app.config.ts). We mirror that
+// here rather than evaluate the TS config — read expo.version from app.json
+// first (in case a build pins it statically), then fall back to package.json's
+// version. Each file may sit at appDir in the runtime image or one level up in
+// dev, so try appDir then its parent for both.
 func appVersionFromManifest(appDir string) string {
-	for _, base := range []string{appDir, filepath.Dir(appDir)} {
+	bases := []string{appDir, filepath.Dir(appDir)}
+
+	for _, base := range bases {
 		raw, err := os.ReadFile(filepath.Join(base, "app.json"))
 		if err != nil {
 			continue
@@ -286,6 +355,22 @@ func appVersionFromManifest(appDir string) string {
 			return cfg.Expo.Version
 		}
 	}
+
+	// app.json had no expo.version — the normal case here, since the version
+	// lives in package.json and is merged in by app.config.ts at config time.
+	for _, base := range bases {
+		raw, err := os.ReadFile(filepath.Join(base, "package.json"))
+		if err != nil {
+			continue
+		}
+		var pkg struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal(raw, &pkg) == nil && pkg.Version != "" {
+			return pkg.Version
+		}
+	}
+
 	return ""
 }
 

@@ -26,6 +26,12 @@ type Options struct {
 	PublicDir    string
 	FallbackFile string
 
+	// WebsiteDir is the marketing website's static root, served BEFORE PublicDir
+	// and the SPA fallback. Kept separate from PublicDir so the app's web export
+	// (which bundles PublicDir) can't absorb the site. Empty disables it (dev /
+	// com mode); org-mode deploys point it at the built Astro site.
+	WebsiteDir string
+
 	// ReleasesDir is the directory containing per-deploy web bundle state.
 	// On a deployed image it lives on the persistent volume and contains:
 	//   - <id>/             one dir per retained release, holding app.html
@@ -206,6 +212,8 @@ func registerFlags(app *pocketbase.PocketBase, opts *Options) {
 		"the directory with the user defined migrations")
 	f.BoolVar(&opts.Automigrate, "automigrate", opts.Automigrate, "enable/disable auto migrations")
 	f.StringVar(&opts.PublicDir, "publicDir", opts.PublicDir, "the directory to serve static files")
+	f.StringVar(&opts.WebsiteDir, "websiteDir", opts.WebsiteDir,
+		"the directory with the marketing website, served before publicDir (empty disables)")
 	f.StringVar(&opts.FallbackFile, "fallbackFile", opts.FallbackFile,
 		"fallback to this file on missing static path for SPA routes")
 	f.StringVar(&opts.ReleasesDir, "releasesDir", opts.ReleasesDir,
@@ -263,7 +271,7 @@ func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
 
 			if !e.Router.HasRoute(http.MethodGet, "/{path...}") {
 				if opts.ReleasesDir != "" {
-					e.Router.Any("/{path...}", StaticWithDynamicFallback(opts.PublicDir, opts.ReleasesDir))
+					e.Router.Any("/{path...}", StaticWithDynamicFallback(opts.PublicDir, opts.WebsiteDir, opts.ReleasesDir))
 				} else {
 					e.Router.Any("/{path...}", StaticWithFallback(opts.PublicDir, opts.FallbackFile))
 				}

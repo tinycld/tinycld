@@ -91,7 +91,7 @@ ENV TINYCLD_EXPORT_TYPES_BIN=/usr/local/bin/export-types
 # Root manifests + shared test stubs + the workspace-root scripts (link-members).
 # Copied first so the subsequent member COPYs are the only thing that changes
 # between most builds.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc tinycld.packages.ts ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml pnpm-overrides.json .npmrc tinycld.packages.ts ./
 COPY scripts/ ./scripts/
 COPY tests/ ./tests/
 
@@ -344,6 +344,20 @@ ENV AUTOCERT_ENABLED=""
 ENV PUBLIC_SCHEME=""
 ENV FZ_VERSION="1.25.1"
 
+# Heap limit for the Node processes the in-app package installer spawns —
+# primarily `expo export` (web + the native OTA bundles). The full-ecosystem
+# bundle (every member's screens/sidebars) plus `--source-maps external` blows
+# past Node's default old-space ceiling and OOM-aborts the export (SIGABRT,
+# "Ineffective mark-compacts near heap limit"); dev.ts and the EAS production
+# build already run this same export at 8192 for that reason. The web-builder
+# stage sets its own NODE_OPTIONS, which does NOT carry into this runtime stage,
+# so the runtime installer previously ran with no limit. 4096 fits the bundle on
+# a typical server container; raise it (or lower to match a smaller box) via
+# `dokku config:set <app> NODE_OPTIONS=--max-old-space-size=<MB>`, which overrides
+# this default. Must be <= the container's memory limit or the kernel OOM-kills
+# the process before V8's soft limit ever applies.
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
 # Install runtime dependencies + Node for runtime tasks. Cron jobs in bin/
 # invoke `pnpm exec tsx scripts/<x>.ts` (reset-demo, seed-db), so Node must be on
 # PATH. libcap2-bin (setcap) is needed at image build time below; we keep it
@@ -455,7 +469,7 @@ RUN mkdir -p /opt/tinycld-baked/tinycld/public
 # in-app installer's postinstall re-runs it). They sit at /workspace (one
 # directory above /workspace/tinycld) so the symlinks
 # (node_modules/@tinycld/<x> → ../../<x>) still point at the members copied below.
-COPY --from=web-builder --chown=tinycld:tinycld /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/.npmrc /opt/tinycld-baked/
+COPY --from=web-builder --chown=tinycld:tinycld /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/pnpm-overrides.json /ws/.npmrc /opt/tinycld-baked/
 COPY --from=web-builder --chown=tinycld:tinycld /ws/tinycld.packages.ts /opt/tinycld-baked/tinycld.packages.ts
 COPY --from=web-builder --chown=tinycld:tinycld /ws/scripts /opt/tinycld-baked/scripts
 COPY --from=web-builder --chown=tinycld:tinycld /ws/tests /opt/tinycld-baked/tests

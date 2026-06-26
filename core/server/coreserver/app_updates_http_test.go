@@ -2,6 +2,7 @@ package coreserver
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -53,12 +54,32 @@ func newAppUpdateTestApp(t *testing.T) *tests.TestApp {
 			if buildID == "" {
 				return re.NoContent(http.StatusNoContent)
 			}
-			m, status := resolveManifest(bundles, platform, runtime, currentID, currentHash)
+			m, status := resolveNoBad(bundles, platform, runtime, currentID, currentHash)
 			if status != manifestNew {
 				return re.NoContent(http.StatusNoContent)
 			}
 			fillManifestURLs(&m, buildID, platform)
 			return re.JSON(http.StatusOK, m)
+		})
+		g.POST("/boot", func(re *core.RequestEvent) error {
+			var body struct {
+				ID       string `json:"id"`
+				Platform string `json:"platform"`
+				Hash     string `json:"hash"`
+			}
+			if err := re.BindBody(&body); err != nil {
+				return re.BadRequestError("invalid body", err)
+			}
+			if body.ID == "" {
+				return re.BadRequestError("id is required", nil)
+			}
+			app.Logger().Info("app-boot: rendered",
+				"q.bundleId", body.ID,
+				"q.platform", body.Platform,
+				"q.hash", body.Hash,
+				"remoteAddr", re.Request.RemoteAddr,
+			)
+			return re.JSON(http.StatusOK, map[string]any{"ok": true})
 		})
 		g.GET("/bundle/{buildId}/{platform}/{path...}", func(re *core.RequestEvent) error {
 			return serveBuildFile(re)
@@ -156,4 +177,31 @@ func TestAppUpdate_BundleEndpointRejectsTraversal(t *testing.T) {
 			})
 		})
 	}
+}
+
+// TestAppBoot_AcceptsBeacon proves the boot beacon endpoint accepts a freshly
+// rendered bundle's report and returns ok — the OTA e2e reads the resulting
+// `app-boot: rendered` log line from _logs to confirm the new bundle executed.
+func TestAppBoot_AcceptsBeacon(t *testing.T) {
+	app := newAppUpdateTestApp(t)
+	runAppUpdateScenario(t, app, &tests.ApiScenario{
+		Name:            "200 ok when the app posts a boot beacon",
+		Method:          http.MethodPost,
+		URL:             "/api/app/boot",
+		Body:            strings.NewReader(`{"id":"build-9-ios","platform":"ios","hash":"abc"}`),
+		ExpectedStatus:  http.StatusOK,
+		ExpectedContent: []string{`"ok":true`},
+	})
+}
+
+func TestAppBoot_400WithoutId(t *testing.T) {
+	app := newAppUpdateTestApp(t)
+	runAppUpdateScenario(t, app, &tests.ApiScenario{
+		Name:            "400 when the boot beacon omits id",
+		Method:          http.MethodPost,
+		URL:             "/api/app/boot",
+		Body:            strings.NewReader(`{"platform":"ios","hash":"abc"}`),
+		ExpectedStatus:  http.StatusBadRequest,
+		ExpectedContent: []string{`"status":400`},
+	})
 }

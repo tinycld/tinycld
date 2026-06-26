@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -29,6 +30,20 @@ func DefaultPublicDir() string {
 		return filepath.Join(dir, "public")
 	}
 	return "./public"
+}
+
+// DefaultWebsiteDir returns the default marketing-website dir, resolved next to
+// the running binary as <binaryDir>/website (or "./website" for `go run`). It is
+// deliberately SEPARATE from DefaultPublicDir(): org-mode deploys copy the built
+// Astro site here, NOT into public/, so the app's `expo export` (which sweeps
+// public/ into its web bundle) never absorbs the website. Empty in dev / com mode
+// where the dir doesn't exist — StaticWithDynamicFallback treats a missing
+// websiteDir as "no website" and serves the app shell as before.
+func DefaultWebsiteDir() string {
+	if dir := binaryDir(); dir != "" {
+		return filepath.Join(dir, "website")
+	}
+	return "./website"
 }
 
 // DefaultReleasesDir returns the releases dir under the STATE root
@@ -110,17 +125,49 @@ func StaticWithFallback(dir string, fallbackFile string) func(*core.RequestEvent
 	}
 }
 
-// StaticWithDynamicFallback serves static files from publicDir (the
-// marketing website + any other in-image content), and on miss falls back
-// to <releasesDir>/current/app.html (the SPA shell from the active
-// release).
+// serveStaticFrom tries to serve `path` (then `path/index.html`) out of fs.
+// Returns true (and writes the response) on a hit, false on a miss. Shared by
+// the website + public lookups so both apply the same path → path/index.html
+// resolution. A nil fs (dir not configured) is always a miss.
+func serveStaticFrom(e *core.RequestEvent, fs fs.FS, path string) (bool, error) {
+	if fs == nil {
+		return false, nil
+	}
+	if f, err := fs.Open(path); err == nil {
+		f.Close()
+		return true, e.FileFS(fs, path)
+	}
+	indexPath := path + "/index.html"
+	if f, err := fs.Open(indexPath); err == nil {
+		f.Close()
+		return true, e.FileFS(fs, indexPath)
+	}
+	return false, nil
+}
+
+// StaticWithDynamicFallback serves static files, then falls back to the active
+// release's SPA shell (<releasesDir>/current/app.html). Lookups are tried in
+// order:
+//
+//  1. websiteDir — the marketing website (org-mode deploys only; "" otherwise).
+//     It lives in its OWN directory, NOT in publicDir, so the app's `expo
+//     export` (which sweeps publicDir into its web bundle) can never pull the
+//     website into the SPA bundle — the bug where every app route rendered the
+//     marketing homepage after an in-app package install.
+//  2. publicDir — the app's own web static files (favicon, sw.js, workers/),
+//     i.e. exactly what Expo emits from the app member's public/ dir.
+//  3. SPA fallback — <releasesDir>/current/app.html for any non-/api/ miss.
 //
 // When releasesDir is empty or its `current` symlink doesn't resolve to a
 // readable app.html, the handler falls back to publicDir/app.html — the
 // legacy behavior used in dev where the volume isn't mounted. Any path
-// not present in either location returns 404.
-func StaticWithDynamicFallback(publicDir, releasesDir string) func(*core.RequestEvent) error {
+// not present in any location returns 404.
+func StaticWithDynamicFallback(publicDir, websiteDir, releasesDir string) func(*core.RequestEvent) error {
 	publicFs := os.DirFS(publicDir)
+	var websiteFs fs.FS
+	if websiteDir != "" {
+		websiteFs = os.DirFS(websiteDir)
+	}
 
 	return func(e *core.RequestEvent) error {
 		if e.Request.Method != http.MethodGet && e.Request.Method != http.MethodHead {
@@ -132,15 +179,12 @@ func StaticWithDynamicFallback(publicDir, releasesDir string) func(*core.Request
 			path = "index.html"
 		}
 
-		if f, err := publicFs.Open(path); err == nil {
-			f.Close()
-			return e.FileFS(publicFs, path)
+		// Website first (org mode), then the app's own public/ files.
+		if hit, err := serveStaticFrom(e, websiteFs, path); hit {
+			return err
 		}
-
-		indexPath := path + "/index.html"
-		if f, err := publicFs.Open(indexPath); err == nil {
-			f.Close()
-			return e.FileFS(publicFs, indexPath)
+		if hit, err := serveStaticFrom(e, publicFs, path); hit {
+			return err
 		}
 
 		// Never serve the SPA HTML fallback for API paths. This catch-all is

@@ -200,7 +200,7 @@ func TestSerializeBundlesRoundTripsToResolveManifest(t *testing.T) {
 	}
 
 	// iOS: a newer build than the client's current → full manifest, asset intact.
-	m, status := resolveManifest(decoded, "ios", "1.13.7", "build-100-ios", "")
+	m, status := resolveNoBad(decoded, "ios", "1.13.7", "build-100-ios", "")
 	if status != manifestNew {
 		t.Fatalf("ios status = %v, want manifestNew", status)
 	}
@@ -212,18 +212,97 @@ func TestSerializeBundlesRoundTripsToResolveManifest(t *testing.T) {
 	}
 
 	// Android: the assetless bundle still resolves; assets is an empty slice.
-	ma, statusA := resolveManifest(decoded, "android", "1.13.7", "build-100-android", "")
+	ma, statusA := resolveNoBad(decoded, "android", "1.13.7", "build-100-android", "")
 	if statusA != manifestNew || ma.ID != "build-200-android" {
 		t.Fatalf("android manifest = %+v (status %v)", ma, statusA)
 	}
 
 	// Same id the client already runs → up to date (204 on the wire).
-	if _, s := resolveManifest(decoded, "ios", "1.13.7", "build-200-ios", ""); s != manifestUpToDate {
+	if _, s := resolveNoBad(decoded, "ios", "1.13.7", "build-200-ios", ""); s != manifestUpToDate {
 		t.Fatalf("expected manifestUpToDate, got %v", s)
 	}
 
 	// A runtime the build has no bundle for → no match (204 / App Store gate).
-	if _, s := resolveManifest(decoded, "ios", "2.0.0", "build-100-ios", ""); s != manifestNoMatch {
+	if _, s := resolveNoBad(decoded, "ios", "2.0.0", "build-100-ios", ""); s != manifestNoMatch {
 		t.Fatalf("expected manifestNoMatch for mismatched runtime, got %v", s)
+	}
+}
+
+func TestAppVersionFromManifest(t *testing.T) {
+	writeJSON := func(t *testing.T, dir, name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The production shape: app.json carries no expo.version (app.config.ts
+	// injects it from package.json), so the resolver must fall back to
+	// package.json's version.
+	t.Run("falls back to package.json when app.json has no expo.version", func(t *testing.T) {
+		dir := t.TempDir()
+		writeJSON(t, dir, "app.json", `{"expo":{"name":"TinyCld"}}`)
+		writeJSON(t, dir, "package.json", `{"name":"@tinycld/app","version":"2.0.0"}`)
+		if got := appVersionFromManifest(dir); got != "2.0.0" {
+			t.Fatalf("got %q, want 2.0.0", got)
+		}
+	})
+
+	// A statically-pinned expo.version still wins (don't break a build that sets it).
+	t.Run("prefers expo.version when present", func(t *testing.T) {
+		dir := t.TempDir()
+		writeJSON(t, dir, "app.json", `{"expo":{"version":"9.9.9"}}`)
+		writeJSON(t, dir, "package.json", `{"version":"2.0.0"}`)
+		if got := appVersionFromManifest(dir); got != "9.9.9" {
+			t.Fatalf("got %q, want 9.9.9", got)
+		}
+	})
+
+	// Dev layout: manifests live one dir above appDir.
+	t.Run("reads package.json from the parent dir", func(t *testing.T) {
+		parent := t.TempDir()
+		writeJSON(t, parent, "package.json", `{"version":"3.1.4"}`)
+		appDir := filepath.Join(parent, "tinycld")
+		if err := os.MkdirAll(appDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if got := appVersionFromManifest(appDir); got != "3.1.4" {
+			t.Fatalf("got %q, want 3.1.4", got)
+		}
+	})
+
+	// Neither source has a version → empty (the caller turns this into a loud error).
+	t.Run("returns empty when no version anywhere", func(t *testing.T) {
+		dir := t.TempDir()
+		writeJSON(t, dir, "app.json", `{"expo":{"name":"x"}}`)
+		writeJSON(t, dir, "package.json", `{"name":"x"}`)
+		if got := appVersionFromManifest(dir); got != "" {
+			t.Fatalf("got %q, want empty", got)
+		}
+	})
+}
+
+// TestSentryReleaseFor locks the Sentry release string format. This MUST stay in
+// lockstep with the client (core/lib/sentry.ts → sentryReleaseAndDist), which
+// reports `tinycld@<version>` for a promoted OTA bundle. If these two ever
+// diverge, OTA-bundle crashes upload under one release and report under another,
+// and symbolication silently fails — so this test is the canary for that drift.
+func TestSentryReleaseFor(t *testing.T) {
+	if got := sentryReleaseFor("2.0.0"); got != "tinycld@2.0.0" {
+		t.Fatalf("sentryReleaseFor(2.0.0) = %q, want tinycld@2.0.0", got)
+	}
+	if got := sentryReleaseFor("1.13.7"); got != "tinycld@1.13.7" {
+		t.Fatalf("sentryReleaseFor(1.13.7) = %q, want tinycld@1.13.7", got)
+	}
+}
+
+func TestEnvOr(t *testing.T) {
+	t.Setenv("TINYCLD_ENVOR_TEST", "")
+	if got := envOr("TINYCLD_ENVOR_TEST", "fallback"); got != "fallback" {
+		t.Fatalf("empty env should yield fallback, got %q", got)
+	}
+	t.Setenv("TINYCLD_ENVOR_TEST", "set-value")
+	if got := envOr("TINYCLD_ENVOR_TEST", "fallback"); got != "set-value" {
+		t.Fatalf("set env should win, got %q", got)
 	}
 }

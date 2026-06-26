@@ -17,8 +17,13 @@ type parsedManifest struct {
 	Routes      *manifestRoutes `json:"routes"`
 	Nav         *manifestNav    `json:"nav"`
 	Server      *manifestServer `json:"server,omitempty"`
-	HasServer   bool            `json:"-"`
-	RawJSON     map[string]any  `json:"-"`
+	// PeerVersions is the package's enforced semver requirements on other
+	// packages (keyed by slug) / @tinycld/core. The install pipeline gates on
+	// these before any migration runs (checkInstallCompat); the version-change
+	// solver checks them too (peerVersionsFromManifest).
+	PeerVersions map[string]string `json:"peerVersions,omitempty"`
+	HasServer    bool              `json:"-"`
+	RawJSON      map[string]any    `json:"-"`
 }
 
 type manifestRoutes struct {

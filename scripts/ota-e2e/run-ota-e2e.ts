@@ -4,6 +4,7 @@ import path from 'node:path'
 import { classifyBundleId, embeddedIdForVersion } from './identity'
 import { fetchAppUpdateCurrentIds, pollForBundleId, superuserToken } from './logs-poller'
 import { precheckNewerBundle } from './server-bundle'
+import { assertUpdateIsLive } from './update-is-live'
 
 const SERVER_URL = process.env.OTA_E2E_SERVER_URL ?? 'http://localhost:7200'
 const SUPERUSER_EMAIL = process.env.OTA_E2E_SUPERUSER_EMAIL
@@ -26,12 +27,15 @@ const APP_DIR = path.resolve(import.meta.dirname, '..', '..')
 // timeout calls process.exit while a long xcodebuild keeps running orphaned.
 let buildChild: import('node:child_process').ChildProcess | null = null
 
-// Read expo.version from app.json without a JSON module import (which the
-// project tsconfig may reject) — a plain read keeps the script tsconfig-agnostic.
+// Read the app version from package.json — the SAME source app.config.ts uses
+// for expo.version / expo.runtimeVersion (app.json has no version key, so reading
+// expo.version there yields undefined and the precheck 204s on a runtimeVersion
+// mismatch). A plain read (no JSON module import) keeps the script
+// tsconfig-agnostic; mirrors how tests/install/todo-install.spec.ts derives it.
 function readAppVersion(): string {
-    const raw = readFileSync(path.join(APP_DIR, 'app.json'), 'utf8')
-    const parsed = JSON.parse(raw) as { expo: { version: string } }
-    return parsed.expo.version
+    const raw = readFileSync(path.join(APP_DIR, 'package.json'), 'utf8')
+    const parsed = JSON.parse(raw) as { version: string }
+    return parsed.version
 }
 
 function fail(msg: string): never {
@@ -113,6 +117,12 @@ async function main() {
 
     try {
         const observed = await reloaded
+        console.log(
+            `[ota-e2e] app reloaded into ${observed} (was ${embeddedId}); verifying it's live…`
+        )
+        // Assert update-is-live BEFORE printing PASS — otherwise a missing
+        // boot-beacon proof would log "PASS" then "FAIL".
+        await assertUpdateIsLive(SERVER_URL, token, newId, fail, m => console.log(`[ota-e2e] ${m}`))
         console.log(`\n[ota-e2e] PASS: app reloaded into ${observed} (was ${embeddedId}).\n`)
         process.exit(0)
     } catch (err) {

@@ -1,4 +1,14 @@
+import { createRequire } from 'node:module'
 import { expect, type Page, test } from '@playwright/test'
+
+// Read the app version via createRequire rather than a static ESM JSON import:
+// under Node's ESM loader (which Playwright drives the spec through) a plain
+// `import … from '../../package.json'` is rejected with "needs an import
+// attribute of type: json", and the import-attribute form isn't reliably
+// preserved through Playwright's transpile. createRequire is the same pattern
+// playwright.config.ts already uses to reach workspace modules from ESM.
+const APP_VERSION = (createRequire(import.meta.url)('../../package.json') as { version: string })
+    .version
 
 // Integration test for the per-package VERSION-CHANGE flow in /admin, driven
 // through the real in-app installer + Versions tab against an already-running
@@ -184,6 +194,57 @@ async function superuserToken(page: Page): Promise<string> {
         await page.waitForTimeout(750) // transient 5xx (DB busy) — back off and retry
     }
     throw new Error(`superuser auth failed after retries: ${lastStatus} ${lastBody}`)
+}
+
+// Re-authenticate the APP's persistent PocketBase client (`appPb`, the one
+// `lib/pocketbase.ts` exports with the `pb_auth` AsyncStorage backing) as the
+// superuser, by minting a fresh token and writing it into localStorage, then
+// reloading so the app rehydrates it on boot (authStoreReady).
+//
+// Why this is needed: the /admin login form authenticates `useSuperUserPB` — a
+// SEPARATE PocketBase instance with an IN-MEMORY auth store — not `appPb`. The
+// admin console screens read fine from useSuperUserPB, but OrganizationsTab
+// performs its org-owner create through `appPb` (pbtsdb's collections via `useStore`).
+// `appPb` only ever got a superuser token from the one-time bootstrap wizard, and
+// the rollback fixtures restart the server several times in between, leaving
+// `appPb`'s persisted token stale/unauthorized. The create then goes out without
+// superuser auth, so setting the managed `verified` field is rejected
+// ("validation_values_mismatch") and the org is never created. Refreshing
+// `pb_auth` here makes the create carry a valid superuser token again.
+async function reauthAppPb(page: Page) {
+    // Mint a fresh superuser auth (token + record) the same resilient way
+    // superuserToken does, but keep the record so we can serialize the store.
+    let auth: { token: string; record: unknown } | null = null
+    for (let attempt = 0; attempt < 8; attempt++) {
+        try {
+            const res = await page.request.post('/api/collections/_superusers/auth-with-password', {
+                data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
+                failOnStatusCode: false,
+            })
+            if (res.ok()) {
+                const body = (await res.json()) as { token?: string; record?: unknown }
+                if (body.token) {
+                    auth = { token: body.token, record: body.record ?? {} }
+                    break
+                }
+            } else if (res.status() < 500) {
+                throw new Error(`superuser auth failed: ${res.status()} ${await res.text()}`)
+            }
+        } catch (err) {
+            if (err instanceof Error && /superuser auth failed/.test(err.message)) throw err
+            // transient (restart window) — back off and retry
+        }
+        await page.waitForTimeout(750)
+    }
+    if (!auth) throw new Error('reauthAppPb: could not mint a superuser token')
+
+    // Write the token into the app's persistent auth key (the shape
+    // authStoreReady parses), then reload so appPb picks it up on boot.
+    await page.evaluate(
+        ({ token, record }) => localStorage.setItem('pb_auth', JSON.stringify({ token, record })),
+        auth
+    )
+    await page.reload()
 }
 
 // Reads the id of the slug's most-recent pkg_install_log row (via the status
@@ -528,10 +589,13 @@ async function postAdminPackageOp(page: Page, path: string, payload: Record<stri
     }
 }
 
-// The app version (app.json → expo.version) the native bundles are stamped with.
-// /api/app/update keys updates by runtimeVersion, so the OTA check must send the
-// same value a real device on this build reports. Bump here if app.json changes.
-const RUNTIME_VERSION = '1.13.7'
+// The app version the native bundles are stamped with as their runtimeVersion
+// (app.config.ts injects package.json's version; the server's appVersionFromManifest
+// reads the same). /api/app/update keys updates by runtimeVersion, so the OTA check
+// must send the same value a real device on this build reports. Derived from the
+// app's package.json (NOT a hardcoded literal) so it never drifts when the version
+// is bumped — a stale literal here made the OTA assertion 204 (runtime mismatch).
+const RUNTIME_VERSION = APP_VERSION
 
 // Polls the public OTA endpoint /api/app/update until it advertises a new bundle
 // (HTTP 200 + manifest) for the given platform, or throws. After every package
@@ -658,6 +722,17 @@ async function applyVersionChange(
     targetLabel: string,
     opts: { downgrade: boolean; expectDrops?: string[] }
 ) {
+    // The Packages list reads pkg_registry through pbtsdb (`appPb`), now gated by
+    // super-admin API rules — so the rows render ONLY when appPb carries a valid
+    // superuser token. The /admin login form authenticates the separate in-memory
+    // `useSuperUserPB`, not appPb, and the rollback-fixture restarts leave appPb's
+    // persisted token stale, so the list comes back empty ("No packages installed
+    // yet") and the slug cell below never appears. Refresh appPb (reloads the page)
+    // and re-establish the admin UI session before driving the picker — the same
+    // sequence the verify-v1 test uses before its appPb-backed org create.
+    await reauthAppPb(page)
+    await loginAsSuperuserWithRetry(page)
+
     // Scope every action to the TARGET package's row. In a full assembly the
     // Packages list shows ~9 rows, each with its own `v… (current)` picker, so a
     // global `.first()` would grab the wrong row. The row renders the bare slug in
@@ -947,6 +1022,13 @@ test.describe('todo version change', () => {
         await waitForCollection(page, 'tags', false, 30_000)
         await waitForCollection(page, 'todo_tags', false, 30_000)
 
+        // The org create writes through `appPb` (see reauthAppPb), whose persisted
+        // superuser token is left stale by the preceding rollback-fixture restarts.
+        // Refresh it (reloads the page), then re-establish the /admin UI session
+        // before driving the form.
+        await reauthAppPb(page)
+        await loginAsSuperuserWithRetry(page)
+
         // 3. Create an org to log into — the superuser dashboard isn't the app
         //    shell; the nav rail lives in the org-scoped app.
         await page.getByText('Organizations', { exact: true }).first().click()
@@ -1180,11 +1262,17 @@ test.describe('todo version change', () => {
         await waitForOpStatus(page, 'todo', 'success', 2_400_000, 'uninstall', priorId)
     })
 
-    test('delete landed: todo registry row is disabled', async ({ page }) => {
+    test('delete landed: todo registry row is removed', async ({ page }) => {
         test.setTimeout(300_000)
         await loginAsSuperuserWithRetry(page)
-        // The registry keeps the row but marks it disabled (the uninstall pipeline's
-        // final state). Poll the row's status via the superuser API.
+        // A user-initiated uninstall DELETES the registry row outright (commitRegistry
+        // in rebuild.go, covered by TestCommitRegistry_DeletesUninstalledMember) so the
+        // package leaves the admin list entirely. It is NOT kept as a `disabled` row:
+        // a disabled row couldn't be re-enabled — toggling it back to installed never
+        // returns the code uninstall removed — which was the "can't re-enable / still
+        // shows up" bug. So success here is the row being GONE. Poll via the superuser
+        // API, tolerating the post-restart window where a read transiently returns the
+        // row before the delete propagates (only an empty result set counts).
         const deadline = Date.now() + 90_000
         let last = 'none'
         while (Date.now() < deadline) {
@@ -1199,13 +1287,30 @@ test.describe('todo version change', () => {
                     .catch(() => null)
                 if (res?.ok()) {
                     const body = (await res.json()) as { items?: Array<{ status?: string }> }
-                    last = body.items?.[0]?.status ?? 'no-row'
-                    if (last === 'disabled') return
+                    if ((body.items?.length ?? 0) === 0) return
+                    last = body.items?.[0]?.status ?? 'present'
                 }
             }
             await page.waitForTimeout(3_000)
         }
-        throw new Error(`todo registry status did not reach 'disabled' within 90s (last=${last})`)
+        throw new Error(`todo registry row was not removed within 90s (last status seen=${last})`)
+    })
+
+    // REGRESSION GUARD: uninstall must run the package's DOWN migrations so its
+    // tables/data are removed — not just rebuild without the member. The prior
+    // uninstall coverage only checked the job succeeded + the registry row was gone,
+    // so an uninstall that left every collection behind passed green (the observed
+    // bug: tables persisted after delete). At this point todo is at v2.0.0 (the
+    // rollback-landed test just verified tags/todo_tags ARE present), so uninstall
+    // must drop the package's tagging collections. If the DOWN migrations don't run
+    // on uninstall, these still exist and this fails — exactly the reported bug.
+    // (tags/todo_tags are the collections the spec already tracks by name and just
+    // confirmed present, so they're the reliable witnesses for "the schema is gone".)
+    test('delete landed: todo collections are dropped after uninstall', async ({ page }) => {
+        test.setTimeout(300_000)
+        await loginAsSuperuserWithRetry(page)
+        await waitForCollection(page, 'tags', false, 60_000)
+        await waitForCollection(page, 'todo_tags', false, 60_000)
     })
 
     test(`upgrade core to v${CORE_NEXT} via the Packages version picker`, async ({ page }) => {

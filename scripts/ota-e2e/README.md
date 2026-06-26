@@ -81,8 +81,86 @@ pnpm run test:e2e:ota
 - **build/boot exited non-zero** → an `expo run:ios --configuration Release`
   failure; see the inline build output.
 
+## Crash-rollback E2E (`test:e2e:ota:rollback`)
+
+A sibling harness that exercises the *unhappy* OTA path. Instead of the happy-path
+`todo` install, it installs **`@tinycld/calendar-slots`** (an external `github:`
+package, via the in-app installer UI driven by
+`tests/install/calendar-slots-install.spec.ts`), which mints a `build-<ts>-ios`
+bundle. It then boots the Release sim and races **two** terminal outcomes,
+asserting which one happened:
+
+- **HEALTHY** — the app reloads into the new bundle and stays up. The harness then
+  asserts the install actually created all four booking collections
+  (`booking_pages`, `booking_slot_types`, `booking_availability`, `bookings`) —
+  guarding the "booking tables sometimes not created on install" bug — and runs the
+  **update-is-live assertion** (below).
+- **ROLLBACK** — the app crash-loops the new bundle and reverts to embedded; the
+  server records a `pkg_bad_bundle` row whose `last_error` carries a **captured
+  reason** (the native rollback reason / regex detail). An empty or the generic
+  `last_error` is a FAILURE — that's exactly the gap the manual repro hit.
+
+`OTA_E2E_EXPECT` selects which outcome is the pass (default `rollback`, the case
+we're chasing). The driver mirrors the happy-path one but uses a **distinct**
+container name (`tinycld-ota-rollback-server`), port (`7091`), and log dir
+(`ota-crash-rollback-logs`) so a `KEEP=1` dry-run and a `KEEP=1` rollback run can
+coexist.
+
+```sh
+cd ~/code/tinycld/tinycld
+# Full automated driver (Docker + sim): builds the image, installs calendar-slots,
+# boots the Release sim, and runs the assertion.
+KEEP=1 OTA_E2E_EXPECT=rollback bash scripts/ota-e2e/run-ota-crash-rollback.sh
+# Healthy variant (also asserts the booking tables exist):
+KEEP=1 OTA_E2E_EXPECT=healthy bash scripts/ota-e2e/run-ota-crash-rollback.sh
+```
+
+Additional env knobs (on top of the happy-path ones above):
+
+| Var | Default | Meaning |
+|---|---|---|
+| `OTA_E2E_EXPECT` | `rollback` | Which terminal outcome is the pass: `healthy` or `rollback`. |
+| `PKG_SPEC` | `github:stefnnn/tinycld-calendar-slots` | The package whose OTA crash we reproduce (overridable for a fork/tag). |
+| `CONTAINER` | `tinycld-ota-rollback-server` | Container name (distinct from the dry-run's). |
+| `SERVER_PORT` | `7091` | Host port (distinct from the dry-run's `7090`). |
+
+The TS assertion runner (`run-ota-crash-rollback.ts`) can also be invoked directly
+(`pnpm run test:e2e:ota:rollback`) once a bundle is staged and the sim is booted +
+connected — it is poll-only and never builds. (The driver passes
+`OTA_E2E_SKIP_BUILD=1` for parity with the happy-path runner, but this runner
+ignores it.)
+
+## Update-is-live assertion (server boot beacon)
+
+Both runners (the happy-path `run-ota-e2e.ts` and the crash-rollback runner's
+HEALTHY outcome) verify the update is genuinely *live* — not merely that the
+native `currentId` flipped. The native id comes from a read of which bundle
+directory is promoted; it does **not** prove the new bundle's JS executed or that
+the real app tree mounted (a bundle could promote, then crash before its JS runs,
+and still report the new `currentId` natively).
+
+The proof: the app's `BundleSentinel` (`core/lib/bundle-sentinel.tsx`) **POSTs a
+boot beacon** to `POST /api/app/boot` — but only after the **real provider tree
+commits** (it is mounted next to `MarkBundleHealthy` inside `<Providers>`, so it
+can't fire from the blank gate placeholder). The server logs `app-boot: rendered`
+with the bundle id; the harness polls `_logs` (`boot-beacon-poller.ts`) until the
+new `build-<ts>-ios` id appears, and fails if it never does within 60s. This
+proves the new bundle's JS executed and mounted.
+
+**Why a server beacon and not a device-side signal.** The OTA path runs only in a
+**Release** build, and a real-sim run proved both obvious device-side signals are
+unobservable there: React Native does **not** route `console.log` to `os_log` in
+Release (so `simctl log show` sees nothing), and a visually-hidden (`opacity:0`)
+accessibility sentinel isn't surfaced by `idb`. The server channel is the one that
+works in Release — it's the same `_logs` channel the `currentId`-flip assertion
+already uses. The beacon is **not** `__DEV__`-gated (it must fire in Release), and
+no-ops on web / until the server address resolves.
+
+The running bundle id is also shown to users in **Settings → About** (a "Bundle"
+row), independent of this harness — a human-facing "what's running" indicator.
+
 ## Not covered (future work)
 
-Healthy-mark persistence across relaunch, crash-rollback + server reconcile,
-Android, and on-screen UI assertions. See
-`docs/superpowers/specs/2026-06-12-ota-native-e2e-design.md`.
+Healthy-mark persistence across relaunch and Android. See
+`docs/superpowers/specs/2026-06-12-ota-native-e2e-design.md` and
+`docs/superpowers/specs/2026-06-24-ota-update-visible-assertion-design.md`.

@@ -61,7 +61,15 @@ type manifestAsset struct {
 // reload on first foreground: when the embedded bytecode is identical to the
 // server's current bundle, the hashes match and we report up-to-date. currentHash
 // may be empty (older clients / hash unavailable) — then only the id check applies.
-func resolveManifest(bundles []any, platform, runtimeVersion, currentID, currentHash string) (clientManifest, manifestStatus) {
+//
+// `badIDs`/`badHashes` are bundle ids/hashes clients reported as crash-looping
+// (pkg_bad_bundle). A matching bundle is treated as if it doesn't exist (skipped),
+// so a bundle that bricked a device is never advertised to the rest of the fleet.
+func resolveManifest(
+	bundles []any,
+	platform, runtimeVersion, currentID, currentHash string,
+	badIDs, badHashes map[string]bool,
+) (clientManifest, manifestStatus) {
 	for _, raw := range bundles {
 		b, ok := raw.(map[string]any)
 		if !ok {
@@ -72,6 +80,12 @@ func resolveManifest(bundles []any, platform, runtimeVersion, currentID, current
 		}
 		id := str(b["bundle_id"])
 		hash := str(b["bundle_hash"])
+		// Skip a bundle the fleet reported as bad — don't push a known-bricking
+		// bundle to anyone else. (A client already running it recovers via its own
+		// local crash-rollback.)
+		if badIDs[id] || (hash != "" && badHashes[hash]) {
+			continue
+		}
 		if id == currentID || (currentHash != "" && hash == currentHash) {
 			return clientManifest{}, manifestUpToDate
 		}
@@ -168,6 +182,79 @@ func currentBuildBundles(app core.App) (string, []any) {
 	return rec.GetString("build_id"), bundles
 }
 
+// loadBadBundles returns the set of bundle ids and hashes clients have reported
+// as crash-looping (the pkg_bad_bundle collection), for resolveManifest to skip.
+// Best-effort: a query error logs and returns empty sets (fail OPEN — we'd rather
+// risk re-offering a bad bundle, which each client's local rollback still catches,
+// than block all updates on a reporting-table hiccup).
+func loadBadBundles(app core.App) (ids map[string]bool, hashes map[string]bool) {
+	ids = map[string]bool{}
+	hashes = map[string]bool{}
+	recs, err := app.FindRecordsByFilter("pkg_bad_bundle", "1=1", "", 0, 0)
+	if err != nil {
+		app.Logger().Error("app-update: failed to load bad bundles", "err", err)
+		return ids, hashes
+	}
+	for _, r := range recs {
+		if id := r.GetString("bundle_id"); id != "" {
+			ids[id] = true
+		}
+		if h := r.GetString("bundle_hash"); h != "" {
+			hashes[h] = true
+		}
+	}
+	return ids, hashes
+}
+
+// reportBadBody is the POST /api/app/update/report-bad payload: the bundle a
+// client found to crash-loop, plus an optional error string for triage.
+type reportBadBody struct {
+	ID       string `json:"id"`
+	Hash     string `json:"hash"`
+	Platform string `json:"platform"`
+	Error    string `json:"error"`
+}
+
+// recordBadBundle upserts a pkg_bad_bundle row for the reported bundle,
+// incrementing its report count. Keyed by bundle_id (unique index). Returns the
+// new report count.
+func recordBadBundle(app core.App, body reportBadBody) (int, error) {
+	var count int
+	err := app.RunInTransaction(func(txApp core.App) error {
+		existing, _ := txApp.FindFirstRecordByFilter(
+			"pkg_bad_bundle", "bundle_id = {:id}", map[string]any{"id": body.ID},
+		)
+		if existing != nil {
+			count = existing.GetInt("reports") + 1
+			existing.Set("reports", count)
+			if body.Error != "" {
+				existing.Set("last_error", truncate(body.Error, 2000))
+			}
+			return txApp.Save(existing)
+		}
+		coll, err := txApp.FindCollectionByNameOrId("pkg_bad_bundle")
+		if err != nil {
+			return err
+		}
+		count = 1
+		rec := core.NewRecord(coll)
+		rec.Set("bundle_id", body.ID)
+		rec.Set("bundle_hash", body.Hash)
+		rec.Set("platform", body.Platform)
+		rec.Set("reports", count)
+		rec.Set("last_error", truncate(body.Error, 2000))
+		return txApp.Save(rec)
+	})
+	return count, err
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
+}
+
 // RegisterAppUpdateEndpoints wires the public OTA update endpoints: a JSON
 // manifest check and static serving of bundle + asset files from the build
 // archive. Public (no superuser guard) — the app calls these pre/post-auth.
@@ -210,7 +297,8 @@ func RegisterAppUpdateEndpoints(app *pocketbase.PocketBase) {
 				app.Logger().Info("app-update: response 204 (no current build / no bundles)")
 				return re.NoContent(204)
 			}
-			m, status := resolveManifest(bundles, platform, runtime, currentID, currentHash)
+			badIDs, badHashes := loadBadBundles(app)
+			m, status := resolveManifest(bundles, platform, runtime, currentID, currentHash, badIDs, badHashes)
 			if status != manifestNew {
 				app.Logger().Info("app-update: response 204 (no new bundle)",
 					"status", manifestStatusName(status),
@@ -227,6 +315,56 @@ func RegisterAppUpdateEndpoints(app *pocketbase.PocketBase) {
 				"manifest.assetCount", len(m.Assets),
 			)
 			return re.JSON(http.StatusOK, m)
+		})
+
+		// A client whose freshly-applied bundle crash-looped reports it here so the
+		// server stops advertising it to every other device. Public, like the rest
+		// of /api/app — the app may report pre-auth. Idempotent (upsert by id).
+		g.POST("/update/report-bad", func(re *core.RequestEvent) error {
+			var body reportBadBody
+			if err := re.BindBody(&body); err != nil {
+				return re.BadRequestError("invalid body", err)
+			}
+			if body.ID == "" || (body.Platform != string(platformIOS) && body.Platform != string(platformAndroid)) {
+				return re.BadRequestError("id and a valid platform are required", nil)
+			}
+			count, err := recordBadBundle(app, body)
+			if err != nil {
+				app.Logger().Error("app-update: failed to record bad bundle",
+					"bundle_id", body.ID, "platform", body.Platform, "err", err)
+				return re.InternalServerError("failed to record report", err)
+			}
+			app.Logger().Warn("app-update: bundle reported bad",
+				"bundle_id", body.ID, "platform", body.Platform,
+				"reports", count, "error", body.Error)
+			return re.JSON(http.StatusOK, map[string]any{"ok": true, "reports": count})
+		})
+
+		// A freshly-booted bundle's JS posts here once the real provider tree has
+		// mounted (BundleSentinel) — the proof the new bundle EXECUTED and rendered, not
+		// just that the native loader promoted it. Public, like the rest of /api/app
+		// (the app may post pre-auth). Logged at Info so the OTA e2e can read the beacon
+		// from _logs; console.log can't be observed in a Release build, which is why this
+		// server beacon exists.
+		g.POST("/boot", func(re *core.RequestEvent) error {
+			var body struct {
+				ID       string `json:"id"`
+				Platform string `json:"platform"`
+				Hash     string `json:"hash"`
+			}
+			if err := re.BindBody(&body); err != nil {
+				return re.BadRequestError("invalid body", err)
+			}
+			if body.ID == "" {
+				return re.BadRequestError("id is required", nil)
+			}
+			app.Logger().Info("app-boot: rendered",
+				"q.bundleId", body.ID,
+				"q.platform", body.Platform,
+				"q.hash", body.Hash,
+				"remoteAddr", re.Request.RemoteAddr,
+			)
+			return re.JSON(http.StatusOK, map[string]any{"ok": true})
 		})
 
 		g.GET("/bundle/{buildId}/{platform}/{path...}", func(re *core.RequestEvent) error {

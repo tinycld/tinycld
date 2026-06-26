@@ -3,6 +3,7 @@ import { useLiveQuery } from '@tanstack/react-db'
 import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import { captureException } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
+import { navigateToOrg } from '@tinycld/core/lib/org-url'
 import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
 import { pb as appPb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -248,9 +249,11 @@ function OrgRow({
                 owner: { id: string; name: string; email: string }
             }>(`/api/admin/orgs/${org.id}/impersonate`, { method: 'POST' })
             appPb.authStore.save(token, { id: owner.id, email: owner.email } as never)
-            if (typeof window !== 'undefined') {
-                window.location.href = `/a/${org.slug}`
-            }
+            // Navigate via the router (web AND native) — a raw window.location.href
+            // assignment no-ops on native (RN has no window.location), so impersonate
+            // silently went nowhere on device. navigateToOrg uses expo-router and
+            // preserves the in-org subpath on web.
+            navigateToOrg(org.slug)
         } catch (err) {
             captureException('Failed to impersonate user', err)
         }
