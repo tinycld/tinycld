@@ -91,7 +91,7 @@ ENV TINYCLD_EXPORT_TYPES_BIN=/usr/local/bin/export-types
 # Root manifests + shared test stubs + the workspace-root scripts (link-members).
 # Copied first so the subsequent member COPYs are the only thing that changes
 # between most builds.
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml pnpm-overrides.json .npmrc tinycld.packages.ts ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml package-versions.json .npmrc tinycld.packages.ts ./
 COPY scripts/ ./scripts/
 COPY tests/ ./tests/
 
@@ -469,7 +469,7 @@ RUN mkdir -p /opt/tinycld-baked/tinycld/public
 # in-app installer's postinstall re-runs it). They sit at /workspace (one
 # directory above /workspace/tinycld) so the symlinks
 # (node_modules/@tinycld/<x> → ../../<x>) still point at the members copied below.
-COPY --from=web-builder --chown=tinycld:tinycld /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/pnpm-overrides.json /ws/.npmrc /opt/tinycld-baked/
+COPY --from=web-builder --chown=tinycld:tinycld /ws/package.json /ws/pnpm-lock.yaml /ws/pnpm-workspace.yaml /ws/package-versions.json /ws/.npmrc /opt/tinycld-baked/
 COPY --from=web-builder --chown=tinycld:tinycld /ws/tinycld.packages.ts /opt/tinycld-baked/tinycld.packages.ts
 COPY --from=web-builder --chown=tinycld:tinycld /ws/scripts /opt/tinycld-baked/scripts
 COPY --from=web-builder --chown=tinycld:tinycld /ws/tests /opt/tinycld-baked/tests

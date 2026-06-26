@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// writeTestOverrides drops a minimal pnpm-overrides.json into root so the
+// writeTestOverrides drops a minimal package-versions.json into root so the
 // scaffold writer (which reads it to emit the `overrides:` block) has its
 // required source. A real build always carries this file (baked into the image,
 // copied from the active build); tests must supply it explicitly.
@@ -60,7 +60,7 @@ func TestWriteWorkspaceScaffold(t *testing.T) {
 	if !strings.Contains(s, "nodeLinker: hoisted") {
 		t.Fatal("pnpm-workspace.yaml missing nodeLinker: hoisted")
 	}
-	// The pins from pnpm-overrides.json are transcribed into the `overrides:`
+	// The pins from package-versions.json are transcribed into the `overrides:`
 	// block — without this the OTA rebuild's --no-frozen-lockfile install drifts
 	// uniwind/tailwind off the embedded binary. The doc `//` key must NOT appear.
 	if !strings.Contains(s, "\noverrides:\n") {
@@ -73,7 +73,7 @@ func TestWriteWorkspaceScaffold(t *testing.T) {
 		t.Fatal("pnpm-workspace.yaml overrides missing quoted scoped pin")
 	}
 	if strings.Contains(s, "//") {
-		t.Fatal("pnpm-workspace.yaml leaked the // doc key from pnpm-overrides.json")
+		t.Fatal("pnpm-workspace.yaml leaked the // doc key from package-versions.json")
 	}
 }
 
