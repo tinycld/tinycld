@@ -103,7 +103,20 @@ export default defineConfig({
     },
     test: {
         environment: 'node',
-        include: ['tests/**/*.test.{ts,tsx}', 'scripts/**/__tests__/**/*.test.{ts,tsx}'],
+        // Core is nested at tinycld/core/ and ships WITH the app shell (it's not a
+        // separately-releasable member, and tinycld-pkg's --all discovery only sees
+        // workspace-root dirs, so core is never its own target). Its tests must
+        // therefore run as part of the app shell's run, or a core regression (e.g.
+        // sentry.ts importing the native-only app-updater) goes uncaught. Feature
+        // configs inherit this config but set `root` to their own dir, so this
+        // `core/**` glob resolves relative to `<feature>/` — which has no core/ —
+        // and matches nothing there; it only picks up files when the run's root is
+        // the app shell. (core/vitest.config.ts still exists for a core-scoped run.)
+        include: [
+            'tests/**/*.test.{ts,tsx}',
+            'scripts/**/__tests__/**/*.test.{ts,tsx}',
+            'core/**/*.test.{ts,tsx}',
+        ],
         // The app shell has no tests/ of its own yet; self-mode `npm test`
         // (tinycld-pkg test from app/) must not fail on an empty match.
         passWithNoTests: true,
