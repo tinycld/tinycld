@@ -32,7 +32,7 @@ var scaffoldExtras = []string{".npmrc", "tinycld.packages.ts", "scripts", "tests
 // install) can't drift these deps off the embedded native binary. It is copied
 // verbatim from the active build into each new build (via scaffoldExtras), the
 // same single source bootstrap's assemble-workspace.ts reads on a dev machine.
-const overridesFile = "pnpm-overrides.json"
+const overridesFile = "package-versions.json"
 
 // writeWorkspaceScaffold writes the workspace-root manifests into buildDir and
 // copies the static scaffold extras from srcRoot (the active build's root).
@@ -55,7 +55,7 @@ func writeWorkspaceScaffoldFrom(buildDir string, members []string, srcRoot strin
 		return err
 	}
 	// Copy the scaffold extras FIRST: writePnpmWorkspaceYAML reads
-	// pnpm-overrides.json (a scaffold extra) to emit the `overrides:` block, so
+	// package-versions.json (a scaffold extra) to emit the `overrides:` block, so
 	// the file must already be in buildDir when the YAML is generated.
 	if err := copyScaffoldExtras(srcRoot, buildDir); err != nil {
 		return err
@@ -293,7 +293,7 @@ func writePnpmWorkspaceYAML(buildDir string, members []string) error {
 	return os.WriteFile(filepath.Join(buildDir, "pnpm-workspace.yaml"), []byte(sb.String()), 0o644)
 }
 
-// readOverrides loads the version pins from pnpm-overrides.json in buildDir
+// readOverrides loads the version pins from package-versions.json in buildDir
 // (copied there as a scaffold extra). The pins force the framework/native/
 // styling stack to the embedded-binary versions so the OTA rebuild's
 // `pnpm install --no-frozen-lockfile` can't drift them. The file is required in
