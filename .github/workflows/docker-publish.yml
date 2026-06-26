@@ -287,8 +287,8 @@ jobs:
           # Index annotations carry the package-version inventory on the
           # multi-arch manifest list itself — one --annotation arg per line of
           # the file the previous step wrote. Reading from a file (not a
-          # `${{ }}`-interpolated string) keeps each arg a single shell word
-          # even if a value ever contained whitespace or metacharacters.
+          # GitHub-expression-interpolated string) keeps each arg a single shell
+          # word even if a value ever contained whitespace or metacharacters.
           annotation_args=()
           while IFS= read -r ann; do
             [ -z "$ann" ] && continue
