@@ -1,7 +1,6 @@
 declare const __DEV__: boolean
 
 import * as Sentry from '@sentry/react-native'
-import AppUpdater from 'app-updater'
 import { Platform } from 'react-native'
 import { getCoreConfigOptional } from './core-config'
 import { scrubPII } from './sentry-scrub'
@@ -26,6 +25,20 @@ let initialized = false
 function sentryReleaseAndDist(): { release?: string; dist?: string } {
     if (Platform.OS === 'web') return {}
     try {
+        // Lazy require + a minimal local type, NOT a top-level
+        // `import ... from 'app-updater'`: that module is native-only and lives
+        // in the runnable app shell. A static import (value OR type) pulls its
+        // app-shell-resident ambient declaration into the tsconfig program of
+        // every feature that imports captureException (errors.ts → sentry.ts) —
+        // and features can't resolve it standalone, so their typecheck fails with
+        // "Cannot find module 'app-updater'". Typing the require against an inline
+        // interface keeps this file feature-resolvable; the helper only ever runs
+        // on native, where the real module is present.
+        interface BundleInfo {
+            getCurrentBundleId(): string
+            getRuntimeVersion(): string
+        }
+        const AppUpdater = (require('app-updater') as { default: BundleInfo }).default
         const id = AppUpdater.getCurrentBundleId()
         // Embedded (or unknown) → no override; the EAS-uploaded sourcemaps own it.
         if (!id || id.startsWith('embedded')) return {}
