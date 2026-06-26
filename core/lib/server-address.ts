@@ -10,7 +10,14 @@ function envToAddress(env: string): string | null {
     if (env === 'web') {
         const fromConfig = config.webShortcut?.()
         if (fromConfig) return fromConfig
-        if (typeof window === 'undefined') return null
+        // `window.location` only exists on web. On native, RN defines a partial
+        // `window` WITHOUT `location`, so reading `.origin` throws. This branch is
+        // reachable on native because the server-exported OTA bundle bakes
+        // EXPO_PUBLIC_ENV='web' (it's a web-context export), which drives a native
+        // device down here at configureCore() module-init. Gate on Platform, not
+        // `typeof window`, and return null so native falls back to the cached
+        // address / connect screen rather than crashing.
+        if (Platform.OS !== 'web' || typeof window === 'undefined') return null
         return window.location.origin
     }
     return config.serverShortcuts[env] ?? null

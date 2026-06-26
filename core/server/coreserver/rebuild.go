@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
@@ -284,15 +285,40 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 			if err != nil {
 				return SyncResult{}, err
 			}
-			return syncMigrations(app, applied, newSet)
+			res, err := syncMigrations(app, applied, newSet)
+			if err != nil {
+				return res, err
+			}
+			// On uninstall, clear any of the package's history rows whose Down was
+			// skipped (unregistered) so a future reinstall isn't blocked by stale
+			// "already applied" rows. Best-effort: a failure here is logged, not
+			// fatal — the build is already correct schema-wise.
+			if job.Action == "uninstall" && len(res.SkippedUnregistered) > 0 {
+				purged, pErr := purgeUnregisteredPackageRows(app, job.Slug, res.SkippedUnregistered)
+				if pErr != nil {
+					jobLogf(job, "WARNING: purging stranded %s migration rows failed (reinstall may skip its Up): %v", job.Slug, pErr)
+				} else if len(purged) > 0 {
+					jobLogf(job, "purged %d stranded %s _migrations row(s) whose Down was unregistered: %s", len(purged), job.Slug, strings.Join(purged, ", "))
+				}
+			}
+			return res, nil
 		},
 		activate:  activateBuild,
 		recoverDB: func() error { return recoverLiveDBAfterExternalWrite(app) },
 		recordBuild: func(out buildOutput) error {
 			return recordRebuildBuild(app, m, buildDir, out)
 		},
-		commitRegistry: func() error { return commitRegistry(app, m, buildDir) },
-		prune:          pruneBuilds,
+		commitRegistry: func() error {
+			// On a user-initiated uninstall, delete the package's registry row
+			// (job.Slug is the registry slug); other operations pass "" and keep the
+			// disable-on-absence behavior.
+			uninstalled := ""
+			if job.Action == "uninstall" {
+				uninstalled = job.Slug
+			}
+			return commitRegistry(app, m, buildDir, uninstalled)
+		},
+		prune: pruneBuilds,
 		finalizeLog: func(status, errMsg string) {
 			finalizeInstallLog(app, logRecord, status, errMsg, job.LogLines)
 		},
@@ -443,11 +469,16 @@ func buildCurrentMemberSet(app core.App) ([]MemberSpec, error) {
 //     installed (bundled rows keep "bundled");
 //   - present members with NO row yet (a fresh install): a full row is created
 //     from the member's manifest parsed out of the build dir;
-//   - rows absent from the manifest (an uninstall): marked disabled.
+//   - the row for uninstalledSlug (a user-initiated uninstall): DELETED, so the
+//     package disappears from the admin list entirely rather than lingering as a
+//     "disabled" row (which couldn't be toggled back on — its code is gone);
+//   - any OTHER row absent from the manifest (e.g. a build reverted past a
+//     package, which isn't a user uninstall): marked disabled, not deleted.
 //
-// buildDir is the active build's root, used to parse newly-installed members'
-// manifests for the create path.
-func commitRegistry(app core.App, m RebuildManifest, buildDir string) error {
+// uninstalledSlug is the registry slug the current operation uninstalled, or ""
+// for install/version/revert. buildDir is the active build's root, used to parse
+// newly-installed members' manifests for the create path.
+func commitRegistry(app core.App, m RebuildManifest, buildDir, uninstalledSlug string) error {
 	present := map[string]MemberSpec{}
 	for _, ms := range m.Members {
 		present[memberSlugToRegistry(ms.Slug)] = ms
@@ -461,13 +492,24 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir string) error {
 		slug := r.GetString("slug")
 		ms, ok := present[slug]
 		if !ok {
-			// No longer in the desired set — uninstalled.
+			// The slug this operation explicitly uninstalled — remove its row so it
+			// leaves the admin list entirely (a kept "disabled" row was the source of
+			// the "can't re-enable / still shows up" bug: toggling its status back to
+			// installed never returns the code that uninstall removed).
+			if slug == uninstalledSlug && uninstalledSlug != "" {
+				if err := app.Delete(r); err != nil {
+					return err
+				}
+				log.Printf("[pkg_install] registry: %s -> deleted (uninstalled)", slug)
+				continue
+			}
+			// Absent for another reason (reverted past, etc.) — disable, don't delete.
 			if r.GetString("status") != "bundled" && r.GetString("status") != "disabled" {
 				r.Set("status", "disabled")
 				if err := app.Save(r); err != nil {
 					return err
 				}
-				log.Printf("[pkg_install] registry: %s -> disabled (uninstalled)", slug)
+				log.Printf("[pkg_install] registry: %s -> disabled (absent from build)", slug)
 			}
 			continue
 		}

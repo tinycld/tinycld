@@ -1,3 +1,10 @@
+// diagnose-regexp must run FIRST — it wraps the global RegExp constructor to
+// record the exact pattern compiled before a fatal. A regex Hermes can't handle
+// aborts the process (RCTFatal/SIGABRT) before any handler sees which pattern,
+// and the native crash report only shows `regExpConstructor` with no source.
+// This shim is the primary diagnostic for the OTA-update crash; its captures are
+// read by the global fatal handler + the report-bad upload. No-op on web/non-Hermes.
+import '~/lib/diagnose-regexp'
 // polyfill-dom-shim must run before anything that pulls in prosemirror-view
 // (tentap → @tiptap/core → @tiptap/pm/view). Something in our Expo SDK 55
 // stack now installs a partial `document` on Hermes that breaks
@@ -15,6 +22,8 @@ import '~/lib/configure-core'
 import '~/global.css'
 import { AppErrorBoundary } from '@tinycld/core/components/AppErrorBoundary'
 import { NewVersionToast } from '@tinycld/core/components/NewVersionToast'
+import { BundleSentinel } from '@tinycld/core/lib/bundle-sentinel'
+import { installFatalRollbackHandler } from '@tinycld/core/lib/install-fatal-rollback'
 import { initSentry } from '@tinycld/core/lib/sentry'
 import { useAppUpdates } from '@tinycld/core/lib/use-app-updates'
 import { useChunkLoadRecovery } from '@tinycld/core/lib/use-chunk-load-recovery'
@@ -25,6 +34,10 @@ import { MarkBundleHealthy } from '~/lib/use-mark-bundle-healthy'
 import { useServerAddressGate } from '~/lib/use-server-address-gate'
 
 initSentry()
+// Install AFTER initSentry so the fatal handler chains Sentry's global handler
+// rather than clobbering it. Catches non-render fatals (which the ErrorBoundary
+// can't see) → reports to Sentry + reverts a not-yet-healthy crashing OTA bundle.
+installFatalRollbackHandler()
 
 // Expo Router renders a route module's exported `ErrorBoundary` (wrapping its
 // subtree in <Try>) whenever a descendant throws during render. Exporting it
@@ -49,6 +62,7 @@ export default function Layout() {
     return (
         <Providers>
             <MarkBundleHealthy />
+            <BundleSentinel />
             <Slot />
             <NewVersionToast />
         </Providers>

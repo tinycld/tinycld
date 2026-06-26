@@ -1,3 +1,4 @@
+import { trace } from '@tinycld/core/lib/debug-trace'
 import { router } from 'expo-router'
 import { Platform } from 'react-native'
 
@@ -19,5 +20,7 @@ export function getOrgHrefString(orgSlug: string): string {
 }
 
 export function navigateToOrg(orgSlug: string): void {
-    router.push(getOrgPath(orgSlug))
+    const path = getOrgPath(orgSlug)
+    trace('navigateToOrg push', { orgSlug, path })
+    router.push(path)
 }

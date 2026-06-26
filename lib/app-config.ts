@@ -40,7 +40,15 @@ function devDefaultServer(): string {
 export const appConfig: CoreConfig = {
     brandName: Constants.expoConfig?.name ?? 'TinyCld',
     serverShortcuts: {},
-    webShortcut: () => (typeof window !== 'undefined' ? window.location.origin : null),
+    // Web resolves PB from the page origin. Guard on Platform.OS === 'web', NOT
+    // `typeof window`: React Native defines a partial `window` WITHOUT `location`,
+    // so a `typeof window` check passes on native and `window.location.origin`
+    // throws "Cannot read property 'origin' of undefined". This crashed the
+    // server-exported OTA bundle specifically, where EXPO_PUBLIC_ENV is baked as
+    // 'web' (the web export), driving resolveEnvAddress down the web branch at
+    // configureCore() module-init — before any screen renders.
+    webShortcut: () =>
+        Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : null,
     defaultServer: __DEV__ ? devDefaultServer() : 'https://tinycld.org',
     sentryDsn:
         'https://bfba682150acd66a9b75f51ddbced312@o4510361420431360.ingest.us.sentry.io/4511261359013888',

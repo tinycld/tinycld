@@ -114,7 +114,18 @@ function rerootPlugins(plugins: PluginEntry[], appDirName: string): PluginEntry[
 // "couldn't find an ignore file".
 function writeRootBiomeConfig() {
     const appDirName = path.basename(APP_DIR)
-    const canonical = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'biome.json'), 'utf8'))
+    const canonicalPath = path.join(APP_DIR, 'biome.json')
+    // The ws-root biome.json is a dev/CI-only convenience (lets `pnpm run lint`
+    // and the editor LSP resolve rules from a root above the sibling members). A
+    // runtime rebuild — the in-app package installer's postinstall — only runs
+    // `expo export` + `go build` and never lints, and its build tree is assembled
+    // from the deployed image, which doesn't carry the canonical config. Skip
+    // rather than abort the whole generator when it's absent.
+    if (!fs.existsSync(canonicalPath)) {
+        console.warn(`[generate] ${canonicalPath} absent — skipping ws-root biome.json (lint-only)`)
+        return
+    }
+    const canonical = JSON.parse(fs.readFileSync(canonicalPath, 'utf8'))
 
     const config = {
         ...canonical,

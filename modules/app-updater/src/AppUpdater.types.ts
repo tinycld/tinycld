@@ -20,6 +20,27 @@ export interface AppUpdaterModuleType {
     stageBundle(localDir: string, id: string, hash: string): Promise<void>
     /** Mark the active OTA bundle healthy so rollback won't revert it. */
     markBundleHealthy(): void
+    /**
+     * Persist a crash-detail string (e.g. the regex pattern that aborted Hermes
+     * plus the error message) for the active bundle, surfaced via takeRevertedBundle
+     * and uploaded on the next (rolled-back) launch. Best-effort; overwrites any
+     * prior record; cleared once the bundle is marked healthy.
+     */
+    recordBundleError(detail: string): void
+    /**
+     * Mark the active OTA bundle bad so the next launch/reload reverts to the
+     * previous bundle. Paired with reload() by the global fatal handler to recover
+     * a not-yet-healthy crashing bundle in-session.
+     */
+    markBundleBad(): void
+    /**
+     * Read-once: returns the { id, hash, error } of a bundle that was rolled back
+     * since the last call, or null. `error` carries the detail recorded by
+     * recordBundleError (the crashing regex pattern + message), or "" if none. The
+     * recovered bundle reports it to the server's report-bad endpoint on boot so the
+     * bad bundle stops being advertised fleetwide.
+     */
+    takeRevertedBundle(): { id: string; hash: string; error: string } | null
     /** Reload the JS runtime, promoting any pending bundle. */
     reload(): Promise<void>
 }

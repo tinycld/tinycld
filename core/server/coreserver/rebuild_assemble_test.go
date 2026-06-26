@@ -9,9 +9,22 @@ import (
 	"testing"
 )
 
+// writeTestOverrides drops a minimal pnpm-overrides.json into root so the
+// scaffold writer (which reads it to emit the `overrides:` block) has its
+// required source. A real build always carries this file (baked into the image,
+// copied from the active build); tests must supply it explicitly.
+func writeTestOverrides(t *testing.T, root string) {
+	t.Helper()
+	body := `{"//":"doc","uniwind":"1.8.0","@sentry/react-native":"7.11.0"}`
+	if err := os.WriteFile(filepath.Join(root, overridesFile), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWriteWorkspaceScaffold(t *testing.T) {
 	dir := t.TempDir()
-	src := t.TempDir() // empty src root → scaffold extras skipped
+	src := t.TempDir()
+	writeTestOverrides(t, src) // scaffold copies it into dir before YAML is written
 	members := []string{"tinycld", "mail", "calc"}
 	if err := writeWorkspaceScaffoldFrom(dir, members, src); err != nil {
 		t.Fatal(err)
@@ -47,6 +60,21 @@ func TestWriteWorkspaceScaffold(t *testing.T) {
 	if !strings.Contains(s, "nodeLinker: hoisted") {
 		t.Fatal("pnpm-workspace.yaml missing nodeLinker: hoisted")
 	}
+	// The pins from pnpm-overrides.json are transcribed into the `overrides:`
+	// block — without this the OTA rebuild's --no-frozen-lockfile install drifts
+	// uniwind/tailwind off the embedded binary. The doc `//` key must NOT appear.
+	if !strings.Contains(s, "\noverrides:\n") {
+		t.Fatal("pnpm-workspace.yaml missing overrides: block")
+	}
+	if !strings.Contains(s, "  uniwind: 1.8.0\n") {
+		t.Fatal("pnpm-workspace.yaml overrides missing uniwind pin")
+	}
+	if !strings.Contains(s, "  '@sentry/react-native': 7.11.0\n") {
+		t.Fatal("pnpm-workspace.yaml overrides missing quoted scoped pin")
+	}
+	if strings.Contains(s, "//") {
+		t.Fatal("pnpm-workspace.yaml leaked the // doc key from pnpm-overrides.json")
+	}
 }
 
 func TestAssembleBuild_FetchesAllAndScaffolds(t *testing.T) {
@@ -61,6 +89,12 @@ func TestAssembleBuild_FetchesAllAndScaffolds(t *testing.T) {
 	var fetched []string
 	fakeFetch := func(ms MemberSpec, dir string) error {
 		fetched = append(fetched, ms.Slug)
+		// The first member materialized also drops the override file the scaffold
+		// writer reads — standing in for the baked workspace-root file a real
+		// build always carries.
+		if len(fetched) == 1 {
+			writeTestOverrides(t, dir)
+		}
 		return os.MkdirAll(filepath.Join(dir, ms.Slug), 0o755)
 	}
 	failCopy := func(ms MemberSpec, dir string) error {
@@ -90,6 +124,9 @@ func TestAssembleBuild_CopiesFromCurrentVsFetch(t *testing.T) {
 	}
 	fakeCopy := func(ms MemberSpec, dir string) error {
 		copied = append(copied, ms.Slug)
+		// The unchanged "tinycld" member, copied from the current build, carries
+		// the workspace-root override file the scaffold writer reads.
+		writeTestOverrides(t, dir)
 		return os.MkdirAll(filepath.Join(dir, ms.Slug), 0o755)
 	}
 	if err := assembleBuildWith(nil, manifest, build, fakeFetch, fakeCopy); err != nil {
