@@ -74,8 +74,8 @@ pnpm run ssl:generate
 
 ## What's where
 
-- **`app/`** — Expo Router route tree. `_layout.tsx` calls `configureCore(appConfig)` first, then
-  imports core's Providers and mounts the gate.
+- **`app/`** — Expo Router route tree. `_layout.tsx` imports `~/lib/configure-core` first (which
+  calls `configureCore(appConfig)` at module-init), then imports core's Providers and mounts the gate.
 - **`lib/app-config.ts`** — `CoreConfig` value handed to core at boot. Branding, server
   shortcuts, Sentry creds, review-mode flags.
 - **`lib/configure-core.ts`** — side-effect-only module imported first by `_layout.tsx` so
@@ -85,7 +85,7 @@ pnpm run ssl:generate
   at runtime. Gitignored.
 - **`tinycld.seeds.ts`** — generated Node-only seed list, kept out of the app bundle. Gitignored.
 - **`lib/generated/`** — generator output: `tinycld-config.ts` shim, `package-help.ts`,
-  `uniwind-sources.css`. Gitignored.
+  `package-icons.ts`, `uniwind-sources.css`, and the `@tinycld/app-generated` `package.json`. Gitignored.
 - **`scripts/generate.ts` + `scripts/gen-*.ts`** — the lean generator. Walks the workspace
   members with a `manifest.ts` (via `../tinycld.packages.ts`), writes route re-exports,
   `tinycld.config.ts`/`tinycld.seeds.ts`, help, uniwind sources, PocketBase migration/hook
