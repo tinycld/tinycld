@@ -237,7 +237,11 @@ jobs:
           gh release download "${TAG}" -R "${GITHUB_REPOSITORY}" -p manifest.json --dir /tmp/rel
           # Fetch the inventory script from the tagged commit so the merge job
           # uses the exact same logic as the per-arch build (no ws/ checkout here).
-          gh api "repos/${GITHUB_REPOSITORY}/contents/app/scripts/release-image-inventory.sh?ref=${TAG}" \
+          # The path is repo-root-relative here (this gh api call resolves against
+          # THIS app repo's tree, where the script lives at scripts/) — unlike the
+          # per-arch build's `app/scripts/...`, which is relative to the assembled
+          # ws/ where the app member is checked out under app/.
+          gh api "repos/${GITHUB_REPOSITORY}/contents/scripts/release-image-inventory.sh?ref=${TAG}" \
             -H 'Accept: application/vnd.github.raw' > /tmp/release-image-inventory.sh
           chmod +x /tmp/release-image-inventory.sh
           # One --annotation=index:<k>=<v> arg per inventory line, written to a
