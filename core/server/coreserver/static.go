@@ -135,6 +135,12 @@ func serveStaticFrom(e *core.RequestEvent, fs fs.FS, path string) (bool, error) 
 	}
 	if f, err := fs.Open(path); err == nil {
 		f.Close()
+		// apple-app-site-association has no extension, so Go's mime sniffing
+		// serves it as text/plain — but iOS Universal Links require
+		// application/json or it silently fails domain verification.
+		if path == ".well-known/apple-app-site-association" {
+			e.Response.Header().Set("Content-Type", "application/json")
+		}
 		return true, e.FileFS(fs, path)
 	}
 	indexPath := path + "/index.html"
