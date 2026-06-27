@@ -142,6 +142,8 @@ export function SetupWizard({ token }: SetupWizardProps) {
                     placeholder="admin@example.com"
                     keyboardType="email-address"
                     autoCapitalize="none"
+                    autoComplete="email"
+                    textContentType="emailAddress"
                 />
 
                 <TextInput
@@ -150,6 +152,8 @@ export function SetupWizard({ token }: SetupWizardProps) {
                     label="Password"
                     placeholder="At least 10 characters"
                     secureTextEntry
+                    autoComplete="new-password"
+                    textContentType="newPassword"
                 />
 
                 <TextInput
@@ -158,6 +162,8 @@ export function SetupWizard({ token }: SetupWizardProps) {
                     label="Confirm Password"
                     placeholder="Repeat password"
                     secureTextEntry
+                    autoComplete="new-password"
+                    textContentType="newPassword"
                 />
 
                 <TextInput
