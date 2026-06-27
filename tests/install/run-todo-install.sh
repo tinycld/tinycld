@@ -13,9 +13,17 @@
 #
 # Env knobs:
 #   IMAGE=<tag>   Skip the build and test an existing image tag.
+#   PULL=1        Pull the image from its registry before running (skips the
+#                 build). With no IMAGE set, defaults to the published
+#                 ghcr.io/tinycld/tinycld:latest; with IMAGE set, pulls that
+#                 exact ref. Use this to validate a release image end-to-end
+#                 (e.g. PULL=1 IMAGE=ghcr.io/tinycld/tinycld:0.2.0 ./run-todo-install.sh).
 #   KEEP=1        Leave the container running after the run (manual debug).
 #   PW_BASE_URL   Override the base URL (default http://localhost:7090).
 set -euo pipefail
+
+# Default published image, used when PULL=1 is set without an explicit IMAGE.
+DEFAULT_PULL_IMAGE="ghcr.io/tinycld/tinycld:latest"
 
 # Resolve paths. This script lives at app/tests/install/; the app member is
 # two levels up, and the workspace root (the docker build context) is three.
@@ -49,9 +57,18 @@ LOG_DIR="${SCRIPT_DIR}/todo-install-logs"
 LIVE_LOG="${LOG_DIR}/container.live.log"
 TAIL_PID=""
 
-# IMAGE defaults to a local build tag; if the caller sets IMAGE we skip the build.
+# Decide where the image comes from. Three modes, in precedence order:
+#   PULL=1            → pull from a registry (skip build). IMAGE defaults to the
+#                       published image when unset; otherwise pulls that exact ref.
+#   IMAGE=<tag> only  → use an existing LOCAL image tag (skip build, no pull).
+#   neither           → build from the current working tree (the default).
 BUILD_IMAGE=1
-if [ -n "${IMAGE:-}" ]; then
+PULL_IMAGE=0
+if [ "${PULL:-}" = "1" ]; then
+    BUILD_IMAGE=0
+    PULL_IMAGE=1
+    IMAGE="${IMAGE:-${DEFAULT_PULL_IMAGE}}"
+elif [ -n "${IMAGE:-}" ]; then
     BUILD_IMAGE=0
 else
     IMAGE=tinycld-todo-test
@@ -138,8 +155,12 @@ wait_unhealthy() {
     return 0
 }
 
-# 1. Build image from the working tree (unless IMAGE points at an existing tag).
-if [ "${BUILD_IMAGE}" = "1" ]; then
+# 1. Obtain the image: pull it, build it from the working tree, or use an
+#    existing local tag.
+if [ "${PULL_IMAGE}" = "1" ]; then
+    echo "[runner] pulling ${IMAGE} from its registry (skipping build)"
+    docker pull "${IMAGE}"
+elif [ "${BUILD_IMAGE}" = "1" ]; then
     echo "[runner] building ${IMAGE} from ${WS_ROOT}"
     echo "[runner] NOTE: the build context is the assembled workspace root."
     echo "[runner] If 'pnpm install --frozen-lockfile' fails on a missing member,"
@@ -147,7 +168,7 @@ if [ "${BUILD_IMAGE}" = "1" ]; then
     echo "[runner] that surfaces here as a build failure, by design."
     docker build -f "${APP_DIR}/Dockerfile" -t "${IMAGE}" "${WS_ROOT}"
 else
-    echo "[runner] using existing image ${IMAGE} (skipping build)"
+    echo "[runner] using existing local image ${IMAGE} (skipping build)"
 fi
 
 # 2. Boot.
