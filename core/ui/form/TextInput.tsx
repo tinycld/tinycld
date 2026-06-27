@@ -80,6 +80,11 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
                     autoFocus={inputProps.autoFocus}
                     keyboardType={inputProps.keyboardType}
                     autoCapitalize={inputProps.autoCapitalize}
+                    // Forward autofill hints so the browser/keychain treats each
+                    // field correctly. Without these, password managers fall back
+                    // to heuristics and can fill a password field with the email.
+                    autoComplete={inputProps.autoComplete}
+                    textContentType={inputProps.textContentType}
                     secureTextEntry={inputProps.secureTextEntry}
                     placeholderTextColor={placeholderColor}
                     className={`flex-1 border rounded-lg px-3 py-2.5 text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}
