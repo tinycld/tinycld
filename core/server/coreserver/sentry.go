@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -17,28 +16,36 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 )
 
-// RegisterSentry initializes the Sentry client and binds router middleware
-// that captures returned handler errors, panics, and any 5xx response that
-// reaches the client without producing an error value (e.g. handlers that
-// write directly to ResponseWriter, like the go-webdav CalDAV library).
+// RegisterSentry binds the router middleware that captures returned handler
+// errors, panics, and any 5xx response that reaches the client without producing
+// an error value (e.g. handlers that write directly to ResponseWriter, like the
+// go-webdav CalDAV library).
 //
-// Must run before any OnServe handlers register routes — middleware bound
-// after a route is added does not apply to it. Register() calls this first.
+// Must run before any OnServe handlers register routes — middleware bound after a
+// route is added does not apply to it. Register() calls this first.
 //
-// When SENTRY_DSN is empty the SDK still functions but events are dropped,
-// so the middleware is a no-op in dev. The panic recovery still re-panics
-// regardless, so PB's normal 500 response path is unaffected.
+// The Sentry CLIENT itself is initialized later, by RegisterSystemConfig, once
+// the system_settings collection is loaded — the DSN comes from there, not an env
+// var. Until then (and whenever the DSN is empty) the SDK is a no-op: events drop,
+// the middleware still runs, and panic recovery still re-panics so PB's normal 500
+// path is unaffected. initSentryFromConfig performs the actual Init and is reused
+// for live re-init when the DSN changes.
 func RegisterSentry(app *pocketbase.PocketBase) {
+	registerSentryMiddlewareCore(app)
+}
+
+// initSentryFromConfig (re)initializes the global Sentry client from the current
+// system settings. Safe to call repeatedly: sentry.Init swaps the active client,
+// so a DSN change applied here takes effect immediately for subsequent captures.
+func initSentryFromConfig(cfg *SystemConfig) {
 	if err := sentry.Init(sentry.ClientOptions{
-		Dsn:              os.Getenv("SENTRY_DSN"),
+		Dsn:              cfg.Get("sentry.dsn"),
 		Environment:      GetEnvironment(),
 		TracesSampleRate: 0.2,
 		AttachStacktrace: true,
 	}); err != nil {
 		log.Printf("Sentry initialization failed: %v", err)
 	}
-
-	registerSentryMiddlewareCore(app)
 }
 
 // registerSentryMiddlewareCore binds the per-request capture logic. Split
