@@ -2,12 +2,9 @@ import { useLiveQuery } from '@tanstack/react-db'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { newRecordId } from 'pbtsdb/core'
+import { rowsToMap, type SettingRow } from './system-settings-logic'
 
-export interface SettingRow {
-    id: string
-    value: string
-    isSecret: boolean
-}
+export type { SettingRow }
 
 /**
  * Read/write access to the system_settings collection for the /admin Settings
@@ -21,9 +18,7 @@ export function useSystemSettings() {
 
     const { data: rows = [] } = useLiveQuery(query => query.from({ s: systemSettings }))
 
-    const byKey = new Map<string, SettingRow>(
-        rows.map(r => [r.key, { id: r.id, value: r.value, isSecret: r.is_secret }])
-    )
+    const byKey = rowsToMap(rows)
 
     const upsert = useMutation({
         mutationFn: mutation(function* (input: { key: string; value: string; isSecret: boolean }) {

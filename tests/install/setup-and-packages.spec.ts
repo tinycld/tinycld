@@ -195,4 +195,35 @@ test.describe('first-run install', () => {
         // owner's row (not just "not empty") makes the regression signal precise.
         await expect(page.getByText(TEST_ORG_OWNER_EMAIL, { exact: true })).toBeVisible()
     })
+
+    // Exercises the full system-settings chain end-to-end: save a value in the
+    // /admin Settings UI → server stores it → the app server injects the
+    // non-secret public config into app.html → the next page load exposes it on
+    // window.__TINYCLD_PUBLIC_CONFIG__ (which lib/app-config.ts reads for the
+    // Sentry DSN). Also drives the VAPID generate button.
+    test('superuser can configure system settings (Sentry DSN + VAPID)', async ({ page }) => {
+        const TEST_DSN = 'https://e2ekey@o1.ingest.sentry.io/42'
+
+        await loginAsSuperuser(page)
+        await page.getByText('Settings', { exact: true }).first().click()
+
+        // Sentry DSN: fill, save.
+        await page.getByRole('textbox', { name: 'Sentry DSN', exact: true }).fill(TEST_DSN)
+        await page.getByTestId('sentry-dsn-save').click()
+
+        // Reload so the server re-serves app.html with the freshly-stored value
+        // injected. (login goto('/admin') is the one allowed full load.)
+        await page.goto('/admin')
+        const injected = await page.evaluate(
+            () =>
+                (window as unknown as { __TINYCLD_PUBLIC_CONFIG__?: { sentryDsn?: string } })
+                    .__TINYCLD_PUBLIC_CONFIG__?.sentryDsn
+        )
+        expect(injected).toBe(TEST_DSN)
+
+        // VAPID: generate a keypair server-side; the panel flips to "Configured".
+        await page.getByText('Settings', { exact: true }).first().click()
+        await page.getByTestId('vapid-generate').click()
+        await expect(page.getByText('Configured ✓')).toBeVisible()
+    })
 })
