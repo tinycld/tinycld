@@ -7,7 +7,13 @@ import { type ReactNode, Suspense, useState } from 'react'
 import type { Control, FieldValues, Path } from 'react-hook-form'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import { PageHeader, SectionLabel } from './console-ui'
-import { type SettingRow, useSystemSettings } from './system-settings-store'
+import {
+    type SettingRow,
+    sentryDsnSchema,
+    shouldPersistSecret,
+    vapidSubjectSchema,
+} from './system-settings-logic'
+import { useSystemSettings } from './system-settings-store'
 
 export function SettingsTab({ isVisible }: { isVisible: boolean }) {
     if (!isVisible) return null
@@ -33,11 +39,7 @@ function Panel({ label, children }: { label: string; children: ReactNode }) {
     )
 }
 
-const sentrySchema = z.object({
-    // Empty clears the DSN (disables error reporting). Otherwise require a URL so
-    // a typo'd value surfaces before it silently drops events.
-    dsn: z.union([z.string().url('Enter a valid Sentry DSN URL'), z.literal('')]),
-})
+const sentrySchema = z.object({ dsn: sentryDsnSchema })
 
 function SentrySettings() {
     const { byKey, upsert } = useSystemSettings()
@@ -97,7 +99,7 @@ const vapidSchema = z.object({
     publicKey: z.string(),
     // A secret field: blank means "leave the stored value unchanged" (write-only).
     privateKey: z.string(),
-    subject: z.union([z.string().url('Use a URL or mailto: URI'), z.literal('')]),
+    subject: vapidSubjectSchema,
 })
 
 // The operator never needs to READ the VAPID keys: the server signs with the
@@ -222,7 +224,7 @@ function VapidPaste({
                 isSecret: false,
             })
         }
-        if (data.privateKey.trim() !== '') {
+        if (shouldPersistSecret(data.privateKey)) {
             await upsert.mutateAsync({
                 key: 'vapid.private_key',
                 value: data.privateKey,

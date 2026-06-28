@@ -22,23 +22,30 @@ import (
 func RegisterVapidAdminEndpoints(app *pocketbase.PocketBase) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.POST("/api/admin/vapid/generate", func(re *core.RequestEvent) error {
-			privateKey, publicKey, err := push.GenerateVAPIDKeys()
-			if err != nil {
-				return re.InternalServerError("Failed to generate VAPID keys", err)
-			}
-			if err := upsertSystemSetting(app, "vapid.public_key", publicKey, false); err != nil {
-				return re.InternalServerError("Failed to save VAPID public key", err)
-			}
-			if err := upsertSystemSetting(app, "vapid.private_key", privateKey, true); err != nil {
-				return re.InternalServerError("Failed to save VAPID private key", err)
-			}
-			// Return only the public key — the private key stays server-side.
-			return re.JSON(http.StatusOK, map[string]string{"publicKey": publicKey})
+			return handleGenerateVapid(app, re)
 		}).BindFunc(func(re *core.RequestEvent) error {
 			return requireAdmin(app, re)
 		})
 		return e.Next()
 	})
+}
+
+// handleGenerateVapid mints a keypair, persists both keys to system_settings, and
+// returns ONLY the public key. Split out so it's unit-testable against a
+// tests.TestApp without standing up the router.
+func handleGenerateVapid(app core.App, re *core.RequestEvent) error {
+	privateKey, publicKey, err := push.GenerateVAPIDKeys()
+	if err != nil {
+		return re.InternalServerError("Failed to generate VAPID keys", err)
+	}
+	if err := upsertSystemSetting(app, "vapid.public_key", publicKey, false); err != nil {
+		return re.InternalServerError("Failed to save VAPID public key", err)
+	}
+	if err := upsertSystemSetting(app, "vapid.private_key", privateKey, true); err != nil {
+		return re.InternalServerError("Failed to save VAPID private key", err)
+	}
+	// Return only the public key — the private key stays server-side.
+	return re.JSON(http.StatusOK, map[string]string{"publicKey": publicKey})
 }
 
 // upsertSystemSetting writes a single key into the system_settings collection,
