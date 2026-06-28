@@ -49,6 +49,9 @@ CURRENT_LINK=/workspace/current
 # migrations (code, which does travel with the build):
 #   --dir          pb_data → /workspace/pb_data (persistent)
 #   --releasesDir  promoted web bundles → /workspace/releases (persistent)
+#   --websiteDir   marketing site → /workspace/website (persistent; populated by
+#                  `utils/deploy.sh web`, NOT baked into the image — empty until
+#                  the first web deploy, which the server tolerates)
 #   --migrationsDir → the active build's server/pb_migrations (the REAL dir the
 #                     generator materializes for every build). We deliberately do
 #                     NOT use the member-root pb_data→server/pb_migrations symlink:
@@ -58,7 +61,7 @@ CURRENT_LINK=/workspace/current
 #                     means a newly-installed package's migrations always load and
 #                     apply on the post-swap boot.
 PB_DATA_DIR=/workspace/pb_data
-PB_SERVE_DIRS="--dir=${PB_DATA_DIR} --releasesDir=/workspace/releases --migrationsDir=${CURRENT_LINK}/server/pb_migrations"
+PB_SERVE_DIRS="--dir=${PB_DATA_DIR} --releasesDir=/workspace/releases --websiteDir=/workspace/website --migrationsDir=${CURRENT_LINK}/server/pb_migrations"
 
 # Armed-backup rollback protocol (review finding H3). A package version change
 # runs DOWN migrations against the LIVE db, swaps `current`, then exits 75 so the
