@@ -22,12 +22,13 @@ import (
 type SystemConfig struct {
 	mu       sync.RWMutex
 	values   map[string]string
+	secret   map[string]bool // key → is_secret; gates what may be exposed to clients
 	onChange []func(key, value string)
 }
 
 // systemConfig is the process-wide instance, constructed by RegisterSystemConfig
 // and read by subsystems (sentry.go, push, mail) via SystemSettings().
-var systemConfig = &SystemConfig{values: map[string]string{}}
+var systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
 
 // SystemSettings returns the process-wide SystemConfig. Always non-nil; before
 // load() runs (i.e. before the DB is ready) every Get returns "".
@@ -38,6 +39,22 @@ func (c *SystemConfig) Get(key string) string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.values[key]
+}
+
+// PublicValues returns a copy of every NON-secret key→value pair. This is the
+// only set of values allowed to leave the server toward a client (injected into
+// the web HTML). Secret values (tokens, the VAPID private key, IMAP password)
+// are never included — they're read server-side only.
+func (c *SystemConfig) PublicValues() map[string]string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]string)
+	for k, v := range c.values {
+		if !c.secret[k] {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // OnChange registers a callback fired whenever a key's value changes (via the
@@ -62,23 +79,31 @@ func (c *SystemConfig) load(app core.App) {
 		return
 	}
 	next := make(map[string]string, len(recs))
+	nextSecret := make(map[string]bool, len(recs))
 	for _, r := range recs {
-		next[r.GetString("key")] = r.GetString("value")
+		key := r.GetString("key")
+		next[key] = r.GetString("value")
+		nextSecret[key] = r.GetBool("is_secret")
 	}
 	c.mu.Lock()
 	c.values = next
+	c.secret = nextSecret
 	c.mu.Unlock()
 }
 
-// set updates a single key in the map and fires change callbacks. Called by the
-// record hooks; the callbacks run OUTSIDE the lock so a reinit handler can call
-// Get without deadlocking.
-func (c *SystemConfig) set(key, value string) {
+// set updates a single key (value + secret flag) and fires change callbacks.
+// Called by the record hooks; the callbacks run OUTSIDE the lock so a reinit
+// handler can call Get without deadlocking.
+func (c *SystemConfig) set(key, value string, isSecret bool) {
 	c.mu.Lock()
 	if c.values == nil {
 		c.values = map[string]string{}
 	}
+	if c.secret == nil {
+		c.secret = map[string]bool{}
+	}
 	c.values[key] = value
+	c.secret[key] = isSecret
 	cbs := make([]func(string, string), len(c.onChange))
 	copy(cbs, c.onChange)
 	c.mu.Unlock()
@@ -113,7 +138,11 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	})
 
 	syncRow := func(e *core.RecordEvent) error {
-		systemConfig.set(e.Record.GetString("key"), e.Record.GetString("value"))
+		systemConfig.set(
+			e.Record.GetString("key"),
+			e.Record.GetString("value"),
+			e.Record.GetBool("is_secret"),
+		)
 		return e.Next()
 	}
 	app.OnRecordAfterCreateSuccess("system_settings").BindFunc(syncRow)

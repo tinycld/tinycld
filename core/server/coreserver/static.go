@@ -1,6 +1,8 @@
 package coreserver
 
 import (
+	"bytes"
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"os"
@@ -9,6 +11,58 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 )
+
+// publicConfigScript builds the inline <script> that publishes NON-secret system
+// config to the web client on window.__TINYCLD_PUBLIC_CONFIG__, read at module
+// init by lib/app-config.ts (e.g. the Sentry DSN). Secret values never appear
+// here — PublicValues() already excludes them. Storage keys are mapped to the
+// client config field names so the browser contract is decoupled from the
+// collection's key namespace. Returns "" when there's nothing to publish.
+//
+// The JSON is marshaled (not string-built) so values are safely escaped; we then
+// guard against "</script>" appearing in a value, which would otherwise close the
+// tag early — JSON-encodes "<" as-is, so a malicious DSN could break out.
+func publicConfigScript() string {
+	vals := systemConfig.PublicValues()
+	// Whitelist + rename: only keys the client is meant to consume, under their
+	// client-facing names. Adding a new public client value is a deliberate edit
+	// here, not an automatic passthrough of every non-secret row.
+	out := map[string]string{}
+	if v := vals["sentry.dsn"]; v != "" {
+		out["sentryDsn"] = v
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(out)
+	if err != nil {
+		return ""
+	}
+	// Defense-in-depth against early tag termination from a "</script>" substring.
+	safe := bytes.ReplaceAll(payload, []byte("</"), []byte("<\\/"))
+	return "<script>window.__TINYCLD_PUBLIC_CONFIG__=" + string(safe) + "</script>"
+}
+
+// injectPublicConfig inserts the public-config <script> just before </head> in
+// the SPA shell HTML. The script runs before the deferred bundle JS, so the
+// window global is set by the time lib/configure-core reads it at module init.
+// Falls back to returning the HTML unchanged when there's nothing to inject or
+// no </head> is present.
+func injectPublicConfig(html []byte) []byte {
+	script := publicConfigScript()
+	if script == "" {
+		return html
+	}
+	idx := bytes.Index(bytes.ToLower(html), []byte("</head>"))
+	if idx < 0 {
+		return html
+	}
+	out := make([]byte, 0, len(html)+len(script))
+	out = append(out, html[:idx]...)
+	out = append(out, script...)
+	out = append(out, html[idx:]...)
+	return out
+}
 
 // binaryDir returns the directory containing the running executable, or
 // the empty string for `go run` invocations (where os.Args[0] is a temp
@@ -213,16 +267,18 @@ func StaticWithDynamicFallback(publicDir, websiteDir, releasesDir string) func(*
 			if data, err := os.ReadFile(currentApp); err == nil {
 				e.Response.Header().Set("Cache-Control", "no-store")
 				e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-				_, _ = e.Response.Write(data)
+				_, _ = e.Response.Write(injectPublicConfig(data))
 				return nil
 			}
 		}
 
-		// Dev fallback: publicDir/app.html.
-		if f, err := publicFs.Open("app.html"); err == nil {
-			f.Close()
+		// Dev fallback: publicDir/app.html. Read into memory (rather than
+		// streaming via FileFS) so the same public-config injection applies.
+		if data, err := fs.ReadFile(publicFs, "app.html"); err == nil {
 			e.Response.Header().Set("Cache-Control", "no-store")
-			return e.FileFS(publicFs, "app.html")
+			e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = e.Response.Write(injectPublicConfig(data))
+			return nil
 		}
 
 		return e.NotFoundError("", nil)

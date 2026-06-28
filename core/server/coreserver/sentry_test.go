@@ -264,7 +264,7 @@ func TestInitSentryFromConfig(t *testing.T) {
 	cfg := &SystemConfig{values: map[string]string{}}
 	initSentryFromConfig(cfg) // empty DSN — no-op, no panic
 
-	cfg.set("sentry.dsn", "https://abc@o1.ingest.sentry.io/1")
+	cfg.set("sentry.dsn", "https://abc@o1.ingest.sentry.io/1", false)
 	initSentryFromConfig(cfg) // valid-shaped DSN — swaps the client, no panic
 }
 
@@ -281,14 +281,14 @@ func TestSentryReinitOnlyForSentryKeys(t *testing.T) {
 		}
 	})
 
-	cfg.set("vapid.subject", "mailto:a@b.c")
-	cfg.set("mail.postmark_server_token", "tok")
+	cfg.set("vapid.subject", "mailto:a@b.c", false)
+	cfg.set("mail.postmark_server_token", "tok", true)
 	if reinits != 0 {
 		t.Errorf("non-sentry keys must not trigger reinit, got %d", reinits)
 	}
 
-	cfg.set("sentry.dsn", "https://x@o1.ingest.sentry.io/2")
-	cfg.set("sentry.org", "myorg")
+	cfg.set("sentry.dsn", "https://x@o1.ingest.sentry.io/2", false)
+	cfg.set("sentry.org", "myorg", false)
 	if reinits != 2 {
 		t.Errorf("each sentry.* change should reinit once, got %d", reinits)
 	}

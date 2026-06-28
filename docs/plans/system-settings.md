@@ -168,6 +168,14 @@ Note: `EXPO_PUBLIC_SENTRY_DSN` here is a *build input* (read at `expo export`, i
 not a runtime env read — consistent with "no runtime env." Native reflects a change
 only after the next rebuild/OTA.
 
+**Done (phase 4):** server injection + `injectPublicConfig` (non-secret only, before
+`</head>`, `</script>`-escaped); `app-config.ts` resolves `window → EXPO_PUBLIC_SENTRY_DSN
+→ ''` with **no hardcoded DSN**. Because the official EAS native build previously
+depended on that hardcode, `eas.json`'s production profile now sets
+`EXPO_PUBLIC_SENTRY_DSN` so the official app keeps reporting; a third-party native
+build is silent until they set their own. **Release-note this** (behavior change for
+self-hosters relying on the env var / on our DSN).
+
 ## Native client: build-time inject
 
 `rebuild_pipeline.go::runExportWithProgress`: for native platforms add
