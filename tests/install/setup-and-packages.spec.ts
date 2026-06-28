@@ -163,6 +163,11 @@ test.describe('first-run install', () => {
             await ownerPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
             await ownerPage.getByTestId('login-submit').click()
             await ownerPage.waitForURL(/\/a\//, { timeout: 30_000 })
+            // Landing on /a/ isn't enough — assert the authenticated org app shell
+            // actually rendered. nav-home is the rail's org-home button, present
+            // only inside the signed-in workspace (not on the login screen or an
+            // error shell), so this proves the owner is genuinely authenticated.
+            await expect(ownerPage.getByTestId('nav-home')).toBeVisible({ timeout: 30_000 })
         } finally {
             await ownerPage.close()
         }
