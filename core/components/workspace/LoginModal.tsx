@@ -3,6 +3,7 @@ import { ReviewModeHints } from '@tinycld/core/components/connect/ReviewModeHint
 import { useAuth } from '@tinycld/core/lib/auth'
 import { navigateToOrg } from '@tinycld/core/lib/org-url'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { router } from 'expo-router'
 import { useState } from 'react'
 import {
     ActivityIndicator,
@@ -36,6 +37,10 @@ export function LoginModal() {
             setIsSubmitting(false)
         } else if (result.user?.primaryOrgSlug) {
             navigateToOrg(result.user.primaryOrgSlug)
+        } else if (result.user) {
+            // Signed in but no org (a super admin with no membership) — send them
+            // to the admin console, where they manage orgs/packages.
+            router.replace('/admin')
         }
     }
 
