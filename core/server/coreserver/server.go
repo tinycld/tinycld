@@ -152,6 +152,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	RegisterPackageInstallEndpoints(app)
 	RegisterSuperAdminEndpoints(app)
 	RegisterOrgAdminEndpoints(app)
+	RegisterVapidAdminEndpoints(app)
 	RegisterAppUpdateEndpoints(app)
 	RegisterSetupBootstrap(app)
 	RegisterAccountDelete(app)
