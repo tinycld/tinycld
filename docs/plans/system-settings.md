@@ -201,6 +201,15 @@ remains anywhere in coreserver.
   the `system_settings` store via `useStore` + `useMutation` (console runs as a
   super-admin app user, so writes are authorized).
 
+**Done (phase 6):** `SetupDashboard` has a Settings nav entry + `SettingsTab`.
+`SettingsTab` renders a core-owned **Sentry** panel (DSN field; upserts `sentry.dsn`
+into the `system_settings` store via `useStore`+`useMutation`, keyed by row, using
+RHF `values:` for reactive seeding — no `useEffect`) plus any package-contributed
+`packageSystemSettings` panels (lazy, in Suspense). The panel is non-secret; secret
+fields get the write-only treatment when VAPID/mail land in phase 7. End-to-end
+visual verification (UI → store → server load → web injection) still wants a fresh
+image build — deferred.
+
 ## Phases
 
 1. **Storage + SystemConfig** — `system_settings` collection + migration (incl. one-time

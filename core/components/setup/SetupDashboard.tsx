@@ -1,5 +1,12 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Building2, History, type LucideIcon, Package, ShieldCheck } from 'lucide-react-native'
+import {
+    Building2,
+    History,
+    type LucideIcon,
+    Package,
+    Settings,
+    ShieldCheck,
+} from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
@@ -7,9 +14,10 @@ import { DraxProvider } from 'react-native-drax'
 import { BuildHistoryTab } from './BuildHistoryTab'
 import { OrganizationsTab } from './OrganizationsTab'
 import { PackageManager } from './PackageManager'
+import { SettingsTab } from './SettingsTab'
 import { SuperAdminsTab } from './SuperAdminsTab'
 
-type SetupTab = 'organizations' | 'packages' | 'builds' | 'super-admins'
+type SetupTab = 'organizations' | 'packages' | 'builds' | 'super-admins' | 'settings'
 
 interface NavEntry {
     tab: SetupTab
@@ -25,6 +33,7 @@ const NAV: NavEntry[] = [
     { tab: 'packages', label: 'Packages', crumb: 'packages', Icon: Package },
     { tab: 'builds', label: 'Build History', crumb: 'build history', Icon: History },
     { tab: 'super-admins', label: 'Super Admins', crumb: 'super admins', Icon: ShieldCheck },
+    { tab: 'settings', label: 'Settings', crumb: 'settings', Icon: Settings },
 ]
 
 interface SetupDashboardProps {
@@ -54,6 +63,7 @@ export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardPr
                             <PackagesTab isVisible={activeTab === 'packages'} pb={pb} />
                             <BuildHistoryTab isVisible={activeTab === 'builds'} pb={pb} />
                             <SuperAdminsTab isVisible={activeTab === 'super-admins'} pb={pb} />
+                            <SettingsTab isVisible={activeTab === 'settings'} />
                         </View>
                     </ScrollView>
                 </View>
