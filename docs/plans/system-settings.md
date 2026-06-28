@@ -264,3 +264,16 @@ image build — deferred.
   only by the one-time migration seed.
 - **Live re-init on change** via `SystemConfig.onChanged` — Sentry re-inits; push/mail
   read per-use so they're already live. No restart required.
+
+## End-to-end verification (done)
+
+`tests/install/run-first-boot-admin.sh` (new smoketest runner — boots a fresh-DB
+image, scrapes the setup token, runs `setup-and-packages.spec.ts`) passes all 5
+specs on an image built from this branch **after rebasing onto main (post-#82)**:
+bootstrap → lists bundled packages → create org → grant super-admin → **configure
+system settings** (save Sentry DSN → reload → `window.__TINYCLD_PUBLIC_CONFIG__.
+sentryDsn` injection confirmed → Generate VAPID → "Configured ✓").
+
+Dependency note: this branch required PR #82's `appPb`-auth fix (the console now
+runs authenticated) — before the rebase, the package list and the Settings-panel
+store reads came back empty because `appPb` was anonymous. #82 merged; rebased in.
