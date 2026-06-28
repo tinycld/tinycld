@@ -2,6 +2,7 @@ package coreserver
 
 import (
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/pocketbase/pocketbase"
@@ -87,14 +88,27 @@ func (c *SystemConfig) set(key, value string) {
 }
 
 // RegisterSystemConfig constructs the system config lifecycle: load all values
-// once the server starts, and keep the in-memory map in sync as rows are created
-// or updated. Edits take effect without a restart — re-init handlers registered
-// via OnChange run on each change.
+// once the server starts, init the consumers that depend on them, and keep the
+// in-memory map in sync as rows are created or updated. Edits take effect without
+// a restart — re-init handlers registered via OnChange run on each change.
 func RegisterSystemConfig(app *pocketbase.PocketBase) {
+	// Re-init Sentry whenever a sentry.* value changes. Registered before the
+	// initial load so no early change is missed. Sentry is the only stateful
+	// consumer; push reads VAPID per-send and mail builds its provider per-call,
+	// so both pick up changes via Get without a re-init handler.
+	systemConfig.OnChange(func(key, _ string) {
+		if strings.HasPrefix(key, "sentry.") {
+			initSentryFromConfig(systemConfig)
+		}
+	})
+
 	// Load after bootstrap/migrations, before the server begins handling
-	// requests. OnServe fires once per boot at that point.
+	// requests, then perform the initial Sentry init from the loaded values.
+	// OnServe fires once per boot at that point. The Sentry middleware is already
+	// bound (RegisterSentry); this supplies the client the middleware reports to.
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		systemConfig.load(app)
+		initSentryFromConfig(systemConfig)
 		return e.Next()
 	})
 

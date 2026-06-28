@@ -129,8 +129,12 @@ naturally live because they read per-use. The struct still centralizes all reads
 
 ## Read-site changes (remove env)
 
-- `sentry.go`: `Dsn: cfg.Get("sentry.dsn")` (was `os.Getenv("SENTRY_DSN")`); add
-  `reinitSentry`. Sourcemap upload reads `sentry.org/project/auth_token` from `cfg`.
+- `sentry.go`: `Dsn: cfg.Get("sentry.dsn")` (was `os.Getenv("SENTRY_DSN")`); done in
+  phase 3 via `initSentryFromConfig`, re-run on any `sentry.*` change. **Done.**
+- Sourcemap upload (`app_native_export.go`: `SENTRY_AUTH_TOKEN`/`SENTRY_ORG`/
+  `SENTRY_PROJECT`) — these feed the `sentry-cli` SUBPROCESS env, not just a Go read,
+  so they move in **phase 5** (build-env injection) alongside the native build vars,
+  not phase 3.
 - `push/push.go`: VAPID trio via `cfg.Get` (drop the three `os.Getenv`).
 - `mail` package `register.go`: replace the env fallbacks in `providerForOrg` /
   `newProviderFromEnv` / `smtpConfigFromEnv` with `cfg.Get("mail.*")`. **Layering note:**
