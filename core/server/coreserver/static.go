@@ -90,16 +90,17 @@ func DefaultPublicDir() string {
 	return "./public"
 }
 
-// DefaultWebsiteDir returns the default marketing-website dir, resolved next to
-// the running binary as <binaryDir>/website (or "./website" for `go run`). It is
-// deliberately SEPARATE from DefaultPublicDir(): org-mode deploys copy the built
-// Astro site here, NOT into public/, so the app's `expo export` (which sweeps
-// public/ into its web bundle) never absorbs the website. Empty in dev / com mode
-// where the dir doesn't exist — StaticWithDynamicFallback treats a missing
-// websiteDir as "no website" and serves the app shell as before.
+// DefaultWebsiteDir returns the marketing-website root on the persistent state
+// volume: <TINYCLD_STATE_DIR>/website (e.g. /workspace/website in production),
+// or "./website" when TINYCLD_STATE_DIR is unset (`go run` / dev). The site lives
+// on the state volume, NOT baked into the image, so a website-only deploy
+// (utils/deploy.sh web) can rsync a new build onto the volume without an image
+// rebuild. It stays SEPARATE from DefaultPublicDir() so the app's `expo export`
+// (which sweeps public/ into its web bundle) never absorbs the site.
+// StaticWithDynamicFallback treats a missing/empty websiteDir as "no website".
 func DefaultWebsiteDir() string {
-	if dir := binaryDir(); dir != "" {
-		return filepath.Join(dir, "website")
+	if d := os.Getenv("TINYCLD_STATE_DIR"); d != "" {
+		return filepath.Join(d, "website")
 	}
 	return "./website"
 }
