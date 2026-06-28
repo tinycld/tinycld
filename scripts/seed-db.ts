@@ -30,6 +30,7 @@
  *   --help                 Show this help message
  */
 
+import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import { loadEnv } from '@tinycld/core/lib/load-env'
 import { deriveSeeds } from '@tinycld/core/lib/packages/derive-seeds'
 import PocketBase from 'pocketbase'
@@ -673,6 +674,49 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
     return login
 }
 
+// Make the admin a REAL app user, not just a PocketBase _superusers record.
+// `reset-dev-db.ts` creates the admin via `superuser upsert`, which only writes
+// _superusers — so without this the admin can sign into the /admin console (PB
+// superuser path) but has no `users` row, no app-shell login, and no membership.
+// This mirrors what the first-boot wizard now does (handleSetupInit): create a
+// `users` record for the admin email + a super_admins grant, so admin@ is a
+// usable super-admin app user. Idempotent: skips creation when the row exists.
+async function ensureAdminAppUser(pb: PocketBase, config: SeedConfig): Promise<void> {
+    let existing: { id: string } | null = null
+    try {
+        existing = await pb.collection('users').getFirstListItem(`email = "${config.adminEmail}"`)
+    } catch (err) {
+        if (!isNotFoundError(err)) throw err
+    }
+
+    let adminUser: { id: string }
+    if (existing) {
+        adminUser = existing
+        log('Found existing admin app user:', config.adminEmail)
+    } else {
+        log('Creating admin app user:', config.adminEmail)
+        adminUser = await pb.collection('users').create({
+            username: deriveUsername(config.adminEmail),
+            email: config.adminEmail,
+            password: config.adminPassword,
+            passwordConfirm: config.adminPassword,
+            name: config.adminEmail.split('@')[0],
+            emailVisibility: true,
+            verified: true,
+        })
+    }
+
+    if (await hasCollection(pb, 'super_admins')) {
+        try {
+            await pb.collection('super_admins').getFirstListItem(`user = "${adminUser.id}"`)
+            log('Found existing super_admins grant for admin')
+        } catch {
+            log('Granting super_admins to admin', config.adminEmail)
+            await pb.collection('super_admins').create({ user: adminUser.id })
+        }
+    }
+}
+
 export async function authSuperuser(config: {
     url: string
     adminEmail: string
@@ -709,7 +753,8 @@ function printLoginSummary(config: SeedConfig, login: SeedLoginResult): void {
         `  user:     ${login.userEmail}`,
         `  password: ${appPassword}`,
         '',
-        'Superuser  (PocketBase /_/ dashboard, and /admin to manage orgs & packages)',
+        'Admin  (super-admin app user — signs into the app AND /admin to manage',
+        'orgs & packages; also a PocketBase superuser for the /_/ dashboard)',
         `  ${url}/admin`,
         `  user:     ${config.adminEmail}`,
         `  password: ${config.adminPassword}`,
@@ -722,6 +767,7 @@ async function main() {
     const config = parseArgs()
     log(`Mode: ${config.mode} (user=${config.userEmail}, org=${config.orgSlug})`)
     const pb = await authSuperuser(config)
+    await ensureAdminAppUser(pb, config)
     const login = await seedForUser(pb, config)
     log('Seeding complete!')
     printLoginSummary(config, login)
