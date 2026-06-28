@@ -296,13 +296,11 @@ func TestSentryReleaseFor(t *testing.T) {
 	}
 }
 
-func TestEnvOr(t *testing.T) {
-	t.Setenv("TINYCLD_ENVOR_TEST", "")
-	if got := envOr("TINYCLD_ENVOR_TEST", "fallback"); got != "fallback" {
-		t.Fatalf("empty env should yield fallback, got %q", got)
+func TestOrDefault(t *testing.T) {
+	if got := orDefault("", "fallback"); got != "fallback" {
+		t.Fatalf("empty value should yield fallback, got %q", got)
 	}
-	t.Setenv("TINYCLD_ENVOR_TEST", "set-value")
-	if got := envOr("TINYCLD_ENVOR_TEST", "fallback"); got != "set-value" {
-		t.Fatalf("set env should win, got %q", got)
+	if got := orDefault("set-value", "fallback"); got != "set-value" {
+		t.Fatalf("non-empty value should win, got %q", got)
 	}
 }
