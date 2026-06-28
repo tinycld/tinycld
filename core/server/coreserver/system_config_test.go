@@ -219,3 +219,36 @@ func TestInjectPublicConfigNoop(t *testing.T) {
 		t.Errorf("expected HTML unchanged when nothing public, got %q", got)
 	}
 }
+
+// publicValue (the per-key injection gate) returns a non-secret value but BLANKS
+// a secret one — so even a whitelisted key can't leak a credential into the HTML
+// if it were mis-flagged secret.
+func TestSystemConfigPublicValue(t *testing.T) {
+	cfg := &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	cfg.set("sentry.dsn", "https://public.dsn", false)
+	if got := cfg.publicValue("sentry.dsn"); got != "https://public.dsn" {
+		t.Errorf("non-secret publicValue = %q, want the value", got)
+	}
+	// Flip the same key to secret → must blank.
+	cfg.set("sentry.dsn", "https://now.secret", true)
+	if got := cfg.publicValue("sentry.dsn"); got != "" {
+		t.Errorf("secret publicValue must be blank, got %q", got)
+	}
+	if got := cfg.publicValue("missing"); got != "" {
+		t.Errorf("unset publicValue must be blank, got %q", got)
+	}
+}
+
+// The injector relies on publicValue: a sentry.dsn mis-flagged secret must NOT
+// appear in the injected HTML.
+func TestInjectPublicConfigSkipsSecretSentryDsn(t *testing.T) {
+	prev := systemConfig
+	t.Cleanup(func() { systemConfig = prev })
+	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	systemConfig.set("sentry.dsn", "https://leak.dsn", true) // mis-flagged secret
+
+	out := string(injectPublicConfig([]byte("<head></head>")))
+	if out != "<head></head>" {
+		t.Errorf("a secret-flagged sentry.dsn must not be injected, got %q", out)
+	}
+}

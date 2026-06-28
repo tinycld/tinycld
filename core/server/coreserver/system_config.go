@@ -42,9 +42,15 @@ func (c *SystemConfig) Get(key string) string {
 }
 
 // PublicValues returns a copy of every NON-secret key→value pair. This is the
-// only set of values allowed to leave the server toward a client (injected into
-// the web HTML). Secret values (tokens, the VAPID private key, IMAP password)
-// are never included — they're read server-side only.
+// only set of values allowed to be injected into the web HTML. Secret values
+// (tokens, the VAPID private key, IMAP password) are never included here.
+//
+// NOTE: this gates HTML INJECTION only. It is NOT a confidentiality boundary for
+// the secret values themselves — those still live in the super-admin-readable
+// system_settings collection, so a super admin's client reads them over the wire
+// (the admin UI just renders them write-only). The trust boundary is "super
+// admin"; "secret" here means "never embedded in the public page served to every
+// visitor".
 func (c *SystemConfig) PublicValues() map[string]string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -55,6 +61,18 @@ func (c *SystemConfig) PublicValues() map[string]string {
 		}
 	}
 	return out
+}
+
+// publicValue returns the value for key ONLY if it is non-secret; a secret (or
+// unset) key returns "". Per-key gate for the HTML injector so a single
+// whitelisted key can't leak even if a row were mis-flagged.
+func (c *SystemConfig) publicValue(key string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.secret[key] {
+		return ""
+	}
+	return c.values[key]
 }
 
 // OnChange registers a callback fired whenever a key's value changes (via the
