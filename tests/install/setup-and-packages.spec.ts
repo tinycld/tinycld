@@ -207,12 +207,24 @@ test.describe('first-run install', () => {
         await loginAsSuperuser(page)
         await page.getByText('Settings', { exact: true }).first().click()
 
-        // Sentry DSN: fill, save.
+        // Sentry DSN: fill, save. On a fresh deployment the field starts empty, so
+        // filling it makes the form dirty and enables Save. After a successful save
+        // the form is no longer dirty and the button re-disables — wait for that so
+        // the value is persisted before we reload. (The smoketest runner always
+        // boots a clean DB, so the field is reliably empty here.)
         await page.getByRole('textbox', { name: 'Sentry DSN', exact: true }).fill(TEST_DSN)
         await page.getByTestId('sentry-dsn-save').click()
+        await expect(page.getByTestId('sentry-dsn-save')).toBeDisabled()
 
-        // Reload so the server re-serves app.html with the freshly-stored value
-        // injected. (login goto('/admin') is the one allowed full load.)
+        // VAPID: generate a keypair server-side; the panel flips to "Configured".
+        await page.getByTestId('vapid-generate').click()
+        await expect(page.getByText('Configured ✓')).toBeVisible()
+
+        // Reload so the server re-serves app.html with the stored DSN injected as
+        // window.__TINYCLD_PUBLIC_CONFIG__ — the value the web client reads at
+        // startup. This is the public-config injection chain, end to end. The
+        // global is set by an inline <script> regardless of auth, so we can read
+        // it on the (logged-out) shell without signing back in.
         await page.goto('/admin')
         const injected = await page.evaluate(
             () =>
@@ -220,10 +232,5 @@ test.describe('first-run install', () => {
                     .__TINYCLD_PUBLIC_CONFIG__?.sentryDsn
         )
         expect(injected).toBe(TEST_DSN)
-
-        // VAPID: generate a keypair server-side; the panel flips to "Configured".
-        await page.getByText('Settings', { exact: true }).first().click()
-        await page.getByTestId('vapid-generate').click()
-        await expect(page.getByText('Configured ✓')).toBeVisible()
     })
 })
