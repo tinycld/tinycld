@@ -21,6 +21,14 @@ func systemSetting(app core.App, key string) string {
 	return rec.GetString("value")
 }
 
+// GenerateVAPIDKeys mints a fresh VAPID keypair (ECDSA P-256, base64url). The
+// public key derives from the private, so they must be generated together — this
+// wraps webpush so coreserver's admin endpoint can offer a "generate" action
+// without importing the webpush library directly.
+func GenerateVAPIDKeys() (privateKey, publicKey string, err error) {
+	return webpush.GenerateVAPIDKeys()
+}
+
 // Payload is the JSON structure sent to the browser push service.
 type Payload struct {
 	Title string `json:"title"`
