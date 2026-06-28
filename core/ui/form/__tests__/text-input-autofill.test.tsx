@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { cleanup, render } from '@testing-library/react'
 import { useForm } from 'react-hook-form'
+import type { TextInputProps as RNTextInputProps } from 'react-native'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { TextInput } from '../TextInput'
@@ -10,7 +11,10 @@ import { TextInput } from '../TextInput'
 // `autoComplete`/`textContentType` autofill hints (it cherry-picked a fixed
 // prop allowlist instead of forwarding them). With the hints forwarded, the
 // browser/keychain treats each field correctly.
-function Harness(props: { autoComplete?: string; textContentType?: string }) {
+// Use RN's own prop types so the test matches what TextInput forwards (its
+// `autoComplete` is a narrow union, not `string`) — otherwise the harness fails
+// to typecheck under CI's stricter tsc.
+function Harness(props: Pick<RNTextInputProps, 'autoComplete' | 'textContentType'>) {
     const { control } = useForm({ defaultValues: { field: '' } })
     return <TextInput control={control} name="field" label="Field" {...props} />
 }
