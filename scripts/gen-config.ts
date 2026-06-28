@@ -4,6 +4,12 @@ export interface ConfigSettingsPanel {
     component: string // subpath e.g. 'settings/provider'
 }
 
+export interface ConfigSystemSettingsPanel {
+    slug: string
+    label: string
+    component: string // subpath e.g. 'system-settings/provider'
+}
+
 export interface ConfigSidebarContribution {
     target: string
     slot: string
@@ -20,6 +26,7 @@ export interface ConfigPkg {
     hasProvider: boolean
     hasSeed: boolean
     settings: ConfigSettingsPanel[]
+    systemSettings: ConfigSystemSettingsPanel[]
     slots: string[]
     sidebarContributions: ConfigSidebarContribution[]
     manifest: { name: string; slug: string; version: string; description: string } & Record<
@@ -52,6 +59,7 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
             p.hasSidebar ||
             p.hasProvider ||
             p.settings.length > 0 ||
+            p.systemSettings.length > 0 ||
             p.sidebarContributions.length > 0
     )
     if (needsLazy) lines.push("import { lazy } from 'react'")
@@ -83,6 +91,15 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
         if (p.settings.length > 0) {
             lines.push('        settings: [')
             for (const s of p.settings) {
+                lines.push(
+                    `            { slug: ${jsonLiteral(s.slug)}, label: ${jsonLiteral(s.label)}, Component: lazy(() => import('${p.packageName}/${s.component}')) },`
+                )
+            }
+            lines.push('        ],')
+        }
+        if (p.systemSettings.length > 0) {
+            lines.push('        systemSettings: [')
+            for (const s of p.systemSettings) {
                 lines.push(
                     `            { slug: ${jsonLiteral(s.slug)}, label: ${jsonLiteral(s.label)}, Component: lazy(() => import('${p.packageName}/${s.component}')) },`
                 )

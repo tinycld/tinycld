@@ -1,7 +1,11 @@
 import { tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import { type ComponentType, type LazyExoticComponent, lazy, type ReactNode } from 'react'
 import { ADMIN_PACKAGE_SLUG } from './builtin-admin'
-import type { PackageSettingsPanel, SidebarContribution } from './config-types'
+import type {
+    PackageSettingsPanel,
+    PackageSystemSettingsPanel,
+    SidebarContribution,
+} from './config-types'
 
 interface SidebarProps {
     isCollapsed: boolean
@@ -58,6 +62,40 @@ export function deriveSettings(entries: readonly SettingsEntryLike[]): PackageSe
                 pkgSlug: e.manifest.slug,
                 icon: e.manifest.nav?.icon,
                 panels: e.settings,
+            })
+        }
+    }
+    return out
+}
+
+export interface PackageSystemSettingsGroup {
+    packageName: string
+    pkgSlug: string
+    icon: string | undefined
+    panels: PackageSystemSettingsPanel[]
+}
+
+type SystemSettingsEntryLike = {
+    manifest: { name: string; slug: string; nav?: { icon?: string } }
+    systemSettings?: PackageSystemSettingsPanel[]
+}
+
+/**
+ * System-wide settings panels grouped by package, omitting packages that
+ * contribute none. Mirrors deriveSettings but for the /admin Settings section
+ * (system scope, not org scope).
+ */
+export function deriveSystemSettings(
+    entries: readonly SystemSettingsEntryLike[]
+): PackageSystemSettingsGroup[] {
+    const out: PackageSystemSettingsGroup[] = []
+    for (const e of entries) {
+        if (e.systemSettings && e.systemSettings.length > 0) {
+            out.push({
+                packageName: e.manifest.name,
+                pkgSlug: e.manifest.slug,
+                icon: e.manifest.nav?.icon,
+                panels: e.systemSettings,
             })
         }
     }
@@ -124,4 +162,5 @@ export const packageSidebars: Record<string, SidebarComp | null> = {
 }
 export const packageProviders = deriveProviders(tinycldConfig)
 export const packageSettings = deriveSettings(tinycldConfig)
+export const packageSystemSettings = deriveSystemSettings(tinycldConfig)
 export const packageSidebarContributions = deriveSidebarContributions(tinycldConfig)

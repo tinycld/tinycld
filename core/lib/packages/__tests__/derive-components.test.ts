@@ -4,6 +4,7 @@ import {
     deriveSettings,
     deriveSidebarContributions,
     deriveSidebars,
+    deriveSystemSettings,
 } from '../derive-components'
 
 const A = () => null
@@ -43,6 +44,27 @@ describe('derive-components', () => {
         expect(g[0].pkgSlug).toBe('mail')
         expect(g[0].packageName).toBe('Mail')
         expect(g[0].panels[0].slug).toBe('provider')
+    })
+
+    it('groups system-settings panels by package, skipping packages with none', () => {
+        const g = deriveSystemSettings([
+            {
+                manifest: { name: 'Mail', slug: 'mail', nav: { icon: 'mail' } },
+                systemSettings: [{ slug: 'provider', label: 'Mail Provider', Component: A }],
+            },
+            { manifest: { name: 'Calc', slug: 'calc' } },
+            // settings (org-scoped) present but no systemSettings → still skipped
+            {
+                manifest: { name: 'Drive', slug: 'drive' },
+                settings: [{ slug: 'x', label: 'X', Component: P }],
+            },
+        ] as never)
+        expect(g).toHaveLength(1)
+        expect(g[0].pkgSlug).toBe('mail')
+        expect(g[0].packageName).toBe('Mail')
+        expect(g[0].icon).toBe('mail')
+        expect(g[0].panels[0].slug).toBe('provider')
+        expect(g[0].panels[0].Component).toBe(A)
     })
 
     describe('deriveSidebarContributions', () => {

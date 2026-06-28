@@ -23,6 +23,13 @@ export interface PackageSettingsPanel {
     label: string
     Component: ComponentType | LazyExoticComponent<ComponentType>
 }
+// System-wide settings panel (the /admin Settings section). Same shape as a
+// per-org settings panel but rendered system-scoped, not per org.
+export interface PackageSystemSettingsPanel {
+    slug: string
+    label: string
+    Component: ComponentType | LazyExoticComponent<ComponentType>
+}
 export interface SidebarContribution {
     target: string
     slot: string
@@ -65,6 +72,7 @@ export interface PackageEntry<S extends SchemaDeclaration, R> {
         | LazyExoticComponent<ComponentType<PackageProviderProps>>
         | null
     settings?: PackageSettingsPanel[]
+    systemSettings?: PackageSystemSettingsPanel[]
     sidebarContributions?: SidebarContribution[]
     seed?: (pb: PocketBase, ctx: SeedContext) => Promise<void>
 }
@@ -86,6 +94,7 @@ export function definePackageEntry<S extends SchemaDeclaration>() {
         sidebar?: PackageEntry<S, R>['sidebar']
         provider?: PackageEntry<S, R>['provider']
         settings?: PackageEntry<S, R>['settings']
+        systemSettings?: PackageEntry<S, R>['systemSettings']
         sidebarContributions?: PackageEntry<S, R>['sidebarContributions']
         seed?: PackageEntry<S, R>['seed']
     }): PackageEntry<S, R> => entry as unknown as PackageEntry<S, R>
