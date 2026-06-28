@@ -1,8 +1,8 @@
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
+import { pb as appPb } from '@tinycld/core/lib/pocketbase'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
-import PocketBase from 'pocketbase'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SetupDashboard } from './SetupDashboard'
@@ -25,11 +25,12 @@ interface SetupWizardProps {
 }
 
 export function SetupWizard({ token }: SetupWizardProps) {
-    const pbRef = useRef<PocketBase | null>(null)
-    if (!pbRef.current) {
-        pbRef.current = new PocketBase(PB_SERVER_ADDR)
-    }
-    const pb = pbRef.current
+    // Drive the dashboard with the shared app pb client (the one pbtsdb stores
+    // write through), not a throwaway instance. /api/setup/init returns a token
+    // minted from the operator's `users` record + super_admins grant; saving it
+    // here authorizes every store write (incl. setting `verified` on a new org
+    // owner) as the super-admin app user.
+    const pb = appPb
 
     const [isComplete, setIsComplete] = useState(false)
     const [submitError, setSubmitError] = useState<string | null>(null)
@@ -81,10 +82,10 @@ export function SetupWizard({ token }: SetupWizardProps) {
                 return
             }
             pb.authStore.save(result.authToken, {
-                id: '',
+                id: result.userId,
                 email: result.email,
-                collectionId: '_superusers',
-                collectionName: '_superusers',
+                collectionId: '_pb_users_auth_',
+                collectionName: 'users',
             })
             setIsComplete(true)
         } catch (err) {
@@ -142,6 +143,8 @@ export function SetupWizard({ token }: SetupWizardProps) {
                     placeholder="admin@example.com"
                     keyboardType="email-address"
                     autoCapitalize="none"
+                    autoComplete="email"
+                    textContentType="emailAddress"
                 />
 
                 <TextInput
@@ -150,6 +153,8 @@ export function SetupWizard({ token }: SetupWizardProps) {
                     label="Password"
                     placeholder="At least 10 characters"
                     secureTextEntry
+                    autoComplete="new-password"
+                    textContentType="newPassword"
                 />
 
                 <TextInput
@@ -158,6 +163,8 @@ export function SetupWizard({ token }: SetupWizardProps) {
                     label="Confirm Password"
                     placeholder="Repeat password"
                     secureTextEntry
+                    autoComplete="new-password"
+                    textContentType="newPassword"
                 />
 
                 <TextInput

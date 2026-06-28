@@ -73,7 +73,7 @@ function SetupRail({
     const railText = useThemeColor('rail-text')
 
     return (
-        <View className="w-60 py-6 px-3 gap-1" style={{ backgroundColor: railBg }}>
+        <View className="w-60 h-full py-6 px-3 gap-1" style={{ backgroundColor: railBg }}>
             <View className="flex-row items-center gap-3 px-3 pb-5">
                 <View className="w-9 h-9 rounded-xl items-center justify-center bg-primary">
                     <Text
