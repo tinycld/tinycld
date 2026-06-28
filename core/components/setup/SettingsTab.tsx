@@ -1,14 +1,11 @@
-import { eq } from '@tanstack/db'
-import { useLiveQuery } from '@tanstack/react-db'
-import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { packageSystemSettings } from '@tinycld/core/lib/packages/derive-components'
-import { useStore } from '@tinycld/core/lib/pocketbase'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
-import { newRecordId } from 'pbtsdb/core'
-import { Suspense } from 'react'
+import { type ReactNode, Suspense } from 'react'
+import type { Control, FieldValues, Path } from 'react-hook-form'
 import { ActivityIndicator, Text, View } from 'react-native'
 import { PageHeader, SectionLabel } from './console-ui'
+import { type SettingRow, useSystemSettings } from './system-settings-store'
 
 export function SettingsTab({ isVisible }: { isVisible: boolean }) {
     if (!isVisible) return null
@@ -19,12 +16,20 @@ export function SettingsTab({ isVisible }: { isVisible: boolean }) {
                 subtitle="System-wide configuration for this deployment. These apply to the entire system, not a single organization."
             />
             <SentrySettings />
+            <VapidSettings />
             <PackageSettings />
         </View>
     )
 }
 
-const SENTRY_DSN_KEY = 'sentry.dsn'
+function Panel({ label, children }: { label: string; children: ReactNode }) {
+    return (
+        <View className="gap-4 p-5 rounded-2xl bg-surface-secondary border border-border">
+            <SectionLabel>{label}</SectionLabel>
+            {children}
+        </View>
+    )
+}
 
 const sentrySchema = z.object({
     // Empty clears the DSN (disables error reporting). Otherwise require a URL so
@@ -33,12 +38,8 @@ const sentrySchema = z.object({
 })
 
 function SentrySettings() {
-    const [systemSettings] = useStore('system_settings')
-
-    const { data: rows = [] } = useLiveQuery(query =>
-        query.from({ s: systemSettings }).where(({ s }) => eq(s.key, SENTRY_DSN_KEY))
-    )
-    const existing = rows[0]
+    const { byKey, upsert } = useSystemSettings()
+    const existing = byKey.get('sentry.dsn')
 
     const {
         control,
@@ -48,38 +49,25 @@ function SentrySettings() {
     } = useForm({
         resolver: zodResolver(sentrySchema),
         // `values` (not defaultValues) so the field reactively re-syncs when the
-        // stored DSN loads async or changes server-side — RHF resets to it while
-        // leaving a user's in-progress edit dirty. Avoids a useEffect+reset sync.
+        // stored DSN loads async or changes server-side. Avoids a useEffect+reset.
         values: { dsn: existing?.value ?? '' },
         mode: 'onChange',
     })
 
-    const save = useMutation({
-        mutationFn: mutation(function* (data: z.infer<typeof sentrySchema>) {
-            if (existing) {
-                yield systemSettings.update(existing.id, draft => {
-                    draft.value = data.dsn
-                })
-            } else {
-                yield systemSettings.insert({
-                    id: newRecordId(),
-                    key: SENTRY_DSN_KEY,
-                    value: data.dsn,
-                    is_secret: false,
-                } as never)
+    const onSubmit = handleSubmit(data =>
+        upsert.mutate(
+            { key: 'sentry.dsn', value: data.dsn, isSecret: false },
+            {
+                onError: err =>
+                    setError('dsn', {
+                        message: err instanceof Error ? err.message : 'Failed to save',
+                    }),
             }
-        }),
-        onError: err =>
-            setError('dsn', {
-                message: err instanceof Error ? err.message : 'Failed to save',
-            }),
-    })
-
-    const onSubmit = handleSubmit(data => save.mutate(data))
+        )
+    )
 
     return (
-        <View className="gap-4 p-5 rounded-2xl bg-surface-secondary border border-border">
-            <SectionLabel>Error reporting (Sentry)</SectionLabel>
+        <Panel label="Error reporting (Sentry)">
             <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
                 The DSN errors are reported to. Leave blank to disable. Web clients pick up a change
                 on their next load; native apps on their next build.
@@ -93,16 +81,152 @@ function SentrySettings() {
                 autoCapitalize="none"
                 hint="Public value — safe to expose in the web client."
             />
-            <View className="flex-row justify-end">
-                <Button
-                    testID="sentry-dsn-save"
-                    onPress={onSubmit}
-                    size="sm"
-                    isDisabled={isSubmitting || !isDirty}
-                >
-                    <ButtonText>{save.isPending ? 'Saving…' : 'Save'}</ButtonText>
-                </Button>
-            </View>
+            <SaveRow
+                testID="sentry-dsn-save"
+                onPress={onSubmit}
+                isPending={upsert.isPending}
+                isDisabled={isSubmitting || !isDirty}
+            />
+        </Panel>
+    )
+}
+
+const vapidSchema = z.object({
+    publicKey: z.string(),
+    // A secret field: blank means "leave the stored value unchanged" (write-only),
+    // so it's always optional in the form.
+    privateKey: z.string(),
+    subject: z.union([z.string().url('Use a URL or mailto: URI'), z.literal('')]),
+})
+
+function VapidSettings() {
+    const { byKey, upsert } = useSystemSettings()
+    const publicKey = byKey.get('vapid.public_key')
+    const privateKey = byKey.get('vapid.private_key')
+    const subject = byKey.get('vapid.subject')
+
+    const {
+        control,
+        handleSubmit,
+        formState: { errors, isSubmitting, isSubmitted },
+    } = useForm({
+        resolver: zodResolver(vapidSchema),
+        // The secret privateKey is NEVER seeded into the form — see SecretField.
+        values: {
+            publicKey: publicKey?.value ?? '',
+            privateKey: '',
+            subject: subject?.value ?? '',
+        },
+        mode: 'onChange',
+    })
+
+    const onSubmit = handleSubmit(async data => {
+        await upsert.mutateAsync({
+            key: 'vapid.public_key',
+            value: data.publicKey,
+            isSecret: false,
+        })
+        // Write-only secret: only persist a non-empty private key, so saving the
+        // form without re-entering it leaves the stored key untouched.
+        if (data.privateKey.trim() !== '') {
+            await upsert.mutateAsync({
+                key: 'vapid.private_key',
+                value: data.privateKey,
+                isSecret: true,
+            })
+        }
+        await upsert.mutateAsync({ key: 'vapid.subject', value: data.subject, isSecret: false })
+    })
+
+    return (
+        <Panel label="Web push (VAPID)">
+            <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
+                The VAPID keypair browser push notifications are signed with. Generate a pair once
+                per deployment; the private key is stored write-only.
+            </Text>
+            <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
+            <TextInput
+                control={control}
+                name="publicKey"
+                label="Public key"
+                autoCapitalize="none"
+                hint="Public value — shipped to the browser to subscribe."
+            />
+            <SecretField
+                control={control}
+                name="privateKey"
+                label="Private key"
+                existing={privateKey}
+            />
+            <TextInput
+                control={control}
+                name="subject"
+                label="Subject"
+                placeholder="mailto:admin@example.com"
+                autoCapitalize="none"
+            />
+            <SaveRow
+                testID="vapid-save"
+                onPress={onSubmit}
+                isPending={upsert.isPending}
+                isDisabled={isSubmitting}
+            />
+        </Panel>
+    )
+}
+
+// SecretField renders a write-only input for a secret system setting. It NEVER
+// seeds the stored value into the field (the value would otherwise round-trip
+// through the DOM); instead it shows whether a value is configured and a hint
+// that leaving it blank keeps the current one. Submitting blank means "unchanged"
+// — the caller must skip the write when the field is empty.
+function SecretField<T extends FieldValues>({
+    control,
+    name,
+    label,
+    existing,
+}: {
+    control: Control<T>
+    name: Path<T>
+    label: string
+    existing: SettingRow | undefined
+}) {
+    const configured = Boolean(existing?.value)
+    return (
+        <View className="gap-1.5">
+            <TextInput
+                control={control}
+                name={name}
+                label={label}
+                placeholder={configured ? '•••••••• (configured)' : 'Not set'}
+                secureTextEntry
+                autoCapitalize="none"
+                hint={
+                    configured
+                        ? 'Configured. Enter a new value to replace it; leave blank to keep it.'
+                        : 'Not set.'
+                }
+            />
+        </View>
+    )
+}
+
+function SaveRow({
+    testID,
+    onPress,
+    isPending,
+    isDisabled,
+}: {
+    testID: string
+    onPress: () => void
+    isPending: boolean
+    isDisabled: boolean
+}) {
+    return (
+        <View className="flex-row justify-end">
+            <Button testID={testID} onPress={onPress} size="sm" isDisabled={isDisabled}>
+                <ButtonText>{isPending ? 'Saving…' : 'Save'}</ButtonText>
+            </Button>
         </View>
     )
 }
@@ -116,15 +240,12 @@ function PackageSettings() {
         <>
             {packageSystemSettings.map(group =>
                 group.panels.map(panel => {
-                    const Panel = panel.Component
+                    const PanelComponent = panel.Component
                     return (
-                        <View
+                        <Panel
                             key={`${group.pkgSlug}:${panel.slug}`}
-                            className="gap-4 p-5 rounded-2xl bg-surface-secondary border border-border"
+                            label={`${group.packageName} — ${panel.label}`}
                         >
-                            <SectionLabel>
-                                {group.packageName} — {panel.label}
-                            </SectionLabel>
                             <Suspense
                                 fallback={
                                     <View className="py-6 items-center">
@@ -132,9 +253,9 @@ function PackageSettings() {
                                     </View>
                                 }
                             >
-                                <Panel />
+                                <PanelComponent />
                             </Suspense>
-                        </View>
+                        </Panel>
                     )
                 })
             )}
