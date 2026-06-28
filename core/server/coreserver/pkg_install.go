@@ -708,9 +708,20 @@ func getBundledSlugs(app core.App) map[string]bool {
 // shows the full install trace — including the real npm/pnpm/go/expo errors
 // that would otherwise be buried in the SSE stream / DB record only.
 func runCmd(dir string, name string, args ...string) (string, error) {
+	return runCmdEnv(dir, nil, name, args...)
+}
+
+// runCmdEnv is runCmd with extra environment entries ("KEY=VALUE") appended to
+// the inherited env. Use this to pass SECRETS to a subprocess: the extra env is
+// NOT logged (only the command + args are), so a value like a Sentry auth token
+// never lands in the build log — unlike threading it through args.
+func runCmdEnv(dir string, extraEnv []string, name string, args ...string) (string, error) {
 	log.Printf("[pkg_install] $ (cd %s && %s %s)", dir, name, strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 	out, err := cmd.CombinedOutput()
 	if s := strings.TrimRight(string(out), "\n"); s != "" {
 		log.Printf("[pkg_install] output of %s:\n%s", name, s)

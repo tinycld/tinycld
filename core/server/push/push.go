@@ -4,11 +4,30 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/pocketbase/pocketbase/core"
 )
+
+// systemSetting reads a value from the system_settings collection — the
+// system-wide config store (the same one coreserver.SystemConfig loads). push
+// reads it directly from the app (not via coreserver) to avoid an import cycle;
+// VAPID keys are needed per-send and rarely, so a direct lookup is fine.
+func systemSetting(app core.App, key string) string {
+	rec, err := app.FindFirstRecordByFilter("system_settings", "key = {:key}", map[string]any{"key": key})
+	if err != nil {
+		return ""
+	}
+	return rec.GetString("value")
+}
+
+// GenerateVAPIDKeys mints a fresh VAPID keypair (ECDSA P-256, base64url). The
+// public key derives from the private, so they must be generated together — this
+// wraps webpush so coreserver's admin endpoint can offer a "generate" action
+// without importing the webpush library directly.
+func GenerateVAPIDKeys() (privateKey, publicKey string, err error) {
+	return webpush.GenerateVAPIDKeys()
+}
 
 // Payload is the JSON structure sent to the browser push service.
 type Payload struct {
@@ -44,9 +63,9 @@ func SendToUser(app core.App, userID string, payload Payload) {
 		return
 	}
 
-	vapidPublicKey := os.Getenv("VAPID_PUBLIC_KEY")
-	vapidPrivateKey := os.Getenv("VAPID_PRIVATE_KEY")
-	vapidSubject := os.Getenv("VAPID_SUBJECT")
+	vapidPublicKey := systemSetting(app, "vapid.public_key")
+	vapidPrivateKey := systemSetting(app, "vapid.private_key")
+	vapidSubject := systemSetting(app, "vapid.subject")
 	if vapidSubject == "" {
 		vapidSubject = "mailto:admin@tinycld.com"
 	}

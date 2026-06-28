@@ -21,7 +21,8 @@
             "autoIncrement": true,
             "env": {
                 "EXPO_PUBLIC_ENV": "production",
-                "NODE_OPTIONS": "--max-old-space-size=8192"
+                "NODE_OPTIONS": "--max-old-space-size=8192",
+                "EXPO_PUBLIC_SENTRY_DSN": "https://bfba682150acd66a9b75f51ddbced312@o4510361420431360.ingest.us.sentry.io/4511261359013888"
             },
             "android": {
                 "buildType": "app-bundle"
