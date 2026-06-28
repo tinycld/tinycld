@@ -48,6 +48,21 @@ export interface PackageManifest {
     }[]
 
     /**
+     * System-wide settings panels this package contributes to the /admin
+     * Settings section (deployment/system scope — NOT org-scoped like
+     * `settings`). Same shape and lazy-component resolution as `settings`:
+     * `component` is a package-exports subpath (e.g.
+     * `'system-settings/provider'`). Used for "use-your-own-service" config a
+     * host owns (mail provider creds, etc.). Rendered only in the super-admin
+     * console; values are stored system-wide, not per org.
+     */
+    systemSettings?: {
+        slug: string
+        component: string
+        label: string
+    }[]
+
+    /**
      * Names of sidebar slots this package exposes. Other packages target these
      * names from their `sidebarContributions`. Each name must be unique within
      * the manifest; the generator errors on duplicates and on contributions
