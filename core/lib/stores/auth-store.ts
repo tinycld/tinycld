@@ -128,15 +128,36 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                 Users & {
                     expand?: {
                         user_org_via_user?: UserOrgExpanded[]
+                        super_admins_via_user?: { id: string }
                     }
                 }
             >(identifier, password, {
-                expand: 'user_org_via_user.org',
+                expand: 'user_org_via_user.org,super_admins_via_user',
             })
             const userOrgs = authData.record.expand?.user_org_via_user ?? []
             const firstUserOrgWithSlug = userOrgs.find(uo => uo.expand?.org?.slug)
+            // super_admins is a self-read junction; presence of the back-relation
+            // means this user is a super admin.
+            const isSuperAdmin = Boolean(authData.record.expand?.super_admins_via_user)
 
             if (!firstUserOrgWithSlug?.expand?.org) {
+                // A super admin with no org membership is a valid state (e.g. the
+                // first operator before creating any org): keep them signed in and
+                // let the caller route to /admin, where they manage orgs/packages.
+                // A regular user with no org genuinely has nowhere to go — reject.
+                if (isSuperAdmin) {
+                    const adminUser: AuthenticatedUser = {
+                        id: authData.record.id,
+                        name: authData.record.name,
+                        email: authData.record.email,
+                        primaryOrgSlug: undefined,
+                        isDemo: false,
+                        isBetaTester: false,
+                    }
+                    set({ user: adminUser })
+                    await preloadStores()
+                    return { user: adminUser, error: null }
+                }
                 pb.authStore.clear()
                 return {
                     user: null,

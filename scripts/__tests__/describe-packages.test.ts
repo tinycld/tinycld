@@ -39,12 +39,28 @@ describe('manifestToConfigPkg', () => {
             version: '0.1.0',
             description: 'd',
             settings: [{ slug: 'g', component: 'settings/takeout', label: 'Import' }],
+            systemSettings: [
+                { slug: 'mail', component: 'system-settings/provider', label: 'Mail Provider' },
+            ],
         })
         expect(cp.hasRegister).toBe(false)
         expect(cp.schemaType).toBe('')
         expect(cp.settings).toEqual([{ slug: 'g', component: 'settings/takeout', label: 'Import' }])
+        expect(cp.systemSettings).toEqual([
+            { slug: 'mail', component: 'system-settings/provider', label: 'Mail Provider' },
+        ])
         expect(cp.slots).toEqual([])
         expect(cp.sidebarContributions).toEqual([])
+    })
+
+    it('defaults systemSettings to [] when the manifest omits it', () => {
+        const cp = manifestToConfigPkg('@tinycld/contacts', {
+            name: 'Contacts',
+            slug: 'contacts',
+            version: '0.1.0',
+            description: 'd',
+        })
+        expect(cp.systemSettings).toEqual([])
     })
 
     it('passes through slots and sidebarContributions, defaulting order to 0', () => {

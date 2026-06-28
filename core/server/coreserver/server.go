@@ -101,6 +101,12 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// Middleware bound after a route is added does not apply retroactively.
 	RegisterSentry(app)
 
+	// System-wide settings (Sentry/web-push/mail creds). Loads the
+	// system_settings collection into the in-memory SystemConfig once the DB is
+	// ready and keeps it in sync on edits, so subsystems read current values
+	// without env vars and stateful ones (Sentry) re-init on change.
+	RegisterSystemConfig(app)
+
 	jsvm.MustRegister(app, jsvm.Config{
 		MigrationsDir: opts.MigrationsDir,
 		HooksDir:      opts.HooksDir,
@@ -146,6 +152,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	RegisterPackageInstallEndpoints(app)
 	RegisterSuperAdminEndpoints(app)
 	RegisterOrgAdminEndpoints(app)
+	RegisterVapidAdminEndpoints(app)
 	RegisterAppUpdateEndpoints(app)
 	RegisterSetupBootstrap(app)
 	RegisterAccountDelete(app)

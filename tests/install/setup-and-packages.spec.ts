@@ -163,6 +163,11 @@ test.describe('first-run install', () => {
             await ownerPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
             await ownerPage.getByTestId('login-submit').click()
             await ownerPage.waitForURL(/\/a\//, { timeout: 30_000 })
+            // Landing on /a/ isn't enough — assert the authenticated org app shell
+            // actually rendered. nav-home is the rail's org-home button, present
+            // only inside the signed-in workspace (not on the login screen or an
+            // error shell), so this proves the owner is genuinely authenticated.
+            await expect(ownerPage.getByTestId('nav-home')).toBeVisible({ timeout: 30_000 })
         } finally {
             await ownerPage.close()
         }
@@ -194,5 +199,43 @@ test.describe('first-run install', () => {
         // and the email surfaced as an inline form error instead. Asserting the
         // owner's row (not just "not empty") makes the regression signal precise.
         await expect(page.getByText(TEST_ORG_OWNER_EMAIL, { exact: true })).toBeVisible()
+    })
+
+    // Exercises the full system-settings chain end-to-end: save a value in the
+    // /admin Settings UI → server stores it → the app server injects the
+    // non-secret public config into app.html → the next page load exposes it on
+    // window.__TINYCLD_PUBLIC_CONFIG__ (which lib/app-config.ts reads for the
+    // Sentry DSN). Also drives the VAPID generate button.
+    test('superuser can configure system settings (Sentry DSN + VAPID)', async ({ page }) => {
+        const TEST_DSN = 'https://e2ekey@o1.ingest.sentry.io/42'
+
+        await loginAsSuperuser(page)
+        await page.getByText('Settings', { exact: true }).first().click()
+
+        // Sentry DSN: fill, save. On a fresh deployment the field starts empty, so
+        // filling it makes the form dirty and enables Save. After a successful save
+        // the form is no longer dirty and the button re-disables — wait for that so
+        // the value is persisted before we reload. (The smoketest runner always
+        // boots a clean DB, so the field is reliably empty here.)
+        await page.getByRole('textbox', { name: 'Sentry DSN', exact: true }).fill(TEST_DSN)
+        await page.getByTestId('sentry-dsn-save').click()
+        await expect(page.getByTestId('sentry-dsn-save')).toBeDisabled()
+
+        // VAPID: generate a keypair server-side; the panel flips to "Configured".
+        await page.getByTestId('vapid-generate').click()
+        await expect(page.getByText('Configured ✓')).toBeVisible()
+
+        // Reload so the server re-serves app.html with the stored DSN injected as
+        // window.__TINYCLD_PUBLIC_CONFIG__ — the value the web client reads at
+        // startup. This is the public-config injection chain, end to end. The
+        // global is set by an inline <script> regardless of auth, so we can read
+        // it on the (logged-out) shell without signing back in.
+        await page.goto('/admin')
+        const injected = await page.evaluate(
+            () =>
+                (window as unknown as { __TINYCLD_PUBLIC_CONFIG__?: { sentryDsn?: string } })
+                    .__TINYCLD_PUBLIC_CONFIG__?.sentryDsn
+        )
+        expect(injected).toBe(TEST_DSN)
     })
 })

@@ -69,7 +69,11 @@ const GRANTS = [
     // owner accounts. They need view/update to see + edit owners, and `manage`
     // so they can set the managed auth fields (verified/email/password) when
     // creating a pre-verified org owner or resetting an owner's credentials.
-    { name: 'users', ops: ['view', 'update', 'manage'] },
+    // `list` (added later in 1910000011) lets the /admin Organizations tab
+    // resolve each org's owner via a cross-org users list/join; without it owners
+    // render as "No owner assigned". Kept here so a fresh DB grants it directly;
+    // 1910000011's idempotent append is a no-op on those.
+    { name: 'users', ops: ['list', 'view', 'update', 'manage'] },
     // mail_domains only exists when the mail package is installed
     { name: 'mail_domains', ops: ['create'], optional: true },
 ]

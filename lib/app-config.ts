@@ -26,6 +26,30 @@ function devDefaultServer(): string {
     return 'https://localhost:7100'
 }
 
+// Public (non-secret) system config the server injects into the web HTML before
+// the bundle loads — see coreserver/static.go::publicConfigScript. Web only;
+// native has no window/HTML and uses the build-time path below.
+declare global {
+    // eslint-disable-next-line no-var
+    var __TINYCLD_PUBLIC_CONFIG__: { sentryDsn?: string } | undefined
+}
+
+// Resolve the Sentry DSN at startup. Order:
+//   1. window.__TINYCLD_PUBLIC_CONFIG__ — web, injected by the app server at
+//      serve time, so changing it in /admin Settings takes effect on next load
+//      with no rebuild.
+//   2. process.env.EXPO_PUBLIC_SENTRY_DSN — native, inlined at `expo export`
+//      from the stored value by the rebuild pipeline (build input, not a runtime
+//      env read).
+//   3. '' — no DSN configured; Sentry init no-ops (see core/lib/sentry.ts).
+// No hardcoded production DSN: a third-party host must supply its own.
+function resolveSentryDsn(): string {
+    if (typeof globalThis !== 'undefined' && globalThis.__TINYCLD_PUBLIC_CONFIG__?.sentryDsn) {
+        return globalThis.__TINYCLD_PUBLIC_CONFIG__.sentryDsn
+    }
+    return process.env.EXPO_PUBLIC_SENTRY_DSN ?? ''
+}
+
 // App config handed to @tinycld/core at startup. Web resolves the PB address
 // from the page origin (the dev proxy / app server routes /api to PocketBase
 // same-origin); native uses defaultServer on the connect screen.
@@ -34,9 +58,10 @@ function devDefaultServer(): string {
 // app.json alone. The fallback covers the rare case Constants.expoConfig is
 // unavailable (e.g. some unit-test environments).
 //
-// Sentry DSN is hardcoded (matches the EXPO_PUBLIC_SENTRY_DSN value EAS injects
-// from its production environment) so it ships in every build without depending
-// on build-time env plumbing.
+// Sentry DSN is resolved at startup (resolveSentryDsn): web reads the
+// server-injected window global; native uses EXPO_PUBLIC_SENTRY_DSN inlined at
+// build time. There is NO hardcoded production DSN — a host (incl. ours, via EAS
+// env) must supply its own, so a third-party deployment never reports to us.
 export const appConfig: CoreConfig = {
     brandName: Constants.expoConfig?.name ?? 'TinyCld',
     serverShortcuts: {},
@@ -50,8 +75,7 @@ export const appConfig: CoreConfig = {
     webShortcut: () =>
         Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : null,
     defaultServer: __DEV__ ? devDefaultServer() : 'https://tinycld.org',
-    sentryDsn:
-        'https://bfba682150acd66a9b75f51ddbced312@o4510361420431360.ingest.us.sentry.io/4511261359013888',
+    sentryDsn: resolveSentryDsn(),
     privacyUrl: 'https://tinycld.org/privacy',
     sourceUrl: 'https://github.com/tinycld/tinycld',
 }

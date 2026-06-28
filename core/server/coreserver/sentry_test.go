@@ -254,3 +254,42 @@ func TestSentryMiddlewareCapturesDirectWriteServerError(t *testing.T) {
 		t.Errorf("expected captured body to contain the http.Error message, got %q", body)
 	}
 }
+
+// initSentryFromConfig is safe to call with an empty or a set DSN — empty leaves
+// the SDK a no-op, a value swaps the active client. It must never panic; the boot
+// path and the on-change re-init both call it unconditionally.
+func TestInitSentryFromConfig(t *testing.T) {
+	t.Cleanup(func() { _ = sentry.Init(sentry.ClientOptions{}) }) // reset global client
+
+	cfg := &SystemConfig{values: map[string]string{}}
+	initSentryFromConfig(cfg) // empty DSN — no-op, no panic
+
+	cfg.set("sentry.dsn", "https://abc@o1.ingest.sentry.io/1", false)
+	initSentryFromConfig(cfg) // valid-shaped DSN — swaps the client, no panic
+}
+
+// The re-init wiring fires ONLY for sentry.* keys: a sentry.dsn change re-inits,
+// an unrelated key (e.g. vapid.subject) does not. This mirrors the prefix filter
+// RegisterSystemConfig installs; push/mail read per-use and must not trigger a
+// Sentry re-init.
+func TestSentryReinitOnlyForSentryKeys(t *testing.T) {
+	cfg := &SystemConfig{values: map[string]string{}}
+	var reinits int
+	cfg.OnChange(func(key, _ string) {
+		if strings.HasPrefix(key, "sentry.") {
+			reinits++
+		}
+	})
+
+	cfg.set("vapid.subject", "mailto:a@b.c", false)
+	cfg.set("mail.postmark_server_token", "tok", true)
+	if reinits != 0 {
+		t.Errorf("non-sentry keys must not trigger reinit, got %d", reinits)
+	}
+
+	cfg.set("sentry.dsn", "https://x@o1.ingest.sentry.io/2", false)
+	cfg.set("sentry.org", "myorg", false)
+	if reinits != 2 {
+		t.Errorf("each sentry.* change should reinit once, got %d", reinits)
+	}
+}

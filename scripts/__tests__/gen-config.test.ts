@@ -10,6 +10,7 @@ const contacts: ConfigPkg = {
     hasProvider: false,
     hasSeed: true,
     settings: [],
+    systemSettings: [],
     slots: [],
     sidebarContributions: [],
     manifest: { name: 'Contacts', slug: 'contacts', version: '0.1.0', description: 'd' },
@@ -23,6 +24,7 @@ const takeout: ConfigPkg = {
     hasProvider: false,
     hasSeed: false,
     settings: [{ slug: 'google-takeout', label: 'Import', component: 'settings/takeout' }],
+    systemSettings: [],
     slots: [],
     sidebarContributions: [],
     manifest: {
@@ -59,6 +61,21 @@ describe('buildConfigSource', () => {
         expect(src).toContain('export type MergedPackageSchema = Record<string, never>')
     })
 
+    it('emits systemSettings as a lazy-loaded array (system-scoped panels)', () => {
+        const withSystem: ConfigPkg = {
+            ...takeout,
+            systemSettings: [
+                { slug: 'provider', label: 'Mail Provider', component: 'system-settings/provider' },
+            ],
+        }
+        const src = buildConfigSource([withSystem])
+        expect(src).toContain('systemSettings: [')
+        expect(src).toContain('label: "Mail Provider"')
+        expect(src).toContain(
+            "lazy(() => import('@tinycld/google-takeout-import/system-settings/provider'))"
+        )
+    })
+
     it('camelCases slugs for identifiers', () => {
         const src = buildConfigSource([
             {
@@ -85,6 +102,7 @@ describe('buildConfigSource', () => {
             hasProvider: true,
             hasSeed: false,
             settings: [],
+            systemSettings: [],
             slots: [],
             sidebarContributions: [],
             manifest: { name: 'Drive', slug: 'drive', version: '0.1.0', description: 'd' },
@@ -105,6 +123,7 @@ describe('buildConfigSource', () => {
             hasProvider: false,
             hasSeed: false,
             settings: [],
+            systemSettings: [],
             slots: [],
             sidebarContributions: [],
             manifest: { name: 'Mail', slug: 'mail', version: '0.1.0', description: 'd' },
