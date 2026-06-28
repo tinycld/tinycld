@@ -269,9 +269,9 @@ func exportNativeBundles(job *installJob, appDir, buildID, runtimeVersion string
 	return out, nil
 }
 
-// envOr returns the environment variable named key, or def when it is unset/empty.
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
+// orDefault returns v when non-empty, else def.
+func orDefault(v, def string) string {
+	if v != "" {
 		return v
 	}
 	return def
@@ -288,25 +288,28 @@ func sentryReleaseFor(runtimeVersion string) string {
 }
 
 // uploadBundleSourcemaps uploads the .hbc + .map under outDir to Sentry via
-// sentry-cli, keyed by (release, dist). No-op (logs) when SENTRY_AUTH_TOKEN is
-// unset — self-hosters without Sentry build normally. Never returns an error:
-// the install succeeds whether or not the upload does.
+// sentry-cli, keyed by (release, dist). No-op (logs) when the Sentry auth token
+// is unset — self-hosters without Sentry build normally. Never returns an error:
+// the install succeeds whether or not the upload does. All Sentry config comes
+// from system settings (the system-wide source of truth), not env vars.
 func uploadBundleSourcemaps(job *installJob, outDir, runtimeVersion, bundleID string) {
-	if os.Getenv("SENTRY_AUTH_TOKEN") == "" {
-		jobLogf(job, "sourcemap upload skipped for %s (SENTRY_AUTH_TOKEN unset)", bundleID)
+	authToken := systemConfig.Get("sentry.auth_token")
+	if authToken == "" {
+		jobLogf(job, "sourcemap upload skipped for %s (sentry.auth_token unset)", bundleID)
 		return
 	}
 	release := sentryReleaseFor(runtimeVersion)
 	// org/project: ios/sentry.properties is prebuild output and is NOT in the
 	// server's build tree, so sentry-cli can't discover them — pass explicitly.
-	// Env-overridable (SENTRY_ORG/SENTRY_PROJECT) but defaulted to the known
-	// argosity/tinycld project so a standard deploy needs only the auth token.
-	org := envOr("SENTRY_ORG", "argosity")
-	project := envOr("SENTRY_PROJECT", "tinycld")
-	// sentry-cli reads SENTRY_AUTH_TOKEN from the env. Point it at the JS output
-	// dir; it pairs each minified file with its sibling .map.
+	// Configurable via system settings but defaulted to the known argosity/tinycld
+	// project so a standard deploy needs only the auth token.
+	org := orDefault(systemConfig.Get("sentry.org"), "argosity")
+	project := orDefault(systemConfig.Get("sentry.project"), "tinycld")
+	// sentry-cli reads the auth token from SENTRY_AUTH_TOKEN in its env. Pass it
+	// via runCmdEnv (NOT a CLI flag) so the secret stays out of the logged args.
 	jsDir := filepath.Join(outDir, "_expo", "static", "js")
-	out, err := runCmd(outDir, "pnpm", "exec", "sentry-cli", "sourcemaps", "upload",
+	out, err := runCmdEnv(outDir, []string{"SENTRY_AUTH_TOKEN=" + authToken},
+		"pnpm", "exec", "sentry-cli", "sourcemaps", "upload",
 		"--org", org, "--project", project,
 		"--release", release, "--dist", bundleID, jsDir)
 	if err != nil {

@@ -265,11 +265,23 @@ func runExportWithProgress(job *installJob, lo, hi int, step, dir string, args .
 			publicEnv = "web"
 		}
 	}
-	exportArgs := append([]string{
+	scopedEnv := []string{
 		"EXPO_PUBLIC_ENV=" + publicEnv,
 		"NODE_ENV=production",
-		"pnpm", "exec", "expo", "export",
-	}, args...)
+	}
+	// Native bundles read the Sentry DSN from EXPO_PUBLIC_SENTRY_DSN inlined at
+	// export time (they have no window to receive the server-injected runtime
+	// config that the WEB bundle uses). Source it from system settings — the
+	// system-wide source of truth — so a native rebuild/OTA picks up the
+	// operator's DSN. The web export deliberately omits it: web resolves the DSN
+	// at runtime from window.__TINYCLD_PUBLIC_CONFIG__, and inlining a snapshot
+	// here would let a stale build-time value shadow the live one.
+	if publicEnv != "web" {
+		if dsn := systemConfig.Get("sentry.dsn"); dsn != "" {
+			scopedEnv = append(scopedEnv, "EXPO_PUBLIC_SENTRY_DSN="+dsn)
+		}
+	}
+	exportArgs := append(append(scopedEnv, "pnpm", "exec", "expo", "export"), args...)
 	return expoStream(
 		func(line string) { reportExpoProgress(job, line, step, lo, hi, throttle) },
 		dir, "env", exportArgs...,

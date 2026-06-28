@@ -182,6 +182,14 @@ self-hosters relying on the env var / on our DSN).
 `EXPO_PUBLIC_SENTRY_DSN=<SettingValue(app,'sentry.dsn')>` to the scoped export env.
 Picked up on the next package rebuild / OTA. Web export doesn't need it.
 
+**Done (phase 5):** native export injects `EXPO_PUBLIC_SENTRY_DSN` from
+`systemConfig.Get("sentry.dsn")` (web omitted — runtime-injected). The sourcemap
+upload (`uploadBundleSourcemaps`) now reads `sentry.auth_token`/`org`/`project`
+from `systemConfig` and passes the token to the `sentry-cli` subprocess via a new
+`runCmdEnv` (env, not a logged arg — keeps the secret out of build logs). The old
+`envOr` env helper is gone (replaced by the pure `orDefault`). No `os.Getenv("SENTRY_*")`
+remains anywhere in coreserver.
+
 ## /admin Settings section
 
 - `SetupDashboard.tsx`: add `'settings'` to the `SetupTab` union, a NAV entry
