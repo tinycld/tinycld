@@ -154,6 +154,20 @@ func TestStatic_NoWebsiteDirStillServesApp(t *testing.T) {
 	})
 }
 
+func TestDefaultWebsiteDir_StateDirSet(t *testing.T) {
+	t.Setenv("TINYCLD_STATE_DIR", "/workspace")
+	if got, want := DefaultWebsiteDir(), filepath.Join("/workspace", "website"); got != want {
+		t.Fatalf("DefaultWebsiteDir() = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultWebsiteDir_StateDirUnsetFallsBackToRelative(t *testing.T) {
+	t.Setenv("TINYCLD_STATE_DIR", "")
+	if got, want := DefaultWebsiteDir(), "./website"; got != want {
+		t.Fatalf("DefaultWebsiteDir() = %q, want %q", got, want)
+	}
+}
+
 func TestStatic_ApiPathNeverServesShell(t *testing.T) {
 	publicDir, websiteDir, releasesDir := staticDirs(t,
 		nil,
