@@ -241,6 +241,14 @@ const super_admins = newCollection('super_admins', {
     ...indexing,
 })
 
+// System-wide configuration (Sentry, web-push, mail provider creds). Read/written
+// by the /admin Settings console; the server reads it through SystemConfig. See
+// the create_system_settings migration.
+const system_settings = newCollection('system_settings', {
+    omitOnInsert: ['created', 'updated'],
+    ...indexing,
+})
+
 const audit_logs = newCollection('audit_logs', {
     omitOnInsert: ['created', 'updated'],
     expand: { actor: users },
@@ -285,6 +293,7 @@ const coreStores = {
     pkg_install_log,
     notifications,
     super_admins,
+    system_settings,
 }
 export type CoreStores = typeof coreStores
 
