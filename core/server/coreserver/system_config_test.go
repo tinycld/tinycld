@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"strings"
 	"sync"
 	"testing"
 
@@ -81,7 +82,7 @@ func TestSystemConfigSetFiresOnChange(t *testing.T) {
 		gotKey, gotVal, fireCnt = key, value, fireCnt+1
 	})
 
-	cfg.set("sentry.dsn", "https://new.dsn")
+	cfg.set("sentry.dsn", "https://new.dsn", false)
 
 	if got := cfg.Get("sentry.dsn"); got != "https://new.dsn" {
 		t.Errorf("set did not update value, got %q", got)
@@ -101,7 +102,7 @@ func TestSystemConfigOnChangeCanRead(t *testing.T) {
 	cfg.OnChange(func(key, _ string) {
 		observed = cfg.Get(key) // must not deadlock
 	})
-	cfg.set("sentry.dsn", "https://read.dsn")
+	cfg.set("sentry.dsn", "https://read.dsn", false)
 	if observed != "https://read.dsn" {
 		t.Errorf("OnChange could not read updated value, got %q", observed)
 	}
@@ -123,7 +124,11 @@ func TestSystemConfigRecordHooksSync(t *testing.T) {
 	systemConfig = &SystemConfig{values: map[string]string{}}
 
 	syncRow := func(e *core.RecordEvent) error {
-		systemConfig.set(e.Record.GetString("key"), e.Record.GetString("value"))
+		systemConfig.set(
+			e.Record.GetString("key"),
+			e.Record.GetString("value"),
+			e.Record.GetBool("is_secret"),
+		)
 		return e.Next()
 	}
 	app.OnRecordAfterCreateSuccess("system_settings").BindFunc(syncRow)
@@ -140,5 +145,77 @@ func TestSystemConfigRecordHooksSync(t *testing.T) {
 	}
 	if got := systemConfig.Get("vapid.subject"); got != "mailto:ops@example.com" {
 		t.Errorf("after update hook: got %q", got)
+	}
+}
+
+// PublicValues exposes non-secret keys and withholds secret ones — the gate that
+// keeps tokens/private keys out of anything sent to a client.
+func TestSystemConfigPublicValues(t *testing.T) {
+	cfg := &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	cfg.set("sentry.dsn", "https://public.dsn", false)
+	cfg.set("sentry.auth_token", "secret-token", true)
+
+	pub := cfg.PublicValues()
+	if pub["sentry.dsn"] != "https://public.dsn" {
+		t.Errorf("non-secret value missing from PublicValues: %v", pub)
+	}
+	if _, present := pub["sentry.auth_token"]; present {
+		t.Error("secret value must NOT appear in PublicValues")
+	}
+}
+
+// injectPublicConfig publishes only non-secret values into the HTML, before
+// </head>, and never leaks a secret. Drives the package-global systemConfig.
+func TestInjectPublicConfig(t *testing.T) {
+	prev := systemConfig
+	t.Cleanup(func() { systemConfig = prev })
+	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	systemConfig.set("sentry.dsn", "https://abc@o1.ingest.sentry.io/1", false)
+	systemConfig.set("sentry.auth_token", "super-secret", true)
+
+	html := []byte("<html><head><title>x</title></head><body></body></html>")
+	out := string(injectPublicConfig(html))
+
+	if !strings.Contains(out, "window.__TINYCLD_PUBLIC_CONFIG__=") {
+		t.Fatalf("injection missing: %s", out)
+	}
+	if !strings.Contains(out, "https://abc@o1.ingest.sentry.io/1") {
+		t.Error("non-secret DSN should be injected")
+	}
+	if !strings.Contains(out, `"sentryDsn"`) {
+		t.Error("DSN should be published under the client field name sentryDsn")
+	}
+	if strings.Contains(out, "super-secret") || strings.Contains(out, "auth_token") {
+		t.Error("secret value/key must NEVER be injected into the HTML")
+	}
+	// Injected before </head> so it runs before the deferred bundle.
+	if strings.Index(out, "window.__TINYCLD_PUBLIC_CONFIG__") > strings.Index(out, "</head>") {
+		t.Error("script must be injected before </head>")
+	}
+}
+
+// A value containing "</script>" must not terminate the tag early.
+func TestInjectPublicConfigEscapesScriptClose(t *testing.T) {
+	prev := systemConfig
+	t.Cleanup(func() { systemConfig = prev })
+	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	systemConfig.set("sentry.dsn", "https://x/</script><script>alert(1)</script>", false)
+
+	out := string(injectPublicConfig([]byte("<head></head>")))
+	if strings.Contains(out, "</script><script>alert(1)") {
+		t.Errorf("unescaped </script> breakout in injected config: %s", out)
+	}
+}
+
+// Nothing to publish (no non-secret values) → HTML unchanged.
+func TestInjectPublicConfigNoop(t *testing.T) {
+	prev := systemConfig
+	t.Cleanup(func() { systemConfig = prev })
+	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	systemConfig.set("sentry.auth_token", "only-a-secret", true)
+
+	html := []byte("<head></head>")
+	if got := string(injectPublicConfig(html)); got != string(html) {
+		t.Errorf("expected HTML unchanged when nothing public, got %q", got)
 	}
 }
