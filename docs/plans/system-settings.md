@@ -227,6 +227,27 @@ image build — deferred.
 7. **Follow-ups** — VAPID panel + read site (core; per-send, no re-init) and mail panel +
    read sites (mail package; per-call, no re-init), reusing 1–6. Remove their `os.Getenv`.
 
+**Done (phase 7):**
+- **VAPID (core):** `push/push.go` reads `vapid.*` from `system_settings` directly off
+  `app` (no coreserver import → no cycle), per-send. `SettingsTab` gained a VAPID panel
+  with a reusable write-only `SecretField` (private key never seeded back into the form;
+  blank submit = unchanged). Shared `useSystemSettings` hook (`system-settings-store.ts`)
+  backs both core panels.
+- **Mail (sibling repo):** `register.go` provider/SMTP/IMAP-credential reads now layer
+  org `settings` → `system_settings` (`mail.*`) → default; the env fallback is gone
+  (`smtpConfigFromEnv`→`smtpConfigFromSystem(app)`, `newProviderFromEnv`→
+  `newProviderFromSystem(app)`, threaded `app` through `smtpConfigFromSettings`/imap
+  fetcher). Mail contributes a `system-settings/provider` panel (provider + write-only
+  Postmark tokens) via its manifest + a `./system-settings/*` exports entry.
+- **Out of scope (stay env, confirmed):** mail's listen-address/port/enable-flag vars
+  (`SMTP_ADDR`, `IMAP_ENABLED`, `SMTP_DOMAIN`, `SMTP_INBOUND_ADDR`, …) — host topology.
+- **Two repos:** core (`tinycld`) and `mail` are separate git repos → two commits,
+  coordinated release. No migrated `os.Getenv("MAIL_*"/"POSTMARK_*"/"SMTP_IMAP_*")`,
+  `VAPID_*`, or `SENTRY_*` reads remain.
+- **Secrets:** front-end obfuscation only (write-only fields); the value still reaches
+  the super-admin client over the wire (existing trust model). NOT injected into public
+  web HTML. (Server-side redaction was considered and declined.)
+
 ## Tests
 
 - Go: `SystemConfig.Get` returns the stored value; `onChanged` updates it live;
