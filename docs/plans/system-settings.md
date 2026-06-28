@@ -277,3 +277,27 @@ sentryDsn` injection confirmed → Generate VAPID → "Configured ✓").
 Dependency note: this branch required PR #82's `appPb`-auth fix (the console now
 runs authenticated) — before the rebase, the package list and the Settings-panel
 store reads came back empty because `appPb` was anonymous. #82 merged; rebased in.
+
+## Upgrade notes — BREAKING for self-hosters
+
+Service config is no longer read from environment variables at runtime; it lives in
+**/admin → Settings** (the `system_settings` collection). The collection migration
+performs a **one-time seed from the legacy env vars** on the first boot that runs
+it, so an existing env-configured deployment carries over automatically. After
+that, env changes have no effect — edit the values in /admin.
+
+Things that change on upgrade:
+- **Sentry** (`SENTRY_DSN` etc.): server + web read it from settings; the hardcoded
+  client DSN is gone. The official EAS build supplies it via `eas.json`. A
+  **third-party native rebuild reports nowhere until they set their own DSN** in
+  /admin (web picks up a change on next load; native on next rebuild/OTA).
+- **VAPID** (`VAPID_*`): web-push keys come from settings — use the "Generate
+  keypair" button or paste an existing pair. An unconfigured deployment sends no push.
+- **Mail** (`MAIL_PROVIDER`/`POSTMARK_*`/`SMTP_IMAP_*`): provider + credentials are
+  now **system-wide** (Settings → Mail), not per-org. Org mail settings keep only
+  domain management. The seed migrates env values; otherwise configure in /admin.
+- **NOT changed** (still env): listen addresses/ports/enable-flags (`SMTP_ADDR`,
+  `IMAP_ENABLED`, `SMTP_DOMAIN`, …), `TINYCLD_PUBLIC_URL`, TLS/domain vars — host
+  topology, set by the process manager.
+
+For the release: tag the system-settings commits as a breaking change in the notes.

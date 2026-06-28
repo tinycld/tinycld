@@ -15,20 +15,24 @@ import (
 // publicConfigScript builds the inline <script> that publishes NON-secret system
 // config to the web client on window.__TINYCLD_PUBLIC_CONFIG__, read at module
 // init by lib/app-config.ts (e.g. the Sentry DSN). Secret values never appear
-// here — PublicValues() already excludes them. Storage keys are mapped to the
-// client config field names so the browser contract is decoupled from the
-// collection's key namespace. Returns "" when there's nothing to publish.
+// here (see the two gates below). Storage keys are mapped to client-facing field
+// names so the browser contract is decoupled from the collection's key namespace.
+// Returns "" when there's nothing to publish.
 //
 // The JSON is marshaled (not string-built) so values are safely escaped; we then
 // guard against "</script>" appearing in a value, which would otherwise close the
 // tag early — JSON-encodes "<" as-is, so a malicious DSN could break out.
 func publicConfigScript() string {
-	vals := systemConfig.PublicValues()
-	// Whitelist + rename: only keys the client is meant to consume, under their
-	// client-facing names. Adding a new public client value is a deliberate edit
-	// here, not an automatic passthrough of every non-secret row.
+	// Two independent gates keep secrets out of the HTML: (1) PublicValues()
+	// returns only non-secret rows, and (2) the explicit whitelist below names the
+	// exact keys the client may consume, under their client-facing names. Adding a
+	// public client value is a deliberate edit here, not an automatic passthrough.
+	// The whitelist is also asserted non-secret at injection time (the one place a
+	// leak is unrecoverable) so a row mis-flagged is_secret=false elsewhere still
+	// can't slip a credential into the page.
+	const sentryDSNKey = "sentry.dsn"
 	out := map[string]string{}
-	if v := vals["sentry.dsn"]; v != "" {
+	if v := systemConfig.publicValue(sentryDSNKey); v != "" {
 		out["sentryDsn"] = v
 	}
 	if len(out) == 0 {
