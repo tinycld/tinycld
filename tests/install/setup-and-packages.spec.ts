@@ -112,9 +112,16 @@ test.describe('first-run install', () => {
         // Switch to the Organizations section via the nav rail.
         await page.getByText('Organizations', { exact: true }).first().click()
 
-        // Regression test for "Failed to create record. The username field
-        // is required." — the form previously omitted username on the user
-        // create, which is now derived from the email.
+        // Regression test for two org-create failures:
+        //   1. "The username field is required." — the form once omitted
+        //      username (now derived from the email).
+        //   2. A 400 on `verified` ("Values don't match.") — the console wrote
+        //      through an UNAUTHENTICATED app pb client, so setting the managed
+        //      `verified` field on the new owner failed the users manageRule.
+        //      The bootstrap now makes the operator a super_admin app user and
+        //      the console's shared pb client carries that token, authorizing
+        //      the managed-field write. The owner-login step below proves the
+        //      account is actually usable (not just that a row appeared).
         await page.getByRole('button', { name: 'New organization' }).click()
 
         // The create form groups fields under Organization / Owner account
@@ -143,6 +150,22 @@ test.describe('first-run install', () => {
         await expect(page.getByText(TEST_ORG_NAME, { exact: true })).toBeVisible()
         await expect(page.getByText(TEST_ORG_SLUG, { exact: true })).toBeVisible()
         await expect(page.getByText(TEST_ORG_OWNER_EMAIL, { exact: true })).toBeVisible()
+
+        // The owner must be able to sign in with the password just entered —
+        // proves the account is usable, not merely that a row appeared. (The
+        // `verified` 400 regression created no owner at all; a password=email
+        // mix-up would create one that can't log in.) Use a fresh page so the
+        // admin session stays intact for the next serial test.
+        const ownerPage = await page.context().newPage()
+        try {
+            await ownerPage.goto('/')
+            await ownerPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
+            await ownerPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
+            await ownerPage.getByTestId('login-submit').click()
+            await ownerPage.waitForURL(/\/a\//, { timeout: 30_000 })
+        } finally {
+            await ownerPage.close()
+        }
     })
 
     test('superuser can grant another user super admin', async ({ page }) => {

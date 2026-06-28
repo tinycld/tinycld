@@ -423,6 +423,8 @@ function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEn
                                 label="Email"
                                 keyboardType="email-address"
                                 autoCapitalize="none"
+                                autoComplete="email"
+                                textContentType="emailAddress"
                             />
                         </View>
                         <View className="flex-1 min-w-[200px]">
@@ -432,6 +434,8 @@ function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEn
                                 label="New Password"
                                 placeholder="Leave blank to keep current"
                                 secureTextEntry
+                                autoComplete="new-password"
+                                textContentType="newPassword"
                             />
                         </View>
                     </View>
@@ -618,6 +622,8 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 placeholder="owner@example.com"
                                 keyboardType="email-address"
                                 autoCapitalize="none"
+                                autoComplete="email"
+                                textContentType="emailAddress"
                             />
                         </View>
                         <View className="flex-1 min-w-[200px]">
@@ -627,6 +633,8 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 label="Username"
                                 placeholder="jane"
                                 autoCapitalize="none"
+                                autoComplete="username"
+                                textContentType="username"
                                 hint="Must be unique — suggested from the email"
                             />
                         </View>
@@ -637,6 +645,8 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 label="Password"
                                 placeholder="At least 8 characters"
                                 secureTextEntry
+                                autoComplete="new-password"
+                                textContentType="newPassword"
                             />
                         </View>
                     </View>

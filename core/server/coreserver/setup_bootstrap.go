@@ -73,11 +73,11 @@ func RegisterSetupBootstrap(app *pocketbase.PocketBase) {
 }
 
 type setupInitRequest struct {
-	Token   string `json:"token"`
-	AppName string `json:"appName"`
-	Email   string `json:"email"`
+	Token    string `json:"token"`
+	AppName  string `json:"appName"`
+	Email    string `json:"email"`
 	Password string `json:"password"`
-	AppURL  string `json:"appUrl"`
+	AppURL   string `json:"appUrl"`
 }
 
 func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
@@ -119,21 +119,40 @@ func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		})
 	}
 
-	collection, err := app.FindCollectionByNameOrId("_superusers")
+	// Bootstrap two identities for the first operator:
+	//   1. a PocketBase _superusers record — keeps PB's installer satisfied (so
+	//      the setup token isn't re-printed on every reboot), backs the sharelink
+	//      signing key, and remains a recovery login.
+	//   2. a regular `users` record promoted via a `super_admins` row — this is
+	//      the identity the /admin console actually runs as. The console writes
+	//      through the app's pbtsdb stores (the shared app pb client), and those
+	//      writes must carry an auth that satisfies the users `manageRule`
+	//      (@collection.super_admins...) to set managed fields like `verified`
+	//      when creating a pre-verified org owner. A raw _superusers token on a
+	//      throwaway client never reached those stores, which is why org creation
+	//      failed with a 400 on `verified`. We therefore mint the returned auth
+	//      token from the `users` record and the client saves it onto the shared
+	//      pb instance.
+	superusers, err := app.FindCollectionByNameOrId("_superusers")
 	if err != nil {
 		return re.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Failed to find superusers collection.",
 		})
 	}
-
-	record := core.NewRecord(collection)
-	record.SetEmail(req.Email)
-	record.SetPassword(req.Password)
-	record.SetVerified(true)
-
-	if err := app.Save(record); err != nil {
+	superuser := core.NewRecord(superusers)
+	superuser.SetEmail(req.Email)
+	superuser.SetPassword(req.Password)
+	superuser.SetVerified(true)
+	if err := app.Save(superuser); err != nil {
 		return re.JSON(http.StatusInternalServerError, map[string]string{
 			"error": fmt.Sprintf("Failed to create superuser: %v", err),
+		})
+	}
+
+	operator, err := createSuperAdminOperator(app, req.Email, req.Password)
+	if err != nil {
+		return re.JSON(http.StatusInternalServerError, map[string]string{
+			"error": fmt.Sprintf("Failed to create admin user: %v", err),
 		})
 	}
 
@@ -154,17 +173,57 @@ func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	setupToken = ""
 	setupTokenMu.Unlock()
 
-	authToken, err := record.NewAuthToken()
+	// Mint the token from the `users` operator (not _superusers) so the console
+	// runs as the super-admin app user and store writes are authorized.
+	authToken, err := operator.NewAuthToken()
 	if err != nil {
 		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Superuser created but failed to generate auth token.",
+			"error": "Admin user created but failed to generate auth token.",
 		})
 	}
 
 	return re.JSON(http.StatusOK, map[string]string{
 		"authToken": authToken,
 		"email":     req.Email,
+		"userId":    operator.Id,
 	})
+}
+
+// createSuperAdminOperator creates the first operator as a regular `users`
+// record and promotes it via a `super_admins` row. Returns the users record so
+// the caller can mint its auth token. The super_admins createRule is null
+// (superuser-only); this runs in the app's Go context, which bypasses record
+// rules, so the insert is authorized without an authenticated superuser.
+func createSuperAdminOperator(app core.App, email, password string) (*core.Record, error) {
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		return nil, fmt.Errorf("find users collection: %w", err)
+	}
+	username := DeriveUsername(email)
+	operator := core.NewRecord(users)
+	operator.SetEmail(email)
+	operator.SetPassword(password)
+	operator.SetVerified(true)
+	operator.Set("emailVisibility", true)
+	// `name` is required and is a human display label; seed it from the email
+	// local-part (the operator can rename themselves later). `username` is the
+	// unique handle, derived by the shared helper.
+	operator.Set("name", strings.SplitN(email, "@", 2)[0])
+	operator.Set("username", username)
+	if err := app.Save(operator); err != nil {
+		return nil, fmt.Errorf("create users record: %w", err)
+	}
+
+	superAdmins, err := app.FindCollectionByNameOrId("super_admins")
+	if err != nil {
+		return nil, fmt.Errorf("find super_admins collection: %w", err)
+	}
+	grant := core.NewRecord(superAdmins)
+	grant.Set("user", operator.Id)
+	if err := app.Save(grant); err != nil {
+		return nil, fmt.Errorf("create super_admins grant: %w", err)
+	}
+	return operator, nil
 }
 
 func generateToken(bytes int) (string, error) {
