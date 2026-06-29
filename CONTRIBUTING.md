@@ -174,7 +174,7 @@ There is **no** central `log` helper. **Don't import `@tinycld/core/lib/logger` 
 - `pnpm run export:ios` and `pnpm run export:android` produce platform-specific exports (used by the docker/EAS build pipelines, not for local launch).
 
 ## PocketBase Notes
-- Local data lives in `tinycld/server/pb_data/`; reset via `tinycld/tests/pb-test-server` scripts when fixtures fall out of sync.
+- Local data lives in `tinycld/server/pb_data/`; reset via `pnpm run db:reset` (or `db:reset:demo`) and re-seed with `pnpm run db:seed` when fixtures fall out of sync.
 - Keep migrations in `tinycld/server/pb_migrations/` (and per-package `pb-migrations/`, symlinked in by the generator) and describe manual steps in the PR body.
 - Create api routes only as a last resort and after discussion. Prefer to create records using standard useMutation with pbtsdb stores.  If needed we can use golang hooks to observe and modify records as they're created/modified
 - Go server hooks (e.g. CardDAV in the `@tinycld/contacts` sibling's `server/` directory) use SDK methods that bypass PocketBase API rules — they implement equivalent authorization manually. When changing API rules on a collection, check if a Go hook also accesses that collection and update its filters to match.
