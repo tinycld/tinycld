@@ -151,10 +151,19 @@ jobs:
           cat > tsconfig.json <<'TSCFG'
           { "compilerOptions": { "target": "es2022", "module": "commonjs", "moduleResolution": "node", "esModuleInterop": true, "strict": false, "skipLibCheck": true } }
           TSCFG
-          # Copy the spec + config in. The config's testDir: '.' then resolves
-          # to PW_ROOT, matching the local spec layout.
-          cp ${{ github.workspace }}/tests/install/playwright.config.ts .
+          # Copy the spec in. The config's testDir: '.' resolves to PW_ROOT,
+          # matching the local spec layout.
           cp ${{ github.workspace }}/tests/install/setup-and-packages.spec.ts .
+          # Copy the config, but STRIP the local-only `.env` loader block. That
+          # block uses `import.meta.url` + `createRequire('@tinycld/core/...')`,
+          # which only resolves inside the workspace; in this isolated CJS sandbox
+          # it either throws ("exports is not defined") or hangs the TS loader.
+          # The runner forwards PW_BASE_URL / PW_SETUP_TOKEN via env instead, so
+          # the loader is unnecessary here. Drop the `import { createRequire }`
+          # line and replace the call with a no-op.
+          sed -e "/^import { createRequire } from 'node:module'$/d" \
+              -e "s#createRequire(import.meta.url)('@tinycld/core/lib/load-env').loadEnv()#// stripped for sandbox (env forwarded by the runner)#" \
+              ${{ github.workspace }}/tests/install/playwright.config.ts > playwright.config.ts
           ls -la
           echo "root=${PW_ROOT}" >> "$GITHUB_OUTPUT"
 
