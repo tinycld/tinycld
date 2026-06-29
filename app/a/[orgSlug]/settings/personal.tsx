@@ -5,10 +5,12 @@ import { DeleteAccountSection } from '@tinycld/core/components/settings/DeleteAc
 import { DisconnectServerSection } from '@tinycld/core/components/settings/DisconnectServerSection'
 import { LeaveOrgSection } from '@tinycld/core/components/settings/leave-org/LeaveOrgSection'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
+import { changeMyPassword } from '@tinycld/core/lib/account-password'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { COLOR_THEMES, type ColorThemeSlug } from '@tinycld/core/lib/color-themes'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
+import { notify } from '@tinycld/core/lib/notify'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import type { PackageManifest } from '@tinycld/core/lib/packages/types'
 import { useStore } from '@tinycld/core/lib/pocketbase'
@@ -27,7 +29,7 @@ import { useUserPreference } from '@tinycld/core/lib/use-user-preference'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { Switch } from '@tinycld/core/ui/switch'
 import { ArrowLeft, Check, RotateCcw } from 'lucide-react-native'
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import {
     ActivityIndicator,
     Platform,
@@ -43,6 +45,17 @@ const profileSchema = z.object({
     name: z.string().min(1, 'Name is required'),
     email: z.string().email('Valid email is required'),
 })
+
+const passwordSchema = z
+    .object({
+        oldPassword: z.string().min(1, 'Current password is required'),
+        password: z.string().min(8, 'New password must be at least 8 characters'),
+        passwordConfirm: z.string().min(1, 'Please confirm your new password'),
+    })
+    .refine(data => data.password === data.passwordConfirm, {
+        path: ['passwordConfirm'],
+        message: 'Passwords do not match',
+    })
 
 export default function PersonalSettings() {
     const orgHref = useOrgHref()
@@ -118,7 +131,126 @@ function ProfileSection() {
                 <TextInput control={control} name="name" label="Name" onBlur={saveIfValid} />
                 <TextInput control={control} name="email" label="Email" onBlur={saveIfValid} />
             </View>
+
+            <ChangePassword />
         </View>
+    )
+}
+
+function ChangePassword() {
+    const [isOpen, setIsOpen] = useState(false)
+
+    if (!isOpen) {
+        return (
+            <Pressable
+                onPress={() => setIsOpen(true)}
+                className="self-start rounded-lg px-3 py-2 border border-border"
+            >
+                <Text className="text-foreground font-semibold">Change password</Text>
+            </Pressable>
+        )
+    }
+
+    return <ChangePasswordForm onDone={() => setIsOpen(false)} />
+}
+
+function ChangePasswordForm({ onDone }: { onDone: () => void }) {
+    const { user } = useAuth()
+    const primaryFg = useThemeColor('primary-foreground')
+
+    const {
+        control,
+        setError,
+        getValues,
+        handleSubmit,
+        reset,
+        formState: { errors, isSubmitted },
+    } = useForm({
+        resolver: zodResolver(passwordSchema),
+        defaultValues: { oldPassword: '', password: '', passwordConfirm: '' },
+    })
+
+    const change = useMutation({
+        mutationFn: (data: z.infer<typeof passwordSchema>) =>
+            changeMyPassword({
+                email: user.email,
+                oldPassword: data.oldPassword,
+                newPassword: data.password,
+                passwordConfirm: data.passwordConfirm,
+            }),
+        onSuccess: () => {
+            notify.emit({ event: 'account.password_changed', title: 'Password changed' })
+            reset()
+            onDone()
+        },
+        onError: handleMutationErrorsWithForm({
+            setError,
+            getValues,
+            operation: 'change-password',
+        }),
+    })
+
+    const handleCancel = () => {
+        if (change.isPending) return
+        reset()
+        onDone()
+    }
+
+    const submit = handleSubmit(data => change.mutate(data))
+
+    return (
+        <SectionCard>
+            <View className="gap-1">
+                <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
+
+                <TextInput
+                    control={control}
+                    name="oldPassword"
+                    label="Current password"
+                    secureTextEntry
+                    autoComplete="current-password"
+                    textContentType="password"
+                />
+                <TextInput
+                    control={control}
+                    name="password"
+                    label="New password"
+                    hint="At least 8 characters"
+                    secureTextEntry
+                    autoComplete="new-password"
+                    textContentType="newPassword"
+                />
+                <TextInput
+                    control={control}
+                    name="passwordConfirm"
+                    label="Confirm new password"
+                    secureTextEntry
+                    autoComplete="new-password"
+                    textContentType="newPassword"
+                />
+
+                <View className="flex-row gap-3 mt-1">
+                    <Pressable
+                        onPress={submit}
+                        disabled={change.isPending}
+                        className={`rounded-lg px-4 py-2.5 bg-primary ${change.isPending ? 'opacity-50' : 'opacity-100'}`}
+                    >
+                        {change.isPending ? (
+                            <ActivityIndicator size="small" color={primaryFg} />
+                        ) : (
+                            <Text className="text-primary-foreground font-semibold">Save</Text>
+                        )}
+                    </Pressable>
+                    <Pressable
+                        onPress={handleCancel}
+                        disabled={change.isPending}
+                        className="rounded-lg px-4 py-2.5 border border-border"
+                    >
+                        <Text className="text-foreground font-semibold">Cancel</Text>
+                    </Pressable>
+                </View>
+            </View>
+        </SectionCard>
     )
 }
 
