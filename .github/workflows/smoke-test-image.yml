@@ -122,6 +122,11 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
+          # The repo's package.json declares packageManager: pnpm, so setup-node's
+          # default package-manager cache tries to run `pnpm` to find its store —
+          # but this job never installs pnpm (it builds a standalone npm sandbox
+          # below). Disable the cache so the step doesn't fail looking for pnpm.
+          package-manager-cache: false
 
       # Build a self-contained Playwright sandbox in a temp dir:
       #   - @playwright/test installed locally (matching app's pinned version)
