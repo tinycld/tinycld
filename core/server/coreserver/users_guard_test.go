@@ -297,6 +297,27 @@ func TestUsersGuard_SelfCannotEditVerified(t *testing.T) {
 	}
 }
 
+// The guard no longer pre-rejects a self password change. Old-password
+// correctness is enforced separately by PocketBase's own auth-record form
+// validation on the real request path (see the change-password e2e); this
+// test only asserts the field-allowlist guard lets the change through.
+func TestUsersGuard_SelfCanChangePassword(t *testing.T) {
+	app := setupGuardTestApp(t)
+	user := makeUser(t, app, "self-pw@test.local")
+
+	err := updateAsAuthenticated(t, app, user, user, func(r *core.Record) {
+		r.SetPassword("RotatedSelf1!")
+	})
+	if err != nil {
+		t.Fatalf("self password change should be allowed by the guard: %v", err)
+	}
+
+	fresh, _ := app.FindRecordById("users", user.Id)
+	if !fresh.ValidatePassword("RotatedSelf1!") {
+		t.Error("new password should validate after self change")
+	}
+}
+
 func TestUsersGuard_AdminCanFlipIsDemoOnSharedOrg(t *testing.T) {
 	app := setupGuardTestApp(t)
 	admin := makeUser(t, app, "admin@test.local")

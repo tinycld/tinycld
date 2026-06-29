@@ -25,4 +25,5 @@ export const eventRegistry: Record<NotifyEventName, EventConfig> = {
     'import.complete': { channels: ['toast', 'bell'], variant: 'success' },
     'import.failed': { channels: ['toast', 'bell'], variant: 'error' },
     'mutation.error': { channels: ['toast'], variant: 'error' },
+    'account.password_changed': { channels: ['toast'], variant: 'success' },
 }
