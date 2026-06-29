@@ -74,12 +74,14 @@ pnpm run ssl:generate
 
 ## What's where
 
-- **`app/`** — Expo Router route tree. `_layout.tsx` imports `~/lib/configure-core` first (which
-  calls `configureCore(appConfig)` at module-init), then imports core's Providers and mounts the gate.
+- **`app/`** — Expo Router route tree. `_layout.tsx` runs the Hermes polyfills first
+  (`~/lib/diagnose-regexp`, `~/lib/polyfill-dom-shim`, `~/lib/polyfill-crypto`), then imports
+  `~/lib/configure-core` (which calls `configureCore(appConfig)` at module-init), then imports
+  core's Providers and mounts the gate.
 - **`lib/app-config.ts`** — `CoreConfig` value handed to core at boot. Branding, server
   shortcuts, Sentry creds, review-mode flags.
-- **`lib/configure-core.ts`** — side-effect-only module imported first by `_layout.tsx` so
-  `configureCore` runs before any other `@tinycld/core/*` import.
+- **`lib/configure-core.ts`** — side-effect-only module imported by `_layout.tsx` right after the
+  Hermes polyfills (and before any other `@tinycld/core/*` import) so `configureCore` runs first.
 - **`tinycld.config.ts`** — generated source of truth for installed packages (a typed
   `definePackageEntry` array). Core derives stores/sidebars/providers/registry/seeds from it
   at runtime. Gitignored.
