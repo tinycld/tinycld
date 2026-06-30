@@ -1,7 +1,10 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+// @vitest-environment happy-dom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const update = vi.fn()
 const authWithPassword = vi.fn()
+const requestPasswordReset = vi.fn()
+const confirmPasswordReset = vi.fn()
 const captureException = vi.fn()
 
 const authStore = { record: { id: 'user_1' } as { id: string } | null }
@@ -9,7 +12,12 @@ const authStore = { record: { id: 'user_1' } as { id: string } | null }
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
     pb: {
         authStore,
-        collection: () => ({ update, authWithPassword }),
+        collection: () => ({
+            update,
+            authWithPassword,
+            requestPasswordReset,
+            confirmPasswordReset,
+        }),
     },
 }))
 
@@ -73,5 +81,49 @@ describe('changeMyPassword', () => {
 
         await expect(changeMyPassword(args)).rejects.toThrow('reauth failed')
         expect(captureException).toHaveBeenCalledWith('account.changePassword.reauth', reauthError)
+    })
+})
+
+describe('requestPasswordReset', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        authStore.record = { id: 'user_1' }
+    })
+
+    it('calls PocketBase requestPasswordReset with the email', async () => {
+        const { requestPasswordReset: fn } = await import('@tinycld/core/lib/account-password')
+        requestPasswordReset.mockResolvedValueOnce(true)
+        await fn('alice@example.com')
+        expect(requestPasswordReset).toHaveBeenCalledWith('alice@example.com')
+    })
+
+    it('never throws and reports unexpected failures (no account enumeration)', async () => {
+        const { requestPasswordReset: fn } = await import('@tinycld/core/lib/account-password')
+        requestPasswordReset.mockRejectedValueOnce(new Error('boom'))
+        await expect(fn('nobody@example.com')).resolves.toBeUndefined()
+        expect(captureException).toHaveBeenCalledWith(
+            'account.requestPasswordReset',
+            expect.any(Error)
+        )
+    })
+})
+
+describe('confirmPasswordReset', () => {
+    beforeEach(() => {
+        vi.clearAllMocks()
+        authStore.record = { id: 'user_1' }
+    })
+
+    it('forwards token and both passwords to PocketBase', async () => {
+        const { confirmPasswordReset: fn } = await import('@tinycld/core/lib/account-password')
+        confirmPasswordReset.mockResolvedValueOnce(true)
+        await fn('tok-1', 'newpassword', 'newpassword')
+        expect(confirmPasswordReset).toHaveBeenCalledWith('tok-1', 'newpassword', 'newpassword')
+    })
+
+    it('propagates errors so the confirm screen can surface them', async () => {
+        const { confirmPasswordReset: fn } = await import('@tinycld/core/lib/account-password')
+        confirmPasswordReset.mockRejectedValueOnce(new Error('invalid token'))
+        await expect(fn('bad', 'pw12345678', 'pw12345678')).rejects.toThrow('invalid token')
     })
 })
