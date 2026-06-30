@@ -35,3 +35,34 @@ export async function changeMyPassword(args: ChangePasswordArgs): Promise<void> 
         throw err
     }
 }
+
+/**
+ * Request a password-reset email for the given address. Uses PocketBase's
+ * built-in flow (PB mints the token and owns its lifecycle); the outbound email
+ * is overridden server-side to send via the core mailer with a link to the
+ * app's own /reset-password/<token> screen.
+ *
+ * Failures are reported but NOT rethrown: the login UI always shows the same
+ * "if an account exists, we've sent a link" confirmation so the response can't
+ * be used to discover whether an email is registered.
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+    try {
+        await pb.collection('users').requestPasswordReset(email)
+    } catch (err) {
+        captureException('account.requestPasswordReset', err)
+    }
+}
+
+/**
+ * Complete a password reset using the token from the emailed link. Errors here
+ * (invalid/expired token, weak password) ARE surfaced so the confirm screen can
+ * show them to the user.
+ */
+export async function confirmPasswordReset(
+    token: string,
+    password: string,
+    passwordConfirm: string
+): Promise<void> {
+    await pb.collection('users').confirmPasswordReset(token, password, passwordConfirm)
+}
