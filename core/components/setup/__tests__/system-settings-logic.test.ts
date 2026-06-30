@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+    deliveryEnabledValue,
+    fromAddressSchema,
+    isDeliveryEnabled,
     rowsToMap,
     sentryDsnSchema,
     shouldPersistSecret,
@@ -45,5 +48,28 @@ describe('vapidSubjectSchema', () => {
     })
     it('rejects a bare string', () => {
         expect(vapidSubjectSchema.safeParse('admin').success).toBe(false)
+    })
+})
+
+describe('fromAddressSchema', () => {
+    it('accepts a valid email and blank (blank = server default)', () => {
+        expect(fromAddressSchema.safeParse('noreply@tinycld.org').success).toBe(true)
+        expect(fromAddressSchema.safeParse('').success).toBe(true)
+    })
+    it('rejects a non-email', () => {
+        expect(fromAddressSchema.safeParse('not-an-email').success).toBe(false)
+    })
+})
+
+describe('delivery-enabled mapping', () => {
+    it('maps the toggle boolean to a stored string', () => {
+        expect(deliveryEnabledValue(true)).toBe('true')
+        expect(deliveryEnabledValue(false)).toBe('false')
+    })
+    it('treats absent / anything-but-"false" as enabled', () => {
+        expect(isDeliveryEnabled(undefined)).toBe(true)
+        expect(isDeliveryEnabled('true')).toBe(true)
+        expect(isDeliveryEnabled('')).toBe(true)
+        expect(isDeliveryEnabled('false')).toBe(false)
     })
 })
