@@ -14,6 +14,7 @@ export type NotificationEvents = {
     'import.complete': { source: 'google-takeout' | 'csv'; count: number }
     'import.failed': { source: string; error: string }
     'mutation.error': { operation: string; error: string }
+    'account.password_changed': Record<string, never>
 }
 
 export type NotifyEventName = keyof NotificationEvents

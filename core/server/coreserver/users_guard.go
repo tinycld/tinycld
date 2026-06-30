@@ -9,16 +9,20 @@ import (
 )
 
 // selfEditableUserFields lists the fields the record's own user is allowed
-// to change via a direct API write. Profile-style fields only — `name` and
-// `avatar`. Password / email changes flow through PocketBase's dedicated
-// confirmation endpoints (requestPasswordReset, requestEmailChange) which
-// don't go through this hook. `verified` is set by confirmVerification.
+// to change via a direct API write. Profile-style fields (`name`, `avatar`)
+// plus `password` — an authenticated self password change is safe because
+// PocketBase's own auth-record validation requires and verifies `oldPassword`
+// for a non-superuser password change (forms.RecordUpsert.checkOldPassword),
+// so allowing the field here defers to that check rather than bypassing it.
+// `email` still flows through PB's confirmation endpoint (requestEmailChange);
+// `verified` is set by confirmVerification.
 //
 // `is_demo` is intentionally absent: a sandboxed user must not be able to
 // lift their own restrictions.
 var selfEditableUserFields = map[string]bool{
-	"name":   true,
-	"avatar": true,
+	"name":     true,
+	"avatar":   true,
+	"password": true,
 }
 
 // adminEditableUserFields lists the fields shared-org admins are allowed
