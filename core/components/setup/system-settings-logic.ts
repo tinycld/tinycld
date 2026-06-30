@@ -38,3 +38,24 @@ export const vapidSubjectSchema = z.union([
     z.string().url('Use a URL or mailto: URI'),
     z.literal(''),
 ])
+
+// The default From for transactional mail. Blank falls back to the server
+// default (noreply@tinycld.org); otherwise it must be a bare email address.
+export const fromAddressSchema = z.union([
+    z.string().email('Enter a valid email address'),
+    z.literal(''),
+])
+
+/**
+ * Whether a delivery-enabled toggle's boolean maps to a stored "false" string.
+ * The server treats any value other than "false" as enabled, so we only need to
+ * persist the explicit-off case distinctly; we store "true"/"false" for clarity.
+ */
+export function deliveryEnabledValue(enabled: boolean): string {
+    return enabled ? 'true' : 'false'
+}
+
+/** Parse a stored mail.delivery_enabled value; absent/anything-but-"false" is on. */
+export function isDeliveryEnabled(stored: string | undefined): boolean {
+    return stored !== 'false'
+}
