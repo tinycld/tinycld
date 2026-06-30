@@ -1,6 +1,6 @@
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { packageSystemSettings } from '@tinycld/core/lib/packages/derive-components'
-import { usePackages } from '@tinycld/core/lib/packages/use-packages'
+import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
 import { pb as appPb } from '@tinycld/core/lib/pocketbase'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import {
@@ -307,7 +307,9 @@ const mailSchema = z.object({
 
 function MailSettings() {
     const { byKey, upsert } = useSystemSettings()
-    const mailPackageInstalled = usePackages().some(p => p.slug === 'mail')
+    // Build-time registry (same source that decides whether mail's Provider
+    // panel renders), so the two panels' key ownership stays consistent.
+    const mailPackageInstalled = packageRegistry.some(p => p.slug === 'mail')
 
     const provider = byKey.get('mail.provider')
     const serverToken = byKey.get('mail.postmark_server_token')

@@ -332,11 +332,13 @@ func envelopeAddress(from string) (string, error) {
 	return strings.TrimSpace(from), nil
 }
 
-// splitAddress splits an email address into its local-part and domain. Returns
-// empty strings when there is no single "@" separator.
+// splitAddress splits an email address into its local-part and domain. The
+// address is trimmed and lower-cased first so the derived domain is a clean
+// MX-lookup target. Returns empty strings when there is no single "@" separator.
 func splitAddress(email string) (localPart, domain string) {
+	email = strings.TrimSpace(strings.ToLower(email))
 	at := strings.LastIndex(email, "@")
-	if at <= 0 || at == len(email)-1 {
+	if at < 1 || at >= len(email)-1 {
 		return "", ""
 	}
 	return email[:at], email[at+1:]

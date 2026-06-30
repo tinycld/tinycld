@@ -164,6 +164,10 @@ func buildSender() Sender {
 		}
 		return NewPostmarkSender(token, ConfigResolver(keyPostmarkAccount), fromAddress())
 	default:
+		// An unrecognized provider would silently degrade to log-only, which
+		// looks to an operator like mail is configured when it isn't. Surface it.
+		fmt.Fprintf(os.Stderr, "[mailer] unknown %s=%q — mail will be logged, not delivered\n",
+			keyProvider, ConfigResolver(keyProvider))
 		return nil
 	}
 }
