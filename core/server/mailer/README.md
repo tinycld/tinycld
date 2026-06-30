@@ -1,11 +1,13 @@
-# tinycld/mailer
+# tinycld.org/core/mailer
 
-Shared email sending package for all TinyCld packages. Wraps the configured provider (currently Postmark) so any package can send transactional emails without depending on the mail package.
+The shared outbound email stack for all TinyCld packages: a provider registry
+(Postmark, self-hosted SMTP) selected by configuration, so any package can send
+transactional email without depending on the mail feature package.
 
 ## Usage
 
 ```go
-import "tinycld/mailer"
+import "tinycld.org/core/mailer"
 
 // Simple transactional email (notifications, invites, etc.)
 err := mailer.DefaultSender().Send(ctx, &mailer.Message{
@@ -14,35 +16,49 @@ err := mailer.DefaultSender().Send(ctx, &mailer.Message{
     HTML:    "<p>Hello!</p>",
     Text:    "Hello!",
 })
-
-// Rich email with CC, BCC, attachments, threading headers
-result, err := mailer.Default().SendFull(ctx, &mailer.SendRequest{
-    From:    "sender@example.com",
-    To:      []mailer.Recipient{{Name: "Holly", Email: "holly@example.com"}},
-    Subject: "Re: Project update",
-    HTMLBody: "<p>Sounds good</p>",
-    TextBody: "Sounds good",
-    InReplyTo: "<original-message-id@example.com>",
-})
 ```
 
-## Environment Variables
+`DefaultSender()` returns the configured provider, or a log-only sender when
+delivery is disabled or nothing is configured. `CanDeliver()` reports whether a
+real send would actually go out.
 
-| Variable | Required | Description |
+## Configuration
+
+Configuration lives in the **`system_settings`** collection (the `mail.*` keys),
+edited from the **/admin → Settings** console — there is no `os.Getenv` in the
+runtime read path. The server reads through `mailer.ConfigResolver`, which
+`coreserver` points at the in-memory `SystemConfig`. Reads happen per-send, so an
+/admin edit applies on the next send without a restart.
+
+| `system_settings` key | Secret | Description |
 |---|---|---|
-| `POSTMARK_SERVER_TOKEN` | Yes (for delivery) | Postmark server API token |
-| `MAIL_FROM_ADDRESS` | No | Default "From" address. Defaults to `noreply@tinycld.org` |
-| `SKIP_SENDING_MAIL` | No | `true` forces logging instead of delivery; `false` forces real delivery. When unset, the default is `true` for PocketBase processes started with `--dev` (dev/test/seed) and `false` otherwise. |
+| `mail.provider` | no | `postmark` (default) or `smtp` |
+| `mail.postmark_server_token` | yes | Postmark server API token (required to deliver via Postmark) |
+| `mail.postmark_account_token` | yes | Postmark account token (domain ops; mail feature) |
+| `mail.from_address` | no | Default "From" address. Defaults to `noreply@tinycld.org` |
+| `mail.delivery_enabled` | no | `false` logs instead of delivering. Any other value (or unset) delivers in production |
+| `mail.smtp_public_hostname` | no | EHLO/MX hostname for the self-hosted SMTP sender |
+
+The mail feature package contributes the **Provider** panel that edits provider
+selection, the Postmark/SMTP credentials, and inbound (SMTP/IMAP) config. The
+core **Mail — Sending** panel edits the from-address and the delivery switch
+(and, in a mail-less assembly, provider + token), so the two never edit the same
+key.
 
 ## Development
 
-By default, any PocketBase started with `--dev` logs emails to stdout instead of delivering. Production runs without `--dev` and delivers normally. Set `SKIP_SENDING_MAIL=false` in a `--dev` process to force real delivery (e.g. for end-to-end testing against Postmark sandboxes).
+PocketBase processes started with `--dev` (dev/test/seed) **log emails to stdout
+instead of delivering**, regardless of `mail.delivery_enabled`, so local and CI
+runs never send real mail. Production runs without `--dev` and delivers unless
+`mail.delivery_enabled` is `false`.
 
-Logged emails are printed in a formatted box. This applies to both simple sends (`Send`) and full sends (`SendFull`) across all packages.
+Logged emails are printed in a formatted box (both `Send` and `SendFull`). When
+the `TINYCLD_EMAIL_LOG` env var is set, each logged email is also appended as a
+JSON line to that file — the e2e suite reads it to assert on outbound mail.
 
 ```
 ╭──────────────────────────────────────────────────────────╮
-│  EMAIL (not delivered — SKIP_SENDING_MAIL is set)        │
+│  EMAIL (not delivered — delivery is disabled)       │
 ├──────────────────────────────────────────────────────────┤
 │  To:      Holly Stitt <holly@example.com>
 │  Subject: Nathan shared "API Design Proposal" with you
@@ -54,5 +70,3 @@ Nathan shared "API Design Proposal" with you.
 Open: http://localhost:7100/a/test-org/drive?file=abc123
 ╰──────────────────────────────────────────────────────────╯
 ```
-
-Add `SKIP_SENDING_MAIL=true` to your `.env` file for local development.
