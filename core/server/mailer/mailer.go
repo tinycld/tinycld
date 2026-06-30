@@ -1,11 +1,12 @@
-// Package mailer provides a shared email sending interface for all packages.
-// It wraps the configured provider (e.g. Postmark) so that any package can
-// send transactional emails without depending on the mail package.
+// Package mailer provides the shared outbound email stack for all packages —
+// a provider registry (Postmark, self-hosted SMTP) selected by configuration,
+// so any package can send transactional email without depending on the mail
+// feature package. Configuration is read from the system_settings collection
+// via ConfigResolver (the mail.* keys), per-send, so /admin edits apply live.
 //
-// Delivery gating: by default, PocketBase processes started with --dev (i.e.
-// dev/test/seed) log emails to stdout instead of delivering. SKIP_SENDING_MAIL
-// can override either way: "true" forces logging, "false" forces real
-// delivery. Production runs without --dev and delivers by default.
+// Delivery gating: PocketBase processes started with --dev (dev/test/seed) log
+// emails to stdout instead of delivering. In production, delivery is on unless
+// the mail.delivery_enabled setting is "false". See deliveryEnabled.
 package mailer
 
 import (
@@ -98,58 +99,99 @@ type FullSender interface {
 	SendFull(ctx context.Context, req *SendRequest) (*SendResult, error)
 }
 
-// --- Singleton ---
+// --- Configuration ---
 
-var (
-	instance *PostmarkSender
-	once     sync.Once
-	deliver  bool
+// Config keys read from the system_settings collection (via ConfigResolver).
+// They live in the shared `mail.*` namespace so the core transactional mailer
+// and the mail feature package read one set of credentials.
+const (
+	keyProvider        = "mail.provider" // "postmark" | "smtp" (default postmark)
+	keyPostmarkToken   = "mail.postmark_server_token"
+	keyPostmarkAccount = "mail.postmark_account_token"
+	keyFromAddress     = "mail.from_address"     // default From; falls back to defaultFromAddress
+	keyDeliveryEnabled = "mail.delivery_enabled" // "false" disables delivery (logs instead)
+	keySMTPPublicHost  = "mail.smtp_public_hostname"
 )
 
-func init() {
-	// Default to NOT delivering when PocketBase runs with --dev (the flag
-	// only ever appears in dev/test/seed processes). Production binaries
-	// invoke `serve` without --dev, so deliver defaults to true there.
-	// SKIP_SENDING_MAIL=true forces no-delivery regardless; setting it to
-	// "false" explicitly opts a --dev process back into real delivery.
-	devMode := slices.Contains(os.Args, "--dev")
-	skip := os.Getenv("SKIP_SENDING_MAIL")
-	if skip == "" {
-		deliver = !devMode
-	} else {
-		deliver = !strings.EqualFold(skip, "true")
+const defaultFromAddress = "noreply@tinycld.org"
+
+// ConfigResolver is the seam through which the mailer reads its configuration.
+// coreserver populates it at startup to read from the in-memory SystemConfig
+// (backed by the system_settings collection). The default returns "" so the
+// package still builds and works standalone (tests, the bootstrap binary) —
+// with no token configured it logs instead of delivering.
+//
+// Reads happen per-send (no caching), so an /admin edit to a mail.* setting
+// takes effect on the next send without a restart — matching how the mail
+// feature package and Sentry/VAPID consume system config.
+var ConfigResolver = func(string) string { return "" }
+
+// devAutoLog is true when this process was started with --dev (dev/test/seed).
+// Such processes log emails instead of delivering by default, regardless of
+// the mail.delivery_enabled setting, so local/CI runs never send real mail.
+// Captured once at init since it's a fixed process property.
+var devAutoLog = slices.Contains(os.Args, "--dev")
+
+// deliveryEnabled reports whether outbound delivery is on. Delivery is off in
+// --dev processes (auto-log) and when mail.delivery_enabled is explicitly
+// "false". Otherwise it is on (the production default).
+func deliveryEnabled() bool {
+	if devAutoLog {
+		return false
+	}
+	return !strings.EqualFold(ConfigResolver(keyDeliveryEnabled), "false")
+}
+
+// fromAddress returns the configured default From, or the package default.
+func fromAddress() string {
+	if v := ConfigResolver(keyFromAddress); v != "" {
+		return v
+	}
+	return defaultFromAddress
+}
+
+// buildSender constructs the configured outbound sender from current config,
+// or nil when nothing is configured (e.g. postmark selected but no token).
+// Built per-call so config changes apply immediately.
+func buildSender() Sender {
+	switch strings.ToLower(ConfigResolver(keyProvider)) {
+	case "smtp":
+		return NewSMTPSender(SMTPConfig{PublicHostname: ConfigResolver(keySMTPPublicHost)})
+	case "", "postmark":
+		token := ConfigResolver(keyPostmarkToken)
+		if token == "" {
+			return nil
+		}
+		return NewPostmarkSender(token, ConfigResolver(keyPostmarkAccount), fromAddress())
+	default:
+		return nil
 	}
 }
 
-// Default returns the shared PostmarkSender (or nil if not configured).
-func Default() *PostmarkSender {
-	once.Do(func() {
-		token := os.Getenv("POSTMARK_SERVER_TOKEN")
-		from := os.Getenv("MAIL_FROM_ADDRESS")
-		if from == "" {
-			from = "noreply@tinycld.org"
-		}
-		if token != "" {
-			instance = NewPostmarkSender(token, "", from)
-		}
-	})
-	return instance
-}
-
-// DefaultSender returns a Sender, falling back to LogSender if no provider is configured.
-// The PostmarkSender itself checks DELIVER_MAIL and logs instead of sending in dev mode.
+// DefaultSender returns the Sender to use for a send. When delivery is disabled
+// (dev/test or mail.delivery_enabled=false) or no provider is configured, it
+// returns the log-only LogSender (which also writes TINYCLD_EMAIL_LOG for e2e).
 func DefaultSender() Sender {
-	s := Default()
-	if s == nil {
+	if !deliveryEnabled() {
 		return &LogSender{}
 	}
-	return s
+	if s := buildSender(); s != nil {
+		return s
+	}
+	return &LogSender{}
+}
+
+// CanDeliver reports whether a real outbound provider is configured AND
+// delivery is enabled — i.e. whether DefaultSender().Send would actually
+// deliver rather than log.
+func CanDeliver() bool {
+	return deliveryEnabled() && buildSender() != nil
 }
 
 // NoopSender silently discards messages.
 type NoopSender struct{}
 
-func (n *NoopSender) Send(_ context.Context, _ *Message) error              { return nil }
+func (n *NoopSender) Send(_ context.Context, _ *Message) error { return nil }
 func (n *NoopSender) SendFull(_ context.Context, _ *SendRequest) (*SendResult, error) {
 	return &SendResult{}, nil
 }
@@ -211,7 +253,7 @@ func appendToEmailLog(entry loggedEmail) {
 
 func (l *LogSender) Send(_ context.Context, msg *Message) error {
 	fmt.Println("╭──────────────────────────────────────────────────────────╮")
-	fmt.Println("│  EMAIL (not delivered — SKIP_SENDING_MAIL is set)   │")
+	fmt.Println("│  EMAIL (not delivered — delivery is disabled)       │")
 	fmt.Println("├──────────────────────────────────────────────────────────┤")
 	fmt.Printf("│  To:      %s\n", FormatRecipients(msg.To))
 	if msg.From != "" {
@@ -239,7 +281,7 @@ func (l *LogSender) Send(_ context.Context, msg *Message) error {
 
 func (l *LogSender) SendFull(_ context.Context, req *SendRequest) (*SendResult, error) {
 	fmt.Println("╭──────────────────────────────────────────────────────────╮")
-	fmt.Println("│  EMAIL (not delivered — SKIP_SENDING_MAIL is set)   │")
+	fmt.Println("│  EMAIL (not delivered — delivery is disabled)       │")
 	fmt.Println("├──────────────────────────────────────────────────────────┤")
 	fmt.Printf("│  To:      %s\n", FormatRecipients(req.To))
 	if len(req.Cc) > 0 {

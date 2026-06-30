@@ -7,6 +7,7 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/mailer"
 )
 
 // SystemConfig is the single source of truth for system-wide configuration —
@@ -135,6 +136,13 @@ func (c *SystemConfig) set(key, value string, isSecret bool) {
 // in-memory map in sync as rows are created or updated. Edits take effect without
 // a restart — re-init handlers registered via OnChange run on each change.
 func RegisterSystemConfig(app *pocketbase.PocketBase) {
+	// Point the core transactional mailer at system config. The resolver reads
+	// lazily (per-send), so it's safe to set here before the OnServe load —
+	// Get returns "" until then, and sends only happen well after boot. This is
+	// the single seam that keeps the mailer out of an import cycle with this
+	// package (mailer can't import coreserver).
+	mailer.ConfigResolver = systemConfig.Get
+
 	// Re-init Sentry whenever a sentry.* value changes. Registered before the
 	// initial load so no early change is missed. Sentry is the only stateful
 	// consumer; push reads VAPID per-send and mail builds its provider per-call,

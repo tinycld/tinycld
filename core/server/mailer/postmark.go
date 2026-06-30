@@ -12,10 +12,11 @@ var log = &LogSender{}
 
 // PostmarkSender sends email via the Postmark API.
 // It implements both Sender (simple) and FullSender (rich with CC/BCC/attachments).
-// When DELIVER_MAIL is not "true", it logs emails to stdout instead of delivering.
+// When delivery is disabled (a --dev process or mail.delivery_enabled=false) it
+// logs emails to stdout instead of delivering — see deliveryEnabled.
 type PostmarkSender struct {
-	client       *postmark.Client
-	defaultFrom  string
+	client      *postmark.Client
+	defaultFrom string
 }
 
 // NewPostmarkSender creates a Postmark-backed sender.
@@ -34,7 +35,7 @@ func (p *PostmarkSender) Client() *postmark.Client {
 
 // Send sends a simple transactional email.
 func (p *PostmarkSender) Send(ctx context.Context, msg *Message) error {
-	if !deliver {
+	if !deliveryEnabled() {
 		return log.Send(ctx, msg)
 	}
 	from := msg.From
@@ -63,11 +64,15 @@ func (p *PostmarkSender) Send(ctx context.Context, msg *Message) error {
 
 // SendFull sends a rich email with CC, BCC, attachments, and threading headers.
 func (p *PostmarkSender) SendFull(ctx context.Context, req *SendRequest) (*SendResult, error) {
-	if !deliver {
+	if !deliveryEnabled() {
 		return log.SendFull(ctx, req)
 	}
+	from := req.From
+	if from == "" {
+		from = p.defaultFrom
+	}
 	email := postmark.Email{
-		From:     req.From,
+		From:     from,
 		To:       FormatRecipients(req.To),
 		Cc:       FormatRecipients(req.Cc),
 		Bcc:      FormatRecipients(req.Bcc),

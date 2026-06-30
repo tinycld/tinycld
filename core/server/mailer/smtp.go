@@ -64,9 +64,7 @@ var smtpDial = func(ctx context.Context, network, addr string) (net.Conn, error)
 	return d.DialContext(ctx, network, addr)
 }
 
-// Send adapts the simple Message shape onto SendFull. When delivery is gated
-// off (dev/test or mail.delivery_enabled=false) the caller routes through
-// LogSender instead, so SMTPSender always attempts a real delivery.
+// Send adapts the simple Message shape onto SendFull.
 func (p *SMTPSender) Send(ctx context.Context, msg *Message) error {
 	_, err := p.SendFull(ctx, &SendRequest{
 		From:     msg.From,
@@ -91,6 +89,9 @@ func (p *SMTPSender) Send(ctx context.Context, msg *Message) error {
 func (p *SMTPSender) SendFull(ctx context.Context, req *SendRequest) (*SendResult, error) {
 	if req == nil {
 		return nil, fmt.Errorf("nil send request")
+	}
+	if !deliveryEnabled() {
+		return log.SendFull(ctx, req)
 	}
 
 	messageID := generateMessageID(p.cfg.PublicHostname)
