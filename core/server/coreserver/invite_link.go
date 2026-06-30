@@ -211,20 +211,15 @@ func sendInviteEmailTo(app core.App, toEmail string, user *core.Record, org *cor
 	}
 
 	subject := fmt.Sprintf("You've been invited to %s", orgName)
-	htmlBody := buildInviteEmailHTML(inviteEmailData{
-		Greeting:   greeting(userName),
-		OrgName:    orgName,
-		Role:       role,
-		CTALabel:   "Set your password",
-		CTALink:    link,
-		Intro:      fmt.Sprintf("You've been invited to join <strong>%s</strong> as a <strong>%s</strong>. To get started, set a password for your account.", htmlEscape(orgName), htmlEscape(role)),
-		Footer:     "If you weren't expecting this invitation, you can safely ignore this email. The link expires in 7 days.",
-		CopyPrompt: "Or copy this link into your browser:",
+	htmlBody, text := mailer.RenderTransactionalEmail(mailer.TransactionalEmail{
+		Eyebrow:  "Invitation to " + orgName,
+		Greeting: mailer.Greeting(userName),
+		BodyHTML: fmt.Sprintf("You've been invited to join <strong>%s</strong> as a <strong>%s</strong>. To get started, set a password for your account.", mailer.EscapeHTML(orgName), mailer.EscapeHTML(role)),
+		BodyText: fmt.Sprintf("You've been invited to join %s as a %s. To get started, set a password for your account. The link expires in 7 days.", orgName, role),
+		CTALabel: "Set your password",
+		CTALink:  link,
+		Footer:   "If you weren't expecting this invitation, you can safely ignore this email. The link expires in 7 days.",
 	})
-	text := fmt.Sprintf(
-		"%s,\n\nYou've been invited to join %s as a %s.\n\nSet your password: %s\n\nThe link expires in 7 days.\n",
-		greeting(userName), orgName, role, link,
-	)
 
 	msg := &mailer.Message{
 		To:      []mailer.Recipient{{Name: userName, Email: toEmail}},
