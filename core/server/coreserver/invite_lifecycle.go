@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	htmltpl "html"
 	"strings"
 	"time"
 
@@ -17,7 +16,6 @@ import (
 const (
 	inviteTokenTTL  = 7 * 24 * time.Hour
 	inviteTokenSize = 32 // bytes; hex-encoded to 64 chars
-	brandColor      = "#0d9488"
 )
 
 // RegisterInviteLifecycle wires a hook that emails invited users after
@@ -134,20 +132,15 @@ func sendExistingMemberEmail(app core.App, user *core.Record, org *core.Record, 
 	}
 
 	subject := fmt.Sprintf("You've been added to %s", orgName)
-	htmlBody := buildInviteEmailHTML(inviteEmailData{
-		Greeting:   greeting(userName),
-		OrgName:    orgName,
-		Role:       role,
-		CTALabel:   fmt.Sprintf("Open %s", orgName),
-		CTALink:    link,
-		Intro:      fmt.Sprintf("You've been added to <strong>%s</strong> as a <strong>%s</strong>. Sign in with your existing account to get started.", htmlEscape(orgName), htmlEscape(role)),
-		Footer:     "If you didn't expect to join this organization, please contact your admin.",
-		CopyPrompt: "Or copy this link into your browser:",
+	htmlBody, text := mailer.RenderTransactionalEmail(mailer.TransactionalEmail{
+		Eyebrow:  "Invitation to " + orgName,
+		Greeting: mailer.Greeting(userName),
+		BodyHTML: fmt.Sprintf("You've been added to <strong>%s</strong> as a <strong>%s</strong>. Sign in with your existing account to get started.", mailer.EscapeHTML(orgName), mailer.EscapeHTML(role)),
+		BodyText: fmt.Sprintf("You've been added to %s as a %s. Sign in with your existing account to get started.", orgName, role),
+		CTALabel: fmt.Sprintf("Open %s", orgName),
+		CTALink:  link,
+		Footer:   "If you didn't expect to join this organization, please contact your admin.",
 	})
-	text := fmt.Sprintf(
-		"%s,\n\nYou've been added to %s as a %s. Sign in with your existing account to get started.\n\n%s\n",
-		greeting(userName), orgName, role, link,
-	)
 
 	send(app, userName, userEmail, subject, htmlBody, text)
 }
@@ -163,89 +156,4 @@ func send(app core.App, toName, toEmail, subject, htmlBody, textBody string) {
 		app.Logger().Error("invite lifecycle: failed to send email",
 			"to", toEmail, "subject", subject, "error", err)
 	}
-}
-
-func greeting(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "Hi"
-	}
-	return "Hi " + name
-}
-
-func htmlEscape(s string) string {
-	return htmltpl.EscapeString(s)
-}
-
-type inviteEmailData struct {
-	Greeting   string
-	OrgName    string
-	Role       string
-	Intro      string
-	CTALabel   string
-	CTALink    string
-	CopyPrompt string
-	Footer     string
-}
-
-func buildInviteEmailHTML(d inviteEmailData) string {
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>%s</title>
-</head>
-<body style="margin:0;padding:0;background:#f5f5f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1c1917;">
-  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f4;padding:40px 16px;">
-    <tr>
-      <td align="center">
-        <table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%%;background:#ffffff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,0.08);overflow:hidden;">
-          <tr>
-            <td style="padding:32px 40px 16px 40px;border-top:4px solid %s;">
-              <p style="margin:0 0 8px 0;font-size:14px;color:#78716c;letter-spacing:0.5px;text-transform:uppercase;font-weight:600;">Invitation to %s</p>
-              <h1 style="margin:0;font-size:24px;line-height:1.3;font-weight:600;color:#1c1917;">%s,</h1>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:8px 40px 8px 40px;">
-              <p style="margin:0;font-size:16px;line-height:1.6;color:#44403c;">%s</p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:24px 40px 8px 40px;">
-              <a href="%s" style="display:inline-block;padding:12px 24px;background:%s;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;font-size:15px;">%s</a>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:8px 40px 32px 40px;">
-              <p style="margin:16px 0 4px 0;font-size:13px;color:#78716c;">%s</p>
-              <p style="margin:0;font-size:13px;color:#44403c;word-break:break-all;"><a href="%s" style="color:%s;text-decoration:none;">%s</a></p>
-            </td>
-          </tr>
-          <tr>
-            <td style="padding:20px 40px;border-top:1px solid #e7e5e4;background:#fafaf9;">
-              <p style="margin:0;font-size:12px;line-height:1.6;color:#78716c;">%s</p>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`,
-		htmlEscape(d.OrgName),
-		brandColor,
-		htmlEscape(d.OrgName),
-		htmlEscape(d.Greeting),
-		d.Intro,
-		htmlEscape(d.CTALink),
-		brandColor,
-		htmlEscape(d.CTALabel),
-		htmlEscape(d.CopyPrompt),
-		htmlEscape(d.CTALink),
-		brandColor,
-		htmlEscape(d.CTALink),
-		htmlEscape(d.Footer),
-	)
 }
