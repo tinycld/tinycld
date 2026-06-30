@@ -147,6 +147,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	RegisterInviteEndpoint(app)
 	RegisterInviteLinkEndpoints(app)
 	RegisterInviteLifecycle(app)
+	RegisterPasswordResetMailer(app)
 	RegisterAuditHooks(app)
 	RegisterOrgPkgEnabledHooks(app)
 	RegisterPackageInstallEndpoints(app)
