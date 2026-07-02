@@ -30,6 +30,12 @@
                     "project": "tinycld"
                 }
             ],
+            [
+                "expo-dev-client",
+                {
+                    "toolsButton": false
+                }
+            ],
             "./plugins/with-app-updater.cjs"
         ],
         "icon": "./assets/app-icon.png",
