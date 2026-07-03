@@ -134,17 +134,8 @@ function LoginForm({
             </View>
 
             <Pressable
-                testID="forgot-password-link"
-                accessibilityRole="link"
-                onPress={onForgotPassword}
-                className="mb-2 self-end"
-            >
-                <Text className="text-xs text-muted-foreground underline">Forgot password?</Text>
-            </Pressable>
-
-            <Pressable
                 testID="login-submit"
-                className={`rounded-lg items-center mt-2 p-3.5 bg-primary ${canSubmit ? 'opacity-100' : 'opacity-50'}`}
+                className={`rounded-lg items-center mt-4 p-3.5 bg-primary ${canSubmit ? 'opacity-100' : 'opacity-50'}`}
                 onPress={handleSubmit}
                 disabled={!canSubmit}
             >
@@ -162,7 +153,16 @@ function LoginForm({
                 }}
             />
 
-            <View className="mt-4 items-center">
+            <View className="mt-4 flex-row justify-around">
+                <Pressable
+                    testID="forgot-password-link"
+                    accessibilityRole="link"
+                    onPress={onForgotPassword}
+                >
+                    <Text className="text-xs text-muted-foreground underline">
+                        Forgot password?
+                    </Text>
+                </Pressable>
                 <ChangeServerLink />
             </View>
         </>
