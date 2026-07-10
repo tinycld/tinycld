@@ -7,6 +7,7 @@ import {
     PB_SERVER_ADDR,
     pb,
     preloadStores,
+    resetSessionState,
     seedUserOrg,
 } from '@tinycld/core/lib/pocketbase'
 import { create } from '@tinycld/core/lib/store'
@@ -200,6 +201,12 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         // the same device doesn't inherit the previous user's last-opened
         // file references.
         useWorkspaceStore.setState({ lastPackageHref: {} })
+        // Drop per-session in-memory caches (pbtsdb stores + React Query,
+        // incl. the pb file token) so the next user signing in on this SPA
+        // instance can't read the previous user's rows or reuse their token.
+        resetSessionState().catch(err =>
+            captureException('auth-store.logout resetSessionState', err)
+        )
         set({ user: null })
     },
 

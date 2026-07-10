@@ -108,7 +108,8 @@ export function usePocketBase() {
 // auto-reconnects on EventSource error, and reconnect reads PB_SERVER_ADDR
 // — clearing the address before disconnecting realtime trips the "address
 // not resolved" guard. The auth-store's logout already does the realtime
-// teardown + auth clear; we just need to add the address clear.
+// teardown + auth clear + resetSessionState (stores + query cache); we
+// just need to add the address clear.
 export async function disconnectServer() {
     const { useAuthStore } = await import('./stores/auth-store')
     useAuthStore.getState().logout()
@@ -351,8 +352,26 @@ export async function fetchAndSeedUserOrg() {
 
 export async function clearStores() {
     for (const s of Object.values(stores)) {
+        // cleanup() on an already cleaned-up collection throws an invalid
+        // status-transition error, and repeated teardowns are a legal path
+        // (sign out, then "change server" runs logout() a second time).
+        if (s.status === 'cleaned-up') continue
         await s.cleanup()
     }
+}
+
+// Single teardown point for everything cached per-session in memory. On web
+// the SPA survives logout → next login in the same tab (no reload), so
+// anything left behind leaks across users on the same device: the pbtsdb
+// stores still hold the previous user's rows, and the React Query cache still
+// holds their file token (['pb-files-token'] in use-authed-file-url.ts) —
+// which authorizes file reads as that user. Runs from the auth-store's
+// logout(), which disconnectServer() also routes through.
+// TODO: web-push subscription teardown (review §4.12) belongs here once
+// implemented — unsubscribe the device before the session is dropped.
+export async function resetSessionState() {
+    await clearStores()
+    queryClient.clear()
 }
 
 export { PBTSDBProvider, queryClient, stores, useStore }
