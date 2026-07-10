@@ -46,12 +46,43 @@ export function skipWithoutShortcutStub(): boolean {
     return true
 }
 
+// The sign-in POST occasionally returns a transient 400 under parallel CI
+// load (PocketBase auto-cancels an overlapping auth request, or the expand
+// query races), surfacing as an inline "Failed to authenticate." with the
+// form still mounted — the redirect never fires and a single click wedges
+// the whole test. Rather than a single fire-and-hope click, submit and then
+// race the post-login redirect against that error banner; on the error,
+// resubmit. Credentials are correct (the same ones log in across the suite),
+// so a bounded retry deterministically clears the race without touching the
+// timeout.
 export async function login(page: Page) {
     await page.goto('/')
     await page.getByTestId('identifier').fill(TEST_USER_EMAIL)
     await page.getByPlaceholder('Password').fill(TEST_USER_PASSWORD)
-    await page.getByText('Sign in', { exact: true }).last().click()
-    await page.waitForURL(/\/a\//, { timeout: 15_000 })
+
+    const authError = page.getByText('Failed to authenticate', { exact: false })
+    const maxAttempts = 3
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        await page.getByText('Sign in', { exact: true }).last().click()
+        // Whichever resolves first wins: a URL change means we're in.
+        const outcome = await Promise.race([
+            page
+                .waitForURL(/\/a\//, { timeout: 15_000 })
+                .then(() => 'ok' as const)
+                .catch(() => 'timeout' as const),
+            authError
+                .waitFor({ state: 'visible', timeout: 15_000 })
+                .then(() => 'error' as const)
+                .catch(() => 'timeout' as const),
+        ])
+        if (outcome === 'ok' || /\/a\//.test(page.url())) return
+        if (outcome === 'error' && attempt < maxAttempts) continue
+        // Timed out with no redirect and no error banner, or exhausted retries:
+        // give the redirect one last direct wait so the failure surfaces with a
+        // clear message and a fresh screenshot.
+        await page.waitForURL(/\/a\//, { timeout: 15_000 })
+        return
+    }
 }
 
 // Navigate to a package's org-scoped route via the rail link in the app
