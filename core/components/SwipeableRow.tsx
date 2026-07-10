@@ -113,6 +113,7 @@ function NativeSwipeableRow({
             overshootRight={false}
             enabled={enabled}
             containerStyle={swipeContainerStyle}
+            accessible={false}
         >
             {children}
         </ReanimatedSwipeable>
