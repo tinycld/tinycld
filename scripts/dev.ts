@@ -434,7 +434,7 @@ function spawnPbBinary(pbPort: number, publicUrl: string, dataDir: string | null
     const onPbErr = withPrefix('pb', '\x1b[31m') // red
     const args = ['--dev', '--http', `127.0.0.1:${pbPort}`]
     if (dataDir) args.push('--dir', dataDir)
-    args.push('--typesDir', path.join(ROOT, '..', 'core', 'types'), 'serve')
+    args.push('--typesDir', path.join(ROOT, 'core', 'types'), 'serve')
     // The mail package's IMAP server defaults to :1143 in dev. The Playwright
     // IMAP suite (app/tests/e2e/imap-helpers.ts) connects on :1193 — a port
     // distinct from the normal dev one so an e2e run never collides with a
