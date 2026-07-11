@@ -7,17 +7,21 @@ export const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
 export const TEST_USER_PASSWORD = process.env.TEST_USER_PW || 'TestUser1234!'
 export const TEST_USER_USERNAME = process.env.TEST_USER_USERNAME ?? 'tester'
 
-// isPackageLinked checks whether a given @tinycld/* package is wired into
-// this core checkout. Tests that depend on package-contributed routes or
-// collections should guard with `test.skip(!isPackageLinked('mail'), ...)`
-// so they run when the package is linked (dev/package CI) and are skipped
-// when core runs standalone (core's own CI).
+// isPackageLinked checks whether a given feature package is present in this
+// workspace. Tests that depend on package-contributed routes or collections
+// should guard with `test.skip(!isPackageLinked('mail'), ...)` so they run when
+// the package is present (dev/package CI) and skip when the app shell runs
+// standalone (its own CI).
+//
+// A feature is "present" when its sibling member dir exists at the workspace
+// root and carries a manifest.ts (the marker that makes a dir a member — see
+// tinycld.packages.ts). The old `<checkout>/packages/@tinycld/<slug>` layout is
+// gone: features are now flat sibling dirs under the workspace root, resolved
+// the same way as shortcutStubInstalled() below.
 export function isPackageLinked(slug: string): boolean {
-    const corePackagesDir = path.resolve(import.meta.dirname, '..', '..', 'packages')
-    return (
-        fs.existsSync(path.join(corePackagesDir, '@tinycld', slug)) ||
-        fs.existsSync(path.join(corePackagesDir, slug))
-    )
+    // tinycld/tests/e2e/helpers.ts → tinycld/tests → tinycld → workspace root → <slug>/manifest.ts
+    const manifest = path.resolve(import.meta.dirname, '..', '..', '..', slug, 'manifest.ts')
+    return fs.existsSync(manifest)
 }
 
 // The keyboard-shortcut and offline-overlay specs drive a minimal stub package
