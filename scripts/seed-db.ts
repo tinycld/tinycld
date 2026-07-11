@@ -53,6 +53,11 @@ interface SeedConfig {
     url: string
     adminEmail: string
     adminPassword: string
+    // True only when the caller (reset-dev-db.ts) randomly generated the admin
+    // password and asked us to surface it. A password supplied via ADMIN_USER_PW
+    // / --admin-pw (env/CI/flag) is a secret we must NOT echo — see
+    // printLoginSummary. Defaults to false: seed-db never generates it itself.
+    adminPasswordGenerated: boolean
     mode: SeedMode
     userEmail: string
     userUsername: string
@@ -71,11 +76,14 @@ interface SeedConfig {
 
 // What seedForUser resolved for the app user, so the caller can print an
 // accurate login summary. `password` is null when the user already existed and
-// we left their credential untouched (we can't know it).
+// we left their credential untouched (we can't know it). `passwordGenerated` is
+// true only when we minted a random password; an explicitly-supplied one
+// (--user-pw / TEST_USER_PW / REVIEW_DEMO_PASSWORD) is a secret we don't echo.
 interface SeedLoginResult {
     created: boolean
     userEmail: string
     password: string | null
+    passwordGenerated: boolean
 }
 
 const TEST_DEFAULTS = {
@@ -122,6 +130,11 @@ function parseArgs(): SeedConfig {
     // --admin-pw or ADMIN_USER_PW. reset-dev-db.ts passes the (possibly random)
     // password it created the superuser with; CI sets ADMIN_USER_PW.
     let adminPassword = process.env.ADMIN_USER_PW || ''
+    // reset-dev-db.ts appends --admin-pw-generated (after its --admin-pw) when it
+    // randomly generated the admin password, so the login summary may safely echo
+    // it. A password supplied via ADMIN_USER_PW / --admin-pw (env/CI/flag) is a
+    // secret and stays unset here (default: not generated).
+    let adminPasswordGenerated = false
 
     if (args.includes('--help')) process.exit(0)
 
@@ -163,6 +176,11 @@ function parseArgs(): SeedConfig {
                 break
             case '--admin-pw':
                 adminPassword = args[++i]
+                // An explicitly passed password is caller-supplied, not generated.
+                adminPasswordGenerated = false
+                break
+            case '--admin-pw-generated':
+                adminPasswordGenerated = true
                 break
             default:
                 if (arg.startsWith('-')) {
@@ -193,6 +211,7 @@ function parseArgs(): SeedConfig {
         url,
         adminEmail,
         adminPassword,
+        adminPasswordGenerated,
         mode,
         userEmail: overrides.userEmail ?? defaults.userEmail,
         userUsername: overrides.userUsername ?? defaults.userUsername,
@@ -517,6 +536,7 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
         created: !existingUser,
         userEmail: config.userEmail,
         password: null,
+        passwordGenerated: false,
     }
     if (existingUser) {
         user = existingUser
@@ -547,6 +567,7 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
                 passwordConfirm: newPassword,
             })
             login.password = newPassword
+            login.passwordGenerated = !config.userPasswordExplicit
         }
     } else {
         log('Creating user:', config.userUsername)
@@ -557,6 +578,7 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
         // fresh local checkout has a unique, discoverable credential.
         const password = config.userPasswordExplicit ? config.userPassword : generatePassword()
         login.password = password
+        login.passwordGenerated = !config.userPasswordExplicit
         user = await pb.collection('users').create({
             username: config.userUsername,
             email: config.userEmail,
@@ -740,10 +762,21 @@ function browseUrl(pbUrl: string): string {
     return pbUrl.replace('127.0.0.1', 'localhost').replace(/\/$/, '')
 }
 
+// A supplied secret (from env/CI/flag) is never echoed — only a password we
+// generated ourselves. This keeps the summary useful (it still confirms a
+// password was set) without printing a credential the caller already knows.
+const SUPPLIED_NOTICE = '(supplied — not shown; use the value you provided)'
+const UNCHANGED_NOTICE = '(unchanged — use the password from when this user was created)'
+
 function printLoginSummary(config: SeedConfig, login: SeedLoginResult): void {
     const url = browseUrl(config.url)
     const appPassword =
-        login.password ?? '(unchanged — use the password from when this user was created)'
+        login.password === null
+            ? UNCHANGED_NOTICE
+            : login.passwordGenerated
+              ? login.password
+              : SUPPLIED_NOTICE
+    const adminPassword = config.adminPasswordGenerated ? config.adminPassword : SUPPLIED_NOTICE
 
     printBox([
         'Seed complete — log in with:',
@@ -757,7 +790,7 @@ function printLoginSummary(config: SeedConfig, login: SeedLoginResult): void {
         'orgs & packages; also a PocketBase superuser for the /_/ dashboard)',
         `  ${url}/admin`,
         `  user:     ${config.adminEmail}`,
-        `  password: ${config.adminPassword}`,
+        `  password: ${adminPassword}`,
         '',
         `Org:  ${config.orgSlug}`,
     ])
