@@ -113,6 +113,7 @@ async function main() {
         url: config.url,
         adminEmail: config.adminEmail,
         adminPassword: config.adminPassword,
+        adminPasswordGenerated: false,
         mode: 'demo',
         userEmail: DEMO_USER_EMAIL,
         userUsername: DEMO_USER_USERNAME,
