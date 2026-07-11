@@ -1,9 +1,18 @@
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'] as const
+
 export function formatBytes(bytes: number): string {
     if (bytes === 0) return '—'
-    const units = ['B', 'KB', 'MB', 'GB']
-    const i = Math.floor(Math.log(bytes) / Math.log(1024))
-    const value = bytes / 1024 ** i
-    return `${value.toFixed(i > 0 ? 1 : 0)} ${units[i]}`
+    // A non-finite (NaN/Infinity) or negative size is never a real file size;
+    // treat it as nothing rather than emitting "NaN undefined".
+    if (!Number.isFinite(bytes) || bytes < 0) return '0 B'
+    // Bytes below 1 KiB (incl. fractional counts < 1) belong in the 'B' unit;
+    // log-based index math would otherwise produce a negative exponent.
+    if (bytes < 1024) return `${Math.round(bytes)} B`
+    // Clamp the exponent to the last available unit so a petabyte-plus value
+    // still renders in 'PB' instead of indexing past the array into undefined.
+    const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), BYTE_UNITS.length - 1)
+    const value = bytes / 1024 ** exponent
+    return `${value.toFixed(1)} ${BYTE_UNITS[exponent]}`
 }
 
 export function formatDate(isoDate: string): string {
@@ -12,7 +21,9 @@ export function formatDate(isoDate: string): string {
     // (e.g. a drive search row before its record is loaded); our API otherwise
     // always emits well-formed dates.
     if (!isoDate) return ''
-    return new Date(isoDate).toLocaleDateString('en-US', {
+    // Use the device locale (undefined) to match formatRelativeDate — an
+    // absolute date shouldn't render as en-US on a non-US device.
+    return new Date(isoDate).toLocaleDateString(undefined, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',

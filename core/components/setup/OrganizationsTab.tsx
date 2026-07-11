@@ -1,7 +1,7 @@
 import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { deriveUsername } from '@tinycld/core/lib/derive-username'
-import { captureException } from '@tinycld/core/lib/errors'
+import { captureException, handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { navigateToOrg } from '@tinycld/core/lib/org-url'
 import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
@@ -248,7 +248,18 @@ function OrgRow({
                 token: string
                 owner: { id: string; name: string; email: string }
             }>(`/api/admin/orgs/${org.id}/impersonate`, { method: 'POST' })
-            appPb.authStore.save(token, { id: owner.id, email: owner.email } as never)
+            // Save the full owner identity — getUserFromAuthStore derives the
+            // signed-in user (incl. the name shown in the user menu) from the
+            // saved auth record, so dropping `name` left the menu blank. The
+            // collectionId/Name fields make this a valid PB auth record without
+            // an `as never` cast (mirrors SetupWizard's post-setup save).
+            appPb.authStore.save(token, {
+                id: owner.id,
+                name: owner.name,
+                email: owner.email,
+                collectionId: '_pb_users_auth_',
+                collectionName: 'users',
+            })
             // Navigate via the router (web AND native) — a raw window.location.href
             // assignment no-ops on native (RN has no window.location), so impersonate
             // silently went nowhere on device. navigateToOrg uses expo-router and
@@ -307,12 +318,13 @@ function OrgRow({
 }
 
 function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEntry }) {
-    const [saveError, setSaveError] = useState<string | null>(null)
     const [orgsCollection, usersCollection] = useStore('orgs', 'users')
 
     const {
         control,
         handleSubmit,
+        setError,
+        getValues,
         formState: { errors, isSubmitted, isDirty },
     } = useForm({
         resolver: zodResolver(editOrgSchema),
@@ -345,11 +357,13 @@ function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEn
                 })
             }
         }),
-        onError: err => setSaveError(err instanceof Error ? err.message : 'Failed to update'),
+        // Map PB validation errors back onto the form fields (falling back to a
+        // toast for non-field errors) instead of dropping them into a single
+        // string — a duplicate email/name now flags the offending field.
+        onError: handleMutationErrorsWithForm({ setError, getValues, operation: 'editOrg' }),
     })
 
     const onSave = handleSubmit(data => {
-        setSaveError(null)
         save.mutate(data)
     })
 
@@ -370,12 +384,6 @@ function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEn
             <Divider />
 
             <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
-
-            {saveError && (
-                <View className="rounded-lg p-2 bg-danger-soft">
-                    <Text className="text-xs text-danger">{saveError}</Text>
-                </View>
-            )}
 
             <View className="gap-3">
                 <SectionLabel>Organization</SectionLabel>
@@ -460,7 +468,6 @@ function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEn
 }
 
 function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCreated: () => void }) {
-    const [submitError, setSubmitError] = useState<string | null>(null)
     const [orgsCollection, usersCollection, userOrgCollection, orgProvisioningCollection] =
         useStore('orgs', 'users', 'user_org', 'org_provisioning')
 
@@ -468,6 +475,8 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
         control,
         handleSubmit,
         setValue,
+        setError,
+        getValues,
         watch,
         reset,
         formState: { errors, isSubmitted },
@@ -552,11 +561,13 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
             reset()
             onCreated()
         },
-        onError: err => setSubmitError(err instanceof Error ? err.message : 'Failed to create org'),
+        // A username/slug collision comes back as a PB field error — route it to
+        // the matching input (toast fallback for anything unmapped) rather than a
+        // single opaque string.
+        onError: handleMutationErrorsWithForm({ setError, getValues, operation: 'createOrg' }),
     })
 
     const onSubmit = handleSubmit(data => {
-        setSubmitError(null)
         create.mutate(data)
     })
 
@@ -570,12 +581,6 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                 </Text>
 
                 <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
-
-                {submitError && (
-                    <View className="rounded-lg p-2 bg-danger-soft">
-                        <Text className="text-xs text-danger">{submitError}</Text>
-                    </View>
-                )}
 
                 <View className="gap-3">
                     <SectionLabel>Organization</SectionLabel>
