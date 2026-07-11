@@ -14,9 +14,8 @@ export function Kbd({ keys }: KbdProps) {
     const groups = formatKeys(keys)
     return (
         <View className="flex-row items-center gap-1">
-            {groups.map((parts, atomIndex) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: static shortcut atoms parsed from a fixed key string, never reordered
-                <KbdBadge key={atomIndex} parts={parts} />
+            {groups.map(parts => (
+                <KbdBadge key={parts.join('+')} parts={parts} />
             ))}
         </View>
     )

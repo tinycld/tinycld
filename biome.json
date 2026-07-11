@@ -78,7 +78,13 @@
                 "!**/seed-db.ts",
                 "!**/*.seed.ts",
                 "!**/core/lib/mutations.ts",
-                "!**/core/lib/pocketbase.ts"
+                "!**/core/lib/pocketbase.ts",
+                "!**/core/lib/account-password.ts",
+                "!**/core/lib/web-push.ts",
+                "!**/core/lib/expo-push.ts",
+                "!**/core/lib/use-push-subscription.ts",
+                "!**/core/lib/stores/auth-store.ts",
+                "!**/core/lib/editor/use-share-visitor-role.tsx"
             ]
         },
         {
@@ -167,11 +173,30 @@
             }
         },
         {
-            "includes": ["**/core/lib/nav-perf.ts"],
+            "includes": [
+                "**/core/lib/nav-perf.ts",
+                "**/core/lib/sentry.ts",
+                "**/core/lib/debug-trace.ts",
+                "**/core/lib/editor/webview-bundler/build.ts",
+                "**/core/components/workspace/LazySidebarBoundary.tsx",
+                "**/core/components/AppErrorBoundary.tsx",
+                "**/lib/use-server-address-gate.ts",
+                "**/lib/diagnose-regexp.ts"
+            ],
             "linter": {
                 "rules": {
                     "suspicious": {
                         "noConsole": "off"
+                    }
+                }
+            }
+        },
+        {
+            "includes": ["**/core/components/help/MarkdownRenderer.tsx"],
+            "linter": {
+                "rules": {
+                    "suspicious": {
+                        "noArrayIndexKey": "off"
                     }
                 }
             }

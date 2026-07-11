@@ -21,7 +21,6 @@ export function trace(message: string, extra?: Record<string, unknown>): void {
 
     const serverUrl = getResolvedAddress()
     const line = extra ? `TRACE: ${message} ${JSON.stringify(extra)}` : `TRACE: ${message}`
-    // biome-ignore lint/suspicious/noConsole: temporary debug tracer
     console.log(`[trace] ${line}`)
     if (!serverUrl) return
     void fetch(`${serverUrl}/api/app/boot`, {

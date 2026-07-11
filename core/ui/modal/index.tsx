@@ -41,16 +41,14 @@ const AnimatePresenceShim = React.forwardRef<unknown, { children?: React.ReactNo
 )
 
 const UIModal = createModal({
-    // biome-ignore lint/suspicious/noExplicitAny: GlueStack factory requires generic View cast
-    Root: withStyleContext(View as any, SCOPE),
+    Root: withStyleContext(View, SCOPE),
     Backdrop: StyledAnimatedPressable,
     Content: StyledAnimatedView,
     Body: ScrollView,
     CloseButton: Pressable,
     Footer: View,
     Header: View,
-    // biome-ignore lint/suspicious/noExplicitAny: GlueStack AnimatePresence type is too narrow
-    AnimatePresence: AnimatePresenceShim as any,
+    AnimatePresence: AnimatePresenceShim as React.ComponentType<{ children?: React.ReactNode }>,
 })
 
 const modalStyle = tva({

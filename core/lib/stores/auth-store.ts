@@ -304,7 +304,6 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
             pb.authStore.save(data.token, data.record as never)
 
             // Expand user_org_via_user.org to get the primary org slug for the guest.
-            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: auth bootstrap — runs as the user signs in (before the pbtsdb stores exist) and needs a relational expand.
             const expanded = await pb.collection('users').getOne<
                 Users & {
                     expand?: {
@@ -368,7 +367,9 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
 
             pb.authStore.save(data.token, data.record as never)
 
-            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: auth bootstrap (demo sign-in) — runs before the pbtsdb stores exist and needs a relational expand.
+            // auth bootstrap (demo sign-in) — runs before the pbtsdb stores exist
+            // and needs a relational expand; this store file is exempted from the
+            // pbtsdb-no-raw-pb-access plugin in biome.json.
             const expanded = await pb.collection('users').getOne<
                 Users & {
                     expand?: { user_org_via_user?: UserOrgExpanded[] }

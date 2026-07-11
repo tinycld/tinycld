@@ -33,8 +33,10 @@ export function AppErrorBoundary({ error, retry }: ErrorBoundaryProps) {
         if (!error.stack) return
         symbolicateStack(error.stack)
             .then(clean => {
-                // biome-ignore lint/suspicious/noConsole: surfacing the readable, source-mapped stack is the point
-                console.log(`[error-boundary] ${clean}`)
+                // The raw error is already on Sentry (captureException above);
+                // this surfaces the readable, source-mapped stack for local
+                // debugging only.
+                if (__DEV__) console.log(`[error-boundary] ${clean}`)
             })
             .catch(() => {
                 // Symbolication is best-effort; the raw error already went to
