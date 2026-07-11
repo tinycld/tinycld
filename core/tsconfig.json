@@ -30,15 +30,7 @@
         "preserveSymlinks": true,
         "types": ["node", "react"]
     },
-    "exclude": [
-        "node_modules",
-        ".expo",
-        "**/test",
-        "**/dist",
-        "node_modules/**/types",
-        "**/__tests__",
-        "ideas"
-    ],
+    "exclude": ["node_modules", ".expo", "**/dist", "node_modules/**/types", "ideas"],
     "typeAcquisition": {
         "enable": true
     },

@@ -50,6 +50,13 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()(
                 }),
         }),
         {
+            // Key kept as 'tinycld_sidebar_open' for historical reasons even
+            // though it now also persists `lastPackageHref` (see partialize).
+            // Renaming to something accurate (e.g. 'tinycld_workspace') would
+            // orphan every existing user's stored sidebar/last-href state on
+            // upgrade — Zustand's version/migrate can't carry state across a
+            // key rename — and this state is trivial enough that the silent
+            // drop isn't worth it. Left as-is intentionally.
             name: 'tinycld_sidebar_open',
             storage: asyncStorage,
             partialize: s => ({

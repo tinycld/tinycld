@@ -10,7 +10,7 @@ vi.mock('@tinycld/core/lib/pocketbase', () => ({
     },
 }))
 vi.mock('@tinycld/core/lib/notifications', () => ({
-    notify: vi.fn(() => Promise.resolve()),
+    showOsNotification: vi.fn(() => Promise.resolve()),
 }))
 vi.mock('@tinycld/core/lib/stores/toast-store', () => ({
     useToastStore: { getState: () => ({ addToast: vi.fn() }) },

@@ -59,7 +59,7 @@ export default function AcceptInvite() {
                 setLoadState({ status: 'ready', info })
             } catch (err) {
                 if (cancelled) return
-                captureException('Failed to load invitation', err)
+                captureException('invite.accept.load', err)
                 setLoadState({
                     status: 'invalid',
                     message: 'Could not reach the server. Try again in a moment.',
@@ -149,7 +149,7 @@ function AcceptForm({ token, info }: { token: string; info: InviteInfo }) {
             router.replace(`/a/${orgSlug}`)
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to accept invitation'
-            captureException('Accept invite failed', err)
+            captureException('invite.accept.submit', err)
             setSubmitError(message)
         } finally {
             setIsSubmitting(false)

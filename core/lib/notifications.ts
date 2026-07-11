@@ -60,8 +60,12 @@ export async function requestNotificationPermission(): Promise<boolean> {
 
 /**
  * Show an OS notification immediately.
+ *
+ * Named distinctly from the `notify` event dispatcher in
+ * `@tinycld/core/lib/notify` — this is the low-level OS-notification
+ * primitive; that one is the app-wide toast/bell/OS event bus.
  */
-export async function notify({ title, body, data }: NotifyOptions): Promise<void> {
+export async function showOsNotification({ title, body, data }: NotifyOptions): Promise<void> {
     const allowed = await requestNotificationPermission()
     if (!allowed) return
 
@@ -93,7 +97,7 @@ export async function scheduleNotification({
 
     const secondsUntil = Math.max(0, (triggerAt.getTime() - Date.now()) / 1000)
     if (secondsUntil <= 0) {
-        await notify({ title, body, data })
+        await showOsNotification({ title, body, data })
         return null
     }
 
