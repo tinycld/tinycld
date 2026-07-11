@@ -27,4 +27,33 @@ describe('formatBytes', () => {
         expect(formatBytes(1024 * 1024)).toBe('1.0 MB')
         expect(formatBytes(1024 * 1024 * 1024)).toBe('1.0 GB')
     })
+
+    // A negative or non-finite size is never a real file size — it must not
+    // render as "NaN undefined".
+    it('renders a floor value for negative or non-finite input', () => {
+        expect(formatBytes(-1)).toBe('0 B')
+        expect(formatBytes(-1024)).toBe('0 B')
+        expect(formatBytes(Number.NaN)).toBe('0 B')
+        expect(formatBytes(Number.POSITIVE_INFINITY)).toBe('0 B')
+    })
+
+    // Fractional counts below one byte belong in the 'B' unit rather than
+    // producing a negative log exponent.
+    it('rounds sub-1 byte counts into the B unit', () => {
+        expect(formatBytes(0.4)).toBe('0 B')
+        expect(formatBytes(0.9)).toBe('1 B')
+    })
+
+    // TB is a real unit: without the extended units array + index clamp this
+    // returned "1.0 undefined".
+    it('formats terabytes and larger without falling off the unit array', () => {
+        expect(formatBytes(1024 ** 4)).toBe('1.0 TB')
+        expect(formatBytes(1024 ** 5)).toBe('1.0 PB')
+    })
+
+    // A value beyond the largest known unit clamps to PB rather than indexing
+    // past the array end.
+    it('clamps astronomically large sizes to the last unit', () => {
+        expect(formatBytes(1024 ** 8)).toBe(`${(1024 ** 3).toFixed(1)} PB`)
+    })
 })

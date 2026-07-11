@@ -119,22 +119,20 @@ export async function disconnectServer() {
     setResolvedAddress(null)
 }
 
+// Route pbtsdb's internal logs somewhere useful. Errors go to Sentry so a
+// failed subscription/sync is observable in production instead of being
+// silently dropped — the previous empty if/else bodies discarded EVERYTHING,
+// errors included, which is the bug this fixes. The debug/info/warn levels are
+// subscription-lifecycle chatter with no production value, so they're
+// intentionally dropped rather than logged (no unguarded console shipped).
 setLogger({
     debug: () => {},
-    info: (_msg, context) => {
-        if (context) {
-        } else {
-        }
-    },
-    warn: (_msg, context) => {
-        if (context) {
-        } else {
-        }
-    },
-    error: (_msg, context) => {
-        if (context) {
-        } else {
-        }
+    info: () => {},
+    warn: () => {},
+    error: (msg, context) => {
+        // Stable grouping key; the varying message rides in the Error and the
+        // pbtsdb context object rides in `extra`.
+        captureException('pbtsdb.error', new Error(msg), context as Record<string, unknown>)
     },
 })
 
