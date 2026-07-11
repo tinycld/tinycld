@@ -78,12 +78,13 @@ export function useAuth(options?: {
         : { login, logout, user: null, isLoggedIn: false, isInitializing: !hasHydrated }
 
     if (throwIfAnon) {
+        // The throwIfAnon contract is "the caller requires an authenticated
+        // user". When there is none we throw AuthRequiredError so the nearest
+        // error boundary handles it, rather than fabricating a blank-id user
+        // that downstream hooks would run queries against (user.id === '').
+        // Anon-allowed callers pass throwIfAnon: false and are unaffected.
         if (!context.user) {
-            return {
-                ...context,
-                isLoggedIn: false,
-                user: { id: '', name: '', email: '', isDemo: false },
-            } as unknown as AuthenticatedContext
+            throw new AuthRequiredError()
         }
         return context as AuthenticatedContext
     }
