@@ -86,6 +86,13 @@ interface SeedLoginResult {
     passwordGenerated: boolean
 }
 
+// The password the e2e login helper uses when TEST_USER_PW is unset. It MUST
+// match TEST_USER_PASSWORD in tests/e2e/helpers.ts: playwright.config.ts never
+// loads .env, so on a clean checkout without TEST_USER_PW the seed and the
+// helper have to agree on a shared literal or every login() fails. An explicit
+// TEST_USER_PW (e.g. from CI) still overrides this for both sides.
+const TEST_USER_DEFAULT_PASSWORD = 'TestUser1234!'
+
 const TEST_DEFAULTS = {
     userEmail: process.env.TEST_USER_LOGIN || 'user@tinycld.org',
     userUsername: process.env.TEST_USER_USERNAME || 'tester',
@@ -199,11 +206,15 @@ function parseArgs(): SeedConfig {
 
     // An explicit password comes from --user-pw, or from the mode's env var
     // (TEST_USER_PW in test mode — set by CI — or REVIEW_DEMO_PASSWORD in demo
-    // mode for App Review). When none is set, userPassword is '' and seedForUser
-    // mints a random one on create rather than reusing a shared literal.
+    // mode for App Review). In test mode, fall back to the shared default the
+    // e2e login helper reads (TEST_USER_DEFAULT_PASSWORD) so a clean checkout
+    // without TEST_USER_PW still logs in — the helper and seed MUST agree on
+    // that literal. Demo mode has no shared login helper, so when
+    // REVIEW_DEMO_PASSWORD is unset userPassword stays '' and seedForUser mints
+    // a random one on create rather than reusing a known literal.
     const envPassword =
         mode === 'test'
-            ? (process.env.TEST_USER_PW ?? '')
+            ? (process.env.TEST_USER_PW ?? TEST_USER_DEFAULT_PASSWORD)
             : (process.env.REVIEW_DEMO_PASSWORD ?? '')
     const userPassword = overrides.userPassword ?? envPassword
 
