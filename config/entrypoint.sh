@@ -243,6 +243,12 @@ seed_baked_build() {
 fix_data_dir_ownership() {
     [ "$(id -u)" = "0" ] || return 0
 
+    # The expected owner is whatever uid:gid $RUN_AS actually resolves to. The
+    # Dockerfile lets an operator build with a non-default uid/gid
+    # (--build-arg TINYCLD_UID/GID), so we must not hardcode 1000:1000 — that
+    # would re-run the full recursive chown on every boot for a non-default uid.
+    want_owner="$(id -u "$RUN_AS"):$(id -g "$RUN_AS")"
+
     for dir in \
         /workspace/pb_data \
         /workspace/builds \
@@ -252,7 +258,7 @@ fix_data_dir_ownership() {
         # already owned correctly — the steady state after first run, so normal
         # restarts pay nothing. A fresh root-owned mount triggers the fix-up.
         owner=$(stat -c '%u:%g' "$dir" 2>/dev/null || echo '')
-        if [ "$owner" != "1000:1000" ]; then
+        if [ "$owner" != "$want_owner" ]; then
             echo "[entrypoint] fixing ownership of $dir (was '$owner') -> $RUN_AS"
             chown -R "$RUN_AS:$RUN_AS" "$dir"
         fi
