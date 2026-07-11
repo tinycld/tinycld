@@ -38,6 +38,19 @@ describe('emitRoutes', () => {
         )
         expect(written).toHaveLength(2)
     })
+
+    it('rejects a packageName that would break out of the generated re-export', () => {
+        expect(() =>
+            emitRoutes({
+                packageName: "@tinycld/x'; evil()//",
+                slug: 'contacts',
+                packageDir: pkgDir,
+                routesDir: 'tinycld/contacts/screens',
+                importSubpath: 'screens',
+                routesBase,
+            })
+        ).toThrow(/unsafe value/)
+    })
 })
 
 describe('emitPublicRoutes', () => {
