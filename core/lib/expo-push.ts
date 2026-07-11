@@ -21,7 +21,10 @@ export async function registerExpoPushToken(userId: string): Promise<boolean> {
         // Check if this token is already registered
         // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative push-registration util (not a React hook); push_subscriptions isn't a store-backed collection here.
         const existing = await pb.collection('push_subscriptions').getFullList({
-            filter: `user = "${userId}" && platform = "expo" && expo_token = "${token}"`,
+            filter: pb.filter('user = {:userId} && platform = "expo" && expo_token = {:token}', {
+                userId,
+                token,
+            }),
         })
         if (existing.length > 0) return true
 
@@ -60,7 +63,10 @@ export async function unregisterExpoPushToken(userId: string, authToken?: string
         // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative push-teardown util (not a React hook); pairs with registerExpoPushToken above.
         const records = await pb.collection('push_subscriptions').getFullList({
             ...authOptions,
-            filter: `user = "${userId}" && platform = "expo" && expo_token = "${token}"`,
+            filter: pb.filter('user = {:userId} && platform = "expo" && expo_token = {:token}', {
+                userId,
+                token,
+            }),
         })
         for (const record of records) {
             // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative push-teardown util (not a React hook); pairs with registerExpoPushToken above.

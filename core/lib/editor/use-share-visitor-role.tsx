@@ -70,7 +70,10 @@ export function useShareLinkVisitorRole(token: string): ShareVisitorRoleResult {
                     .collection('drive_shares')
                     // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: guest share-access lookup — a relational filter (user_org.user) + expand for a user who has no pbtsdb store; cached via React Query.
                     .getFirstListItem<DriveShareWithUserOrg>(
-                        `item = "${itemId}" && user_org.user = "${userId}"`,
+                        pb.filter('item = {:itemId} && user_org.user = {:userId}', {
+                            itemId,
+                            userId,
+                        }),
                         { expand: 'user_org' }
                     )
             } catch {

@@ -69,7 +69,10 @@ export async function unsubscribeFromPush(userId: string, authToken?: string): P
         // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker unsubscribe util (not a React hook); pb is lazy-imported to break a require cycle.
         const records = await pb.collection('push_subscriptions').getFullList({
             ...authOptions,
-            filter: `user = "${userId}" && endpoint = "${subscription.endpoint}"`,
+            filter: pb.filter('user = {:userId} && endpoint = {:endpoint}', {
+                userId,
+                endpoint: subscription.endpoint,
+            }),
         })
         for (const record of records) {
             // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker unsubscribe util (not a React hook); pairs with subscribeToPush above.
