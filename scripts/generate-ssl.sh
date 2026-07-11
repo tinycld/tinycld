@@ -11,6 +11,6 @@ else
     mkcert -cert-file "$CERT" -key-file "$KEY" localhost 127.0.0.1 ::1
 fi
 
-echo Installing $ROOT_PEM into booted sim
+echo "Installing $ROOT_PEM into booted sim"
 
-xcrun simctl keychain booted add-root-cert $ROOT_PEM
+xcrun simctl keychain booted add-root-cert "$ROOT_PEM"
