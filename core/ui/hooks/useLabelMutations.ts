@@ -24,7 +24,7 @@ export function useLabelMutations() {
     )
 
     const onError = (error: unknown) => {
-        captureException('Label action failed', error)
+        captureException('labels.mutation', error)
     }
 
     const createLabel = useMutation({

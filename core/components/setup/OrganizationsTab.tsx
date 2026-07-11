@@ -266,7 +266,7 @@ function OrgRow({
             // preserves the in-org subpath on web.
             navigateToOrg(org.slug)
         } catch (err) {
-            captureException('Failed to impersonate user', err)
+            captureException('setup.org.impersonate', err)
         }
     }
 

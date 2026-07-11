@@ -145,7 +145,7 @@ export function useRealtimeRoom({
                     const parsed = text.length > 0 ? JSON.parse(text) : null
                     setServerHello(parsed)
                 } catch (err) {
-                    captureException('realtime: ServerHello JSON parse failed', err, {
+                    captureException('realtime.serverHello.parse', err, {
                         roomKind,
                         roomID,
                     })
@@ -159,7 +159,7 @@ export function useRealtimeRoom({
                     const parsed = text.length > 0 ? JSON.parse(text) : null
                     setServerSlot(parsed)
                 } catch (err) {
-                    captureException('realtime: ServerSlot JSON parse failed', err, {
+                    captureException('realtime.serverSlot.parse', err, {
                         roomKind,
                         roomID,
                     })
@@ -184,7 +184,7 @@ export function useRealtimeRoom({
                         // renders don't disappear into the void; the
                         // UI still falls through to its own empty
                         // state, but at least we'll see the cause.
-                        captureException('realtime: bootstrap failed', err, {
+                        captureException('realtime.bootstrap', err, {
                             roomKind,
                             roomID,
                         })
