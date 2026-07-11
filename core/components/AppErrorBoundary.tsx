@@ -33,10 +33,14 @@ export function AppErrorBoundary({ error, retry }: ErrorBoundaryProps) {
         if (!error.stack) return
         symbolicateStack(error.stack)
             .then(clean => {
-                // The raw error is already on Sentry (captureException above);
-                // this surfaces the readable, source-mapped stack for local
-                // debugging only.
-                if (__DEV__) console.log(`[error-boundary] ${clean}`)
+                // Load-bearing in ALL builds: the browser never applies
+                // sourcemaps to error.stack at runtime (only DevTools/Sentry do),
+                // so this is the ONLY place the readable, source-mapped crash
+                // stack surfaces in a production web build. sourcemaps.spec.ts
+                // asserts this line fires and names the original source. The file
+                // is exempt from noConsole in biome.json (diagnostic-modules
+                // override).
+                console.log(`[error-boundary] ${clean}`)
             })
             .catch(() => {
                 // Symbolication is best-effort; the raw error already went to
