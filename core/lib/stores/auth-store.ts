@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { captureException } from '@tinycld/core/lib/errors'
+import { unregisterExpoPushToken } from '@tinycld/core/lib/expo-push'
 import {
     authStoreReady,
     fetchAndSeedUserOrg,
@@ -13,7 +14,10 @@ import {
 import { create } from '@tinycld/core/lib/store'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import type { UserSession } from '@tinycld/core/lib/types'
+import { resetExpoPushRegistration } from '@tinycld/core/lib/use-expo-push-registration'
+import { isPushSupported, unsubscribeFromPush } from '@tinycld/core/lib/web-push'
 import type { Orgs, UserOrg, Users } from '@tinycld/core/types/pbSchema'
+import { Platform } from 'react-native'
 
 interface UserOrgExpanded extends UserOrg {
     expand?: { org?: Orgs }
@@ -53,6 +57,22 @@ async function clearPrimaryOrgStorage(): Promise<void> {
     } catch {
         // Storage might not be available
     }
+}
+
+// Tear down the device's push subscription on logout: remove the browser/device
+// push registration AND delete the matching server push_subscriptions row, so a
+// signed-out device stops receiving pushes. Resetting resetExpoPushRegistration()
+// clears the module-lifetime guard so a second user signing in on the same
+// running session re-registers their own token (otherwise the guard would
+// suppress it). Best-effort: platform push helpers already swallow their own
+// errors, and any failure here must never block logout.
+async function teardownPushOnLogout(userId: string, authToken: string): Promise<void> {
+    if (Platform.OS === 'web') {
+        if (isPushSupported()) await unsubscribeFromPush(userId, authToken)
+    } else {
+        await unregisterExpoPushToken(userId, authToken)
+    }
+    resetExpoPushRegistration()
 }
 
 type RequestOtpResult = {
@@ -194,7 +214,22 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
     },
 
     logout: () => {
+        // Capture the userId + token while pb.authStore is still authed — push
+        // teardown deletes this user's server subscription row and needs both.
+        // The token is forwarded as an Authorization header inside teardown so
+        // the delete stays authorized after pb.authStore.clear() below (which
+        // runs synchronously, before teardown's async PB requests dispatch).
+        const userId = get().user?.id
+        const authToken = pb.authStore.token
         pb.realtime.unsubscribe()
+        // Fire-and-forget push teardown: unsubscribe the device and delete the
+        // server push_subscriptions row, then reset the module-lifetime
+        // registration guard so a second user on this same session re-registers.
+        if (userId) {
+            teardownPushOnLogout(userId, authToken).catch(err =>
+                captureException('auth-store.logout teardownPush', err)
+            )
+        }
         pb.authStore.clear()
         clearPrimaryOrgStorage()
         // Wipe per-device rail deep-links so a second user signing in on

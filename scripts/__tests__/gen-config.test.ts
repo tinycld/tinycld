@@ -137,6 +137,24 @@ describe('buildConfigSource', () => {
         expect(() => buildConfigSource([bad])).toThrow(/schemaType is empty/)
     })
 
+    it('rejects a packageName that would break out of the generated import string', () => {
+        const bad: ConfigPkg = { ...contacts, packageName: "@tinycld/x'; evil()//" }
+        expect(() => buildConfigSource([bad])).toThrow(/unsafe value/)
+    })
+
+    it('rejects a settings component subpath containing a quote', () => {
+        const bad: ConfigPkg = {
+            ...takeout,
+            settings: [{ slug: 's', label: 'S', component: "settings/x')//" }],
+        }
+        expect(() => buildConfigSource([bad])).toThrow(/unsafe value/)
+    })
+
+    it('rejects a schemaType containing a backslash', () => {
+        const bad: ConfigPkg = { ...contacts, schemaType: 'Contacts\\Schema' }
+        expect(() => buildConfigSource([bad])).toThrow(/unsafe value/)
+    })
+
     it('emits sidebarContributions as a lazy-loaded array with order', () => {
         const slotsPkg: ConfigPkg = {
             ...contacts,
