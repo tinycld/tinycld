@@ -51,7 +51,12 @@ export async function subscribeToPush(userId: string): Promise<boolean> {
     return true
 }
 
-export async function unsubscribeFromPush(userId: string): Promise<void> {
+// `authToken` is passed explicitly (rather than read from pb.authStore) so the
+// caller can run teardown as part of logout without racing pb.authStore.clear():
+// when provided it's sent as the Authorization header so the delete is
+// authorized even once the store has been cleared. The in-app settings toggle
+// omits it and relies on the live session.
+export async function unsubscribeFromPush(userId: string, authToken?: string): Promise<void> {
     if (!isPushSupported()) return
 
     const registration = await navigator.serviceWorker.ready
@@ -59,14 +64,16 @@ export async function unsubscribeFromPush(userId: string): Promise<void> {
     if (subscription) {
         await subscription.unsubscribe()
 
+        const authOptions = authToken ? { headers: { Authorization: authToken } } : {}
         const { pb } = await import('./pocketbase')
         // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker unsubscribe util (not a React hook); pb is lazy-imported to break a require cycle.
         const records = await pb.collection('push_subscriptions').getFullList({
+            ...authOptions,
             filter: `user = "${userId}" && endpoint = "${subscription.endpoint}"`,
         })
         for (const record of records) {
             // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker unsubscribe util (not a React hook); pairs with subscribeToPush above.
-            await pb.collection('push_subscriptions').delete(record.id)
+            await pb.collection('push_subscriptions').delete(record.id, authOptions)
         }
     }
 }
