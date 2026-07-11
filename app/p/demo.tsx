@@ -3,7 +3,7 @@ import { navigateToOrg } from '@tinycld/core/lib/org-url'
 import { setResolvedAddress, writeCached } from '@tinycld/core/lib/server-address'
 import { useAuthStore } from '@tinycld/core/lib/stores/auth-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, Pressable, Text, View } from 'react-native'
 
 // A demo tap on tinycld.org (universal/app link) lands here on devices with the
@@ -21,7 +21,7 @@ function useStartDemo() {
     const startDemo = useAuthStore(s => s.startDemo)
     const started = useRef(false)
 
-    async function run() {
+    const run = useCallback(async () => {
         if (started.current) return
         started.current = true
         setState({ status: 'starting' })
@@ -40,13 +40,16 @@ function useStartDemo() {
             return
         }
         navigateToOrg('demo')
-    }
+    }, [startDemo])
 
-    // Kick off on first render. A ref guards against double-invocation; this is a
-    // navigation side-effect, not data sync, so an inline kickoff is appropriate.
-    if (!started.current && state.status === 'starting') {
-        void run()
-    }
+    // Kick off in an effect (not during render): starting the demo fires a
+    // network request + navigation, so a discarded / strict-mode render must
+    // not trigger it for a tree that never commits. The started.current ref
+    // still guards against a second invocation (incl. strict-mode's double
+    // effect), so the demo starts exactly once when status becomes 'starting'.
+    useEffect(() => {
+        if (state.status === 'starting') void run()
+    }, [state.status, run])
 
     return { state, retry: run }
 }
