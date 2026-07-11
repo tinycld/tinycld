@@ -1,12 +1,15 @@
-import { useAccessiblePackages } from '@tinycld/core/lib/use-accessible-packages'
+import { useAccessiblePackagesResult } from '@tinycld/core/lib/use-accessible-packages'
 import { useUserPreference } from '@tinycld/core/lib/use-user-preference'
 import { useMemo } from 'react'
 
-export function useSortedPackages() {
-    const packages = useAccessiblePackages()
+// Returns the nav packages in display order PLUS whether the underlying access
+// data has settled. Callers that redirect on an empty list (org-index) must
+// wait for isReady so they don't act on the transient default-deny empty state.
+export function useSortedPackagesResult() {
+    const { packages, isReady } = useAccessiblePackagesResult()
     const [pkgOrder] = useUserPreference('core', 'pkg_order', [] as string[])
 
-    return useMemo(() => {
+    const sorted = useMemo(() => {
         // Packages without a nav entry (e.g. settings-only contributors like
         // google-takeout-import) must not appear in the rail.
         const navPackages = packages.filter(p => p.nav)
@@ -20,4 +23,10 @@ export function useSortedPackages() {
             return aIdx - bIdx
         })
     }, [packages, pkgOrder])
+
+    return { packages: sorted, isReady }
+}
+
+export function useSortedPackages() {
+    return useSortedPackagesResult().packages
 }
