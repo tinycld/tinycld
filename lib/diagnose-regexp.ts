@@ -29,11 +29,8 @@ interface RegExpErrorDiag extends RegExpDiag {
 }
 
 declare global {
-    // eslint-disable-next-line no-var
     var __TINYCLD_LAST_REGEXP: RegExpDiag | undefined
-    // eslint-disable-next-line no-var
     var __TINYCLD_REGEXP_ERROR: RegExpErrorDiag | undefined
-    // eslint-disable-next-line no-var
     var __TINYCLD_REGEXP_SHIMMED: boolean | undefined
 }
 
