@@ -1,5 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { assertSafeImportField, assertSafeRoutePath } from './validate-generated-field'
 
 // Recursively list files (relative paths) under dir.
 function walkFiles(dir: string, prefix = ''): string[] {
@@ -27,6 +28,8 @@ export interface EmitRoutesOpts {
 // Emit one `export { default } from '<pkg>/<subpath>/<file>'` per screen file,
 // preserving directory structure, under routesBase/<slug>/.
 export function emitRoutes(opts: EmitRoutesOpts): string[] {
+    assertSafeImportField('packageName', opts.packageName)
+    assertSafeImportField('routes.importSubpath', opts.importSubpath)
     const screensDir = path.join(opts.packageDir, opts.routesDir)
     const files = walkFiles(screensDir).filter(f => ROUTE_EXTS.has(path.extname(f)))
     const pkgRouteDir = path.join(opts.routesBase, opts.slug)
@@ -35,6 +38,7 @@ export function emitRoutes(opts: EmitRoutesOpts): string[] {
     const written: string[] = []
     for (const file of files) {
         const withoutExt = file.replace(/\.[^.]+$/, '')
+        assertSafeRoutePath('route file', withoutExt)
         const importPath = `${opts.packageName}/${opts.importSubpath}/${withoutExt}`
         const outFile = path.join(pkgRouteDir, file)
         fs.mkdirSync(path.dirname(outFile), { recursive: true })
@@ -89,6 +93,8 @@ export function pruneOrphanRouteDirs(
 }
 
 export function emitPublicRoutes(opts: EmitPublicRoutesOpts): string[] {
+    assertSafeImportField('packageName', opts.packageName)
+    assertSafeImportField('publicRoutes.importSubpath', opts.importSubpath)
     const sourceDir = path.join(opts.packageDir, opts.routesDir)
     const files = walkFiles(sourceDir).filter(f => ROUTE_EXTS.has(path.extname(f)))
     const pkgRouteDir = path.join(opts.publicRoutesBase, opts.slug)
@@ -97,6 +103,7 @@ export function emitPublicRoutes(opts: EmitPublicRoutesOpts): string[] {
     const written: string[] = []
     for (const file of files) {
         const withoutExt = file.replace(/\.[^.]+$/, '')
+        assertSafeRoutePath('public route file', withoutExt)
         const importPath = `${opts.packageName}/${opts.importSubpath}/${withoutExt}`
         const outFile = path.join(pkgRouteDir, file)
         fs.mkdirSync(path.dirname(outFile), { recursive: true })
