@@ -43,6 +43,7 @@ export default function Connect() {
 
     const fg = useThemeColor('foreground')
     const muted = useThemeColor('muted-foreground')
+    const backdrop = useThemeColor('overlay-backdrop')
 
     const { control, handleSubmit, reset } = useForm({
         resolver: zodResolver(urlSchema),
@@ -194,7 +195,7 @@ export default function Connect() {
                     <Pressable
                         onPress={closeSheet}
                         className="flex-1"
-                        style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
+                        style={{ backgroundColor: backdrop }}
                     />
                     <View
                         className="bg-background px-6 pt-3 pb-8"

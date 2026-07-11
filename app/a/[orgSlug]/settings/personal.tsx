@@ -318,6 +318,7 @@ function ColorThemePicker({
     isDark: boolean
 }) {
     const borderColor = useThemeColor('border')
+    const onSwatchColor = useThemeColor('primary-foreground')
 
     return (
         <View className="flex-row gap-4 flex-wrap">
@@ -341,7 +342,7 @@ function ColorThemePicker({
                                 borderColor: isActive ? swatchColor : borderColor,
                             }}
                         >
-                            {isActive && <Check size={18} color="#fff" />}
+                            {isActive && <Check size={18} color={onSwatchColor} />}
                         </View>
                         <Text
                             className={`text-[11px] ${isActive ? 'font-semibold text-foreground' : 'font-normal text-muted-foreground'}`}

@@ -6,16 +6,17 @@ interface StarIconProps {
     size?: number
 }
 
-const STARRED_COLOR = '#facc15'
-
 export function StarIcon({ isStarred, size = 16 }: StarIconProps) {
     const mutedColor = useThemeColor('muted-foreground')
+    // `warning` is the theme's amber/gold token — it renders as a legible gold in
+    // both light and dark, unlike a fixed hex that only suited light mode.
+    const starredColor = useThemeColor('warning')
 
     return (
         <Star
             size={size}
-            color={isStarred ? STARRED_COLOR : mutedColor}
-            fill={isStarred ? STARRED_COLOR : 'transparent'}
+            color={isStarred ? starredColor : mutedColor}
+            fill={isStarred ? starredColor : 'transparent'}
         />
     )
 }

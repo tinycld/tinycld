@@ -23,11 +23,39 @@ export const ROLE_DESCRIPTIONS: Record<OrgRole, string> = {
     guest: 'Limited access. Scoped to whatever you grant per package.',
 }
 
-export const ROLE_SWATCH: Record<OrgRole, { fg: string; bg: string; ring: string }> = {
-    owner: { fg: '#7c3aed', bg: 'rgba(124, 58, 237, 0.12)', ring: 'rgba(124, 58, 237, 0.35)' },
-    admin: { fg: '#2563eb', bg: 'rgba(37, 99, 235, 0.12)', ring: 'rgba(37, 99, 235, 0.35)' },
-    member: { fg: '#059669', bg: 'rgba(5, 150, 105, 0.12)', ring: 'rgba(5, 150, 105, 0.35)' },
-    guest: { fg: '#ea580c', bg: 'rgba(234, 88, 12, 0.12)', ring: 'rgba(234, 88, 12, 0.35)' },
+// Role → semantic status tokens. Each role tracks the active theme via
+// Tailwind semantic classes (owner=primary, admin=info, member=success,
+// guest=warning) instead of a fixed light-mode hex that clashed in dark mode.
+// `fg` is the theme-color name for the few spots that need a runtime color value
+// (a Lucide icon color, or an inline-styled border); `text`/`bg`/`border` are the
+// className parts (bg/border use an opacity modifier for the soft tint).
+export interface RoleSwatch {
+    fg: 'primary' | 'info' | 'success' | 'warning'
+    text: string
+    bg: string
+    border: string
+}
+
+export const ROLE_SWATCH: Record<OrgRole, RoleSwatch> = {
+    owner: {
+        fg: 'primary',
+        text: 'text-primary',
+        bg: 'bg-primary/10',
+        border: 'border-primary/40',
+    },
+    admin: { fg: 'info', text: 'text-info', bg: 'bg-info/10', border: 'border-info/40' },
+    member: {
+        fg: 'success',
+        text: 'text-success',
+        bg: 'bg-success/10',
+        border: 'border-success/40',
+    },
+    guest: {
+        fg: 'warning',
+        text: 'text-warning',
+        bg: 'bg-warning/10',
+        border: 'border-warning/40',
+    },
 }
 
 export const ROLE_ORDER: OrgRole[] = ['owner', 'admin', 'member', 'guest']

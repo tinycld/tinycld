@@ -39,6 +39,7 @@ import {
     ROLE_ORDER,
     ROLE_SWATCH,
 } from './types'
+import { useRoleColors } from './use-role-color'
 
 // writeIsDemo writes the demo flag onto a pbtsdb users-collection draft. The
 // generated schema doesn't yet include `is_demo` (it regenerates after the
@@ -288,7 +289,8 @@ function RolePicker({
     onChange: (role: OrgRole) => void
 }) {
     const fgColor = useThemeColor('foreground')
-    const borderColor = useThemeColor('border')
+    const roleColors = useRoleColors()
+    const onColor = useThemeColor('primary-foreground')
 
     const helperText = isSelf
         ? 'You can’t change your own role. Ask another owner.'
@@ -318,40 +320,38 @@ function RolePicker({
             <View className="gap-1.5">
                 {availableRoles.map(role => {
                     const swatch = ROLE_SWATCH[role]
+                    const roleColor = roleColors[role]
                     const isActive = role === currentRole
                     const optionDisabled = disabled && !isActive
+                    const activeClasses = isActive
+                        ? `${swatch.bg} ${swatch.border}`
+                        : 'border-border'
                     return (
                         <Pressable
                             key={role}
                             disabled={optionDisabled || isActive}
                             onPress={() => onChange(role)}
-                            className="flex-row items-center gap-3 rounded-xl p-3"
-                            style={{
-                                borderWidth: 1.5,
-                                borderColor: isActive ? swatch.ring : borderColor,
-                                backgroundColor: isActive ? swatch.bg : 'transparent',
-                                opacity: optionDisabled ? 0.45 : 1,
-                            }}
+                            className={`flex-row items-center gap-3 rounded-xl p-3 border-[1.5px] ${activeClasses}`}
+                            style={{ opacity: optionDisabled ? 0.45 : 1 }}
                         >
                             <View
-                                className="items-center justify-center"
+                                className={`items-center justify-center border-2 ${isActive ? '' : 'border-border'}`}
                                 style={{
                                     width: 22,
                                     height: 22,
                                     borderRadius: 11,
-                                    borderWidth: 2,
-                                    borderColor: isActive ? swatch.fg : borderColor,
-                                    backgroundColor: isActive ? swatch.fg : 'transparent',
+                                    borderColor: isActive ? roleColor : undefined,
+                                    backgroundColor: isActive ? roleColor : 'transparent',
                                 }}
                             >
-                                {isActive && <Check size={12} color="#fff" strokeWidth={3} />}
+                                {isActive && <Check size={12} color={onColor} strokeWidth={3} />}
                             </View>
                             <View className="flex-1">
                                 <Text
                                     style={{
                                         fontSize: 13.5,
                                         fontWeight: '700',
-                                        color: isActive ? swatch.fg : fgColor,
+                                        color: isActive ? roleColor : fgColor,
                                     }}
                                 >
                                     {ROLE_LABELS[role]}
@@ -446,7 +446,8 @@ function InviteView({ onDone }: { onDone: () => void }) {
     const mutedColor = useThemeColor('muted-foreground')
     const primaryColor = useThemeColor('primary')
     const primaryFgColor = useThemeColor('primary-foreground')
-    const borderColor = useThemeColor('border')
+    const roleColors = useRoleColors()
+    const onColor = primaryFgColor
 
     const {
         control,
@@ -574,41 +575,35 @@ function InviteView({ onDone }: { onDone: () => void }) {
                                 <View className="gap-1.5">
                                     {inviteRoles.map(role => {
                                         const swatch = ROLE_SWATCH[role]
+                                        const roleColor = roleColors[role]
                                         const isActive = value === role
+                                        const activeClasses = isActive
+                                            ? `${swatch.bg} ${swatch.border}`
+                                            : 'border-border'
                                         return (
                                             <Pressable
                                                 key={role}
                                                 onPress={() => onChange(role)}
-                                                className="flex-row items-center gap-3 rounded-xl p-3"
-                                                style={{
-                                                    borderWidth: 1.5,
-                                                    borderColor: isActive
-                                                        ? swatch.ring
-                                                        : borderColor,
-                                                    backgroundColor: isActive
-                                                        ? swatch.bg
-                                                        : 'transparent',
-                                                }}
+                                                className={`flex-row items-center gap-3 rounded-xl p-3 border-[1.5px] ${activeClasses}`}
                                             >
                                                 <View
-                                                    className="items-center justify-center"
+                                                    className={`items-center justify-center border-2 ${isActive ? '' : 'border-border'}`}
                                                     style={{
                                                         width: 20,
                                                         height: 20,
                                                         borderRadius: 10,
-                                                        borderWidth: 2,
                                                         borderColor: isActive
-                                                            ? swatch.fg
-                                                            : borderColor,
+                                                            ? roleColor
+                                                            : undefined,
                                                         backgroundColor: isActive
-                                                            ? swatch.fg
+                                                            ? roleColor
                                                             : 'transparent',
                                                     }}
                                                 >
                                                     {isActive && (
                                                         <Check
                                                             size={11}
-                                                            color="#fff"
+                                                            color={onColor}
                                                             strokeWidth={3}
                                                         />
                                                     )}
@@ -618,7 +613,7 @@ function InviteView({ onDone }: { onDone: () => void }) {
                                                         style={{
                                                             fontSize: 13.5,
                                                             fontWeight: '700',
-                                                            color: isActive ? swatch.fg : fgColor,
+                                                            color: isActive ? roleColor : fgColor,
                                                         }}
                                                     >
                                                         {ROLE_LABELS[role]}
