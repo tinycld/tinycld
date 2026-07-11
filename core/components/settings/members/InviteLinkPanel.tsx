@@ -1,7 +1,8 @@
+import { useQuery } from '@tanstack/react-query'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import * as Clipboard from 'expo-clipboard'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Pressable, Text, TextInput, View } from 'react-native'
 
 export type InviteLinkPanelProps = {
@@ -16,35 +17,17 @@ type LinkState =
     | { kind: 'error'; message: string }
 
 export function InviteLinkPanel({ userOrgId, initialUrl }: InviteLinkPanelProps) {
-    const [state, setState] = useState<LinkState>(
-        initialUrl ? { kind: 'ready', url: initialUrl } : { kind: 'loading' }
-    )
+    // A URL from rotate() (or the initialUrl prop) short-circuits the fetch —
+    // both hand us a ready link with no round-trip needed.
+    const [overrideUrl, setOverrideUrl] = useState<string | undefined>(initialUrl)
 
-    useEffect(() => {
-        if (initialUrl) return
-        let cancelled = false
-        ;(async () => {
-            try {
-                const res = await pb.send<{ inviteUrl: string }>(`/api/invite-link/${userOrgId}`, {
-                    method: 'GET',
-                })
-                if (!cancelled) setState({ kind: 'ready', url: res.inviteUrl })
-            } catch (err) {
-                if (cancelled) return
-                const status = (err as { status?: number })?.status
-                if (status === 404) {
-                    setState({ kind: 'expired' })
-                    return
-                }
-                const message =
-                    (err as { message?: string })?.message ?? 'Failed to load invite link'
-                setState({ kind: 'error', message })
-            }
-        })()
-        return () => {
-            cancelled = true
-        }
-    }, [userOrgId, initialUrl])
+    const linkQuery = useQuery({
+        queryKey: ['invite-link', userOrgId],
+        queryFn: () =>
+            pb.send<{ inviteUrl: string }>(`/api/invite-link/${userOrgId}`, { method: 'GET' }),
+        enabled: !overrideUrl,
+        retry: false,
+    })
 
     const rotate = useMutation({
         mutationFn: async () => {
@@ -52,8 +35,10 @@ export function InviteLinkPanel({ userOrgId, initialUrl }: InviteLinkPanelProps)
                 method: 'POST',
             })
         },
-        onSuccess: data => setState({ kind: 'ready', url: data.inviteUrl }),
+        onSuccess: data => setOverrideUrl(data.inviteUrl),
     })
+
+    const state = deriveLinkState(overrideUrl, linkQuery)
 
     if (state.kind === 'loading') {
         return (
@@ -80,6 +65,25 @@ export function InviteLinkPanel({ userOrgId, initialUrl }: InviteLinkPanelProps)
             rotatePending={rotate.isPending}
         />
     )
+}
+
+// Maps the invite-link query (or a short-circuit override URL) into the panel's
+// view state. A 404 from the endpoint means the link expired; anything else is a
+// surfaced error.
+function deriveLinkState(
+    overrideUrl: string | undefined,
+    query: ReturnType<typeof useQuery<{ inviteUrl: string }>>
+): LinkState {
+    if (overrideUrl) return { kind: 'ready', url: overrideUrl }
+    if (query.isPending) return { kind: 'loading' }
+    if (query.isError) {
+        const status = (query.error as { status?: number })?.status
+        if (status === 404) return { kind: 'expired' }
+        const message =
+            (query.error as { message?: string })?.message ?? 'Failed to load invite link'
+        return { kind: 'error', message }
+    }
+    return { kind: 'ready', url: query.data.inviteUrl }
 }
 
 function ExpiredView({ onRotate, pending }: { onRotate: () => void; pending: boolean }) {

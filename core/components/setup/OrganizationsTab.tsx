@@ -13,7 +13,7 @@ import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/c
 import { Building2, ChevronDown, ChevronRight, ExternalLink, Plus, X } from 'lucide-react-native'
 import { newRecordId } from 'pbtsdb/core'
 import type PocketBase from 'pocketbase'
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import { PageHeader, RowIcon, SectionLabel, SlugTag } from './console-ui'
 
@@ -477,7 +477,6 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
         setValue,
         setError,
         getValues,
-        watch,
         reset,
         formState: { errors, isSubmitted },
     } = useForm({
@@ -494,26 +493,19 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
         mode: 'onChange',
     })
 
-    const orgName = watch('orgName')
-    const orgSlug = watch('orgSlug')
-    const email = watch('email')
-    const ownerUsername = watch('ownerUsername')
+    // Auto-suggest the slug from the org name and the username from the email in
+    // the source field's change event (not a syncing useEffect). Each stops
+    // auto-tracking once the admin edits the derived field by hand — the ref
+    // flips the moment onSlugEdited/onUsernameEdited fires.
+    const slugEdited = useRef(false)
+    const usernameEdited = useRef(false)
 
-    // Auto-suggest the slug from the org name and the username from the email —
-    // both stop auto-tracking once the admin edits them by hand.
-    useEffect(() => {
-        const prev = deriveSlug(orgName.slice(0, -1))
-        if (!orgSlug || orgSlug === prev) {
-            setValue('orgSlug', deriveSlug(orgName))
-        }
-    }, [orgName, orgSlug, setValue])
-
-    useEffect(() => {
-        const prev = deriveUsername(email.slice(0, -1))
-        if (!ownerUsername || ownerUsername === prev) {
-            setValue('ownerUsername', deriveUsername(email))
-        }
-    }, [email, ownerUsername, setValue])
+    const onOrgNameChange = (value: string) => {
+        if (!slugEdited.current) setValue('orgSlug', deriveSlug(value))
+    }
+    const onEmailChange = (value: string) => {
+        if (!usernameEdited.current) setValue('ownerUsername', deriveUsername(value))
+    }
 
     // The admin picks the owner username; a collision surfaces as a mutation
     // error they can fix and retry. pbtsdb yields run as one optimistic
@@ -559,6 +551,9 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
         }),
         onSuccess: () => {
             reset()
+            // A fresh form re-arms the auto-suggest for the next org.
+            slugEdited.current = false
+            usernameEdited.current = false
             onCreated()
         },
         // A username/slug collision comes back as a PB field error — route it to
@@ -591,6 +586,7 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 name="orgName"
                                 label="Name"
                                 placeholder="Acme Corp"
+                                onValueChange={onOrgNameChange}
                             />
                         </View>
                         <View className="flex-1 min-w-[200px]">
@@ -601,6 +597,9 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 placeholder="acme-corp"
                                 autoCapitalize="none"
                                 hint="3-15 chars, lowercase, hyphens"
+                                onValueChange={() => {
+                                    slugEdited.current = true
+                                }}
                             />
                         </View>
                     </View>
@@ -629,6 +628,7 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 autoCapitalize="none"
                                 autoComplete="email"
                                 textContentType="emailAddress"
+                                onValueChange={onEmailChange}
                             />
                         </View>
                         <View className="flex-1 min-w-[200px]">
@@ -641,6 +641,9 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 autoComplete="username"
                                 textContentType="username"
                                 hint="Must be unique — suggested from the email"
+                                onValueChange={() => {
+                                    usernameEdited.current = true
+                                }}
                             />
                         </View>
                         <View className="flex-1 min-w-[200px]">
