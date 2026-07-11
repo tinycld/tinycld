@@ -11,7 +11,13 @@ export function useUserPreference<T>(
     key: string,
     defaultValue: T
 ): readonly [T, (newValue: T) => void] {
-    const { user } = useAuth()
+    // Anon-tolerant: this hook runs in the theme/color path (useColorTheme →
+    // useUserPreference), which mounts on every screen INCLUDING the pre-auth
+    // login screen. Passing throwIfAnon: false keeps it from throwing before
+    // anyone is authed; when anon we skip the user-scoped query and return the
+    // caller's default. Mirrors use-theme-preference.ts.
+    const { user, isLoggedIn } = useAuth({ throwIfAnon: false })
+    const userId = user?.id ?? ''
     const [userPreferencesCollection] = useStore('user_preferences')
 
     const { data: rows } = useLiveQuery(
@@ -22,13 +28,13 @@ export function useUserPreference<T>(
                     and(
                         eq(user_preferences.app, app),
                         eq(user_preferences.key, key),
-                        eq(user_preferences.user, user.id)
+                        eq(user_preferences.user, userId)
                     )
                 ),
-        [app, key, user.id]
+        [app, key, userId]
     )
 
-    const existing = rows?.[0]
+    const existing = isLoggedIn ? rows?.[0] : undefined
     const value = existing ? (existing.value as T) : defaultValue
 
     // Re-resolve the row at mutation time rather than capturing the render-time
@@ -39,6 +45,7 @@ export function useUserPreference<T>(
     // back, manifesting as the UI flipping to the new value and snapping back.
     const upsert = useMutation({
         mutationFn: mutation(function* (newValue: T) {
+            if (!user) return
             const current = userPreferencesCollection.toArray.find(
                 r => r.app === app && r.key === key && r.user === user.id
             )
@@ -60,9 +67,11 @@ export function useUserPreference<T>(
 
     const setValue = useCallback(
         (newValue: T) => {
+            // No-op when anon: there's no user to scope the preference to.
+            if (!isLoggedIn) return
             upsert.mutate(newValue)
         },
-        [upsert]
+        [isLoggedIn, upsert]
     )
 
     return [value, setValue] as const
