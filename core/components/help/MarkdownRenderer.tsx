@@ -102,9 +102,12 @@ class HelpRenderer extends Renderer {
         // paints top + left. That gives a single-pixel grid with no
         // doubled-up lines and works without relying on the library's
         // reanimated-table Cell (which we replaced to fix overflow).
-        // tableStyle.borderColor flows in from the styles map below so
-        // the grid picks up the themed border color.
-        const borderColor = tableStyle?.borderColor ?? '#888'
+        // tableStyle.borderColor always flows in from the themed styles map
+        // below (styles.table.borderColor = useThemeColor('border')), so the
+        // grid picks up the theme's border color. The `transparent` fallback
+        // only guards the never-hit case where the renderer is used without our
+        // styles map — it must not hardcode a raw color that breaks in dark mode.
+        const borderColor = tableStyle?.borderColor ?? 'transparent'
         const rowFlex: ViewStyle = { flexDirection: 'row', ...rowStyle }
         // Detect keyboard-shortcut tables (first column holds the
         // shortcut, second the description) and give them a 20/80

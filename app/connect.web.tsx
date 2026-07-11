@@ -155,10 +155,7 @@ export default function ConnectWeb() {
                         disabled={busy}
                         className={`border-[1.5px] border-foreground bg-foreground rounded-2xl p-[18px] flex-row items-start gap-3.5 ${busy ? 'opacity-60' : 'opacity-100'}`}
                     >
-                        <View
-                            className="w-9 h-9 rounded-[10px] items-center justify-center"
-                            style={{ backgroundColor: 'rgba(255,255,255,0.12)' }}
-                        >
+                        <View className="w-9 h-9 rounded-[10px] items-center justify-center bg-background/10">
                             <Globe size={18} color={bg} />
                         </View>
                         <View className="flex-1">

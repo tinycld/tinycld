@@ -33,7 +33,7 @@ function SkeletonBlock({
                     width: width as number,
                     height,
                     borderRadius: 8,
-                    backgroundColor: borderColor ?? '#88888833',
+                    backgroundColor: borderColor,
                     opacity,
                 },
                 style,
