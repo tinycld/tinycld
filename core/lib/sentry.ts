@@ -57,12 +57,10 @@ export function initSentry(): void {
     const config = getCoreConfigOptional()
     const dsn = config?.sentryDsn
     if (__DEV__) {
-        // biome-ignore lint/suspicious/noConsole: visible diagnostic for "where are my errors?"
         console.info('[sentry] init skipped — __DEV__ build')
         return
     }
     if (!dsn) {
-        // biome-ignore lint/suspicious/noConsole: visible diagnostic for "where are my errors?"
         console.warn(
             '[sentry] init skipped — no DSN. The DSN is set in lib/app-config.ts (appConfig.sentryDsn); a missing one means configureCore() did not run before initSentry().'
         )
@@ -103,7 +101,6 @@ export function initSentry(): void {
         replaysOnErrorSampleRate: 0,
     })
     initialized = true
-    // biome-ignore lint/suspicious/noConsole: one-line confirmation that capture will actually work
     console.info(
         `[sentry] initialized (env=${config?.environment ?? 'production'}, release=${release ?? config?.release ?? 'unknown'}, dist=${dist ?? 'none'})`
     )
@@ -121,7 +118,6 @@ export function captureMessageToSentry(
     extra?: Record<string, unknown>
 ): void {
     const scrubbedExtra = extra ? scrubPII(extra) : undefined
-    // biome-ignore lint/suspicious/noConsole: tracing aid; always visible in browser
     console.info(`[trace:${context}] ${message}`, scrubbedExtra ?? '')
     if (!initialized) return
     Sentry.withScope(scope => {
@@ -138,7 +134,6 @@ export function captureExceptionToSentry(
     extra?: Record<string, unknown>
 ): void {
     if (!initialized) {
-        // biome-ignore lint/suspicious/noConsole: don't silently swallow when Sentry isn't wired up
         console.error(`[sentry:not-initialized] ${context}`, error, extra)
         return
     }

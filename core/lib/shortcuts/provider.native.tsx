@@ -76,9 +76,11 @@ function namedKeyFromCode(keyCode: number, char: string): string | null {
 }
 
 function isTextInputFocused(): boolean {
-    // React Native exposes a single global text input focus state.
-    // biome-ignore lint/suspicious/noExplicitAny: State() is not in public RN types
-    const currentlyFocused = (TextInput as any).State?.currentlyFocusedInput?.()
+    // React Native exposes a single global text input focus state via
+    // TextInput.State, which isn't in the public RN type surface.
+    const State = (TextInput as unknown as { State?: { currentlyFocusedInput?: () => unknown } })
+        .State
+    const currentlyFocused = State?.currentlyFocusedInput?.()
     return currentlyFocused != null
 }
 

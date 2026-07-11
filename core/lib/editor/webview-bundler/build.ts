@@ -141,7 +141,6 @@ export async function bundleWebViewEditor(
 
     if (result.warnings.length > 0) {
         for (const warning of result.warnings) {
-            // biome-ignore lint/suspicious/noConsole: build-time helper; surfacing warnings is intentional
             console.warn(`bundleWebViewEditor: ${warning.text}`)
         }
     }

@@ -1,7 +1,14 @@
 import { Menu } from '@tinycld/core/ui/menu'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { type GestureResponderEvent, Platform, Pressable, StyleSheet, View } from 'react-native'
+import {
+    type GestureResponderEvent,
+    Platform,
+    Pressable,
+    StyleSheet,
+    View,
+    type ViewProps,
+} from 'react-native'
 import { markContextMenuOpenedByLongPress } from './context-menu-press-guard'
 
 interface ContextMenuProps {
@@ -104,8 +111,7 @@ function ContextMenuWeb({ children, content, onOpen, className }: ContextMenuPro
     return (
         <View
             className={className}
-            // biome-ignore lint/suspicious/noExplicitAny: web-only DOM event prop on RN View
-            {...({ onContextMenu: handleContextMenu } as any)}
+            {...({ onContextMenu: handleContextMenu } as unknown as ViewProps)}
         >
             {children}
             {cursorPos && (

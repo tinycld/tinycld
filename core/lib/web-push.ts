@@ -4,6 +4,10 @@ import { Platform } from 'react-native'
 // pocketbase → errors → notify → … → web-push → pocketbase. web-push only needs
 // pb at call time inside these async actions, so a dynamic import is free here
 // and matches the same cycle-breaking pattern used in pocketbase.ts.
+//
+// This is an imperative ServiceWorker/PushManager utility (not a React hook), so
+// useMutation/pbtsdb primitives can't apply — the whole file is exempted from the
+// pbtsdb-no-raw-pb-access plugin in biome.json.
 
 export function isPushSupported(): boolean {
     return (
@@ -36,7 +40,6 @@ export async function subscribeToPush(userId: string): Promise<boolean> {
     const subscriptionJSON = subscription.toJSON()
 
     const { pb } = await import('./pocketbase')
-    // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker/PushManager util (not a React hook), so useMutation/pbtsdb can't apply; pb is lazy-imported to break a require cycle.
     await pb.collection('push_subscriptions').create({
         user: userId,
         endpoint: subscriptionJSON.endpoint,
@@ -66,7 +69,6 @@ export async function unsubscribeFromPush(userId: string, authToken?: string): P
 
         const authOptions = authToken ? { headers: { Authorization: authToken } } : {}
         const { pb } = await import('./pocketbase')
-        // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker unsubscribe util (not a React hook); pb is lazy-imported to break a require cycle.
         const records = await pb.collection('push_subscriptions').getFullList({
             ...authOptions,
             filter: pb.filter('user = {:userId} && endpoint = {:endpoint}', {
@@ -75,7 +77,6 @@ export async function unsubscribeFromPush(userId: string, authToken?: string): P
             }),
         })
         for (const record of records) {
-            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker unsubscribe util (not a React hook); pairs with subscribeToPush above.
             await pb.collection('push_subscriptions').delete(record.id, authOptions)
         }
     }

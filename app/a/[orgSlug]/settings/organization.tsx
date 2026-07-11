@@ -426,7 +426,10 @@ function UserBreakdownTable({
 
 function LogoSection({ org }: { org: { id: string; name: string; logo?: string } | null }) {
     const [error, setError] = useState<string | null>(null)
+    const [orgsCollection] = useStore('orgs')
 
+    // The upload is the one raw-PB exception in this file: a multipart
+    // FormData file blob that pbtsdb's optimistic transaction can't carry.
     const upload = useRawMutation({
         mutationFn: async () => {
             if (!org?.id) throw new Error('No organization context')
@@ -445,12 +448,13 @@ function LogoSection({ org }: { org: { id: string; name: string; logo?: string }
         onSuccess: () => setError(null),
     })
 
-    const remove = useRawMutation({
-        mutationFn: async () => {
+    const remove = useMutation({
+        mutationFn: mutation(function* () {
             if (!org?.id) throw new Error('No organization context')
-            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: pairs with the FormData logo upload above as one raw LogoSection mutation; kept in the same style.
-            await pb.collection('orgs').update(org.id, { logo: null })
-        },
+            yield orgsCollection.update(org.id, draft => {
+                draft.logo = ''
+            })
+        }),
         onError: (err: Error) => setError(err.message),
         onSuccess: () => setError(null),
     })
