@@ -33,9 +33,14 @@ export function downloadFile(source: FilePreviewSource) {
 export function downloadFromUrl(url: string, fileName: string, mimeType: string) {
     if (Platform.OS === 'web') {
         // PocketBase serves files with `?download=1` as Content-Disposition:
-        // attachment. URLs that already encode their own download semantics
-        // (drive's share-link `?inline=0`) are passed through untouched.
-        const href = url.includes('?') ? url : `${url}?download=1`
+        // attachment. A protected file arrives with a `?token=…` query, so we
+        // must join the download param with `&` vs `?` on whether a query
+        // already exists — a bare `url.includes('?')` skip dropped the param on
+        // every authed URL, so protected files opened inline instead of saving.
+        // URLs that already encode their own download semantics (drive's
+        // share-link `?inline=0`/`?download=…`) are passed through untouched.
+        const encodesDisposition = /[?&](download|inline)=/.test(url)
+        const href = encodesDisposition ? url : `${url}${url.includes('?') ? '&' : '?'}download=1`
         const a = document.createElement('a')
         a.href = href
         a.download = fileName
