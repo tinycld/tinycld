@@ -128,7 +128,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
                     set({ user: currentUser })
                 }
             } catch (err) {
-                captureException('auth-store.initAuth hydration failed', err)
+                captureException('auth-store.initAuth.hydrate', err)
             } finally {
                 set({ hasHydrated: true })
             }
@@ -227,7 +227,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         // registration guard so a second user on this same session re-registers.
         if (userId) {
             teardownPushOnLogout(userId, authToken).catch(err =>
-                captureException('auth-store.logout teardownPush', err)
+                captureException('auth-store.logout.teardownPush', err)
             )
         }
         pb.authStore.clear()
@@ -240,7 +240,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         // incl. the pb file token) so the next user signing in on this SPA
         // instance can't read the previous user's rows or reuse their token.
         resetSessionState().catch(err =>
-            captureException('auth-store.logout resetSessionState', err)
+            captureException('auth-store.logout.resetSessionState', err)
         )
         set({ user: null })
     },

@@ -2,7 +2,7 @@ import { osChannel } from '@tinycld/core/lib/notify/channels/os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tinycld/core/lib/notifications', () => ({
-    notify: vi.fn(() => Promise.resolve()),
+    showOsNotification: vi.fn(() => Promise.resolve()),
 }))
 
 describe('OsChannel', () => {
@@ -11,7 +11,7 @@ describe('OsChannel', () => {
     })
 
     it('forwards title/body/data to the platform notify helper', async () => {
-        const { notify: osNotify } = await import('@tinycld/core/lib/notifications')
+        const { showOsNotification: osNotify } = await import('@tinycld/core/lib/notifications')
         await osChannel.dispatch({
             event: 'import.complete',
             title: 'Done',
@@ -28,7 +28,7 @@ describe('OsChannel', () => {
     })
 
     it('omits body and data when not provided', async () => {
-        const { notify: osNotify } = await import('@tinycld/core/lib/notifications')
+        const { showOsNotification: osNotify } = await import('@tinycld/core/lib/notifications')
         await osChannel.dispatch({
             event: 'import.complete',
             title: 'Just a title',
