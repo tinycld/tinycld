@@ -38,3 +38,35 @@ export async function registerExpoPushToken(userId: string): Promise<boolean> {
         return false
     }
 }
+
+// Tear down this device's Expo push registration on logout: delete the
+// server push_subscriptions row(s) for this user's Expo token so the backend
+// stops pushing to a device the user has signed out of. A no-op on web (no
+// Expo token) and best-effort — a teardown failure must never block logout.
+//
+// `authToken` is passed explicitly (rather than read from pb.authStore) so the
+// caller can run teardown as part of logout without racing pb.authStore.clear():
+// we send it as the Authorization header so the delete is authorized even once
+// the store has been cleared.
+export async function unregisterExpoPushToken(userId: string, authToken?: string): Promise<void> {
+    if (Platform.OS === 'web') return
+
+    const authOptions = authToken ? { headers: { Authorization: authToken } } : {}
+    try {
+        const Notifications = await import('expo-notifications')
+        const tokenData = await Notifications.getExpoPushTokenAsync()
+        const token = tokenData.data
+
+        // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative push-teardown util (not a React hook); pairs with registerExpoPushToken above.
+        const records = await pb.collection('push_subscriptions').getFullList({
+            ...authOptions,
+            filter: `user = "${userId}" && platform = "expo" && expo_token = "${token}"`,
+        })
+        for (const record of records) {
+            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative push-teardown util (not a React hook); pairs with registerExpoPushToken above.
+            await pb.collection('push_subscriptions').delete(record.id, authOptions)
+        }
+    } catch {
+        // Best-effort: a failed teardown must never block logout.
+    }
+}
