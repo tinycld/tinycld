@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { View } from 'react-native'
-import { WebView, type WebViewMessageEvent } from 'react-native-webview'
+import { Linking, View } from 'react-native'
+import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview'
 
 // Injected at body end. ResizeObserver posts intrinsic body height
 // back through react-native-webview's `window.ReactNativeWebView`
@@ -50,6 +50,17 @@ export interface HtmlSurfaceProps {
     onAnchor?: (anchor: CommentAnchor) => void
 }
 
+// The surface renders its HTML via `source={{ html }}`, which the WebView
+// loads as an in-memory `about:blank` document. The only legitimate loads are
+// therefore that initial document and any `data:` URIs it inlines — everything
+// else (a link the user taps inside the rendered content) is an off-origin
+// navigation that must NOT replace the surface in-place, or a phishing link
+// could paint an arbitrary site inside app chrome. We allow the internal loads
+// and hand any real URL to the OS browser instead.
+function isInternalDocumentLoad(url: string): boolean {
+    return url === 'about:blank' || url === '' || url.startsWith('data:')
+}
+
 // HtmlSurface (native) renders the same envelope as the web variant
 // but inside a react-native-webview. Height tracking uses an injected
 // ResizeObserver that posts the document height back over the
@@ -75,12 +86,25 @@ export function HtmlSurface({ html, css, ariaLabel }: HtmlSurfaceProps) {
         }
     }
 
+    // Gate every navigation the WebView attempts. Return true only for the
+    // internal document/data loads the surface itself renders; block real URLs
+    // and open them in the OS browser so a tapped link can't navigate the
+    // WebView to an arbitrary external site inside the app.
+    const onShouldStartLoadWithRequest = (request: WebViewNavigation): boolean => {
+        if (isInternalDocumentLoad(request.url)) return true
+        void Linking.openURL(request.url).catch(() => {
+            // no-op: nothing to do if the OS can't open the URL
+        })
+        return false
+    }
+
     return (
         <View className="flex-1 bg-background">
             <WebView
                 accessibilityLabel={ariaLabel}
                 source={source}
-                originWhitelist={['*']}
+                originWhitelist={['about:*', 'data:*']}
+                onShouldStartLoadWithRequest={onShouldStartLoadWithRequest}
                 scrollEnabled={false}
                 onMessage={onMessage}
                 style={{ width: '100%', height, backgroundColor: 'transparent' }}
