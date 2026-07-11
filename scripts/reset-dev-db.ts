@@ -49,6 +49,22 @@ interface Config {
     keepRunning: boolean
 }
 
+function printUsage(): void {
+    process.stdout.write(
+        `Reset the dev database: delete pb_data, run migrations, and seed a test user + org.\n\n` +
+            `Usage:\n` +
+            `  pnpm exec tsx scripts/reset-dev-db.ts [options]\n\n` +
+            `Options:\n` +
+            `  --url <url>        PocketBase URL (default: http://127.0.0.1:7100)\n` +
+            `  --browse-url <url> URL the developer opens in the browser (cosmetic; printed in\n` +
+            `                     the seed login summary). Defaults to --url with 127.0.0.1 → localhost.\n` +
+            `  --data-dir <dir>   Data directory (default: server/pb_data)\n` +
+            `  --skip-build       Skip building PocketBase\n` +
+            `  --keep-running     Keep the server running after seeding (default: exit after seed)\n` +
+            `  --help             Show this help message\n`
+    )
+}
+
 function parseArgs(): Config {
     const args = process.argv.slice(2)
     const config: Config = {
@@ -75,13 +91,18 @@ function parseArgs(): Config {
                 config.skipBuild = true
                 break
             case '--keep-running':
-                config.keepRunning = args[++i] !== 'false'
+                // Boolean flag — it consumes no value. (Previously it swallowed
+                // the next argv token, so a following flag was silently eaten.)
+                config.keepRunning = true
                 break
             case '--help':
+                printUsage()
                 process.exit(0)
                 break
             default:
                 if (arg.startsWith('-')) {
+                    logError(`Unknown flag: ${arg}`)
+                    printUsage()
                     process.exit(1)
                 }
         }
@@ -125,7 +146,11 @@ async function waitForPocketBase(maxAttempts = 30): Promise<boolean> {
 function killExistingPocketBase(): void {
     log('Killing existing PocketBase on port', PB_PORT)
     try {
-        const result = spawnSync('lsof', ['-ti', `:${PB_PORT}`], {
+        // -sTCP:LISTEN restricts the match to the process LISTENING on the
+        // port. Without it, lsof also returns clients with an open connection
+        // to that port (e.g. a browser tab or the seed's fetch), and kill -9'ing
+        // those would take out unrelated processes rather than just the server.
+        const result = spawnSync('lsof', ['-ti', `:${PB_PORT}`, '-sTCP:LISTEN'], {
             encoding: 'utf-8',
         })
         if (result.stdout.trim()) {
