@@ -16,15 +16,18 @@ import {
  * })
  * ```
  */
-export async function performMutations<TResult = void>(
-    fn: () => Generator<
-        Transaction<Record<string, unknown>> | Transaction<Record<string, unknown>>[],
-        TResult,
-        void
-    >
-): Promise<TResult> {
-    const gen = fn()
+type TransactionYield =
+    | Transaction<Record<string, unknown>>
+    | Transaction<Record<string, unknown>>[]
 
+// Drive a Transaction-yielding generator to completion, awaiting each yielded
+// Transaction (or array, in parallel) before resuming. Takes an already-created
+// iterator so callers that must invoke the generator fn exactly once (to detect
+// whether it IS a generator by inspecting its return value) can hand the result
+// straight in without re-invoking.
+async function drainTransactions<TResult>(
+    gen: Generator<TransactionYield, TResult, void>
+): Promise<TResult> {
     let result = gen.next()
     while (!result.done) {
         const value = result.value
@@ -37,6 +40,34 @@ export async function performMutations<TResult = void>(
     }
 
     return result.value
+}
+
+export async function performMutations<TResult = void>(
+    fn: () => Generator<
+        Transaction<Record<string, unknown>> | Transaction<Record<string, unknown>>[],
+        TResult,
+        void
+    >
+): Promise<TResult> {
+    return drainTransactions(fn())
+}
+
+// A generator's return value is an iterator: it has both `.next()` and is
+// iterable via Symbol.iterator. Duck-typing on the RETURNED object is robust
+// where `mutationFn.constructor.name === 'GeneratorFunction'` is not — a
+// decorator, a wrapping closure, or Babel's regenerator transpile (which turns
+// a generator into a plain function whose call returns a runtime iterator) all
+// leave a fn whose constructor.name is 'Function', which the old check treated
+// as async — returning the raw generator unconsumed so NO transaction was ever
+// awaited (a mutation that "succeeds" without persisting).
+function isTransactionGenerator(
+    value: unknown
+): value is Generator<TransactionYield, unknown, void> {
+    return (
+        value != null &&
+        typeof (value as Iterator<unknown>).next === 'function' &&
+        typeof (value as Iterable<unknown>)[Symbol.iterator] === 'function'
+    )
 }
 
 type GeneratorMutationFn<TData, TVariables> = (
@@ -116,17 +147,28 @@ export function useMutation<TData = unknown, TError = Error, TVariables = void>(
 ): UseMutationResult<TData, TError, TVariables> {
     const { mutationFn, ...restOptions } = options
 
-    const isGeneratorFn = mutationFn && mutationFn.constructor.name === 'GeneratorFunction'
-
-    const wrappedOptions = isGeneratorFn
-        ? {
-              ...restOptions,
-              mutationFn: (variables: TVariables) =>
-                  performMutations(() =>
-                      (mutationFn as GeneratorMutationFn<TData, TVariables>)(variables)
-                  ),
+    // A single wrapper that decides generator-vs-async by INVOKING the fn once
+    // and inspecting what it returns — not by the fragile constructor.name of
+    // the fn itself. The fn is called exactly once per mutation run (no
+    // double-invocation of a non-idempotent async fn): a generator's call is
+    // side-effect free until driven, so calling it here to test the result is
+    // safe, and an async fn's returned promise is awaited directly.
+    const wrappedMutationFn = mutationFn
+        ? async (variables: TVariables): Promise<TData> => {
+              const result = (
+                  mutationFn as (
+                      v: TVariables
+                  ) => ReturnType<GeneratorMutationFn<TData, TVariables>>
+              )(variables)
+              if (isTransactionGenerator(result)) {
+                  return drainTransactions(result) as Promise<TData>
+              }
+              return result as unknown as Promise<TData>
           }
-        : (options as AsyncMutationOptions<TData, TError, TVariables>)
+        : undefined
 
-    return useTanStackMutation(wrappedOptions)
+    return useTanStackMutation({
+        ...restOptions,
+        mutationFn: wrappedMutationFn,
+    } as UseMutationOptions<TData, TError, TVariables>)
 }
