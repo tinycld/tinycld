@@ -1,6 +1,6 @@
 #!/bin/sh
-# Delete release directories under /app/releases/ older than 7 days,
-# never deleting the one /app/releases/current points at. Scheduled by the
+# Delete release directories under /workspace/releases/ older than 7 days,
+# never deleting the one /workspace/releases/current points at. Scheduled by the
 # deploy platform (e.g. a host cron invoking this inside the app container);
 # the image itself carries no scheduler config.
 #
@@ -16,7 +16,7 @@
 # tracks the build, not the promote.
 set -eu
 
-RELEASES_DIR=/app/releases
+RELEASES_DIR=/workspace/releases
 CURRENT=$(readlink "$RELEASES_DIR/current" 2>/dev/null || true)
 RELEASE_ID_RE='^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}-[a-f0-9]+$'
 
