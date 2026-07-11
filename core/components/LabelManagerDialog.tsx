@@ -185,12 +185,11 @@ function CreateLabelRow({ onCreated }: { onCreated: () => void }) {
             <Pressable onPress={() => setIsCreating(true)}>
                 <View className="flex-row items-center px-3 py-2 gap-2 opacity-60">
                     <View
+                        className="border-[1.5px] border-border/70"
                         style={{
                             width: 14,
                             height: 14,
                             borderRadius: 7,
-                            borderWidth: 1.5,
-                            borderColor: 'rgba(128, 128, 128, 0.4)',
                             borderStyle: 'dashed',
                             alignItems: 'center',
                             justifyContent: 'center',

@@ -10,20 +10,14 @@ export function RoleBadge({ role, size = 'md' }: { role: OrgRole; size?: 'sm' | 
     const fontSize = size === 'sm' ? 10.5 : 11.5
     return (
         <View
-            style={{
-                paddingVertical: py,
-                paddingHorizontal: px,
-                borderRadius: 999,
-                backgroundColor: swatch.bg,
-                borderWidth: 1,
-                borderColor: swatch.ring,
-            }}
+            className={`rounded-full border ${swatch.bg} ${swatch.border}`}
+            style={{ paddingVertical: py, paddingHorizontal: px }}
         >
             <Text
+                className={swatch.text}
                 style={{
                     fontSize,
                     fontWeight: '700',
-                    color: swatch.fg,
                     letterSpacing: 0.3,
                     textTransform: 'uppercase',
                 }}
@@ -35,24 +29,18 @@ export function RoleBadge({ role, size = 'md' }: { role: OrgRole; size?: 'sm' | 
 }
 
 export function PendingBadge() {
+    const warningColor = useThemeColor('warning')
     return (
         <View
-            className="flex-row items-center gap-1"
-            style={{
-                paddingVertical: 3,
-                paddingHorizontal: 8,
-                borderRadius: 999,
-                backgroundColor: 'rgba(217, 119, 6, 0.12)',
-                borderWidth: 1,
-                borderColor: 'rgba(217, 119, 6, 0.35)',
-            }}
+            className="flex-row items-center gap-1 rounded-full border bg-warning/10 border-warning/40"
+            style={{ paddingVertical: 3, paddingHorizontal: 8 }}
         >
-            <Clock size={10} color="#b45309" />
+            <Clock size={10} color={warningColor} />
             <Text
+                className="text-warning"
                 style={{
                     fontSize: 10.5,
                     fontWeight: '700',
-                    color: '#b45309',
                     letterSpacing: 0.3,
                     textTransform: 'uppercase',
                 }}
