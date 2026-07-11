@@ -8,6 +8,7 @@
 // and NO transaction is ever awaited (a mutation that "succeeds" without
 // persisting).
 
+import type { Transaction } from '@tanstack/react-db'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
@@ -23,13 +24,18 @@ function wrapper() {
     )
 }
 
-// A stand-in for a pbtsdb Transaction: performMutations awaits `isPersisted.promise`.
+type FakeTransaction = Transaction<Record<string, unknown>>
+
+// A stand-in for a pbtsdb Transaction: the mutation machinery only touches
+// `isPersisted.promise`, so we stub that and cast to Transaction to satisfy the
+// GeneratorMutationFn yield type (the generators below must typecheck).
 function fakeTransaction() {
     let resolvePersist!: () => void
     const promise = new Promise<void>(resolve => {
         resolvePersist = resolve
     })
-    return { tx: { isPersisted: { promise } }, resolvePersist }
+    const tx = { isPersisted: { promise } } as unknown as FakeTransaction
+    return { tx, resolvePersist }
 }
 
 describe('useMutation generator detection', () => {
@@ -41,7 +47,6 @@ describe('useMutation generator detection', () => {
             () =>
                 useMutation({
                     mutationFn: function* () {
-                        // @ts-expect-error test transaction stub
                         yield tx
                         afterYield()
                         return 'done'
@@ -67,7 +72,6 @@ describe('useMutation generator detection', () => {
         const afterYield = vi.fn()
 
         function* gen() {
-            // @ts-expect-error test transaction stub
             yield tx
             afterYield()
             return 'wrapped-done'
