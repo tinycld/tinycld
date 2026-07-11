@@ -367,8 +367,11 @@ export async function clearStores() {
 // holds their file token (['pb-files-token'] in use-authed-file-url.ts) —
 // which authorizes file reads as that user. Runs from the auth-store's
 // logout(), which disconnectServer() also routes through.
-// TODO: web-push subscription teardown (review §4.12) belongs here once
-// implemented — unsubscribe the device before the session is dropped.
+//
+// Push subscription teardown is NOT done here: it needs the userId and an
+// authorized PB session, both of which are gone by the time resetSessionState
+// runs (logout() clears pb.authStore first). The auth-store's logout() tears
+// down push explicitly, before the auth clear — see teardownPushOnLogout.
 export async function resetSessionState() {
     await clearStores()
     queryClient.clear()
