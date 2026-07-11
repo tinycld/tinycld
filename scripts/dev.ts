@@ -413,12 +413,14 @@ function startPbWatcher(opts: {
                     'allof',
                     ['type', 'f'],
                     ['suffix', 'go'],
-                    // Any package-owned server source: core/server/**.go and
-                    // <sibling>/server/**.go. Exclude app/server/** because
-                    // those .go files (package_extensions.go, go.work) are
-                    // generator output — rebuilding on them would loop.
+                    // Any package-owned server source: tinycld/core/server/**.go
+                    // and <sibling>/server/**.go. Exclude tinycld/server/**
+                    // because those .go files (package_extensions.go, go.work)
+                    // are generator output — rebuilding on them would loop.
+                    // (Globs are wholename, relative to the watched workspace
+                    // root one level up from the tinycld/ member dir.)
                     ['match', '**/server/**', 'wholename'],
-                    ['not', ['match', 'app/server/**', 'wholename']],
+                    ['not', ['match', 'tinycld/server/**', 'wholename']],
                 ],
                 fields: ['name', 'exists'],
                 ...(resp.relative_path ? { relative_root: resp.relative_path } : {}),
