@@ -1,5 +1,6 @@
+import { useQuery } from '@tanstack/react-query'
 import { pb } from '@tinycld/core/lib/pocketbase'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 interface UseApiSearchOptions<TResult> {
     endpoint: string
@@ -17,12 +18,19 @@ interface UseApiSearchReturn<TResult> {
     error: string | null
 }
 
-function isAbortError(err: unknown): boolean {
-    return err instanceof DOMException && err.name === 'AbortError'
-}
-
 function toErrorMessage(err: unknown): string {
     return err instanceof Error ? err.message : 'Search failed'
+}
+
+// Debounce a value: only surface the latest after `delayMs` of quiet. Genuine
+// timer side-effect (not a server-data sync), so it stays in an effect.
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+    const [debounced, setDebounced] = useState(value)
+    useEffect(() => {
+        const timer = setTimeout(() => setDebounced(value), delayMs)
+        return () => clearTimeout(timer)
+    }, [value, delayMs])
+    return debounced
 }
 
 export function useApiSearch<TResult>(
@@ -38,70 +46,36 @@ export function useApiSearch<TResult>(
         debounceMs = 300,
     } = options
 
-    const [results, setResults] = useState<TResult[]>([])
-    const [total, setTotal] = useState(0)
-    const [isSearching, setIsSearching] = useState(false)
-    const [error, setError] = useState<string | null>(null)
-    const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-    const abortRef = useRef<AbortController | null>(null)
+    const debouncedQuery = useDebouncedValue(query, debounceMs)
+    const enabled = debouncedQuery.length >= minQueryLength
 
-    const search = useCallback(
-        async (q: string) => {
-            abortRef.current?.abort()
-            const controller = new AbortController()
-            abortRef.current = controller
+    // React Query owns the fetch lifecycle: it aborts a superseded request via
+    // the queryFn `signal`, tracks in-flight/error state, and caches by the
+    // debounced query — replacing the hand-rolled AbortController + useState
+    // machinery this hook used to carry.
+    const search = useQuery({
+        queryKey: ['api-search', endpoint, debouncedQuery, buildQueryParams?.(debouncedQuery)],
+        queryFn: ({ signal }) =>
+            pb.send(endpoint, {
+                method: 'GET',
+                query: buildQueryParams ? buildQueryParams(debouncedQuery) : { q: debouncedQuery },
+                signal,
+            }),
+        enabled,
+        // A search is inherently point-in-time; don't retry a failed query
+        // (the user will just keep typing) and don't refetch on focus.
+        retry: false,
+        refetchOnWindowFocus: false,
+    })
 
-            setIsSearching(true)
-            setError(null)
+    if (!enabled) {
+        return { results: [], total: 0, isSearching: false, error: null }
+    }
 
-            try {
-                const queryParams = buildQueryParams ? buildQueryParams(q) : { q }
-                const response: unknown = await pb.send(endpoint, {
-                    method: 'GET',
-                    query: queryParams,
-                    signal: controller.signal,
-                })
-                if (controller.signal.aborted) return
-                setResults(extractResults(response))
-                setTotal(extractTotal ? extractTotal(response) : 0)
-            } catch (err: unknown) {
-                if (isAbortError(err) || controller.signal.aborted) return
-                setError(toErrorMessage(err))
-                setResults([])
-                setTotal(0)
-            } finally {
-                if (!controller.signal.aborted) {
-                    setIsSearching(false)
-                }
-            }
-        },
-        [endpoint, buildQueryParams, extractResults, extractTotal]
-    )
-
-    useEffect(() => {
-        if (timerRef.current) clearTimeout(timerRef.current)
-
-        if (query.length < minQueryLength) {
-            setResults([])
-            setTotal(0)
-            setIsSearching(false)
-            setError(null)
-            abortRef.current?.abort()
-            return
-        }
-
-        timerRef.current = setTimeout(() => search(query), debounceMs)
-
-        return () => {
-            if (timerRef.current) clearTimeout(timerRef.current)
-        }
-    }, [query, search, minQueryLength, debounceMs])
-
-    useEffect(() => {
-        return () => {
-            abortRef.current?.abort()
-        }
-    }, [])
-
-    return { results, total, isSearching, error }
+    return {
+        results: search.data ? extractResults(search.data) : [],
+        total: search.data && extractTotal ? extractTotal(search.data) : 0,
+        isSearching: search.isFetching,
+        error: search.error ? toErrorMessage(search.error) : null,
+    }
 }
