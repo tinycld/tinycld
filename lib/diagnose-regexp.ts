@@ -65,7 +65,6 @@ if (isHermes && !globalThis.__TINYCLD_REGEXP_SHIMMED) {
         }
         if (__DEV__) {
             // Visible in the Metro/device console during a local repro.
-            // biome-ignore lint/suspicious/noConsole: opt-in diagnostic
             console.debug(`[regexp-diag] compiling /${pattern}/${flags}`)
         }
     }

@@ -9,10 +9,12 @@ export interface UseYUndoManagerOptions {
     // top-level Y.Maps that hold their app's mutable state — e.g.
     // sheets passes [doc.getMap('cells'), doc.getMap('sheets')].
     //
-    // The `AbstractType<any>` typing matches Y.UndoManager's own
-    // constructor signature in upstream yjs — it's the only correct
-    // shape for "any Y type subclass."
-    // biome-ignore lint/suspicious/noExplicitAny: matches Y.UndoManager's upstream constructor signature.
+    // `AbstractType<any>` mirrors Y.UndoManager's own upstream constructor
+    // signature and is load-bearing: yjs's type hierarchy is invariant, so a
+    // caller passing `Y.Map<unknown>[]` (from doc.getMap()) is NOT assignable
+    // to `AbstractType<unknown>[]`. `any` is the only shape that accepts every
+    // Y type subclass here, exactly as upstream yjs declares it.
+    // biome-ignore lint/suspicious/noExplicitAny: mirrors yjs's invariant AbstractType<any> constructor signature; unknown rejects legitimate Y.Map callers (see calc's useUndoManager).
     scope: () => Y.AbstractType<any>[]
 
     // captureTimeout groups successive edits made within this many

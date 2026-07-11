@@ -223,8 +223,7 @@ function Trigger({ children, disableClick }: TriggerProps) {
     const isOpenRef = useRef(isOpen)
     isOpenRef.current = isOpen
 
-    // biome-ignore lint/suspicious/noExplicitAny: web-only ref for DOM element
-    const webDivRef = useRef<any>(null)
+    const webDivRef = useRef<HTMLElement | null>(null)
 
     const measureWeb = useCallback(() => {
         if (!webDivRef.current) return
@@ -379,8 +378,7 @@ const Content = forwardRef<View, ContentProps>(function Content(
     const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null)
     const windowDim = Dimensions.get('window')
     const innerRef = useRef<View | null>(null)
-    // biome-ignore lint/suspicious/noExplicitAny: web-only ref for DOM element
-    const webDivRef = useRef<any>(null)
+    const webDivRef = useRef<HTMLElement | null>(null)
 
     const positionStyle = React.useMemo(() => {
         if (!triggerLayout) return {}
@@ -656,8 +654,7 @@ function SubTrigger({ children, isDisabled, className }: SubTriggerProps) {
     const { isOpen, setOpen, setTriggerLayout, hoverIntentRef } = useMenuSubContext()
     const [hovered, setHovered] = useState(false)
     const innerRef = useRef<View | null>(null)
-    // biome-ignore lint/suspicious/noExplicitAny: web-only ref for DOM element
-    const webDivRef = useRef<any>(null)
+    const webDivRef = useRef<HTMLElement | null>(null)
     const mutedColor = useThemeColor('muted-foreground')
 
     const cancelClose = useCallback(() => {
