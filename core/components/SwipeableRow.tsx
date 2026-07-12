@@ -114,7 +114,11 @@ function NativeSwipeableRow({
             enabled={enabled}
             containerStyle={swipeContainerStyle}
         >
-            {children}
+            {/* iOS otherwise collapses the swipeable's subtree into a single
+                opaque accessibility element, hiding the individual row controls
+                from VoiceOver/XCUITest. `accessible={false}` on this wrapper
+                tells iOS to descend into the children instead. */}
+            <View accessible={false}>{children}</View>
         </ReanimatedSwipeable>
     )
 }

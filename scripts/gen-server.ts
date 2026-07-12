@@ -1,6 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type { PackageManifest } from './load-manifest'
+import { GO_VERSION } from './paths'
 import { assertSafeImportField } from './validate-generated-field'
 
 export interface ServerPkg {
@@ -51,7 +52,9 @@ export function buildPackageExtensionsGo(pkgs: ServerPkg[]): string {
 
 export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
     const uses = pkgs.map(p => `    ${p.serverRelPath}`)
-    return ['go 1.25.0', '', 'use (', '    .', `    ${coreRelPath}`, ...uses, ')', ''].join('\n')
+    return [`go ${GO_VERSION}`, '', 'use (', '    .', `    ${coreRelPath}`, ...uses, ')', ''].join(
+        '\n'
+    )
 }
 
 // A member server module (drive, calc, …) imports tinycld.org/core/* but pins
@@ -69,9 +72,14 @@ export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
 // go.work and is unaffected. It's gitignored in each member repo so it never
 // ships into the assembled workspace.
 export function buildMemberGoWork(coreRelPath: string): string {
-    return ['go 1.25.0', '', 'use .', '', `replace tinycld.org/core => ${coreRelPath}`, ''].join(
-        '\n'
-    )
+    return [
+        `go ${GO_VERSION}`,
+        '',
+        'use .',
+        '',
+        `replace tinycld.org/core => ${coreRelPath}`,
+        '',
+    ].join('\n')
 }
 
 interface BundledPkgInput {
