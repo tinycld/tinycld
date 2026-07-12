@@ -1,6 +1,7 @@
 package thumbnails
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"image"
@@ -69,13 +70,23 @@ func Generate(ctx context.Context, w io.Writer, r io.Reader, mimeType string, wi
 	return generateFromDoc(ctx, w, r, mimeType, width, height)
 }
 
-func generateFromDoc(ctx context.Context, w io.Writer, r io.Reader, mimeType string, width, height int) error {
+// readCapped buffers at most MaxInputBytes from r, erroring when the input
+// exceeds the cap.
+func readCapped(r io.Reader) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, MaxInputBytes+1))
 	if err != nil {
-		return fmt.Errorf("thumbnails: failed to read document: %w", err)
+		return nil, fmt.Errorf("thumbnails: failed to read document: %w", err)
 	}
 	if len(data) > MaxInputBytes {
-		return fmt.Errorf("thumbnails: document exceeds %d bytes", MaxInputBytes)
+		return nil, fmt.Errorf("thumbnails: document exceeds %d bytes", MaxInputBytes)
+	}
+	return data, nil
+}
+
+func generateFromDoc(ctx context.Context, w io.Writer, r io.Reader, mimeType string, width, height int) error {
+	data, err := readCapped(r)
+	if err != nil {
+		return err
 	}
 
 	doc, err := doctaculous.OpenBytesAs(doctaculous.FormatFromMIME(mimeType), data)
@@ -101,7 +112,13 @@ func generateFromDoc(ctx context.Context, w io.Writer, r io.Reader, mimeType str
 }
 
 func generateFromHeif(w io.Writer, r io.Reader, width, height int) error {
-	img, err := goheif.Decode(r)
+	// Buffering also hands goheif an io.ReaderAt, sidestepping its internal
+	// ReadAll of the whole stream.
+	data, err := readCapped(r)
+	if err != nil {
+		return err
+	}
+	img, err := goheif.Decode(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("thumbnails: failed to decode heif: %w", err)
 	}

@@ -332,7 +332,6 @@ ENV PRIMARY_DOMAIN=""
 ENV ADDITIONAL_DOMAINS=""
 ENV AUTOCERT_ENABLED=""
 ENV PUBLIC_SCHEME=""
-ENV FZ_VERSION="1.25.1"
 
 # Heap limit for the Node processes the in-app package installer spawns —
 # primarily `expo export` (web + the native OTA bundles). The full-ecosystem
