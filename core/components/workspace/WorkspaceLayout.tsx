@@ -5,11 +5,11 @@ import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Platform, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { FrozenStack } from './FrozenStack'
 import { MobileLayout } from './MobileLayout'
 import { PackageProviderWrapper } from './PackageProviderWrapper'
 import { PackageRail } from './PackageRail'
 import { PackageSidebar } from './PackageSidebar'
+import { PackageTabs } from './PackageTabs'
 import { useBreakpoint } from './useBreakpoint'
 
 // Docked sidebar width. The tablet breakpoint (768–1023dp) is narrow enough that
@@ -65,7 +65,7 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
                             minHeight: 0,
                         }}
                     >
-                        <FrozenStack />
+                        <PackageTabs />
                     </View>
                 </PackageProviderWrapper>
             </View>
