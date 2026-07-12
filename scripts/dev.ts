@@ -2,6 +2,12 @@
 // the user-facing port that routes /api and /_ to PB and everything else to
 // Expo.
 //
+// Bind host: 127.0.0.1 by default — the proxy is NOT reachable from the LAN.
+// This matters because the proxy forwards /_ (PocketBase's superuser dashboard)
+// and /api to local PB, so a 0.0.0.0 bind would expose an admin surface to
+// every device on the network. Pass --host 0.0.0.0 (or set
+// TINYCLD_DEV_PROXY_HOST) to opt in for physical-device testing.
+//
 // SSL: OFF by default — the proxy serves cleartext on the user-facing
 // port. Pass --ssl to serve TLS (errors if assets/localhost*.pem are
 // missing). --no-ssl is accepted as an explicit no-op for back-compat.
@@ -88,6 +94,19 @@ function resolveUseSsl(): boolean {
     return false
 }
 
+// The proxy binds 127.0.0.1 by default so PB's superuser dashboard (/_) and
+// /api aren't reachable from the LAN. Opt into a wider bind (e.g. 0.0.0.0, for
+// testing on a physical phone over the network) with --host <host> or the
+// TINYCLD_DEV_PROXY_HOST env var. Only override when you understand you're
+// exposing the local admin surface to the network.
+function resolveProxyHost(): string {
+    const fromFlag = flagValue('--host')
+    if (fromFlag !== null) return fromFlag
+    const fromEnv = process.env.TINYCLD_DEV_PROXY_HOST
+    if (fromEnv && fromEnv.trim() !== '') return fromEnv.trim()
+    return '127.0.0.1'
+}
+
 // --no-expo skips spawning Expo so the dev script runs only PB + proxy.
 // Use this to launch Expo yourself in a separate terminal (`npx expo
 // start --port <expo>`) when you need Expo's interactive shortcuts
@@ -108,6 +127,7 @@ const clearCache = process.argv.includes('--clear') || process.argv.includes('--
 const skipPbWatch = process.argv.includes('--no-pb-watch')
 
 const useSsl = resolveUseSsl()
+const proxyHost = resolveProxyHost()
 
 interface PortBlock {
     proxy: number
@@ -393,12 +413,14 @@ function startPbWatcher(opts: {
                     'allof',
                     ['type', 'f'],
                     ['suffix', 'go'],
-                    // Any package-owned server source: core/server/**.go and
-                    // <sibling>/server/**.go. Exclude app/server/** because
-                    // those .go files (package_extensions.go, go.work) are
-                    // generator output — rebuilding on them would loop.
+                    // Any package-owned server source: tinycld/core/server/**.go
+                    // and <sibling>/server/**.go. Exclude tinycld/server/**
+                    // because those .go files (package_extensions.go, go.work)
+                    // are generator output — rebuilding on them would loop.
+                    // (Globs are wholename, relative to the watched workspace
+                    // root one level up from the tinycld/ member dir.)
                     ['match', '**/server/**', 'wholename'],
-                    ['not', ['match', 'app/server/**', 'wholename']],
+                    ['not', ['match', 'tinycld/server/**', 'wholename']],
                 ],
                 fields: ['name', 'exists'],
                 ...(resp.relative_path ? { relative_root: resp.relative_path } : {}),
@@ -434,7 +456,7 @@ function spawnPbBinary(pbPort: number, publicUrl: string, dataDir: string | null
     const onPbErr = withPrefix('pb', '\x1b[31m') // red
     const args = ['--dev', '--http', `127.0.0.1:${pbPort}`]
     if (dataDir) args.push('--dir', dataDir)
-    args.push('--typesDir', path.join(ROOT, '..', 'core', 'types'), 'serve')
+    args.push('--typesDir', path.join(ROOT, 'core', 'types'), 'serve')
     // The mail package's IMAP server defaults to :1143 in dev. The Playwright
     // IMAP suite (app/tests/e2e/imap-helpers.ts) connects on :1193 — a port
     // distinct from the normal dev one so an e2e run never collides with a
@@ -554,7 +576,13 @@ function isPbPath(url: string): boolean {
     return PB_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
 }
 
-function startProxy(opts: { proxyPort: number; pbPort: number; expoPort: number; ssl: boolean }) {
+function startProxy(opts: {
+    proxyPort: number
+    pbPort: number
+    expoPort: number
+    ssl: boolean
+    host: string
+}) {
     const log = withPrefix('proxy', '\x1b[33m') // yellow
 
     const handler: http.RequestListener = (req, res) => {
@@ -632,11 +660,13 @@ function startProxy(opts: { proxyPort: number; pbPort: number; expoPort: number;
         server = http.createServer(handler)
     }
     server.on('upgrade', onUpgrade)
-    server.listen(opts.proxyPort, '0.0.0.0')
+    server.listen(opts.proxyPort, opts.host)
     return server
 }
 
-function printBanner(block: PortBlock, ssl: boolean, suffix?: string) {
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
+
+function printBanner(block: PortBlock, ssl: boolean, host: string, suffix?: string) {
     const scheme = ssl ? 'https' : 'http'
     const lines = [
         '',
@@ -645,6 +675,11 @@ function printBanner(block: PortBlock, ssl: boolean, suffix?: string) {
         `  PB:    127.0.0.1:${block.pb} (proxied at /api, /_)`,
         `  Expo:  127.0.0.1:${block.expo}`,
     ]
+    if (!LOOPBACK_HOSTS.has(host)) {
+        lines.push(
+            `  \x1b[31m! proxy bound to ${host} — PB dashboard (/_) + /api are reachable from the LAN\x1b[0m`
+        )
+    }
     if (suffix) lines.push(`  \x1b[33m${suffix}\x1b[0m`)
     lines.push('')
     process.stdout.write(`${lines.join('\n')}\n`)
@@ -693,7 +728,7 @@ async function main() {
     const printOnce = (suffix?: string) => {
         if (bannerPrinted) return
         bannerPrinted = true
-        printBanner(block, useSsl, suffix)
+        printBanner(block, useSsl, proxyHost, suffix)
     }
 
     const publicUrl = `${useSsl ? 'https' : 'http'}://localhost:${block.proxy}`
@@ -731,6 +766,7 @@ async function main() {
         pbPort: block.pb,
         expoPort: block.expo,
         ssl: useSsl,
+        host: proxyHost,
     })
 
     if (skipExpo) {

@@ -102,9 +102,12 @@ class HelpRenderer extends Renderer {
         // paints top + left. That gives a single-pixel grid with no
         // doubled-up lines and works without relying on the library's
         // reanimated-table Cell (which we replaced to fix overflow).
-        // tableStyle.borderColor flows in from the styles map below so
-        // the grid picks up the themed border color.
-        const borderColor = tableStyle?.borderColor ?? '#888'
+        // tableStyle.borderColor always flows in from the themed styles map
+        // below (styles.table.borderColor = useThemeColor('border')), so the
+        // grid picks up the theme's border color. The `transparent` fallback
+        // only guards the never-hit case where the renderer is used without our
+        // styles map — it must not hardcode a raw color that breaks in dark mode.
+        const borderColor = tableStyle?.borderColor ?? 'transparent'
         const rowFlex: ViewStyle = { flexDirection: 'row', ...rowStyle }
         // Detect keyboard-shortcut tables (first column holds the
         // shortcut, second the description) and give them a 20/80
@@ -129,17 +132,14 @@ class HelpRenderer extends Renderer {
             <View key={this.getKey()} style={outer}>
                 <View style={rowFlex}>
                     {header.map((cell, i) => (
-                        // biome-ignore lint/suspicious/noArrayIndexKey: static table header cells from parsed markdown, never reordered
                         <View key={`h-${i}`} style={cellFlexFor(i)}>
                             {cell}
                         </View>
                     ))}
                 </View>
                 {rows.map((row, ri) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: static table rows from parsed markdown, never reordered
                     <View key={`r-${ri}`} style={rowFlex}>
                         {row.map((cell, ci) => (
-                            // biome-ignore lint/suspicious/noArrayIndexKey: static table cells from parsed markdown, never reordered
                             <View key={`c-${ri}-${ci}`} style={cellFlexFor(ci)}>
                                 {cell}
                             </View>

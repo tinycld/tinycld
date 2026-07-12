@@ -29,11 +29,8 @@ interface RegExpErrorDiag extends RegExpDiag {
 }
 
 declare global {
-    // eslint-disable-next-line no-var
     var __TINYCLD_LAST_REGEXP: RegExpDiag | undefined
-    // eslint-disable-next-line no-var
     var __TINYCLD_REGEXP_ERROR: RegExpErrorDiag | undefined
-    // eslint-disable-next-line no-var
     var __TINYCLD_REGEXP_SHIMMED: boolean | undefined
 }
 
@@ -65,7 +62,6 @@ if (isHermes && !globalThis.__TINYCLD_REGEXP_SHIMMED) {
         }
         if (__DEV__) {
             // Visible in the Metro/device console during a local repro.
-            // biome-ignore lint/suspicious/noConsole: opt-in diagnostic
             console.debug(`[regexp-diag] compiling /${pattern}/${flags}`)
         }
     }

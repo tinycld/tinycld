@@ -37,6 +37,10 @@ export type TextInputProps<T extends FieldValues = Record<string, unknown>> = Om
     wrapperProps?: ViewProps
     addon?: ReactNode
     onBlur?: () => void
+    // Optional side-effect fired with the new value on each keystroke, in
+    // addition to RHF's own field.onChange. Lets a form derive a sibling field
+    // (e.g. slug from name) in the change event instead of a syncing useEffect.
+    onValueChange?: (value: string) => void
 }
 
 export function TextInput<T extends FieldValues = Record<string, unknown>>(
@@ -52,6 +56,7 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
         wrapperProps = {},
         addon,
         onBlur: onBlurProp,
+        onValueChange,
         ...inputProps
     } = props
     const {
@@ -69,7 +74,10 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
             <View className="flex-row gap-2 items-center">
                 <RNTextInput
                     value={field.value || ''}
-                    onChangeText={field.onChange}
+                    onChangeText={value => {
+                        field.onChange(value)
+                        onValueChange?.(value)
+                    }}
                     onBlur={() => {
                         field.onBlur()
                         onBlurProp?.()

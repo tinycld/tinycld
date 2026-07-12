@@ -8,7 +8,7 @@ artifacts behind it.
 ## The one hard requirement
 
 TinyCld writes its embedded SQLite database, file uploads, and server private
-keys to **`/workspace/tinycld/pb_data`** inside the container. That directory
+keys to **`/workspace/pb_data`** inside the container. That directory
 **must** be backed by a persistent volume. Hosts with an ephemeral filesystem
 (Heroku, DigitalOcean App Platform, AWS App Runner, Cloudflare Containers, …)
 silently destroy the database on every restart and are not supported — use a
@@ -68,7 +68,7 @@ file. To (re)create the public template:
 3. Service → **Variables**: add `AUTOCERT_ENABLED=false`, `PUBLIC_SCHEME=https`,
    `HTTP_ADDR=0.0.0.0:7090`, and `TINYCLD_PUBLIC_URL` (the railway.app domain).
 4. Service → **Volumes**: add a volume mounted at
-   `/workspace/tinycld/pb_data`.
+   `/workspace/pb_data`.
 5. Project → **Settings → Create Template** → publish.
 
 Record the resulting button URL here once published:

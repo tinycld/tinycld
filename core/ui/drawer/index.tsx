@@ -55,8 +55,7 @@ const UIDrawer = createDrawer({
     CloseButton: Pressable,
     Footer: View,
     Header: View,
-    // biome-ignore lint/suspicious/noExplicitAny: GlueStack AnimatePresence type is too narrow
-    AnimatePresence: AnimatePresenceShim as any,
+    AnimatePresence: AnimatePresenceShim as React.ComponentType<{ children?: React.ReactNode }>,
 })
 
 const drawerStyle = tva({

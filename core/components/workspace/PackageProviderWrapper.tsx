@@ -11,9 +11,11 @@ type ProviderComp =
     | ComponentType<{ children: ReactNode }>
     | LazyExoticComponent<ComponentType<{ children: ReactNode }>>
 
-const stableProviderChain: ProviderComp[] = Object.values(packageProviders).filter(
-    (p): p is ProviderComp => p != null
+const stableProviderChain: { slug: string; Provider: ProviderComp }[] = Object.entries(
+    packageProviders
 )
+    .filter((entry): entry is [string, ProviderComp] => entry[1] != null)
+    .map(([slug, Provider]) => ({ slug, Provider }))
 
 export function PackageProviderWrapper({ children }: { children: ReactNode }) {
     // Rebuild the provider-chain elements only when `children` changes. A bare
@@ -26,8 +28,7 @@ export function PackageProviderWrapper({ children }: { children: ReactNode }) {
     const chain = useMemo(
         () =>
             stableProviderChain.reduceRight<ReactNode>(
-                // biome-ignore lint/suspicious/noArrayIndexKey: fixed provider chain derived once at module load, never reordered
-                (acc, Provider, i) => <Provider key={i}>{acc}</Provider>,
+                (acc, { slug, Provider }) => <Provider key={slug}>{acc}</Provider>,
                 children
             ),
         [children]

@@ -1,7 +1,7 @@
 import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { deriveUsername } from '@tinycld/core/lib/derive-username'
-import { captureException } from '@tinycld/core/lib/errors'
+import { captureException, handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { navigateToOrg } from '@tinycld/core/lib/org-url'
 import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
@@ -13,7 +13,7 @@ import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/c
 import { Building2, ChevronDown, ChevronRight, ExternalLink, Plus, X } from 'lucide-react-native'
 import { newRecordId } from 'pbtsdb/core'
 import type PocketBase from 'pocketbase'
-import { useEffect, useState } from 'react'
+import { useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import { PageHeader, RowIcon, SectionLabel, SlugTag } from './console-ui'
 
@@ -248,14 +248,25 @@ function OrgRow({
                 token: string
                 owner: { id: string; name: string; email: string }
             }>(`/api/admin/orgs/${org.id}/impersonate`, { method: 'POST' })
-            appPb.authStore.save(token, { id: owner.id, email: owner.email } as never)
+            // Save the full owner identity — getUserFromAuthStore derives the
+            // signed-in user (incl. the name shown in the user menu) from the
+            // saved auth record, so dropping `name` left the menu blank. The
+            // collectionId/Name fields make this a valid PB auth record without
+            // an `as never` cast (mirrors SetupWizard's post-setup save).
+            appPb.authStore.save(token, {
+                id: owner.id,
+                name: owner.name,
+                email: owner.email,
+                collectionId: '_pb_users_auth_',
+                collectionName: 'users',
+            })
             // Navigate via the router (web AND native) — a raw window.location.href
             // assignment no-ops on native (RN has no window.location), so impersonate
             // silently went nowhere on device. navigateToOrg uses expo-router and
             // preserves the in-org subpath on web.
             navigateToOrg(org.slug)
         } catch (err) {
-            captureException('Failed to impersonate user', err)
+            captureException('setup.org.impersonate', err)
         }
     }
 
@@ -307,12 +318,13 @@ function OrgRow({
 }
 
 function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEntry }) {
-    const [saveError, setSaveError] = useState<string | null>(null)
     const [orgsCollection, usersCollection] = useStore('orgs', 'users')
 
     const {
         control,
         handleSubmit,
+        setError,
+        getValues,
         formState: { errors, isSubmitted, isDirty },
     } = useForm({
         resolver: zodResolver(editOrgSchema),
@@ -345,11 +357,13 @@ function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEn
                 })
             }
         }),
-        onError: err => setSaveError(err instanceof Error ? err.message : 'Failed to update'),
+        // Map PB validation errors back onto the form fields (falling back to a
+        // toast for non-field errors) instead of dropping them into a single
+        // string — a duplicate email/name now flags the offending field.
+        onError: handleMutationErrorsWithForm({ setError, getValues, operation: 'editOrg' }),
     })
 
     const onSave = handleSubmit(data => {
-        setSaveError(null)
         save.mutate(data)
     })
 
@@ -370,12 +384,6 @@ function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEn
             <Divider />
 
             <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
-
-            {saveError && (
-                <View className="rounded-lg p-2 bg-danger-soft">
-                    <Text className="text-xs text-danger">{saveError}</Text>
-                </View>
-            )}
 
             <View className="gap-3">
                 <SectionLabel>Organization</SectionLabel>
@@ -460,7 +468,6 @@ function OrgExpandedDetails({ isVisible, org }: { isVisible: boolean; org: OrgEn
 }
 
 function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCreated: () => void }) {
-    const [submitError, setSubmitError] = useState<string | null>(null)
     const [orgsCollection, usersCollection, userOrgCollection, orgProvisioningCollection] =
         useStore('orgs', 'users', 'user_org', 'org_provisioning')
 
@@ -468,7 +475,8 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
         control,
         handleSubmit,
         setValue,
-        watch,
+        setError,
+        getValues,
         reset,
         formState: { errors, isSubmitted },
     } = useForm({
@@ -485,26 +493,19 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
         mode: 'onChange',
     })
 
-    const orgName = watch('orgName')
-    const orgSlug = watch('orgSlug')
-    const email = watch('email')
-    const ownerUsername = watch('ownerUsername')
+    // Auto-suggest the slug from the org name and the username from the email in
+    // the source field's change event (not a syncing useEffect). Each stops
+    // auto-tracking once the admin edits the derived field by hand — the ref
+    // flips the moment onSlugEdited/onUsernameEdited fires.
+    const slugEdited = useRef(false)
+    const usernameEdited = useRef(false)
 
-    // Auto-suggest the slug from the org name and the username from the email —
-    // both stop auto-tracking once the admin edits them by hand.
-    useEffect(() => {
-        const prev = deriveSlug(orgName.slice(0, -1))
-        if (!orgSlug || orgSlug === prev) {
-            setValue('orgSlug', deriveSlug(orgName))
-        }
-    }, [orgName, orgSlug, setValue])
-
-    useEffect(() => {
-        const prev = deriveUsername(email.slice(0, -1))
-        if (!ownerUsername || ownerUsername === prev) {
-            setValue('ownerUsername', deriveUsername(email))
-        }
-    }, [email, ownerUsername, setValue])
+    const onOrgNameChange = (value: string) => {
+        if (!slugEdited.current) setValue('orgSlug', deriveSlug(value))
+    }
+    const onEmailChange = (value: string) => {
+        if (!usernameEdited.current) setValue('ownerUsername', deriveUsername(value))
+    }
 
     // The admin picks the owner username; a collision surfaces as a mutation
     // error they can fix and retry. pbtsdb yields run as one optimistic
@@ -550,13 +551,18 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
         }),
         onSuccess: () => {
             reset()
+            // A fresh form re-arms the auto-suggest for the next org.
+            slugEdited.current = false
+            usernameEdited.current = false
             onCreated()
         },
-        onError: err => setSubmitError(err instanceof Error ? err.message : 'Failed to create org'),
+        // A username/slug collision comes back as a PB field error — route it to
+        // the matching input (toast fallback for anything unmapped) rather than a
+        // single opaque string.
+        onError: handleMutationErrorsWithForm({ setError, getValues, operation: 'createOrg' }),
     })
 
     const onSubmit = handleSubmit(data => {
-        setSubmitError(null)
         create.mutate(data)
     })
 
@@ -571,12 +577,6 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
 
                 <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
 
-                {submitError && (
-                    <View className="rounded-lg p-2 bg-danger-soft">
-                        <Text className="text-xs text-danger">{submitError}</Text>
-                    </View>
-                )}
-
                 <View className="gap-3">
                     <SectionLabel>Organization</SectionLabel>
                     <View className="flex-row gap-3 flex-wrap">
@@ -586,6 +586,7 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 name="orgName"
                                 label="Name"
                                 placeholder="Acme Corp"
+                                onValueChange={onOrgNameChange}
                             />
                         </View>
                         <View className="flex-1 min-w-[200px]">
@@ -596,6 +597,9 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 placeholder="acme-corp"
                                 autoCapitalize="none"
                                 hint="3-15 chars, lowercase, hyphens"
+                                onValueChange={() => {
+                                    slugEdited.current = true
+                                }}
                             />
                         </View>
                     </View>
@@ -624,6 +628,7 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 autoCapitalize="none"
                                 autoComplete="email"
                                 textContentType="emailAddress"
+                                onValueChange={onEmailChange}
                             />
                         </View>
                         <View className="flex-1 min-w-[200px]">
@@ -636,6 +641,9 @@ function CreateOrgSection({ isVisible, onCreated }: { isVisible: boolean; onCrea
                                 autoComplete="username"
                                 textContentType="username"
                                 hint="Must be unique — suggested from the email"
+                                onValueChange={() => {
+                                    usernameEdited.current = true
+                                }}
                             />
                         </View>
                         <View className="flex-1 min-w-[200px]">

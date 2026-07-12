@@ -32,11 +32,21 @@ const RESOURCE_TYPE_OPTIONS = [
     { label: 'Packages', value: 'org_pkg_enabled' },
 ] as const
 
-const ACTION_BADGE_COLORS = {
-    created: { bg: 'rgba(34, 197, 94, 0.15)', text: '#22c55e' },
-    updated: { bg: 'rgba(59, 130, 246, 0.15)', text: '#3b82f6' },
-    deleted: { bg: 'rgba(239, 68, 68, 0.15)', text: '#ef4444' },
+// Each audit action maps to a semantic soft-status class pair so the badge
+// tracks the theme (created=success, updated=accent, deleted=danger) instead of
+// a fixed hex that would read the same — and clash — in dark mode.
+const ACTION_BADGE_CLASS = {
+    created: 'bg-success-soft',
+    updated: 'bg-accent',
+    deleted: 'bg-danger-soft',
 } as const
+const ACTION_TEXT_CLASS = {
+    created: 'text-success-soft-foreground',
+    updated: 'text-accent-foreground',
+    deleted: 'text-danger-soft-foreground',
+} as const
+
+type AuditAction = keyof typeof ACTION_BADGE_CLASS
 
 export default function AuditLogSettings() {
     const orgHref = useOrgHref()
@@ -212,7 +222,6 @@ function AuditLogRow({ entry }: { entry: AuditEntry }) {
     const mutedColor = useThemeColor('muted-foreground')
 
     const actorName = entry.expand?.actor?.name || entry.expand?.actor?.email || 'System'
-    const actionColors = ACTION_BADGE_COLORS[entry.action as keyof typeof ACTION_BADGE_COLORS]
     const hasDetails = Boolean(
         (entry.action === 'updated' && entry.changes && Object.keys(entry.changes).length > 0) ||
             (entry.action === 'deleted' && entry.snapshot && Object.keys(entry.snapshot).length > 0)
@@ -229,7 +238,7 @@ function AuditLogRow({ entry }: { entry: AuditEntry }) {
                 <View className="flex-1 gap-1">
                     <View className="flex-row gap-2 items-center flex-wrap">
                         <Text className="text-foreground text-sm font-semibold">{actorName}</Text>
-                        <ActionBadge action={entry.action} colors={actionColors} />
+                        <ActionBadge action={entry.action} />
                         <Text className="text-muted-foreground text-[13px]">{resourceLabel}</Text>
                     </View>
                     <EntryLabel isVisible={!!entry.resource_label} label={entry.resource_label} />
@@ -272,12 +281,11 @@ function ExpandIcon({
     )
 }
 
-function ActionBadge({ action, colors }: { action: string; colors: { bg: string; text: string } }) {
+function ActionBadge({ action }: { action: string }) {
+    const key = (action in ACTION_BADGE_CLASS ? action : 'updated') as AuditAction
     return (
-        <View className="rounded px-1.5 py-0.5" style={{ backgroundColor: colors.bg }}>
-            <Text className="text-[11px] font-semibold" style={{ color: colors.text }}>
-                {action}
-            </Text>
+        <View className={`rounded px-1.5 py-0.5 ${ACTION_BADGE_CLASS[key]}`}>
+            <Text className={`text-[11px] font-semibold ${ACTION_TEXT_CLASS[key]}`}>{action}</Text>
         </View>
     )
 }

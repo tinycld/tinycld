@@ -50,5 +50,5 @@ services:
           name: pb_data
           # PocketBase data: SQLite DB, file uploads, server private keys.
           # This is the one thing that must survive restarts/redeploys.
-          mountPath: /workspace/tinycld/pb_data
+          mountPath: /workspace/pb_data
           sizeGB: 10

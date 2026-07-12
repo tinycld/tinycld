@@ -1,6 +1,7 @@
 // core/lib/editor/use-share-visitor-role.tsx
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@tinycld/core/lib/auth'
+import { captureException } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import type { UserOrg } from '@tinycld/core/types/pbSchema'
 import { type ShareSession, useShareSession } from '../anon-identity'
@@ -66,13 +67,17 @@ export function useShareLinkVisitorRole(token: string): ShareVisitorRoleResult {
         queryFn: async () => {
             if (!userId || !itemId) return null
             try {
-                return await pb
-                    .collection('drive_shares')
-                    // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: guest share-access lookup — a relational filter (user_org.user) + expand for a user who has no pbtsdb store; cached via React Query.
-                    .getFirstListItem<DriveShareWithUserOrg>(
-                        `item = "${itemId}" && user_org.user = "${userId}"`,
-                        { expand: 'user_org' }
-                    )
+                // Guest share-access lookup — a relational filter (user_org.user)
+                // + expand for a user who has no pbtsdb store; cached via React
+                // Query. This file is exempted from the pbtsdb-no-raw-pb-access
+                // plugin in biome.json.
+                return await pb.collection('drive_shares').getFirstListItem<DriveShareWithUserOrg>(
+                    pb.filter('item = {:itemId} && user_org.user = {:userId}', {
+                        itemId,
+                        userId,
+                    }),
+                    { expand: 'user_org' }
+                )
             } catch {
                 // 404 / no row found → treat as no membership for this item.
                 return null
@@ -110,9 +115,10 @@ export function useShareLinkVisitorRole(token: string): ShareVisitorRoleResult {
                 shareRole = row.role
                 break
             default:
-                // biome-ignore lint/suspicious/noConsole: intentional anomaly log — surfaces upstream data-integrity bug, no logger module in core.
-                console.warn(
-                    `useShareLinkVisitorRole: unexpected drive_shares.role=${JSON.stringify(row.role)} on a guest user_org (item ${session?.itemId}); coercing to 'commentor'`
+                captureException(
+                    'editor.shareVisitorRole.unexpectedRole',
+                    new Error(`unexpected drive_shares.role=${JSON.stringify(row.role)}`),
+                    { itemId: session?.itemId }
                 )
                 shareRole = 'commentor'
         }

@@ -84,16 +84,14 @@ const REGULAR_NO_ORG = {
 }
 
 describe('auth-store login() org resolution', () => {
-    // biome-ignore lint/suspicious/noExplicitAny: store login signature is broad here
-    let login: (id: string, pw: string) => Promise<{ user: any; error: string | null }>
+    let login: ReturnType<typeof import('../auth-store').useAuthStore.getState>['login']
 
     beforeEach(async () => {
         vi.resetModules()
         mockAuthStoreClear.mockClear()
         mockAuthWithPassword.mockReset()
         const mod = await import('../auth-store')
-        // biome-ignore lint/suspicious/noExplicitAny: test harness reaches the store action
-        login = (mod as any).useAuthStore.getState().login
+        login = mod.useAuthStore.getState().login
     })
 
     afterEach(() => vi.clearAllMocks())

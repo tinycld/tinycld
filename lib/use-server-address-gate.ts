@@ -64,7 +64,6 @@ export function useServerAddressGate(pathname: string): GateState {
                 // diagnostic UI.
                 if (cancelled) return
                 const message = err instanceof Error ? err.message : String(err)
-                // biome-ignore lint/suspicious/noConsole: pre-Sentry boot path
                 console.error('[layout-gate] failed to resolve providers:', err)
                 setState({ status: 'failed', error: message })
             }

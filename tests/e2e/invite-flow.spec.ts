@@ -2,6 +2,17 @@ import { expect, type Page, test } from '@playwright/test'
 import { clearEmailLog, waitForEmailTo } from './email-log-helpers'
 import { isPackageLinked, login, ORG_SLUG, TEST_USER_EMAIL, TEST_USER_PASSWORD } from './helpers'
 
+// SPA-navigate to Settings → Members via the shell chrome (rail → settings
+// index → Members). A page.goto here would tear down the SPA and cancel the
+// in-flight lazy route chunks (see the note on navigateToPackage in helpers.ts),
+// so we click through expo-router instead.
+async function openMembersSettings(page: Page) {
+    await page.getByTestId('nav-settings').click()
+    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/settings(/|$|\\?)`))
+    await page.getByText('Members', { exact: true }).click()
+    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/settings/members`))
+}
+
 // Reads the logged-in PocketBase auth token from the web auth store (the
 // AsyncStorage→localStorage 'pb_auth' entry, JSON.stringify({ token, record })).
 async function authTokenFromStore(page: Page): Promise<string> {
@@ -67,7 +78,7 @@ test.describe('Invite flow', () => {
         // --- 1. Owner signs in and sends an invite ---
         await login(page)
 
-        await page.goto(`/a/${ORG_SLUG}/settings/members`)
+        await openMembersSettings(page)
         // Open the invite drawer.
         await page.getByText('Invite', { exact: true }).click()
         await expect(page.getByText('Invite a teammate', { exact: true })).toBeVisible({
@@ -154,7 +165,7 @@ test.describe('Invite flow', () => {
         const altEmail = `personal-${Date.now()}@example.com`
 
         await login(page)
-        await page.goto(`/a/${ORG_SLUG}/settings/members`)
+        await openMembersSettings(page)
         await page.getByText('Invite', { exact: true }).click()
         await expect(page.getByText('Invite a teammate', { exact: true })).toBeVisible({
             timeout: 10_000,
@@ -182,7 +193,7 @@ test.describe('Invite flow', () => {
         const rotateInviteUsername = `inviteerotate${Date.now()}`
 
         await login(page)
-        await page.goto(`/a/${ORG_SLUG}/settings/members`)
+        await openMembersSettings(page)
         await page.getByText('Invite', { exact: true }).click()
         await expect(page.getByText('Invite a teammate', { exact: true })).toBeVisible({
             timeout: 10_000,

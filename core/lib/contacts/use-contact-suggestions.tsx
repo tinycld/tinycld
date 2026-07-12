@@ -1,3 +1,4 @@
+import type { Collection } from '@tanstack/db'
 import { eq } from '@tanstack/db'
 import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
@@ -15,6 +16,16 @@ export interface ContactSuggestion {
     first_name: string
     last_name: string
     email: string
+}
+
+/**
+ * Minimal local shape of a `contacts` record needed to run the suggestions
+ * query. The `contacts` package owns the real schema; core only declares the
+ * fields it reads so the soft dependency stays compile-time optional (see the
+ * lean-shell guarantee in the ecosystem docs).
+ */
+interface ContactRecord extends ContactSuggestion {
+    owner: string
 }
 
 interface ContactSuggestionsProps {
@@ -46,17 +57,19 @@ export function ContactSuggestionsProvider({ children }: ContactSuggestionsProps
 }
 
 function ActiveContactSuggestions({ children }: ContactSuggestionsProps) {
-    // biome-ignore lint/suspicious/noExplicitAny: cross-package soft dependency
-    const [contactsCollection] = useStore('contacts' as any) as [any]
+    // `contacts` isn't in core's store map (it belongs to the contacts
+    // package), so the key + result are bridged through `unknown` to the
+    // minimal ContactRecord collection this query needs.
+    const [contactsCollection] = useStore('contacts' as unknown as never) as unknown as [
+        Collection<ContactRecord>,
+    ]
 
     const { data } = useOrgLiveQuery(
         (query, { userOrgId }) =>
             query
                 .from({ contacts: contactsCollection })
-                // biome-ignore lint/suspicious/noExplicitAny: collection is dynamic
-                .where(({ contacts }: any) => eq(contacts.owner, userOrgId))
-                // biome-ignore lint/suspicious/noExplicitAny: collection is dynamic
-                .orderBy(({ contacts }: any) => contacts.first_name, 'asc'),
+                .where(({ contacts }) => eq(contacts.owner, userOrgId))
+                .orderBy(({ contacts }) => contacts.first_name, 'asc'),
         []
     )
 

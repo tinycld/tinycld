@@ -40,7 +40,6 @@ interface TakeoutImportState {
     overallError: string | null
     activeServices: ImportService[]
     cancelRequested: boolean
-    fallbackActive: boolean
 
     setFiles: (files: File[]) => void
     setDetection: (detection: TakeoutDetection) => void
@@ -50,7 +49,6 @@ interface TakeoutImportState {
     setOverallError: (error: string | null) => void
     setActiveServices: (services: ImportService[]) => void
     requestCancel: () => void
-    setFallbackActive: (active: boolean) => void
     reset: () => void
 }
 
@@ -88,7 +86,6 @@ export const useTakeoutImportStore = create<TakeoutImportState>()(set => ({
     overallError: null,
     activeServices: [],
     cancelRequested: false,
-    fallbackActive: false,
 
     setFiles: files => set({ files }),
     setDetection: detection =>
@@ -132,7 +129,6 @@ export const useTakeoutImportStore = create<TakeoutImportState>()(set => ({
     setOverallError: overallError => set({ overallError }),
     setActiveServices: activeServices => set({ activeServices }),
     requestCancel: () => set({ cancelRequested: true }),
-    setFallbackActive: active => set({ fallbackActive: active }),
     reset: () =>
         set({
             files: [],
@@ -143,6 +139,5 @@ export const useTakeoutImportStore = create<TakeoutImportState>()(set => ({
             overallError: null,
             activeServices: [],
             cancelRequested: false,
-            fallbackActive: false,
         }),
 }))
