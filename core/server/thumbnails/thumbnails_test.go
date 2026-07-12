@@ -106,14 +106,19 @@ func TestCanGenerate(t *testing.T) {
 }
 
 func TestGenerateRejectsOversizeInput(t *testing.T) {
-	huge := bytes.NewReader(make([]byte, MaxInputBytes+1))
-	var out bytes.Buffer
-	err := Generate(context.Background(), &out, huge, "application/pdf", DefaultWidth, DefaultHeight)
-	if err == nil {
-		t.Fatal("expected error for oversize input")
-	}
-	if !strings.Contains(err.Error(), "exceeds") {
-		t.Fatalf("expected size error, got: %v", err)
+	// Both the document path and the HEIF path must enforce MaxInputBytes.
+	for _, mime := range []string{"application/pdf", "image/heic"} {
+		t.Run(mime, func(t *testing.T) {
+			huge := bytes.NewReader(make([]byte, MaxInputBytes+1))
+			var out bytes.Buffer
+			err := Generate(context.Background(), &out, huge, mime, DefaultWidth, DefaultHeight)
+			if err == nil {
+				t.Fatal("expected error for oversize input")
+			}
+			if !strings.Contains(err.Error(), "exceeds") {
+				t.Fatalf("expected size error, got: %v", err)
+			}
+		})
 	}
 }
 

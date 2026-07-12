@@ -848,7 +848,7 @@ test.describe('todo version change', () => {
     test('install @tinycld/todo pinned to v1.0.0 through the installer UI', async ({ page }) => {
         // Generous overall budget: the runtime image has no Go module cache, so
         // the installer's `go build` downloads hundreds of MB AND compiles
-        // (CGO/cgo links mupdf + libde265) — minutes on its own — and `expo
+        // (cgo links libde265 for goheif) — minutes on its own — and `expo
         // export` is another multi-minute web build. 45 min covers a cold run on
         // a slow network without the outer test timeout pre-empting the
         // per-stage, stage-named timeouts below.
