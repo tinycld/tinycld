@@ -5,7 +5,7 @@
 // app/scripts/export-types.ts → invoked by `pnpm install`'s postinstall).
 // Pure Go, no CGO, imports only core/coreserver — so it builds quickly
 // inside the lean web-builder Docker stage without dragging in the
-// feature-server CGO dependency chain (mupdf, goheif, …) that the full
+// feature-server CGO dependency chain (goheif, …) that the full
 // `tinycld` binary needs.
 //
 // The full `tinycld` binary exposes the same operation as a
