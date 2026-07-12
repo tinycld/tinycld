@@ -56,7 +56,7 @@ RUN_USER="${RUN_USER:-tinycld}"
 STATE_DIR="${STATE_DIR:-/workspace}"
 BAKED_DIR="${BAKED_DIR:-/opt/tinycld-baked}"
 
-GO_VERSION="${GO_VERSION:-1.25.1}"
+GO_VERSION="${GO_VERSION:-1.26.3}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 UNPRIV_PORT_START="${UNPRIV_PORT_START:-80}"
 
@@ -73,13 +73,13 @@ export DEBIAN_FRONTEND=noninteractive
 # TinyCld self-rebuilds: its in-app package installer runs pnpm install + go build
 # + expo export on the HOST, so the host needs the full toolchain, not just a
 # runtime. This is the Dockerfile runtime-stage apt list + Node + Go.
-#   cgo: libmupdf-dev (go-fitz), gcc/g++ (mupdf + goheif/libde265)
+#   cgo: gcc/g++ (goheif/libde265, the one remaining CGo dependency)
 #   sqlite3 CLI: the installer's DB backup step; gosu: privilege drop in entrypoint
 # ------------------------------------------------------------------------------
 log "installing apt packages"
 apt-get update -qq
 apt-get install -y --no-install-recommends \
-    ca-certificates libffi8 libmupdf-dev libcap2-bin curl git \
+    ca-certificates libffi8 libcap2-bin curl git \
     build-essential gcc g++ sqlite3 gnupg gosu rsync
 
 if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -c2- | cut -d. -f1)" != "$NODE_MAJOR" ]; then
