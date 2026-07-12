@@ -19,6 +19,7 @@ export function MobileTabBar() {
     const sorted = useSortedPackages()
     const activePkgSlug = useWorkspaceStore(s => s.activePkgSlug)
     const setActivePkgSlug = useWorkspaceStore(s => s.setActivePkgSlug)
+    const lastPackageHref = useWorkspaceStore(s => s.lastPackageHref)
     const isMoreOpen = useWorkspaceStore(s => s.isMoreOpen)
     const setMoreOpen = useWorkspaceStore(s => s.setMoreOpen)
     const router = useRouter()
@@ -66,18 +67,16 @@ export function MobileTabBar() {
                             // without the longer wait runAfterInteractions imposes.
                             requestAnimationFrame(() => {
                                 markNavMilestone(pkg.slug, 'navigate-called')
-                                // dangerouslySingular gives the route a stable id
-                                // ('mail', 'calendar', …) so the org-level <Stack>
-                                // REUSES the existing frozen screen's route key on
-                                // return instead of allocating a new key
-                                // (`mail-<nanoid>`) and remounting the whole
-                                // package subtree. A plain navigate() only reuses
-                                // the *current* route — returning to a different,
-                                // already-mounted tab would otherwise rebuild it
-                                // from scratch, defeating freezeOnBlur.
-                                router.navigate(`/a/${orgSlug}/${pkg.slug}`, {
-                                    dangerouslySingular: true,
-                                })
+                                // Reopen the exact inner view the user left (a
+                                // thread, a drive folder, …) via lastPackageHref,
+                                // mirroring the desktop rail; fall back to the
+                                // package root on first visit. The org-level
+                                // switcher is a Tabs navigator, so this is a
+                                // JUMP_TO to the package's existing frozen screen
+                                // — one instance per route, no remount.
+                                const target =
+                                    lastPackageHref[pkg.slug] ?? `/a/${orgSlug}/${pkg.slug}`
+                                router.navigate(target)
                             })
                         }}
                         accessibilityLabel={pkg.nav?.label}

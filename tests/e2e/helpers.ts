@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import type { Locator, Page } from '@playwright/test'
+import { expect, type Locator, type Page } from '@playwright/test'
 
 export const ORG_SLUG = 'test-org'
 export const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
@@ -87,6 +87,83 @@ export async function login(page: Page) {
         await page.waitForURL(/\/a\//, { timeout: 15_000 })
         return
     }
+}
+
+export interface InvitedUser {
+    username: string
+    email: string
+    password: string
+}
+
+// Provision a fresh org member via the invite flow, in an isolated browser
+// context, and return its credentials. Signup is disabled, so the only way to
+// mint a throwaway account is an owner invite: the owner (shared TEST_USER)
+// sends an invite, the invitee accepts and sets a password. The invitee is a
+// full member of ORG_SLUG with its OWN username/email/password — so a spec that
+// mutates a password (change-password, password-reset) can operate on this
+// account without touching TEST_USER_PASSWORD, which every other spec's login()
+// depends on. Runs in its own context so the owner's auth doesn't leak in and
+// the returned page can be used (or discarded) independently.
+//
+// The credentials are unique per call (Date.now() + a caller label) because the
+// e2e DB is reset across runs but NOT between tests. Pass an `email` so the
+// account can drive email-addressed flows (e.g. password reset by email).
+export async function createInvitedUser(
+    page: Page,
+    label: string
+): Promise<{ user: InvitedUser; inviteePage: Page; close: () => Promise<void> }> {
+    const stamp = Date.now()
+    const user: InvitedUser = {
+        username: `${label}${stamp}`,
+        email: `${label}-${stamp}@example.com`,
+        password: 'InvitedPass1!',
+    }
+
+    // --- Owner sends the invite (username + email) from Settings → Members ---
+    await login(page)
+    await navigateToPackage(page, 'settings')
+    await page.goto(`/a/${ORG_SLUG}/settings/members`)
+    await page.getByText('Invite', { exact: true }).click()
+    await expect(page.getByText('Invite a teammate', { exact: true })).toBeVisible({
+        timeout: 10_000,
+    })
+    await page.getByTestId('username').fill(user.username)
+    await page.getByTestId('email').fill(user.email)
+    await page.getByText('Send invite', { exact: true }).click()
+
+    // The invite-link panel surfaces the accept URL directly (no auto-email).
+    await expect(page.getByTestId('invite-link-step')).toBeVisible({ timeout: 10_000 })
+    const urlText = await page.getByTestId('invite-link-url').textContent()
+    const tokenMatch = urlText?.match(/\/accept-invite\/([0-9a-f]{64})/)
+    if (!tokenMatch) throw new Error(`invite link had no token: ${urlText}`)
+    await page.getByTestId('invite-link-done').click()
+
+    // --- Invitee accepts in a fresh context and sets its password ---
+    const inviteeContext = await page.context().browser()!.newContext()
+    const inviteePage = await inviteeContext.newPage()
+    await inviteePage.goto(`/accept-invite/${tokenMatch[1]}`)
+    await expect(inviteePage.getByText(/Welcome to/i)).toBeVisible({ timeout: 10_000 })
+    await inviteePage.getByTestId('name').fill('Invited Tester')
+    await inviteePage.getByTestId('password').fill(user.password)
+    await inviteePage.getByTestId('confirmPassword').fill(user.password)
+    await inviteePage.getByText(/Set password and sign in/i).click()
+    await inviteePage.waitForURL(new RegExp(`/a/${ORG_SLUG}`), { timeout: 15_000 })
+
+    return { user, inviteePage, close: () => inviteeContext.close() }
+}
+
+// Sign in as a specific (non-fixture) user by identifier + password. Mirrors
+// login() but for accounts minted via createInvitedUser.
+export async function loginAs(page: Page, identifier: string, password: string) {
+    await page.evaluate(() => {
+        window.localStorage.clear()
+        window.sessionStorage.clear()
+    })
+    await page.goto('/')
+    await page.getByTestId('identifier').fill(identifier)
+    await page.getByPlaceholder('Password').fill(password)
+    await page.getByText('Sign in', { exact: true }).last().click()
+    await page.waitForURL(/\/a\//, { timeout: 15_000 })
 }
 
 // Navigate to a package's org-scoped route via the rail link in the app

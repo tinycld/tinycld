@@ -15,7 +15,7 @@ import { markNavMilestone } from '@tinycld/core/lib/nav-perf'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { OrgSlugProvider } from '@tinycld/core/lib/use-org-slug'
-import { useGlobalSearchParams, usePathname } from 'expo-router'
+import { useGlobalSearchParams, usePathname, useUnstableGlobalHref } from 'expo-router'
 import { useEffect } from 'react'
 
 export default function OrgLayout() {
@@ -63,19 +63,45 @@ function OrgLayoutInner() {
     )
 }
 
+// App-owned areas whose rail entries always link to their root — we never
+// record a lastPackageHref for these. (activePkgSlug still tracks admin so its
+// rail entry highlights; that's a separate concern handled below.)
+const NON_RESTORABLE_SLUGS = new Set(['settings', 'help', 'admin'])
+
 function ActivePkgSync() {
     const pathname = usePathname()
+    // Full href incl. query (?folder=sent, ?label=…) — pathname alone drops
+    // those, and mail/drive encode inner view state in query params.
+    const href = useUnstableGlobalHref()
 
     useEffect(() => {
         const match = pathname.match(/^\/a\/[^/]+\/([^/?]+)/)
         const slug = match?.[1] ?? null
+        // settings/help are chrome, not a "current package" — they leave the
+        // active-package highlight where it was. admin IS tracked as active so
+        // its rail entry highlights (preserving prior behavior).
         const nextSlug = slug === 'settings' || slug === 'help' ? null : slug
         if (nextSlug) markNavMilestone(nextSlug, 'route-committed')
 
         const state = useWorkspaceStore.getState()
         if (state.isDrawerOpen) state.setDrawerOpen(false)
         if (state.activePkgSlug !== nextSlug) state.setActivePkgSlug(nextSlug)
-    }, [pathname])
+
+        // Record the exact inner route as the package's "return here" href, so
+        // the rail (and MobileTabBar) reopen the view the user left — a thread,
+        // a drive folder, a filtered mail folder — rather than resetting to the
+        // list. The full href (path + query) is captured at any depth; a
+        // package root (e.g. /mail) is itself a valid href, so leaving a
+        // package on its list still restores to the list. Skipped for app-owned
+        // areas (settings/help/admin), which the rail always links to their root.
+        if (
+            nextSlug &&
+            !NON_RESTORABLE_SLUGS.has(nextSlug) &&
+            state.lastPackageHref[nextSlug] !== href
+        ) {
+            state.setLastPackageHref(nextSlug, href)
+        }
+    }, [pathname, href])
 
     return null
 }

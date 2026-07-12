@@ -62,13 +62,13 @@
 # regenerates core/types/pbSchema.ts + pbZodSchema.ts from migrations so the
 # subsequent `expo export` can typecheck every package's collections.ts /
 # types.ts. It imports only core/coreserver — pure Go, no CGO, no feature-
-# server dependency chain (mupdf, goheif, dav1d), so we don't drag a C
+# server dependency chain (goheif, dav1d), so we don't drag a C
 # toolchain into the lean web-builder Node stage just to write two TS files.
 #
 # Sources copied: tinycld/core/server only (the binary's full dependency closure).
 # The go-builder stage below builds the real CGO_ENABLED Linux runtime binary
 # from the full workspace; this stage is throwaway, ~50 lines of Go work.
-FROM golang:1.25-trixie AS types-binary-builder
+FROM golang:1.26-trixie AS types-binary-builder
 WORKDIR /src
 COPY tinycld/core/server/ ./core/server/
 WORKDIR /src/core/server
@@ -252,21 +252,11 @@ RUN set -eu \
 
 
 # Build stage for Go server.
-FROM golang:1.25-trixie AS go-builder
+FROM golang:1.26-trixie AS go-builder
 
-# Install CGo dependencies for mupdf (thumbnail generation via go-fitz).
-# Cache-mount apt's archive + lists so repeated builds skip the re-download.
-# The mounts keep /var/cache/apt and /var/lib/apt/lists OUT of the image layer.
-# Debian's base image ships /etc/apt/apt.conf.d/docker-clean, which deletes
-# downloaded .debs in a post-invoke hook — that would empty the cache mount on
-# every run, so disable it for the duration of this RUN. The keep-downloaded-
-# packages line stops apt from auto-pruning the archive after install.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    rm -f /etc/apt/apt.conf.d/docker-clean \
-    && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
-    && apt-get update \
-    && apt-get install -y libmupdf-dev
+# The only remaining CGo dependency is goheif (HEIC thumbnails), which needs
+# gcc/g++ — both already ship in the golang:trixie base via build-essential,
+# so no extra apt packages are required here.
 
 WORKDIR /ws
 
@@ -320,7 +310,7 @@ RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
 
 # Build the server binary. Mount both the module cache (read) and the compiled-
 # object build cache (/root/.cache/go-build) so an unchanged-source rebuild is a
-# near-instant cache hit instead of a full CGO recompile against mupdf.
+# near-instant cache hit instead of a full CGO recompile.
 RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
     CGO_ENABLED=1 GOOS=linux go build -o tinycld .
@@ -368,13 +358,12 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 # gcc AND g++ are required to install a package that ships a Go server: the
 # installer's checkGoBuildPrereqs() gate needs `go` (from the copied toolchain)
 # plus a C compiler, and the server is built with CGO_ENABLED=1. The cgo set
-# needs BOTH compilers — gcc for libmupdf (go-fitz) and g++ for goheif/libde265
-# (HEIF decode, which shells out to g++). The build-stage go-builder gets both
+# needs BOTH compilers for goheif/libde265 (HEIF decode, which shells out to
+# g++) — the one remaining CGo dependency. The build-stage go-builder gets both
 # from the golang:trixie base (build-essential); the slim runtime base has
 # neither, so add them explicitly. Without gcc, server packages are rejected at
 # manifest validation ("requires Phase 3 support"); without g++, the runtime
-# `go build` fails with `exec: "g++": executable file not found`. libmupdf-dev
-# (already listed) supplies the cgo link target.
+# `go build` fails with `exec: "g++": executable file not found`.
 #
 # sqlite3 (the CLI) is needed by the installer's database-backup step, which runs
 # `sqlite3 <db> "VACUUM INTO '<backup>'"` for a consistent snapshot before
@@ -391,7 +380,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libffi8 libmupdf-dev libcap2-bin curl git gcc g++ sqlite3 gnupg gosu \
+    && apt-get install -y --no-install-recommends ca-certificates libffi8 libcap2-bin curl git gcc g++ sqlite3 gnupg gosu \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get autoremove -y
