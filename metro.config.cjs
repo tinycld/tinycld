@@ -52,6 +52,37 @@ const LUCIDE_PKG_ROOT = (() => {
 })()
 const LUCIDE_ICONS_DIR = path.join(LUCIDE_PKG_ROOT, 'dist', 'esm', 'icons')
 const LUCIDE_ICON_PREFIX = 'lucide-react-native/icons/'
+
+// Canonicalize every resolved module to its realpath. In this symlinked
+// workspace, `@tinycld/core/*` is reachable by two routes — the app's own
+// `tinycld/node_modules/@tinycld/core` (→ ../../core) and the workspace-root
+// `node_modules/@tinycld/core` (→ tinycld/core) that the feature siblings
+// resolve through. Metro keys module identity by the resolved path, so the
+// same file reached via different symlink routes becomes TWO module instances.
+// For a module that owns a singleton (pbtsdb's `createReactProvider` context in
+// @tinycld/core/lib/pocketbase), that duplication means a lazily-imported
+// package provider bundle (e.g. calendar's, which calls useStore) gets its own
+// copy of the store graph + a second React context. useStore then reads a
+// context the app-root <PBTSDBProvider> never populated and throws "useStore
+// must be used within the Provider". Collapsing every result to its realpath
+// gives each file exactly one module id regardless of the symlink route, so the
+// singleton is shared across the base bundle and every async chunk.
+const { realpathSync } = require('node:fs')
+const realpathCache = new Map()
+function toRealpath(filePath) {
+    if (typeof filePath !== 'string') return filePath
+    const cached = realpathCache.get(filePath)
+    if (cached !== undefined) return cached
+    let resolved = filePath
+    try {
+        resolved = realpathSync.native(filePath)
+    } catch {
+        // Not on disk (virtual/asset module) — leave as-is.
+    }
+    realpathCache.set(filePath, resolved)
+    return resolved
+}
+
 const originalResolveRequest = config.resolver.resolveRequest
 config.resolver.resolveRequest = (context, moduleName, platform) => {
     if (moduleName.startsWith('@tinycld/app-generated/')) {
@@ -70,7 +101,18 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
             platform
         )
     }
-    return (originalResolveRequest ?? context.resolveRequest)(context, moduleName, platform)
+    const resolution = (originalResolveRequest ?? context.resolveRequest)(
+        context,
+        moduleName,
+        platform
+    )
+    // Only source files carry a `filePath` and can duplicate across symlink
+    // routes; canonicalize those to their realpath.
+    if (resolution && resolution.type === 'sourceFile' && resolution.filePath) {
+        const real = toRealpath(resolution.filePath)
+        if (real !== resolution.filePath) return { ...resolution, filePath: real }
+    }
+    return resolution
 }
 
 module.exports = withUniwindConfig(config, {

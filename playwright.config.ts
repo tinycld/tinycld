@@ -108,5 +108,20 @@ export default defineConfig({
     // ws/<pkg>/test-results/ + playwright-report/) keep working with NO changes.
     // CI runs on Linux (inotify, and Watchman typically absent on the runners),
     // so it does not hit the macOS FSEvents recrawl this guards against.
-    ...(process.env.CI ? {} : { outputDir: path.join('/tmp', 'tinycld-pw-artifacts') }),
+    //
+    // Per-RUN subdirectory: Playwright wipes outputDir at the start of every
+    // run, so a fixed path discards the previous run's retain-on-failure traces
+    // — losing exactly the artifacts needed to debug an intermittent failure.
+    // Bucketing each run under its own dir (PW_RUN_ID, else a timestamp) keeps
+    // prior runs' traces intact for post-mortem. Still outside the watched tree,
+    // so the FSEvents rationale above holds. Cleared by hand or on reboot (/tmp).
+    ...(process.env.CI
+        ? {}
+        : {
+              outputDir: path.join(
+                  '/tmp',
+                  'tinycld-pw-artifacts',
+                  process.env.PW_RUN_ID ?? `run-${new Date().toISOString().replace(/[:.]/g, '-')}`
+              ),
+          }),
 })
