@@ -476,8 +476,9 @@ to. The runtime image (`app/Dockerfile`) provides:
 - **Tools on `PATH`:** `git` (git-spec `npm pack`), `node`/`npm`/`npx`,
   `pnpm` (pre-activated into a shared `COREPACK_HOME=/opt/corepack` so the
   unprivileged user finds it without a network fetch/prompt), the Go toolchain
-  plus `gcc` **and** `g++` (the server's cgo set links libmupdf *and*
-  goheif/libde265), `sqlite3` (the DB-backup `VACUUM INTO`), and `tar`/`cp`.
+  plus `gcc` **and** `g++` (the server's remaining cgo is goheif/libde265 for
+  HEIC thumbnails; document rendering is pure-Go doctaculous), `sqlite3` (the
+  DB-backup `VACUUM INTO`), and `tar`/`cp`.
 - **A writable workspace:** the whole tree lives under `/workspace`, owned by
   the `tinycld` runtime user, so the installer can create `/workspace/<slug>`
   and rewrite the workspace manifests. (The workspace is *not* at the

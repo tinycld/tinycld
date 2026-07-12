@@ -1,7 +1,7 @@
 // Package textpreview renders a deliberately lightweight, NOT pixel-perfect,
-// approximation of a document's first page to a JPEG. It is pure Go (no CGo,
-// no mupdf) so it can run anywhere the binary runs without the native MuPDF
-// stack. The output is a best-effort "what's roughly on page 1" preview —
+// approximation of a document's first page to a JPEG, without parsing the
+// source document at all — editors stash the page model at flush time.
+// The output is a best-effort "what's roughly on page 1" preview —
 // plain text, an optional header image, and an optional small table grid —
 // not a faithful re-layout of the source document.
 package textpreview

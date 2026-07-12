@@ -1,17 +1,18 @@
 package thumbnails
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/jpeg"
-	"os"
+	"io"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/disintegration/imaging"
-	"github.com/gen2brain/go-fitz"
 	"github.com/jdeng/goheif"
+	"github.com/nathanstitt/doctaculous/pkg/doctaculous"
 )
 
 // DefaultWidth is the default thumbnail width.
@@ -20,25 +21,27 @@ const DefaultWidth = 480
 // DefaultHeight is the default thumbnail height.
 const DefaultHeight = 360
 
-// fitzMu serializes all go-fitz (mupdf CGo) operations.
-// MuPDF is not thread-safe, so concurrent calls cause SIGSEGV.
-var fitzMu sync.Mutex
+// MaxInputBytes caps how much of a document is buffered for rendering.
+// doctaculous parses the whole input in memory (the old mupdf path worked
+// from a file on disk), so this bounds worst-case memory per render.
+const MaxInputBytes = 50 << 20
 
-// fitzMimeTypes lists MIME types that go-fitz (mupdf) can render.
-var fitzMimeTypes = []string{
-	"application/pdf",
-	"application/epub+zip",
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-	"application/vnd.openxmlformats-officedocument.presentationml.presentation",
-	"application/vnd.ms-word",
-	"application/vnd.ms-excel",
-	"application/vnd.ms-powerpoint",
-	"application/msword",
+// thumbFormats lists the doctaculous input formats we render document
+// thumbnails for. Deliberately narrower than Format.ValidInput(): plain
+// text / CSV / Markdown uploads have no useful page render, and PNG/JPEG
+// images are handled by PocketBase's built-in ?thumb= parameter.
+var thumbFormats = []doctaculous.Format{
+	doctaculous.FormatPDF,
+	doctaculous.FormatDOCX,
+	doctaculous.FormatXLSX,
+	doctaculous.FormatPPTX,
+	doctaculous.FormatEPUB,
 }
 
 // heifMimeTypes lists MIME types we decode via goheif. iPhone photo library
 // emits image/heic for HEVC-encoded stills; image/heif covers the container.
+// goheif (CGo) stays until doctaculous grows HEIF support; when that lands,
+// this list and the goheif dependency go away.
 var heifMimeTypes = []string{
 	"image/heic",
 	"image/heif",
@@ -51,65 +54,82 @@ var heifMimeTypes = []string{
 // which Go's stdlib can't decode — we render those ourselves.
 func CanGenerate(mimeType string) bool {
 	mt := normalizeMime(mimeType)
-	return slices.Contains(fitzMimeTypes, mt) || slices.Contains(heifMimeTypes, mt)
-}
-
-// Generate renders inputPath as a JPEG thumbnail at outputPath, resized to fit
-// within width x height while preserving aspect ratio. The decoder is chosen
-// from the file's MIME type.
-func Generate(inputPath, outputPath, mimeType string, width, height int) error {
-	if slices.Contains(heifMimeTypes, normalizeMime(mimeType)) {
-		return generateFromHeif(inputPath, outputPath, width, height)
+	if slices.Contains(heifMimeTypes, mt) {
+		return true
 	}
-	return generateFromFitz(inputPath, outputPath, width, height)
+	return slices.Contains(thumbFormats, doctaculous.FormatFromMIME(mt))
 }
 
-func generateFromFitz(inputPath, outputPath string, width, height int) error {
-	fitzMu.Lock()
-	defer fitzMu.Unlock()
+// Generate renders the document in r as a JPEG thumbnail written to w, fitted
+// within width x height while preserving aspect ratio. The decoder is chosen
+// from the document's MIME type. Reads at most MaxInputBytes from r.
+func Generate(ctx context.Context, w io.Writer, r io.Reader, mimeType string, width, height int) error {
+	if slices.Contains(heifMimeTypes, normalizeMime(mimeType)) {
+		return generateFromHeif(w, r, width, height)
+	}
+	return generateFromDoc(ctx, w, r, mimeType, width, height)
+}
 
-	doc, err := fitz.New(inputPath)
+// readCapped buffers at most MaxInputBytes from r, erroring when the input
+// exceeds the cap.
+func readCapped(r io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, MaxInputBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("thumbnails: failed to read document: %w", err)
+	}
+	if len(data) > MaxInputBytes {
+		return nil, fmt.Errorf("thumbnails: document exceeds %d bytes", MaxInputBytes)
+	}
+	return data, nil
+}
+
+func generateFromDoc(ctx context.Context, w io.Writer, r io.Reader, mimeType string, width, height int) error {
+	data, err := readCapped(r)
+	if err != nil {
+		return err
+	}
+
+	doc, err := doctaculous.OpenBytesAs(doctaculous.FormatFromMIME(mimeType), data)
 	if err != nil {
 		return fmt.Errorf("thumbnails: failed to open document: %w", err)
 	}
-	defer doc.Close()
 
-	img, err := doc.Image(0)
+	err = doc.WriteImage(ctx, w, 0, doctaculous.ImageOptions{
+		Format:  doctaculous.FormatJPEG,
+		Quality: 85,
+		Raster: doctaculous.RasterOptions{
+			// A positive DPI makes the Max box a downscale-only ceiling,
+			// matching the old render-at-native-resolution-then-Fit behavior.
+			DPI:         300,
+			MaxWidthPx:  width,
+			MaxHeightPx: height,
+		},
+	})
 	if err != nil {
 		return fmt.Errorf("thumbnails: failed to render page: %w", err)
 	}
-
-	return writeJpegThumb(img, outputPath, width, height)
+	return nil
 }
 
-func generateFromHeif(inputPath, outputPath string, width, height int) error {
-	in, err := os.Open(inputPath)
+func generateFromHeif(w io.Writer, r io.Reader, width, height int) error {
+	// Buffering also hands goheif an io.ReaderAt, sidestepping its internal
+	// ReadAll of the whole stream.
+	data, err := readCapped(r)
 	if err != nil {
-		return fmt.Errorf("thumbnails: failed to open heif: %w", err)
+		return err
 	}
-	defer in.Close()
-
-	img, err := goheif.Decode(in)
+	img, err := goheif.Decode(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("thumbnails: failed to decode heif: %w", err)
 	}
-
-	return writeJpegThumb(img, outputPath, width, height)
+	return writeJpegThumb(w, img, width, height)
 }
 
-func writeJpegThumb(img image.Image, outputPath string, width, height int) error {
+func writeJpegThumb(w io.Writer, img image.Image, width, height int) error {
 	thumb := imaging.Fit(img, width, height, imaging.Lanczos)
-
-	out, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("thumbnails: failed to create output file: %w", err)
-	}
-	defer out.Close()
-
-	if err := jpeg.Encode(out, thumb, &jpeg.Options{Quality: 85}); err != nil {
+	if err := jpeg.Encode(w, thumb, &jpeg.Options{Quality: 85}); err != nil {
 		return fmt.Errorf("thumbnails: failed to encode JPEG: %w", err)
 	}
-
 	return nil
 }
 
