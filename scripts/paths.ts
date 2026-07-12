@@ -8,6 +8,18 @@ export const APP_DIR = process.env.TINYCLD_APP_DIR
     : path.resolve(import.meta.dirname, '..')
 
 export const WS_ROOT = path.resolve(APP_DIR, '..')
+
+// The Go toolchain version the generated go.work files pin. Source of truth is
+// the workspace-root `.go-version` (also drives setup-go in member CI); fall
+// back to a sane default if it's absent (e.g. a partial checkout).
+export const GO_VERSION = (() => {
+    try {
+        return fs.readFileSync(path.join(WS_ROOT, '.go-version'), 'utf8').trim()
+    } catch {
+        return '1.26.3'
+    }
+})()
+
 export const GENERATED_DIR = path.join(APP_DIR, 'lib', 'generated')
 export const ROUTES_BASE = path.join(APP_DIR, 'app', 'a', '[orgSlug]')
 export const PUBLIC_ROUTES_BASE = path.join(APP_DIR, 'app', 'p')
