@@ -48,7 +48,7 @@ primary_region = "iad"     # pick a region near you: fly platform regions
 # PocketBase data: SQLite DB, file uploads, server private keys.
 [mounts]
     source = "pb_data"
-    destination = "/workspace/tinycld/pb_data"
+    destination = "/workspace/pb_data"
 
 [[vm]]
     size = "shared-cpu-1x"

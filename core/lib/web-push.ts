@@ -4,6 +4,10 @@ import { Platform } from 'react-native'
 // pocketbase → errors → notify → … → web-push → pocketbase. web-push only needs
 // pb at call time inside these async actions, so a dynamic import is free here
 // and matches the same cycle-breaking pattern used in pocketbase.ts.
+//
+// This is an imperative ServiceWorker/PushManager utility (not a React hook), so
+// useMutation/pbtsdb primitives can't apply — the whole file is exempted from the
+// pbtsdb-no-raw-pb-access plugin in biome.json.
 
 export function isPushSupported(): boolean {
     return (
@@ -36,7 +40,6 @@ export async function subscribeToPush(userId: string): Promise<boolean> {
     const subscriptionJSON = subscription.toJSON()
 
     const { pb } = await import('./pocketbase')
-    // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker/PushManager util (not a React hook), so useMutation/pbtsdb can't apply; pb is lazy-imported to break a require cycle.
     await pb.collection('push_subscriptions').create({
         user: userId,
         endpoint: subscriptionJSON.endpoint,
@@ -51,7 +54,12 @@ export async function subscribeToPush(userId: string): Promise<boolean> {
     return true
 }
 
-export async function unsubscribeFromPush(userId: string): Promise<void> {
+// `authToken` is passed explicitly (rather than read from pb.authStore) so the
+// caller can run teardown as part of logout without racing pb.authStore.clear():
+// when provided it's sent as the Authorization header so the delete is
+// authorized even once the store has been cleared. The in-app settings toggle
+// omits it and relies on the live session.
+export async function unsubscribeFromPush(userId: string, authToken?: string): Promise<void> {
     if (!isPushSupported()) return
 
     const registration = await navigator.serviceWorker.ready
@@ -59,14 +67,17 @@ export async function unsubscribeFromPush(userId: string): Promise<void> {
     if (subscription) {
         await subscription.unsubscribe()
 
+        const authOptions = authToken ? { headers: { Authorization: authToken } } : {}
         const { pb } = await import('./pocketbase')
-        // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker unsubscribe util (not a React hook); pb is lazy-imported to break a require cycle.
         const records = await pb.collection('push_subscriptions').getFullList({
-            filter: `user = "${userId}" && endpoint = "${subscription.endpoint}"`,
+            ...authOptions,
+            filter: pb.filter('user = {:userId} && endpoint = {:endpoint}', {
+                userId,
+                endpoint: subscription.endpoint,
+            }),
         })
         for (const record of records) {
-            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: imperative ServiceWorker unsubscribe util (not a React hook); pairs with subscribeToPush above.
-            await pb.collection('push_subscriptions').delete(record.id)
+            await pb.collection('push_subscriptions').delete(record.id, authOptions)
         }
     }
 }

@@ -60,11 +60,10 @@ export const Icon = React.forwardRef<
 
 type ParameterTypes = Omit<Parameters<typeof createIcon>[0], 'Root'>
 
-// biome-ignore lint/suspicious/noExplicitAny: GlueStack generated utility
-const accessClassName = (style: any) => {
-    const styleObject = Array.isArray(style) ? style[0] : style
+const accessClassName = (style: unknown): string | undefined => {
+    const styleObject = (Array.isArray(style) ? style[0] : style) as Record<string, unknown>
     const keys = Object.keys(styleObject)
-    return styleObject[keys[1]]
+    return styleObject[keys[1]] as string | undefined
 }
 
 const createIconUI = ({ ...props }: ParameterTypes) => {

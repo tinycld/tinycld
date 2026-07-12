@@ -33,7 +33,13 @@ export function AppErrorBoundary({ error, retry }: ErrorBoundaryProps) {
         if (!error.stack) return
         symbolicateStack(error.stack)
             .then(clean => {
-                // biome-ignore lint/suspicious/noConsole: surfacing the readable, source-mapped stack is the point
+                // Load-bearing in ALL builds: the browser never applies
+                // sourcemaps to error.stack at runtime (only DevTools/Sentry do),
+                // so this is the ONLY place the readable, source-mapped crash
+                // stack surfaces in a production web build. sourcemaps.spec.ts
+                // asserts this line fires and names the original source. The file
+                // is exempt from noConsole in biome.json (diagnostic-modules
+                // override).
                 console.log(`[error-boundary] ${clean}`)
             })
             .catch(() => {

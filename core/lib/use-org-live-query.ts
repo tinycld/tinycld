@@ -23,6 +23,9 @@ export function useOrgLiveQuery<TContext extends Context>(
             if (!orgId || !userOrgId) return null
             return queryFn(q, scope)
         },
-        [orgId, userOrgId, ...deps]
+        // orgSlug is part of `scope`, so a query that filters on it (e.g.
+        // eq(org.slug, orgSlug)) must re-run when the org is renamed —
+        // otherwise it keeps matching the stale slug.
+        [orgId, userOrgId, orgSlug, ...deps]
     )
 }

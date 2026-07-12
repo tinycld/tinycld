@@ -9,7 +9,7 @@ export function usePkgAccess(pkgSlug: string): PackageAccessLevel {
     const { role, userOrgId } = useCurrentRole()
     const [orgPkgAccessCollection] = useStore('org_pkg_access')
 
-    const { data: overrides } = useLiveQuery(
+    const { data: overrides, isReady } = useLiveQuery(
         query =>
             query
                 .from({ org_pkg_access: orgPkgAccessCollection })
@@ -19,7 +19,15 @@ export function usePkgAccess(pkgSlug: string): PackageAccessLevel {
         [userOrgId, pkgSlug]
     )
 
+    // Owners/admins always have full access — no override row to wait for.
     if (role === 'owner' || role === 'admin') return 'full'
+
+    // Default-DENY until the override query has loaded: a member with a
+    // readonly/none override otherwise reads 'full' during the load window and
+    // flashes forbidden UI. Once loaded we apply the real default (member: full
+    // unless overridden; guest: none unless overridden). The 'none' floor here
+    // is transient — it resolves as soon as the org_pkg_access query is ready.
+    if (!isReady) return 'none'
 
     const override = overrides?.[0]
 

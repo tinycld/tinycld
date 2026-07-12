@@ -8,7 +8,7 @@ vi.mock('@tinycld/core/lib/pocketbase', () => ({
     },
 }))
 vi.mock('@tinycld/core/lib/notifications', () => ({
-    notify: vi.fn(() => Promise.resolve()),
+    showOsNotification: vi.fn(() => Promise.resolve()),
 }))
 
 describe('handleMutationErrorsWithForm', () => {

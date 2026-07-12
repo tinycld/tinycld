@@ -19,7 +19,6 @@ export async function changeMyPassword(args: ChangePasswordArgs): Promise<void> 
     const userId = pb.authStore.record?.id
     if (!userId) throw new Error('Not authenticated')
 
-    // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: auth-record password change; write-only fields + token rotation pbtsdb can't model
     await pb.collection('users').update(userId, {
         oldPassword: args.oldPassword,
         password: args.newPassword,

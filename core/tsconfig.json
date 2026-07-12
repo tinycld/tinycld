@@ -30,17 +30,15 @@
         "preserveSymlinks": true,
         "types": ["node", "react"]
     },
-    "exclude": [
-        "node_modules",
-        ".expo",
-        "**/test",
-        "**/dist",
-        "node_modules/**/types",
-        "**/__tests__",
-        "ideas"
-    ],
+    "exclude": ["node_modules", ".expo", "**/dist", "node_modules/**/types", "ideas"],
     "typeAcquisition": {
         "enable": true
     },
-    "include": ["**/*.ts", "**/*.tsx", "expo-env.d.ts", "../uniwind-types.d.ts"]
+    "include": [
+        "**/*.ts",
+        "**/*.tsx",
+        "expo-env.d.ts",
+        "../uniwind-types.d.ts",
+        "../lucide-icons.d.ts"
+    ]
 }

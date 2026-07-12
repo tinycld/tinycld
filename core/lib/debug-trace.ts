@@ -12,14 +12,16 @@ import { Platform } from 'react-native'
 //
 // Fire-and-forget; never throws, never blocks render. REMOVE once the routing
 // bug is found — this is a debug aid, not a shipping feature.
+//
+// Both the console line AND the network beacon are __DEV__-gated: a release
+// build must NEVER beacon (it would POST to /api/app/boot on every trace call,
+// including every navigateToOrg, for all users).
 export function trace(message: string, extra?: Record<string, unknown>): void {
+    if (!__DEV__) return
+
     const serverUrl = getResolvedAddress()
     const line = extra ? `TRACE: ${message} ${JSON.stringify(extra)}` : `TRACE: ${message}`
-    // Always emit to console too (works in dev / on the Metro side).
-    if (__DEV__) {
-        // biome-ignore lint/suspicious/noConsole: temporary debug tracer
-        console.log(`[trace] ${line}`)
-    }
+    console.log(`[trace] ${line}`)
     if (!serverUrl) return
     void fetch(`${serverUrl}/api/app/boot`, {
         method: 'POST',

@@ -27,6 +27,11 @@ describe('buildPackageExtensionsGo', () => {
         expect(go).toContain('contacts.Register(app)')
         expect(go).toContain('func registerPackageExtensions(app *pocketbase.PocketBase)')
     })
+
+    it('rejects a module path that would break out of the generated Go import', () => {
+        const bad: ServerPkg = { ...contacts, module: 'tinycld.org/x"; evil()//' }
+        expect(() => buildPackageExtensionsGo([bad])).toThrow(/unsafe value/)
+    })
 })
 
 describe('buildGoWork', () => {

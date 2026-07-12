@@ -470,11 +470,15 @@ function StatChip({
     const fgColor = useThemeColor('foreground')
     const mutedColor = useThemeColor('muted-foreground')
     const borderColor = useThemeColor('border')
+    const warningColor = useThemeColor('warning')
+    const primaryColor = useThemeColor('primary')
 
+    // warn=warning, owner=primary — theme tokens instead of a fixed light-mode
+    // hex that clashed in dark mode.
     const tones = {
         neutral: { fg: fgColor, accent: mutedColor, ring: borderColor },
-        warn: { fg: '#b45309', accent: '#b45309', ring: 'rgba(180, 83, 9, 0.35)' },
-        owner: { fg: '#7c3aed', accent: '#7c3aed', ring: 'rgba(124, 58, 237, 0.35)' },
+        warn: { fg: warningColor, accent: warningColor, ring: warningColor },
+        owner: { fg: primaryColor, accent: primaryColor, ring: primaryColor },
     }[tone]
 
     return (

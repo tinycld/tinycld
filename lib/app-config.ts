@@ -30,7 +30,6 @@ function devDefaultServer(): string {
 // the bundle loads — see coreserver/static.go::publicConfigScript. Web only;
 // native has no window/HTML and uses the build-time path below.
 declare global {
-    // eslint-disable-next-line no-var
     var __TINYCLD_PUBLIC_CONFIG__: { sentryDsn?: string } | undefined
 }
 

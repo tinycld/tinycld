@@ -50,4 +50,52 @@ describe('scrubPII', () => {
         expect(PII_KEY_PATTERN.test('USER_EMAIL')).toBe(true)
         expect(PII_KEY_PATTERN.test('orgId')).toBe(false)
     })
+
+    it('scrubs credential keys', () => {
+        const input = {
+            token: 'abc',
+            password: 'p',
+            secret: 's',
+            authorization: 'Bearer x',
+            apiKey: 'k',
+            api_key: 'k2',
+            s3_key: 'k3',
+            ok: 'keep',
+        }
+        const out = scrubPII(input) as Record<string, unknown>
+        expect(out.ok).toBe('keep')
+        for (const k of [
+            'token',
+            'password',
+            'secret',
+            'authorization',
+            'apiKey',
+            'api_key',
+            's3_key',
+        ]) {
+            expect(out[k]).toBe('[Filtered]')
+        }
+    })
+
+    it('does not over-scrub benign identifier keys', () => {
+        const input = { orgId: '1', monkey: 'ook', keyboard: 'qwerty', id: 'x' }
+        expect(scrubPII(input)).toEqual(input)
+    })
+
+    it('redacts the token in a [share-session, token] queryKey array', () => {
+        expect(scrubPII(['share-session', 'super-secret-token'])).toEqual([
+            'share-session',
+            '[Filtered]',
+        ])
+    })
+
+    it('redacts credential query params in URL string values', () => {
+        const input = { url: 'https://api.example.com/x?token=abc123&keep=1' }
+        const out = scrubPII(input) as Record<string, unknown>
+        expect(out.url).toBe('https://api.example.com/x?token=[Filtered]&keep=1')
+    })
+
+    it('redacts a bare ?token= URL passed as a top-level string', () => {
+        expect(scrubPII('/api/session?token=deadbeef')).toBe('/api/session?token=[Filtered]')
+    })
 })

@@ -108,7 +108,8 @@ export function usePocketBase() {
 // auto-reconnects on EventSource error, and reconnect reads PB_SERVER_ADDR
 // — clearing the address before disconnecting realtime trips the "address
 // not resolved" guard. The auth-store's logout already does the realtime
-// teardown + auth clear; we just need to add the address clear.
+// teardown + auth clear + resetSessionState (stores + query cache); we
+// just need to add the address clear.
 export async function disconnectServer() {
     const { useAuthStore } = await import('./stores/auth-store')
     useAuthStore.getState().logout()
@@ -118,22 +119,20 @@ export async function disconnectServer() {
     setResolvedAddress(null)
 }
 
+// Route pbtsdb's internal logs somewhere useful. Errors go to Sentry so a
+// failed subscription/sync is observable in production instead of being
+// silently dropped — the previous empty if/else bodies discarded EVERYTHING,
+// errors included, which is the bug this fixes. The debug/info/warn levels are
+// subscription-lifecycle chatter with no production value, so they're
+// intentionally dropped rather than logged (no unguarded console shipped).
 setLogger({
     debug: () => {},
-    info: (_msg, context) => {
-        if (context) {
-        } else {
-        }
-    },
-    warn: (_msg, context) => {
-        if (context) {
-        } else {
-        }
-    },
-    error: (_msg, context) => {
-        if (context) {
-        } else {
-        }
+    info: () => {},
+    warn: () => {},
+    error: (msg, context) => {
+        // Stable grouping key; the varying message rides in the Error and the
+        // pbtsdb context object rides in `extra`.
+        captureException('pbtsdb.error', new Error(msg), context as Record<string, unknown>)
     },
 })
 
@@ -351,8 +350,29 @@ export async function fetchAndSeedUserOrg() {
 
 export async function clearStores() {
     for (const s of Object.values(stores)) {
+        // cleanup() on an already cleaned-up collection throws an invalid
+        // status-transition error, and repeated teardowns are a legal path
+        // (sign out, then "change server" runs logout() a second time).
+        if (s.status === 'cleaned-up') continue
         await s.cleanup()
     }
+}
+
+// Single teardown point for everything cached per-session in memory. On web
+// the SPA survives logout → next login in the same tab (no reload), so
+// anything left behind leaks across users on the same device: the pbtsdb
+// stores still hold the previous user's rows, and the React Query cache still
+// holds their file token (['pb-files-token'] in use-authed-file-url.ts) —
+// which authorizes file reads as that user. Runs from the auth-store's
+// logout(), which disconnectServer() also routes through.
+//
+// Push subscription teardown is NOT done here: it needs the userId and an
+// authorized PB session, both of which are gone by the time resetSessionState
+// runs (logout() clears pb.authStore first). The auth-store's logout() tears
+// down push explicitly, before the auth clear — see teardownPushOnLogout.
+export async function resetSessionState() {
+    await clearStores()
+    queryClient.clear()
 }
 
 export { PBTSDBProvider, queryClient, stores, useStore }

@@ -2,6 +2,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type { PackageManifest } from './load-manifest'
 import { GO_VERSION } from './paths'
+import { assertSafeImportField } from './validate-generated-field'
 
 export interface ServerPkg {
     slug: string
@@ -24,6 +25,12 @@ export function buildPackageExtensionsGo(pkgs: ServerPkg[]): string {
             'func registerPackageExtensions(_ *pocketbase.PocketBase) {}',
             '',
         ].join('\n')
+    }
+    // Both the slug (→ Go import alias) and the module path are interpolated
+    // unescaped into the generated Go, so validate before emitting.
+    for (const p of pkgs) {
+        assertSafeImportField('server.slug', p.slug)
+        assertSafeImportField('server.module', p.module)
     }
     const imports = pkgs.map(p => `\t${slugToIdentifier(p.slug)} "${p.module}"`)
     const calls = pkgs.map(p => `\t${slugToIdentifier(p.slug)}.Register(app)`)
