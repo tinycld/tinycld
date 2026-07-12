@@ -14,7 +14,7 @@ import { MIGRATIONS_DIR, memberDir, SERVER_DIR } from './paths'
 //
 // Standalone binary, not the full app: the export-types binary lives at
 // core/server/cmd/export-types and imports only core/coreserver. Pure
-// Go, no CGO, no feature-server dependency chain (mupdf, goheif, etc.).
+// Go, no CGO, no feature-server dependency chain (goheif, etc.).
 // That keeps `pnpm install` lean — the only build prerequisite is `go`
 // on PATH, no C libraries. The full `tinycld` binary exposes the same
 // operation as a subcommand (`tinycld export-types`) for ad-hoc dev
