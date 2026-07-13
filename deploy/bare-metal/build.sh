@@ -129,6 +129,21 @@ CGO_ENABLED=1 GOOS=linux go build -o ../tinycld .
 if [ -f go.work ]; then go work sync; fi
 cd ..
 
+# Place bundled-packages.json NEXT TO the binary (../server/bundled-packages.json
+# -> ./bundled-packages.json). The generator writes it under server/, but core's
+# coreserver.SyncBundledPackages resolves it relative to the binary's own dir
+# (filepath.Dir(os.Args[0])) — and the entrypoint runs the binary with cwd = this
+# tinycld/ dir, one level ABOVE server/. Without this copy the loader logs
+# "bundled-packages.json not found, skipping sync" and the in-app package registry
+# (Setup → Versions) never learns the bundled versions. The Dockerfile does the
+# identical copy for the container image.
+if [ -f server/bundled-packages.json ]; then
+    cp server/bundled-packages.json bundled-packages.json
+    echo "[build] placed bundled-packages.json next to the binary"
+else
+    echo "[build] WARN: server/bundled-packages.json missing; Setup → Versions will be empty"
+fi
+
 echo "[build] assembled tree ready at ${SCRATCH}/tinycld/tinycld"
 BUILD
 
