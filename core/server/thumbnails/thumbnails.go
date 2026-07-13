@@ -36,6 +36,7 @@ var thumbFormats = []doctaculous.Format{
 	doctaculous.FormatXLSX,
 	doctaculous.FormatPPTX,
 	doctaculous.FormatEPUB,
+	doctaculous.FormatRTF,
 }
 
 // heifMimeTypes lists MIME types we decode via goheif. iPhone photo library
