@@ -47,6 +47,7 @@ func TestGenerateDocumentFormats(t *testing.T) {
 		{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", doctaculous.FormatXLSX},
 		{"application/vnd.openxmlformats-officedocument.presentationml.presentation", doctaculous.FormatPPTX},
 		{"application/epub+zip", doctaculous.FormatEPUB},
+		{"application/rtf", doctaculous.FormatRTF},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.format), func(t *testing.T) {
@@ -83,6 +84,8 @@ func TestCanGenerate(t *testing.T) {
 		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", true},
 		{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", true},
 		{"application/vnd.openxmlformats-officedocument.presentationml.presentation", true},
+		{"application/rtf", true},
+		{"text/rtf", true},
 		{"image/heic", true},
 		{"image/heif", true},
 		{"IMAGE/HEIC ", true}, // normalizeMime lowercases + trims
