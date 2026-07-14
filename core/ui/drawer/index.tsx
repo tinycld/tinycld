@@ -18,6 +18,7 @@ import Animated, {
     SlideOutRight,
     SlideOutUp,
 } from 'react-native-reanimated'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useCloseOnNavigate } from './use-close-on-navigate'
 
 const SCOPE = 'MODAL'
@@ -87,8 +88,12 @@ const drawerBackdropStyle = tva({
 // modes prevents the content from jumping when the inner subview changes.
 // Vertical drawers (top/bottom) keep height scaling per `size`. Use
 // `size="full"` for an edge-to-edge drawer.
+// Base padding (`p-6` = 24px) is applied via inline style in DrawerContent so
+// the device safe-area inset can be *added* to it per edge — an inline padding
+// value would otherwise fully override a className padding, zeroing the base on
+// non-notch platforms.
 const drawerContentStyle = tva({
-    base: 'bg-background shadow-hard-5 p-6 absolute',
+    base: 'bg-background shadow-hard-5 absolute',
     parentVariants: {
         size: {
             sm: '',
@@ -276,8 +281,22 @@ const DrawerBackdrop = React.forwardRef<
 const DrawerContent = React.forwardRef<
     React.ComponentRef<typeof UIDrawer.Content>,
     IDrawerContentProps
->(function DrawerContent({ className, ...props }, ref) {
+>(function DrawerContent({ className, style, ...props }, ref) {
     const { size: parentSize, anchor: parentAnchor } = useStyleContext(SCOPE)
+    const insets = useSafeAreaInsets()
+
+    // 24px base padding (was `p-6`) plus the device safe-area inset on the edges
+    // the drawer reaches, so its header/body clears the status bar / notch /
+    // home indicator. Side drawers span full height (top + bottom); a top drawer
+    // reaches the top edge, a bottom drawer the bottom. On web / non-notch
+    // devices every inset is 0, leaving the original 24px.
+    const BASE = 24
+    const paddingStyle = {
+        paddingTop: BASE + (parentAnchor !== 'bottom' ? insets.top : 0),
+        paddingBottom: BASE + (parentAnchor !== 'top' ? insets.bottom : 0),
+        paddingLeft: BASE + (parentAnchor === 'left' ? insets.left : 0),
+        paddingRight: BASE + (parentAnchor === 'right' ? insets.right : 0),
+    }
 
     const customClass =
         parentAnchor === 'left' || parentAnchor === 'right'
@@ -315,6 +334,7 @@ const DrawerContent = React.forwardRef<
                 },
                 class: `${className || ''} ${customClass}`,
             })}
+            style={[paddingStyle, style]}
             pointerEvents="auto"
         />
     )
