@@ -42,6 +42,11 @@
             --surface: 255 255 255;
             --surface-secondary: 248 250 252;
 
+            /* Unread list-row highlight — must read as clearly elevated vs
+               --background in BOTH themes (a faint darker tint on white here,
+               a lighter elevated surface in dark). */
+            --unread-background: 241 245 249;
+
             /* Fields */
             --field-background: 255 255 255;
             --field-placeholder: 148 163 184;
@@ -101,6 +106,10 @@
             /* Surface */
             --surface: 15 22 41;
             --surface-secondary: 18 24 40;
+
+            /* Unread list-row highlight — a lighter, clearly elevated surface
+               so unread rows stand out from the near-black --background. */
+            --unread-background: 30 41 59;
 
             /* Fields */
             --field-background: 15 22 41;
@@ -275,6 +284,7 @@
     --color-accent-foreground: rgb(var(--accent-foreground));
     --color-surface: rgb(var(--surface));
     --color-surface-secondary: rgb(var(--surface-secondary));
+    --color-unread-background: rgb(var(--unread-background));
     --color-field-background: rgb(var(--field-background));
     --color-field-placeholder: rgb(var(--field-placeholder));
     --color-info: rgb(var(--info));

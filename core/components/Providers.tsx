@@ -2,6 +2,7 @@ import '@tinycld/core/lib/crypto-polyfill'
 import '@tinycld/core/file-viewer/register-default-previews'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { CoreShortcuts } from '@tinycld/core/components/CoreShortcuts'
+import { NavigationThemeProvider } from '@tinycld/core/components/NavigationThemeProvider'
 import { OfflineOverlay } from '@tinycld/core/components/OfflineOverlay'
 import { ToastRenderer } from '@tinycld/core/components/Toast'
 import { AuthProvider } from '@tinycld/core/lib/auth'
@@ -22,7 +23,7 @@ function ThemeAwareGluestackProvider({ children }: { children: ReactNode }) {
     useConnectivityDetector()
     return (
         <GluestackUIProvider mode={preference} colorTheme={colorTheme}>
-            {children}
+            <NavigationThemeProvider>{children}</NavigationThemeProvider>
             <ToastRenderer />
             <OfflineOverlay />
             <ShortcutHelp />
