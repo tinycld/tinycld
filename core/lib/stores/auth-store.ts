@@ -8,6 +8,7 @@ import {
     PB_SERVER_ADDR,
     pb,
     preloadStores,
+    refreshAuth,
     resetSessionState,
     seedUserOrg,
 } from '@tinycld/core/lib/pocketbase'
@@ -118,6 +119,15 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         const hydrate = async () => {
             try {
                 await authStoreReady
+
+                // Renew (or, if the stored token is already dead, clear) the
+                // session BEFORE deriving the user. A token that expired while
+                // the app was closed would otherwise hydrate a "logged in" user
+                // whose every request fails — the stale-session bug. refreshAuth
+                // clears the store on an authoritative rejection, so
+                // getUserFromAuthStore then returns null and the app gates to
+                // login instead of a broken half-session.
+                await refreshAuth()
 
                 const primaryOrgSlug = await loadPrimaryOrgFromStorage()
                 const currentUser = getUserFromAuthStore(primaryOrgSlug)

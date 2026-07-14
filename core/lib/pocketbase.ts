@@ -322,6 +322,45 @@ export function getUserFromAuthStore(primaryOrgSlug?: string | null): UserSessio
     }
 }
 
+// PocketBase auth tokens carry a JWT `exp` (default 7-day duration) and are
+// never renewed on their own — the SDK doesn't auto-refresh, and expiry doesn't
+// fire authStore.onChange. Left alone, a long-open session silently crosses exp:
+// the token string is still present (so naive presence checks read "logged in"),
+// but every request now carries a dead token, so reads return nothing and the
+// pbtsdb collections drain to empty — the "stale session" state where fetches
+// yield no records and any create fails for want of org context.
+//
+// refreshAuth reconciles that. It mints a fresh token when the current one is
+// still valid (extending an active session indefinitely), and on any failure —
+// including a token already past exp — clears the auth store so the app routes
+// to the login gate instead of running as a broken half-session. authRefresh()
+// saves the new token, which DOES fire onChange, keeping the auth-store user in
+// sync. Returns whether a valid session remains afterward.
+export async function refreshAuth(): Promise<boolean> {
+    if (!pb.authStore.token) return false
+    try {
+        await pb.collection('users').authRefresh()
+        return pb.authStore.isValid
+    } catch (err) {
+        // A network blip must not sign the user out; only an authoritative
+        // rejection (expired/revoked token → 401/403) should. On a transient
+        // failure we keep whatever token we have and let the next tick retry.
+        if (isAuthRejection(err)) {
+            pb.authStore.clear()
+            return false
+        }
+        return pb.authStore.isValid
+    }
+}
+
+// True when the error is PocketBase rejecting our credentials (401/403), as
+// opposed to a network/timeout failure. Only the former means the token is
+// genuinely dead and the session must be cleared.
+function isAuthRejection(err: unknown): boolean {
+    const status = (err as { status?: number } | null)?.status
+    return status === 401 || status === 403
+}
+
 export async function seedUserOrg(userRecord: Users, orgRecord: Orgs, userOrgRecord: UserOrg) {
     await Promise.all([stores.users.preload(), stores.orgs.preload(), stores.user_org.preload()])
     stores.users.utils?.writeUpsert(userRecord)

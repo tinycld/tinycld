@@ -24,6 +24,7 @@ vi.mock('@tinycld/core/lib/pocketbase', () => ({
     fetchAndSeedUserOrg: vi.fn(() => Promise.resolve()),
     preloadStores: vi.fn(() => Promise.resolve()),
     seedUserOrg: vi.fn(() => Promise.resolve()),
+    refreshAuth: vi.fn(() => Promise.resolve(false)),
 }))
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
