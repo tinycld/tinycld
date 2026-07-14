@@ -68,6 +68,7 @@ type BuiltInThemeColor =
     | 'success-soft-foreground'
     | 'success-soft-hover'
     | 'surface-secondary'
+    | 'unread-background'
     | 'surface-tertiary'
     | 'on-surface'
     | 'on-surface-foreground'
