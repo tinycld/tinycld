@@ -302,3 +302,60 @@
     --color-active-indicator: var(--active-indicator);
     --color-hover-background: var(--hover-background);
 }
+
+/*
+ * Re-derive the bridge --color-* variables inside a nested theme scope.
+ *
+ * @theme static (above) emits these `--color-x: rgb(var(--x))` definitions
+ * ONLY on :root, so each --color-* is substituted a single time using the
+ * root's --x triplet and then inherited verbatim. A nested theme scope —
+ * uniwind's <ScopedTheme theme="light"> drops a `.light` class mid-tree —
+ * overrides the base triplets (--background, --foreground, …) but CANNOT
+ * change the already-resolved --color-* the subtree inherits from :root.
+ * On web that leaves e.g. calc's always-light grid canvas painting the dark
+ * root's --color-background even though it sits inside a `.light` scope.
+ * (Native is unaffected — uniwind resolves --color-* per-scope in JS.)
+ *
+ * Redeclaring the derived bridge vars on the `.light` / `.dark` selectors
+ * makes any element inside a scope re-resolve rgb(var(--x)) against THAT
+ * scope's triplets. Keep this list in sync with the @theme static block.
+ */
+.light,
+.dark {
+    --color-primary: rgb(var(--primary));
+    --color-primary-foreground: rgb(var(--primary-foreground));
+    --color-card: rgb(var(--card));
+    --color-secondary: rgb(var(--secondary));
+    --color-secondary-foreground: rgb(var(--secondary-foreground));
+    --color-background: rgb(var(--background));
+    --color-popover: rgb(var(--popover));
+    --color-popover-foreground: rgb(var(--popover-foreground));
+    --color-muted: rgb(var(--muted));
+    --color-muted-foreground: rgb(var(--muted-foreground));
+    --color-destructive: rgb(var(--destructive));
+    --color-foreground: rgb(var(--foreground));
+    --color-border: rgb(var(--border));
+    --color-input: rgb(var(--input));
+    --color-ring: rgb(var(--ring));
+    --color-accent: rgb(var(--accent));
+    --color-accent-foreground: rgb(var(--accent-foreground));
+    --color-surface: rgb(var(--surface));
+    --color-surface-secondary: rgb(var(--surface-secondary));
+    --color-unread-background: rgb(var(--unread-background));
+    --color-field-background: rgb(var(--field-background));
+    --color-field-placeholder: rgb(var(--field-placeholder));
+    --color-info: rgb(var(--info));
+    --color-info-foreground: rgb(var(--info-foreground));
+    --color-success: rgb(var(--success));
+    --color-success-foreground: rgb(var(--success-foreground));
+    --color-warning: rgb(var(--warning));
+    --color-warning-foreground: rgb(var(--warning-foreground));
+    --color-danger: rgb(var(--danger));
+    --color-danger-foreground: rgb(var(--danger-foreground));
+    --color-rail-background: var(--rail-background);
+    --color-rail-text: var(--rail-text);
+    --color-rail-active-text: var(--rail-active-text);
+    --color-sidebar-background: var(--sidebar-background);
+    --color-active-indicator: var(--active-indicator);
+    --color-hover-background: var(--hover-background);
+}
