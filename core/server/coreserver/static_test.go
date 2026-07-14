@@ -1,6 +1,8 @@
 package coreserver
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,6 +11,14 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 )
+
+// shellETag mirrors writeAppShell's ETag derivation for a shell whose injected
+// body equals its source (the test app publishes no public config, so
+// injectPublicConfig is a passthrough).
+func shellETag(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return `"` + hex.EncodeToString(sum[:]) + `"`
+}
 
 // staticDirs builds a publicDir (app's own web static), a websiteDir (marketing
 // site), and a releasesDir with current/app.html (the SPA shell), each populated
@@ -181,5 +191,108 @@ func TestStatic_ApiPathNeverServesShell(t *testing.T) {
 		ExpectedStatus:     http.StatusNotFound,
 		ExpectedContent:    []string{`"status":404`},
 		NotExpectedContent: []string{"APP SHELL", "HOME"},
+	})
+}
+
+// TestStatic_ShellRevalidates guards the stale-shell fix: the SPA shell must be
+// served with `no-cache` + a content ETag so a reload always revalidates rather
+// than serving a cached shell that pins dropped asset hashes.
+func TestStatic_ShellRevalidates(t *testing.T) {
+	const shell = "<html>APP SHELL</html>"
+	publicDir, websiteDir, releasesDir := staticDirs(t, nil, nil, shell)
+	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
+		Name:            "shell serves no-cache + ETag",
+		Method:          http.MethodGet,
+		URL:             "/a/acme/mail",
+		ExpectedStatus:  http.StatusOK,
+		ExpectedContent: []string{"APP SHELL"},
+		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
+			if cc := res.Header.Get("Cache-Control"); cc != "no-cache" {
+				t.Errorf("Cache-Control = %q, want %q", cc, "no-cache")
+			}
+			if et := res.Header.Get("ETag"); et != shellETag(shell) {
+				t.Errorf("ETag = %q, want %q", et, shellETag(shell))
+			}
+		},
+	})
+}
+
+// TestStatic_ShellConditionalGet confirms a matching If-None-Match short-circuits
+// to a 304 with no body — the payoff of no-cache over no-store.
+func TestStatic_ShellConditionalGet(t *testing.T) {
+	const shell = "<html>APP SHELL</html>"
+	publicDir, websiteDir, releasesDir := staticDirs(t, nil, nil, shell)
+	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
+		Name:           "matching If-None-Match yields 304, empty body",
+		Method:         http.MethodGet,
+		URL:            "/a/acme/mail",
+		Headers:        map[string]string{"If-None-Match": shellETag(shell)},
+		ExpectedStatus: http.StatusNotModified,
+		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
+			if cc := res.Header.Get("Cache-Control"); cc != "no-cache" {
+				t.Errorf("Cache-Control = %q, want %q", cc, "no-cache")
+			}
+		},
+	})
+}
+
+// TestStatic_ShellStaleETagRefetches confirms a non-matching validator (a client
+// holding a prior release's shell) gets the full new body, not a 304.
+func TestStatic_ShellStaleETagRefetches(t *testing.T) {
+	publicDir, websiteDir, releasesDir := staticDirs(t, nil, nil, "<html>APP SHELL</html>")
+	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
+		Name:            "stale If-None-Match re-sends the shell",
+		Method:          http.MethodGet,
+		URL:             "/a/acme/mail",
+		Headers:         map[string]string{"If-None-Match": shellETag("<html>OLD SHELL</html>")},
+		ExpectedStatus:  http.StatusOK,
+		ExpectedContent: []string{"APP SHELL"},
+	})
+}
+
+// TestStatic_WebsiteHTMLRevalidates confirms static HTML documents (the
+// marketing site's entry) are served no-cache so they too can't be
+// heuristically cached and pin old asset hashes. FileFS supplies Last-Modified,
+// so revalidation is a cheap 304.
+func TestStatic_WebsiteHTMLRevalidates(t *testing.T) {
+	publicDir, websiteDir, releasesDir := staticDirs(t,
+		nil,
+		map[string]string{"index.html": "<html>MARKETING HOME</html>"},
+		"<html>APP SHELL</html>",
+	)
+	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
+		Name:            "website / serves no-cache",
+		Method:          http.MethodGet,
+		URL:             "/",
+		ExpectedStatus:  http.StatusOK,
+		ExpectedContent: []string{"MARKETING HOME"},
+		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
+			if cc := res.Header.Get("Cache-Control"); cc != "no-cache" {
+				t.Errorf("Cache-Control = %q, want %q", cc, "no-cache")
+			}
+		},
+	})
+}
+
+// TestStatic_NonHTMLAssetKeepsDefault confirms the no-cache marking is scoped to
+// HTML — a static JS/asset file is untouched (its caching is set elsewhere, by
+// PoolAssets for hashed bundles).
+func TestStatic_NonHTMLAssetKeepsDefault(t *testing.T) {
+	publicDir, websiteDir, releasesDir := staticDirs(t,
+		map[string]string{"sw.js": "SERVICE_WORKER_BODY"},
+		nil,
+		"<html>APP SHELL</html>",
+	)
+	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
+		Name:            "sw.js is not marked no-cache by the HTML path",
+		Method:          http.MethodGet,
+		URL:             "/sw.js",
+		ExpectedStatus:  http.StatusOK,
+		ExpectedContent: []string{"SERVICE_WORKER_BODY"},
+		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
+			if cc := res.Header.Get("Cache-Control"); cc == "no-cache" {
+				t.Errorf("Cache-Control = %q; HTML-only no-cache leaked onto a non-HTML asset", cc)
+			}
+		},
 	})
 }

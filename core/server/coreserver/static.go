@@ -2,6 +2,8 @@ package coreserver
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"net/http"
@@ -200,14 +202,30 @@ func serveStaticFrom(e *core.RequestEvent, fs fs.FS, path string) (bool, error) 
 		if path == ".well-known/apple-app-site-association" {
 			e.Response.Header().Set("Content-Type", "application/json")
 		}
+		setHTMLRevalidate(e, path)
 		return true, e.FileFS(fs, path)
 	}
 	indexPath := path + "/index.html"
 	if f, err := fs.Open(indexPath); err == nil {
 		f.Close()
+		setHTMLRevalidate(e, indexPath)
 		return true, e.FileFS(fs, indexPath)
 	}
 	return false, nil
+}
+
+// setHTMLRevalidate marks an HTML document as always-revalidate. FileFS serves
+// via http.ServeContent, which emits Last-Modified and answers a conditional
+// GET with 304, so `no-cache` keeps the entry document current without the
+// full-refetch cost of `no-store` — an unchanged page costs one header
+// round-trip. Non-HTML static assets (favicon, images, workers) keep FileFS's
+// default (no directive) and are unaffected. This closes the stale-shell bug:
+// an HTML entry that pins content-hashed asset URLs must never be served from
+// cache without revalidation, or it references asset hashes the client dropped.
+func setHTMLRevalidate(e *core.RequestEvent, path string) {
+	if strings.HasSuffix(path, ".html") {
+		e.Response.Header().Set("Cache-Control", "no-cache")
+	}
 }
 
 // StaticWithDynamicFallback serves static files, then falls back to the active
@@ -264,28 +282,60 @@ func StaticWithDynamicFallback(publicDir, websiteDir, releasesDir string) func(*
 			return e.NotFoundError("", nil)
 		}
 
-		// SPA fallback. Set no-store on app.html so a tab reload always
-		// pulls the active release's shell rather than a cached copy that
-		// may reference asset hashes the client has since dropped.
+		// SPA fallback: the active release's shell. writeAppShell revalidates
+		// via ETag (see its doc) so a tab reload always confirms the shell is
+		// current — a stale shell would reference asset hashes the client has
+		// since dropped — but an unchanged shell 304s instead of re-sending.
 		if releasesDir != "" {
 			currentApp := filepath.Join(releasesDir, "current", "app.html")
 			if data, err := os.ReadFile(currentApp); err == nil {
-				e.Response.Header().Set("Cache-Control", "no-store")
-				e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-				_, _ = e.Response.Write(injectPublicConfig(data))
-				return nil
+				return writeAppShell(e, injectPublicConfig(data))
 			}
 		}
 
 		// Dev fallback: publicDir/app.html. Read into memory (rather than
 		// streaming via FileFS) so the same public-config injection applies.
 		if data, err := fs.ReadFile(publicFs, "app.html"); err == nil {
-			e.Response.Header().Set("Cache-Control", "no-store")
-			e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = e.Response.Write(injectPublicConfig(data))
-			return nil
+			return writeAppShell(e, injectPublicConfig(data))
 		}
 
 		return e.NotFoundError("", nil)
 	}
+}
+
+// writeAppShell sends the injected SPA shell HTML with revalidation caching.
+//
+// The shell body changes only per release (a new app.html) or when injected
+// public config changes, so a content-hash ETag identifies it exactly. We set
+// `no-cache` (always revalidate, never serve from cache blindly) plus that
+// ETag: an unchanged shell answers a conditional GET with a 304 and no body,
+// while a changed shell sends the new bytes. This keeps the shell always-fresh
+// — a cached shell would pin content-hashed asset URLs the client has dropped,
+// the stale-shell bug — without `no-store`'s full-refetch-every-load cost.
+//
+// The ETag is computed over the FINAL injected bytes (what the client receives),
+// so two deploys with identical shells + config collide correctly (same ETag →
+// 304), and any change to either busts it.
+func writeAppShell(e *core.RequestEvent, html []byte) error {
+	sum := sha256.Sum256(html)
+	etag := `"` + hex.EncodeToString(sum[:]) + `"`
+
+	e.Response.Header().Set("Cache-Control", "no-cache")
+	e.Response.Header().Set("ETag", etag)
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// http.ServeContent isn't usable here (the body is built in memory, not a
+	// ReadSeeker file), so match If-None-Match ourselves. A comma-split covers
+	// the multi-value form; weak validators ("W/…") never match our strong tag.
+	if match := e.Request.Header.Get("If-None-Match"); match != "" {
+		for _, candidate := range strings.Split(match, ",") {
+			if strings.TrimSpace(candidate) == etag {
+				e.Response.WriteHeader(http.StatusNotModified)
+				return nil
+			}
+		}
+	}
+
+	_, _ = e.Response.Write(html)
+	return nil
 }
