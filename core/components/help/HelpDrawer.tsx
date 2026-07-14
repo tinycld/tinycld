@@ -12,7 +12,6 @@ import {
 import { router } from 'expo-router'
 import { ArrowLeft, X } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useHelpStore } from '../../lib/help/store'
 import { useHelpGroupForPackage, useHelpTopic } from '../../lib/help/use-help-topics'
 import { HelpTopicView } from './HelpTopicView'
@@ -31,7 +30,6 @@ export function HelpDrawer() {
     const pkgGroup = useHelpGroupForPackage(pkgSlug)
     const muted = useThemeColor('muted-foreground')
     const orgHref = useOrgHref()
-    const insets = useSafeAreaInsets()
 
     const showBackArrow = mode === 'topic' && cameFrom !== null
 
@@ -50,7 +48,7 @@ export function HelpDrawer() {
         <Drawer isOpen={isOpen} onClose={close} anchor="right" size="md">
             <DrawerBackdrop />
             <DrawerContent>
-                <DrawerHeader style={{ paddingTop: insets.top }}>
+                <DrawerHeader>
                     <View className="flex-row items-center justify-between flex-1">
                         <View className="flex-row items-center flex-1">
                             {showBackArrow && (
