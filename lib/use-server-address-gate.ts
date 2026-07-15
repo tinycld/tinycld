@@ -1,4 +1,5 @@
 import {
+    DEMO_SERVER,
     getResolvedAddress,
     readCached,
     resolveEnvAddress,
@@ -26,6 +27,13 @@ export function useServerAddressGate(pathname: string): GateState {
     const [state, setState] = useState<GateState>(() => {
         const env = resolveEnvAddress()
         if (env) setResolvedAddress(env)
+        // A universal-link demo open on a fresh install has no env/cached address,
+        // so the gate would resolve to 'unresolved' and blank-screen /p/demo before
+        // it can pin the server itself. Seed the hosted demo server synchronously
+        // here so the gate resolves normally and the demo screen mounts inside the
+        // provider tree. __DEV__ is exempt (keeps whatever dev server is resolved,
+        // matching app/p/demo.tsx) so local testing hits localhost.
+        else if (!__DEV__ && pathname === '/p/demo') setResolvedAddress(DEMO_SERVER)
         return { status: 'resolving' }
     })
 
@@ -82,7 +90,12 @@ export function useServerAddressGate(pathname: string): GateState {
 
     useEffect(() => {
         if (state.status !== 'unresolved') return
-        if (pathname === '/connect') return
+        // Routes that resolve the server address themselves must be exempt from the
+        // →/connect redirect, or they get bounced before they can set it. /connect
+        // is the picker; /p/demo pins the public demo server (see app/p/demo.tsx),
+        // so a universal-link demo open on a fresh install (no cached address) must
+        // reach it instead of being sent to /connect.
+        if (pathname === '/connect' || pathname === '/p/demo') return
         const backTo = encodeURIComponent(pathname || '/')
         router.replace(`/connect?backTo=${backTo}`)
     }, [state.status, pathname])

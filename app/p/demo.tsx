@@ -1,6 +1,6 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { navigateToOrg } from '@tinycld/core/lib/org-url'
-import { setResolvedAddress, writeCached } from '@tinycld/core/lib/server-address'
+import { DEMO_SERVER, setResolvedAddress, writeCached } from '@tinycld/core/lib/server-address'
 import { useAuthStore } from '@tinycld/core/lib/stores/auth-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -9,10 +9,11 @@ import { ActivityIndicator, Linking, Pressable, Text, View } from 'react-native'
 // A demo tap on tinycld.org (universal/app link) lands here on devices with the
 // app installed — the AASA/assetlinks claim tinycld.org/demo, which +native-intent
 // rewrites to this pre-auth public route (/p/demo). We always pin the public
-// production server: browsing the marketing site signals wanting the hosted demo,
-// not any self-hosted server the user may have configured. __DEV__ keeps whatever
-// dev server is already resolved so local testing of `tinycld://p/demo` hits localhost.
-const DEMO_SERVER = 'https://tinycld.org'
+// production server (DEMO_SERVER): browsing the marketing site signals wanting the
+// hosted demo, not any self-hosted server the user may have configured. __DEV__
+// keeps whatever dev server is already resolved so local testing of `tinycld://p/demo`
+// hits localhost. The server-address gate seeds the same DEMO_SERVER synchronously
+// for /p/demo so this screen mounts inside the provider tree on a fresh install.
 
 type DemoState = { status: 'starting' } | { status: 'error'; message: string }
 
