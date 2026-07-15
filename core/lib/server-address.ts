@@ -4,6 +4,12 @@ import { getCoreConfigOptional, registerConfigListener } from './core-config'
 
 const STORAGE_KEY_PREFIX = 'tinycld:server:'
 
+// The public hosted server the demo flow pins. A universal-link demo open
+// (tinycld.org/demo → /p/demo) signals wanting the hosted demo, not any
+// self-hosted server the user configured, so both the server-address gate (to
+// resolve synchronously on a fresh install) and app/p/demo.tsx use this.
+export const DEMO_SERVER = 'https://tinycld.org'
+
 function envToAddress(env: string): string | null {
     const config = getCoreConfigOptional()
     if (!config) return null
