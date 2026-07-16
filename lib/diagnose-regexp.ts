@@ -17,8 +17,6 @@
 // Side-effect import; must run before any module that compiles a regex. No-op on
 // web (we only chase the Hermes/OTA crash) and guarded so a double-import is safe.
 
-declare const __DEV__: boolean
-
 interface RegExpDiag {
     pattern: string
     flags: string
@@ -55,14 +53,14 @@ if (isHermes && !globalThis.__TINYCLD_REGEXP_SHIMMED) {
     const recordAttempt = (pattern: string, flags: string) => {
         // Record BEFORE the native call so a pattern that aborts the process
         // mid-compile (no return, no throw we can catch) is still the last entry.
+        // No per-compile console log: this fires on every regex the app
+        // compiles, which floods the dev console. The recorded
+        // __TINYCLD_LAST_REGEXP (read by install-fatal-rollback + the
+        // report-bad upload) is what actually diagnoses the crash.
         globalThis.__TINYCLD_LAST_REGEXP = {
             pattern,
             flags,
             at: new Date().toISOString(),
-        }
-        if (__DEV__) {
-            // Visible in the Metro/device console during a local repro.
-            console.debug(`[regexp-diag] compiling /${pattern}/${flags}`)
         }
     }
 
