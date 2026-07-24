@@ -25,15 +25,6 @@ migrate(
                     maxSelect: 1,
                 },
                 {
-                    id: 'invite_tokens_org',
-                    name: 'org',
-                    type: 'relation',
-                    required: true,
-                    collectionId: 'pbc_orgs_00001',
-                    cascadeDelete: true,
-                    maxSelect: 1,
-                },
-                {
                     id: 'invite_tokens_role',
                     name: 'role',
                     type: 'text',
@@ -79,7 +70,6 @@ migrate(
             indexes: [
                 'CREATE UNIQUE INDEX `idx_invite_tokens_token` ON `invite_tokens` (`token`)',
                 'CREATE INDEX `idx_invite_tokens_user` ON `invite_tokens` (`user`)',
-                'CREATE INDEX `idx_invite_tokens_org` ON `invite_tokens` (`org`)',
             ],
         })
 

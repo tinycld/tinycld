@@ -22,15 +22,6 @@ migrate(
                     maxSelect: 1,
                 },
                 {
-                    id: 'notif_org',
-                    name: 'org',
-                    type: 'relation',
-                    required: true,
-                    collectionId: 'pbc_orgs_00001',
-                    cascadeDelete: true,
-                    maxSelect: 1,
-                },
-                {
                     id: 'notif_type',
                     name: 'type',
                     type: 'text',
@@ -94,7 +85,6 @@ migrate(
             ],
             indexes: [
                 'CREATE INDEX `idx_notif_user` ON `notifications` (`user`, `read`, `created`)',
-                'CREATE INDEX `idx_notif_org` ON `notifications` (`org`)',
             ],
         })
         app.save(notifications)
