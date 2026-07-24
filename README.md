@@ -13,6 +13,10 @@ Expo native projects, deployment configs, the package generator, and all the hea
 runtime dependencies. It is the entrypoint for `pnpm run dev` and
 `docker pull ghcr.io/tinycld/tinycld`.
 
+The mobile app that connects to a self-hosted server is published on the
+[App Store](https://apps.apple.com/app/tinycld/id6762420971) (iPhone/iPad) and
+[Google Play](https://play.google.com/store/apps/details?id=org.tinycld.app) (Android).
+
 `@tinycld/core` (the shared TypeScript + Go library) is **part of this repo** — nested at
 `core/` (`tinycld/core/`) and imported as `@tinycld/core`. The `tinycld-pkg` CLI
 (`@tinycld/package-scripts`) is nested at `package-scripts/`. Feature packages are sibling
