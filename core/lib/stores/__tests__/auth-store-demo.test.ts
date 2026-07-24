@@ -21,9 +21,9 @@ vi.mock('@tinycld/core/lib/pocketbase', () => ({
     },
     authStoreReady: Promise.resolve(),
     getUserFromAuthStore: vi.fn(() => null),
-    fetchAndSeedUserOrg: vi.fn(() => Promise.resolve()),
+    seedUser: vi.fn(() => Promise.resolve()),
     preloadStores: vi.fn(() => Promise.resolve()),
-    seedUserOrg: vi.fn(() => Promise.resolve()),
+    resetSessionState: vi.fn(() => Promise.resolve()),
     refreshAuth: vi.fn(() => Promise.resolve(false)),
 }))
 
@@ -87,7 +87,7 @@ describe('auth-store startDemo', () => {
         mockGetOne.mockReset()
     })
 
-    it('adopts the demo envelope and pins the demo org', async () => {
+    it('adopts the demo envelope and returns the demo user', async () => {
         vi.stubGlobal(
             'fetch',
             vi.fn().mockResolvedValue({
@@ -96,14 +96,6 @@ describe('auth-store startDemo', () => {
                 statusText: 'OK',
             })
         )
-        mockGetOne.mockResolvedValue({
-            ...fakeRecord,
-            expand: {
-                user_org_via_user: [
-                    { id: 'uo_demo', expand: { org: { id: 'org_demo', slug: 'demo' } } },
-                ],
-            },
-        })
 
         const result = await startDemo(demoServer)
 
@@ -112,7 +104,6 @@ describe('auth-store startDemo', () => {
         expect(result.user).toMatchObject({
             id: 'user_demo',
             email: 'demo@tinycld.org',
-            primaryOrgSlug: 'demo',
             isDemo: true,
         })
     })
@@ -124,14 +115,6 @@ describe('auth-store startDemo', () => {
             statusText: 'OK',
         })
         vi.stubGlobal('fetch', fetchMock)
-        mockGetOne.mockResolvedValue({
-            ...fakeRecord,
-            expand: {
-                user_org_via_user: [
-                    { id: 'uo_demo', expand: { org: { id: 'org_demo', slug: 'demo' } } },
-                ],
-            },
-        })
 
         await startDemo(demoServer)
 
@@ -157,24 +140,6 @@ describe('auth-store startDemo', () => {
         expect(result.user).toBeNull()
         expect(result.error).toBe('Server returned HTTP 503')
         expect(mockAuthStoreSave).not.toHaveBeenCalled()
-    })
-
-    it('errors and clears auth when the demo org is missing from the membership', async () => {
-        vi.stubGlobal(
-            'fetch',
-            vi.fn().mockResolvedValue({
-                ok: true,
-                json: async () => ({ token: 'demo_tok', record: fakeRecord }),
-                statusText: 'OK',
-            })
-        )
-        mockGetOne.mockResolvedValue({ ...fakeRecord, expand: { user_org_via_user: [] } })
-
-        const result = await startDemo(demoServer)
-
-        expect(result.user).toBeNull()
-        expect(result.error).toBe('Demo workspace is unavailable')
-        expect(mockAuthStoreClear).toHaveBeenCalled()
     })
 
     it('rejects a malformed envelope', async () => {

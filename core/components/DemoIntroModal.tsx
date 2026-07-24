@@ -13,7 +13,7 @@ import { useRef } from 'react'
  * on first arrival; the banner reminds users they're in demo mode and
  * exposes a "Tell us about you" link that stays available afterward.
  *
- * Mounted from app/a/[orgSlug]/_layout.tsx so it appears on the first demo
+ * Mounted from app/(app)/_layout.tsx so it appears on the first demo
  * screen regardless of which package the user lands in (mail, calendar, etc.).
  */
 export function DemoIntroModal() {

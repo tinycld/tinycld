@@ -9,28 +9,30 @@ import { useEffect } from 'react'
 
 export default function Index() {
     const auth = useAuth({ throwIfAnon: false })
-    const targetOrg = auth.isLoggedIn ? auth.user.primaryOrgSlug : null
     const hasServer = !!getResolvedAddress()
 
     trace('Index render', {
         isLoggedIn: auth.isLoggedIn,
         isInitializing: auth.isInitializing,
-        targetOrg,
         hasServer,
     })
 
     useEffect(() => {
-        trace('Index effect', { targetOrg, hasServer, isInitializing: auth.isInitializing })
-        if (targetOrg) {
-            trace('Index navigateToOrg', { targetOrg })
-            navigateToOrg(targetOrg)
+        trace('Index effect', {
+            isLoggedIn: auth.isLoggedIn,
+            hasServer,
+            isInitializing: auth.isInitializing,
+        })
+        if (auth.isLoggedIn) {
+            trace('Index navigateToOrg')
+            navigateToOrg()
         } else if (!auth.isInitializing && !hasServer) {
             trace('Index replace /connect')
             router.replace('/connect')
         }
-    }, [targetOrg, hasServer, auth.isInitializing])
+    }, [auth.isLoggedIn, hasServer, auth.isInitializing])
 
-    if (auth.isInitializing || targetOrg || !hasServer) {
+    if (auth.isInitializing || auth.isLoggedIn || !hasServer) {
         return <SkeletonLayout />
     }
 

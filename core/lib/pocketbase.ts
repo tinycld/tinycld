@@ -3,7 +3,7 @@ import { QueryCache, QueryClient } from '@tanstack/react-query'
 import { type MergedPackageSchema, tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
-import type { Orgs, Schema, UserOrg, Users } from '@tinycld/core/types/pbSchema'
+import type { Schema, Users } from '@tinycld/core/types/pbSchema'
 import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
 import PocketBase, { AsyncAuthStore } from 'pocketbase'
 import { Platform } from 'react-native'
@@ -162,23 +162,8 @@ const users = newCollection('users', {
     ...indexing,
 })
 
-const orgs = newCollection('orgs', {
-    omitOnInsert: ['created', 'updated'],
-    ...indexing,
-})
-
-const user_org = newCollection('user_org', {
-    omitOnInsert: ['created', 'updated'],
-    expand: {
-        user: users,
-        org: orgs,
-    },
-    ...indexing,
-})
-
 const settings = newCollection('settings', {
     omitOnInsert: ['created', 'updated'],
-    expand: { org: orgs },
     ...indexing,
 })
 
@@ -190,19 +175,19 @@ const user_preferences = newCollection('user_preferences', {
 
 const labels = newCollection('labels', {
     omitOnInsert: ['created', 'updated'],
-    expand: { org: orgs, user_org },
+    expand: { user: users },
     ...indexing,
 })
 
 const label_assignments = newCollection('label_assignments', {
     omitOnInsert: ['created', 'updated'],
-    expand: { label: labels, user_org },
+    expand: { label: labels, user: users },
     ...indexing,
 })
 
 const org_pkg_access = newCollection('org_pkg_access', {
     omitOnInsert: ['created', 'updated'],
-    expand: { user_org },
+    expand: { user: users },
     ...indexing,
 })
 
@@ -221,16 +206,6 @@ const pkg_build = newCollection('pkg_build', {
 
 const org_pkg_enabled = newCollection('org_pkg_enabled', {
     omitOnInsert: ['created', 'updated'],
-    expand: { org: orgs },
-    ...indexing,
-})
-
-// Intent signal core emits on admin org-create so feature packages (mail) can
-// provision their own per-org data without core depending on them. See the
-// create_org_provisioning migration.
-const org_provisioning = newCollection('org_provisioning', {
-    omitOnInsert: ['created', 'updated'],
-    expand: { org: orgs },
     ...indexing,
 })
 
@@ -262,7 +237,7 @@ const pkg_install_log = newCollection('pkg_install_log', {
 
 const notifications = newCollection('notifications', {
     omitOnInsert: ['created', 'updated'],
-    expand: { user: users, org: orgs },
+    expand: { user: users },
     ...indexing,
 })
 export const notificationsCollection = notifications
@@ -277,8 +252,6 @@ export const notificationsCollection = notifications
 
 const coreStores = {
     users,
-    orgs,
-    user_org,
     settings,
     user_preferences,
     labels,
@@ -287,7 +260,6 @@ const coreStores = {
     pkg_registry,
     pkg_build,
     org_pkg_enabled,
-    org_provisioning,
     audit_logs,
     pkg_install_log,
     notifications,
@@ -303,7 +275,7 @@ const stores = {
 
 const { Provider: PBTSDBProvider, useStore } = createReactProvider(stores)
 
-export function getUserFromAuthStore(primaryOrgSlug?: string | null): UserSession | null {
+export function getUserFromAuthStore(): UserSession | null {
     const authRecord = pb.authStore.record as Users | null
     const authToken = pb.authStore.token
 
@@ -316,7 +288,6 @@ export function getUserFromAuthStore(primaryOrgSlug?: string | null): UserSessio
         id: authRecord.id,
         name: authRecord.name,
         email: authRecord.email,
-        primaryOrgSlug: primaryOrgSlug ?? undefined,
         isDemo: !!(authRecord as Users & { is_demo?: boolean }).is_demo,
         isBetaTester: !!metadata?.isBetaTester,
     }
@@ -361,30 +332,19 @@ function isAuthRejection(err: unknown): boolean {
     return status === 401 || status === 403
 }
 
-export async function seedUserOrg(userRecord: Users, orgRecord: Orgs, userOrgRecord: UserOrg) {
-    await Promise.all([stores.users.preload(), stores.orgs.preload(), stores.user_org.preload()])
+export async function seedUser(userRecord: Users) {
+    await stores.users.preload()
     stores.users.utils?.writeUpsert(userRecord)
-    stores.orgs.utils?.writeUpsert(orgRecord)
-    stores.user_org.utils?.writeUpsert(userOrgRecord)
 }
 
 export async function preloadStores() {
     await Promise.all([
-        stores.orgs.preload(),
-        stores.user_org.preload(),
+        stores.users.preload(),
         stores.org_pkg_access.preload(),
         stores.pkg_registry.preload(),
         stores.org_pkg_enabled.preload(),
         stores.super_admins.preload(),
     ])
-}
-
-export async function fetchAndSeedUserOrg() {
-    await Promise.all([stores.users.preload(), stores.orgs.preload(), stores.user_org.preload()])
-    const userOrgs = await pb.collection('user_org').getFullList<UserOrg>()
-    for (const userOrgRecord of userOrgs) {
-        stores.user_org.utils?.writeUpsert(userOrgRecord)
-    }
 }
 
 export async function clearStores() {

@@ -93,7 +93,7 @@ function ViewMember({
     onClose: () => void
 }) {
     const { user } = useAuth()
-    const [userOrgCollection, usersCollection] = useStore('user_org', 'users')
+    const [usersCollection] = useStore('users')
 
     const mutedColor = useThemeColor('muted-foreground')
     const fgColor = useThemeColor('foreground')
@@ -111,9 +111,11 @@ function ViewMember({
         ? ROLE_ORDER
         : ROLE_ORDER.filter(r => r !== 'owner')
 
+    // Role now lives directly on the users record (single-org: every user in the
+    // database is a member; there's no user_org join row to carry a per-org role).
     const updateRole = useMutation({
         mutationFn: mutation(function* ({ role }: { role: OrgRole }) {
-            yield userOrgCollection.update(member.userOrgId, draft => {
+            yield usersCollection.update(member.userId, draft => {
                 draft.role = role
             })
         }),
@@ -245,7 +247,7 @@ function ViewMember({
                         onToggle={value => setDemo.mutate(value)}
                     />
 
-                    {showPackageAccess && <PackageAccessPanel userOrgId={member.userOrgId} />}
+                    {showPackageAccess && <PackageAccessPanel userId={member.userId} />}
                 </View>
             </DrawerBody>
 

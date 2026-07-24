@@ -2,7 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Mock PocketBase so login() runs without a live server. authWithPassword's
-// return shape drives the org-resolution branch under test.
+// return shape drives the authenticated-user projection under test. Multi-org
+// is removed, so login() no longer resolves an org / primaryOrgSlug and never
+// rejects a user for "no org" — any valid credentials sign in.
 const mockAuthStoreClear = vi.fn()
 const mockAuthWithPassword = vi.fn()
 
@@ -22,9 +24,9 @@ vi.mock('@tinycld/core/lib/pocketbase', () => ({
     },
     authStoreReady: Promise.resolve(),
     getUserFromAuthStore: vi.fn(() => null),
-    fetchAndSeedUserOrg: vi.fn(() => Promise.resolve()),
+    seedUser: vi.fn(() => Promise.resolve()),
     preloadStores: vi.fn(() => Promise.resolve()),
-    seedUserOrg: vi.fn(() => Promise.resolve()),
+    resetSessionState: vi.fn(() => Promise.resolve()),
     refreshAuth: vi.fn(() => Promise.resolve(false)),
 }))
 
@@ -62,29 +64,14 @@ vi.mock('@tinycld/core/lib/store', () => ({
     asyncStorage: undefined,
 }))
 
-const ORG_USER = {
-    record: {
-        id: 'u1',
-        name: 'Owner',
-        email: 'owner@example.com',
-        expand: {
-            user_org_via_user: [{ id: 'uo1', expand: { org: { id: 'o1', slug: 'acme' } } }],
-        },
-    },
+const REGULAR_USER = {
+    record: { id: 'u1', name: 'Owner', email: 'owner@example.com', role: 'owner' },
 }
-const SUPER_ADMIN_NO_ORG = {
-    record: {
-        id: 'admin1',
-        name: 'admin',
-        email: 'admin@tinycld.org',
-        expand: { super_admins_via_user: { id: 'sa1' } }, // present → super admin; no user_org
-    },
-}
-const REGULAR_NO_ORG = {
-    record: { id: 'u2', name: 'Nobody', email: 'nobody@example.com', expand: {} },
+const DEMO_USER = {
+    record: { id: 'u2', name: 'Demo', email: 'demo@example.com', is_demo: true },
 }
 
-describe('auth-store login() org resolution', () => {
+describe('auth-store login()', () => {
     let login: ReturnType<typeof import('../auth-store').useAuthStore.getState>['login']
 
     beforeEach(async () => {
@@ -97,32 +84,28 @@ describe('auth-store login() org resolution', () => {
 
     afterEach(() => vi.clearAllMocks())
 
-    it('signs in a user with an org and returns its slug', async () => {
-        mockAuthWithPassword.mockResolvedValue(ORG_USER)
+    it('signs in a user and returns the authenticated user projection', async () => {
+        mockAuthWithPassword.mockResolvedValue(REGULAR_USER)
         const res = await login('owner@example.com', 'pw')
         expect(res.error).toBeNull()
-        expect(res.user?.primaryOrgSlug).toBe('acme')
+        expect(res.user?.id).toBe('u1')
+        expect(res.user?.email).toBe('owner@example.com')
+        expect(res.user?.isDemo).toBe(false)
     })
 
-    // login() clears auth once at the start of every attempt; the meaningful
-    // difference is whether the no-org branch clears AGAIN (rejecting) or keeps
-    // the freshly-authed session (super admin).
-    it('signs in a super admin with NO org: no error, no slug, session kept', async () => {
-        mockAuthWithPassword.mockResolvedValue(SUPER_ADMIN_NO_ORG)
-        const res = await login('admin@tinycld.org', 'pw')
+    it('flags a demo user via the is_demo record field', async () => {
+        mockAuthWithPassword.mockResolvedValue(DEMO_USER)
+        const res = await login('demo@example.com', 'pw')
         expect(res.error).toBeNull()
-        expect(res.user).not.toBeNull()
-        expect(res.user?.primaryOrgSlug).toBeUndefined()
-        // Only the start-of-login clear — the session is NOT torn down.
-        expect(mockAuthStoreClear).toHaveBeenCalledTimes(1)
+        expect(res.user?.isDemo).toBe(true)
     })
 
-    it('rejects a regular user with no org and clears the session', async () => {
-        mockAuthWithPassword.mockResolvedValue(REGULAR_NO_ORG)
-        const res = await login('nobody@example.com', 'pw')
+    it('returns an error and no user when credentials are rejected', async () => {
+        mockAuthWithPassword.mockRejectedValue(new Error('Failed to authenticate.'))
+        const res = await login('nobody@example.com', 'wrong')
         expect(res.user).toBeNull()
-        expect(res.error).toBe('No organization associated with this account')
-        // Start-of-login clear + the rejection clear.
-        expect(mockAuthStoreClear).toHaveBeenCalledTimes(2)
+        expect(res.error).toBe('Failed to authenticate.')
+        // login() clears the session once at the start of every attempt.
+        expect(mockAuthStoreClear).toHaveBeenCalledTimes(1)
     })
 })

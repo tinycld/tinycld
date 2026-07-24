@@ -1,27 +1,11 @@
-import { and, eq } from '@tanstack/db'
-import { useLiveQuery } from '@tanstack/react-db'
 import { useAuth } from '@tinycld/core/lib/auth'
-import { useStore } from '@tinycld/core/lib/pocketbase'
 
-export function useCurrentUserOrg(orgSlug: string) {
+// Single-org deployment: feature records that used to reference the caller's
+// `user_org` membership row now reference the `users` record directly. This shim
+// returns an object whose `id` is the current user's id, so existing call sites
+// that read `userOrg?.id` and store it as an owner/creator FK keep working with
+// the new value (a users id). The `orgSlug` argument is ignored.
+export function useCurrentUserOrg(_orgSlug?: string) {
     const { user } = useAuth()
-    const [userOrgCollection] = useStore('user_org')
-    const [orgsCollection] = useStore('orgs')
-
-    const { data: orgs } = useLiveQuery(
-        query => query.from({ orgs: orgsCollection }).where(({ orgs }) => eq(orgs.slug, orgSlug)),
-        [orgSlug]
-    )
-
-    const orgId = orgs?.[0]?.id ?? ''
-
-    const { data: userOrgs } = useLiveQuery(
-        query =>
-            query
-                .from({ user_org: userOrgCollection })
-                .where(({ user_org }) => and(eq(user_org.user, user.id), eq(user_org.org, orgId))),
-        [user.id, orgId]
-    )
-
-    return userOrgs?.[0] ?? null
+    return user?.id ? { id: user.id } : null
 }

@@ -14,7 +14,7 @@ import { Pressable, Text, View } from 'react-native'
  * Renders nothing for non-demo users — the demo banner is the only place
  * that calls setFollowUpOpen(true).
  *
- * Mounted alongside DemoIntroModal in app/a/[orgSlug]/_layout.tsx.
+ * Mounted alongside DemoIntroModal in app/(app)/_layout.tsx.
  */
 export function DemoFollowUpModal() {
     const { user, isLoggedIn } = useAuth({ throwIfAnon: false })

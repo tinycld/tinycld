@@ -1,12 +1,15 @@
 import { and, eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
+import { useAuth } from '@tinycld/core/lib/auth'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 
 export type PackageAccessLevel = 'full' | 'readonly' | 'none'
 
 export function usePkgAccess(pkgSlug: string): PackageAccessLevel {
-    const { role, userOrgId } = useCurrentRole()
+    const { role } = useCurrentRole()
+    const { user } = useAuth()
+    const userId = user.id
     const [orgPkgAccessCollection] = useStore('org_pkg_access')
 
     const { data: overrides, isReady } = useLiveQuery(
@@ -14,9 +17,9 @@ export function usePkgAccess(pkgSlug: string): PackageAccessLevel {
             query
                 .from({ org_pkg_access: orgPkgAccessCollection })
                 .where(({ org_pkg_access }) =>
-                    and(eq(org_pkg_access.user_org, userOrgId), eq(org_pkg_access.pkg, pkgSlug))
+                    and(eq(org_pkg_access.user, userId), eq(org_pkg_access.pkg, pkgSlug))
                 ),
-        [userOrgId, pkgSlug]
+        [userId, pkgSlug]
     )
 
     // Owners/admins always have full access — no override row to wait for.

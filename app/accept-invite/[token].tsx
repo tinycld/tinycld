@@ -138,15 +138,14 @@ function AcceptForm({ token, info }: { token: string; info: InviteInfo }) {
                 const body = (await res.json().catch(() => null)) as { message?: string } | null
                 throw new Error(body?.message ?? 'Failed to accept invitation')
             }
-            const { username, orgSlug } = (await res.json()) as {
+            const { username } = (await res.json()) as {
                 username: string
                 email: string
-                orgSlug: string
             }
 
             await pb.collection('users').authWithPassword(username, data.password)
             setIsSuccess(true)
-            router.replace(`/a/${orgSlug}`)
+            router.replace('/')
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to accept invitation'
             captureException('invite.accept.submit', err)

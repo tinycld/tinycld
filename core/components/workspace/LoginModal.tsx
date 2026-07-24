@@ -4,7 +4,6 @@ import { requestPasswordReset } from '@tinycld/core/lib/account-password'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { navigateToOrg } from '@tinycld/core/lib/org-url'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { router } from 'expo-router'
 import { useState } from 'react'
 import {
     ActivityIndicator,
@@ -75,12 +74,10 @@ function LoginForm({
         if (result.error) {
             setError(result.error)
             setIsSubmitting(false)
-        } else if (result.user?.primaryOrgSlug) {
-            navigateToOrg(result.user.primaryOrgSlug)
         } else if (result.user) {
-            // Signed in but no org (a super admin with no membership) — send them
-            // to the admin console, where they manage orgs/packages.
-            router.replace('/admin')
+            // Single-org deployment: org identity comes from the deployment, not
+            // the user — send every signed-in user to the app root.
+            navigateToOrg()
         }
     }
 

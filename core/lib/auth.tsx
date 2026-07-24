@@ -4,8 +4,6 @@ import type { ReactNode } from 'react'
 import { useEffect } from 'react'
 import { AppState, type AppStateStatus, Platform } from 'react-native'
 
-export { loadPrimaryOrgFromStorage } from '@tinycld/core/lib/stores/auth-store'
-
 export class AuthRequiredError extends Error {
     constructor(message = 'Authentication required') {
         super(message)
@@ -17,7 +15,6 @@ interface UserShape {
     id: string
     name: string
     email: string
-    primaryOrgSlug?: string
     isDemo: boolean
 }
 

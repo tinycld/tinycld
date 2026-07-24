@@ -1,24 +1,22 @@
 import { expect, test } from '@playwright/test'
 
-// Guards the superuser console route. The page moved from /setup to /admin; this
-// is the regular-CI smoke test that the route resolves, mounts the console (not a
-// blank screen or 404), and wires its document title. It deliberately does NOT
-// log in — the regular e2e seed provisions an app user, not a known superuser
-// password, and the full bootstrap/login/dashboard flow is covered by the
-// docker smoke suite (tests/install/setup-and-packages.spec.ts). Here we only
-// need to prove the route + page shell are intact after the rename.
+// Guards the superuser bootstrap/recovery route. The single admin CONSOLE for
+// logged-in super-admins is now the in-shell /admin area; /setup is the pre-auth
+// bootstrap door (first-run wizard + superuser recovery login). This regular-CI
+// smoke test proves the /setup route resolves, mounts the page shell (not a blank
+// screen or 404), and wires its document title. It deliberately does NOT log in —
+// the regular e2e seed provisions an app user, not a known superuser password,
+// and the full bootstrap/login/dashboard flow is covered by the docker smoke
+// suite (tests/install/setup-and-packages.spec.ts).
 //
-// SetupPage now has a super-admin app-user path: a logged-in user listed in
-// super_admins reaches the dashboard with their normal session (no superuser
-// login). That path is exercised by the docker smoke suite (which can seed a
-// super-admin grant); the anonymous case below still falls through to the
-// superuser login form, so this assertion is unchanged.
-test.describe('Admin console route', () => {
-    test('/admin resolves to the superuser console', async ({ page }) => {
-        await page.goto('/admin')
+// A logged-in super-admin app user who hits /setup is redirected to /admin; the
+// anonymous case below falls through to the superuser login form.
+test.describe('Setup / bootstrap route', () => {
+    test('/setup resolves to the superuser bootstrap console', async ({ page }) => {
+        await page.goto('/setup')
 
-        // DocumentTitle title="Admin" includeOrg={false} → brand + leaf, no org.
-        await expect(page).toHaveTitle('TinyCld: Admin')
+        // DocumentTitle title="Setup" includeOrg={false} → brand + leaf, no org.
+        await expect(page).toHaveTitle('TinyCld: Setup')
 
         // Unauthenticated, the console shows the superuser login form. Its heading
         // and Sign-in button mounting proves SetupPage rendered (not a 404 / blank).

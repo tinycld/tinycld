@@ -1,4 +1,4 @@
-import { and, eq } from '@tanstack/db'
+import { eq } from '@tanstack/db'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
@@ -112,10 +112,8 @@ function NotificationContent() {
     const router = useRouter()
 
     const { data: rawNotifications } = useOrgLiveQuery(
-        (query, { orgId }) =>
-            query
-                .from({ n: notificationsCollection })
-                .where(({ n }) => and(eq(n.org, orgId), eq(n.dismissed, false))),
+        query =>
+            query.from({ n: notificationsCollection }).where(({ n }) => eq(n.dismissed, false)),
         []
     )
 

@@ -65,10 +65,10 @@ function ActiveContactSuggestions({ children }: ContactSuggestionsProps) {
     ]
 
     const { data } = useOrgLiveQuery(
-        (query, { userOrgId }) =>
+        (query, { userId }) =>
             query
                 .from({ contacts: contactsCollection })
-                .where(({ contacts }) => eq(contacts.owner, userOrgId))
+                .where(({ contacts }) => eq(contacts.owner, userId))
                 .orderBy(({ contacts }) => contacts.first_name, 'asc'),
         []
     )

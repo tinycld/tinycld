@@ -1,17 +1,22 @@
-import { eq } from '@tanstack/db'
-import { useLiveQuery } from '@tanstack/react-db'
-import { pb, useStore } from '@tinycld/core/lib/pocketbase'
-import { useOrgSlug } from '@tinycld/core/lib/use-org-slug'
+import { pb } from '@tinycld/core/lib/pocketbase'
 
+// Single-org deployment: the process IS one org, identified by the deployment
+// (subdomain), not by a row in an `orgs` collection or a URL slug. There is no
+// `orgs` collection to query anymore.
+//
+// This shim preserves the `{ orgSlug, orgId, org }` shape so the many call sites
+// that still destructure it keep compiling while queries are de-scoped. Org
+// branding (name/logo) now comes from the deployment/cookie — a follow-up wires
+// that in; for now `org` is null and callers fall back to their defaults.
 export function useOrgInfo() {
-    const orgSlug = useOrgSlug()
-    const [orgsCollection] = useStore('orgs')
-    const { data: orgs } = useLiveQuery(
-        query => query.from({ orgs: orgsCollection }).where(({ orgs }) => eq(orgs.slug, orgSlug)),
-        [orgSlug]
-    )
-    const org = orgs?.[0] ?? null
-    return { orgSlug, orgId: org?.id ?? '', org }
+    return { orgSlug: '', orgId: '', org: null as OrgBranding | null }
+}
+
+interface OrgBranding {
+    id: string
+    name: string
+    slug: string
+    logo?: string
 }
 
 /** Returns a fully-qualified URL for an org's logo, or null when unset. */

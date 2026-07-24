@@ -15,16 +15,14 @@ import { markNavMilestone } from '@tinycld/core/lib/nav-perf'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { OrgSlugProvider } from '@tinycld/core/lib/use-org-slug'
-import { useGlobalSearchParams, usePathname, useUnstableGlobalHref } from 'expo-router'
+import { usePathname, useUnstableGlobalHref } from 'expo-router'
 import { useEffect } from 'react'
 
 export default function OrgLayout() {
-    const { orgSlug = '' } = useGlobalSearchParams<{ orgSlug: string }>()
-
-    trace('OrgLayout mount', { orgSlug })
+    trace('OrgLayout mount')
 
     return (
-        <OrgSlugProvider slug={orgSlug}>
+        <OrgSlugProvider>
             <OrgLayoutInner />
         </OrgSlugProvider>
     )
@@ -75,7 +73,7 @@ function ActivePkgSync() {
     const href = useUnstableGlobalHref()
 
     useEffect(() => {
-        const match = pathname.match(/^\/a\/[^/]+\/([^/?]+)/)
+        const match = pathname.match(/^\/([^/?]+)/)
         const slug = match?.[1] ?? null
         // settings/help are chrome, not a "current package" — they leave the
         // active-package highlight where it was. admin IS tracked as active so

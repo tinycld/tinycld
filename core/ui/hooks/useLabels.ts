@@ -8,15 +8,10 @@ type LabelInfo = { id: string; name: string; color: string }
 export function useLabels() {
     const [labelsCollection] = useStore('labels')
 
-    const { data: allLabels } = useOrgLiveQuery((query, { orgId, userOrgId }) =>
+    const { data: allLabels } = useOrgLiveQuery((query, { userId }) =>
         query
             .from({ labels: labelsCollection })
-            .where(({ labels }) =>
-                and(
-                    eq(labels.org, orgId),
-                    or(eq(labels.user_org, ''), eq(labels.user_org, userOrgId))
-                )
-            )
+            .where(({ labels }) => or(eq(labels.user, ''), eq(labels.user, userId)))
     )
 
     const labels = allLabels ?? []
@@ -39,22 +34,20 @@ export function useLabelsForRecord(recordId: string, collection: string) {
     const [assignmentsCollection, labelsCollection] = useStore('label_assignments', 'labels')
 
     const { data: assignments } = useOrgLiveQuery(
-        (query, { userOrgId }) =>
+        (query, { userId }) =>
             query
                 .from({ label_assignments: assignmentsCollection })
                 .where(({ label_assignments }) =>
                     and(
                         eq(label_assignments.record_id, recordId),
                         eq(label_assignments.collection, collection),
-                        eq(label_assignments.user_org, userOrgId)
+                        eq(label_assignments.user, userId)
                     )
                 ),
         [recordId, collection]
     )
 
-    const { data: allLabels } = useOrgLiveQuery((query, { orgId }) =>
-        query.from({ labels: labelsCollection }).where(({ labels }) => eq(labels.org, orgId))
-    )
+    const { data: allLabels } = useOrgLiveQuery(query => query.from({ labels: labelsCollection }))
 
     const labels = useMemo(() => {
         if (!assignments || !allLabels) return []

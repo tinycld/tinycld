@@ -1,6 +1,5 @@
 import { notify } from '@tinycld/core/lib/notify'
 import { useTakeoutImportStore } from '@tinycld/core/lib/stores/takeout-import-store'
-import { useOrgSlug } from '@tinycld/core/lib/use-org-slug'
 import { useEffect, useRef } from 'react'
 
 export function ImportNotifier() {
@@ -8,7 +7,6 @@ export function ImportNotifier() {
     const progress = useTakeoutImportStore(s => s.progress)
     const overallError = useTakeoutImportStore(s => s.overallError)
     const prevPhaseRef = useRef(phase)
-    const orgSlug = useOrgSlug()
 
     useEffect(() => {
         const prev = prevPhaseRef.current
@@ -33,7 +31,7 @@ export function ImportNotifier() {
                 event: 'import.complete',
                 title: 'Google Takeout import complete',
                 body: `${parts.join(', ')}.`,
-                url: `/a/${orgSlug}/settings/personal`,
+                url: '/settings/personal',
                 data: { source: 'google-takeout', count: totals.imported },
             })
         }
@@ -44,11 +42,11 @@ export function ImportNotifier() {
                 event: 'import.failed',
                 title: 'Google Takeout import failed',
                 body,
-                url: `/a/${orgSlug}/settings/personal`,
+                url: '/settings/personal',
                 data: { source: 'google-takeout', error: body },
             })
         }
-    }, [phase, progress, overallError, orgSlug])
+    }, [phase, progress, overallError])
 
     return null
 }

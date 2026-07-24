@@ -13,7 +13,7 @@ const ACCESS_OPTIONS: { label: string; value: PackageAccessLevel | 'default' }[]
     { label: 'None', value: 'none' },
 ]
 
-export function PackageAccessPanel({ userOrgId }: { userOrgId: string }) {
+export function PackageAccessPanel({ userId }: { userId: string }) {
     const packages = usePackages()
     const [orgPkgAccessCollection] = useStore('org_pkg_access')
 
@@ -21,8 +21,8 @@ export function PackageAccessPanel({ userOrgId }: { userOrgId: string }) {
         query =>
             query
                 .from({ org_pkg_access: orgPkgAccessCollection })
-                .where(({ org_pkg_access }) => eq(org_pkg_access.user_org, userOrgId)),
-        [userOrgId]
+                .where(({ org_pkg_access }) => eq(org_pkg_access.user, userId)),
+        [userId]
     )
 
     const overrideMap = new Map(
@@ -45,7 +45,7 @@ export function PackageAccessPanel({ userOrgId }: { userOrgId: string }) {
             } else {
                 yield orgPkgAccessCollection.insert({
                     id: crypto.randomUUID().replace(/-/g, '').slice(0, 15),
-                    user_org: userOrgId,
+                    user: userId,
                     pkg,
                     access,
                     created: '',

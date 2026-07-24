@@ -87,6 +87,10 @@ export function MoreDrawer() {
 
                 <MoreDrawerAdminItem onNavigate={handleNav} />
 
+                {/* TODO(de-org): the org-switcher below is multi-org member UI —
+                    `useUserOrgs` and the `org.slug === orgSlug` highlight are dead
+                    now that org identity comes from the deployment. Left for the
+                    member-UI de-org stream to remove. */}
                 {orgs.length > 1 ? (
                     <>
                         <View
@@ -157,9 +161,7 @@ export function MoreDrawer() {
                                     key={pkg.slug}
                                     testID={`nav-${pkg.slug}`}
                                     className="flex-row items-center gap-3.5 px-4 py-3.5 rounded-lg"
-                                    onPress={() =>
-                                        handleNav(() => router.push(`/a/${orgSlug}/${pkg.slug}`))
-                                    }
+                                    onPress={() => handleNav(() => router.push(`/${pkg.slug}`))}
                                 >
                                     <Icon size={20} color={color} />
                                     <Text className="text-base font-medium" style={{ color }}>

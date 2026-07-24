@@ -36,7 +36,6 @@ describe('BellChannel', () => {
         const arg = insertMock.mock.calls[0][0]
         expect(arg).toMatchObject({
             user: 'u1',
-            org: 'o1',
             type: 'import.complete',
             title: 'Import done',
             body: '42 contacts',

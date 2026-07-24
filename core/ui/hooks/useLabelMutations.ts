@@ -1,25 +1,24 @@
 import { and, eq } from '@tanstack/db'
+import { useAuth } from '@tinycld/core/lib/auth'
 import { captureException } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
-import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
-import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import { newRecordId } from 'pbtsdb/core'
 
 export function useLabelMutations() {
     const [labelsCollection, assignmentsCollection] = useStore('labels', 'label_assignments')
-    const { orgId } = useOrgInfo()
-    const { userOrgId } = useCurrentRole()
+    const { user } = useAuth()
+    const userId = user.id
 
-    // This user-org's assignments, so unassignLabel can resolve a (label,
+    // This user's assignments, so unassignLabel can resolve a (label,
     // record, collection) tuple to its row id through pbtsdb instead of a raw
     // pb.collection(...).getFirstListItem/delete.
     const { data: myAssignments = [] } = useOrgLiveQuery(
-        (query, { userOrgId: uoId }) =>
+        (query, { userId: uid }) =>
             query
                 .from({ label_assignments: assignmentsCollection })
-                .where(({ label_assignments }) => eq(label_assignments.user_org, uoId)),
+                .where(({ label_assignments }) => eq(label_assignments.user, uid)),
         []
     )
 
@@ -31,8 +30,7 @@ export function useLabelMutations() {
         mutationFn: mutation(function* (data: { name: string; color: string }) {
             yield labelsCollection.insert({
                 id: newRecordId(),
-                org: orgId,
-                user_org: userOrgId,
+                user: userId,
                 name: data.name,
                 color: data.color,
             })
@@ -79,7 +77,7 @@ export function useLabelMutations() {
                 label: labelId,
                 record_id: recordId,
                 collection,
-                user_org: userOrgId,
+                user: userId,
             })
         }),
         onError,
@@ -110,14 +108,14 @@ export function useAssignmentsForRecord(recordId: string, collection: string) {
     const [assignmentsCollection] = useStore('label_assignments')
 
     const { data: assignments } = useOrgLiveQuery(
-        (query, { userOrgId }) =>
+        (query, { userId }) =>
             query
                 .from({ label_assignments: assignmentsCollection })
                 .where(({ label_assignments }) =>
                     and(
                         eq(label_assignments.record_id, recordId),
                         eq(label_assignments.collection, collection),
-                        eq(label_assignments.user_org, userOrgId)
+                        eq(label_assignments.user, userId)
                     )
                 ),
         [recordId, collection]

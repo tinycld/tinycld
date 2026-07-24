@@ -9,7 +9,7 @@ import { Menu, Separator } from '@tinycld/core/ui/menu'
 import { useRouter } from 'expo-router'
 import { LogOut, Settings, User } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
-import { useUserOrgs } from './useUserOrgs'
+import { type UserOrgEntry, useUserOrgs } from './useUserOrgs'
 
 export function UserMenu() {
     const railActiveText = useThemeColor('rail-active-text')
@@ -47,20 +47,7 @@ export function UserMenu() {
                         onPress={() => router.push(orgHref('settings/personal'))}
                     />
 
-                    <Separator />
-
-                    <Menu.Label>Organizations</Menu.Label>
-
-                    {orgs.map(org => (
-                        <MenuActionItem
-                            key={org.id}
-                            label={org.name}
-                            leading={<OrgLogo org={org} size={18} />}
-                            isActive={org.slug === orgSlug}
-                            href={getOrgHrefString(org.slug)}
-                            onPress={() => navigateToOrg(org.slug)}
-                        />
-                    ))}
+                    <OrganizationsSection orgs={orgs} orgSlug={orgSlug} />
 
                     <Separator />
 
@@ -68,5 +55,28 @@ export function UserMenu() {
                 </Menu.Content>
             </Menu.Portal>
         </Menu>
+    )
+}
+
+// Cross-org switching is deferred (no in-app org list yet), so this renders
+// nothing while useUserOrgs() returns []. Kept as a component so the switcher
+// lights up automatically once useUserOrgs is wired to a real source.
+function OrganizationsSection({ orgs, orgSlug }: { orgs: UserOrgEntry[]; orgSlug: string }) {
+    if (orgs.length === 0) return null
+    return (
+        <>
+            <Separator />
+            <Menu.Label>Organizations</Menu.Label>
+            {orgs.map(org => (
+                <MenuActionItem
+                    key={org.id}
+                    label={org.name}
+                    leading={<OrgLogo org={org} size={18} />}
+                    isActive={org.slug === orgSlug}
+                    href={getOrgHrefString(org.slug)}
+                    onPress={() => navigateToOrg(org.slug)}
+                />
+            ))}
+        </>
     )
 }

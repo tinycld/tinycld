@@ -1,7 +1,6 @@
 import { markNavMilestone, markNavPress } from '@tinycld/core/lib/nav-perf'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgSlug } from '@tinycld/core/lib/use-org-slug'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { useRouter } from 'expo-router'
 import { Ellipsis } from 'lucide-react-native'
@@ -24,7 +23,6 @@ export function MobileTabBar() {
     const setMoreOpen = useWorkspaceStore(s => s.setMoreOpen)
     const router = useRouter()
     const insets = useSafeAreaInsets()
-    const orgSlug = useOrgSlug()
 
     const visiblePkgs =
         sorted.length > MAX_VISIBLE_TABS ? sorted.slice(0, MAX_VISIBLE_TABS) : sorted
@@ -74,8 +72,7 @@ export function MobileTabBar() {
                                 // switcher is a Tabs navigator, so this is a
                                 // JUMP_TO to the package's existing frozen screen
                                 // — one instance per route, no remount.
-                                const target =
-                                    lastPackageHref[pkg.slug] ?? `/a/${orgSlug}/${pkg.slug}`
+                                const target = lastPackageHref[pkg.slug] ?? `/${pkg.slug}`
                                 router.navigate(target)
                             })
                         }}

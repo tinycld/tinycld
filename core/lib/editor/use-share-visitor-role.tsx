@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { captureException } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
-import type { UserOrg } from '@tinycld/core/types/pbSchema'
 import { type ShareSession, useShareSession } from '../anon-identity'
 
 // drive_shares is owned by @tinycld/drive — its row shape isn't part of
@@ -45,8 +44,16 @@ interface ShareVisitorRoleResult {
     shareRole?: 'viewer' | 'commentor' | 'editor'
 }
 
+// drive_shares.user_org now stores a users id (multi-org removed); expanding it
+// resolves a users record. Only its id + role are read here. Minimal local shape
+// so core typechecks standalone (the drive collection isn't in core's pbSchema).
+interface ShareUser {
+    id: string
+    role: 'owner' | 'admin' | 'member' | 'guest'
+}
+
 interface DriveShareWithUserOrg extends DriveSharesRow {
-    expand?: { user_org?: UserOrg }
+    expand?: { user_org?: ShareUser }
 }
 
 // useShareLinkVisitorRole resolves the visitor's relationship to THIS
