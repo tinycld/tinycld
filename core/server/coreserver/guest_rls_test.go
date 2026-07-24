@@ -9,73 +9,38 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-// guest_rls_test.go proves the collection access rules tightened by the
-// 187* migrations against PocketBase's REAL rule engine.
+// guest_rls_test.go proves the collection access rules tightened by
+// 1870000000_exclude_guests_from_org_rls.js against PocketBase's REAL rule
+// engine.
 //
-// Background: a "guest" share-link visitor gets a real users record plus a
-// user_org row with role='guest' in the owner's org. ~11 collection rules
-// granted access to ANY org member regardless of role, so a guest membership
-// row would leak the member roster, emails, audit log, org settings and let
-// the guest create files/calendars/mailboxes. These tests assert that a
-// role='guest' member is DENIED while a real (member/owner/admin) member is
-// still ALLOWED.
+// Single-org: a "guest" share-link visitor gets a real users record with
+// role='guest'. The member-scoped collection rules granted access to any
+// authenticated user, so a guest would leak the member roster, emails, audit
+// log, settings and the package toggles. These tests assert that a
+// role='guest' user is DENIED while a real (member/owner/admin) user is still
+// ALLOWED. Role now lives on the users auth record, so the rules key on
+// `@request.auth.role`.
 //
 // Each scenario builds a FRESH TestApp: ApiScenario.Test re-triggers OnServe,
 // which re-registers PocketBase's built-in routes and panics on the duplicate
-// `GET /_/extensions.js` pattern under PB v0.38.1 if a single app is reused
-// across scenarios (see invite_link_test.go for the same note).
+// route pattern if a single app is reused across scenarios.
 //
-// The TestApp runs only PocketBase's bundled system migrations, not this
-// repo's JS migrations, so the schema + the candidate rule strings are built
-// programmatically here. The rule strings MUST stay byte-for-byte identical to
-// what the 187* migrations set — they are the source of truth this test
-// validates.
+// The rule strings MUST stay byte-for-byte identical to what the migration
+// sets — they are the source of truth this test validates.
 
-// ----- candidate rule predicates (mirror the 187* migrations verbatim) -----
+// ----- candidate rule predicates (mirror the migration verbatim) -----
 
-// guestRLSUserOrgRule is user_org's tightened list/view rule.
-// A non-guest member of the org may list the roster; a guest may see ONLY
-// their own membership row. The role pin lives on the same back-relation path
-// prefix as the user pin so PB applies both to the SAME joined user_org row.
-const guestRLSUserOrgRule = `@request.auth.id != "" && (` +
-	`(org.user_org_via_org.user ?= @request.auth.id && org.user_org_via_org.role ?!= "guest")` +
-	` || user = @request.auth.id)`
+// guestRLSNonGuest is the shared "authenticated non-guest" predicate.
+const guestRLSNonGuest = `@request.auth.id != "" && @request.auth.role != "guest"`
 
-// guestRLSUsersRule is users' tightened list/view rule. A user U is visible
-// to a caller who has a NON-GUEST membership in an org U also belongs to,
-// OR when U is the caller themselves (auth-refresh + self-fetch).
-const guestRLSUsersRule = `@request.auth.id != "" && (` +
-	`(user_org_via_user.org.user_org_via_org.user ?= @request.auth.id && ` +
-	`user_org_via_user.org.user_org_via_org.role ?!= "guest")` +
-	` || id = @request.auth.id)`
-
-// guestRLSOrgsMemberRule is the non-guest-member predicate for orgs.
-const guestRLSOrgsMemberRule = `user_org_via_org.user ?= @request.auth.id && ` +
-	`user_org_via_org.role ?!= "guest"`
-
-// guestRLSOrgsReadRule is orgs' tightened list/view rule: a non-guest member
-// sees the org; a guest may VIEW (only) the org(s) they hold a membership in.
-const guestRLSOrgsReadRule = `@request.auth.id != "" && (` +
-	`(` + guestRLSOrgsMemberRule + `)` +
-	` || user_org_via_org.user ?= @request.auth.id)`
-
-// guestRLSOrgsWriteRule is orgs' tightened update rule (guests never update).
-const guestRLSOrgsWriteRule = `@request.auth.id != "" && (` + guestRLSOrgsMemberRule + `)`
-
-// guestRLSOrgScopedRule is the non-guest-member predicate for org-scoped
-// collections (labels, settings, org_pkg_enabled) whose org relation is a
-// direct field `org`.
-const guestRLSOrgScopedRule = `org.user_org_via_org.user ?= @request.auth.id && ` +
-	`org.user_org_via_org.role ?!= "guest"`
-
-// guestRLSAuditRule is audit_logs' tightened list/view rule.
-const guestRLSAuditRule = `@request.auth.id != "" && (` + guestRLSOrgScopedRule + `)`
+// guestRLSUsersRule is users' tightened list/view rule: a non-guest sees
+// everyone; a guest sees ONLY their own row (auth-refresh + self-fetch).
+const guestRLSUsersRule = `(` + guestRLSNonGuest + `) || id = @request.auth.id`
 
 // ---------------------------------------------------------------------------
 
 type guestRLSEnv struct {
 	app    *tests.TestApp
-	org    *core.Record
 	member *core.Record
 	guest  *core.Record
 	// tokens
@@ -83,8 +48,8 @@ type guestRLSEnv struct {
 	guestToken  string
 }
 
-// setupGuestRLSApp builds the orgs / user_org / users(is_demo) / labels /
-// settings / audit_logs / org_pkg_enabled schema, seeds one org with a real
+// setupGuestRLSApp builds the users(role, is_demo) / labels / settings /
+// audit_logs / org_pkg_enabled schema (single-org: no org FK), seeds a real
 // member (role 'member') and a guest (role 'guest'), and returns auth tokens
 // for each. Collection rules are NOT set here — each sub-test applies the
 // candidate rule(s) for the collection under test, then exercises the API.
@@ -101,42 +66,16 @@ func setupGuestRLSApp(t *testing.T) *guestRLSEnv {
 		t.Fatal(err)
 	}
 	users.Fields.Add(&core.BoolField{Name: "is_demo"})
+	users.Fields.Add(&core.SelectField{
+		Name: "role", MaxSelect: 1,
+		Values: []string{"owner", "admin", "member", "guest"},
+	})
 	relaxUsernameMinLength(users)
 	if err := app.Save(users); err != nil {
 		t.Fatal(err)
 	}
 
-	orgs := core.NewBaseCollection("orgs")
-	orgs.Id = "pbc_orgs_00001"
-	orgs.Fields.Add(&core.TextField{Name: "name", Required: true})
-	orgs.Fields.Add(&core.TextField{Name: "slug", Required: true})
-	if err := app.Save(orgs); err != nil {
-		t.Fatal(err)
-	}
-
-	userOrg := core.NewBaseCollection("user_org")
-	userOrg.Id = "pbc_user_org_01"
-	userOrg.Fields.Add(&core.RelationField{
-		Name: "org", Required: true, CollectionId: orgs.Id,
-		CascadeDelete: true, MaxSelect: 1,
-	})
-	userOrg.Fields.Add(&core.RelationField{
-		Name: "user", Required: true, CollectionId: users.Id,
-		CascadeDelete: true, MaxSelect: 1,
-	})
-	userOrg.Fields.Add(&core.SelectField{
-		Name: "role", Required: true, MaxSelect: 1,
-		Values: []string{"owner", "admin", "member", "guest"},
-	})
-	if err := app.Save(userOrg); err != nil {
-		t.Fatal(err)
-	}
-
 	labels := core.NewBaseCollection("labels")
-	labels.Fields.Add(&core.RelationField{
-		Name: "org", Required: true, CollectionId: orgs.Id,
-		CascadeDelete: true, MaxSelect: 1,
-	})
 	labels.Fields.Add(&core.TextField{Name: "name", Required: true})
 	labels.Fields.Add(&core.TextField{Name: "color", Required: true})
 	if err := app.Save(labels); err != nil {
@@ -147,19 +86,11 @@ func setupGuestRLSApp(t *testing.T) *guestRLSEnv {
 	settings.Fields.Add(&core.TextField{Name: "app", Required: true})
 	settings.Fields.Add(&core.TextField{Name: "key", Required: true})
 	settings.Fields.Add(&core.JSONField{Name: "value"})
-	settings.Fields.Add(&core.RelationField{
-		Name: "org", Required: true, CollectionId: orgs.Id,
-		CascadeDelete: true, MaxSelect: 1,
-	})
 	if err := app.Save(settings); err != nil {
 		t.Fatal(err)
 	}
 
 	auditLogs := core.NewBaseCollection("audit_logs")
-	auditLogs.Fields.Add(&core.RelationField{
-		Name: "org", Required: true, CollectionId: orgs.Id,
-		CascadeDelete: true, MaxSelect: 1,
-	})
 	auditLogs.Fields.Add(&core.TextField{Name: "action", Required: true})
 	auditLogs.Fields.Add(&core.TextField{Name: "resource_type", Required: true})
 	auditLogs.Fields.Add(&core.TextField{Name: "resource_id", Required: true})
@@ -168,29 +99,14 @@ func setupGuestRLSApp(t *testing.T) *guestRLSEnv {
 	}
 
 	orgPkgEnabled := core.NewBaseCollection("org_pkg_enabled")
-	orgPkgEnabled.Fields.Add(&core.RelationField{
-		Name: "org", Required: true, CollectionId: orgs.Id,
-		CascadeDelete: true, MaxSelect: 1,
-	})
 	orgPkgEnabled.Fields.Add(&core.TextField{Name: "pkg", Required: true})
 	orgPkgEnabled.Fields.Add(&core.BoolField{Name: "enabled"})
 	if err := app.Save(orgPkgEnabled); err != nil {
 		t.Fatal(err)
 	}
 
-	// Seed org + a real member + a guest.
-	org := core.NewRecord(orgs)
-	org.Set("name", "Acme")
-	org.Set("slug", "acme")
-	if err := app.Save(org); err != nil {
-		t.Fatal(err)
-	}
-
-	member := guestRLSUser(t, app, "member@test.local")
-	guest := guestRLSUser(t, app, "guest@test.local")
-
-	guestRLSMembership(t, app, member, org, "member")
-	guestRLSMembership(t, app, guest, org, "guest")
+	member := guestRLSUser(t, app, "member@test.local", "member")
+	guest := guestRLSUser(t, app, "guest@test.local", "guest")
 
 	memberToken, err := member.NewAuthToken()
 	if err != nil {
@@ -203,7 +119,6 @@ func setupGuestRLSApp(t *testing.T) *guestRLSEnv {
 
 	return &guestRLSEnv{
 		app:         app,
-		org:         org,
 		member:      member,
 		guest:       guest,
 		memberToken: memberToken,
@@ -211,7 +126,7 @@ func setupGuestRLSApp(t *testing.T) *guestRLSEnv {
 	}
 }
 
-func guestRLSUser(t *testing.T, app core.App, email string) *core.Record {
+func guestRLSUser(t *testing.T, app core.App, email, role string) *core.Record {
 	t.Helper()
 	col, err := app.FindCollectionByNameOrId("users")
 	if err != nil {
@@ -221,6 +136,7 @@ func guestRLSUser(t *testing.T, app core.App, email string) *core.Record {
 	r.SetEmail(email)
 	r.Set("username", DeriveUsername(email))
 	r.Set("name", "Test")
+	r.Set("role", role)
 	r.SetVerified(true)
 	r.SetPassword("Password123!")
 	if err := app.Save(r); err != nil {
@@ -229,23 +145,7 @@ func guestRLSUser(t *testing.T, app core.App, email string) *core.Record {
 	return r
 }
 
-func guestRLSMembership(t *testing.T, app core.App, user, org *core.Record, role string) *core.Record {
-	t.Helper()
-	col, err := app.FindCollectionByNameOrId("user_org")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := core.NewRecord(col)
-	r.Set("user", user.Id)
-	r.Set("org", org.Id)
-	r.Set("role", role)
-	if err := app.Save(r); err != nil {
-		t.Fatal(err)
-	}
-	return r
-}
-
-// setRule applies a list+view rule to a collection (most rules) and re-saves.
+// setListView applies a list+view rule to a collection and re-saves.
 func setListView(t *testing.T, app core.App, name, rule string) {
 	t.Helper()
 	col, err := app.FindCollectionByNameOrId(name)
@@ -276,51 +176,6 @@ func runListScenario(t *testing.T, app *tests.TestApp, name, token string, wantC
 	scenario.Test(t)
 }
 
-// ============================ user_org ============================
-
-func TestGuestRLS_UserOrg_GuestSeesOnlyOwnRow(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	setListView(t, env.app, "user_org", guestRLSUserOrgRule)
-
-	// Guest: must see exactly ONE row (their own), never the member's row.
-	t.Run("guest sees only own row", func(t *testing.T) {
-		runListScenario(t, env.app, "user_org", env.guestToken, []string{
-			`"totalItems":1`,
-			`"role":"guest"`,
-		})
-	})
-}
-
-func TestGuestRLS_UserOrg_GuestCannotSeeMemberRow(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	setListView(t, env.app, "user_org", guestRLSUserOrgRule)
-
-	// The guest's list must NOT contain a member-role row.
-	scenario := &tests.ApiScenario{
-		Method:                http.MethodGet,
-		URL:                   "/api/collections/user_org/records",
-		Headers:               map[string]string{"Authorization": env.guestToken},
-		ExpectedStatus:        http.StatusOK,
-		ExpectedContent:       []string{`"totalItems":1`},
-		NotExpectedContent:    []string{`"role":"member"`},
-		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
-		DisableTestAppCleanup: true,
-	}
-	scenario.Test(t)
-}
-
-func TestGuestRLS_UserOrg_MemberSeesRoster(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	setListView(t, env.app, "user_org", guestRLSUserOrgRule)
-
-	// Member: must see BOTH rows (member + guest) — the full roster.
-	runListScenario(t, env.app, "user_org", env.memberToken, []string{
-		`"totalItems":2`,
-		`"role":"guest"`,
-		`"role":"member"`,
-	})
-}
-
 // ============================ users ============================
 
 func TestGuestRLS_Users_GuestSeesOnlySelf(t *testing.T) {
@@ -338,8 +193,7 @@ func TestGuestRLS_Users_GuestCannotSeeMemberEmail(t *testing.T) {
 	setListView(t, env.app, "users", guestRLSUsersRule)
 
 	// The roster-leak property: the guest sees themselves (totalItems:1) but
-	// no other member's email. The `|| id = @request.auth.id` self-carve-out
-	// does not widen what the guest can see about anyone else.
+	// no other member's email.
 	scenario := &tests.ApiScenario{
 		Method:                http.MethodGet,
 		URL:                   "/api/collections/users/records",
@@ -357,216 +211,26 @@ func TestGuestRLS_Users_MemberSeesOtherMembers(t *testing.T) {
 	env := setupGuestRLSApp(t)
 	setListView(t, env.app, "users", guestRLSUsersRule)
 
-	// Member shares the org and is non-guest, so sees both user records
-	// (their own + the guest's). The key assertion is they still see >=2.
-	runListScenario(t, env.app, "users", env.memberToken, []string{`"totalItems":2`})
-}
-
-// ===================== same-row semantics + cross-org isolation =====================
-//
-// These guard the SUBTLE part of the predicate: the role pin must apply to the
-// CALLER's OWN membership row, not to "some non-guest row in the org." With a
-// second real member added, the org contains multiple non-guest rows, so an
-// "any-row" misreading of `... role ?!= "guest"` would leak the roster to the
-// guest. We assert the guest still sees only their own row — proving PB applies
-// both legs of the same relation-path prefix to the same joined row.
-
-// addSecondMember adds another role='member' user to env.org. The org then has
-// two non-guest rows + one guest row — the trap configuration.
-func addSecondMember(t *testing.T, env *guestRLSEnv) {
-	t.Helper()
-	m2 := guestRLSUser(t, env.app, "member2@test.local")
-	guestRLSMembership(t, env.app, m2, env.org, "member")
-}
-
-func TestGuestRLS_UserOrg_GuestStillIsolatedWithMultipleMembers(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	addSecondMember(t, env)
-	setListView(t, env.app, "user_org", guestRLSUserOrgRule)
-
-	scenario := &tests.ApiScenario{
-		Method:                http.MethodGet,
-		URL:                   "/api/collections/user_org/records",
-		Headers:               map[string]string{"Authorization": env.guestToken},
-		ExpectedStatus:        http.StatusOK,
-		ExpectedContent:       []string{`"totalItems":1`, `"role":"guest"`},
-		NotExpectedContent:    []string{`"role":"member"`},
-		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
-		DisableTestAppCleanup: true,
-	}
-	scenario.Test(t)
-}
-
-func TestGuestRLS_Users_GuestStillBlockedWithMultipleMembers(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	addSecondMember(t, env)
-	setListView(t, env.app, "users", guestRLSUsersRule)
-
-	// Even with two non-guest members in the shared org, the guest sees only
-	// themselves — neither member's row leaks. The same-relation-path-prefix
-	// pin still applies to the non-guest disjunct; the new self-carve-out
-	// matches only the guest's own id.
-	scenario := &tests.ApiScenario{
-		Method:                http.MethodGet,
-		URL:                   "/api/collections/users/records",
-		Headers:               map[string]string{"Authorization": env.guestToken},
-		ExpectedStatus:        http.StatusOK,
-		ExpectedContent:       []string{`"totalItems":1`, "guest@test.local"},
-		NotExpectedContent:    []string{"member@test.local", "member2@test.local"},
-		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
-		DisableTestAppCleanup: true,
-	}
-	scenario.Test(t)
-}
-
-func TestGuestRLS_UserOrg_CrossOrgIsolation(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	setListView(t, env.app, "user_org", guestRLSUserOrgRule)
-
-	// A separate org with its own member; env.member belongs only to org A and
-	// must never see org B's membership rows.
-	orgsCol, err := env.app.FindCollectionByNameOrId("orgs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	orgB := core.NewRecord(orgsCol)
-	orgB.Set("name", "OrgB")
-	orgB.Set("slug", "orgb")
-	if err := env.app.Save(orgB); err != nil {
-		t.Fatal(err)
-	}
-	stranger := guestRLSUser(t, env.app, "stranger@test.local")
-	guestRLSMembership(t, env.app, stranger, orgB, "member")
-
-	scenario := &tests.ApiScenario{
-		Method:                http.MethodGet,
-		URL:                   "/api/collections/user_org/records",
-		Headers:               map[string]string{"Authorization": env.memberToken},
-		ExpectedStatus:        http.StatusOK,
-		ExpectedContent:       []string{`"totalItems":2`}, // only org A's two rows
-		NotExpectedContent:    []string{stranger.Id},
-		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
-		DisableTestAppCleanup: true,
-	}
-	scenario.Test(t)
-}
-
-// ============================ orgs ============================
-
-func TestGuestRLS_Orgs_GuestCanViewOwnOrgOnly(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	setListView(t, env.app, "orgs", guestRLSOrgsReadRule)
-
-	// A guest legitimately needs to read the org row they're a guest in (for
-	// the editor to show the org name). They see exactly that one org.
-	runListScenario(t, env.app, "orgs", env.guestToken, []string{
-		`"totalItems":1`,
-		`"Acme"`,
+	// A non-guest member sees other users' records — including the seeded
+	// guest and the member's own row. (The bundled PB test fixture also ships
+	// a few extra users, so assert on visible content rather than a brittle
+	// exact count.)
+	// Emails are hidden unless emailVisibility is set, so assert on usernames
+	// (always visible) — the guest's row being visible is the key property.
+	runListScenario(t, env.app, "users", env.memberToken, []string{
+		`"username":"member"`, `"username":"guest"`,
 	})
 }
 
-func TestGuestRLS_Orgs_GuestCannotSeeOtherOrg(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	setListView(t, env.app, "orgs", guestRLSOrgsReadRule)
-
-	// Seed a SECOND org the guest has no membership in. The guest must not see it.
-	orgsCol, err := env.app.FindCollectionByNameOrId("orgs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	other := core.NewRecord(orgsCol)
-	other.Set("name", "Secret Org")
-	other.Set("slug", "secret")
-	if err := env.app.Save(other); err != nil {
-		t.Fatal(err)
-	}
-
-	scenario := &tests.ApiScenario{
-		Method:                http.MethodGet,
-		URL:                   "/api/collections/orgs/records",
-		Headers:               map[string]string{"Authorization": env.guestToken},
-		ExpectedStatus:        http.StatusOK,
-		ExpectedContent:       []string{`"totalItems":1`},
-		NotExpectedContent:    []string{"Secret Org"},
-		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
-		DisableTestAppCleanup: true,
-	}
-	scenario.Test(t)
-}
-
-func TestGuestRLS_Orgs_MemberCanView(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	setListView(t, env.app, "orgs", guestRLSOrgsReadRule)
-
-	runListScenario(t, env.app, "orgs", env.memberToken, []string{
-		`"totalItems":1`,
-		`"Acme"`,
-	})
-}
-
-func TestGuestRLS_Orgs_GuestCannotUpdate(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	// Need a read rule too so a 404-vs-403 distinction is meaningful; set both.
-	setListView(t, env.app, "orgs", guestRLSOrgsReadRule)
-	orgsCol, err := env.app.FindCollectionByNameOrId("orgs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	orgsCol.UpdateRule = strPtrGuest(guestRLSOrgsWriteRule)
-	if err := env.app.Save(orgsCol); err != nil {
-		t.Fatal(err)
-	}
-
-	// Guest PATCH must be denied (the update rule excludes guests). PB returns
-	// 404 when the record fails the update rule's record-level filter.
-	scenario := &tests.ApiScenario{
-		Method:                http.MethodPatch,
-		URL:                   "/api/collections/orgs/records/" + env.org.Id,
-		Body:                  strings.NewReader(`{"name":"Hijacked"}`),
-		Headers:               map[string]string{"Authorization": env.guestToken, "Content-Type": "application/json"},
-		ExpectedStatus:        http.StatusNotFound,
-		ExpectedContent:       []string{`"message"`},
-		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
-		DisableTestAppCleanup: true,
-	}
-	scenario.Test(t)
-}
-
-func TestGuestRLS_Orgs_MemberCanUpdate(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	setListView(t, env.app, "orgs", guestRLSOrgsReadRule)
-	orgsCol, err := env.app.FindCollectionByNameOrId("orgs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	orgsCol.UpdateRule = strPtrGuest(guestRLSOrgsWriteRule)
-	if err := env.app.Save(orgsCol); err != nil {
-		t.Fatal(err)
-	}
-
-	scenario := &tests.ApiScenario{
-		Method:                http.MethodPatch,
-		URL:                   "/api/collections/orgs/records/" + env.org.Id,
-		Body:                  strings.NewReader(`{"name":"Renamed"}`),
-		Headers:               map[string]string{"Authorization": env.memberToken, "Content-Type": "application/json"},
-		ExpectedStatus:        http.StatusOK,
-		ExpectedContent:       []string{`"name":"Renamed"`},
-		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
-		DisableTestAppCleanup: true,
-	}
-	scenario.Test(t)
-}
-
-// ============================ labels (org-scoped, all CRUD) ============================
+// ============================ labels ============================
 
 func TestGuestRLS_Labels_GuestDeniedMemberAllowed(t *testing.T) {
 	env := setupGuestRLSApp(t)
-	setAllCRUD(t, env.app, "labels", guestRLSOrgScopedRule)
+	setAllCRUD(t, env.app, "labels", guestRLSNonGuest)
 
 	// Seed a label so list has something for a member to see.
 	labelsCol, _ := env.app.FindCollectionByNameOrId("labels")
 	lbl := core.NewRecord(labelsCol)
-	lbl.Set("org", env.org.Id)
 	lbl.Set("name", "Important")
 	lbl.Set("color", "#f00")
 	if err := env.app.Save(lbl); err != nil {
@@ -580,10 +244,9 @@ func TestGuestRLS_Labels_GuestDeniedMemberAllowed(t *testing.T) {
 
 func TestGuestRLS_Labels_MemberSeesLabels(t *testing.T) {
 	env := setupGuestRLSApp(t)
-	setAllCRUD(t, env.app, "labels", guestRLSOrgScopedRule)
+	setAllCRUD(t, env.app, "labels", guestRLSNonGuest)
 	labelsCol, _ := env.app.FindCollectionByNameOrId("labels")
 	lbl := core.NewRecord(labelsCol)
-	lbl.Set("org", env.org.Id)
 	lbl.Set("name", "Important")
 	lbl.Set("color", "#f00")
 	if err := env.app.Save(lbl); err != nil {
@@ -594,12 +257,12 @@ func TestGuestRLS_Labels_MemberSeesLabels(t *testing.T) {
 
 func TestGuestRLS_Labels_GuestCannotCreate(t *testing.T) {
 	env := setupGuestRLSApp(t)
-	setAllCRUD(t, env.app, "labels", guestRLSOrgScopedRule)
+	setAllCRUD(t, env.app, "labels", guestRLSNonGuest)
 
 	scenario := &tests.ApiScenario{
 		Method:                http.MethodPost,
 		URL:                   "/api/collections/labels/records",
-		Body:                  strings.NewReader(`{"org":"` + env.org.Id + `","name":"X","color":"#000"}`),
+		Body:                  strings.NewReader(`{"name":"X","color":"#000"}`),
 		Headers:               map[string]string{"Authorization": env.guestToken, "Content-Type": "application/json"},
 		ExpectedStatus:        http.StatusBadRequest,
 		ExpectedContent:       []string{`"message"`},
@@ -609,17 +272,16 @@ func TestGuestRLS_Labels_GuestCannotCreate(t *testing.T) {
 	scenario.Test(t)
 }
 
-// ============================ settings (org-scoped) ============================
+// ============================ settings ============================
 
 func TestGuestRLS_Settings_GuestDenied(t *testing.T) {
 	env := setupGuestRLSApp(t)
-	setListViewCreateUpdate(t, env.app, "settings", guestRLSOrgScopedRule)
+	setListViewCreateUpdate(t, env.app, "settings", guestRLSNonGuest)
 
 	settingsCol, _ := env.app.FindCollectionByNameOrId("settings")
 	s := core.NewRecord(settingsCol)
 	s.Set("app", "core")
 	s.Set("key", "theme")
-	s.Set("org", env.org.Id)
 	if err := env.app.Save(s); err != nil {
 		t.Fatal(err)
 	}
@@ -629,12 +291,11 @@ func TestGuestRLS_Settings_GuestDenied(t *testing.T) {
 
 func TestGuestRLS_Settings_MemberAllowed(t *testing.T) {
 	env := setupGuestRLSApp(t)
-	setListViewCreateUpdate(t, env.app, "settings", guestRLSOrgScopedRule)
+	setListViewCreateUpdate(t, env.app, "settings", guestRLSNonGuest)
 	settingsCol, _ := env.app.FindCollectionByNameOrId("settings")
 	s := core.NewRecord(settingsCol)
 	s.Set("app", "core")
 	s.Set("key", "theme")
-	s.Set("org", env.org.Id)
 	if err := env.app.Save(s); err != nil {
 		t.Fatal(err)
 	}
@@ -645,11 +306,10 @@ func TestGuestRLS_Settings_MemberAllowed(t *testing.T) {
 
 func TestGuestRLS_AuditLogs_GuestCannotRead(t *testing.T) {
 	env := setupGuestRLSApp(t)
-	setListView(t, env.app, "audit_logs", guestRLSAuditRule)
+	setListView(t, env.app, "audit_logs", guestRLSNonGuest)
 
 	auditCol, _ := env.app.FindCollectionByNameOrId("audit_logs")
 	a := core.NewRecord(auditCol)
-	a.Set("org", env.org.Id)
 	a.Set("action", "created")
 	a.Set("resource_type", "drive_items")
 	a.Set("resource_id", "abc123")
@@ -662,10 +322,9 @@ func TestGuestRLS_AuditLogs_GuestCannotRead(t *testing.T) {
 
 func TestGuestRLS_AuditLogs_MemberCanRead(t *testing.T) {
 	env := setupGuestRLSApp(t)
-	setListView(t, env.app, "audit_logs", guestRLSAuditRule)
+	setListView(t, env.app, "audit_logs", guestRLSNonGuest)
 	auditCol, _ := env.app.FindCollectionByNameOrId("audit_logs")
 	a := core.NewRecord(auditCol)
-	a.Set("org", env.org.Id)
 	a.Set("action", "created")
 	a.Set("resource_type", "drive_items")
 	a.Set("resource_id", "abc123")
@@ -679,11 +338,10 @@ func TestGuestRLS_AuditLogs_MemberCanRead(t *testing.T) {
 
 func TestGuestRLS_OrgPkgEnabled_GuestDenied(t *testing.T) {
 	env := setupGuestRLSApp(t)
-	setAllCRUD(t, env.app, "org_pkg_enabled", guestRLSOrgScopedRule)
+	setAllCRUD(t, env.app, "org_pkg_enabled", guestRLSNonGuest)
 
 	opeCol, _ := env.app.FindCollectionByNameOrId("org_pkg_enabled")
 	o := core.NewRecord(opeCol)
-	o.Set("org", env.org.Id)
 	o.Set("pkg", "drive")
 	o.Set("enabled", true)
 	if err := env.app.Save(o); err != nil {
@@ -695,10 +353,9 @@ func TestGuestRLS_OrgPkgEnabled_GuestDenied(t *testing.T) {
 
 func TestGuestRLS_OrgPkgEnabled_MemberAllowed(t *testing.T) {
 	env := setupGuestRLSApp(t)
-	setAllCRUD(t, env.app, "org_pkg_enabled", guestRLSOrgScopedRule)
+	setAllCRUD(t, env.app, "org_pkg_enabled", guestRLSNonGuest)
 	opeCol, _ := env.app.FindCollectionByNameOrId("org_pkg_enabled")
 	o := core.NewRecord(opeCol)
-	o.Set("org", env.org.Id)
 	o.Set("pkg", "drive")
 	o.Set("enabled", true)
 	if err := env.app.Save(o); err != nil {
@@ -708,8 +365,6 @@ func TestGuestRLS_OrgPkgEnabled_MemberAllowed(t *testing.T) {
 }
 
 // ----- small helpers -----
-
-func strPtrGuest(s string) *string { return &s }
 
 func setAllCRUD(t *testing.T, app core.App, name, rule string) {
 	t.Helper()

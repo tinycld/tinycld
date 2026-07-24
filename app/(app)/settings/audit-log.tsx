@@ -170,22 +170,21 @@ function AuditLogList({
     const [auditLogsCollection] = useStore('audit_logs')
 
     const { data: logs } = useOrgLiveQuery(
-        (query, { orgId }) => {
-            const q = query
-                .from({ audit_logs: auditLogsCollection })
-                .where(({ audit_logs }) => {
-                    let condition = eq(audit_logs.org, orgId)
-                    if (actionFilter) {
-                        condition = and(condition, eq(audit_logs.action, actionFilter))
+        query => {
+            let q = query.from({ audit_logs: auditLogsCollection })
+            if (actionFilter || resourceFilter) {
+                q = q.where(({ audit_logs }) => {
+                    if (actionFilter && resourceFilter) {
+                        return and(
+                            eq(audit_logs.action, actionFilter),
+                            eq(audit_logs.resource_type, resourceFilter)
+                        )
                     }
-                    if (resourceFilter) {
-                        condition = and(condition, eq(audit_logs.resource_type, resourceFilter))
-                    }
-                    return condition
+                    if (actionFilter) return eq(audit_logs.action, actionFilter)
+                    return eq(audit_logs.resource_type, resourceFilter)
                 })
-                .orderBy(({ audit_logs }) => audit_logs.created, 'desc')
-
-            return q
+            }
+            return q.orderBy(({ audit_logs }) => audit_logs.created, 'desc')
         },
         [actionFilter, resourceFilter]
     )

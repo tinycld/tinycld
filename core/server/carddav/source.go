@@ -21,7 +21,7 @@ type Source struct {
 	Collection string
 
 	// ListFilter is the PB filter selecting a book's objects, with {:ownerId}
-	// bound to the resolved owner (user_org) id — e.g.
+	// bound to the resolved owner (users) id — e.g.
 	// `owner = {:ownerId} && deleted_at = ''`.
 	ListFilter string
 
@@ -29,7 +29,7 @@ type Source struct {
 	Sort string
 
 	// OwnerField is the collection field holding the owner reference
-	// (a relation to a user_org row), e.g. "owner".
+	// (a relation to a users row), e.g. "owner".
 	OwnerField string
 
 	// UIDField is the collection field holding the vCard UID (e.g. "vcard_uid").

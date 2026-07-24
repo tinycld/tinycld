@@ -9,10 +9,12 @@ import (
 )
 
 // setupCommentMentionTestApp builds the minimum collection graph the
-// notify hook touches: users, orgs, user_org, drive_items, text_comments,
-// comment_mentions, and notifications. NewTestApp() ships the standard
-// PB users + collections (settings, etc.) but not the tinycld
-// extensions, so we add them inline.
+// notify hook touches: users, drive_items, text_comments, comment_mentions,
+// and notifications. NewTestApp() ships the standard PB users + collections
+// (settings, etc.) but not the tinycld extensions, so we add them inline.
+//
+// Single-org: there are no orgs/user_org collections. mentioned_user_org and
+// text_comments.author keep their field names but hold users ids directly.
 func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 	t.Helper()
 	app, err := tests.NewTestApp()
@@ -37,32 +39,10 @@ func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 		t.Fatal(err)
 	}
 
-	orgs := core.NewBaseCollection("orgs")
-	orgs.Fields.Add(&core.TextField{Name: "name", Required: true})
-	orgs.Fields.Add(&core.TextField{Name: "slug", Required: true})
-	if err := app.Save(orgs); err != nil {
-		t.Fatal(err)
-	}
-
-	userOrg := core.NewBaseCollection("user_org")
-	userOrg.Fields.Add(&core.RelationField{
-		Name: "org", Required: true, CollectionId: orgs.Id, MaxSelect: 1,
-	})
-	userOrg.Fields.Add(&core.RelationField{
-		Name: "user", Required: true, CollectionId: users.Id, MaxSelect: 1,
-	})
-	userOrg.Fields.Add(&core.SelectField{
-		Name: "role", Required: true, MaxSelect: 1,
-		Values: []string{"owner", "admin", "member", "guest"},
-	})
-	if err := app.Save(userOrg); err != nil {
-		t.Fatal(err)
-	}
-
 	driveItems := core.NewBaseCollection("drive_items")
 	driveItems.Fields.Add(&core.TextField{Name: "name", Required: true})
 	driveItems.Fields.Add(&core.RelationField{
-		Name: "org", Required: true, CollectionId: orgs.Id, MaxSelect: 1,
+		Name: "created_by", CollectionId: users.Id, MaxSelect: 1,
 	})
 	if err := app.Save(driveItems); err != nil {
 		t.Fatal(err)
@@ -78,7 +58,7 @@ func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 	textComments.Fields.Add(&core.TextField{Name: "body"})
 	textComments.Fields.Add(&core.TextField{Name: "resolved_at"})
 	textComments.Fields.Add(&core.RelationField{
-		Name: "author", Required: true, CollectionId: userOrg.Id, MaxSelect: 1,
+		Name: "author", Required: true, CollectionId: users.Id, MaxSelect: 1,
 	})
 	textComments.Fields.Add(&core.TextField{Name: "author_name"})
 	textComments.Fields.Add(&core.TextField{Name: "suggestion_id"})
@@ -94,7 +74,7 @@ func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 		Name: "drive_item", Required: true, CollectionId: driveItems.Id, MaxSelect: 1,
 	})
 	commentMentions.Fields.Add(&core.RelationField{
-		Name: "mentioned_user_org", Required: true, CollectionId: userOrg.Id, MaxSelect: 1,
+		Name: "mentioned_user_org", Required: true, CollectionId: users.Id, MaxSelect: 1,
 	})
 	if err := app.Save(commentMentions); err != nil {
 		t.Fatal(err)
@@ -103,9 +83,6 @@ func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 	notifications := core.NewBaseCollection("notifications")
 	notifications.Fields.Add(&core.RelationField{
 		Name: "user", Required: true, CollectionId: users.Id, MaxSelect: 1,
-	})
-	notifications.Fields.Add(&core.RelationField{
-		Name: "org", CollectionId: orgs.Id, MaxSelect: 1,
 	})
 	notifications.Fields.Add(&core.TextField{Name: "type"})
 	notifications.Fields.Add(&core.TextField{Name: "package"})
@@ -123,14 +100,11 @@ func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 }
 
 type mentionFixture struct {
-	app          *tests.TestApp
-	org          *core.Record
-	authorUser   *core.Record
-	authorUO     *core.Record
-	mentionUser  *core.Record
-	mentionUO    *core.Record
-	driveItem    *core.Record
-	commentRoot  *core.Record
+	app         *tests.TestApp
+	authorUser  *core.Record
+	mentionUser *core.Record
+	driveItem   *core.Record
+	commentRoot *core.Record
 }
 
 func seedMentionFixture(t *testing.T) *mentionFixture {
@@ -156,35 +130,10 @@ func seedMentionFixture(t *testing.T) *mentionFixture {
 		t.Fatal(err)
 	}
 
-	orgsCol, _ := app.FindCollectionByNameOrId("orgs")
-	org := core.NewRecord(orgsCol)
-	org.Set("name", "Acme")
-	org.Set("slug", "acme")
-	if err := app.Save(org); err != nil {
-		t.Fatal(err)
-	}
-
-	userOrgCol, _ := app.FindCollectionByNameOrId("user_org")
-	authorUO := core.NewRecord(userOrgCol)
-	authorUO.Set("org", org.Id)
-	authorUO.Set("user", authorUser.Id)
-	authorUO.Set("role", "member")
-	if err := app.Save(authorUO); err != nil {
-		t.Fatal(err)
-	}
-
-	mentionUO := core.NewRecord(userOrgCol)
-	mentionUO.Set("org", org.Id)
-	mentionUO.Set("user", mentionUser.Id)
-	mentionUO.Set("role", "member")
-	if err := app.Save(mentionUO); err != nil {
-		t.Fatal(err)
-	}
-
 	driveCol, _ := app.FindCollectionByNameOrId("drive_items")
 	driveItem := core.NewRecord(driveCol)
 	driveItem.Set("name", "doc.txt")
-	driveItem.Set("org", org.Id)
+	driveItem.Set("created_by", authorUser.Id)
 	if err := app.Save(driveItem); err != nil {
 		t.Fatal(err)
 	}
@@ -194,8 +143,8 @@ func seedMentionFixture(t *testing.T) *mentionFixture {
 	commentRoot.Set("drive_item", driveItem.Id)
 	commentRoot.Set("comment_id", "cm_xyz")
 	commentRoot.Set("parent_comment", "")
-	commentRoot.Set("body", "hi [[@"+mentionUO.Id+"]]")
-	commentRoot.Set("author", authorUO.Id)
+	commentRoot.Set("body", "hi [[@"+mentionUser.Id+"]]")
+	commentRoot.Set("author", authorUser.Id)
 	commentRoot.Set("author_name", "Alice")
 	if err := app.Save(commentRoot); err != nil {
 		t.Fatal(err)
@@ -203,11 +152,8 @@ func seedMentionFixture(t *testing.T) *mentionFixture {
 
 	return &mentionFixture{
 		app:         app,
-		org:         org,
 		authorUser:  authorUser,
-		authorUO:    authorUO,
 		mentionUser: mentionUser,
-		mentionUO:   mentionUO,
 		driveItem:   driveItem,
 		commentRoot: commentRoot,
 	}
@@ -253,7 +199,7 @@ func mkMention(t *testing.T, app core.App, f *mentionFixture, collection string)
 	mention.Set("comment_collection", collection)
 	mention.Set("comment_record", f.commentRoot.Id)
 	mention.Set("drive_item", f.driveItem.Id)
-	mention.Set("mentioned_user_org", f.mentionUO.Id)
+	mention.Set("mentioned_user_org", f.mentionUser.Id)
 	if err := app.Save(mention); err != nil {
 		t.Fatal(err)
 	}
@@ -283,10 +229,7 @@ func TestCommentMention_HappyPathWritesNotification(t *testing.T) {
 	if got := n.GetString("package"); got != "text" {
 		t.Errorf("package = %q, want text", got)
 	}
-	if got := n.GetString("org"); got != f.org.Id {
-		t.Errorf("org = %q, want %q", got, f.org.Id)
-	}
-	wantURL := "https://app.test.local/a/acme/text/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
+	wantURL := "https://app.test.local/p/text/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q", got, wantURL)
 	}
@@ -303,8 +246,8 @@ func TestCommentMention_ReplyDeepLinksToRootThread(t *testing.T) {
 	reply.Set("drive_item", f.driveItem.Id)
 	reply.Set("comment_id", "cm_xyz")
 	reply.Set("parent_comment", f.commentRoot.Id)
-	reply.Set("body", "ping [[@"+f.mentionUO.Id+"]]")
-	reply.Set("author", f.authorUO.Id)
+	reply.Set("body", "ping [[@"+f.mentionUser.Id+"]]")
+	reply.Set("author", f.authorUser.Id)
 	reply.Set("author_name", "Alice")
 	if err := f.app.Save(reply); err != nil {
 		t.Fatal(err)
@@ -315,7 +258,7 @@ func TestCommentMention_ReplyDeepLinksToRootThread(t *testing.T) {
 	mention.Set("comment_collection", "text_comments")
 	mention.Set("comment_record", reply.Id)
 	mention.Set("drive_item", f.driveItem.Id)
-	mention.Set("mentioned_user_org", f.mentionUO.Id)
+	mention.Set("mentioned_user_org", f.mentionUser.Id)
 	if err := f.app.Save(mention); err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +269,7 @@ func TestCommentMention_ReplyDeepLinksToRootThread(t *testing.T) {
 	if n == nil {
 		t.Fatal("expected notification, got none")
 	}
-	wantURL := "https://app.test.local/a/acme/text/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
+	wantURL := "https://app.test.local/p/text/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q (reply should deep-link to root)", got, wantURL)
 	}
@@ -344,8 +287,8 @@ func TestCommentMention_SuggestionReplyDeepLinksWithFocusSuggestionParam(t *test
 	suggestionReply.Set("drive_item", f.driveItem.Id)
 	suggestionReply.Set("comment_id", "synth_xyz")
 	suggestionReply.Set("parent_comment", "")
-	suggestionReply.Set("body", "ping [[@"+f.mentionUO.Id+"]]")
-	suggestionReply.Set("author", f.authorUO.Id)
+	suggestionReply.Set("body", "ping [[@"+f.mentionUser.Id+"]]")
+	suggestionReply.Set("author", f.authorUser.Id)
 	suggestionReply.Set("author_name", "Alice")
 	suggestionReply.Set("suggestion_id", "sug_abc123")
 	if err := f.app.Save(suggestionReply); err != nil {
@@ -357,7 +300,7 @@ func TestCommentMention_SuggestionReplyDeepLinksWithFocusSuggestionParam(t *test
 	mention.Set("comment_collection", "text_comments")
 	mention.Set("comment_record", suggestionReply.Id)
 	mention.Set("drive_item", f.driveItem.Id)
-	mention.Set("mentioned_user_org", f.mentionUO.Id)
+	mention.Set("mentioned_user_org", f.mentionUser.Id)
 	if err := f.app.Save(mention); err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +311,7 @@ func TestCommentMention_SuggestionReplyDeepLinksWithFocusSuggestionParam(t *test
 	if n == nil {
 		t.Fatal("expected notification, got none")
 	}
-	wantURL := "https://app.test.local/a/acme/text/" + f.driveItem.Id + "?focusSuggestion=sug_abc123"
+	wantURL := "https://app.test.local/p/text/" + f.driveItem.Id + "?focusSuggestion=sug_abc123"
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q (suggestion reply should deep-link with focusSuggestion param)", got, wantURL)
 	}
@@ -384,7 +327,7 @@ func TestCommentMention_SkipsSelfMention(t *testing.T) {
 	mention.Set("comment_collection", "text_comments")
 	mention.Set("comment_record", f.commentRoot.Id)
 	mention.Set("drive_item", f.driveItem.Id)
-	mention.Set("mentioned_user_org", f.authorUO.Id)
+	mention.Set("mentioned_user_org", f.authorUser.Id)
 	if err := f.app.Save(mention); err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +351,7 @@ func TestCommentMention_HookIsRegisteredAndFiresAsync(t *testing.T) {
 	mention.Set("comment_collection", "text_comments")
 	mention.Set("comment_record", f.commentRoot.Id)
 	mention.Set("drive_item", f.driveItem.Id)
-	mention.Set("mentioned_user_org", f.mentionUO.Id)
+	mention.Set("mentioned_user_org", f.mentionUser.Id)
 	if err := f.app.Save(mention); err != nil {
 		t.Fatal(err)
 	}

@@ -6,30 +6,15 @@ import (
 )
 
 // RegisterOrgPkgEnabledHooks adds authorization checks that PocketBase RQL
-// alone cannot express: the requesting user must have admin+ role in the org.
+// alone cannot express: the requesting user must hold an owner/admin role.
 func RegisterOrgPkgEnabledHooks(app *pocketbase.PocketBase) {
 	check := func(e *core.RecordRequestEvent) error {
 		if e.Auth == nil {
 			return e.UnauthorizedError("Authentication required", nil)
 		}
-
-		orgId := e.Record.GetString("org")
-		if orgId == "" {
-			return e.BadRequestError("org is required", nil)
-		}
-
-		records, err := e.App.FindRecordsByFilter(
-			"user_org",
-			"user = {:userId} && org = {:orgId} && (role = 'admin' || role = 'owner')",
-			"",
-			1,
-			0,
-			map[string]any{"userId": e.Auth.Id, "orgId": orgId},
-		)
-		if err != nil || len(records) == 0 {
+		if !isOrgAdmin(e.Auth) {
 			return e.ForbiddenError("Org admin role required", nil)
 		}
-
 		return e.Next()
 	}
 

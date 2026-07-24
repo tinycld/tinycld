@@ -59,22 +59,3 @@ func TestDescriptorConfig_NoLabelFieldsLeavesDefault(t *testing.T) {
 		t.Error("ExtractLabel should be nil when no LabelFields (falls back to default)")
 	}
 }
-
-func TestDescriptorConfig_NoResolveOrgLeavesDefault(t *testing.T) {
-	cfg := descriptorConfig(Descriptor{Collection: "x", LabelFields: []string{"a"}})
-	if cfg.ResolveOrg != nil {
-		t.Error("ResolveOrg should be nil when ResolveOrg.Field empty (falls back to default)")
-	}
-}
-
-func TestDescriptorConfig_ResolveOrgEmptyRelationReturnsEmpty(t *testing.T) {
-	cfg := descriptorConfig(Descriptor{
-		Collection: "contacts",
-		ResolveOrg: OrgVia{Field: "owner", Collection: "user_org", OrgField: "org"},
-	})
-	// Record with no owner set → resolver returns "" without touching the DB.
-	rec := newRec(t, map[string]string{"owner": ""})
-	if got := cfg.ResolveOrg(nil, rec); got != "" {
-		t.Errorf("resolveOrg with empty owner = %q, want empty", got)
-	}
-}

@@ -36,9 +36,7 @@ type manifestCapabilities struct {
 			Strip bool   `json:"strip"`
 		} `json:"columns"`
 		Owner struct {
-			Field     string `json:"field"`
-			Via       string `json:"via"`
-			UserField string `json:"userField"`
+			Field string `json:"field"`
 		} `json:"owner"`
 		Output []struct {
 			Column string `json:"column"`
@@ -64,12 +62,7 @@ type manifestCapabilities struct {
 		} `json:"vcard"`
 	} `json:"carddav"`
 	Audit []struct {
-		Collection string `json:"collection"`
-		ResolveOrg struct {
-			Field      string `json:"field"`
-			Collection string `json:"collection"`
-			OrgField   string `json:"orgField"`
-		} `json:"resolveOrg"`
+		Collection  string   `json:"collection"`
 		LabelFields []string `json:"labelFields"`
 		LabelJoin   string   `json:"labelJoin"`
 	} `json:"audit"`
@@ -103,9 +96,7 @@ func loadFTSConfigs() []fts.Config {
 			Table:      c.FTS.Table,
 			Columns:    cols,
 			Owner: fts.OwnerScope{
-				Field:     c.FTS.Owner.Field,
-				Via:       c.FTS.Owner.Via,
-				UserField: c.FTS.Owner.UserField,
+				Field: c.FTS.Owner.Field,
 			},
 			Output:          output,
 			SoftDeleteField: c.FTS.SoftDeleteField,
@@ -129,8 +120,8 @@ func validateFTS(c manifestCapabilities) error {
 			return fmt.Errorf("fts column %d requires fts and field", i)
 		}
 	}
-	if f.Owner.Field == "" || f.Owner.Via == "" || f.Owner.UserField == "" {
-		return fmt.Errorf("fts requires owner.field, owner.via and owner.userField")
+	if f.Owner.Field == "" {
+		return fmt.Errorf("fts requires owner.field")
 	}
 	return nil
 }
@@ -198,12 +189,7 @@ func loadAuditDescriptors() []audit.Descriptor {
 				log.Fatalf("coreserver: invalid audit config for package %q: collection required", c.Slug)
 			}
 			descriptors = append(descriptors, audit.Descriptor{
-				Collection: a.Collection,
-				ResolveOrg: audit.OrgVia{
-					Field:      a.ResolveOrg.Field,
-					Collection: a.ResolveOrg.Collection,
-					OrgField:   a.ResolveOrg.OrgField,
-				},
+				Collection:  a.Collection,
 				LabelFields: a.LabelFields,
 				LabelJoin:   a.LabelJoin,
 			})

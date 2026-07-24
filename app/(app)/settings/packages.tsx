@@ -43,7 +43,6 @@ export default function OrgPackageSettings() {
 }
 
 function PackageToggleList() {
-    const { orgId } = useOrgInfo()
     const [pkgRegistryCollection] = useStore('pkg_registry')
     const [orgPkgEnabledCollection] = useStore('org_pkg_enabled')
 
@@ -64,13 +63,9 @@ function PackageToggleList() {
         []
     )
 
-    // Get org-level toggles
-    const { data: orgToggles } = useOrgLiveQuery(
-        (query, { orgId: oid }) =>
-            query
-                .from({ org_pkg_enabled: orgPkgEnabledCollection })
-                .where(({ org_pkg_enabled }) => eq(org_pkg_enabled.org, oid)),
-        []
+    // Package enablement toggles (single-org: no org scoping)
+    const { data: orgToggles } = useOrgLiveQuery(query =>
+        query.from({ org_pkg_enabled: orgPkgEnabledCollection })
     )
 
     const allPackages = [...(bundledPackages ?? []), ...(installedPackages ?? [])].sort(
@@ -94,7 +89,7 @@ function PackageToggleList() {
             {allPackages.map((pkg, i) => (
                 <View key={pkg.id}>
                     {i > 0 && <Divider />}
-                    <PackageToggleRow pkg={pkg} orgId={orgId} toggle={toggleMap.get(pkg.slug)} />
+                    <PackageToggleRow pkg={pkg} toggle={toggleMap.get(pkg.slug)} />
                 </View>
             ))}
         </View>
@@ -103,11 +98,9 @@ function PackageToggleList() {
 
 function PackageToggleRow({
     pkg,
-    orgId,
     toggle,
 }: {
     pkg: { id: string; name: string; slug: string; icon: string; description: string }
-    orgId: string
     toggle?: { id: string; enabled: boolean }
 }) {
     const fgColor = useThemeColor('foreground')
@@ -124,7 +117,6 @@ function PackageToggleRow({
             } else {
                 yield orgPkgEnabledCollection.insert({
                     id: crypto.randomUUID().replace(/-/g, '').slice(0, 15),
-                    org: orgId,
                     pkg: pkg.slug,
                     enabled,
                     created: '',

@@ -14,17 +14,12 @@ import (
 func TestInviteMember_NewUser_ReturnsInviteURLAndDoesNotEmail(t *testing.T) {
 	read := captureMailerOutput(t)
 
-	// Build app and seed data BEFORE registering the lifecycle hook so the
-	// owner's own membership creation does not trigger an invite email.
 	app := setupInviteTestApp(t)
 
 	owner := mustCreateUser(t, app, "owner@test.local", false)
-	org := mustCreateOrg(t, app)
-	newMembership(t, app, owner, org, "owner", "")
+	setUserRole(t, app, owner, "owner")
 
-	// Register endpoint + lifecycle only after seed data is in place.
 	registerInviteEndpointCore(app)
-	registerInviteLifecycleCore(app)
 
 	token, err := owner.NewAuthToken()
 	if err != nil {
@@ -35,7 +30,6 @@ func TestInviteMember_NewUser_ReturnsInviteURLAndDoesNotEmail(t *testing.T) {
 		"username": "newhire",
 		"email":    "newhire@example.com",
 		"role":     "member",
-		"orgId":    org.Id,
 	})
 
 	scenario := &tests.ApiScenario{
@@ -83,11 +77,9 @@ func TestInviteMember_NewUser_ByUsername_NoEmail(t *testing.T) {
 	read := captureMailerOutput(t)
 
 	owner := mustCreateUser(t, app, "owner-by-uname@test.local", false)
-	org := mustCreateOrg(t, app)
-	newMembership(t, app, owner, org, "owner", "")
+	setUserRole(t, app, owner, "owner")
 
 	registerInviteEndpointCore(app)
-	registerInviteLifecycleCore(app)
 
 	tok, err := tokenForUser(app, owner)
 	if err != nil {
@@ -97,7 +89,6 @@ func TestInviteMember_NewUser_ByUsername_NoEmail(t *testing.T) {
 	bodyBytes, _ := json.Marshal(map[string]string{
 		"username": "newhire",
 		"role":     "member",
-		"orgId":    org.Id,
 	})
 
 	scenario := &tests.ApiScenario{
@@ -125,6 +116,9 @@ func TestInviteMember_NewUser_ByUsername_NoEmail(t *testing.T) {
 			if got := rec.GetString("email"); got != "" {
 				tt.Errorf("email = %q, want empty (none provided)", got)
 			}
+			if got := rec.GetString("role"); got != "member" {
+				tt.Errorf("role = %q, want member", got)
+			}
 			if sends := read(); len(sends) != 0 {
 				tt.Errorf("expected no emails, got %d", len(sends))
 			}
@@ -137,15 +131,12 @@ func TestInviteMember_RejectsDuplicateUsername(t *testing.T) {
 	app := setupInviteTestApp(t)
 
 	owner := mustCreateUser(t, app, "owner-dup@test.local", false)
-	// Existing verified member with username "newhire".
+	setUserRole(t, app, owner, "owner")
+	// Existing verified member with username "newhire" who already has a role.
 	existing := mustCreateUser(t, app, "newhire@x.com", false) // DeriveUsername → "newhire"
-	org := mustCreateOrg(t, app)
-	newMembership(t, app, owner, org, "owner", "")
-	// Make existing user an active member so re-inviting by username returns 400.
-	newMembership(t, app, existing, org, "member", owner.Id)
+	setUserRole(t, app, existing, "member")
 
 	registerInviteEndpointCore(app)
-	registerInviteLifecycleCore(app)
 
 	tok, err := tokenForUser(app, owner)
 	if err != nil {
@@ -155,7 +146,6 @@ func TestInviteMember_RejectsDuplicateUsername(t *testing.T) {
 	bodyBytes, _ := json.Marshal(map[string]string{
 		"username": "newhire",
 		"role":     "member",
-		"orgId":    org.Id,
 	})
 
 	scenario := &tests.ApiScenario{
@@ -174,11 +164,9 @@ func TestInviteMember_RejectsDuplicateUsername(t *testing.T) {
 func TestInviteMember_RejectsMissingUsername(t *testing.T) {
 	app := setupInviteTestApp(t)
 	owner := mustCreateUser(t, app, "owner-missing@test.local", false)
-	org := mustCreateOrg(t, app)
-	newMembership(t, app, owner, org, "owner", "")
+	setUserRole(t, app, owner, "owner")
 
 	registerInviteEndpointCore(app)
-	registerInviteLifecycleCore(app)
 
 	tok, err := tokenForUser(app, owner)
 	if err != nil {
@@ -186,8 +174,7 @@ func TestInviteMember_RejectsMissingUsername(t *testing.T) {
 	}
 
 	bodyBytes, _ := json.Marshal(map[string]string{
-		"role":  "member",
-		"orgId": org.Id,
+		"role": "member",
 	})
 
 	scenario := &tests.ApiScenario{
@@ -197,6 +184,36 @@ func TestInviteMember_RejectsMissingUsername(t *testing.T) {
 		Headers:               map[string]string{"Authorization": tok},
 		ExpectedStatus:        http.StatusBadRequest,
 		ExpectedContent:       []string{"required"},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}
+	scenario.Test(t)
+}
+
+func TestInviteMember_RejectsNonAdminCaller(t *testing.T) {
+	app := setupInviteTestApp(t)
+	member := mustCreateUser(t, app, "plain-member@test.local", false)
+	setUserRole(t, app, member, "member")
+
+	registerInviteEndpointCore(app)
+
+	tok, err := tokenForUser(app, member)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bodyBytes, _ := json.Marshal(map[string]string{
+		"username": "newhire",
+		"role":     "member",
+	})
+
+	scenario := &tests.ApiScenario{
+		Method:                http.MethodPost,
+		URL:                   "/api/invite-member",
+		Body:                  strings.NewReader(string(bodyBytes)),
+		Headers:               map[string]string{"Authorization": tok},
+		ExpectedStatus:        http.StatusForbidden,
+		ExpectedContent:       []string{`"message"`},
 		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 	}

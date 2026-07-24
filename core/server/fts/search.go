@@ -25,34 +25,28 @@ type SearchOpts struct {
 	IncludeDeleted bool
 }
 
-// Search runs an owner-scoped FTS5 MATCH for one config against the user's org
-// memberships, returning hits (ordered by FTS rank) and the total count. It
-// returns no rows — never an error to the caller path — for an empty/too-short
-// query or when the user has no memberships; a genuine DB failure is returned so
-// the route can log it. Column identifiers come from config (trusted); only the
-// MATCH value and owner ids are bound parameters.
+// Search runs an owner-scoped FTS5 MATCH for one config, returning hits
+// (ordered by FTS rank) and the total count. It returns no rows — never an
+// error to the caller path — for an empty/too-short query or an
+// unauthenticated caller; a genuine DB failure is returned so the route can log
+// it. Column identifiers come from config (trusted); only the MATCH value and
+// owner id are bound parameters.
+//
+// Single-org: a record's owner field holds the requesting user's id directly
+// (the former user_org junction is gone), so search is scoped to owner ==
+// userID — no membership lookup.
 func Search(app *pocketbase.PocketBase, cfg Config, userID string, opts SearchOpts) ([]SearchResult, int, error) {
 	match := SanitizeQuery(opts.Query)
 	if match == "" {
 		return nil, 0, nil
 	}
 
-	ownerIDs, err := ownerScopeIDs(app, cfg, userID)
-	if err != nil {
-		return nil, 0, err
-	}
-	if len(ownerIDs) == 0 {
+	if userID == "" {
 		return nil, 0, nil
 	}
 
-	params := map[string]any{"match": match}
-	ownerPlaceholders := make([]string, len(ownerIDs))
-	for i, id := range ownerIDs {
-		key := "own" + strconv.Itoa(i)
-		params[key] = id
-		ownerPlaceholders[i] = "{:" + key + "}"
-	}
-	inClause := "(" + strings.Join(ownerPlaceholders, ", ") + ")"
+	params := map[string]any{"match": match, "owner": userID}
+	inClause := "({:owner})"
 
 	// Soft-delete split is a fixed SQL fragment (no user input).
 	deletedClause := ""
@@ -139,26 +133,4 @@ func coerce(raw, typ string) any {
 	default:
 		return raw
 	}
-}
-
-// ownerScopeIDs returns the ids on cfg.Owner.Via that belong to userID — the set
-// of owner references (e.g. user_org ids) search is scoped to. The user field is
-// a config-supplied identifier interpolated into the filter; the value is bound.
-func ownerScopeIDs(app *pocketbase.PocketBase, cfg Config, userID string) ([]string, error) {
-	recs, err := app.FindRecordsByFilter(
-		cfg.Owner.Via,
-		cfg.Owner.UserField+" = {:user}",
-		"",
-		0,
-		0,
-		map[string]any{"user": userID},
-	)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]string, len(recs))
-	for i, r := range recs {
-		ids[i] = r.Id
-	}
-	return ids, nil
 }

@@ -7,9 +7,11 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-// setupScopeApp builds an in-memory app with users + orgs + user_org, one org
-// ("acme") and one member user, returning the app, the user, and the user_org id.
-func setupScopeApp(t *testing.T) (*tests.TestApp, *core.Record, string) {
+// setupScopeApp builds an in-memory app with a users collection and one member
+// user, returning the app and the user. Single-org: contacts reference the
+// users collection directly (the former user_org junction is gone), so the
+// owner id IS the authenticated user's id.
+func setupScopeApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	t.Helper()
 	app, err := tests.NewTestApp()
 	if err != nil {
@@ -22,20 +24,6 @@ func setupScopeApp(t *testing.T) (*tests.TestApp, *core.Record, string) {
 		t.Fatalf("users collection: %v", err)
 	}
 
-	orgs := core.NewBaseCollection("orgs")
-	orgs.Fields.Add(&core.TextField{Name: "name", Required: true})
-	orgs.Fields.Add(&core.TextField{Name: "slug", Required: true})
-	if err := app.Save(orgs); err != nil {
-		t.Fatalf("save orgs: %v", err)
-	}
-
-	userOrg := core.NewBaseCollection("user_org")
-	userOrg.Fields.Add(&core.RelationField{Name: "org", Required: true, CollectionId: orgs.Id, MaxSelect: 1})
-	userOrg.Fields.Add(&core.RelationField{Name: "user", Required: true, CollectionId: users.Id, MaxSelect: 1})
-	if err := app.Save(userOrg); err != nil {
-		t.Fatalf("save user_org: %v", err)
-	}
-
 	user := core.NewRecord(users)
 	user.Set("email", "alice@example.com")
 	user.Set("password", "password123")
@@ -43,25 +31,11 @@ func setupScopeApp(t *testing.T) (*tests.TestApp, *core.Record, string) {
 		t.Fatalf("save user: %v", err)
 	}
 
-	org := core.NewRecord(orgs)
-	org.Set("name", "Acme")
-	org.Set("slug", "acme")
-	if err := app.Save(org); err != nil {
-		t.Fatalf("save org: %v", err)
-	}
-
-	uo := core.NewRecord(userOrg)
-	uo.Set("org", org.Id)
-	uo.Set("user", user.Id)
-	if err := app.Save(uo); err != nil {
-		t.Fatalf("save user_org: %v", err)
-	}
-
-	return app, user, uo.Id
+	return app, user
 }
 
-func TestSingleOrgScope_ResolvesOwnMembership(t *testing.T) {
-	app, user, uoID := setupScopeApp(t)
+func TestSingleOrgScope_ResolvesOwnBook(t *testing.T) {
+	app, user := setupScopeApp(t)
 	s := singleOrgScope{bookSegment: "default"}
 
 	books, err := s.Books(app, user)
@@ -72,21 +46,39 @@ func TestSingleOrgScope_ResolvesOwnMembership(t *testing.T) {
 		t.Fatalf("Books = %+v, want one default book", books)
 	}
 
+	// orgHint is ignored under single-org; the owner id is the user's id.
 	ownerID, bookPath, err := s.ResolveBook(app, user, "ignored-hint")
 	if err != nil {
 		t.Fatalf("ResolveBook: %v", err)
 	}
-	if ownerID != uoID {
-		t.Errorf("ownerID = %q, want the user's user_org id %q", ownerID, uoID)
+	if ownerID != user.Id {
+		t.Errorf("ownerID = %q, want the user's id %q", ownerID, user.Id)
 	}
 	if bookPath != "/carddav/u/ab/default/" {
 		t.Errorf("bookPath = %q", bookPath)
 	}
 }
 
-func TestSingleOrgScope_NoMembershipHidesBook(t *testing.T) {
-	app, _, _ := setupScopeApp(t)
-	// A different user with no user_org row.
+func TestSingleOrgScope_UnauthenticatedHidesBook(t *testing.T) {
+	app, _ := setupScopeApp(t)
+	s := singleOrgScope{bookSegment: "default"}
+
+	// A nil user (unauthenticated) sees no books.
+	books, err := s.Books(app, nil)
+	if err != nil {
+		t.Fatalf("Books: %v", err)
+	}
+	if len(books) != 0 {
+		t.Errorf("unauthenticated user should see no books, got %+v", books)
+	}
+}
+
+func TestSingleOrgScope_ContactsFilteredToOwner(t *testing.T) {
+	app, user := setupScopeApp(t)
+
+	// Seed a contacts collection whose owner relation points at the users
+	// collection directly (single-org model), plus a stranger who owns their
+	// own contact so we can assert the scope filters by owner id.
 	users, _ := app.FindCollectionByNameOrId("users")
 	stranger := core.NewRecord(users)
 	stranger.Set("email", "bob@example.com")
@@ -95,43 +87,42 @@ func TestSingleOrgScope_NoMembershipHidesBook(t *testing.T) {
 		t.Fatalf("save stranger: %v", err)
 	}
 
+	contacts := core.NewBaseCollection("contacts")
+	contacts.Fields.Add(&core.RelationField{Name: "owner", Required: true, CollectionId: users.Id, MaxSelect: 1})
+	contacts.Fields.Add(&core.TextField{Name: "first_name"})
+	contacts.Fields.Add(&core.TextField{Name: "deleted_at"})
+	if err := app.Save(contacts); err != nil {
+		t.Fatalf("save contacts: %v", err)
+	}
+
+	mine := core.NewRecord(contacts)
+	mine.Set("owner", user.Id)
+	mine.Set("first_name", "Mine")
+	if err := app.Save(mine); err != nil {
+		t.Fatalf("save mine: %v", err)
+	}
+
+	theirs := core.NewRecord(contacts)
+	theirs.Set("owner", stranger.Id)
+	theirs.Set("first_name", "Theirs")
+	if err := app.Save(theirs); err != nil {
+		t.Fatalf("save theirs: %v", err)
+	}
+
 	s := singleOrgScope{bookSegment: "default"}
-	books, err := s.Books(app, stranger)
-	if err != nil {
-		t.Fatalf("Books: %v", err)
-	}
-	if len(books) != 0 {
-		t.Errorf("stranger should see no books, got %+v", books)
-	}
-	if _, _, err := s.ResolveBook(app, stranger, ""); err == nil {
-		t.Error("ResolveBook should error for a non-member")
-	}
-}
-
-func TestSharedDBScope_BooksPerMembershipAndResolveBySlug(t *testing.T) {
-	app, user, uoID := setupScopeApp(t)
-	s := sharedDBScope{}
-
-	books, err := s.Books(app, user)
-	if err != nil {
-		t.Fatalf("Books: %v", err)
-	}
-	if len(books) != 1 || books[0].Path != "/carddav/u/ab/acme/" {
-		t.Fatalf("Books = %+v, want one acme book", books)
-	}
-
-	ownerID, bookPath, err := s.ResolveBook(app, user, "acme")
+	ownerID, _, err := s.ResolveBook(app, user, "")
 	if err != nil {
 		t.Fatalf("ResolveBook: %v", err)
 	}
-	if ownerID != uoID {
-		t.Errorf("ownerID = %q, want %q", ownerID, uoID)
-	}
-	if bookPath != "/carddav/u/ab/acme/" {
-		t.Errorf("bookPath = %q", bookPath)
-	}
 
-	if _, _, err := s.ResolveBook(app, user, "ghost"); err == nil {
-		t.Error("ResolveBook for a non-member slug should error")
+	// The resolved owner id is what the backend binds to {:ownerId}; a query
+	// scoped to it must return only the user's own contact.
+	rows, err := app.FindRecordsByFilter("contacts", "owner = {:ownerId}", "", 0, 0,
+		map[string]any{"ownerId": ownerID})
+	if err != nil {
+		t.Fatalf("find contacts: %v", err)
+	}
+	if len(rows) != 1 || rows[0].GetString("first_name") != "Mine" {
+		t.Fatalf("owner-scoped query = %+v, want only the user's own contact", rows)
 	}
 }

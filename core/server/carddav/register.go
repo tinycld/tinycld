@@ -12,18 +12,18 @@ import (
 
 const basicRealm = `Basic realm="TinyCld CardDAV"`
 
-// Register mounts the CardDAV routes on serve for the SINGLE-TENANT app, backed
-// by the given sources. Uses sharedDBScope: one process holds every org's data,
-// books are per the user's org membership, paths carry the org slug. A no-op when
-// no sources are registered. Core already installs the /carddav CORS bypass, so
-// this only adds the protocol handler + Basic-Auth challenge + .well-known redirect.
+// Register mounts the CardDAV routes on serve for the single-org app, backed by
+// the given sources. Uses singleOrgScope: the process is one org, each user sees
+// one book of the contacts they own. A no-op when no sources are registered. Core
+// already installs the /carddav CORS bypass, so this only adds the protocol
+// handler + Basic-Auth challenge + .well-known redirect.
 func Register(app *pocketbase.PocketBase, sources []Source) {
 	if len(sources) == 0 {
 		return
 	}
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
-		backend := &Backend{app: app, sources: sources, scope: sharedDBScope{}}
+		backend := &Backend{app: app, sources: sources, scope: singleOrgScope{bookSegment: "default"}}
 		handler := carddav.Handler{Backend: backend, Prefix: "/carddav"}
 
 		serve := func(re *core.RequestEvent) error {

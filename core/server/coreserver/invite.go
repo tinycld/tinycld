@@ -18,7 +18,6 @@ type inviteRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email"` // optional — recovery / notifications only
 	Role     string `json:"role"`
-	OrgID    string `json:"orgId"`
 }
 
 func RegisterInviteEndpoint(app *pocketbase.PocketBase) {
@@ -51,6 +50,16 @@ func requireAuthCore(re *core.RequestEvent) error {
 	return re.Next()
 }
 
+// isOrgAdmin reports whether the given user holds an owner or admin role.
+// Single-org: role is a field on the users record, so no membership lookup.
+func isOrgAdmin(user *core.Record) bool {
+	if user == nil {
+		return false
+	}
+	role := user.GetString("role")
+	return role == "owner" || role == "admin"
+}
+
 func handleInviteMember(app core.App, re *core.RequestEvent) error {
 	var req inviteRequest
 	if err := json.NewDecoder(re.Request.Body).Decode(&req); err != nil {
@@ -60,8 +69,8 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 	req.Username = strings.ToLower(strings.TrimSpace(req.Username))
 	req.Email = strings.TrimSpace(req.Email)
 
-	if req.Username == "" || req.OrgID == "" {
-		return re.BadRequestError("username and orgId are required", nil)
+	if req.Username == "" {
+		return re.BadRequestError("username is required", nil)
 	}
 	if !IsValidUsername(req.Username) {
 		return re.BadRequestError(
@@ -73,29 +82,14 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 		return re.BadRequestError("role must be admin, member, or guest", nil)
 	}
 
-	// Verify the requesting user is an admin or owner of this org
-	authUser := re.Auth
-	userOrgs, err := app.FindRecordsByFilter(
-		"user_org",
-		"user = {:userId} && org = {:orgId} && (role = 'admin' || role = 'owner')",
-		"",
-		1,
-		0,
-		map[string]any{"userId": authUser.Id, "orgId": req.OrgID},
-	)
-	if err != nil || len(userOrgs) == 0 {
-		return re.ForbiddenError("You must be an admin or owner of this organization", nil)
+	// Only an owner or admin may invite. Role lives on the caller's users record.
+	if !isOrgAdmin(re.Auth) {
+		return re.ForbiddenError("You must be an admin or owner", nil)
 	}
 
-	// Check if user already exists
 	usersCollection, err := app.FindCollectionByNameOrId("users")
 	if err != nil {
 		return re.InternalServerError("Failed to find users collection", err)
-	}
-
-	userOrgCollection, err := app.FindCollectionByNameOrId("user_org")
-	if err != nil {
-		return re.InternalServerError("Failed to find user_org collection", err)
 	}
 
 	var userRecord *core.Record
@@ -109,44 +103,29 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 		isNewUser = true
 	}
 
-	// Check for existing membership before creating anything
-	if !isNewUser {
-		existingMembership, _ := app.FindRecordsByFilter(
-			"user_org",
-			"user = {:userId} && org = {:orgId}",
-			"",
-			1,
-			0,
-			map[string]any{"userId": userRecord.Id, "orgId": req.OrgID},
-		)
-		if len(existingMembership) > 0 {
-			// If the user is unverified (pending invite), resend the invite
-			if !userRecord.GetBool("verified") {
-				if err := invalidateExistingTokens(app, userRecord.Id, req.OrgID); err != nil {
-					return re.InternalServerError("Failed to invalidate old tokens", err)
-				}
-				org, err := app.FindRecordById("orgs", req.OrgID)
-				if err != nil {
-					return re.InternalServerError("Failed to find organization", err)
-				}
-				token, err := mintInviteToken(app, userRecord, org, req.Role)
-				if err != nil {
-					return re.InternalServerError("Failed to mint invite token", err)
-				}
-				return re.JSON(http.StatusOK, map[string]any{
-					"userId":    userRecord.Id,
-					"userOrgId": existingMembership[0].Id,
-					"inviteUrl": buildInviteURL(app, token),
-					"isNew":     false,
-					"resent":    true,
-				})
+	// Existing user already has a role → they're already a member.
+	if !isNewUser && userRecord.GetString("role") != "" {
+		// An unverified user with a pending invite gets the invite resent.
+		if !userRecord.GetBool("verified") {
+			if err := invalidateExistingTokens(app, userRecord.Id); err != nil {
+				return re.InternalServerError("Failed to invalidate old tokens", err)
 			}
-			return re.BadRequestError("User is already a member of this organization", nil)
+			token, err := mintInviteToken(app, userRecord, req.Role)
+			if err != nil {
+				return re.InternalServerError("Failed to mint invite token", err)
+			}
+			return re.JSON(http.StatusOK, map[string]any{
+				"userId":    userRecord.Id,
+				"inviteUrl": buildInviteURL(app, token),
+				"isNew":     false,
+				"resent":    true,
+			})
 		}
+		return re.BadRequestError("User is already a member", nil)
 	}
 
-	// Create user + membership in a transaction so we don't orphan users
-	var membershipId string
+	// Create the user (if new) + set their role in a transaction so we don't
+	// orphan a user without a role.
 	var inviteToken string
 	err = app.RunInTransaction(func(txApp core.App) error {
 		if isNewUser {
@@ -175,34 +154,25 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 			}
 			newUser.Set("name", displayName)
 			newUser.Set("verified", false)
+			newUser.Set("role", req.Role)
 			newUser.SetPassword(password)
 
 			if err := txApp.Save(newUser); err != nil {
 				return err
 			}
 			userRecord = newUser
-		}
-
-		membership := core.NewRecord(userOrgCollection)
-		membership.Set("user", userRecord.Id)
-		membership.Set("org", req.OrgID)
-		membership.Set("role", req.Role)
-		membership.Set("created_by", authUser.Id)
-
-		if err := txApp.Save(membership); err != nil {
-			return err
-		}
-		membershipId = membership.Id
-
-		// Mint the invite token inside the same transaction so we don't end up
-		// with a membership row but no token — the admin-delivered flow needs
-		// the URL in the response.
-		if isNewUser {
-			org, err := txApp.FindRecordById("orgs", req.OrgID)
-			if err != nil {
+		} else {
+			userRecord.Set("role", req.Role)
+			if err := txApp.Save(userRecord); err != nil {
 				return err
 			}
-			token, err := mintInviteToken(txApp, userRecord, org, req.Role)
+		}
+
+		// Mint the invite token inside the same transaction so we don't end up
+		// with a user but no token — the admin-delivered flow needs the URL in
+		// the response.
+		if isNewUser {
+			token, err := mintInviteToken(txApp, userRecord, req.Role)
 			if err != nil {
 				return err
 			}
@@ -220,29 +190,26 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 		return re.BadRequestError("Failed to invite member", err)
 	}
 
-	go func() {
-		orgRecord, err := app.FindRecordById("orgs", req.OrgID)
-		if err != nil {
-			return
-		}
-		orgName := orgRecord.GetString("name")
-		orgSlug := orgRecord.GetString("slug")
+	// Existing verified users get a "you've been added" email (skipped for
+	// demo inviters). New users are handled by the admin-delivered invite URL.
+	if !isNewUser && userRecord.GetBool("verified") && !IsDemoUser(app, re.Auth.Id) {
+		go sendExistingMemberEmail(app, userRecord, req.Role)
+	}
 
+	go func() {
 		notify.NotifyUser(app, notify.NotifyParams{
 			UserID:  userRecord.Id,
-			OrgID:   req.OrgID,
 			Type:    "org_invite",
 			Package: "core",
-			Title:   fmt.Sprintf("You were invited to %s", orgName),
+			Title:   "You were invited",
 			Body:    fmt.Sprintf("You've been added as %s", req.Role),
-			URL:     fmt.Sprintf("/a/%s", orgSlug),
+			URL:     "/",
 		})
 	}()
 
 	resp := map[string]any{
-		"userId":    userRecord.Id,
-		"userOrgId": membershipId,
-		"isNew":     isNewUser,
+		"userId": userRecord.Id,
+		"isNew":  isNewUser,
 	}
 	if inviteToken != "" {
 		resp["inviteUrl"] = buildInviteURL(app, inviteToken)
@@ -306,16 +273,10 @@ func handleGetAcceptInvite(app core.App, re *core.RequestEvent) error {
 	if err != nil {
 		return re.JSON(http.StatusNotFound, map[string]string{"error": "user not found"})
 	}
-	org, err := app.FindRecordById("orgs", record.GetString("org"))
-	if err != nil {
-		return re.JSON(http.StatusNotFound, map[string]string{"error": "organization not found"})
-	}
 
 	return re.JSON(http.StatusOK, map[string]any{
 		"username": user.GetString("username"),
 		"email":    user.GetString("email"),
-		"orgName":  org.GetString("name"),
-		"orgSlug":  org.GetString("slug"),
 		"role":     record.GetString("role"),
 	})
 }
@@ -331,7 +292,7 @@ func handlePostAcceptInvite(app core.App, re *core.RequestEvent) error {
 		return re.BadRequestError("Password must be at least 8 characters", nil)
 	}
 
-	var username, email, orgSlug string
+	var username, email string
 	err := app.RunInTransaction(func(txApp core.App) error {
 		record, err := txApp.FindFirstRecordByFilter(
 			"invite_tokens",
@@ -353,10 +314,6 @@ func handlePostAcceptInvite(app core.App, re *core.RequestEvent) error {
 		if err != nil {
 			return fmt.Errorf("user not found")
 		}
-		org, err := txApp.FindRecordById("orgs", record.GetString("org"))
-		if err != nil {
-			return fmt.Errorf("organization not found")
-		}
 
 		user.SetPassword(body.Password)
 		if body.Name != "" {
@@ -374,7 +331,6 @@ func handlePostAcceptInvite(app core.App, re *core.RequestEvent) error {
 
 		username = user.GetString("username")
 		email = user.GetString("email")
-		orgSlug = org.GetString("slug")
 		return nil
 	})
 	if err != nil {
@@ -384,6 +340,5 @@ func handlePostAcceptInvite(app core.App, re *core.RequestEvent) error {
 	return re.JSON(http.StatusOK, map[string]string{
 		"username": username,
 		"email":    email,
-		"orgSlug":  orgSlug,
 	})
 }

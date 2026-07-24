@@ -21,7 +21,7 @@ var allowedCommentCollections = map[string]string{
 
 // RegisterCommentMentionHooks wires the OnRecordAfterCreateSuccess hook
 // for comment_mentions. The hook validates the row, resolves the
-// mentioned user + drive_item + org slug, then calls NotifyUser with a
+// mentioned user + drive_item, then calls NotifyUser with a
 // "comment_mention" payload pointing back at the doc.
 func RegisterCommentMentionHooks(app *pocketbase.PocketBase) {
 	registerCommentMentionHooksCore(app)
@@ -51,35 +51,17 @@ func handleCommentMention(app core.App, mention *core.Record) {
 		return
 	}
 
-	mentionedUserOrgID := mention.GetString("mentioned_user_org")
-	if mentionedUserOrgID == "" {
+	// mentioned_user_org keeps its field name for schema stability but now
+	// holds a users id directly (the former user_org junction is gone).
+	mentionedUserID := mention.GetString("mentioned_user_org")
+	if mentionedUserID == "" {
 		return
 	}
 
-	mentionedUserOrg, err := app.FindRecordById("user_org", mentionedUserOrgID)
-	if err != nil {
-		app.Logger().Warn("comment_mention: mentioned user_org not found",
-			"id", mentionedUserOrgID, "error", err)
-		return
-	}
-
-	// Race guard: a user_org row can be deleted between the comment
-	// insert and the notify dispatch. The relation has cascadeDelete,
-	// so the mention row may have already been wiped, but the goroutine
-	// might race ahead. Re-fetching here would re-trigger the same
-	// failure; we just rely on the cascade and bail if the user_org
-	// is gone.
-	userID := mentionedUserOrg.GetString("user")
-	orgID := mentionedUserOrg.GetString("org")
-	if userID == "" || orgID == "" {
-		return
-	}
-
-	// The comment author posted the mention; if the same user_org
-	// somehow ends up as the mentioned party (e.g. a copy-paste), we
-	// already dedupe self-mentions client-side in the mutations
-	// factory. Defense in depth: skip here too if the comment author
-	// equals the mentioned user_org.
+	// The comment author posted the mention; if the author somehow ends up
+	// as the mentioned party (e.g. a copy-paste), we already dedupe
+	// self-mentions client-side in the mutations factory. Defense in depth:
+	// skip here too if the comment author equals the mentioned user.
 	comment, err := app.FindRecordById(commentCollection, mention.GetString("comment_record"))
 	if err != nil {
 		app.Logger().Warn("comment_mention: comment record not found",
@@ -88,23 +70,12 @@ func handleCommentMention(app core.App, mention *core.Record) {
 			"error", err)
 		return
 	}
-	if comment.GetString("author") == mentionedUserOrgID {
+	if comment.GetString("author") == mentionedUserID {
 		return
 	}
 
 	driveItemID := mention.GetString("drive_item")
 	if driveItemID == "" {
-		return
-	}
-
-	org, err := app.FindRecordById("orgs", orgID)
-	if err != nil {
-		app.Logger().Warn("comment_mention: org not found",
-			"id", orgID, "error", err)
-		return
-	}
-	orgSlug := org.GetString("slug")
-	if orgSlug == "" {
 		return
 	}
 
@@ -115,15 +86,16 @@ func handleCommentMention(app core.App, mention *core.Record) {
 	// the deep-link uses `?focusSuggestion=<id>` instead so the
 	// document screen's useFocusSuggestionParam hook opens the review
 	// drawer focused on the matching suggestion row rather than the
-	// comments drawer.
+	// comments drawer. Routes are slug-scoped (/p/<slug>/…) — single-org,
+	// no org slug in the path.
 	threadID := commentThreadID(comment)
 	suggestionID := comment.GetString("suggestion_id")
 	appURL := strings.TrimRight(app.Settings().Meta.AppURL, "/")
 	var url string
 	if suggestionID != "" {
-		url = fmt.Sprintf("%s/a/%s/%s/%s?focusSuggestion=%s", appURL, orgSlug, packageSlug, driveItemID, suggestionID)
+		url = fmt.Sprintf("%s/p/%s/%s?focusSuggestion=%s", appURL, packageSlug, driveItemID, suggestionID)
 	} else {
-		url = fmt.Sprintf("%s/a/%s/%s/%s?thread=%s", appURL, orgSlug, packageSlug, driveItemID, threadID)
+		url = fmt.Sprintf("%s/p/%s/%s?thread=%s", appURL, packageSlug, driveItemID, threadID)
 	}
 
 	authorName := comment.GetString("author_name")
@@ -135,8 +107,7 @@ func handleCommentMention(app core.App, mention *core.Record) {
 	body := truncate(comment.GetString("body"), 200)
 
 	NotifyUser(app, NotifyParams{
-		UserID:  userID,
-		OrgID:   orgID,
+		UserID:  mentionedUserID,
 		Type:    "comment_mention",
 		Package: packageSlug,
 		Title:   title,

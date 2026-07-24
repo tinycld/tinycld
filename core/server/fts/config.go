@@ -2,13 +2,13 @@
 // SQLite FTS5 index sync + query for any feature collection, driven by
 // per-package config (materialized from each package's manifest `fts` block).
 //
-// Why it lives in core, not per-feature: in the multi-org model a tenant runs
-// stock PocketBase with no feature Go, so raw-SQL FTS work must run host-side in
-// the trusted core process. Keeping it here also means the SQL surface never
-// crosses the untrusted tenant-TS boundary — packages declare an `fts` config
-// block and core registers the index-sync record hooks + the search route
-// itself. The `$fts` JS binding (bindings.go) exists for the rare package that
-// must query imperatively from TS, but the data-plane path is pure core Go.
+// Why it lives in core, not per-feature: the host runs stock PocketBase with no
+// feature Go, so raw-SQL FTS work must run host-side in the trusted core
+// process. Keeping it here also means the SQL surface never crosses the
+// untrusted tenant-TS boundary — packages declare an `fts` config block and
+// core registers the index-sync record hooks + the search route itself. The
+// `$fts` JS binding (bindings.go) exists for the rare package that must query
+// imperatively from TS, but the data-plane path is pure core Go.
 //
 // The FTS virtual table itself is created by the package's JS pb-migrations
 // (the schema source of truth); this package only reads and writes it.
@@ -37,7 +37,7 @@ type Config struct {
 	// before indexing (editor fields).
 	Columns []Column
 
-	// Owner scopes both sync and search to the current user's memberships.
+	// Owner scopes search to the records owned by the requesting user.
 	Owner OwnerScope
 
 	// Output lists the collection columns the search route returns per hit,
@@ -72,16 +72,11 @@ type Column struct {
 }
 
 // OwnerScope declares how a record's owner resolves to the requesting user, so
-// search results stay scoped to the user's org memberships. For the contacts
-// model, records carry an `owner` relation to a `user_org` row, and a user may
-// belong to many orgs — so search is scoped to the set of the user's user_org
-// ids.
+// search results stay scoped to the caller's own records. Single-org: the owner
+// field holds a users id directly (the former user_org junction is gone), so
+// search is scoped to owner == the authenticated user's id.
 type OwnerScope struct {
 	// Field is the collection field holding the owner reference
-	// (e.g. "owner", a relation to user_org).
+	// (e.g. "owner", a relation to users).
 	Field string
-	// Via is the collection the owner Field points at (e.g. "user_org").
-	Via string
-	// UserField is the field on Via that holds the user id (e.g. "user").
-	UserField string
 }

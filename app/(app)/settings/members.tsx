@@ -30,42 +30,37 @@ export default function MembersSettings() {
     const navigateBack = useNavigateBack(() => orgHref('settings'))
     const { isAdmin, isOwner } = useCurrentRole()
     const { user } = useAuth()
-    const [userOrgCollection, usersCollection] = useStore('user_org', 'users')
+    const [usersCollection] = useStore('users')
 
     const fgColor = useThemeColor('foreground')
     const mutedColor = useThemeColor('muted-foreground')
     const primaryFgColor = useThemeColor('primary-foreground')
 
-    const { data: memberRows } = useOrgLiveQuery((query, { orgId }) =>
-        query
-            .from({ uo: userOrgCollection })
-            .join({ u: usersCollection }, ({ uo, u }) => eq(uo.user, u.id))
-            .where(({ uo }) => eq(uo.org, orgId))
-            .select(({ uo, u }) => ({
-                userOrgId: uo.id,
-                userId: uo.user,
-                // Cast: username is added by Phase A migration; pbSchema regenerates
-                // after the next dev-server start picks it up.
-                username: (u as unknown as { username: string }).username,
-                name: u.name,
-                email: u.email,
-                role: uo.role,
-                verified: u.verified,
-                // Cast: is_demo is added by migration 1810000000; the pbSchema
-                // regenerator picks it up after the next dev-server start.
-                isDemo: (u as unknown as { is_demo: boolean }).is_demo,
-            }))
+    // Single-org deployment: every user in the DB is a member of the one org, so
+    // list `users` directly. Role lives on the users record.
+    const { data: memberRows } = useOrgLiveQuery(query =>
+        query.from({ u: usersCollection }).select(({ u }) => ({
+            userId: u.id,
+            username: (u as unknown as { username: string }).username,
+            name: u.name,
+            email: u.email,
+            role: (u as unknown as { role: OrgRole }).role,
+            verified: u.verified,
+            isDemo: (u as unknown as { is_demo: boolean }).is_demo,
+        }))
     )
 
     const members: MemberRow[] = useMemo(
         () =>
             (memberRows ?? []).map(row => ({
-                userOrgId: row.userOrgId,
+                // userOrgId is now the user id (the user_org junction is gone); it
+                // stays as the opaque member key the drawer/rows are keyed on.
+                userOrgId: row.userId,
                 userId: row.userId,
                 username: row.username ?? '',
                 name: row.name ?? '',
                 email: row.email ?? '',
-                role: row.role as OrgRole,
+                role: (row.role ?? 'member') as OrgRole,
                 isPending: row.verified === false,
                 isDemo: !!row.isDemo,
             })),

@@ -14,18 +14,18 @@ import (
 )
 
 // RegisterInviteLinkEndpoints wires the admin-facing endpoints that surface
-// and manage invite links for pending memberships.
+// and manage invite links for pending users.
 func RegisterInviteLinkEndpoints(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
-		e.Router.GET("/api/invite-link/{userOrgId}", func(re *core.RequestEvent) error {
+		e.Router.GET("/api/invite-link/{userId}", func(re *core.RequestEvent) error {
 			return handleGetInviteLink(app, re)
 		}).BindFunc(requireAuthCore)
 
-		e.Router.POST("/api/invite-link/{userOrgId}/rotate", func(re *core.RequestEvent) error {
+		e.Router.POST("/api/invite-link/{userId}/rotate", func(re *core.RequestEvent) error {
 			return handleRotateInviteLink(app, re)
 		}).BindFunc(requireAuthCore)
 
-		e.Router.POST("/api/invite-link/{userOrgId}/send", func(re *core.RequestEvent) error {
+		e.Router.POST("/api/invite-link/{userId}/send", func(re *core.RequestEvent) error {
 			return handleSendInviteLink(app, re)
 		}).BindFunc(requireAuthCore)
 
@@ -33,40 +33,33 @@ func RegisterInviteLinkEndpoints(app core.App) {
 	})
 }
 
-// resolveUserOrgAsAdmin loads the user_org by ID and verifies the caller is an
-// admin or owner of the same org. Returns the user_org record on success.
-func resolveUserOrgAsAdmin(app core.App, re *core.RequestEvent) (*core.Record, error) {
-	userOrgID := re.Request.PathValue("userOrgId")
-	uo, err := app.FindRecordById("user_org", userOrgID)
-	if err != nil || uo == nil {
-		return nil, re.NotFoundError("membership not found", err)
+// resolveInvitedUserAsAdmin loads the invited user by ID and verifies the
+// caller is an admin or owner. Returns the user record on success.
+func resolveInvitedUserAsAdmin(app core.App, re *core.RequestEvent) (*core.Record, error) {
+	userID := re.Request.PathValue("userId")
+	user, err := app.FindRecordById("users", userID)
+	if err != nil || user == nil {
+		return nil, re.NotFoundError("user not found", err)
 	}
-	authUser := re.Auth
-	if authUser == nil {
+	if re.Auth == nil {
 		return nil, re.UnauthorizedError("Authentication required", nil)
 	}
-	admins, err := app.FindRecordsByFilter(
-		"user_org",
-		"user = {:userId} && org = {:orgId} && (role = 'admin' || role = 'owner')",
-		"", 1, 0,
-		map[string]any{"userId": authUser.Id, "orgId": uo.GetString("org")},
-	)
-	if err != nil || len(admins) == 0 {
-		return nil, re.ForbiddenError("You must be an admin or owner of this organization", nil)
+	if !isOrgAdmin(re.Auth) {
+		return nil, re.ForbiddenError("You must be an admin or owner", nil)
 	}
-	return uo, nil
+	return user, nil
 }
 
-// liveTokenForUserOrg returns an unused, unexpired invite token for the
-// user_org's user+org pair, or (nil, nil) if none exists. Rotation invalidates
-// all prior tokens before minting a new one, so at most one live token exists
-// at a time and ordering doesn't matter.
-func liveTokenForUserOrg(app core.App, uo *core.Record) (*core.Record, error) {
+// liveTokenForUser returns an unused, unexpired invite token for the user, or
+// (nil, nil) if none exists. Rotation invalidates all prior tokens before
+// minting a new one, so at most one live token exists at a time and ordering
+// doesn't matter.
+func liveTokenForUser(app core.App, user *core.Record) (*core.Record, error) {
 	records, err := app.FindRecordsByFilter(
 		"invite_tokens",
-		"user = {:u} && org = {:o} && used_at = ''",
+		"user = {:u} && used_at = ''",
 		"", 0, 0,
-		map[string]any{"u": uo.GetString("user"), "o": uo.GetString("org")},
+		map[string]any{"u": user.Id},
 	)
 	if err != nil {
 		return nil, err
@@ -82,11 +75,11 @@ func liveTokenForUserOrg(app core.App, uo *core.Record) (*core.Record, error) {
 }
 
 func handleGetInviteLink(app core.App, re *core.RequestEvent) error {
-	uo, err := resolveUserOrgAsAdmin(app, re)
+	user, err := resolveInvitedUserAsAdmin(app, re)
 	if err != nil {
 		return err
 	}
-	token, err := liveTokenForUserOrg(app, uo)
+	token, err := liveTokenForUser(app, user)
 	if err != nil {
 		return re.InternalServerError("Failed to look up invite token", err)
 	}
@@ -100,27 +93,16 @@ func handleGetInviteLink(app core.App, re *core.RequestEvent) error {
 }
 
 func handleRotateInviteLink(app core.App, re *core.RequestEvent) error {
-	uo, err := resolveUserOrgAsAdmin(app, re)
+	user, err := resolveInvitedUserAsAdmin(app, re)
 	if err != nil {
 		return err
 	}
-	userID := uo.GetString("user")
-	orgID := uo.GetString("org")
 
-	if err := invalidateExistingTokens(app, userID, orgID); err != nil {
+	if err := invalidateExistingTokens(app, user.Id); err != nil {
 		return re.InternalServerError("Failed to invalidate old tokens", err)
 	}
 
-	user, err := app.FindRecordById("users", userID)
-	if err != nil {
-		return re.InternalServerError("Failed to load user", err)
-	}
-	org, err := app.FindRecordById("orgs", orgID)
-	if err != nil {
-		return re.InternalServerError("Failed to load org", err)
-	}
-
-	token, err := mintInviteToken(app, user, org, uo.GetString("role"))
+	token, err := mintInviteToken(app, user, user.GetString("role"))
 	if err != nil {
 		return re.InternalServerError("Failed to mint invite token", err)
 	}
@@ -131,7 +113,7 @@ func handleRotateInviteLink(app core.App, re *core.RequestEvent) error {
 }
 
 func handleSendInviteLink(app core.App, re *core.RequestEvent) error {
-	uo, err := resolveUserOrgAsAdmin(app, re)
+	user, err := resolveInvitedUserAsAdmin(app, re)
 	if err != nil {
 		return err
 	}
@@ -152,7 +134,7 @@ func handleSendInviteLink(app core.App, re *core.RequestEvent) error {
 		})
 	}
 
-	token, err := liveTokenForUserOrg(app, uo)
+	token, err := liveTokenForUser(app, user)
 	if err != nil {
 		return re.InternalServerError("Failed to look up invite token", err)
 	}
@@ -162,16 +144,7 @@ func handleSendInviteLink(app core.App, re *core.RequestEvent) error {
 		})
 	}
 
-	user, err := app.FindRecordById("users", uo.GetString("user"))
-	if err != nil {
-		return re.InternalServerError("Failed to load user", err)
-	}
-	org, err := app.FindRecordById("orgs", uo.GetString("org"))
-	if err != nil {
-		return re.InternalServerError("Failed to load org", err)
-	}
-
-	if err := sendInviteEmailTo(app, body.Email, user, org, uo.GetString("role"), token.GetString("token")); err != nil {
+	if err := sendInviteEmailTo(app, body.Email, user, user.GetString("role"), token.GetString("token")); err != nil {
 		return re.JSON(http.StatusBadGateway, map[string]any{
 			"error": "failed to send invite email: " + err.Error(),
 		})
@@ -201,21 +174,20 @@ func decodeJSONBody(re *core.RequestEvent, dst any) error {
 
 // sendInviteEmailTo builds the invite email body and addresses it to an
 // arbitrary email instead of the user's account email.
-func sendInviteEmailTo(app core.App, toEmail string, user *core.Record, org *core.Record, role, token string) error {
+func sendInviteEmailTo(app core.App, toEmail string, user *core.Record, role, token string) error {
 	link := buildInviteURL(app, token)
 
-	orgName := org.GetString("name")
 	userName := user.GetString("name")
 	if userName == "" {
 		userName = user.GetString("email")
 	}
 
-	subject := fmt.Sprintf("You've been invited to %s", orgName)
+	subject := "You've been invited"
 	htmlBody, text := mailer.RenderTransactionalEmail(mailer.TransactionalEmail{
-		Eyebrow:  "Invitation to " + orgName,
+		Eyebrow:  "Invitation",
 		Greeting: mailer.Greeting(userName),
-		BodyHTML: fmt.Sprintf("You've been invited to join <strong>%s</strong> as a <strong>%s</strong>. To get started, set a password for your account.", mailer.EscapeHTML(orgName), mailer.EscapeHTML(role)),
-		BodyText: fmt.Sprintf("You've been invited to join %s as a %s. To get started, set a password for your account. The link expires in 7 days.", orgName, role),
+		BodyHTML: fmt.Sprintf("You've been invited to join as a <strong>%s</strong>. To get started, set a password for your account.", mailer.EscapeHTML(role)),
+		BodyText: fmt.Sprintf("You've been invited to join as a %s. To get started, set a password for your account. The link expires in 7 days.", role),
 		CTALabel: "Set your password",
 		CTALink:  link,
 		Footer:   "If you weren't expecting this invitation, you can safely ignore this email. The link expires in 7 days.",

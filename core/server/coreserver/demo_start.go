@@ -11,23 +11,21 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// Identifiers for the singleton demo identity. Both the email and the org
-// slug are stable so the front door always lands on the same record set —
-// repeated /api/demo/start hits sign the caller into the same playground.
+// Identifiers for the singleton demo identity. The email is stable so the
+// front door always lands on the same record — repeated /api/demo/start hits
+// sign the caller into the same playground.
 const (
 	demoUserEmail    = "demo@tinycld.org"
 	demoUserUsername = "demo"
 	demoUserName     = "Demo Tour"
-	demoOrgName      = "Demo Workspace"
-	demoOrgSlug      = "demo"
 )
 
 // RegisterDemoStart wires POST /api/demo/start. The endpoint is unauthenticated
 // because it is the entry point a logged-out marketing-site visitor uses to
-// land in the app without registering. It (1) finds-or-creates a single shared
-// demo user flagged is_demo=true, (2) finds-or-creates a "demo" org with the
-// user as a member, and (3) returns a PocketBase-shaped { token, record }
-// auth response so the client can drop it straight into pb.authStore.
+// land in the app without registering. It finds-or-creates a single shared
+// demo user (flagged is_demo=true, role=owner) and returns a PocketBase-shaped
+// { token, record } auth response so the client can drop it straight into
+// pb.authStore.
 func RegisterDemoStart(app *pocketbase.PocketBase) {
 	registerDemoStartCore(app)
 }
@@ -47,9 +45,6 @@ func handleDemoStart(app core.App, re *core.RequestEvent) error {
 		u, err := ensureDemoUser(txApp)
 		if err != nil {
 			return fmt.Errorf("ensure demo user: %w", err)
-		}
-		if err := ensureDemoOrgMembership(txApp, u); err != nil {
-			return fmt.Errorf("ensure demo org: %w", err)
 		}
 		user = u
 		return nil
@@ -85,7 +80,8 @@ func handleDemoStart(app core.App, re *core.RequestEvent) error {
 // The is_demo flag is the linchpin: every outbound-effect chokepoint
 // (mail send, invite emails, drive-share emails, push) consults
 // IsDemoUser before writing to the wire, so demo sessions can exercise the
-// full app surface without anything actually leaving the server.
+// full app surface without anything actually leaving the server. role=owner
+// so the demo session can exercise admin surfaces.
 func ensureDemoUser(app core.App) (*core.Record, error) {
 	existing, err := app.FindFirstRecordByFilter(
 		"users", "username = {:u}", dbx.Params{"u": demoUserUsername})
@@ -110,6 +106,7 @@ func ensureDemoUser(app core.App) (*core.Record, error) {
 	// record, and the front-end uses email to label the session.
 	rec.Set("emailVisibility", true)
 	rec.Set("name", demoUserName)
+	rec.Set("role", "owner")
 	rec.SetVerified(true)
 	pwd, err := randomHex(32)
 	if err != nil {
@@ -122,70 +119,4 @@ func ensureDemoUser(app core.App) (*core.Record, error) {
 		return nil, fmt.Errorf("save demo user: %w", err)
 	}
 	return rec, nil
-}
-
-// ensureDemoOrgMembership guarantees the demo user is a member (role=owner)
-// of an org with slug "demo". The slug is stable because the front-end
-// redirects to /a/{slug} after auth, so a moving target would break the
-// post-auth landing.
-func ensureDemoOrgMembership(app core.App, user *core.Record) error {
-	org, err := app.FindFirstRecordByFilter("orgs", "slug = {:slug}", dbx.Params{"slug": demoOrgSlug})
-	switch {
-	case err == nil:
-		users := org.GetStringSlice("users")
-		if !contains(users, user.Id) {
-			org.Set("users", append(users, user.Id))
-			if err := app.Save(org); err != nil {
-				return fmt.Errorf("update demo org users: %w", err)
-			}
-		}
-	case errors.Is(err, sql.ErrNoRows):
-		orgCol, err := app.FindCollectionByNameOrId("orgs")
-		if err != nil {
-			return fmt.Errorf("find orgs collection: %w", err)
-		}
-		org = core.NewRecord(orgCol)
-		org.Set("name", demoOrgName)
-		org.Set("slug", demoOrgSlug)
-		org.Set("users", []string{user.Id})
-		if err := app.Save(org); err != nil {
-			return fmt.Errorf("save demo org: %w", err)
-		}
-	default:
-		return fmt.Errorf("look up demo org: %w", err)
-	}
-
-	existing, err := app.FindFirstRecordByFilter(
-		"user_org",
-		"user = {:uid} && org = {:oid}",
-		dbx.Params{"uid": user.Id, "oid": org.Id},
-	)
-	if err == nil && existing != nil {
-		return nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("look up demo membership: %w", err)
-	}
-
-	userOrgCol, err := app.FindCollectionByNameOrId("user_org")
-	if err != nil {
-		return fmt.Errorf("find user_org collection: %w", err)
-	}
-	membership := core.NewRecord(userOrgCol)
-	membership.Set("user", user.Id)
-	membership.Set("org", org.Id)
-	membership.Set("role", "owner")
-	if err := app.Save(membership); err != nil {
-		return fmt.Errorf("save demo user_org: %w", err)
-	}
-	return nil
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }

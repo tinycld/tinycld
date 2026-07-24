@@ -1,7 +1,6 @@
-import { eq } from '@tanstack/db'
-import { useQuery, useQueryClient, useMutation as useRawMutation } from '@tanstack/react-query'
+import { and, eq } from '@tanstack/db'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
-import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { formatBytes } from '@tinycld/core/lib/format-utils'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
@@ -10,51 +9,17 @@ import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
-import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import { Divider } from '@tinycld/core/ui/divider'
-import {
-    FormErrorSummary,
-    NumberInput,
-    TextInput,
-    useForm,
-    z,
-    zodResolver,
-} from '@tinycld/core/ui/form'
-import * as DocumentPicker from 'expo-document-picker'
+import { FormErrorSummary, NumberInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { ArrowLeft } from 'lucide-react-native'
 import { newRecordId } from 'pbtsdb/core'
 import { useState } from 'react'
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Text, View } from 'react-native'
 
-const LOGO_MIME_TYPES = ['image/jpeg', 'image/png', 'image/svg+xml', 'image/webp']
-const LOGO_MAX_BYTES = 5 * 1024 * 1024
-
-type PickedLogo = File | { uri: string; name: string; type: string; size?: number }
-
-async function pickLogo(): Promise<PickedLogo | null> {
-    if (Platform.OS === 'web') {
-        return new Promise(resolve => {
-            const input = document.createElement('input')
-            input.type = 'file'
-            input.accept = LOGO_MIME_TYPES.join(',')
-            input.onchange = () => resolve(input.files?.[0] ?? null)
-            input.click()
-        })
-    }
-    const result = await DocumentPicker.getDocumentAsync({ type: LOGO_MIME_TYPES, multiple: false })
-    if (result.canceled) return null
-    const a = result.assets[0]
-    return { uri: a.uri, name: a.name, type: a.mimeType ?? 'image/png', size: a.size }
-}
-
-function logoSize(picked: PickedLogo): number {
-    return 'size' in picked && typeof picked.size === 'number' ? picked.size : 0
-}
-
-const orgSchema = z.object({
-    name: z.string().min(1, 'Organization name is required'),
-})
+// Single-org deployment: org branding (name / slug / logo) is owned by the
+// deployment (the multi-org router), not editable in-app. What remains here is
+// the storage usage + per-user limit, scoped to this one org (the whole DB).
 
 const storageLimitSchema = z.object({
     limitGb: z.number().min(0, 'Must be 0 or greater'),
@@ -68,41 +33,7 @@ export default function OrganizationSettings() {
     const orgHref = useOrgHref()
     const navigateBack = useNavigateBack(() => orgHref('settings'))
     const { isAdmin } = useCurrentRole()
-    const { orgId } = useOrgInfo()
-    const [orgsCollection] = useStore('orgs')
-
     const fgColor = useThemeColor('foreground')
-
-    const { data: orgs } = useOrgLiveQuery((query, { orgId }) =>
-        query.from({ orgs: orgsCollection }).where(({ orgs }) => eq(orgs.id, orgId))
-    )
-    const org = orgs?.[0]
-
-    const {
-        control,
-        handleSubmit,
-        setError,
-        getValues,
-        formState: { errors, isSubmitted, isDirty },
-    } = useForm({
-        mode: 'onChange',
-        resolver: zodResolver(orgSchema),
-        values: { name: org?.name ?? '' },
-    })
-
-    const updateOrg = useMutation({
-        mutationFn: mutation(function* (data: z.infer<typeof orgSchema>) {
-            if (!orgId) throw new Error('No organization context')
-            yield orgsCollection.update(orgId, draft => {
-                draft.name = data.name.trim()
-            })
-        }),
-        onSuccess: navigateBack,
-        onError: handleMutationErrorsWithForm({ setError, getValues }),
-    })
-
-    const onSubmit = handleSubmit(data => updateOrg.mutate(data))
-    const canSubmit = !updateOrg.isPending && isDirty && !!orgId
 
     if (!isAdmin) {
         return (
@@ -119,57 +50,22 @@ export default function OrganizationSettings() {
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="bg-background">
             <DocumentTitle pkg="Settings" title="Organization" />
             <View className="flex-1 p-5 max-w-[600px]">
-                <View className="flex-row justify-between items-center mb-5">
-                    <View className="flex-row gap-3 items-center">
-                        <Pressable onPress={navigateBack}>
-                            <ArrowLeft size={24} color={fgColor} />
-                        </Pressable>
-                        <Text
-                            className="text-foreground"
-                            style={{ fontSize: 22, fontWeight: 'bold' }}
-                        >
-                            Organization
-                        </Text>
-                    </View>
-                    <Pressable
-                        onPress={onSubmit}
-                        disabled={!canSubmit}
-                        className={`px-4 py-2 rounded-lg self-start bg-primary ${canSubmit ? 'opacity-100' : 'opacity-50'}`}
-                    >
-                        <Text className="text-primary-foreground" style={{ fontWeight: '600' }}>
-                            {updateOrg.isPending ? 'Saving...' : 'Save'}
-                        </Text>
+                <View className="flex-row gap-3 items-center mb-5">
+                    <Pressable onPress={navigateBack}>
+                        <ArrowLeft size={24} color={fgColor} />
                     </Pressable>
+                    <Text className="text-foreground" style={{ fontSize: 22, fontWeight: 'bold' }}>
+                        Organization
+                    </Text>
                 </View>
 
-                <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
-
-                <View className="gap-4">
-                    <TextInput control={control} name="name" label="Organization Name" />
-
-                    <View className="gap-1">
-                        <Text className="text-primary" style={{ fontSize: 13 }}>
-                            Slug
-                        </Text>
-                        <Text className="text-muted-foreground" style={{ fontSize: 16 }}>
-                            {org?.slug ?? '\u2014'}
-                        </Text>
-                    </View>
-                </View>
-
-                <Divider className="my-5" />
-
-                <LogoSection org={org ?? null} />
-
-                <Divider className="my-5" />
-
-                <StorageSection orgId={orgId} />
+                <StorageSection />
             </View>
         </ScrollView>
     )
 }
 
-function StorageSection({ orgId }: { orgId: string }) {
+function StorageSection() {
     const queryClient = useQueryClient()
     const [settingsCollection] = useStore('settings')
     const [showBreakdown, setShowBreakdown] = useState(false)
@@ -179,21 +75,22 @@ function StorageSection({ orgId }: { orgId: string }) {
     const successColor = useThemeColor('success')
 
     const { data: storageInfo, isLoading } = useQuery({
-        queryKey: ['storage-usage', orgId],
+        queryKey: ['storage-usage'],
         queryFn: () =>
             pb.send('/api/drive/storage-usage', {
-                query: { org: orgId, breakdown: 'users' },
+                query: { breakdown: 'users' },
             }),
-        enabled: !!orgId,
     })
 
-    const { data: settings } = useOrgLiveQuery((query, { orgId }) =>
+    const { data: settings } = useOrgLiveQuery(query =>
         query
             .from({ settings: settingsCollection })
-            .where(({ settings }) => eq(settings.org, orgId))
+            .where(({ settings }) =>
+                and(eq(settings.app, 'core'), eq(settings.key, 'storage_limit_bytes'))
+            )
     )
 
-    const existingSetting = settings?.find(s => s.app === 'core' && s.key === 'storage_limit_bytes')
+    const existingSetting = settings?.[0]
 
     const currentLimitGb = storageInfo?.has_limit
         ? storageInfo.limit_bytes / (1024 * 1024 * 1024)
@@ -224,12 +121,11 @@ function StorageSection({ orgId }: { orgId: string }) {
                     app: 'core',
                     key: 'storage_limit_bytes',
                     value: valueBytes,
-                    org: orgId,
                 })
             }
         }),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['storage-usage', orgId] })
+            queryClient.invalidateQueries({ queryKey: ['storage-usage'] })
         },
         onError: handleMutationErrorsWithForm({
             setError: setLimitError,
@@ -365,7 +261,7 @@ function StorageSection({ orgId }: { orgId: string }) {
                                 className="text-foreground"
                                 style={{ fontSize: 15, fontWeight: '600' }}
                             >
-                                Per-User Breakdown {showBreakdown ? '\u25BE' : '\u25B8'}
+                                Per-User Breakdown {showBreakdown ? '▾' : '▸'}
                             </Text>
                         </Pressable>
                         <UserBreakdownTable
@@ -420,100 +316,6 @@ function UserBreakdownTable({
                     </View>
                 )
             })}
-        </View>
-    )
-}
-
-function LogoSection({ org }: { org: { id: string; name: string; logo?: string } | null }) {
-    const [error, setError] = useState<string | null>(null)
-    const [orgsCollection] = useStore('orgs')
-
-    // The upload is the one raw-PB exception in this file: a multipart
-    // FormData file blob that pbtsdb's optimistic transaction can't carry.
-    const upload = useRawMutation({
-        mutationFn: async () => {
-            if (!org?.id) throw new Error('No organization context')
-            const picked = await pickLogo()
-            if (!picked) return
-            const size = logoSize(picked)
-            if (size > LOGO_MAX_BYTES) {
-                throw new Error(`Logo must be 5 MB or smaller (got ${formatBytes(size)}).`)
-            }
-            const fd = new FormData()
-            fd.append('logo', picked as unknown as Blob)
-            // biome-ignore lint/plugin/pbtsdb-no-raw-pb-access: multipart FormData file upload — pbtsdb's optimistic transaction can't carry a file blob.
-            await pb.collection('orgs').update(org.id, fd)
-        },
-        onError: (err: Error) => setError(err.message),
-        onSuccess: () => setError(null),
-    })
-
-    const remove = useMutation({
-        mutationFn: mutation(function* () {
-            if (!org?.id) throw new Error('No organization context')
-            yield orgsCollection.update(org.id, draft => {
-                draft.logo = ''
-            })
-        }),
-        onError: (err: Error) => setError(err.message),
-        onSuccess: () => setError(null),
-    })
-
-    const hasLogo = !!org?.logo
-
-    return (
-        <View className="gap-3">
-            <Text className="text-foreground" style={{ fontSize: 18, fontWeight: 'bold' }}>
-                Logo
-            </Text>
-            <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
-                Up to 5 MB. PNG, JPEG, SVG, or WEBP.
-            </Text>
-
-            <View className="flex-row items-center gap-4">
-                <View
-                    className="border border-border"
-                    style={{
-                        width: 96,
-                        height: 96,
-                        borderRadius: 48,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        overflow: 'hidden',
-                    }}
-                >
-                    <OrgLogo org={org} size={96} />
-                </View>
-
-                <View className="flex-row gap-2">
-                    <Pressable
-                        onPress={() => upload.mutate()}
-                        disabled={upload.isPending}
-                        className={`px-4 py-2 rounded-lg bg-primary ${upload.isPending ? 'opacity-50' : ''}`}
-                    >
-                        <Text className="text-primary-foreground" style={{ fontWeight: '600' }}>
-                            {upload.isPending ? 'Uploading…' : hasLogo ? 'Replace' : 'Upload'}
-                        </Text>
-                    </Pressable>
-                    {hasLogo ? (
-                        <Pressable
-                            onPress={() => remove.mutate()}
-                            disabled={remove.isPending}
-                            className={`px-4 py-2 rounded-lg border border-border ${remove.isPending ? 'opacity-50' : ''}`}
-                        >
-                            <Text className="text-foreground" style={{ fontWeight: '600' }}>
-                                {remove.isPending ? 'Removing…' : 'Remove'}
-                            </Text>
-                        </Pressable>
-                    ) : null}
-                </View>
-            </View>
-
-            {error ? (
-                <Text className="text-danger" style={{ fontSize: 13 }}>
-                    {error}
-                </Text>
-            ) : null}
         </View>
     )
 }

@@ -1,30 +1,42 @@
-// Package userorg owns the "leave an org" workflow.
+// Package userorg owns account offboarding (formerly the "leave an org"
+// workflow).
 //
-// The user-facing action is per-org: a user can be a member of many orgs, and
-// leaving one is independent from leaving another. Account anonymization is a
-// downstream consequence of leaving the *last* org, not a separate user action.
+// Single-org: the process IS one org, so "leaving the org" is no longer a
+// distinct action — an account is either kept or deleted. What survives is
+// account offboarding: when a user's account is deleted, reassign or delete the
+// records they own, then anonymize the users record.
 //
 // The package exposes:
 //
 //   - A RegisterReassignable hook each feature package calls during Register()
-//     to declare which of its (collection, field) pairs point at user_org as
-//     authorship/ownership (e.g. calendar_events.created_by). The leave-org
-//     transaction walks the registry to either rewrite those fields to the
-//     successor user_org or delete the owning records, depending on the plan.
-//   - LeaveOrg(app, userOrgID, plan, actorIsLeaver) — the canonical
-//     transaction. Called by the self-leave UI, the admin-remove-member UI,
-//     and the multi-step delete-account flow.
-//   - HTTP handlers for /api/account/leave-org and its preview counterpart.
+//     to declare which of its (collection, field) pairs point at a user as
+//     authorship/ownership (e.g. calendar_events.created_by). Those FKs now
+//     hold users ids directly (the former user_org junction is gone). The
+//     offboarding transaction walks the registry to either rewrite those fields
+//     to the successor user or delete the owning records, depending on the plan.
+//   - OffboardUser(app, userID, plan, actorUserID) — the canonical transaction.
+//     Called by the delete-account flow (coreserver).
+//   - AnonymizeUser(app, userID) — anonymize a users record directly.
 //
 // The reassignable registry is process-global (one app instance per process)
-// and is meant to be populated at startup before OnServe fires. Tests can
-// reset it with ResetReassignableForTesting.
+// and is meant to be populated at startup. Tests can reset it with
+// ResetReassignableForTesting.
 package userorg
 
-import "sync"
+import (
+	"sync"
 
-// ReassignableRef declares a single FK from <Collection>.<Field> to user_org.
-// At leave-org time, every row where Field == leaverUserOrgID is either
+	"github.com/pocketbase/pocketbase"
+)
+
+// Register is retained as a no-op wiring point so callers (coreserver) don't
+// need to change shape. The former leave-org HTTP endpoints were pure cross-org
+// membership management and no longer exist; account deletion goes through
+// coreserver's /api/account/delete, which drives OffboardUser.
+func Register(_ *pocketbase.PocketBase) {}
+
+// ReassignableRef declares a single FK from <Collection>.<Field> to a user.
+// At offboard time, every row where Field == the offboarded user's id is either
 // rewritten (mode=reassign) or deleted (mode=delete_my_data).
 //
 // We deliberately keep this struct dumb (no behavior, no validation): the
@@ -33,7 +45,7 @@ import "sync"
 type ReassignableRef struct {
 	// Collection is the PocketBase collection name, e.g. "calendar_events".
 	Collection string
-	// Field is the column name pointing at user_org, e.g. "created_by".
+	// Field is the column name pointing at a user, e.g. "created_by".
 	Field string
 }
 
