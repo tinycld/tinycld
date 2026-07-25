@@ -127,7 +127,6 @@ async function main() {
         isDemo: true,
         orgSlug: DEMO_ORG_SLUG,
         orgName: DEMO_ORG_NAME,
-        seedSecondOrg: false,
     })
 
     log('Demo reset complete')

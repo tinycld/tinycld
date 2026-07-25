@@ -71,7 +71,6 @@ interface SeedConfig {
     isDemo: boolean
     orgSlug: string
     orgName: string
-    seedSecondOrg: boolean
 }
 
 // What seedForUser resolved for the app user, so the caller can print an
@@ -113,9 +112,6 @@ const DEMO_DEFAULTS = {
     orgSlug: 'demo',
     orgName: 'Demo Workspace',
 }
-
-const SECOND_ORG_NAME = 'Acme Corp'
-const SECOND_ORG_SLUG = 'acme'
 
 function parseArgs(): SeedConfig {
     const args = process.argv.slice(2)
@@ -232,12 +228,7 @@ function parseArgs(): SeedConfig {
         isDemo: mode === 'demo',
         orgSlug: overrides.orgSlug ?? defaults.orgSlug,
         orgName: overrides.orgName ?? defaults.orgName,
-        seedSecondOrg: mode === 'test' && !overrides.orgSlug,
     }
-}
-
-function htmlBlob(html: string) {
-    return new File([html], 'body.html', { type: 'text/html' })
 }
 
 // A random password that satisfies PocketBase's auth rules (>=8 chars, mixed
@@ -260,20 +251,6 @@ function isNotFoundError(err: unknown): boolean {
     return false
 }
 
-function todayAt(dayOffset: number, hour: number, minute = 0) {
-    const d = new Date()
-    d.setHours(0, 0, 0, 0)
-    d.setDate(d.getDate() + dayOffset)
-    d.setHours(hour, minute, 0, 0)
-    return d.toISOString()
-}
-
-interface OrgSeedContext {
-    user: { id: string; email: string; name: string }
-    org: { id: string }
-    userOrg: { id: string }
-}
-
 const collectionCache = new Map<string, boolean>()
 async function hasCollection(pb: PocketBase, name: string): Promise<boolean> {
     const cached = collectionCache.get(name)
@@ -288,242 +265,10 @@ async function hasCollection(pb: PocketBase, name: string): Promise<boolean> {
     }
 }
 
-async function seedSecondOrg(pb: PocketBase, ctx: OrgSeedContext) {
-    log('Seeding second org (light):', SECOND_ORG_SLUG)
-
-    if (await hasCollection(pb, 'contacts')) {
-        const contacts = [
-            {
-                first_name: 'Lena',
-                last_name: 'Ortiz',
-                email: 'lena@acmecorp.com',
-                company: 'Acme Corp',
-                job_title: 'CEO',
-            },
-            {
-                first_name: 'Raj',
-                last_name: 'Patel',
-                email: 'raj@acmecorp.com',
-                company: 'Acme Corp',
-                job_title: 'CTO',
-            },
-            {
-                first_name: 'Sophie',
-                last_name: 'Liu',
-                email: 'sophie@vendor.io',
-                company: 'Vendor Inc',
-                job_title: 'Account Manager',
-            },
-        ]
-        for (const c of contacts) {
-            await pb.collection('contacts').create({ ...c, owner: ctx.userOrg.id })
-        }
-        log('  Created 3 contacts')
-    } else {
-        log('  skipped contacts (not linked)')
-    }
-
-    if (!(await hasCollection(pb, 'mail_domains'))) {
-        log('  skipped mail (not linked)')
-    } else {
-        let domain: { id: string }
-        try {
-            domain = await pb
-                .collection('mail_domains')
-                .getFirstListItem(`org = "${ctx.org.id}" && domain = "acmecorp.com"`)
-        } catch {
-            domain = await pb.collection('mail_domains').create({
-                org: ctx.org.id,
-                domain: 'acmecorp.com',
-                verified: true,
-            })
-        }
-
-        let mailbox: { id: string }
-        try {
-            mailbox = await pb
-                .collection('mail_mailboxes')
-                .getFirstListItem(`address = "user" && domain = "${domain.id}"`)
-        } catch {
-            mailbox = await pb.collection('mail_mailboxes').create({
-                address: 'user',
-                domain: domain.id,
-                display_name: ctx.user.name,
-                type: 'personal',
-            })
-            await pb.collection('mail_mailbox_members').create({
-                mailbox: mailbox.id,
-                user_org: ctx.userOrg.id,
-                role: 'owner',
-            })
-        }
-
-        const threads = [
-            {
-                subject: 'Welcome to Acme Corp',
-                snippet: 'Hi! Welcome aboard. Here are some resources to get you started.',
-                latest_date: '2026-04-10 09:00:00.000Z',
-                folder: 'inbox',
-                is_read: true,
-                is_starred: false,
-                messages: [
-                    {
-                        sender_name: 'Lena Ortiz',
-                        sender_email: 'lena@acmecorp.com',
-                        recipients_to: [{ name: ctx.user.name, email: 'user@acmecorp.com' }],
-                        date: '2026-04-10 09:00:00.000Z',
-                        subject: 'Welcome to Acme Corp',
-                        snippet: 'Hi! Welcome aboard.',
-                        body_html:
-                            '<p>Hi!</p><p>Welcome aboard. Here are some resources to get you started with the team.</p><p>Best,<br/>Lena</p>',
-                    },
-                ],
-            },
-            {
-                subject: 'Q3 vendor contract review',
-                snippet: 'Please review the attached vendor contract before end of week.',
-                latest_date: '2026-04-11 14:30:00.000Z',
-                folder: 'inbox',
-                is_read: false,
-                is_starred: true,
-                messages: [
-                    {
-                        sender_name: 'Sophie Liu',
-                        sender_email: 'sophie@vendor.io',
-                        recipients_to: [{ name: ctx.user.name, email: 'user@acmecorp.com' }],
-                        date: '2026-04-11 14:30:00.000Z',
-                        subject: 'Q3 vendor contract review',
-                        snippet: 'Please review the attached vendor contract.',
-                        body_html:
-                            '<p>Hi,</p><p>Please review the attached vendor contract before end of week. Let me know if you have questions.</p><p>Thanks,<br/>Sophie</p>',
-                    },
-                ],
-            },
-        ]
-
-        for (const thread of threads) {
-            const threadRecord = await pb.collection('mail_threads').create({
-                mailbox: mailbox.id,
-                subject: thread.subject,
-                snippet: thread.snippet,
-                message_count: thread.messages.length,
-                latest_date: thread.latest_date,
-                participants: thread.messages.map(m => ({
-                    name: m.sender_name,
-                    email: m.sender_email,
-                })),
-            })
-
-            for (let i = 0; i < thread.messages.length; i++) {
-                const msg = thread.messages[i]
-                const formData = new FormData()
-                formData.append('thread', threadRecord.id)
-                formData.append('sender_name', msg.sender_name)
-                formData.append('sender_email', msg.sender_email)
-                formData.append('recipients_to', JSON.stringify(msg.recipients_to))
-                formData.append('recipients_cc', JSON.stringify([]))
-                formData.append('date', msg.date)
-                formData.append('subject', msg.subject)
-                formData.append('snippet', msg.snippet)
-                formData.append('has_attachments', 'false')
-                formData.append('body_html', htmlBlob(msg.body_html))
-                formData.append(
-                    'message_id',
-                    `<acme-${thread.subject.replace(/\s/g, '-').slice(0, 20)}-${i}@acmecorp.com>`
-                )
-                await pb.collection('mail_messages').create(formData)
-            }
-
-            await pb.collection('mail_thread_state').create({
-                thread: threadRecord.id,
-                user_org: ctx.userOrg.id,
-                folder: thread.folder,
-                is_read: thread.is_read,
-                is_starred: thread.is_starred,
-            })
-        }
-        log('  Created 2 mail threads')
-    }
-
-    if (!(await hasCollection(pb, 'calendar_calendars'))) {
-        log('  skipped calendar (not linked)')
-    } else {
-        const calendar = await pb.collection('calendar_calendars').create({
-            org: ctx.org.id,
-            name: 'Acme Calendar',
-            description: 'Main calendar',
-            color: 'purple',
-        })
-        await pb.collection('calendar_members').create({
-            calendar: calendar.id,
-            user_org: ctx.userOrg.id,
-            role: 'owner',
-        })
-
-        const events = [
-            {
-                title: 'Acme weekly standup',
-                start: todayAt(1, 10, 0),
-                end: todayAt(1, 10, 30),
-                description: 'Weekly team sync',
-            },
-            {
-                title: 'Q3 planning kickoff',
-                start: todayAt(3, 14, 0),
-                end: todayAt(3, 15, 30),
-                description: 'Review priorities for next quarter',
-            },
-        ]
-        for (const event of events) {
-            await pb.collection('calendar_events').create({
-                calendar: calendar.id,
-                title: event.title,
-                start: event.start,
-                end: event.end,
-                description: event.description,
-                created_by: ctx.userOrg.id,
-                busy_status: 'busy',
-                visibility: 'default',
-            })
-        }
-        log('  Created 1 calendar with 2 events')
-    }
-
-    if (!(await hasCollection(pb, 'drive_items'))) {
-        log('  skipped drive (not linked)')
-    } else {
-        const folder = await pb.collection('drive_items').create({
-            org: ctx.org.id,
-            name: 'Shared Documents',
-            type: 'folder',
-            created_by: ctx.userOrg.id,
-        })
-
-        const textContent = new File(
-            ['# Acme Corp\n\nWelcome to the shared drive. Add files and folders here.'],
-            'welcome.md',
-            { type: 'text/markdown' }
-        )
-        const fileForm = new FormData()
-        fileForm.append('org', ctx.org.id)
-        fileForm.append('name', 'welcome.md')
-        fileForm.append('type', 'file')
-        fileForm.append('parent', folder.id)
-        fileForm.append('created_by', ctx.userOrg.id)
-        fileForm.append('mime_type', 'text/markdown')
-        fileForm.append('size', String(textContent.size))
-        fileForm.append('file', textContent)
-        await pb.collection('drive_items').create(fileForm)
-        log('  Created 1 folder with 1 file')
-    }
-
-    log('Second org seeding complete')
-}
-
 /**
- * Find-or-create the target user, primary org, and user_org membership, then
- * run all linked package seeds against them. Optionally seeds a second "Acme"
- * org with light data when `config.seedSecondOrg` is true.
+ * Find-or-create the target user (single-org: the `role` enum lives on the user
+ * record; the orgs/user_org collections are gone), then run all linked package
+ * seeds against it.
  *
  * Exported so reset-demo.ts can re-seed without shelling out.
  */
@@ -542,7 +287,7 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
         if (!isNotFoundError(err)) throw err
     }
 
-    let user: { id: string }
+    let user: { id: string; role?: string }
     const login: SeedLoginResult = {
         created: !existingUser,
         userEmail: config.userEmail,
@@ -602,45 +347,12 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
         })
     }
 
-    let org: { id: string }
-    try {
-        org = await pb.collection('orgs').getFirstListItem(`slug = "${config.orgSlug}"`)
-        log('Found existing org:', config.orgSlug)
-    } catch {
-        log('Creating org:', config.orgSlug)
-        org = await pb.collection('orgs').create({
-            name: config.orgName,
-            slug: config.orgSlug,
-        })
-    }
-
-    // Same find-then-create split as the user block above — keeps a failed
-    // role update from silently falling through to a duplicate-create attempt.
-    let existingUserOrg: { id: string; role: string } | null = null
-    try {
-        existingUserOrg = await pb
-            .collection('user_org')
-            .getFirstListItem(`user = "${user.id}" && org = "${org.id}"`)
-    } catch (err) {
-        if (!isNotFoundError(err)) throw err
-    }
-
-    let userOrg: { id: string; role: string }
-    if (existingUserOrg) {
-        if (existingUserOrg.role !== 'owner') {
-            log(`Updating user role from "${existingUserOrg.role}" to "owner"`)
-            userOrg = await pb.collection('user_org').update(existingUserOrg.id, { role: 'owner' })
-        } else {
-            log('Found existing user_org membership (role: owner)')
-            userOrg = existingUserOrg
-        }
-    } else {
-        log('Creating user_org membership (role: owner)')
-        userOrg = await pb.collection('user_org').create({
-            org: org.id,
-            user: user.id,
-            role: 'owner',
-        })
+    // Single-org: the `role` enum moved onto the users record (the orgs/user_org
+    // collections are gone). Stamp the seeded user as owner so role-gated UI and
+    // RLS (@request.auth.role) resolve.
+    if (user.role !== 'owner') {
+        log('Setting user role to "owner"')
+        user = await pb.collection('users').update(user.id, { role: 'owner' })
     }
 
     // Grant the seeded test user super-admin so e2e can drive the /admin console
@@ -658,8 +370,6 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
 
     const seedContext = {
         user: { id: user.id, email: config.userEmail, name: config.userName },
-        org,
-        userOrg,
     }
     const orderedSeeds = deriveSeeds(tinycldSeeds)
     log(`Running ${orderedSeeds.length} package seed(s)...`)
@@ -667,41 +377,6 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
         log(`  → ${slug}`)
         await seedFn(pb, seedContext)
         log(`  ✓ ${slug} done`)
-    }
-
-    if (config.seedSecondOrg) {
-        let org2: { id: string }
-        try {
-            org2 = await pb.collection('orgs').getFirstListItem(`slug = "${SECOND_ORG_SLUG}"`)
-            log('Found existing org:', SECOND_ORG_SLUG)
-        } catch {
-            log('Creating org:', SECOND_ORG_SLUG)
-            org2 = await pb.collection('orgs').create({
-                name: SECOND_ORG_NAME,
-                slug: SECOND_ORG_SLUG,
-            })
-        }
-
-        let userOrg2: { id: string }
-        try {
-            userOrg2 = await pb
-                .collection('user_org')
-                .getFirstListItem(`user = "${user.id}" && org = "${org2.id}"`)
-            log('Found existing user_org for', SECOND_ORG_SLUG)
-        } catch {
-            log('Creating user_org membership for', SECOND_ORG_SLUG)
-            userOrg2 = await pb.collection('user_org').create({
-                org: org2.id,
-                user: user.id,
-                role: 'owner',
-            })
-        }
-
-        await seedSecondOrg(pb, {
-            user: { id: user.id, email: config.userEmail, name: config.userName },
-            org: org2,
-            userOrg: userOrg2,
-        })
     }
 
     return login
