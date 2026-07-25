@@ -4,6 +4,14 @@ import { expect, type Locator, type Page } from '@playwright/test'
 
 export const ORG_SLUG = 'test-org'
 export const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
+
+// Single-org: the `app/a/[orgSlug]/` route segment was collapsed to `app/(app)/`
+// (an invisible route group), so authenticated URLs no longer carry an `/a/<org>`
+// prefix — they are bare `/contacts`, `/settings/...`, `/admin/...`. LANDED_URL
+// matches "we're inside the authenticated app shell" (any of those sections, or
+// the bare root while the index redirect to the first package is mid-flight).
+const APP_SECTIONS = 'contacts|settings|admin|help|mail|drive|calendar|calc|text'
+const LANDED_URL = new RegExp(`/(?:${APP_SECTIONS})(?:/|$|\\?)`)
 export const TEST_USER_PASSWORD = process.env.TEST_USER_PW || 'TestUser1234!'
 export const TEST_USER_USERNAME = process.env.TEST_USER_USERNAME ?? 'tester'
 
@@ -64,14 +72,21 @@ export async function login(page: Page) {
     await page.getByTestId('identifier').fill(TEST_USER_EMAIL)
     await page.getByPlaceholder('Password').fill(TEST_USER_PASSWORD)
 
+    // "We're in" = the authenticated app shell mounted. Single-org: post-login
+    // lands on the bare root `/`, which then client-side <Redirect>s to the first
+    // nav package — a SPA transition that doesn't fire a `load` event and whose
+    // interim URL is the section-less `/`, so a waitForURL(LANDED_URL) hangs.
+    // Gate on the package rail (always present in the shell) instead — it's
+    // timing- and route-independent. nav-home is the workspace rail's home entry.
+    const shellReady = page.getByTestId('nav-home')
     const authError = page.getByText('Failed to authenticate', { exact: false })
     const maxAttempts = 3
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         await page.getByText('Sign in', { exact: true }).last().click()
-        // Whichever resolves first wins: a URL change means we're in.
+        // Whichever resolves first wins: the shell mounting means we're in.
         const outcome = await Promise.race([
-            page
-                .waitForURL(/\/a\//, { timeout: 15_000 })
+            shellReady
+                .waitFor({ state: 'visible', timeout: 15_000 })
                 .then(() => 'ok' as const)
                 .catch(() => 'timeout' as const),
             authError
@@ -79,12 +94,11 @@ export async function login(page: Page) {
                 .then(() => 'error' as const)
                 .catch(() => 'timeout' as const),
         ])
-        if (outcome === 'ok' || /\/a\//.test(page.url())) return
+        if (outcome === 'ok') return
         if (outcome === 'error' && attempt < maxAttempts) continue
-        // Timed out with no redirect and no error banner, or exhausted retries:
-        // give the redirect one last direct wait so the failure surfaces with a
-        // clear message and a fresh screenshot.
-        await page.waitForURL(/\/a\//, { timeout: 15_000 })
+        // Timed out with no shell and no error banner, or exhausted retries: one
+        // last direct wait so the failure surfaces with a clear message + screenshot.
+        await shellReady.waitFor({ state: 'visible', timeout: 15_000 })
         return
     }
 }
@@ -122,7 +136,7 @@ export async function createInvitedUser(
     // --- Owner sends the invite (username + email) from Settings → Members ---
     await login(page)
     await navigateToPackage(page, 'settings')
-    await page.goto(`/a/${ORG_SLUG}/settings/members`)
+    await page.goto('/settings/members')
     await page.getByText('Invite', { exact: true }).click()
     await expect(page.getByText('Invite a teammate', { exact: true })).toBeVisible({
         timeout: 10_000,
@@ -147,7 +161,7 @@ export async function createInvitedUser(
     await inviteePage.getByTestId('password').fill(user.password)
     await inviteePage.getByTestId('confirmPassword').fill(user.password)
     await inviteePage.getByText(/Set password and sign in/i).click()
-    await inviteePage.waitForURL(new RegExp(`/a/${ORG_SLUG}`), { timeout: 15_000 })
+    await inviteePage.waitForURL(LANDED_URL, { timeout: 15_000, waitUntil: 'commit' })
 
     return { user, inviteePage, close: () => inviteeContext.close() }
 }
@@ -163,7 +177,7 @@ export async function loginAs(page: Page, identifier: string, password: string) 
     await page.getByTestId('identifier').fill(identifier)
     await page.getByPlaceholder('Password').fill(password)
     await page.getByText('Sign in', { exact: true }).last().click()
-    await page.waitForURL(/\/a\//, { timeout: 15_000 })
+    await page.waitForURL(LANDED_URL, { timeout: 15_000, waitUntil: 'commit' })
 }
 
 // Navigate to a package's org-scoped route via the rail link in the app
@@ -197,26 +211,28 @@ export async function loginAs(page: Page, identifier: string, password: string) 
 //
 // `pkg` is the lowercase slug (mail, calendar, drive, ...).
 export async function navigateToPackage(page: Page, pkg: string, options?: { waitFor?: Locator }) {
-    const onTarget = new RegExp(`/a/${ORG_SLUG}/${pkg}(/|$|\\?)`)
+    // Single-org: routes are bare `/<pkg>` (the /a/<org> segment is gone).
+    const onTarget = new RegExp(`/${pkg}(/|$|\\?)`)
     // Skip the rail-click when we're already on (or already redirecting to) the
-    // target package. login() returns the moment the URL hits /a/<org>, but the
-    // org index then <Redirect>s to the first nav package — which IS this package
-    // when it's the only/first one installed (e.g. drive in its own CI, where no
-    // other nav package exists). Clicking the rail in that window fires a SECOND
-    // navigation to the same route while the first is still streaming its lazy
-    // chunks, and that interruption wedges the screen/sidebar chunk in Metro
-    // ("loaded but never committed" → the sidebar watchdog remounts for ~45s →
-    // the list lands scrolled and double-clicks misfire). When we're already
-    // headed there, wait for the route + the caller's element instead of
-    // re-navigating.
+    // target package. login() returns the moment the URL hits an app section, but
+    // the index then <Redirect>s to the first nav package — which IS this package
+    // when it's the only/first one installed (e.g. contacts in the lean shell).
+    // Clicking the rail in that window fires a SECOND navigation to the same route
+    // while the first is still streaming its lazy chunks, and that interruption
+    // wedges the screen/sidebar chunk in Metro ("loaded but never committed" → the
+    // sidebar watchdog remounts for ~45s → the list lands scrolled and
+    // double-clicks misfire). When we're already headed there, wait for the route
+    // + the caller's element instead of re-navigating.
     let alreadyThere = onTarget.test(page.url())
-    // Only when sitting on the bare org index (/a/<org> with no package segment)
-    // might an auto-redirect to this package be in flight — wait briefly to catch
-    // it. Anywhere else we're not auto-heading here, so skip the wait (no latency
-    // penalty on the common cross-package navigation) and click the rail.
-    if (!alreadyThere && new RegExp(`/a/${ORG_SLUG}(/|$|\\?)?$`).test(page.url())) {
+    // Only when sitting on the bare root (the index that redirects to the first
+    // package) might an auto-redirect to this package be in flight — wait briefly
+    // to catch it. Anywhere else we're not auto-heading here, so skip the wait (no
+    // latency penalty on the common cross-package navigation) and click the rail.
+    if (!alreadyThere && new URL(page.url()).pathname === '/') {
+        // waitUntil: 'commit' — the index→package redirect is a SPA transition
+        // that never fires a `load` event, so the default wait would time out.
         await page
-            .waitForURL(onTarget, { timeout: 2000 })
+            .waitForURL(onTarget, { timeout: 2000, waitUntil: 'commit' })
             .then(() => {
                 alreadyThere = true
             })
@@ -227,14 +243,14 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     if (!alreadyThere) {
         // Match by URL prefix rather than exact href: some packages (calc,
         // text, …) rewrite their rail link to deep-link the user's last
-        // visited file (e.g. /a/<org>/calc/<id>), so the rail anchor no
-        // longer matches the bare /a/<org>/<pkg> URL. Prefix match keeps
-        // this working regardless of whether the rail item is bare or
-        // deep-linked.
-        const railLink = page.locator(`a[href^="/a/${ORG_SLUG}/${pkg}"]`).first()
+        // visited file (e.g. /calc/<id>), so the rail anchor no longer matches
+        // the bare /<pkg> URL. Prefix match keeps this working regardless of
+        // whether the rail item is bare or deep-linked.
+        const railLink = page.locator(`a[href^="/${pkg}"]`).first()
         await railLink.waitFor({ state: 'visible' })
         await railLink.click()
-        await page.waitForURL(onTarget)
+        // waitUntil: 'commit' — SPA rail navigation doesn't fire a `load` event.
+        await page.waitForURL(onTarget, { waitUntil: 'commit' })
     }
     if (options?.waitFor) {
         await options.waitFor.waitFor({ state: 'visible' })
@@ -255,8 +271,8 @@ export async function navigateToAdmin(page: Page, section: string, sectionLabel:
     const rail = page.getByTestId('nav-admin')
     await rail.waitFor({ state: 'visible', timeout: 15_000 })
     await rail.click()
-    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/admin`))
+    await page.waitForURL(/\/admin(\/|$|\?)/)
     // The index redirects to /admin/packages; click the section in the sidebar.
     await page.getByText(sectionLabel, { exact: true }).click()
-    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/admin/${section}`))
+    await page.waitForURL(new RegExp(`/admin/${section}`))
 }

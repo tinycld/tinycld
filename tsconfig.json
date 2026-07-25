@@ -21,6 +21,11 @@
             "@tinycld/core/*": ["./core/*"]
         }
     },
-    "exclude": ["node_modules", ".expo", "dist"],
+    // server/pb_hooks holds generated symlinks to packages' *.pb.ts server hooks.
+    // They run on the PocketBase jsvm against server/pb_data/types.d.ts (via a
+    // /// <reference> whose relative path is authored for the source location, not
+    // this materialized one), not in the app's TS/React environment — so they are
+    // typechecked in their own package, never here.
+    "exclude": ["node_modules", ".expo", "dist", "server/pb_hooks"],
     "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }
