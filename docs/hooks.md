@@ -1,184 +1,153 @@
-# Core capability hooks
+# Server-side extensions: package Go + TS hooks
 
-Core provides Go-implemented **host-side capabilities** that packages drive
-through **manifest config** — no feature Go runs in the host. This is the seam
-that lets a package contribute protocol servers (CardDAV), full-text search, and
-audit logging as *data*, while the trusted Go implementation lives in core
-(`core/server/{carddav,fts,audit}/` and `core/server/coreserver/`).
+A feature package extends the PocketBase server in two complementary ways:
 
-The same config drives both deployment models:
+- **Go** — the package ships its own Go module (`server/`, declared by the
+  manifest's `server: { package, module }` field). Its `Register(app)` is linked
+  into the app-shell binary by the generator and called once at boot. This is
+  where protocol servers (CardDAV/CalDAV), raw-SQL work (FTS5), record hooks, and
+  custom HTTP routes live.
+- **TypeScript** — `.pb.ts` hooks in the package's `pb-hooks/` directory (declared
+  by `hooks: { directory: 'pb-hooks' }`) run on the sobek jsvm alongside the Go.
+  This is the **customization seam**: authors and downstream integrators add or
+  layer behavior without forking the package's Go.
 
-- **Single-tenant app** (`tinycld/server`): `coreserver.Register` reads each
-  package's config from the generated `server/bundled-packages.json` and wires the
-  capabilities against the one shared app.
-- **Multi-org host** (`multi-org` router): the publish path emits a parsed
-  `manifest.json` into the package store; `orgmanager` reads it per tenant and
-  wires the capability against that org's stock-PocketBase app.
+Core provides **reusable Go helpers** a package's `Register(app)` calls (it links
+no feature package itself), plus the `$`-binding seam that lets a package's Go
+expose native functions to TS hooks.
 
-A package author writes each config block **once** in `manifest.ts`.
+> The `contacts` package is the end-to-end reference: `contacts/server/` ships
+> CardDAV, FTS + `/api/contacts/search`, audit logging, and a `vcard_uid` autogen
+> hook, and exposes `$contacts.search(...)` to TS.
+
+---
+
+## Package Go server
+
+Declare it in `manifest.ts`:
+
+```ts
+server: { package: 'server', module: 'tinycld.org/packages/<slug>' },
+```
+
+`package` is the directory (relative to the package root) holding the Go module
+(`go.mod` lives there); `module` is that module's path (always
+`tinycld.org/packages/<slug>`). The module exports one entry point:
+
+```go
+package <slug>
+
+func Register(app *pocketbase.PocketBase) {
+    // bind record hooks, mount routes on OnServe, register capabilities…
+}
+```
+
+The generator (`scripts/generate.ts` → `gen-server.ts`) emits
+`server/package_extensions.go` with a `<slug>.Register(app)` call and wires the
+module into `server/go.work`, so no manual wiring is needed — the manifest field
+plus an on-disk `server/` dir is enough. `main.go` passes
+`registerPackageExtensions` to `coreserver.Register` via `Options.RegisterExtras`,
+so **core never imports a feature** and still builds with zero packages linked.
+
+A member's `server/go.work` (gitignored, generated) replaces `tinycld.org/core`
+with the local copy and — when the PocketBase fork is checked out at
+`<workspace>/pocketbase` — the fork too, so a standalone `go build`/`go test` from
+`<member>/server` resolves the same sobek-forked core the assembled build uses.
+
+### Reusable core helpers a package's Go calls
+
+Core keeps these as **generic, config-driven libraries** any package server can
+import and drive from its `Register(app)` — core does NOT auto-wire them at boot,
+the package does, passing a config for its own collection:
+
+| Package | What |
+|---|---|
+| `tinycld.org/core/carddav` | CardDAV/RFC-6352 protocol server + vCard codec for any collection. `Register(app, []Source)` mounts `/carddav` on serve (single-tenant); `HandlerFor(app, []Source)` returns a standalone `http.Handler` for one org (the multi-org host). A `Source` is the record↔vCard field map. |
+| `tinycld.org/core/fts` | SQLite FTS5 index sync + search for any collection. `Register(app, []Config)` binds index-sync record hooks + a `GET /api/{slug}/search` route; `Search(app, cfg, userID, opts)` runs an owner-scoped query. The FTS5 virtual table is created by the package's pb-migration. |
+| `tinycld.org/core/audit` | `RegisterCollection(app, name, *CollectionConfig)` — binds create/update/delete audit hooks writing to `audit_logs`, with field diffs, delete snapshots, redaction, and a customizable label extractor. |
+| `tinycld.org/core/coreserver` | The `$`-binding seam — `RegisterJSVMBinder` / `NewBindNamespace` (below). Plus subsystems: `notify`, `push`, `mailer`, `render`, `thumbnails`, `textextract`, `sharelink`, … |
+
+These are **libraries, not boot-time wiring**: a package contributes the config
+(a `carddav.Source`, an `fts.Config`, an audit label extractor) from its own Go so
+there is exactly one copy of the heavy protocol/index code, shared by every
+consumer — the single-tenant app (via each package's `Register`) and the multi-org
+host (which imports `carddav.HandlerFor` directly to serve stock-PB tenants that
+have no feature Go of their own). See `contacts/server/register.go` for the
+reference: it builds a `carddav.Source` + `fts.Config` and calls these.
+
+Go server hooks use SDK methods that **bypass PocketBase API rules** — they
+authorize manually. When changing a collection's API rules, check whether a Go
+hook also accesses it and update its filters to match.
 
 ---
 
 ## The `$`-binding seam (`coreserver/jsvm_binds.go`)
 
-The multi-org PocketBase fork calls `jsvm.Config.OnInit` on every JS VM (hook +
-callback pools). Core uses it to install native `$`-bindings that package
-`.pb.ts` hooks can call — the single, minimal, auditable surface untrusted tenant
-TS is allowed to reach.
+The PocketBase fork calls `jsvm.Config.OnInit` on every JS VM (hook + callback
+pools). A package's Go can install native `$`-bindings that its `.pb.ts` hooks
+call — the auditable surface TS is allowed to reach into Go.
 
-- `RegisterJSVMBinder(fn)` — a core sub-package registers a binder that installs a
-  `$name` namespace onto each VM, without `coreserver` importing it (mirrors the
-  `SetShareSessionResolver` decoupling).
-- `NewBindNamespace(vm, members)` — helper to build a `$name` object from Go funcs.
+- `RegisterJSVMBinder(fn)` — register a binder that installs a `$name` namespace
+  onto each VM. Call it from the package's `Register(app)` before serve.
+- `NewBindNamespace(vm, members)` — build a `$name` object from Go funcs.
 
-**Design rule:** data-plane work triggered by record events (FTS sync, audit,
-thumbnails) is a **core Go record hook driven by config, NOT a binding** — it
-never crosses the VM boundary and a tenant can't skip it. `$`-bindings are
-reserved for logic that must *originate* in package TS (rare). The `$fts` binding
-exists for imperative queries but is unused by the contacts pilot.
+Example (contacts exposes a Go-backed search to TS):
 
----
-
-## CardDAV (`carddav/`)
-
-Serves the CardDAV/RFC-6352 protocol (PROPFIND/REPORT, ETags, Basic-Auth, vCard
-encode/decode via `go-webdav` + `go-vcard`) for any collection, driven by a
-package's `carddav` manifest block. The vCard codec stays Go; only the field map
-is data.
-
-### Handlers / entry points
-
-| Symbol | Purpose |
-|---|---|
-| `Register(app, sources)` | Single-tenant: mounts `/carddav`, `/carddav/{path...}`, `/.well-known/carddav` on the app router with `sharedDBScope`. No-op when `sources` is empty. |
-| `HandlerFor(app, sources) http.Handler` | Multi-org: a standalone `http.Handler` for ONE org (tenant), using `singleOrgScope`. Applies the Basic-Auth challenge itself. Returns nil when no sources. |
-| `HasPrefix(path)` / `Prefixes()` | Report the URL prefixes the handler owns, for a composing router (`orgmanager.prefixMux`). |
-
-### `OrgScope` — the single-tenant/multi-org difference
-
-The protocol mechanics, codec, and config are identical across models; only org
-resolution differs, behind `OrgScope`:
-
-- **`sharedDBScope`** (single-tenant): one process holds every org's data in one
-  DB. Books = one per the user's `user_org` membership; the book path carries the
-  org slug; owner id = the user's `user_org` row for that org.
-- **`singleOrgScope`** (multi-org tenant): the process **is** one org (stock PB
-  per tenant, dispatched by subdomain). One book (`/carddav/u/ab/default/`); owner
-  id = the user's single `user_org` row in this DB; no slug in paths.
-
-### Manifest block
-
-```ts
-carddav: {
-    collection: 'contacts',
-    listFilter: "owner = {:ownerId} && deleted_at = ''", // {:ownerId} bound per request
-    sort: '-updated',
-    ownerField: 'owner',        // relation set on new records
-    uidField: 'vcard_uid',
-    softDeleteField: 'deleted_at', // DELETE stamps this instead of hard-deleting
-    vcard: {
-        version: '4.0',
-        name: { given: 'first_name', family: 'last_name' }, // composes FN + N
-        simple: { EMAIL: 'email', TEL: 'phone', ORG: 'company', TITLE: 'job_title', NOTE: 'notes' },
-        revField: 'updated',    // emitted as vCard REV
-    },
-}
+```go
+coreserver.RegisterJSVMBinder(func(vm *sobek.Runtime, app *pocketbase.PocketBase) error {
+    obj, _ := coreserver.NewBindNamespace(vm, map[string]any{
+        "search": func(userID string, opts map[string]any) (map[string]any, error) { /* … */ },
+    })
+    return vm.Set("$contacts", obj)
+})
 ```
 
-`vcard.simple` keys are vCard property names (`EMAIL`, `TEL`, …); values are the
-record field. Empty simple fields are omitted from the card.
-
----
-
-## Full-text search (`fts/`)
-
-Owns SQLite FTS5 index sync + query for any collection, driven by an `fts`
-manifest block. The FTS5 virtual table is created by the package's JS migration;
-this capability only reads/writes it.
-
-### Handlers / entry points
-
-| Symbol | Purpose |
-|---|---|
-| `Register(app, configs)` | Binds index-sync record hooks (create/update/delete) and, on serve, a `GET /api/{slug}/search` route per config. |
-| `RegisterSync(app, cfg)` | The index-sync hooks alone (idempotent delete-then-insert on `NonconcurrentDB()`). Core-registered — never triggered by TS. |
-| `Search(app, cfg, userID, opts)` | Owner-scoped FTS5 `MATCH`, ordered by rank; returns typed columns + total. |
-| `SanitizeQuery(input)` | FTS5-safe AND-ed prefix terms (handles email punctuation). |
-| `JSVMBinder(configs)` | Installs the `$fts.search` binding (for future imperative TS use; unused by the pilot). |
-
-### Manifest block
-
 ```ts
-fts: {
-    collection: 'contacts',
-    table: 'fts_contacts',          // created by the package's pb-migration
-    columns: [
-        { fts: 'first_name', field: 'first_name' },
-        { fts: 'notes', field: 'notes', strip: true }, // strip HTML before indexing
-    ],
-    owner: { field: 'owner', via: 'user_org', userField: 'user' }, // scopes search to the user's orgs
-    output: [                        // columns the search route returns per hit
-        { column: 'first_name' },
-        { column: 'favorite', type: 'bool' }, // coerce so JSON shape matches the schema
-    ],
-    softDeleteField: 'deleted_at',   // ?deleted=true searches within soft-deleted rows
-}
+// in a pb-hooks/*.pb.ts hook:
+const { items, total } = $contacts.search(userId, { q: 'ada', limit: 10 })
 ```
 
-`output[].type` (`bool` | `number`; omit for string) coerces the value so a bool
-column doesn't come back as the truthy string `"0"`.
+**Design rule:** reserve `$`-bindings for logic that must *originate* in package
+TS or must stay in Go but be *called* from TS (raw SQL, protocol codecs). Ordinary
+data-plane work (FTS index sync, audit) is a plain Go record hook the package
+binds directly in `Register` — it never crosses the VM boundary.
 
 ---
 
-## Audit (`audit/`)
+## TypeScript hooks (`pb-hooks/`)
 
-Registers audit-log hooks for a collection from config, replacing the former
-per-package `audit.RegisterCollection` Go call.
-
-### Handlers / entry points
-
-| Symbol | Purpose |
-|---|---|
-| `RegisterFromDescriptors(app, descriptors)` | Wires create/update/delete audit hooks for each descriptor. |
-| `Descriptor` / `OrgVia` | The declarative form (collection, org-resolution-via-relation, label fields/join). |
-
-### Manifest block
+Drop a `.pb.ts` into the package's `pb-hooks/` dir and bind PocketBase events:
 
 ```ts
-audit: [
-    {
-        collection: 'contacts',
-        resolveOrg: { field: 'owner', collection: 'user_org', orgField: 'org' }, // resolve-via-relation
-        labelFields: ['first_name', 'last_name'], // joined with labelJoin (default " ")
-    },
-]
+/// <reference path="../../tinycld/server/pb_data/types.d.ts" />
+
+onRecordCreate((e) => {
+    if (!e.record.getString('source')) e.record.set('source', 'web')
+    e.next()
+}, 'contacts')
 ```
 
-`audit` is a list — a package may audit several collections. Omit `resolveOrg` /
-`labelFields` to fall back to core's default resolver / extractor.
+- TS hooks run **alongside** the package's Go on the same record events — a TS
+  author can react to `onRecordCreate/Update/Delete('<collection>')` that the Go
+  server also handles, without touching the Go.
+- Because the fork's TS→JS transpile wraps each callback, **top-level module
+  bindings (a `const` or `function` declared outside the callback) are not in
+  scope at request time** — keep everything a hook needs inside the callback body.
+- Call `$`-bindings the package's Go exposes for Go-backed logic.
 
 ---
 
-## How config reaches core
+## Adding server behavior to a package
 
-| | Single-tenant | Multi-org tenant |
-|---|---|---|
-| Source | `server/bundled-packages.json` (generator emits full manifest) | `manifest.json` in the package store (publish emits it via esbuild→sobek) |
-| Reader | `coreserver.loadFTSConfigs` / `loadCardDAVConfigs` / `loadAuditDescriptors` | `controlplane.CardDAVSources` (router), fed to `orgmanager.Config.CardDAVSources` |
-| Wiring | `coreserver.Register` | `orgmanager.load` → `composeMux` (prefix-routes `/carddav` to the handler, else the stock mux) |
-
-Malformed config **fails loud at boot** (single-tenant `log.Fatalf`), mirroring
-`assertSafeImportField` — a silently-unwired capability is worse than a clear
-boot failure.
-
----
-
-## Adding a capability to a new package
-
-1. Add the `carddav` / `fts` / `audit` block(s) to the package's `manifest.ts`.
-2. Ensure the referenced collections + any FTS5 virtual table exist in the
+1. Create `<pkg>/server/` (a Go module `tinycld.org/packages/<slug>`) with a
+   `Register(app)` that binds your hooks/routes and calls any core helpers
+   (`audit.RegisterCollection`, `RegisterJSVMBinder`, …).
+2. Add `server: { package: 'server', module: 'tinycld.org/packages/<slug>' }` to
+   `manifest.ts`.
+3. For TS extension points, add `hooks: { directory: 'pb-hooks' }` and ship a
+   `pb-hooks/<name>.pb.ts` (even an example/placeholder documents the seam).
+4. Ensure any collections + FTS5 virtual tables your Go reads exist in the
    package's `pb-migrations`.
-3. Move any remaining imperative logic to a `.pb.ts` hook in `pb-hooks/`.
-4. Drop the package's `server` field (no feature Go); regenerate.
+5. Run `pnpm run packages:generate` (from `tinycld/`) to wire the Go server.
 
-See the `contacts` package for the reference end-to-end example.
+See the `contacts` package for the full reference.

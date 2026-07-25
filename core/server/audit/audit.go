@@ -3,8 +3,9 @@
 // delete snapshots, and sensitive-field redaction.
 //
 // Single-org: the process IS one org, so audit rows carry no org field and no
-// org resolution runs. Core collections are registered by the main server;
-// external packages register their own via RegisterCollection in Register().
+// org resolution runs. Core registers its own collections here; a feature
+// package registers its collections by calling RegisterCollection from its own
+// server module's Register(app) (see the contacts package for the reference).
 package audit
 
 import (

@@ -13,9 +13,6 @@ import (
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 	"github.com/pocketbase/pocketbase/tools/hook"
 
-	"tinycld.org/core/audit"
-	"tinycld.org/core/carddav"
-	"tinycld.org/core/fts"
 	"tinycld.org/core/notify"
 	"tinycld.org/core/realtime"
 	"tinycld.org/core/sharelink"
@@ -170,24 +167,16 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	RegisterUsersDemoAuditHook(app)
 
 	registerSchemaHooks(app, opts.TypesDir)
+	// Keep the /carddav (and /caldav, /drive) CORS bypass here even though core no
+	// longer serves a protocol handler itself: a package's own Go server (e.g.
+	// contacts) mounts /carddav via OnServe and relies on this bypass for
+	// non-browser DAV clients.
 	registerDavCorsBypass(app)
 
-	// Package-declared host-side capabilities, materialized from manifest config
-	// (bundled-packages.json) — no feature Go is linked in. FTS index-sync hooks
-	// bind now; its search routes are added on serve. The `$fts` binding is
-	// registered for the rare package that queries the index imperatively from TS.
-	ftsConfigs := loadFTSConfigs()
-	fts.Register(app, ftsConfigs)
-	RegisterJSVMBinder(fts.JSVMBinder(ftsConfigs))
-
-	// CardDAV protocol server, driven by each package's `carddav` manifest block.
-	// Routes mount on serve; core already owns the /carddav CORS bypass above.
-	carddav.Register(app, loadCardDAVConfigs())
-
-	// Package audit registration, driven by each package's `audit` manifest
-	// block — replaces the per-package audit.RegisterCollection Go call so a
-	// feature contributes audit config as data, not linked Go.
-	audit.RegisterFromDescriptors(app, loadAuditDescriptors())
+	// Feature Go (CardDAV, full-text search, audit registration) is contributed by
+	// each package's own server module via Options.RegisterExtras — not wired here.
+	// Core provides the reusable helpers those servers call (tinycld.org/core/audit,
+	// the RegisterJSVMBinder/$-binding seam); it links no feature package itself.
 
 	registerStaticServe(app, opts)
 }
