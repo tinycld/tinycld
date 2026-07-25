@@ -34,10 +34,10 @@ func TestExtractOrgSlugFromHost(t *testing.T) {
 		{"acme.localhost:8100", "acme"},
 		{"acme.localhost", "acme"},
 		{"acme.tinycld.com", "acme"},
-		{"tinycld.com", ""},      // two labels — no subdomain
-		{"127.0.0.1", ""},        // IPv4
-		{"127.0.0.1:8090", ""},   // IPv4 with port
-		{"localhost", ""},        // bare host
+		{"tinycld.com", ""},    // two labels — no subdomain
+		{"127.0.0.1", ""},      // IPv4
+		{"127.0.0.1:8090", ""}, // IPv4 with port
+		{"localhost", ""},      // bare host
 	}
 	for _, tc := range cases {
 		if got := extractOrgSlugFromHost(tc.host); got != tc.want {

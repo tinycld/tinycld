@@ -11,7 +11,6 @@ import (
 	"github.com/emersion/go-vcard"
 	"github.com/emersion/go-webdav/carddav"
 	"github.com/google/uuid"
-	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
 )
@@ -28,7 +27,7 @@ const httpRequestKey contextKey = "httpRequest"
 // selected per request; when multiple exist the path's book segment could encode
 // the source, but today the single Source is used.
 type Backend struct {
-	app     *pocketbase.PocketBase
+	app     core.App
 	sources []Source
 	scope   OrgScope
 }

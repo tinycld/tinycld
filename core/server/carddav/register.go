@@ -55,9 +55,11 @@ func Register(app *pocketbase.PocketBase, sources []Source) {
 // multi-org host to prefix-compose in front of a tenant's stock mux. Returns nil
 // when no sources are given (nothing to serve).
 //
-// The app is passed as *pocketbase.PocketBase because the backend needs the
-// concrete app for record Save/Delete; the router holds exactly this (inst.app).
-func HandlerFor(app *pocketbase.PocketBase, sources []Source) http.Handler {
+// The app is taken as core.App — the minimal interface the backend actually
+// needs (record Save/Delete/find are all core.App methods). That lets any host
+// drive it: the single-tenant app, a multi-org tenant, or a future per-org
+// subprocess, without the caller holding a concrete *pocketbase.PocketBase.
+func HandlerFor(app core.App, sources []Source) http.Handler {
 	if len(sources) == 0 {
 		return nil
 	}

@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -12,7 +11,7 @@ import (
 // collection. The identifier may be a bare username or a full email (the
 // discriminator is '@'), mirroring PocketBase's identityFields for `users`. This
 // is feature-agnostic — CalDAV/WebDAV will share the same Basic-Auth path.
-func authenticateRequest(app *pocketbase.PocketBase, r *http.Request) (*core.Record, error) {
+func authenticateRequest(app core.App, r *http.Request) (*core.Record, error) {
 	identifier, password, ok := r.BasicAuth()
 	if !ok || identifier == "" {
 		return nil, errUnauthorized
