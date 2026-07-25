@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
     buildBundledPackages,
     buildGoWork,
+    buildMemberGoWork,
     buildPackageExtensionsGo,
     replaceSymlink,
     type ServerPkg,
@@ -41,6 +42,25 @@ describe('buildGoWork', () => {
         expect(work).toContain('    .')
         expect(work).toContain('    ../../core/server')
         expect(work).toContain('    ../../contacts/server')
+    })
+})
+
+describe('buildMemberGoWork', () => {
+    it('replaces core so a standalone member build resolves it', () => {
+        const work = buildMemberGoWork('../../tinycld/core/server')
+        expect(work).toContain('use .')
+        expect(work).toContain('replace tinycld.org/core => ../../tinycld/core/server')
+    })
+
+    it('omits the fork replace when no fork path is given', () => {
+        const work = buildMemberGoWork('../../tinycld/core/server')
+        expect(work).not.toContain('github.com/pocketbase/pocketbase')
+    })
+
+    it('adds the fork replace when the fork is present', () => {
+        const work = buildMemberGoWork('../../tinycld/core/server', '../../pocketbase')
+        expect(work).toContain('replace tinycld.org/core => ../../tinycld/core/server')
+        expect(work).toContain('replace github.com/pocketbase/pocketbase => ../../pocketbase')
     })
 })
 

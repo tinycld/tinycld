@@ -482,13 +482,21 @@ function emitGoWiring(features: Feature[]) {
     // Per-member go.work so each server module resolves tinycld.org/core when
     // built on its own (the app build above is unaffected — it runs from
     // app/server with its own go.work). core itself has nothing to wire.
+    //
+    // When the PocketBase fork is checked out at <WS_ROOT>/pocketbase (fork
+    // adoption — the app server/go.mod carries the same replace), each member's
+    // go.work also replaces it, so a standalone member build resolves the sobek
+    // fork instead of upstream goja.
+    const forkDir = path.join(WS_ROOT, 'pocketbase')
+    const forkPresent = fs.existsSync(forkDir)
     for (const f of serverFeatures) {
         if (f.manifest.slug === 'core') continue
         const memberServerDir = path.join(f.dir, f.manifest.server!.package!)
         const coreRelFromMember = path.relative(memberServerDir, coreServerDir)
+        const forkRelFromMember = forkPresent ? path.relative(memberServerDir, forkDir) : undefined
         fs.writeFileSync(
             path.join(memberServerDir, 'go.work'),
-            buildMemberGoWork(coreRelFromMember)
+            buildMemberGoWork(coreRelFromMember, forkRelFromMember)
         )
     }
 }
