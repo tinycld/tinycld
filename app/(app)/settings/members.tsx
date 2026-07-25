@@ -1,4 +1,3 @@
-import { eq } from '@tanstack/db'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { MemberAvatar } from '@tinycld/core/components/settings/members/MemberAvatar'
 import {
