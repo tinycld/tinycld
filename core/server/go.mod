@@ -45,6 +45,9 @@ require (
 	github.com/domodwyer/mailyak/v3 v3.6.2 // indirect
 	github.com/dop251/base64dec v0.0.0-20231022112746-c6c9f9a96217 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/emersion/go-imap/v2 v2.0.0-beta.8 // indirect
+	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
+	github.com/emersion/go-smtp v0.24.0 // indirect
 	github.com/evanw/esbuild v0.28.1 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
