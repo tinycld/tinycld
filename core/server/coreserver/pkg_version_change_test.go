@@ -111,8 +111,8 @@ func TestSpecForVersion(t *testing.T) {
 // files regardless of the pkg_build labeling.
 func TestCurrentBuildMigrationsUsesOwnerMap(t *testing.T) {
 	restore := setMigrationOwnersForTest(map[string]string{
-		"1713000005_x.js":   "mail",
-		"1713000006_y.js":   "mail",
+		"1713000005_x.js":    "mail",
+		"1713000006_y.js":    "mail",
 		"1700000000_core.js": "core",
 	})
 	defer restore()

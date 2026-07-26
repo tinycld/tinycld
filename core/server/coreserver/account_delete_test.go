@@ -53,13 +53,13 @@ func TestAccountDeleteSoft(t *testing.T) {
 	}
 
 	scenario := &tests.ApiScenario{
-		Name:           "delete own account",
-		Method:         http.MethodPost,
-		URL:            "/api/account/delete",
-		Body:           strings.NewReader(`{"email":"goodbye@test.local"}`),
-		Headers:        map[string]string{"Authorization": token},
-		ExpectedStatus: http.StatusNoContent,
-		TestAppFactory: func(_ testing.TB) *tests.TestApp { return app },
+		Name:                  "delete own account",
+		Method:                http.MethodPost,
+		URL:                   "/api/account/delete",
+		Body:                  strings.NewReader(`{"email":"goodbye@test.local"}`),
+		Headers:               map[string]string{"Authorization": token},
+		ExpectedStatus:        http.StatusNoContent,
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 		AfterTestFunc: func(t testing.TB, app *tests.TestApp, res *http.Response) {
 			updated, err := app.FindRecordById("users", user.Id)
@@ -94,13 +94,13 @@ func TestAccountDeleteRequiresEmailMatch(t *testing.T) {
 	}
 
 	scenario := &tests.ApiScenario{
-		Name:            "wrong email rejected",
-		Method:          http.MethodPost,
-		URL:             "/api/account/delete",
-		Body:            strings.NewReader(`{"email":"wrong@test.local"}`),
-		Headers:         map[string]string{"Authorization": token},
-		ExpectedStatus:  http.StatusBadRequest,
-		ExpectedContent: []string{`"message"`},
+		Name:                  "wrong email rejected",
+		Method:                http.MethodPost,
+		URL:                   "/api/account/delete",
+		Body:                  strings.NewReader(`{"email":"wrong@test.local"}`),
+		Headers:               map[string]string{"Authorization": token},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{`"message"`},
 		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 	}

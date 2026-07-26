@@ -38,9 +38,10 @@ var (
 )
 
 // RegisterJSVMBinder adds a binder invoked on every VM via OnInit. Call it from
-// a sub-package's init or its Register(app) before the first VM spins up
-// (coreserver.Register wires OnInit before app.Start, so registration during
-// Register is in time). Safe for concurrent registration.
+// a sub-package's init or its Register(app). This must happen BEFORE
+// jsvm.Register runs, because that executes the hook files synchronously —
+// coreserver.Register calls RegisterExtras first for exactly this reason.
+// Safe for concurrent registration.
 func RegisterJSVMBinder(b JSVMBinder) {
 	bindersMu.Lock()
 	defer bindersMu.Unlock()

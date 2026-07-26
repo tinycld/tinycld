@@ -14,14 +14,18 @@ import (
 
 const basicRealm = "TinyCld WebDAV"
 
-// Register mounts the WebDAV routes for each source on the single-org app's
-// router. A no-op when no sources are registered. Core already installs the
-// /drive CORS bypass, so this adds only the protocol handler, the Basic-Auth
-// challenge, and the .well-known redirect.
+// Register mounts the WebDAV routes for each source on the single-app router,
+// and — when host is non-nil — installs the `webdavHook` binding so package TS
+// can register handlers against the four interception points. A no-op when no
+// sources are given. Core already installs the /drive CORS bypass, so this adds
+// only the protocol handler, the Basic-Auth challenge, and the .well-known
+// redirect.
 //
-// Returns the built FileSystems (in source order) so the caller can attach TS
-// hook points before serving.
-func Register(app *pocketbase.PocketBase, sources []Source) ([]*FileSystem, error) {
+// Pass coreserver.WebDAVHostBindings() as host to enable TS hooks; pass the
+// zero value to run pure Go.
+//
+// Returns the built FileSystems in source order.
+func Register(app *pocketbase.PocketBase, sources []Source, host HostBindings) ([]*FileSystem, error) {
 	if len(sources) == 0 {
 		return nil, nil
 	}
@@ -33,6 +37,9 @@ func Register(app *pocketbase.PocketBase, sources []Source) ([]*FileSystem, erro
 		fs, err := NewFileSystem(app, src)
 		if err != nil {
 			return nil, err
+		}
+		if host.Point != nil {
+			fs.SetTSHooks(RegisterTSHooks(host, src))
 		}
 		filesystems = append(filesystems, fs)
 		handlers = append(handlers, newDAVHandler(app, fs))
@@ -81,7 +88,7 @@ func Register(app *pocketbase.PocketBase, sources []Source) ([]*FileSystem, erro
 // *pocketbase.PocketBase. Under per-process tenant isolation this runs INSIDE
 // the org's own process, which mounts these routes on its own router from the
 // source list the router materialized.
-func HandlerFor(app core.App, sources []Source) (http.Handler, []*FileSystem, error) {
+func HandlerFor(app core.App, sources []Source, host HostBindings) (http.Handler, []*FileSystem, error) {
 	if len(sources) == 0 {
 		return nil, nil, nil
 	}
@@ -93,6 +100,9 @@ func HandlerFor(app core.App, sources []Source) (http.Handler, []*FileSystem, er
 		fs, err := NewFileSystem(app, src)
 		if err != nil {
 			return nil, nil, err
+		}
+		if host.Point != nil {
+			fs.SetTSHooks(RegisterTSHooks(host, src))
 		}
 		filesystems = append(filesystems, fs)
 

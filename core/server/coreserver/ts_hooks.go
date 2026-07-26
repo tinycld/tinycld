@@ -161,7 +161,9 @@ var (
 )
 
 // RegisterLoaderBinder adds a binder invoked once on the hooks loader VM. Call
-// it from a sub-package's Register(app) before the first VM spins up.
+// it from a sub-package's Register(app). Like RegisterJSVMBinder, this must
+// happen BEFORE jsvm.Register — the hook files execute synchronously inside it,
+// so a binding registered later would not exist when a .pb.ts calls it.
 func RegisterLoaderBinder(b LoaderBinder) {
 	loaderBindersMu.Lock()
 	defer loaderBindersMu.Unlock()

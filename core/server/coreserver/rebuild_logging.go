@@ -139,5 +139,5 @@ func lastLogLines(job *installJob, n int) string {
 // monoNow/monoSince wrap time so the rest of the logging code reads cleanly.
 // time.Now() is unavailable under the workflow runtime but this is production
 // server code (not a workflow script), so it's fine here.
-func monoNow() time.Time          { return time.Now() }
+func monoNow() time.Time           { return time.Now() }
 func monoSince(t time.Time) string { return monoNow().Sub(t).Round(time.Millisecond).String() }

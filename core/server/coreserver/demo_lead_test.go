@@ -51,13 +51,13 @@ func TestDemoLead_HappyPath(t *testing.T) {
 	app := setupDemoLeadTestApp(t)
 
 	scenario := &tests.ApiScenario{
-		Name:           "happy path inserts row",
-		Method:         http.MethodPost,
-		URL:            "/api/demo/lead",
-		Body:           strings.NewReader(`{"email":"prospect@example.com","reason":"Evaluating for my team","source":"intro_modal"}`),
-		Headers:        map[string]string{"Content-Type": "application/json", "User-Agent": "PlanTestAgent/1.0"},
-		ExpectedStatus: http.StatusNoContent,
-		TestAppFactory: func(_ testing.TB) *tests.TestApp { return app },
+		Name:                  "happy path inserts row",
+		Method:                http.MethodPost,
+		URL:                   "/api/demo/lead",
+		Body:                  strings.NewReader(`{"email":"prospect@example.com","reason":"Evaluating for my team","source":"intro_modal"}`),
+		Headers:               map[string]string{"Content-Type": "application/json", "User-Agent": "PlanTestAgent/1.0"},
+		ExpectedStatus:        http.StatusNoContent,
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
 			tt := t.(*testing.T)
@@ -90,14 +90,14 @@ func TestDemoLead_MissingEmail(t *testing.T) {
 	app := setupDemoLeadTestApp(t)
 
 	scenario := &tests.ApiScenario{
-		Name:           "missing email returns 400",
-		Method:         http.MethodPost,
-		URL:            "/api/demo/lead",
-		Body:            strings.NewReader(`{"email":"","reason":"hi","source":"intro_modal"}`),
-		Headers:         map[string]string{"Content-Type": "application/json"},
-		ExpectedStatus:  http.StatusBadRequest,
-		ExpectedContent: []string{`"status":400`},
-		TestAppFactory:  func(_ testing.TB) *tests.TestApp { return app },
+		Name:                  "missing email returns 400",
+		Method:                http.MethodPost,
+		URL:                   "/api/demo/lead",
+		Body:                  strings.NewReader(`{"email":"","reason":"hi","source":"intro_modal"}`),
+		Headers:               map[string]string{"Content-Type": "application/json"},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{`"status":400`},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 	}
 	scenario.Test(t)
@@ -110,14 +110,14 @@ func TestDemoLead_MalformedEmail(t *testing.T) {
 	app := setupDemoLeadTestApp(t)
 
 	scenario := &tests.ApiScenario{
-		Name:           "malformed email returns 400",
-		Method:         http.MethodPost,
-		URL:            "/api/demo/lead",
-		Body:            strings.NewReader(`{"email":"not-an-email","source":"intro_modal"}`),
-		Headers:         map[string]string{"Content-Type": "application/json"},
-		ExpectedStatus:  http.StatusBadRequest,
-		ExpectedContent: []string{`"status":400`},
-		TestAppFactory:  func(_ testing.TB) *tests.TestApp { return app },
+		Name:                  "malformed email returns 400",
+		Method:                http.MethodPost,
+		URL:                   "/api/demo/lead",
+		Body:                  strings.NewReader(`{"email":"not-an-email","source":"intro_modal"}`),
+		Headers:               map[string]string{"Content-Type": "application/json"},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{`"status":400`},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 	}
 	scenario.Test(t)
@@ -137,9 +137,9 @@ func TestDemoLead_OversizedReasonTruncated(t *testing.T) {
 		Body: strings.NewReader(
 			`{"email":"oversized@example.com","reason":"` + longReason + `","source":"intro_modal"}`,
 		),
-		Headers:        map[string]string{"Content-Type": "application/json"},
-		ExpectedStatus: http.StatusNoContent,
-		TestAppFactory: func(_ testing.TB) *tests.TestApp { return app },
+		Headers:               map[string]string{"Content-Type": "application/json"},
+		ExpectedStatus:        http.StatusNoContent,
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
 			tt := t.(*testing.T)
@@ -166,13 +166,13 @@ func TestDemoLead_UnknownSourceCoerced(t *testing.T) {
 	app := setupDemoLeadTestApp(t)
 
 	scenario := &tests.ApiScenario{
-		Name:           "unknown source coerced to intro_modal",
-		Method:         http.MethodPost,
-		URL:            "/api/demo/lead",
-		Body:           strings.NewReader(`{"email":"coerced@example.com","source":"garbage"}`),
-		Headers:        map[string]string{"Content-Type": "application/json"},
-		ExpectedStatus: http.StatusNoContent,
-		TestAppFactory: func(_ testing.TB) *tests.TestApp { return app },
+		Name:                  "unknown source coerced to intro_modal",
+		Method:                http.MethodPost,
+		URL:                   "/api/demo/lead",
+		Body:                  strings.NewReader(`{"email":"coerced@example.com","source":"garbage"}`),
+		Headers:               map[string]string{"Content-Type": "application/json"},
+		ExpectedStatus:        http.StatusNoContent,
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
 			tt := t.(*testing.T)
@@ -199,13 +199,13 @@ func TestDemoLead_MissingSourceCoerced(t *testing.T) {
 	app := setupDemoLeadTestApp(t)
 
 	scenario := &tests.ApiScenario{
-		Name:           "missing source coerced to intro_modal",
-		Method:         http.MethodPost,
-		URL:            "/api/demo/lead",
-		Body:           strings.NewReader(`{"email":"nosource@example.com"}`),
-		Headers:        map[string]string{"Content-Type": "application/json"},
-		ExpectedStatus: http.StatusNoContent,
-		TestAppFactory: func(_ testing.TB) *tests.TestApp { return app },
+		Name:                  "missing source coerced to intro_modal",
+		Method:                http.MethodPost,
+		URL:                   "/api/demo/lead",
+		Body:                  strings.NewReader(`{"email":"nosource@example.com"}`),
+		Headers:               map[string]string{"Content-Type": "application/json"},
+		ExpectedStatus:        http.StatusNoContent,
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
 		DisableTestAppCleanup: true,
 		AfterTestFunc: func(t testing.TB, app *tests.TestApp, _ *http.Response) {
 			tt := t.(*testing.T)

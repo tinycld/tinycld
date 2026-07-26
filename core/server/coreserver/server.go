@@ -107,23 +107,32 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// without env vars and stateful ones (Sentry) re-init on change.
 	RegisterSystemConfig(app)
 
+	// Feature packages register BEFORE jsvm, and the order is load-bearing:
+	// jsvm.Register executes the hook files synchronously (its registerHooks
+	// call, not deferred to OnBootstrap), so any `$`-binding or loader binding
+	// a package contributes has to exist by then. Registering features after
+	// this point would leave their hook files calling undefined globals —
+	// `webdavHook is not defined` at boot.
+	//
+	// Nothing here mounts routes directly; features bind OnServe, which fires
+	// later, so moving this earlier does not change route ordering.
+	if opts.RegisterExtras != nil {
+		opts.RegisterExtras(app)
+	}
+
 	jsvm.MustRegister(app, jsvm.Config{
 		MigrationsDir: opts.MigrationsDir,
 		HooksDir:      opts.HooksDir,
 		HooksWatch:    opts.HooksWatch,
 		HooksPoolSize: opts.HooksPoolSize,
 		// Install core's native $-bindings on every VM (hook + callback pools).
-		// Binders are registered by core sub-packages (fts, carddav, …) via
-		// RegisterJSVMBinder; see jsvm_binds.go.
+		// Binders are registered by core sub-packages (fts, carddav, …) and by
+		// feature packages via RegisterJSVMBinder; see jsvm_binds.go.
 		OnInit: buildJsvmOnInit(app),
 		// Install the loader-only bindings that REGISTER package TS handlers
-		// against a Go→TS hook point. These must run once, not once per pooled
-		// VM, so they ride OnLoaderInit rather than OnInit; see ts_hooks.go.
-		//
-		// Both callbacks fire from registerHooks, which the jsvm plugin defers
-		// to OnBootstrap — so a feature registering a binder from its own
-		// Register(app) (via Options.RegisterExtras, called below) is still in
-		// time despite running after this line.
+		// against a Go→TS hook point (e.g. webdavHook). These must run once,
+		// not once per pooled VM, so they ride OnLoaderInit rather than
+		// OnInit; see ts_hooks.go.
 		OnLoaderInit: buildJsvmOnLoaderInit(app),
 	})
 
@@ -132,10 +141,6 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		Automigrate:  opts.Automigrate,
 		Dir:          opts.MigrationsDir,
 	})
-
-	if opts.RegisterExtras != nil {
-		opts.RegisterExtras(app)
-	}
 
 	notify.Register(app)
 	notify.RegisterCommentMentionHooks(app)
