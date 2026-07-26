@@ -25,12 +25,23 @@ scripts/ota-e2e/ota-crash-rollback-logs/
 *.pem
 
 # The vendored PocketBase fork is source we ship, not build output, so it is exempt
-# from the rules above. Two of its files are otherwise swept up: ui/dist (tracked
-# upstream and consumed by a //go:embed all:dist directive — excluding it breaks the
-# Go build outright) and ui/.env, which holds no secrets, only Vite build-time
-# constants (doc URLs + PB_VERSION) needed to rebuild the admin UI from source.
-# Placed after the secret rules so it overrides them for this subtree only.
+# from the rules above — ui/dist would otherwise be swept up by `dist/`, and it is
+# tracked upstream and consumed by a //go:embed all:dist directive, so excluding it
+# breaks the Go build outright. Placed after the secret rules so it overrides them
+# for this subtree only.
 !third_party/pocketbase/**
+
+# The admin UI's build inputs (ui/src, ui/public, the 4.2M dprint WASM formatter,
+# vite/npm config) are NOT vendored: Go embeds only the prebuilt ui/dist, so they
+# cost ~8M for a toolchain we never run. Re-fetch from upstream if the admin console
+# ever needs rebuilding from source.
+third_party/pocketbase/ui/src/
+third_party/pocketbase/ui/public/
+third_party/pocketbase/ui/*.wasm
+third_party/pocketbase/ui/package*.json
+third_party/pocketbase/ui/dprint.json
+third_party/pocketbase/ui/vite.config.js
+third_party/pocketbase/ui/index.html
 
 # Build artifacts
 *.tsbuildinfo
