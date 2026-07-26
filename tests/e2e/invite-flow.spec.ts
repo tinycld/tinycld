@@ -109,7 +109,7 @@ test.describe('Invite flow', () => {
         await invitee.getByText(/Set password and sign in/i).click()
 
         // Auto-login + router.replace should land us in the app shell.
-        await invitee.waitForURL(LANDED_URL, { timeout: 15_000 })
+        await invitee.waitForURL(LANDED_URL, { timeout: 15_000, waitUntil: 'commit' })
 
         // Joining fires mail's user hook, which provisions a personal mailbox
         // under the verified domain. Verify it landed (mail only).
@@ -134,7 +134,7 @@ test.describe('Invite flow', () => {
         await invitee.getByTestId('identifier').fill(inviteUsername)
         await invitee.getByPlaceholder('Password').fill(invitePassword)
         await invitee.getByText('Sign in', { exact: true }).last().click()
-        await invitee.waitForURL(LANDED_URL, { timeout: 15_000 })
+        await invitee.waitForURL(LANDED_URL, { timeout: 15_000, waitUntil: 'commit' })
 
         // Sanity: URL is under the owner's org (the invitee is now a member).
         expect(invitee.url()).toContain(`/`)
@@ -150,7 +150,7 @@ test.describe('Invite flow', () => {
         await invitee.getByTestId('identifier').fill(TEST_USER_EMAIL)
         await invitee.getByPlaceholder('Password').fill(TEST_USER_PASSWORD)
         await invitee.getByText('Sign in', { exact: true }).last().click()
-        await invitee.waitForURL(LANDED_URL, { timeout: 15_000 })
+        await invitee.waitForURL(LANDED_URL, { timeout: 15_000, waitUntil: 'commit' })
 
         await inviteePage.close()
     })
@@ -179,10 +179,10 @@ test.describe('Invite flow', () => {
         // The mailer's LogSender writes to the email log. Wait for an entry
         // addressed to the alt email — NOT the invitee's account email.
         const email = await waitForEmailTo(altEmail, {
-            subjectMatch: /invited to/i,
+            subjectMatch: /you've been invited/i,
             timeoutMs: 10_000,
         })
-        expect(email.subject).toMatch(/invited to/i)
+        expect(email.subject).toMatch(/you've been invited/i)
     })
 
     test('rotate invalidates the old invite link', async ({ page }) => {

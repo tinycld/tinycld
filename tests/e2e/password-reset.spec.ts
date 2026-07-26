@@ -59,15 +59,18 @@ test.describe('password reset', () => {
         await inviteePage.getByPlaceholder('Re-enter password').fill(NEW_PASSWORD)
         await inviteePage.getByTestId('reset-confirm-submit').click()
 
-        // On success the screen redirects to the login route.
-        await inviteePage.waitForURL(LANDED_URL, { timeout: 15_000 })
+        // On success the screen does router.replace('/') — the signed-out root,
+        // which renders the login gate. That's the bare root, NOT a named app
+        // section, so LANDED_URL (which requires /<section>) never matches and
+        // waiting on it always times out. Gate on the login form instead.
+        await expect(inviteePage.getByTestId('identifier')).toBeVisible({ timeout: 15_000 })
 
         // Confirm the reset password actually authenticates.
         await inviteePage.goto('/')
         await inviteePage.getByTestId('identifier').fill(invited.email)
         await inviteePage.getByPlaceholder('Password').fill(NEW_PASSWORD)
         await inviteePage.getByText('Sign in', { exact: true }).last().click()
-        await inviteePage.waitForURL(LANDED_URL, { timeout: 15_000 })
+        await inviteePage.waitForURL(LANDED_URL, { timeout: 15_000, waitUntil: 'commit' })
 
         await closeInvitee()
     })

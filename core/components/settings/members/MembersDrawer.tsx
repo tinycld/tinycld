@@ -3,7 +3,6 @@ import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import {
     Drawer,
     DrawerBackdrop,
@@ -223,7 +222,7 @@ function ViewMember({
                                     </Pressable>
                                     {showLink && (
                                         <View className="rounded-xl p-3 bg-surface-secondary border border-border">
-                                            <InviteLinkPanel userOrgId={member.userOrgId} />
+                                            <InviteLinkPanel userId={member.userId} />
                                         </View>
                                     )}
                                 </View>
@@ -442,7 +441,6 @@ const inviteSchema = z.object({
 type InviteFormValues = z.infer<typeof inviteSchema>
 
 function InviteView({ onDone }: { onDone: () => void }) {
-    const { orgId } = useOrgInfo()
     const fgColor = useThemeColor('foreground')
     const mutedColor = useThemeColor('muted-foreground')
     const primaryColor = useThemeColor('primary')
@@ -463,22 +461,26 @@ function InviteView({ onDone }: { onDone: () => void }) {
         defaultValues: { username: '', email: '', role: 'member' },
     })
 
-    const [result, setResult] = useState<{ userOrgId: string; inviteUrl: string } | null>(null)
+    const [result, setResult] = useState<{ userId: string; inviteUrl: string } | null>(null)
 
     const invite = useMutation({
         mutationFn: async (data: InviteFormValues) => {
-            return pb.send<{ userOrgId: string; inviteUrl: string }>('/api/invite-member', {
+            // Single-org: /api/invite-member returns `userId` (the user_org
+            // junction is gone). Reading `userOrgId` here yielded undefined, so
+            // the link panel called /api/invite-link/undefined/{rotate,send}
+            // and got a 404 — the invite itself succeeded, only its follow-up
+            // actions were broken.
+            return pb.send<{ userId: string; inviteUrl: string }>('/api/invite-member', {
                 method: 'POST',
                 body: JSON.stringify({
                     username: data.username.trim().toLowerCase(),
                     email: data.email?.trim() ?? '',
                     role: data.role,
-                    orgId,
                 }),
                 headers: { 'Content-Type': 'application/json' },
             })
         },
-        onSuccess: data => setResult({ userOrgId: data.userOrgId, inviteUrl: data.inviteUrl }),
+        onSuccess: data => setResult({ userId: data.userId, inviteUrl: data.inviteUrl }),
         onError: handleMutationErrorsWithForm({ setError, getValues }),
     })
 
@@ -488,7 +490,7 @@ function InviteView({ onDone }: { onDone: () => void }) {
     if (result) {
         return (
             <InviteLinkSuccessView
-                userOrgId={result.userOrgId}
+                userId={result.userId}
                 inviteUrl={result.inviteUrl}
                 onDone={() => {
                     reset()
@@ -679,11 +681,11 @@ function InviteView({ onDone }: { onDone: () => void }) {
 }
 
 function InviteLinkSuccessView({
-    userOrgId,
+    userId,
     inviteUrl,
     onDone,
 }: {
-    userOrgId: string
+    userId: string
     inviteUrl: string
     onDone: () => void
 }) {
@@ -726,7 +728,7 @@ function InviteLinkSuccessView({
 
             <DrawerBody>
                 <View testID="invite-link-step" className="gap-4">
-                    <InviteLinkPanel userOrgId={userOrgId} initialUrl={inviteUrl} />
+                    <InviteLinkPanel userId={userId} initialUrl={inviteUrl} />
                 </View>
             </DrawerBody>
 
