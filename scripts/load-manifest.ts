@@ -28,6 +28,38 @@ export interface PackageManifest {
     tests?: { directory: string }
     build?: { script: string }
     server?: { package: string; module: string }
+    // Protocol capabilities. Core serves these; a package contributes only the
+    // config, so a multi-org tenant (which links no feature Go) still gets the
+    // protocol. The host materializes these blocks into the tenant's runtime
+    // config — see multi-org's controlplane/capabilities.go.
+    carddav?: {
+        collection: string
+        listFilter: string
+        sort?: string
+        ownerField: string
+        uidField: string
+        softDeleteField?: string
+        vcard: {
+            version: string
+            name: { given: string; family: string }
+            simple: Record<string, string>
+            revField?: string
+        }
+    }
+    webdav?: {
+        prefix: string
+        collection: string
+        fields: {
+            name: string
+            parent: string
+            isFolder: string
+            size: string
+            file: string
+            owner: string
+            mimeType?: string
+            updated?: string
+        }
+    }
     help?: { directory: string }
     repository?: { url: string; issueTemplate?: string }
     dependencies?: string[]
