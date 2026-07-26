@@ -532,65 +532,30 @@ func TestHooksDenyWriteAndDelete(t *testing.T) {
 	}
 }
 
-// The quota hook must see the true byte delta and be able to refuse the write.
-func TestQuotaHookRejectsWrite(t *testing.T) {
-	app, alice, _ := setupTree(t)
-	allowAuthenticated(t, app)
-	src := testSource()
-
-	var sawDelta int64
-	src.Hooks.CheckQuota = func(_ core.App, _ string, delta int64) error {
-		sawDelta = delta
-		return errors.New("over quota")
-	}
-	fs := newFS(t, app, src)
-
-	f, err := fs.OpenFile(ctxAs(alice), "/files/big.bin", os.O_WRONLY|os.O_CREATE, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := strings.Repeat("x", 1234)
-	if _, err := f.Write([]byte(body)); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err == nil {
-		t.Fatal("Close must surface the quota rejection")
-	}
-	if sawDelta != int64(len(body)) {
-		t.Fatalf("quota hook saw delta %d, want %d", sawDelta, len(body))
-	}
-	// Nothing must have been persisted.
-	if _, err := fs.Stat(ctxAs(alice), "/files/big.bin"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("a quota-rejected write must not leave a record behind")
-	}
-}
-
-// Overwriting must call BeforeOverwrite (drive snapshots the old version) and
-// must charge quota only the DELTA, not the whole new size.
-func TestOverwriteCallsHooksWithDelta(t *testing.T) {
+// Overwriting must call BeforeOverwrite so the feature can archive the outgoing
+// version. (Quota moved to core/quota, which enforces it as a record hook on
+// every write path — see that package's tests for the delta semantics.)
+func TestOverwriteCallsBeforeOverwrite(t *testing.T) {
 	app, alice, _ := setupTree(t)
 	allowAuthenticated(t, app)
 	src := testSource()
 
 	var overwrote bool
-	var sawDelta int64
-	src.Hooks.BeforeOverwrite = func(_ core.App, _ string, _ *core.Record) error {
+	var sawRecord string
+	src.Hooks.BeforeOverwrite = func(_ core.App, _ string, rec *core.Record) error {
 		overwrote = true
-		return nil
-	}
-	src.Hooks.CheckQuota = func(_ core.App, _ string, delta int64) error {
-		sawDelta = delta
+		sawRecord = rec.Id
 		return nil
 	}
 	fs := newFS(t, app, src)
 
-	mkFile(t, app, alice, "doc.txt", "", "12345") // 5 bytes
+	existing := mkFile(t, app, alice, "doc.txt", "", "12345")
 
 	f, err := fs.OpenFile(ctxAs(alice), "/files/doc.txt", os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.Write([]byte("1234567890")); err != nil { // 10 bytes
+	if _, err := f.Write([]byte("1234567890")); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.Close(); err != nil {
@@ -600,8 +565,8 @@ func TestOverwriteCallsHooksWithDelta(t *testing.T) {
 	if !overwrote {
 		t.Fatal("BeforeOverwrite was not called on an overwrite")
 	}
-	if sawDelta != 5 {
-		t.Fatalf("quota charged %d, want the 5-byte delta", sawDelta)
+	if sawRecord != existing.Id {
+		t.Fatalf("BeforeOverwrite saw %q, want the existing record %q", sawRecord, existing.Id)
 	}
 
 	info, err := fs.Stat(ctxAs(alice), "/files/doc.txt")

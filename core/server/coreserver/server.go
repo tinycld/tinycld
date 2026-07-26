@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 
 	"tinycld.org/core/notify"
+	"tinycld.org/core/quota"
 	"tinycld.org/core/realtime"
 	"tinycld.org/core/sharelink"
 	"tinycld.org/core/userorg"
@@ -63,6 +65,22 @@ type Options struct {
 	// code that lives outside this package — in particular, the generator's
 	// `registerPackageExtensions(app)` which wires sibling package servers.
 	RegisterExtras func(app *pocketbase.PocketBase)
+
+	// QuotaSources are the storage-bearing collections whose bytes count
+	// toward the deployment's ceilings, materialized from each package's
+	// manifest `quota` block.
+	//
+	// Core binds the enforcement hooks rather than the feature, so the limit
+	// holds on every write path and in a tenant process (which links no
+	// feature Go). Empty disables enforcement.
+	QuotaSources []quota.Source
+
+	// QuotaLimits resolves the ceilings. Defaults to quota.SettingsLimits,
+	// which reads the `settings` collection — correct for a single-org
+	// deployment. A multi-org tenant passes a resolver whose org ceiling comes
+	// from the router's runtime config instead, so the org cannot raise the
+	// plan limit it was sold.
+	QuotaLimits quota.LimitsFunc
 }
 
 // binaryName holds the resolved app binary name (set by Register()).
@@ -118,6 +136,22 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// later, so moving this earlier does not change route ordering.
 	if opts.RegisterExtras != nil {
 		opts.RegisterExtras(app)
+	}
+
+	// Storage ceilings. Bound by core, not by the feature that owns the data,
+	// so no write path and no host can skip them.
+	quotaLimits := opts.QuotaLimits
+	if quotaLimits == nil {
+		quotaLimits = quota.SettingsLimits
+	}
+	// Explicit sources win; otherwise take whatever the installed packages
+	// declared during RegisterExtras above.
+	quotaSources := opts.QuotaSources
+	if len(quotaSources) == 0 {
+		quotaSources = quota.RegisteredSources()
+	}
+	if err := quota.Register(app, quotaSources, quotaLimits); err != nil {
+		log.Fatalf("coreserver: quota config: %v", err)
 	}
 
 	jsvm.MustRegister(app, jsvm.Config{

@@ -145,12 +145,6 @@ func (f *davFile) persistWrite() error {
 		return err
 	}
 
-	stat, err := os.Stat(tmpPath)
-	if err != nil {
-		return err
-	}
-	newSize := stat.Size()
-
 	uploadPath := tmpPath
 	if renamed := filepath.Join(filepath.Dir(tmpPath), filepath.Base(f.wrName)); renamed != tmpPath {
 		if err := os.Rename(tmpPath, renamed); err != nil {
@@ -173,15 +167,6 @@ func (f *davFile) persistWrite() error {
 			return err
 		}
 
-		if hooks.CheckQuota != nil {
-			oldSize := int64(f.existing.GetInt(fields.Size))
-			if delta := newSize - oldSize; delta > 0 {
-				if err := fs.wrapQuotaErr(hooks.CheckQuota(fs.app, f.user.Id, delta)); err != nil {
-					return err
-				}
-			}
-		}
-
 		if hooks.BeforeOverwrite != nil && f.existing.GetString(fields.File) != "" {
 			// Archiving the outgoing blob is best-effort: losing a version
 			// snapshot must not fail the write the user actually asked for.
@@ -196,12 +181,6 @@ func (f *davFile) persistWrite() error {
 		}
 		f.info = fs.recordToFileInfo(f.existing)
 		return nil
-	}
-
-	if hooks.CheckQuota != nil {
-		if err := fs.wrapQuotaErr(hooks.CheckQuota(fs.app, f.user.Id, newSize)); err != nil {
-			return err
-		}
 	}
 
 	collection, err := fs.app.FindCollectionByNameOrId(fs.src.Collection)
@@ -224,21 +203,6 @@ func (f *davFile) persistWrite() error {
 
 	f.info = fs.recordToFileInfo(record)
 	return nil
-}
-
-// wrapQuotaErr shapes a quota rejection so callers can discriminate it.
-//
-// x/net/webdav maps PUT close errors to 405 unconditionally (webdav.go:285),
-// so there is no clean way to surface 507 Insufficient Storage — the client
-// sees 405 either way. The wrap makes errors.Is(err, os.ErrPermission) hold for
-// any other call site that wants to tell quota from transport/IO failure, and
-// preserves the human-readable message so it reaches the Logger callback rather
-// than being discarded.
-func (fs *FileSystem) wrapQuotaErr(err error) error {
-	if err == nil {
-		return nil
-	}
-	return &os.PathError{Op: "write", Err: errors.Join(os.ErrPermission, err)}
 }
 
 // guessMimeType derives a Content-Type from a basename's extension, falling

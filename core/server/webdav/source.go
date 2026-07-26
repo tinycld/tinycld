@@ -12,9 +12,10 @@
 //
 //   - Data (this Source): which collection backs the tree and which of its
 //     fields carry name/parent/size/…. This covers the whole protocol surface.
-//   - Go callbacks (Hooks): the few decisions a field map genuinely cannot
-//     express — per-item authorization, quota, versioning. These run in-process
-//     and are how the single-tenant app keeps drive's exact behaviour.
+//   - Go callbacks (Hooks): the little that is neither config nor an
+//     enforcement boundary — currently just the version snapshot on overwrite.
+//     Authorization comes from the collection's PB rules and quota from
+//     core/quota, both of which a tenant process gets too.
 //   - Opt-in TS hook points, for behaviour an org wants to customize without
 //     writing Go. See hooks.go; the fast path never touches a JS VM.
 //
@@ -31,9 +32,9 @@ import (
 //
 // The field names are data because the protocol only ever needs to read a
 // name, a size, a parent pointer and a blob — nothing about what the feature
-// means by them. Anything that IS feature-specific (may this user read this
-// row? does this write fit the quota?) lives in Hooks instead of being encoded
-// as more configuration.
+// means by them. The feature-specific questions — may this user read this row,
+// does this write fit the quota — are answered by the collection's own access
+// rules and by core/quota, not here.
 type Source struct {
 	// Slug is the owning package slug (e.g. "drive"), for log context.
 	Slug string
@@ -49,9 +50,9 @@ type Source struct {
 	// Fields maps the tree's structural roles onto collection fields.
 	Fields FieldMap
 
-	// Hooks are the feature callbacks. All are optional: a nil hook means
-	// "no restriction" for the permission checks and "no extra work" for the
-	// rest, which yields a plain authenticated file tree.
+	// Hooks are the optional feature side effects. A nil hook means "no extra
+	// work"; it can no longer mean "no restriction", since nothing that
+	// restricts lives here any more.
 	Hooks Hooks
 }
 
@@ -100,14 +101,14 @@ type FieldMap struct {
 //
 // What remains here is the work that genuinely is not an access decision.
 //
-// NOTE: these hooks are nil in a tenant process for the reason above, so a
-// tenant-served write skips quota accounting and does not archive the previous
-// version. Tracked in the router's HANDOFF.
+// Storage quota is NOT here either, and for the same reason: it is an
+// enforcement boundary, so it lives in core/quota as a record hook that every
+// write path — including this one, whose writes go through app.Save — passes
+// through by construction.
+//
+// NOTE: BeforeOverwrite is nil in a tenant process, so a tenant-served write
+// does not archive the previous version. Tracked in the router's HANDOFF.
 type Hooks struct {
-	// CheckQuota is called before a write commits, with the byte delta the
-	// write would add (never negative). A non-nil error rejects the write.
-	CheckQuota func(app core.App, userID string, delta int64) error
-
 	// BeforeOverwrite runs just before an existing entry's blob is replaced —
 	// drive uses it to snapshot the outgoing version. An error here is logged,
 	// not fatal: failing to archive the old blob must not lose the new write.
