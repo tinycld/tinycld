@@ -325,6 +325,10 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
             name: config.userName,
             emailVisibility: true,
             verified: true,
+            // `role` is required (1940000000_backfill_and_require_users_role), so
+            // it must be set on the create itself — the `owner` stamp below is an
+            // update and runs too late to satisfy validation.
+            role: 'owner',
             ...(config.isDemo ? { is_demo: true } : {}),
         })
     }
@@ -393,6 +397,11 @@ async function ensureAdminAppUser(pb: PocketBase, config: SeedConfig): Promise<v
             name: config.adminEmail.split('@')[0],
             emailVisibility: true,
             verified: true,
+            // `role` is required (1940000000_backfill_and_require_users_role).
+            // The operator's authority is its super_admins grant below, not this
+            // field, so it takes the least-privileged non-guest value — matching
+            // coreserver/setup_bootstrap.go's createSuperAdminOperator.
+            role: 'member',
         })
     }
 

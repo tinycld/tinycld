@@ -210,6 +210,12 @@ func createSuperAdminOperator(app core.App, email, password string) (*core.Recor
 	// unique handle, derived by the shared helper.
 	operator.Set("name", strings.SplitN(email, "@", 2)[0])
 	operator.Set("username", username)
+	// `role` is required (1940000000_backfill_and_require_users_role). The
+	// operator's real authority is its super_admins row, not this field, so it
+	// takes the least-privileged non-guest value — the same one the migration
+	// backfilled existing operators to, and the one that leaves every
+	// @request.auth.role rule evaluating exactly as an empty role used to.
+	operator.Set("role", "member")
 	if err := app.Save(operator); err != nil {
 		return nil, fmt.Errorf("create users record: %w", err)
 	}
