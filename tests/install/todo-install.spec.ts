@@ -102,12 +102,19 @@ const TODO_SPEC_BUGGY_FE = 'github:tinycld/todo#v0.0.1-pre-buggy-fe'
 const CORE_CUR = process.env.PW_CORE_CUR ?? '0.0.4'
 const CORE_NEXT = process.env.PW_CORE_NEXT ?? '0.0.5'
 
-const TEST_ORG_NAME = 'Todo Org'
-const TEST_ORG_SLUG = 'todo-org'
-const TEST_ORG_OWNER_NAME = 'Todo Owner'
-const TEST_ORG_OWNER_EMAIL = 'owner@todo.example'
-const TEST_ORG_OWNER_PASSWORD = 'OwnerPass1234!'
-const TEST_ORG_MAIL_DOMAIN = 'todo.example'
+// The app user this spec logs in as to drive the todo UI. Single-org: the
+// console has no user-creation form (that was the org-create flow), so the
+// user is minted through the superuser REST API — a fixture, not the subject.
+// "We're inside the authenticated app shell." Single-org collapsed
+// app/a/[orgSlug]/ to app/(app)/, so authenticated URLs are bare. Defined
+// locally rather than imported from tests/e2e/helpers: the install suite has
+// its own playwright config and deliberately shares no fixtures with e2e.
+const LANDED_URL =
+    /\/(?:todo|contacts|settings|admin|help|mail|drive|calendar|calc|text)(?:\/|$|\?)/
+
+const APP_USER_NAME = 'Todo Owner'
+const APP_USER_EMAIL = 'owner@todo.example'
+const APP_USER_PASSWORD = 'OwnerPass1234!'
 
 const TODO_TEXT = 'Buy milk'
 const TAG_TEXT = 'errand'
@@ -211,6 +218,33 @@ async function superuserToken(page: Page): Promise<string> {
 // superuser auth, so setting the managed `verified` field is rejected
 // ("validation_values_mismatch") and the org is never created. Refreshing
 // `pb_auth` here makes the create carry a valid superuser token again.
+// Mints the app user this spec logs in as, through the superuser REST API.
+// Idempotent: a 400 means an earlier run in the same container already
+// created it, which is fine.
+async function createAppUser(page: Page) {
+    const auth = await page.request.post('/api/collections/_superusers/auth-with-password', {
+        data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
+    })
+    expect(auth.ok()).toBeTruthy()
+    const { token } = (await auth.json()) as { token: string }
+
+    const res = await page.request.post('/api/collections/users/records', {
+        headers: { Authorization: token },
+        data: {
+            email: APP_USER_EMAIL,
+            password: APP_USER_PASSWORD,
+            passwordConfirm: APP_USER_PASSWORD,
+            name: APP_USER_NAME,
+            username: 'todoowner',
+            verified: true,
+            role: 'owner',
+        },
+    })
+    if (!res.ok() && res.status() !== 400) {
+        throw new Error(`create app user failed: ${res.status()} ${await res.text()}`)
+    }
+}
+
 async function reauthAppPb(page: Page) {
     // Mint a fresh superuser auth (token + record) the same resilient way
     // superuserToken does, but keep the record so we can serialize the store.
@@ -693,20 +727,20 @@ async function assertNewExpoUpdate(
 // shares this context's cookies/storage (partial isolation), which is fine —
 // we only need a clean tab to drive the org-user login.
 async function openTodoAsOwner(page: Page): Promise<Page> {
-    const orgPage = await page.context().newPage()
-    await orgPage.goto('/')
-    await orgPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
-    await orgPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
-    await orgPage.getByTestId('login-submit').click()
-    await orgPage.waitForURL(/\/a\//, { timeout: 30_000 })
+    const appPage = await page.context().newPage()
+    await appPage.goto('/')
+    await appPage.getByTestId('identifier').fill(APP_USER_EMAIL)
+    await appPage.getByTestId('login-password').fill(APP_USER_PASSWORD)
+    await appPage.getByTestId('login-submit').click()
+    await appPage.waitForURL(LANDED_URL, { timeout: 30_000 })
 
-    const todoNav = orgPage.getByTestId('nav-todo')
+    const todoNav = appPage.getByTestId('nav-todo')
     await expect(todoNav).toBeVisible({ timeout: 30_000 })
     await todoNav.click()
     // On a freshly-installed/changed package the lazy route chunk is compiled by
     // Metro on first navigation (cold), which can take a while on the container.
-    await expect(orgPage).toHaveURL(/\/a\/[^/]+\/todo/, { timeout: 120_000 })
-    return orgPage
+    await expect(appPage).toHaveURL(/\/todo/, { timeout: 120_000 })
+    return appPage
 }
 
 // Sets a package row's target version on the Packages screen and applies it.
@@ -842,7 +876,9 @@ test.describe('todo version change', () => {
             .fill('http://localhost:7090')
 
         await page.getByRole('button', { name: 'Create Account & Continue' }).click()
-        await expect(page.getByText('No organizations yet.')).toBeVisible()
+        // Single-org: the dashboard lands on Packages, and the Organizations
+        // tab is a static "managed by the router" explainer, not an empty list.
+        await expect(page.getByText('Packages', { exact: true }).first()).toBeVisible()
     })
 
     test('install @tinycld/todo pinned to v1.0.0 through the installer UI', async ({ page }) => {
@@ -1009,7 +1045,7 @@ test.describe('todo version change', () => {
         await waitForCollection(page, 'tags', false, 20_000) // still v1 schema
     })
 
-    test('v1.0.0 is live, has no tags schema, and an org exists', async ({ page }) => {
+    test('v1.0.0 is live, has no tags schema, and a todo can be added', async ({ page }) => {
         test.setTimeout(300_000)
 
         await loginAsSuperuserWithRetry(page)
@@ -1022,40 +1058,32 @@ test.describe('todo version change', () => {
         await waitForCollection(page, 'tags', false, 30_000)
         await waitForCollection(page, 'todo_tags', false, 30_000)
 
-        // The org create writes through `appPb` (see reauthAppPb), whose persisted
-        // superuser token is left stale by the preceding rollback-fixture restarts.
-        // Refresh it (reloads the page), then re-establish the /admin UI session
-        // before driving the form.
+        // The user create writes through `appPb` (see reauthAppPb), whose
+        // persisted superuser token is left stale by the preceding
+        // rollback-fixture restarts. Refresh it (reloads the page), then
+        // re-establish the /admin UI session.
         await reauthAppPb(page)
         await loginAsSuperuserWithRetry(page)
 
-        // 3. Create an org to log into — the superuser dashboard isn't the app
-        //    shell; the nav rail lives in the org-scoped app.
-        await page.getByText('Organizations', { exact: true }).first().click()
-        await page.getByRole('button', { name: 'New organization' }).click()
-        await page.getByRole('textbox', { name: 'Name', exact: true }).fill(TEST_ORG_NAME)
-        await page.getByRole('textbox', { name: 'Slug', exact: true }).fill(TEST_ORG_SLUG)
-        await page
-            .getByRole('textbox', { name: 'Full name', exact: true })
-            .fill(TEST_ORG_OWNER_NAME)
-        await page.getByRole('textbox', { name: 'Email', exact: true }).fill(TEST_ORG_OWNER_EMAIL)
-        await page
-            .getByRole('textbox', { name: 'Password', exact: true })
-            .fill(TEST_ORG_OWNER_PASSWORD)
-        await page
-            .getByRole('textbox', { name: 'Mail domain', exact: true })
-            .fill(TEST_ORG_MAIL_DOMAIN)
-        await page.getByRole('button', { name: 'Create organization' }).click()
-        await expect(page.getByText(TEST_ORG_NAME, { exact: true })).toBeVisible()
+        // 3. Mint an app user to log in as — the superuser dashboard isn't the
+        //    app shell, and the nav rail lives in the authenticated app.
+        //
+        //    Single-org: this used to create an org + owner through the
+        //    Organizations console. That console is now a static empty state
+        //    (the multi-org router owns provisioning), so the user is created
+        //    through the superuser REST API instead. The user is only a
+        //    fixture — everything this spec actually asserts (registry
+        //    version, schema, the todo UI) still runs through the UI.
+        await createAppUser(page)
 
         // 4. Seed a todo as the org owner so the upgrade has data to tag later.
-        const orgPage = await openTodoAsOwner(page)
+        const appPage = await openTodoAsOwner(page)
         try {
-            await orgPage.getByPlaceholder('Add a todo…').fill(TODO_TEXT)
-            await orgPage.getByLabel('Add todo').click()
-            await expect(orgPage.getByText(TODO_TEXT, { exact: true })).toBeVisible()
+            await appPage.getByPlaceholder('Add a todo…').fill(TODO_TEXT)
+            await appPage.getByLabel('Add todo').click()
+            await expect(appPage.getByText(TODO_TEXT, { exact: true })).toBeVisible()
         } finally {
-            await orgPage.close()
+            await appPage.close()
         }
 
         // 5. The install produced a new web+native release — mobile clients must now
@@ -1092,22 +1120,22 @@ test.describe('todo version change', () => {
         await waitForCollection(page, 'todo_tags', true, 60_000)
 
         // 2. Tag the existing todo through the v2 UI — the new feature in action.
-        const orgPage = await openTodoAsOwner(page)
+        const appPage = await openTodoAsOwner(page)
         try {
             // Open the todo's detail screen, where the TAGS editor lives.
-            await orgPage.getByLabel(`Edit ${TODO_TEXT}`).click()
-            await expect(orgPage.getByText('TAGS', { exact: true })).toBeVisible({
+            await appPage.getByLabel(`Edit ${TODO_TEXT}`).click()
+            await expect(appPage.getByText('TAGS', { exact: true })).toBeVisible({
                 timeout: 30_000,
             })
-            await orgPage.getByPlaceholder('Add a tag…').fill(TAG_TEXT)
-            await orgPage.getByLabel('Add tag').click()
+            await appPage.getByPlaceholder('Add a tag…').fill(TAG_TEXT)
+            await appPage.getByLabel('Add tag').click()
             // The new tag renders as a chip and can be removed (proves the link
             // row persisted, not just optimistic text).
-            await expect(orgPage.getByLabel(`Remove tag ${TAG_TEXT}`)).toBeVisible({
+            await expect(appPage.getByLabel(`Remove tag ${TAG_TEXT}`)).toBeVisible({
                 timeout: 15_000,
             })
         } finally {
-            await orgPage.close()
+            await appPage.close()
         }
 
         // 3. Ground truth: a todo_tags link row exists in the DB.
@@ -1160,20 +1188,20 @@ test.describe('todo version change', () => {
         // 3. UI confirmation: the todo survived (its row is in todo_items, which
         //    v1 keeps) but the reverted v1 binary no longer ships the tag editor,
         //    so the detail screen has no TAGS section.
-        const orgPage = await openTodoAsOwner(page)
+        const appPage = await openTodoAsOwner(page)
         try {
-            await expect(orgPage.getByText(TODO_TEXT, { exact: true })).toBeVisible({
+            await expect(appPage.getByText(TODO_TEXT, { exact: true })).toBeVisible({
                 timeout: 30_000,
             })
-            await orgPage.getByLabel(`Edit ${TODO_TEXT}`).click()
+            await appPage.getByLabel(`Edit ${TODO_TEXT}`).click()
             // The v1 detail screen renders the DESCRIPTION editor; wait for it so
             // we're asserting against a mounted screen, not a still-loading one.
-            await expect(orgPage.getByText('DESCRIPTION', { exact: true })).toBeVisible({
+            await expect(appPage.getByText('DESCRIPTION', { exact: true })).toBeVisible({
                 timeout: 30_000,
             })
-            await expect(orgPage.getByText('TAGS', { exact: true })).toHaveCount(0)
+            await expect(appPage.getByText('TAGS', { exact: true })).toHaveCount(0)
         } finally {
-            await orgPage.close()
+            await appPage.close()
         }
 
         // A downgrade is a modification too: it reverts files + rebuilds the

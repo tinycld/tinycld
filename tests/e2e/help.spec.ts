@@ -8,7 +8,7 @@ test.describe('Help', () => {
         await login(page)
 
         await page.getByTestId('nav-help').click()
-        await expect(page).toHaveURL(/\/a\/[^/]+\/help$/)
+        await expect(page).toHaveURL(/\/help$/)
         await expect(page.getByText('Help', { exact: true })).toBeVisible()
 
         // Core topics are always present; assert one renders in the index.
@@ -20,7 +20,7 @@ test.describe('Help', () => {
 
         // Clicking a topic navigates to the permalink and renders the body.
         await page.getByText('Light and dark themes').click()
-        await expect(page).toHaveURL(/\/a\/[^/]+\/help\/core\/themes$/)
+        await expect(page).toHaveURL(/\/help\/core\/themes$/)
         await expect(page.getByText('Light and dark mode')).toBeVisible()
     })
 })

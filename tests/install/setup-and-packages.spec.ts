@@ -6,11 +6,11 @@ import { expect, type Page, test } from '@playwright/test'
 //      creates the superuser. Skipped if the token isn't exported.
 //   2. dashboard packages tab — logs in as the superuser, asserts every
 //      bundled feature package shows up.
-//   3. organization creation — logs in as the superuser, creates a test org,
-//      asserts it appears in the list. Regression test for the missing
-//      'username' bug on user create.
+//   3. super-admin grant — logs in as the superuser, grants an app user
+//      access to the console. Regression test for the grant 500.
+//   4. system settings — saves a value and asserts it reaches the client.
 //
-// The tests run serially: tests 2 and 3 depend on the superuser created by
+// The tests run serially: the later tests depend on the superuser created by
 // test 1 (or by a previous bootstrap if PW_SETUP_TOKEN was consumed earlier).
 //
 // PW_SETUP_TOKEN is scraped from `docker logs <container>` by the workflow
@@ -36,12 +36,41 @@ const EXPECTED_BUNDLED = [
 const SUPERUSER_EMAIL = 'smoke@example.com'
 const SUPERUSER_PASSWORD = 'SmokeTest1234!'
 
-const TEST_ORG_NAME = 'Smoke Org'
-const TEST_ORG_SLUG = 'smoke-org'
-const TEST_ORG_OWNER_NAME = 'Smoke Owner'
-const TEST_ORG_OWNER_EMAIL = 'owner@smoke.example'
-const TEST_ORG_OWNER_PASSWORD = 'OwnerPass1234!'
-const TEST_ORG_MAIL_DOMAIN = 'smoke.example'
+// The user granted super-admin below. Single-org: the setup console has no
+// user-creation UI (that was the org-create form), so the grant test mints
+// its target through the superuser API first. Creating the *fixture* via the
+// API is fine — the grant itself, which is what this spec tests, still runs
+// through the console UI.
+const GRANT_TARGET_NAME = 'Smoke Grantee'
+const GRANT_TARGET_EMAIL = 'grantee@smoke.example'
+const GRANT_TARGET_PASSWORD = 'GranteePass1234!'
+
+// Mints the app user the grant test targets, via the superuser REST API.
+// Idempotent: a 400 from a duplicate email means a previous run already
+// created it, which is fine — the grant only needs the user to exist.
+async function createGrantTarget(page: Page) {
+    const auth = await page.request.post('/api/collections/_superusers/auth-with-password', {
+        data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
+    })
+    expect(auth.ok()).toBeTruthy()
+    const { token } = (await auth.json()) as { token: string }
+
+    const res = await page.request.post('/api/collections/users/records', {
+        headers: { Authorization: token },
+        data: {
+            email: GRANT_TARGET_EMAIL,
+            password: GRANT_TARGET_PASSWORD,
+            passwordConfirm: GRANT_TARGET_PASSWORD,
+            name: GRANT_TARGET_NAME,
+            username: 'smokegrantee',
+            verified: true,
+        },
+    })
+    // 400 == already exists from an earlier run in the same container.
+    if (!res.ok() && res.status() !== 400) {
+        throw new Error(`create grant target failed: ${res.status()} ${await res.text()}`)
+    }
+}
 
 async function loginAsSuperuser(page: Page) {
     await page.goto('/admin')
@@ -84,9 +113,11 @@ test.describe('first-run install', () => {
 
         await page.getByRole('button', { name: 'Create Account & Continue' }).click()
 
-        // Setup wizard transitions in-place to the dashboard with the
-        // Organizations tab active.
-        await expect(page.getByText('No organizations yet.')).toBeVisible()
+        // Setup wizard transitions in-place to the dashboard. Single-org: the
+        // default tab is Packages (SetupDashboard defaultTab), and the
+        // Organizations tab is now a static "managed by the router" explainer
+        // rather than a create form with an empty list.
+        await expect(page.getByText('Packages', { exact: true }).first()).toBeVisible()
     })
 
     test('superuser dashboard lists every bundled package', async ({ page }) => {
@@ -106,72 +137,11 @@ test.describe('first-run install', () => {
         await expect(bundledTags).toHaveCount(EXPECTED_BUNDLED.length)
     })
 
-    test('superuser can create an organization', async ({ page }) => {
-        await loginAsSuperuser(page)
-
-        // Switch to the Organizations section via the nav rail.
-        await page.getByText('Organizations', { exact: true }).first().click()
-
-        // Regression test for two org-create failures:
-        //   1. "The username field is required." — the form once omitted
-        //      username (now derived from the email).
-        //   2. A 400 on `verified` ("Values don't match.") — the console wrote
-        //      through an UNAUTHENTICATED app pb client, so setting the managed
-        //      `verified` field on the new owner failed the users manageRule.
-        //      The bootstrap now makes the operator a super_admin app user and
-        //      the console's shared pb client carries that token, authorizing
-        //      the managed-field write. The owner-login step below proves the
-        //      account is actually usable (not just that a row appeared).
-        await page.getByRole('button', { name: 'New organization' }).click()
-
-        // The create form groups fields under Organization / Owner account
-        // fieldsets, so the org name field is just "Name" and the owner's is
-        // "Full name". Both are unique within the open form.
-        await page.getByRole('textbox', { name: 'Name', exact: true }).fill(TEST_ORG_NAME)
-        // The slug auto-derives from the name; overwrite to make the assertion
-        // explicit and decoupled from the derivation rules.
-        await page.getByRole('textbox', { name: 'Slug', exact: true }).fill(TEST_ORG_SLUG)
-        await page
-            .getByRole('textbox', { name: 'Full name', exact: true })
-            .fill(TEST_ORG_OWNER_NAME)
-        await page.getByRole('textbox', { name: 'Email', exact: true }).fill(TEST_ORG_OWNER_EMAIL)
-        await page
-            .getByRole('textbox', { name: 'Password', exact: true })
-            .fill(TEST_ORG_OWNER_PASSWORD)
-        // Mail is in EXPECTED_BUNDLED so the form requires a mail domain.
-        await page
-            .getByRole('textbox', { name: 'Mail domain', exact: true })
-            .fill(TEST_ORG_MAIL_DOMAIN)
-
-        await page.getByRole('button', { name: 'Create organization' }).click()
-
-        // After creation the form closes and the org row renders with name + slug.
-        await expect(page.getByText('No organizations yet.')).not.toBeVisible()
-        await expect(page.getByText(TEST_ORG_NAME, { exact: true })).toBeVisible()
-        await expect(page.getByText(TEST_ORG_SLUG, { exact: true })).toBeVisible()
-        await expect(page.getByText(TEST_ORG_OWNER_EMAIL, { exact: true })).toBeVisible()
-
-        // The owner must be able to sign in with the password just entered —
-        // proves the account is usable, not merely that a row appeared. (The
-        // `verified` 400 regression created no owner at all; a password=email
-        // mix-up would create one that can't log in.) Use a fresh page so the
-        // admin session stays intact for the next serial test.
-        const ownerPage = await page.context().newPage()
-        try {
-            await ownerPage.goto('/')
-            await ownerPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
-            await ownerPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
-            await ownerPage.getByTestId('login-submit').click()
-            await ownerPage.waitForURL(/\/a\//, { timeout: 30_000 })
-            // Landing on /a/ isn't enough — assert the authenticated org app shell
-            // actually rendered. nav-home is the rail's org-home button, present
-            // only inside the signed-in workspace (not on the login screen or an
-            // error shell), so this proves the owner is genuinely authenticated.
-            await expect(ownerPage.getByTestId('nav-home')).toBeVisible({ timeout: 30_000 })
-        } finally {
-            await ownerPage.close()
-        }
-    })
+    // The "superuser can create an organization" test was removed with the
+    // single-org migration: OrganizationsTab is now a static empty state
+    // explaining that tenant provisioning belongs to the multi-org router,
+    // so there is no create form left to drive. The router owns that flow
+    // and tests it in its own suite (internal/controlplane).
 
     test('superuser can grant another user super admin', async ({ page }) => {
         await loginAsSuperuser(page)
@@ -183,22 +153,24 @@ test.describe('first-run install', () => {
         // never surfaced (it only reached Sentry/the _logs DB). Granting while
         // logged in as the superuser — the common /admin path — is exactly this.
         //
-        // Grant the org owner created by the previous (serial) test; that user
-        // already exists, so this exercises the grant-an-existing-user path.
+        // The grant handler resolves an EXISTING user by email
+        // (resolveGrantTarget in coreserver/super_admins.go), so mint one first.
+        await createGrantTarget(page)
+
         await page.getByText('Super Admins', { exact: true }).first().click()
 
         // Wait for the section to mount (the grant CTA) before interacting.
         await expect(page.getByRole('button', { name: 'Grant access' })).toBeVisible()
 
         await page.getByRole('button', { name: 'Grant access' }).click()
-        await page.getByPlaceholder('person@example.com').fill(TEST_ORG_OWNER_EMAIL)
+        await page.getByPlaceholder('person@example.com').fill(GRANT_TARGET_EMAIL)
         await page.getByRole('button', { name: 'Grant super admin' }).click()
 
         // On success the form closes, the roster refetches, and the granted user
         // appears as a row. Before the fix this never happened — the POST 500'd
         // and the email surfaced as an inline form error instead. Asserting the
-        // owner's row (not just "not empty") makes the regression signal precise.
-        await expect(page.getByText(TEST_ORG_OWNER_EMAIL, { exact: true })).toBeVisible()
+        // grantee's row (not just "not empty") makes the regression signal precise.
+        await expect(page.getByText(GRANT_TARGET_EMAIL, { exact: true })).toBeVisible()
     })
 
     // Exercises the full system-settings chain end-to-end: save a value in the

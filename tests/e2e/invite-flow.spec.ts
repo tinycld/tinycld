@@ -1,6 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 import { clearEmailLog, waitForEmailTo } from './email-log-helpers'
-import { isPackageLinked, login, ORG_SLUG, TEST_USER_EMAIL, TEST_USER_PASSWORD } from './helpers'
+import { isPackageLinked, LANDED_URL, login, TEST_USER_EMAIL, TEST_USER_PASSWORD } from './helpers'
 
 // SPA-navigate to Settings → Members via the shell chrome (rail → settings
 // index → Members). A page.goto here would tear down the SPA and cancel the
@@ -8,11 +8,10 @@ import { isPackageLinked, login, ORG_SLUG, TEST_USER_EMAIL, TEST_USER_PASSWORD }
 // so we click through expo-router instead.
 async function openMembersSettings(page: Page) {
     await page.getByTestId('nav-settings').click()
-    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/settings(/|$|\\?)`))
+    await page.waitForURL(/\/settings(\/|$|\?)/)
     await page.getByText('Members', { exact: true }).click()
-    await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/settings/members`))
+    await page.waitForURL(/\/settings\/members/)
 }
-
 // Reads the logged-in PocketBase auth token from the web auth store (the
 // AsyncStorage→localStorage 'pb_auth' entry, JSON.stringify({ token, record })).
 async function authTokenFromStore(page: Page): Promise<string> {
@@ -22,9 +21,8 @@ async function authTokenFromStore(page: Page): Promise<string> {
     if (!token) throw new Error('pb_auth has no token')
     return token
 }
-
 // Asserts the freshly-accepted invitee got a personal mailbox under a verified
-// org domain — proving mail's user_org → handleUserOrgCreated hook fired. Queries
+// verified domain — proving mail's user-provisioning hook fired. Queries
 // as the invitee themselves (the mail RLS lets a member read their own mailbox +
 // org domain), so no superuser creds are needed. Skipped when mail isn't linked.
 async function verifyInviteeMailbox(page: Page) {
@@ -58,15 +56,13 @@ async function verifyInviteeMailbox(page: Page) {
     expect(dom.org, 'domain belongs to an org').toBeTruthy()
     expect(dom.verified, 'domain is verified').toBe(true)
 }
-
 // End-to-end invite flow:
 //   1. Owner signs in and invites a fresh user via Settings → Members.
-//   2. The Go user_org hook mints an invite_tokens row and the UI's InviteLinkPanel
+//   2. The Go user hook mints an invite_tokens row and the UI's InviteLinkPanel
 //      surfaces the accept URL directly (no auto-email for new invites).
 //   3. The invited user visits the /accept-invite/{token} link, sets a password,
-//      and is auto-logged-in and redirected to /a/{slug}.
+//      and is auto-logged-in and redirected into the app shell.
 //   4. The invited user signs out, then signs back in with the new password.
-
 test.describe('Invite flow', () => {
     // Unique username per run — the test DB is reset across runs but not between tests.
     const inviteUsername = `invitee${Date.now()}`
@@ -112,11 +108,11 @@ test.describe('Invite flow', () => {
         await invitee.getByTestId('confirmPassword').fill(invitePassword)
         await invitee.getByText(/Set password and sign in/i).click()
 
-        // Auto-login + router.replace should land us on /a/{slug}.
-        await invitee.waitForURL(new RegExp(`/a/${ORG_SLUG}`), { timeout: 15_000 })
+        // Auto-login + router.replace should land us in the app shell.
+        await invitee.waitForURL(LANDED_URL, { timeout: 15_000 })
 
-        // Joining the org fires mail's user_org hook, which provisions a personal
-        // mailbox under the org's verified domain. Verify it landed (mail only).
+        // Joining fires mail's user hook, which provisions a personal mailbox
+        // under the verified domain. Verify it landed (mail only).
         if (isPackageLinked('mail')) {
             await expect(async () => {
                 await verifyInviteeMailbox(invitee)
@@ -138,10 +134,10 @@ test.describe('Invite flow', () => {
         await invitee.getByTestId('identifier').fill(inviteUsername)
         await invitee.getByPlaceholder('Password').fill(invitePassword)
         await invitee.getByText('Sign in', { exact: true }).last().click()
-        await invitee.waitForURL(/\/a\//, { timeout: 15_000 })
+        await invitee.waitForURL(LANDED_URL, { timeout: 15_000 })
 
         // Sanity: URL is under the owner's org (the invitee is now a member).
-        expect(invitee.url()).toContain(`/a/${ORG_SLUG}`)
+        expect(invitee.url()).toContain(`/`)
 
         // Guard: original test user can still sign in (password unchanged).
         // This catches regressions where accept-invite accidentally overwrites
@@ -154,7 +150,7 @@ test.describe('Invite flow', () => {
         await invitee.getByTestId('identifier').fill(TEST_USER_EMAIL)
         await invitee.getByPlaceholder('Password').fill(TEST_USER_PASSWORD)
         await invitee.getByText('Sign in', { exact: true }).last().click()
-        await invitee.waitForURL(/\/a\//, { timeout: 15_000 })
+        await invitee.waitForURL(LANDED_URL, { timeout: 15_000 })
 
         await inviteePage.close()
     })

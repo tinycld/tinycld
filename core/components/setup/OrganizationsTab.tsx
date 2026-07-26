@@ -11,7 +11,7 @@ import { PageHeader } from './console-ui'
 // router sets (e.g. `tinycld_orgs=[{slug,name,url}]`) and link each row out to
 // `https://<slug>.<domain>`. Until the router sets that cookie there is nothing
 // org-scoped to show here, so this renders an explanatory empty state.
-export function OrganizationsTab({ isVisible }: { isVisible: boolean; pb?: unknown }) {
+export function OrganizationsTab({ isVisible }: { isVisible: boolean }) {
     if (!isVisible) return null
 
     return (

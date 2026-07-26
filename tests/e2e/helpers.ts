@@ -2,7 +2,6 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { expect, type Locator, type Page } from '@playwright/test'
 
-export const ORG_SLUG = 'test-org'
 export const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
 
 // Single-org: the `app/a/[orgSlug]/` route segment was collapsed to `app/(app)/`
@@ -11,7 +10,7 @@ export const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
 // matches "we're inside the authenticated app shell" (any of those sections, or
 // the bare root while the index redirect to the first package is mid-flight).
 const APP_SECTIONS = 'contacts|settings|admin|help|mail|drive|calendar|calc|text'
-const LANDED_URL = new RegExp(`/(?:${APP_SECTIONS})(?:/|$|\\?)`)
+export const LANDED_URL = new RegExp(`/(?:${APP_SECTIONS})(?:/|$|\\?)`)
 export const TEST_USER_PASSWORD = process.env.TEST_USER_PW || 'TestUser1234!'
 export const TEST_USER_USERNAME = process.env.TEST_USER_USERNAME ?? 'tester'
 
@@ -113,7 +112,7 @@ export interface InvitedUser {
 // context, and return its credentials. Signup is disabled, so the only way to
 // mint a throwaway account is an owner invite: the owner (shared TEST_USER)
 // sends an invite, the invitee accepts and sets a password. The invitee is a
-// full member of ORG_SLUG with its OWN username/email/password — so a spec that
+// full member of the deployment with its OWN username/email/password — so a spec that
 // mutates a password (change-password, password-reset) can operate on this
 // account without touching TEST_USER_PASSWORD, which every other spec's login()
 // depends on. Runs in its own context so the owner's auth doesn't leak in and

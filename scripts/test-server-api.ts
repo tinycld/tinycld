@@ -88,7 +88,7 @@ async function testHealth(config: Config) {
 async function testAuth(config: Config) {
     console.log('\n▸ Authentication')
     try {
-        const url = `${config.url}/api/collections/users/auth-with-password?expand=user_org_via_user.org`
+        const url = `${config.url}/api/collections/users/auth-with-password`
         const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -104,13 +104,16 @@ async function testAuth(config: Config) {
         }
         ok('POST auth-with-password', `user ${data.record.id}`)
 
-        const userOrgs = data.record?.expand?.user_org_via_user ?? []
-        const orgSlug = userOrgs[0]?.expand?.org?.slug
-        if (!orgSlug) {
-            fail('Auth', 'no org found for user')
+        // Single-org: membership is the `role` select on the users auth
+        // record, not a user_org junction row. The old expand
+        // (user_org_via_user.org) walked a back-relation on a deleted
+        // collection and silently returned empty.
+        const role = data.record?.role
+        if (!role) {
+            fail('Auth', 'user has no role')
             return
         }
-        ok('User org', orgSlug)
+        ok('User role', role)
     } catch (err) {
         fail('Auth', String(err))
     }

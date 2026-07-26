@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { LANDED_URL } from './helpers'
 
 // The webServer started by playwright.config.ts serves the SPA and /api/*
 // from a single PocketBase listener on this port (static serve, no proxy).
@@ -9,15 +10,14 @@ const PB_TEST_URL = 'http://127.0.0.1:7200'
 // AsyncAuthStore (configured in packages/@tinycld/core/lib/pocketbase.ts) persists the
 // PocketBase auth state via @react-native-async-storage/async-storage. On web, AsyncStorage
 // v3's default export is the legacy localStorage-backed implementation, so the auth state
-// lands in window.localStorage under the key below. The auth-store hydration also reads
-// the primary org slug from AsyncStorage (PRIMARY_ORG_STORAGE_KEY in core/lib/stores/auth-store.ts)
-// — without it, getUserFromAuthStore returns a user but lib/auth.tsx-driven flows won't know
-// which org slug to land on.
+// lands in window.localStorage under the key below.
+//
+// Single-org: the old `tinycld_primary_org` key is gone — there is no org slug to
+// land on, and nothing reads it anymore.
 const AUTH_STORAGE_KEY = 'pb_auth'
-const PRIMARY_ORG_STORAGE_KEY = 'tinycld_primary_org'
 
 // Drop the singleton demo identity into localStorage before any app code runs, then
-// navigate to /a/demo. addInitScript fires before every navigation in the page's
+// navigate into the app shell. addInitScript fires before every navigation in the page's
 // lifetime — by the time the app hydrates pb.authStore, the token + record are already
 // staged, so the auth gate doesn't bounce us back to the login screen.
 async function enterDemo(page: Page) {
@@ -26,22 +26,21 @@ async function enterDemo(page: Page) {
     const auth = (await res.json()) as { token: string; record: unknown }
 
     await page.addInitScript(
-        ([authKey, orgKey, authValue, orgSlug]) => {
+        ([authKey, authValue]) => {
             // AsyncAuthStore.save serializes as JSON.stringify({ token, record }) — the
             // /api/demo/start response shape is exactly that, so we pass it straight through.
             window.localStorage.setItem(authKey, authValue)
-            window.localStorage.setItem(orgKey, orgSlug)
         },
-        [AUTH_STORAGE_KEY, PRIMARY_ORG_STORAGE_KEY, JSON.stringify(auth), 'demo']
+        [AUTH_STORAGE_KEY, JSON.stringify(auth)]
     )
 
-    await page.goto('/a/demo')
+    await page.goto('/')
 }
 
 test.describe('demo lead capture', () => {
     test('submits via the welcome modal on first arrival', async ({ page }) => {
         await enterDemo(page)
-        await page.waitForURL(/\/a\/demo(\/|$)/)
+        await page.waitForURL(LANDED_URL)
 
         await expect(page.getByText("You're in the demo workspace")).toBeVisible()
 
@@ -55,7 +54,7 @@ test.describe('demo lead capture', () => {
 
     test('skipped on first arrival, submitted later via banner link', async ({ page }) => {
         await enterDemo(page)
-        await page.waitForURL(/\/a\/demo(\/|$)/)
+        await page.waitForURL(LANDED_URL)
 
         await page.getByRole('button', { name: 'Skip for now' }).click()
         await expect(page.getByText("You're in the demo workspace")).not.toBeVisible()
@@ -74,7 +73,7 @@ test.describe('demo lead capture', () => {
 
     test('invalid email keeps the welcome modal open with an error', async ({ page }) => {
         await enterDemo(page)
-        await page.waitForURL(/\/a\/demo(\/|$)/)
+        await page.waitForURL(LANDED_URL)
 
         await expect(page.getByText("You're in the demo workspace")).toBeVisible()
 

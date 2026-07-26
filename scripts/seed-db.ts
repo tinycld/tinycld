@@ -22,8 +22,6 @@
  * it set to the demo singleton ("demo@tinycld.org") unless you also patch
  * demo_start.go's demoUserEmail constant; the demo-token flow looks the user
  * up by that email.
- *   --org-slug <slug>      Override primary org slug
- *   --org-name <name>      Override primary org name
  *   --url <url>            PocketBase URL (default: http://127.0.0.1:7100)
  *   --admin-email <email>  Superuser email
  *   --admin-pw <pw>        Superuser password
@@ -69,8 +67,6 @@ interface SeedConfig {
     // password instead of falling back to a shared literal — see seedForUser.
     userPasswordExplicit: boolean
     isDemo: boolean
-    orgSlug: string
-    orgName: string
 }
 
 // What seedForUser resolved for the app user, so the caller can print an
@@ -96,8 +92,6 @@ const TEST_DEFAULTS = {
     userEmail: process.env.TEST_USER_LOGIN || 'user@tinycld.org',
     userUsername: process.env.TEST_USER_USERNAME || 'tester',
     userName: 'Test User',
-    orgSlug: 'test-org',
-    orgName: 'Test Organization',
 }
 
 // These mirror the singleton constants in
@@ -109,8 +103,6 @@ const DEMO_DEFAULTS = {
     userEmail: process.env.REVIEW_DEMO_EMAIL || 'demo@tinycld.org',
     userUsername: 'demo',
     userName: 'Demo Tour',
-    orgSlug: 'demo',
-    orgName: 'Demo Workspace',
 }
 
 function parseArgs(): SeedConfig {
@@ -121,8 +113,6 @@ function parseArgs(): SeedConfig {
         userUsername: string
         userName: string
         userPassword: string
-        orgSlug: string
-        orgName: string
     }> = {}
 
     let url = 'http://127.0.0.1:7100'
@@ -164,12 +154,6 @@ function parseArgs(): SeedConfig {
                 break
             case '--user-pw':
                 overrides.userPassword = args[++i]
-                break
-            case '--org-slug':
-                overrides.orgSlug = args[++i]
-                break
-            case '--org-name':
-                overrides.orgName = args[++i]
                 break
             case '--url':
                 url = args[++i]
@@ -226,8 +210,6 @@ function parseArgs(): SeedConfig {
         userPassword,
         userPasswordExplicit: userPassword !== '',
         isDemo: mode === 'demo',
-        orgSlug: overrides.orgSlug ?? defaults.orgSlug,
-        orgName: overrides.orgName ?? defaults.orgName,
     }
 }
 
@@ -473,18 +455,16 @@ function printLoginSummary(config: SeedConfig, login: SeedLoginResult): void {
         `  password: ${appPassword}`,
         '',
         'Admin  (super-admin app user — signs into the app AND /admin to manage',
-        'orgs & packages; also a PocketBase superuser for the /_/ dashboard)',
+        'packages; also a PocketBase superuser for the /_/ dashboard)',
         `  ${url}/admin`,
         `  user:     ${config.adminEmail}`,
         `  password: ${adminPassword}`,
-        '',
-        `Org:  ${config.orgSlug}`,
     ])
 }
 
 async function main() {
     const config = parseArgs()
-    log(`Mode: ${config.mode} (user=${config.userEmail}, org=${config.orgSlug})`)
+    log(`Mode: ${config.mode} (user=${config.userEmail})`)
     const pb = await authSuperuser(config)
     await ensureAdminAppUser(pb, config)
     const login = await seedForUser(pb, config)

@@ -10,7 +10,7 @@ const sample: EditorMount = {
     itemName: 'Doc',
     itemFile: '',
     mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    identity: { kind: 'member', userId: 'u1', userOrgId: 'uo1', displayName: 'Ada', color: '#abc' },
+    identity: { kind: 'member', userId: 'u1', displayName: 'Ada', color: '#abc' },
     role: 'editor',
     capabilities: { canEdit: true, canComment: true, canUseFileActions: true, canMention: true },
     realtimeCredential: { kind: 'auth' },

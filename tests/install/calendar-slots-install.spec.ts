@@ -441,7 +441,9 @@ test.describe('calendar-slots install', () => {
             .fill('http://localhost:7090')
 
         await page.getByRole('button', { name: 'Create Account & Continue' }).click()
-        await expect(page.getByText('No organizations yet.')).toBeVisible()
+        // Single-org: the dashboard lands on Packages, and the Organizations
+        // tab is a static "managed by the router" explainer, not an empty list.
+        await expect(page.getByText('Packages', { exact: true }).first()).toBeVisible()
     })
 
     test('installing calendar-slots WITHOUT calendar is rejected by the compat gate', async ({

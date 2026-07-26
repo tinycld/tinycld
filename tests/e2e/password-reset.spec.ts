@@ -1,6 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 import { clearEmailLog, extractFirstLink, waitForEmailTo } from './email-log-helpers'
-import { createInvitedUser, type InvitedUser, ORG_SLUG } from './helpers'
+import { createInvitedUser, type InvitedUser, LANDED_URL } from './helpers'
 
 // Drives the full self-service password-reset flow from the login modal:
 // request → email (captured via the mailer LogSender) → confirm screen → sign
@@ -60,14 +60,14 @@ test.describe('password reset', () => {
         await inviteePage.getByTestId('reset-confirm-submit').click()
 
         // On success the screen redirects to the login route.
-        await inviteePage.waitForURL(/\/$|\/admin|\/a\//, { timeout: 15_000 })
+        await inviteePage.waitForURL(LANDED_URL, { timeout: 15_000 })
 
         // Confirm the reset password actually authenticates.
         await inviteePage.goto('/')
         await inviteePage.getByTestId('identifier').fill(invited.email)
         await inviteePage.getByPlaceholder('Password').fill(NEW_PASSWORD)
         await inviteePage.getByText('Sign in', { exact: true }).last().click()
-        await inviteePage.waitForURL(new RegExp(`/a/${ORG_SLUG}|/a/|/admin`), { timeout: 15_000 })
+        await inviteePage.waitForURL(LANDED_URL, { timeout: 15_000 })
 
         await closeInvitee()
     })

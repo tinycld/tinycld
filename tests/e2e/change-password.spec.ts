@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { createInvitedUser, type InvitedUser, ORG_SLUG } from './helpers'
+import { createInvitedUser, type InvitedUser, LANDED_URL } from './helpers'
 
 // Password changes need a real, mutable account. Rather than mutate the shared
 // TEST_USER (whose password every other spec's login() depends on — a mutation
@@ -29,7 +29,7 @@ test.describe('change password', () => {
     async function openPersonalSettings(page: Page) {
         await page.getByLabel('User menu').click()
         await page.getByText('Settings', { exact: true }).click()
-        await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/settings/personal`))
+        await page.waitForURL(/\/settings\/personal/)
     }
 
     async function fillPasswordForm(page: Page, current: string, next: string, confirm: string) {
@@ -59,7 +59,7 @@ test.describe('change password', () => {
         // Success toast confirms the server accepted the change, and the user
         // stays signed in (no redirect to the connect/login screen).
         await expect(inviteePage.getByText('Password changed')).toBeVisible()
-        await expect(inviteePage).toHaveURL(new RegExp(`/a/${ORG_SLUG}/settings/personal`))
+        await expect(inviteePage).toHaveURL(/\/settings\/personal/)
 
         // The new password actually authenticates: sign out and back in with it.
         await inviteePage.evaluate(() => {
@@ -70,6 +70,6 @@ test.describe('change password', () => {
         await inviteePage.getByTestId('identifier').fill(invited.username)
         await inviteePage.getByPlaceholder('Password').fill(NEW_PASSWORD)
         await inviteePage.getByText('Sign in', { exact: true }).last().click()
-        await inviteePage.waitForURL(/\/a\//, { timeout: 15_000 })
+        await inviteePage.waitForURL(LANDED_URL, { timeout: 15_000 })
     })
 })
