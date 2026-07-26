@@ -46,6 +46,14 @@ export interface PackageManifest {
             revField?: string
         }
     }
+    // Storage-bearing collections. core/quota enforces the ceilings from this
+    // as record hooks, so no write path can skip them. A source with no
+    // ownerField counts toward the org ceiling only.
+    quota?: {
+        collection: string
+        sizeField: string
+        ownerField?: string
+    }[]
     webdav?: {
         prefix: string
         collection: string

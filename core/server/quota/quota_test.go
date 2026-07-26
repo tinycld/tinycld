@@ -336,3 +336,65 @@ func TestSharedRowSkipsPerUserCheck(t *testing.T) {
 		t.Fatalf("unowned data must not be charged to a user: %v", err)
 	}
 }
+
+// makeSettings creates the core `settings` collection the limits resolvers read.
+// The stock PocketBase test fixture has no such collection.
+func makeSettings(t *testing.T, app *tests.TestApp) {
+	t.Helper()
+	if _, err := app.FindCollectionByNameOrId("settings"); err == nil {
+		return
+	}
+	c := core.NewBaseCollection("settings")
+	c.Fields.Add(&core.TextField{Name: "app", Required: true})
+	c.Fields.Add(&core.TextField{Name: "key", Required: true})
+	c.Fields.Add(&core.JSONField{Name: "value"})
+	if err := app.Save(c); err != nil {
+		t.Fatalf("create settings: %v", err)
+	}
+}
+
+func setSetting(t *testing.T, app *tests.TestApp, key string, value int64) {
+	t.Helper()
+	makeSettings(t, app)
+	col, err := app.FindCollectionByNameOrId("settings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("app", "core")
+	rec.Set("key", key)
+	rec.Set("value", value)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("set %s: %v", key, err)
+	}
+}
+
+// THE multi-org security property: the org ceiling must come from the value the
+// router injected, NOT from the org's own settings. Each tenant has its own
+// superusers, so a limit read from the tenant DB could be raised by the tenant.
+func TestFixedLimitsIgnoresTenantSettingsForOrgCeiling(t *testing.T) {
+	app, _, _, _ := setupQuotaApp(t)
+
+	// A tenant superuser writes a wildly generous ceiling into their own DB.
+	setSetting(t, app, "org_storage_limit_bytes", 1<<40) // 1 TB
+
+	// The router said 50 MB. That is what must hold.
+	limits := FixedLimits(50 << 20)(app)
+	if limits.PerOrg != 50<<20 {
+		t.Fatalf("PerOrg = %d, want the router's %d — a tenant must not be able to raise its own plan limit",
+			limits.PerOrg, int64(50<<20))
+	}
+}
+
+// The per-user ceiling, by contrast, IS the org's own policy to set within
+// whatever total it was allotted — so it still comes from settings.
+func TestFixedLimitsStillReadsPerUserFromSettings(t *testing.T) {
+	app, _, _, _ := setupQuotaApp(t)
+
+	setSetting(t, app, "storage_limit_bytes", 4096)
+
+	limits := FixedLimits(50 << 20)(app)
+	if limits.PerUser != 4096 {
+		t.Fatalf("PerUser = %d, want 4096 from settings", limits.PerUser)
+	}
+}
