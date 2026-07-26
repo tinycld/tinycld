@@ -34,6 +34,8 @@
             "!ideas",
             "!**/core/types/pbSchema.ts",
             "!**/core/types/pbZodSchema.ts",
+            "!third_party",
+            "!third_party/**/*",
             "!**/server",
             "!**/server/**/*",
             "!**/pb-migrations",
