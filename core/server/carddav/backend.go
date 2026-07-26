@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
+
+	"tinycld.org/core/davauth"
 )
 
 type contextKey string
@@ -214,9 +216,9 @@ func (b *Backend) DeleteAddressObject(ctx context.Context, path string) error {
 func (b *Backend) authFromContext(ctx context.Context) (*core.Record, error) {
 	r, ok := ctx.Value(httpRequestKey).(*http.Request)
 	if !ok {
-		return nil, errUnauthorized
+		return nil, davauth.ErrUnauthorized
 	}
-	return authenticateRequest(b.app, r)
+	return davauth.Authenticate(b.app, r)
 }
 
 func (b *Backend) recordToAddressObject(src Source, record *core.Record, bookPath string, _ *carddav.AddressDataRequest) (*carddav.AddressObject, error) {

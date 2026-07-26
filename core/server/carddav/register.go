@@ -8,9 +8,11 @@ import (
 	"github.com/emersion/go-webdav/carddav"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/davauth"
 )
 
-const basicRealm = `Basic realm="TinyCld CardDAV"`
+const basicRealm = "TinyCld CardDAV"
 
 // Register mounts the CardDAV routes on serve for the single-org app, backed by
 // the given sources. Uses singleOrgScope: the process is one org, each user sees
@@ -28,8 +30,7 @@ func Register(app *pocketbase.PocketBase, sources []Source) {
 
 		serve := func(re *core.RequestEvent) error {
 			if _, _, ok := re.Request.BasicAuth(); !ok {
-				re.Response.Header().Set("WWW-Authenticate", basicRealm)
-				http.Error(re.Response, "Authentication required", http.StatusUnauthorized)
+				davauth.Challenge(re.Response, basicRealm)
 				return nil
 			}
 			ctx := context.WithValue(re.Request.Context(), httpRequestKey, re.Request)
@@ -51,14 +52,17 @@ func Register(app *pocketbase.PocketBase, sources []Source) {
 // HandlerFor builds a standalone CardDAV http.Handler for ONE org, backed by that
 // org's app, using singleOrgScope (the whole DB is the org — the multi-org tenant
 // model). The returned handler covers /carddav, /carddav/*, and
-// /.well-known/carddav, applying the Basic-Auth challenge itself. Intended for the
-// multi-org host to prefix-compose in front of a tenant's stock mux. Returns nil
+// /.well-known/carddav, applying the Basic-Auth challenge itself. Returns nil
 // when no sources are given (nothing to serve).
 //
 // The app is taken as core.App — the minimal interface the backend actually
 // needs (record Save/Delete/find are all core.App methods). That lets any host
-// drive it: the single-tenant app, a multi-org tenant, or a future per-org
-// subprocess, without the caller holding a concrete *pocketbase.PocketBase.
+// drive it without holding a concrete *pocketbase.PocketBase.
+//
+// Under per-process tenant isolation this runs INSIDE the org's own process
+// (multi-org's cmd/serve-org), which mounts these routes on its own router from
+// the source list the router materialized. The multi-org host has no tenant app
+// object to compose against — it only reverse-proxies to the tenant socket.
 func HandlerFor(app core.App, sources []Source) http.Handler {
 	if len(sources) == 0 {
 		return nil
@@ -72,8 +76,7 @@ func HandlerFor(app core.App, sources []Source) http.Handler {
 	})
 	serve := func(w http.ResponseWriter, r *http.Request) {
 		if _, _, ok := r.BasicAuth(); !ok {
-			w.Header().Set("WWW-Authenticate", basicRealm)
-			http.Error(w, "Authentication required", http.StatusUnauthorized)
+			davauth.Challenge(w, basicRealm)
 			return
 		}
 		ctx := context.WithValue(r.Context(), httpRequestKey, r)

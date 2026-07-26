@@ -1,0 +1,115 @@
+// Package webdav is core's shared WebDAV server. It serves the WebDAV/RFC-4918
+// protocol (PROPFIND/PUT/MKCOL/MOVE/DELETE, locking, Basic-Auth) over any
+// feature collection shaped as a file tree, driven by per-package config (a
+// Source, materialized from each package's manifest `webdav` block).
+//
+// Why it lives in core, not per-feature: in the multi-org model a tenant runs
+// stock PocketBase with no feature Go, so the protocol server must be trusted
+// core code fed by materialized config, never feature Go with full $app reach.
+// Core imports no feature package.
+//
+// What a package contributes:
+//
+//   - Data (this Source): which collection backs the tree and which of its
+//     fields carry name/parent/size/…. This covers the whole protocol surface.
+//   - Go callbacks (Hooks): the few decisions a field map genuinely cannot
+//     express — per-item authorization, quota, versioning. These run in-process
+//     and are how the single-tenant app keeps drive's exact behaviour.
+//   - Opt-in TS hook points, for behaviour an org wants to customize without
+//     writing Go. See hooks.go; the fast path never touches a JS VM.
+//
+// Where it runs: in the single-tenant app, in-process. Under multi-org's
+// per-process tenant isolation, inside each org's own process — the router
+// materializes the Sources and reverse-proxies to that process.
+package webdav
+
+import (
+	"github.com/pocketbase/pocketbase/core"
+)
+
+// Source describes one feature collection served as a WebDAV file tree.
+//
+// The field names are data because the protocol only ever needs to read a
+// name, a size, a parent pointer and a blob — nothing about what the feature
+// means by them. Anything that IS feature-specific (may this user read this
+// row? does this write fit the quota?) lives in Hooks instead of being encoded
+// as more configuration.
+type Source struct {
+	// Slug is the owning package slug (e.g. "drive"), for log context.
+	Slug string
+
+	// Prefix is the URL path the tree is mounted at, without a trailing
+	// slash (e.g. "/drive"). Also the first path segment clients see.
+	Prefix string
+
+	// Collection is the PocketBase collection backing the tree
+	// (e.g. "drive_items").
+	Collection string
+
+	// Fields maps the tree's structural roles onto collection fields.
+	Fields FieldMap
+
+	// Hooks are the feature callbacks. All are optional: a nil hook means
+	// "no restriction" for the permission checks and "no extra work" for the
+	// rest, which yields a plain authenticated file tree.
+	Hooks Hooks
+}
+
+// FieldMap binds tree semantics to collection field names.
+type FieldMap struct {
+	// Name is the field holding the entry's basename (e.g. "name").
+	Name string
+
+	// Parent is the self-relation to the containing folder; empty string
+	// value means a root-level entry (e.g. "parent").
+	Parent string
+
+	// IsFolder is the bool field marking directories (e.g. "is_folder").
+	IsFolder string
+
+	// Size is the number field holding the blob size in bytes (e.g. "size").
+	Size string
+
+	// MimeType is the text field holding the content type (e.g. "mime_type").
+	// Optional: when empty, no MIME is stamped on create.
+	MimeType string
+
+	// File is the file field holding the blob (e.g. "file").
+	File string
+
+	// Owner is the relation to the users row that created the entry
+	// (e.g. "created_by"). Stamped on every create.
+	Owner string
+
+	// Updated is the autodate field surfaced as the entry's mtime
+	// (e.g. "updated"). Optional: when empty, mtime is the zero time.
+	Updated string
+}
+
+// Hooks are the per-feature decisions the protocol defers to the package.
+//
+// Permission hooks are AND-only by construction: returning nil means "allowed
+// as far as this feature is concerned", and the server has no way to grant
+// access a hook denied. A nil hook means unrestricted — appropriate only for a
+// tree whose collection rules already scope every row to its owner.
+type Hooks struct {
+	// CanRead reports whether user may see record. Returning a non-nil error
+	// makes the entry invisible: the server answers not-found rather than
+	// permission-denied so a probe cannot confirm the path exists.
+	CanRead func(app core.App, userID string, record *core.Record) error
+
+	// CanWrite reports whether user may modify the record with the given id.
+	CanWrite func(app core.App, userID, recordID string) error
+
+	// CanDelete reports whether user may delete the record with the given id.
+	CanDelete func(app core.App, userID, recordID string) error
+
+	// CheckQuota is called before a write commits, with the byte delta the
+	// write would add (never negative). A non-nil error rejects the write.
+	CheckQuota func(app core.App, userID string, delta int64) error
+
+	// BeforeOverwrite runs just before an existing entry's blob is replaced —
+	// drive uses it to snapshot the outgoing version. An error here is logged,
+	// not fatal: failing to archive the old blob must not lose the new write.
+	BeforeOverwrite func(app core.App, userID string, record *core.Record) error
+}

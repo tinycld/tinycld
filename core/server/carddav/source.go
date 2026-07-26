@@ -5,10 +5,16 @@
 //
 // Why it lives in core, not per-feature: in the multi-org model a tenant runs
 // stock PocketBase with no feature Go, so the protocol server and its per-feature
-// record↔vCard mapping must run host-side in the trusted core process, fed by
-// materialized config. Core imports no feature package; a package contributes
-// only data (the Source) plus, for anything a field map can't express, TS record
-// hooks. The vCard codec stays Go here — only the field map is data.
+// record↔vCard mapping must be trusted core code fed by materialized config,
+// never feature Go with full $app reach. Core imports no feature package; a
+// package contributes only data (the Source) plus, for anything a field map
+// can't express, TS record hooks. The vCard codec stays Go here — only the
+// field map is data.
+//
+// Where it runs: in the single-tenant app, in-process. Under multi-org's
+// per-process tenant isolation, inside each org's own process — the router
+// materializes the Sources and reverse-proxies to that process, and never holds
+// a tenant app object itself.
 package carddav
 
 // Source describes one feature collection served over CardDAV. One Source maps a
