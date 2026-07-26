@@ -2,13 +2,13 @@ module tinycld.org/core
 
 go 1.26.3
 
-// Build against the multi-org PocketBase fork (feat/multitenant-fork): core's
-// jsvm registration uses the fork-only jsvm.Config.OnInit to install its
-// $-bindings, so core's standalone build/test must resolve the fork too. Same
-// module path + base tag (v0.39.8) as upstream — no version skew. Drop this once
-// the fork seams are upstreamed. The app (tinycld/server) carries the matching
-// replace for the assembled build.
-replace github.com/pocketbase/pocketbase => ../../../pocketbase
+// Build against the multi-org PocketBase fork, vendored at
+// tinycld/third_party/pocketbase: core's jsvm registration uses the fork-only
+// jsvm.Config.OnInit to install its $-bindings, so core's standalone build/test
+// must resolve the fork too. Same module path + base tag (v0.39.8) as upstream —
+// no version skew. Drop this once the fork seams are upstreamed. The app
+// (tinycld/server) carries the matching replace for the assembled build.
+replace github.com/pocketbase/pocketbase => ../../third_party/pocketbase
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0

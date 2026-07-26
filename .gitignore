@@ -4,6 +4,7 @@ node_modules/
 dist/
 build/
 tmp/
+
 .DS_Store
 .idea/
 .worktrees/
@@ -22,6 +23,14 @@ scripts/ota-e2e/ota-crash-rollback-logs/
 .env.test.local
 .env.production.local
 *.pem
+
+# The vendored PocketBase fork is source we ship, not build output, so it is exempt
+# from the rules above. Two of its files are otherwise swept up: ui/dist (tracked
+# upstream and consumed by a //go:embed all:dist directive — excluding it breaks the
+# Go build outright) and ui/.env, which holds no secrets, only Vite build-time
+# constants (doc URLs + PB_VERSION) needed to rebuild the admin UI from source.
+# Placed after the secret rules so it overrides them for this subtree only.
+!third_party/pocketbase/**
 
 # Build artifacts
 *.tsbuildinfo

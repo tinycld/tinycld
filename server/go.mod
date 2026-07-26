@@ -10,11 +10,12 @@ require (
 
 replace tinycld.org/core => ../core/server
 
-// Build against the multi-org PocketBase fork (feat/multitenant-fork): sobek
-// engine + jsvm ProgramSource/OnInit + BuildServeMux seams. Same module path and
-// base tag (v0.39.8) as upstream, so no version skew — the app links the fork's
-// jsvm so package `.pb.ts` hooks and core's OnInit $-bindings are available.
-replace github.com/pocketbase/pocketbase => ../../pocketbase
+// Build against the multi-org PocketBase fork, vendored at
+// tinycld/third_party/pocketbase: sobek engine + jsvm ProgramSource/OnInit +
+// BuildServeMux seams. Same module path and base tag (v0.39.8) as upstream, so no
+// version skew — the app links the fork's jsvm so package `.pb.ts` hooks and
+// core's OnInit $-bindings are available.
+replace github.com/pocketbase/pocketbase => ../third_party/pocketbase
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0 // indirect

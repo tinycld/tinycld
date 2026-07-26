@@ -483,17 +483,22 @@ function emitGoWiring(features: Feature[]) {
     // built on its own (the app build above is unaffected — it runs from
     // app/server with its own go.work). core itself has nothing to wire.
     //
-    // When the PocketBase fork is checked out at <WS_ROOT>/pocketbase (fork
-    // adoption — the app server/go.mod carries the same replace), each member's
-    // go.work also replaces it, so a standalone member build resolves the sobek
-    // fork instead of upstream goja.
-    const forkDir = path.join(WS_ROOT, 'pocketbase')
-    const forkPresent = fs.existsSync(forkDir)
+    // The PocketBase fork is vendored in this repo at third_party/pocketbase, so
+    // every member's go.work replaces it and a standalone member build resolves
+    // the sobek fork rather than upstream goja. It ships with the app shell, so
+    // its absence is a broken checkout, not a supported configuration — fail loudly
+    // instead of silently degrading to upstream.
+    const forkDir = path.join(SERVER_DIR, '..', 'third_party', 'pocketbase')
+    if (!fs.existsSync(forkDir)) {
+        throw new Error(
+            `[generate] vendored PocketBase fork missing at ${forkDir} — the app shell cannot build without it`
+        )
+    }
     for (const f of serverFeatures) {
         if (f.manifest.slug === 'core') continue
         const memberServerDir = path.join(f.dir, f.manifest.server!.package!)
         const coreRelFromMember = path.relative(memberServerDir, coreServerDir)
-        const forkRelFromMember = forkPresent ? path.relative(memberServerDir, forkDir) : undefined
+        const forkRelFromMember = path.relative(memberServerDir, forkDir)
         fs.writeFileSync(
             path.join(memberServerDir, 'go.work'),
             buildMemberGoWork(coreRelFromMember, forkRelFromMember)
