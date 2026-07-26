@@ -46,8 +46,8 @@ func TestSingleOrgScope_ResolvesOwnBook(t *testing.T) {
 		t.Fatalf("Books = %+v, want one default book", books)
 	}
 
-	// orgHint is ignored under single-org; the owner id is the user's id.
-	ownerID, bookPath, err := s.ResolveBook(app, user, "ignored-hint")
+	// Single-org: the owner id is simply the user's id.
+	ownerID, bookPath, err := s.ResolveBook(app, user)
 	if err != nil {
 		t.Fatalf("ResolveBook: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestSingleOrgScope_ContactsFilteredToOwner(t *testing.T) {
 	}
 
 	s := singleOrgScope{bookSegment: "default"}
-	ownerID, _, err := s.ResolveBook(app, user, "")
+	ownerID, _, err := s.ResolveBook(app, user)
 	if err != nil {
 		t.Fatalf("ResolveBook: %v", err)
 	}

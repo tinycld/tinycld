@@ -296,3 +296,21 @@ func TestStatic_NonHTMLAssetKeepsDefault(t *testing.T) {
 		},
 	})
 }
+
+func TestIsDavPath(t *testing.T) {
+	for _, p := range []string{
+		"/caldav", "/caldav/u/cal/x/", "/carddav", "/drive",
+		"/.well-known/caldav", "/.well-known/carddav", "/.well-known/webdav",
+	} {
+		if !isDavPath(p) {
+			t.Errorf("isDavPath(%q) = false, want true", p)
+		}
+	}
+	for _, p := range []string{
+		"/", "/api/health", "/settings", "/.well-known/apple-app-site-association",
+	} {
+		if isDavPath(p) {
+			t.Errorf("isDavPath(%q) = true, want false", p)
+		}
+	}
+}

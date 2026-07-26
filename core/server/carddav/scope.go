@@ -18,9 +18,8 @@ type OrgScope interface {
 
 	// ResolveBook maps a request to the owner id its objects are filtered by
 	// (bound to {:ownerId} in Source.ListFilter and set on Source.OwnerField for
-	// new records) and the book path used to build object URLs. orgHint is
-	// ignored (single-org).
-	ResolveBook(app core.App, user *core.Record, orgHint string) (ownerID, bookPath string, err error)
+	// new records) and the book path used to build object URLs.
+	ResolveBook(app core.App, user *core.Record) (ownerID, bookPath string, err error)
 }
 
 // Book is one address book in a listing.
@@ -53,6 +52,6 @@ func (s singleOrgScope) Books(_ core.App, user *core.Record) ([]Book, error) {
 	return []Book{s.book()}, nil
 }
 
-func (s singleOrgScope) ResolveBook(_ core.App, user *core.Record, _ string) (string, string, error) {
+func (s singleOrgScope) ResolveBook(_ core.App, user *core.Record) (string, string, error) {
 	return user.Id, s.book().Path, nil
 }

@@ -242,7 +242,8 @@ const manifest = {
     },
 
     migrations: { directory: 'pb-migrations' },
-    hooks: { directory: 'pb-hooks' },          // PocketBase JS hooks
+    hooks: { directory: 'pb-hooks' },          // PocketBase JS hooks (and the
+                                               // caldavHook/webdavHook seams)
 
     collections: { register: 'collections', types: 'types' },
 
@@ -267,8 +268,8 @@ export default manifest
 | Field | Effect when present |
 |---|---|
 | `name` / `slug` / `version` / `description` | Required identifiers. `slug` is the URL segment and collection-name prefix. |
-| `routes.directory` | Each file becomes an org-scoped route under `app/a/[orgSlug]/<slug>/`. |
-| `publicRoutes.directory` | Each file becomes a public top-level route under `app/<path>` (outside the org-scoped `app/a/[orgSlug]/` tree — e.g. drive's share routes). |
+| `routes.directory` | Each file becomes an authenticated route under `app/(app)/<slug>/`. |
+| `publicRoutes.directory` | Each file becomes a public top-level route under `app/<path>` (outside the authenticated `app/(app)/` group — e.g. drive's share routes). |
 | `nav` | Adds a nav-rail entry. `shortcut` registers a `t <letter>` jump and must be unique (validated at generate time). |
 | `migrations.directory` | `*.js` migrations symlinked into `server/pb_migrations/`. |
 | `hooks.directory` | PocketBase JS hooks symlinked into `server/pb_hooks/`. |
@@ -280,6 +281,8 @@ export default manifest
 | `help.directory` | `<id>.md` topics surfaced in the in-app help hub. |
 | `seed.script` | Dev sample-data function. |
 | `server` | Go server extension: `package` is the subdir, `module` is its Go module path. |
+| `carddav` / `caldav` / `webdav` | Declarative protocol config, served by the matching core library. Each block **mirrors the `Source` literal the package's own Go registers**, and exists so a multi-org tenant — which links no feature Go — can still serve the protocol: the router materializes the block into `<orgDir>/.runtime/<proto>.json` and core reads it there. Keep the two in sync. Authorization is deliberately absent from all three: core evaluates the collections' own PocketBase rules, which travel in the schema (a Go closure cannot cross a process boundary). See [hooks.md](hooks.md). |
+| `quota` | `[{ collection, sizeField, ownerField? }]` — storage-bearing collections `core/quota` enforces ceilings on, as record hooks. A source with no `ownerField` counts toward the org ceiling only. |
 | `build.script` | A build script run before bundling (e.g. an embedded webview bundle). |
 | `dependencies[]` | A **slug-only** list of other packages — **advisory + seed-ordering only.** Used to topologically sort seed execution and as a soft hint; it imposes **no** version constraint and is never a compile-time import. |
 | `peerVersions` | `{ '<slug or @tinycld/core>': '<semver range>' }` (e.g. `{ '@tinycld/core': '>=2.1 <3' }`) — **enforced** semver ranges keyed by slug. See [`dependencies` vs `peerVersions`](#dependencies-vs-peerversions) below. |

@@ -70,6 +70,7 @@ the package does, passing a config for its own collection:
 | Package | What |
 |---|---|
 | `tinycld.org/core/carddav` | CardDAV/RFC-6352 protocol server + vCard codec for any collection. `Register(app, []Source)` mounts `/carddav` on serve (single-tenant); `HandlerFor(app, []Source)` returns a standalone `http.Handler` for one org (the multi-org host). A `Source` is the record↔vCard field map. |
+| `tinycld.org/core/caldav` | CalDAV/RFC-4791 protocol server + iCalendar codec over a calendars+events collection pair. Same `Register` / `HandlerFor` split. A `Source` carries the two collection names, the field maps, `Defaults` for schema-required fields iCalendar may omit, and an optional `OnError` reporter. Authorization is NOT a config field: core evaluates the collections' own PocketBase rules via `app.CanAccessRecord`. Exposes four TS hook points (below). |
 | `tinycld.org/core/fts` | SQLite FTS5 index sync + search for any collection. `Register(app, []Config)` binds index-sync record hooks + a `GET /api/{slug}/search` route; `Search(app, cfg, userID, opts)` runs an owner-scoped query. The FTS5 virtual table is created by the package's pb-migration. |
 | `tinycld.org/core/audit` | `RegisterCollection(app, name, *CollectionConfig)` — binds create/update/delete audit hooks writing to `audit_logs`, with field diffs, delete snapshots, redaction, and a customizable label extractor. |
 | `tinycld.org/core/coreserver` | The `$`-binding seam — `RegisterJSVMBinder` / `NewBindNamespace` (below). Plus subsystems: `notify`, `push`, `mailer`, `render`, `thumbnails`, `textextract`, `sharelink`, … |
@@ -208,7 +209,7 @@ with what Go authorized rather than trusting it — otherwise a handler could na
 records the caller was never granted. `core/server/webdav/hooks.go` is the
 reference implementation.
 
-### In use: WebDAV
+### In use: WebDAV and CalDAV
 
 `core/webdav` is the first consumer, exposing five points via a single
 `webdavHook({...})` binding — `beforeWrite`, `beforeDelete`, `beforeMove`,
@@ -217,6 +218,19 @@ reference implementation.
 `filterList` receives a whole directory batch, so a listing costs one VM borrow
 rather than one per entry. See `drive/help/webdav-hooks.md` for the
 administrator-facing description.
+
+`core/caldav` is the second, with `caldavHook({...})` and four points —
+`beforeWrite`, `beforeDelete`, `canRead`, `filterList` — namespaced
+`caldav.<slug>.<hook>`. There is no `beforeMove`: CalDAV has no cross-calendar
+move (a client relocating an event PUTs it to the new calendar and DELETEs the
+old copy, which the write and delete points already see). `filterList` batches a
+whole calendar's UIDs. See `calendar/help/caldav-hooks.md`.
+
+> **Both are single-tenant only for now.** `serve-org` sets neither `OnInit` nor
+> `OnLoaderInit`, so a tenant's VMs carry no bindings and package TS cannot
+> register a handler there. Everything else — including every access check —
+> works identically in a tenant, because authorization is a PB rule that travels
+> in the schema, not a Go closure.
 
 ---
 

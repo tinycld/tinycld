@@ -105,7 +105,7 @@ func (b *Backend) ListAddressObjects(ctx context.Context, path string, req *card
 	if err != nil {
 		return nil, err
 	}
-	ownerID, bookPath, err := b.scope.ResolveBook(b.app, user, b.orgSlugFromContext(ctx, path))
+	ownerID, bookPath, err := b.scope.ResolveBook(b.app, user)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +170,7 @@ func (b *Backend) PutAddressObject(ctx context.Context, path string, card vcard.
 		return b.recordToAddressObject(src, existing, bookPath, nil)
 	}
 
-	ownerID, newBookPath, err := b.scope.ResolveBook(b.app, user, b.orgSlugFromContext(ctx, path))
+	ownerID, newBookPath, err := b.scope.ResolveBook(b.app, user)
 	if err != nil {
 		return nil, fmt.Errorf("cannot find org membership: %w", err)
 	}
@@ -257,7 +257,7 @@ func (b *Backend) resolveObjectByPath(ctx context.Context, src Source, path stri
 		return nil, "", fmt.Errorf("invalid object path")
 	}
 
-	ownerID, bookPath, err := b.scope.ResolveBook(b.app, user, b.orgSlugFromContext(ctx, path))
+	ownerID, bookPath, err := b.scope.ResolveBook(b.app, user)
 	if err != nil {
 		return nil, "", err
 	}
@@ -272,65 +272,7 @@ func (b *Backend) resolveObjectByPath(ctx context.Context, src Source, path stri
 	return records[0], bookPath, nil
 }
 
-// orgSlugFromContext prefers the Host-header subdomain, then falls back to path.
-// Used only by sharedDBScope; singleOrgScope ignores the returned hint.
-func (b *Backend) orgSlugFromContext(ctx context.Context, path string) string {
-	if r, ok := ctx.Value(httpRequestKey).(*http.Request); ok {
-		if slug := extractOrgSlugFromHost(r.Host); slug != "" {
-			return slug
-		}
-	}
-	return extractOrgSlug(path)
-}
-
-// extractOrgSlug gets the org slug from /carddav/u/ab/{orgSlug}/...
-func extractOrgSlug(path string) string {
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) >= 4 {
-		return parts[3]
-	}
-	return ""
-}
-
-// extractOrgSlugFromHost parses the subdomain from a Host header.
-// "acme.localhost:8100" → "acme", "acme.tinycld.com" → "acme". Returns "" for IP
-// addresses, bare hostnames, and two-label domains.
-func extractOrgSlugFromHost(host string) string {
-	if idx := strings.LastIndex(host, ":"); idx != -1 {
-		host = host[:idx]
-	}
-	if strings.HasSuffix(host, ".localhost") {
-		return strings.TrimSuffix(host, ".localhost")
-	}
-	if isIPv4(host) {
-		return ""
-	}
-	parts := strings.Split(host, ".")
-	if len(parts) >= 3 {
-		return parts[0]
-	}
-	return ""
-}
-
-func isIPv4(host string) bool {
-	parts := strings.Split(host, ".")
-	if len(parts) != 4 {
-		return false
-	}
-	for _, p := range parts {
-		if p == "" || len(p) > 3 {
-			return false
-		}
-		for _, c := range p {
-			if c < '0' || c > '9' {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// extractVCardUID gets the vCard UID from /carddav/u/ab/{orgSlug}/{uid}.vcf
+// extractVCardUID gets the vCard UID from /carddav/u/ab/{book}/{uid}.vcf
 func extractVCardUID(path string) string {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) >= 5 {
