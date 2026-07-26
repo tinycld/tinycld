@@ -64,14 +64,16 @@ func Register(app *pocketbase.PocketBase, sources []Source, host HostBindings) (
 
 			e.Router.Any(src.Prefix+"/{path...}", serve)
 			e.Router.Any(src.Prefix, serve)
-
-			wellKnown := wellKnownPath(src.Prefix)
-			target := src.Prefix + "/"
-			e.Router.Any(wellKnown, func(re *core.RequestEvent) error {
-				http.Redirect(re.Response, re.Request, target, http.StatusMovedPermanently)
-				return nil
-			})
 		}
+
+		// One alias for the protocol, pointing at the first source. Registering
+		// it per source would bind the same route repeatedly.
+		wellKnownTarget := sources[0].Prefix + "/"
+		e.Router.Any(wellKnownPath, func(re *core.RequestEvent) error {
+			http.Redirect(re.Response, re.Request, wellKnownTarget, http.StatusMovedPermanently)
+			return nil
+		})
+
 		return e.Next()
 	})
 
@@ -119,12 +121,13 @@ func HandlerFor(app core.App, sources []Source, host HostBindings) (http.Handler
 
 		mux.HandleFunc(src.Prefix, serve)
 		mux.HandleFunc(src.Prefix+"/", serve)
-
-		target := src.Prefix + "/"
-		mux.HandleFunc(wellKnownPath(src.Prefix), func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, target, http.StatusMovedPermanently)
-		})
 	}
+
+	// Once, not per source: http.ServeMux panics on a duplicate pattern.
+	wellKnownTarget := sources[0].Prefix + "/"
+	mux.HandleFunc(wellKnownPath, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, wellKnownTarget, http.StatusMovedPermanently)
+	})
 
 	return mux, filesystems, nil
 }
@@ -149,18 +152,26 @@ func newDAVHandler(app core.App, fs *FileSystem) *webdav.Handler {
 	}
 }
 
-// wellKnownPath returns the RFC 5785 alias for a mount prefix
-// ("/drive" → "/.well-known/webdav").
-func wellKnownPath(prefix string) string {
-	return "/.well-known/" + strings.TrimPrefix(prefix, "/")
-}
+// wellKnownPath is the RFC 5785 alias clients probe for service discovery.
+//
+// The name is the PROTOCOL, not the mount prefix: a client looking for a WebDAV
+// share requests /.well-known/webdav regardless of where the tree is mounted.
+// Deriving it from the prefix (yielding /.well-known/drive) would leave the path
+// every client actually asks for unserved.
+//
+// It follows that with multiple sources the alias can only point at one of them;
+// the first registered wins, and the rest are reachable at their own prefixes.
+const wellKnownPath = "/.well-known/webdav"
 
 // Prefixes returns the URL path prefixes the sources serve, so a composing
 // router can split them out from the stock mux.
 func Prefixes(sources []Source) []string {
-	out := make([]string, 0, len(sources)*2)
+	out := make([]string, 0, len(sources)+1)
+	if len(sources) > 0 {
+		out = append(out, wellKnownPath)
+	}
 	for _, src := range sources {
-		out = append(out, src.Prefix, wellKnownPath(src.Prefix))
+		out = append(out, src.Prefix)
 	}
 	return out
 }
@@ -170,7 +181,7 @@ func HasPrefix(sources []Source, reqPath string) bool {
 	for _, src := range sources {
 		if reqPath == src.Prefix ||
 			strings.HasPrefix(reqPath, src.Prefix+"/") ||
-			reqPath == wellKnownPath(src.Prefix) {
+			reqPath == wellKnownPath {
 			return true
 		}
 	}

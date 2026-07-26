@@ -633,3 +633,54 @@ func names(infos []os.FileInfo) []string {
 	}
 	return out
 }
+
+// The .well-known alias names the PROTOCOL, not the mount point: a client looks
+// for /.well-known/webdav wherever the tree lives. Deriving it from the prefix
+// would serve /.well-known/drive and leave the path clients actually request
+// unhandled — which is exactly what the lift briefly did.
+func TestWellKnownPathIsProtocolNotPrefix(t *testing.T) {
+	if wellKnownPath != "/.well-known/webdav" {
+		t.Fatalf("wellKnownPath = %q, want /.well-known/webdav", wellKnownPath)
+	}
+
+	src := testSource() // Prefix "/files"
+	prefixes := Prefixes([]Source{src})
+
+	var sawWellKnown, sawPrefix bool
+	for _, p := range prefixes {
+		switch p {
+		case "/.well-known/webdav":
+			sawWellKnown = true
+		case "/files":
+			sawPrefix = true
+		case "/.well-known/files":
+			t.Fatal("the alias must not be derived from the mount prefix")
+		}
+	}
+	if !sawWellKnown || !sawPrefix {
+		t.Fatalf("Prefixes() = %v, want both the mount and the protocol alias", prefixes)
+	}
+
+	if !HasPrefix([]Source{src}, "/.well-known/webdav") {
+		t.Fatal("HasPrefix must claim the protocol alias")
+	}
+}
+
+// Two sources must not double-register the single alias (ServeMux panics on a
+// duplicate pattern).
+func TestMultipleSourcesRegisterOneWellKnown(t *testing.T) {
+	app, _, _ := setupTree(t)
+
+	a := testSource()
+	b := testSource()
+	b.Slug, b.Prefix = "second", "/second"
+
+	// HandlerFor is where a duplicate pattern would panic.
+	h, _, err := HandlerFor(app, []Source{a, b}, HostBindings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h == nil {
+		t.Fatal("expected a handler")
+	}
+}
