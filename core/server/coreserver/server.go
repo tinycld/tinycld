@@ -116,6 +116,15 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		// Binders are registered by core sub-packages (fts, carddav, …) via
 		// RegisterJSVMBinder; see jsvm_binds.go.
 		OnInit: buildJsvmOnInit(app),
+		// Install the loader-only bindings that REGISTER package TS handlers
+		// against a Go→TS hook point. These must run once, not once per pooled
+		// VM, so they ride OnLoaderInit rather than OnInit; see ts_hooks.go.
+		//
+		// Both callbacks fire from registerHooks, which the jsvm plugin defers
+		// to OnBootstrap — so a feature registering a binder from its own
+		// Register(app) (via Options.RegisterExtras, called below) is still in
+		// time despite running after this line.
+		OnLoaderInit: buildJsvmOnLoaderInit(app),
 	})
 
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
