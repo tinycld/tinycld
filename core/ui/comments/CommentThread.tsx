@@ -13,7 +13,7 @@ type EditValues = z.infer<typeof editSchema>
 
 export interface CommentThreadProps<R extends BaseCommentRow> {
     thread: Thread<R>
-    currentUserOrgId: string
+    currentUserId: string
     // Orphan badge: anchor (cell / mark / …) is gone from the source.
     // Text gets these via the editor's onTransaction listener; calc
     // leaves it false (cells are never orphaned).
@@ -45,7 +45,7 @@ export function CommentThread<R extends BaseCommentRow>(props: CommentThreadProp
     const nameByUserOrgId = useMemo(() => {
         const m = new Map<string, string>()
         for (const s of props.mentionSuggestions ?? []) {
-            m.set(s.userOrgId, s.displayName)
+            m.set(s.userId, s.displayName)
         }
         return m
     }, [props.mentionSuggestions])
@@ -64,7 +64,7 @@ export function CommentThread<R extends BaseCommentRow>(props: CommentThreadProp
             ) : null}
             <CommentLine
                 comment={thread.root}
-                isOwn={thread.root.author === props.currentUserOrgId}
+                isOwn={thread.root.author === props.currentUserId}
                 onEdit={props.onEdit}
                 onDelete={props.onDelete}
                 nameByUserOrgId={nameByUserOrgId}
@@ -73,7 +73,7 @@ export function CommentThread<R extends BaseCommentRow>(props: CommentThreadProp
                 <View key={reply.id} className="mt-2 ml-3">
                     <CommentLine
                         comment={reply}
-                        isOwn={reply.author === props.currentUserOrgId}
+                        isOwn={reply.author === props.currentUserId}
                         onEdit={props.onEdit}
                         onDelete={props.onDelete}
                         nameByUserOrgId={nameByUserOrgId}

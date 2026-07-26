@@ -21,7 +21,8 @@
 // (no field/key-level ACL inside a doc), so consumers that need
 // finer-grained edit authorization must enforce it at a higher layer
 // (typically the durability layer that decides what to persist).
-//   ref: https://discuss.yjs.dev/t/common-concepts-best-practices/2436
+//
+//	ref: https://discuss.yjs.dev/t/common-concepts-best-practices/2436
 package realtime
 
 import (

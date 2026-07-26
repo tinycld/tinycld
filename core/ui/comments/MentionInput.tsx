@@ -18,7 +18,7 @@ import { detectTrigger } from './mention-input-helpers'
 // form pipeline.
 //
 // Wire format: when the user picks a suggestion, the bare `@query`
-// they typed is replaced with the literal token `[[@<userOrgId>]]`
+// they typed is replaced with the literal token `[[@<userId>]]`
 // followed by a space. The token is what gets stored in the comment
 // body — `parseMentions` (lib/comments/mentions.ts) extracts it later
 // for the comment_mentions rows. Read-mode rendering is the consumer's
@@ -32,7 +32,7 @@ import { detectTrigger } from './mention-input-helpers'
 // readable and doesn't break the form value contract.
 
 export interface MentionSuggestion {
-    userOrgId: string
+    userId: string
     displayName: string
     // Optional secondary line — caller often wants to surface an
     // email or role here. Falsy values are ignored.
@@ -112,7 +112,7 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
             if (!trigger) return
             const before = value.slice(0, trigger.atIndex)
             const after = value.slice(trigger.caretIndex)
-            const token = `[[@${s.userOrgId}]] `
+            const token = `[[@${s.userId}]] `
             const next = `${before}${token}${after}`
             field.onChange(next)
             // Re-focus + collapse caret just after the inserted token
@@ -158,7 +158,7 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
                 <View className="mt-1 border border-border rounded-md bg-background overflow-hidden">
                     {filteredSuggestions.map(s => (
                         <Pressable
-                            key={s.userOrgId}
+                            key={s.userId}
                             onPress={() => onPick(s)}
                             accessibilityLabel={`Mention ${s.displayName}`}
                             className="px-3 py-2 border-b border-border"

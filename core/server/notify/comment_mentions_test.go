@@ -13,7 +13,7 @@ import (
 // and notifications. NewTestApp() ships the standard PB users + collections
 // (settings, etc.) but not the tinycld extensions, so we add them inline.
 //
-// Single-org: there are no orgs/user_org collections. mentioned_user_org and
+// Single-org: there are no orgs/user_org collections. mentioned_user and
 // text_comments.author keep their field names but hold users ids directly.
 func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 	t.Helper()
@@ -74,7 +74,7 @@ func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 		Name: "drive_item", Required: true, CollectionId: driveItems.Id, MaxSelect: 1,
 	})
 	commentMentions.Fields.Add(&core.RelationField{
-		Name: "mentioned_user_org", Required: true, CollectionId: users.Id, MaxSelect: 1,
+		Name: "mentioned_user", Required: true, CollectionId: users.Id, MaxSelect: 1,
 	})
 	if err := app.Save(commentMentions); err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func mkMention(t *testing.T, app core.App, f *mentionFixture, collection string)
 	mention.Set("comment_collection", collection)
 	mention.Set("comment_record", f.commentRoot.Id)
 	mention.Set("drive_item", f.driveItem.Id)
-	mention.Set("mentioned_user_org", f.mentionUser.Id)
+	mention.Set("mentioned_user", f.mentionUser.Id)
 	if err := app.Save(mention); err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestCommentMention_ReplyDeepLinksToRootThread(t *testing.T) {
 	mention.Set("comment_collection", "text_comments")
 	mention.Set("comment_record", reply.Id)
 	mention.Set("drive_item", f.driveItem.Id)
-	mention.Set("mentioned_user_org", f.mentionUser.Id)
+	mention.Set("mentioned_user", f.mentionUser.Id)
 	if err := f.app.Save(mention); err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +300,7 @@ func TestCommentMention_SuggestionReplyDeepLinksWithFocusSuggestionParam(t *test
 	mention.Set("comment_collection", "text_comments")
 	mention.Set("comment_record", suggestionReply.Id)
 	mention.Set("drive_item", f.driveItem.Id)
-	mention.Set("mentioned_user_org", f.mentionUser.Id)
+	mention.Set("mentioned_user", f.mentionUser.Id)
 	if err := f.app.Save(mention); err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestCommentMention_SkipsSelfMention(t *testing.T) {
 	mention.Set("comment_collection", "text_comments")
 	mention.Set("comment_record", f.commentRoot.Id)
 	mention.Set("drive_item", f.driveItem.Id)
-	mention.Set("mentioned_user_org", f.authorUser.Id)
+	mention.Set("mentioned_user", f.authorUser.Id)
 	if err := f.app.Save(mention); err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +351,7 @@ func TestCommentMention_HookIsRegisteredAndFiresAsync(t *testing.T) {
 	mention.Set("comment_collection", "text_comments")
 	mention.Set("comment_record", f.commentRoot.Id)
 	mention.Set("drive_item", f.driveItem.Id)
-	mention.Set("mentioned_user_org", f.mentionUser.Id)
+	mention.Set("mentioned_user", f.mentionUser.Id)
 	if err := f.app.Save(mention); err != nil {
 		t.Fatal(err)
 	}
@@ -379,4 +379,3 @@ func TestCommentMention_HookIsRegisteredAndFiresAsync(t *testing.T) {
 		t.Fatal("expected notification to be written by registered hook within 1s")
 	}
 }
-

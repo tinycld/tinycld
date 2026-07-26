@@ -204,10 +204,19 @@ type RoomKindOptions struct {
 // authoritative copy (see text package). Adding a key here is a server
 // rule change; the editor side mirrors it from
 // tinycld/text/webview-editor/source/suggestions/suggestion-types.ts.
+// Named individually so writers can reference the exact root they mutate
+// rather than re-typing the literal — a rename here then reaches every
+// consumer instead of silently diverging from a hardcoded string.
+const (
+	RootClientAuthors   = "clientAuthors"
+	RootClientFirstSeen = "clientFirstSeen"
+	RootEditEvents      = "editEvents"
+)
+
 var ProtectedYjsRootKeys = []string{
-	"clientAuthors",
-	"clientFirstSeen",
-	"editEvents",
+	RootClientAuthors,
+	RootClientFirstSeen,
+	RootEditEvents,
 }
 
 // ErrUnknownRoomKind is returned when a client connects to a room kind
@@ -319,4 +328,3 @@ func LookupForTest(kind string) AuthorizeFn {
 	}
 	return nil
 }
-

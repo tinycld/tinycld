@@ -51,9 +51,11 @@ func handleCommentMention(app core.App, mention *core.Record) {
 		return
 	}
 
-	// mentioned_user_org keeps its field name for schema stability but now
-	// holds a users id directly (the former user_org junction is gone).
-	mentionedUserID := mention.GetString("mentioned_user_org")
+	// mentioned_user is a direct relation to users — drive's migration
+	// 1781000000 renamed it from mentioned_user_org when the junction went
+	// away. Reading the old name here returned "" and silently dropped every
+	// mention notification.
+	mentionedUserID := mention.GetString("mentioned_user")
 	if mentionedUserID == "" {
 		return
 	}
