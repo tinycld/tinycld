@@ -168,6 +168,18 @@ func RegisterLoaderBinder(b LoaderBinder) {
 	loaderBinders = append(loaderBinders, b)
 }
 
+// JSVMBindings returns the two jsvm callbacks that install core's JS seams:
+// the per-VM `$`-namespaces (TS→Go) and the loader-only registration bindings
+// (Go→TS). coreserver.Register wires these itself; this exists for a host that
+// registers jsvm on its own — notably multi-org's cmd/serve-org, which builds a
+// tenant app rather than going through Register.
+//
+// A host that omits these gets VMs with no `$` bindings and no way for package
+// TS to register a hook handler.
+func JSVMBindings(app *pocketbase.PocketBase) (func(*sobek.Runtime), jsvm.LoaderInit) {
+	return buildJsvmOnInit(app), buildJsvmOnLoaderInit(app)
+}
+
 // resetLoaderBindersForTesting clears the binder registry.
 func resetLoaderBindersForTesting() {
 	loaderBindersMu.Lock()
