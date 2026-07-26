@@ -13,8 +13,15 @@ A feature package extends the PocketBase server in two complementary ways:
   layer behavior without forking the package's Go.
 
 Core provides **reusable Go helpers** a package's `Register(app)` calls (it links
-no feature package itself), plus the `$`-binding seam that lets a package's Go
-expose native functions to TS hooks.
+no feature package itself), plus two seams between Go and TS:
+
+| Seam | Direction | For |
+|---|---|---|
+| `$`-bindings | TS → Go | logic that stays in Go but must be *callable* from TS (raw SQL, protocol codecs) |
+| Hook points | Go → TS | letting a deployment intercept a decision Go owns (veto a write, hide a listing entry) |
+
+Hook points are opt-in and cost one atomic load when unused — see the section
+below for why that matters.
 
 > The `contacts` package is the end-to-end reference: `contacts/server/` ships
 > CardDAV, FTS + `/api/contacts/search`, audit logging, and a `vcard_uid` autogen
@@ -114,6 +121,105 @@ binds directly in `Register` — it never crosses the VM boundary.
 
 ---
 
+## Hook points: calling TS *from* Go (`coreserver/ts_hooks.go`)
+
+`$`-bindings run TS→Go. A **hook point** runs the other direction: Go invokes
+registered package TS at a place the host owns — a protocol handler, a request
+path — and uses what it returns. This is for behaviour a declarative config
+can't express ("block this filename", "hide these entries") without turning the
+feature's whole data model into configuration.
+
+### The performance contract
+
+**The fast path never touches a JS VM.** A hook point holds an `atomic.Bool`; a
+point nobody registered costs one atomic load. This is not an optimization
+detail — it is why the seam is safe to put on a hot path at all. jsvm's runtime
+pool falls back to constructing an entire new `sobek.Runtime` (the full bind
+chain, tens of milliseconds) once every pooled executor is busy, which is
+exactly what a fan-out like a WebDAV `PROPFIND` would trigger. Deployments that
+customize nothing pay nothing; only those that register a handler take the cost.
+
+Always gate on `Enabled()` before building a payload:
+
+```go
+if hp.Enabled() {
+    res, err := hp.Call(map[string]any{"name": name, "userId": userID})
+    // …
+}
+```
+
+### Go side
+
+```go
+// Declare the point (idempotent — same name returns the same point).
+hp := coreserver.RegisterHookPoint("webdav.drive.beforeWrite")
+
+// Install the JS-facing registration binding. This must be a LOADER binder:
+// OnInit fires on every pooled VM, so a binding whose job is to REGISTER a
+// handler would otherwise register it once per runtime.
+coreserver.RegisterLoaderBinder(func(loader *sobek.Runtime, compile jsvm.Compiler, app *pocketbase.PocketBase) error {
+    return loader.Set("myHook", func(handlerSource string) error {
+        fn, err := compile(handlerSource)
+        if err != nil { return err }
+        hp.Add(fn)
+        return nil
+    })
+})
+```
+
+`Call` returns `HookResult{Value, Handled}`. `Handled` distinguishes "no handler
+registered" from "a handler ran and returned a zero value". A handler error
+aborts the chain and is returned — for a veto point, that *is* the rejection.
+
+### Ordering (this bites)
+
+`jsvm.Register` executes the hook files **synchronously**, so every binding a
+package contributes must exist before it runs. `coreserver.Register` therefore
+calls `RegisterExtras` (which registers feature packages) *before*
+`jsvm.MustRegister`. Register bindings from your package's `Register(app)` and
+you are in time; register them later and the package's `.pb.ts` dies at boot
+with `<yourHook> is not defined`.
+
+### Handler forms
+
+A handler reaches Go as a **source string**, and the three ways of writing one
+stringify differently:
+
+```ts
+myHook({
+    beforeWrite(e) {…},              // → "beforeWrite(e) {…}"   (method shorthand)
+    canRead: function (e) {…},       // → "function (e) {…}"
+    filterList: (e) => {…},          // → "(e) => {…}"
+})
+```
+
+Method shorthand is a *method definition*, not an expression, so it must be
+normalized (prefix `function `) before compiling — see
+`core/server/webdav/tshooks_register.go`. Handlers are also recompiled
+standalone, so **a handler closes over nothing**: everything it needs must be
+inside its own body.
+
+### Security rule
+
+**A hook point may restrict a decision, never widen one.** Apply the
+authoritative check in Go first and treat the hook's answer as an additional
+constraint. Where a hook returns a collection (a filtered listing), intersect it
+with what Go authorized rather than trusting it — otherwise a handler could name
+records the caller was never granted. `core/server/webdav/hooks.go` is the
+reference implementation.
+
+### In use: WebDAV
+
+`core/webdav` is the first consumer, exposing five points via a single
+`webdavHook({...})` binding — `beforeWrite`, `beforeDelete`, `beforeMove`,
+`canRead`, `filterList`. Points are namespaced per source slug
+(`webdav.<slug>.<hook>`) so two packages serving trees never share a handler.
+`filterList` receives a whole directory batch, so a listing costs one VM borrow
+rather than one per entry. See `drive/help/webdav-hooks.md` for the
+administrator-facing description.
+
+---
+
 ## TypeScript hooks (`pb-hooks/`)
 
 Drop a `.pb.ts` into the package's `pb-hooks/` dir and bind PocketBase events:
@@ -146,6 +252,8 @@ onRecordCreate((e) => {
    `manifest.ts`.
 3. For TS extension points, add `hooks: { directory: 'pb-hooks' }` and ship a
    `pb-hooks/<name>.pb.ts` (even an example/placeholder documents the seam).
+   Register any `$`-binding or hook-point binding from `Register(app)` — it runs
+   before `jsvm`, which executes the hook files synchronously.
 4. Ensure any collections + FTS5 virtual tables your Go reads exist in the
    package's `pb-migrations`.
 5. Run `pnpm run packages:generate` (from `tinycld/`) to wire the Go server.
