@@ -207,12 +207,14 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	RegisterAppUpdateEndpoints(app)
 	RegisterSetupBootstrap(app)
 	RegisterAccountDelete(app)
+	RegisterAdminOffboard(app)
 	userorg.Register(app)
 	RegisterDemoStart(app)
 	RegisterDemoLead(app)
 	RegisterDemoReset(app)
 	RegisterUsersFieldGuard(app)
 	RegisterUsersDemoAuditHook(app)
+	RegisterDisabledUserGuard(app)
 
 	registerSchemaHooks(app, opts.TypesDir)
 	// Keep the /carddav (and /caldav, /drive) CORS bypass here even though core no

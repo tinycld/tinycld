@@ -31,12 +31,19 @@ var selfEditableUserFields = map[string]bool{
 // We use an allowlist rather than a denylist so that future additions to the
 // users collection (PB upgrades, new auth hooks) default to "rejected"
 // instead of silently becoming admin-writable. `role` is admin-editable so an
-// owner/admin can promote or demote a member.
+// owner/admin can promote or demote a member; `disabled` so they can suspend
+// and restore an account.
+//
+// `disabled` is deliberately absent from selfEditableUserFields, for the same
+// reason as `is_demo`: a suspended user must not be able to lift their own
+// suspension. Self-disable goes through POST /api/account/disable, which
+// re-verifies identity by email confirmation.
 var adminEditableUserFields = map[string]bool{
-	"name":    true,
-	"avatar":  true,
-	"is_demo": true,
-	"role":    true,
+	"name":     true,
+	"avatar":   true,
+	"is_demo":  true,
+	"role":     true,
+	"disabled": true,
 }
 
 // RegisterUsersDemoAuditHook writes an audit_logs entry every time the

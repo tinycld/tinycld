@@ -1,4 +1,4 @@
-import { deleteMyAccount } from '@tinycld/core/lib/account-delete'
+import { deleteMyAccount, type OffboardPlan } from '@tinycld/core/lib/account'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { errorToString } from '@tinycld/core/lib/errors'
 import { useMutation } from '@tinycld/core/lib/mutations'
@@ -6,6 +6,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { router } from 'expo-router'
 import { useState } from 'react'
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native'
+import { ContentPlanPicker, usePeers } from './account/OffboardDialog'
 
 interface DeleteAccountModalProps {
     isVisible: boolean
@@ -16,6 +17,11 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
     const { user, logout } = useAuth()
     const [typed, setTyped] = useState('')
     const [error, setError] = useState<string | null>(null)
+    // Who could inherit this user's files/documents/comments. Empty when
+    // they're the only non-guest account, in which case the picker hides and
+    // the plan stays undefined — content is left attributed to "Deleted user".
+    const peers = usePeers(user.id)
+    const [plan, setPlan] = useState<OffboardPlan | undefined>(undefined)
 
     const mutedColor = useThemeColor('muted-foreground')
     const backdropColor = useThemeColor('overlay-backdrop')
@@ -23,7 +29,7 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
 
     const mutation = useMutation({
         mutationFn: async (email: string) => {
-            await deleteMyAccount(email)
+            await deleteMyAccount(email, plan)
         },
         onSuccess: () => {
             logout()
@@ -69,11 +75,23 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
             >
                 <Text className="text-[22px] font-bold mb-1 text-foreground">Delete account</Text>
                 <Text className="text-sm mb-2 text-muted-foreground">
-                    This action is permanent and cannot be undone. All your data will be deleted.
+                    This action is permanent and cannot be undone. Your name, email and avatar are
+                    removed and you're signed out everywhere. Disable your account instead if you
+                    might come back.
                 </Text>
                 <Text className="text-sm mb-6 text-muted-foreground">
                     Signed in as <Text className="font-semibold text-foreground">{user.email}</Text>
                 </Text>
+
+                <View className="mb-6">
+                    <ContentPlanPicker
+                        peers={peers}
+                        subjectLabel="your"
+                        value={plan ?? { mode: 'delete_my_data' }}
+                        onChange={setPlan}
+                        disabled={mutation.isPending}
+                    />
+                </View>
 
                 {error && (
                     <View className="rounded-lg p-3 mb-4 bg-danger-soft">

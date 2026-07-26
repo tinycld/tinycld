@@ -1,9 +1,9 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { SortableDragHandle, SortableList } from '@tinycld/core/components/SortableList'
 import { AboutSection } from '@tinycld/core/components/settings/AboutSection'
+import { DisableAccountSection } from '@tinycld/core/components/settings/account/DisableAccountSection'
 import { DeleteAccountSection } from '@tinycld/core/components/settings/DeleteAccountSection'
 import { DisconnectServerSection } from '@tinycld/core/components/settings/DisconnectServerSection'
-import { LeaveOrgSection } from '@tinycld/core/components/settings/leave-org/LeaveOrgSection'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import { changeMyPassword } from '@tinycld/core/lib/account-password'
 import { useAuth } from '@tinycld/core/lib/auth'
@@ -82,7 +82,7 @@ export default function PersonalSettings() {
                     <NavigationSection />
                     <DisconnectServerSection />
                     <AboutSection />
-                    <LeaveOrgSection />
+                    <DisableAccountSection />
                     <DeleteAccountSection />
                 </View>
             </ScrollView>

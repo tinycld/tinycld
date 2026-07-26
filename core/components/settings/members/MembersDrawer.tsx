@@ -1,4 +1,3 @@
-import { LeaveOrgFlow } from '@tinycld/core/components/settings/leave-org/LeaveOrgFlow'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
@@ -30,6 +29,7 @@ import { InviteLinkPanel } from './InviteLinkPanel'
 import { MemberAvatar } from './MemberAvatar'
 import { PendingBadge, RoleBadge, YouBadge } from './MemberBadges'
 import { PackageAccessPanel } from './PackageAccessPanel'
+import { RemoveMemberFlow } from './RemoveMemberFlow'
 import {
     type DrawerMode,
     type MemberRow,
@@ -124,7 +124,7 @@ function ViewMember({
     // Removing a member previously did a raw user_org delete, which 500'd
     // any time the member owned records that the schema marked
     // required+cascadeDelete:false (calendar_events.created_by, drive_items,
-    // etc.). Route through LeaveOrgFlow so the admin gets a reassign/delete
+    // etc.). Route through RemoveMemberFlow so the admin gets a reassign/delete
     // choice for the member's content before the user_org goes away.
     const [removeOpen, setRemoveOpen] = useState(false)
 
@@ -260,16 +260,15 @@ function ViewMember({
                     />
                 </DrawerFooter>
             )}
-            <LeaveOrgFlow
+            <RemoveMemberFlow
                 isVisible={removeOpen}
                 onClose={() => setRemoveOpen(false)}
                 onSuccess={() => {
                     setRemoveOpen(false)
                     onClose()
                 }}
-                userOrgId={member.userOrgId}
-                mode="admin"
-                targetDisplayName={displayName}
+                userId={member.userId}
+                displayName={displayName}
             />
         </>
     )
