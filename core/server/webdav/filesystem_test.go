@@ -129,25 +129,49 @@ func mkFile(t *testing.T, app *tests.TestApp, owner *core.Record, name, parent, 
 	return r
 }
 
-// ownerOnlyHooks is the smallest realistic authorization: you see what you own.
-func ownerOnlyHooks() Hooks {
-	own := func(app core.App, userID string, rec *core.Record) error {
-		if rec.GetString("created_by") != userID {
-			return os.ErrPermission
-		}
-		return nil
+// restrictToOwner stamps real PocketBase rules on the test collection: you may
+// see and change only what you created.
+//
+// This is what the authorization tests exercise now — the same rule engine the
+// REST API uses, not a Go closure standing in for it. If WebDAV ever stopped
+// consulting the rules, these tests would go red rather than quietly passing
+// against a parallel implementation.
+// allowAuthenticated is the permissive baseline: any signed-in user may do
+// anything. A freshly created collection has nil rules, which PocketBase reads
+// as SUPERUSERS ONLY — so a test that wants a plain authenticated tree has to
+// say so, exactly as a real package's migration would.
+func allowAuthenticated(t *testing.T, app *tests.TestApp) {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("tree_items")
+	if err != nil {
+		t.Fatal(err)
 	}
-	byID := func(app core.App, userID, recID string) error {
-		rec, err := app.FindRecordById("tree_items", recID)
-		if err != nil {
-			return err
-		}
-		return own(app, userID, rec)
+	rule := "@request.auth.id != \"\""
+	col.ListRule = &rule
+	col.ViewRule = &rule
+	col.CreateRule = &rule
+	col.UpdateRule = &rule
+	col.DeleteRule = &rule
+	if err := app.Save(col); err != nil {
+		t.Fatalf("set access rules: %v", err)
 	}
-	return Hooks{
-		CanRead:   own,
-		CanWrite:  byID,
-		CanDelete: byID,
+}
+
+func restrictToOwner(t *testing.T, app *tests.TestApp) {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("tree_items")
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := "created_by = @request.auth.id"
+	col.ListRule = &own
+	col.ViewRule = &own
+	col.UpdateRule = &own
+	col.DeleteRule = &own
+	authed := "@request.auth.id != \"\""
+	col.CreateRule = &authed
+	if err := app.Save(col); err != nil {
+		t.Fatalf("set access rules: %v", err)
 	}
 }
 
@@ -228,6 +252,7 @@ func TestValidateSourceRejectsUnsafeIdentifiers(t *testing.T) {
 
 func TestStatAndListRoot(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 	mkItem(t, app, alice, "Documents", "", true)
 
@@ -255,6 +280,7 @@ func TestStatAndListRoot(t *testing.T) {
 
 func TestStatNestedPath(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 	docs := mkItem(t, app, alice, "Documents", "", true)
 	mkFile(t, app, alice, "report.pdf", docs.Id, "hello")
@@ -277,6 +303,7 @@ func TestStatNestedPath(t *testing.T) {
 
 func TestStatMissingPath(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 
 	if _, err := fs.Stat(ctxAs(alice), "/files/nope.txt"); !errors.Is(err, os.ErrNotExist) {
@@ -288,9 +315,8 @@ func TestStatMissingPath(t *testing.T) {
 // not-found is what stops a probe confirming the path exists.
 func TestUnreadableEntryIsNotFoundNotForbidden(t *testing.T) {
 	app, alice, bob := setupTree(t)
-	src := testSource()
-	src.Hooks = ownerOnlyHooks()
-	fs := newFS(t, app, src)
+	restrictToOwner(t, app)
+	fs := newFS(t, app, testSource())
 
 	mkFile(t, app, alice, "secret.txt", "", "classified")
 
@@ -305,9 +331,8 @@ func TestUnreadableEntryIsNotFoundNotForbidden(t *testing.T) {
 
 func TestListingHidesUnreadableEntries(t *testing.T) {
 	app, alice, bob := setupTree(t)
-	src := testSource()
-	src.Hooks = ownerOnlyHooks()
-	fs := newFS(t, app, src)
+	restrictToOwner(t, app)
+	fs := newFS(t, app, testSource())
 
 	mkItem(t, app, alice, "alice-only", "", true)
 	mkItem(t, app, bob, "bob-only", "", true)
@@ -327,6 +352,7 @@ func TestListingHidesUnreadableEntries(t *testing.T) {
 
 func TestReadFileContent(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 	mkFile(t, app, alice, "a.txt", "", "file body here")
 
@@ -347,6 +373,7 @@ func TestReadFileContent(t *testing.T) {
 
 func TestMkdirCreatesFolder(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 
 	if err := fs.Mkdir(ctxAs(alice), "/files/NewFolder", 0o755); err != nil {
@@ -370,6 +397,7 @@ func TestMkdirCreatesFolder(t *testing.T) {
 
 func TestMkdirExistingIsErrExist(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 	mkItem(t, app, alice, "Dup", "", true)
 
@@ -380,6 +408,7 @@ func TestMkdirExistingIsErrExist(t *testing.T) {
 
 func TestWriteCreatesFileWithMime(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 
 	f, err := fs.OpenFile(ctxAs(alice), "/files/notes.txt", os.O_WRONLY|os.O_CREATE, 0o644)
@@ -411,6 +440,7 @@ func TestWriteCreatesFileWithMime(t *testing.T) {
 
 func TestWriteWithoutCreateFlagOnMissingFails(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 
 	_, err := fs.OpenFile(ctxAs(alice), "/files/absent.txt", os.O_WRONLY, 0o644)
@@ -421,9 +451,8 @@ func TestWriteWithoutCreateFlagOnMissingFails(t *testing.T) {
 
 func TestRenameMovesEntry(t *testing.T) {
 	app, alice, _ := setupTree(t)
-	src := testSource()
-	src.Hooks = ownerOnlyHooks()
-	fs := newFS(t, app, src)
+	restrictToOwner(t, app)
+	fs := newFS(t, app, testSource())
 
 	dst := mkItem(t, app, alice, "Dest", "", true)
 	mkFile(t, app, alice, "move-me.txt", "", "x")
@@ -446,9 +475,8 @@ func TestRenameMovesEntry(t *testing.T) {
 
 func TestRenameOntoExistingIsErrExist(t *testing.T) {
 	app, alice, _ := setupTree(t)
-	src := testSource()
-	src.Hooks = ownerOnlyHooks()
-	fs := newFS(t, app, src)
+	restrictToOwner(t, app)
+	fs := newFS(t, app, testSource())
 
 	mkFile(t, app, alice, "a.txt", "", "a")
 	mkFile(t, app, alice, "b.txt", "", "b")
@@ -462,9 +490,8 @@ func TestRenameOntoExistingIsErrExist(t *testing.T) {
 // of the tree loop forever.
 func TestRenameRejectsCycle(t *testing.T) {
 	app, alice, _ := setupTree(t)
-	src := testSource()
-	src.Hooks = ownerOnlyHooks()
-	fs := newFS(t, app, src)
+	restrictToOwner(t, app)
+	fs := newFS(t, app, testSource())
 
 	parent := mkItem(t, app, alice, "Parent", "", true)
 	mkItem(t, app, alice, "Child", parent.Id, true)
@@ -477,9 +504,8 @@ func TestRenameRejectsCycle(t *testing.T) {
 
 func TestRemoveAllDeletes(t *testing.T) {
 	app, alice, _ := setupTree(t)
-	src := testSource()
-	src.Hooks = ownerOnlyHooks()
-	fs := newFS(t, app, src)
+	restrictToOwner(t, app)
+	fs := newFS(t, app, testSource())
 
 	mkFile(t, app, alice, "gone.txt", "", "bye")
 
@@ -493,9 +519,8 @@ func TestRemoveAllDeletes(t *testing.T) {
 
 func TestHooksDenyWriteAndDelete(t *testing.T) {
 	app, alice, bob := setupTree(t)
-	src := testSource()
-	src.Hooks = ownerOnlyHooks()
-	fs := newFS(t, app, src)
+	restrictToOwner(t, app)
+	fs := newFS(t, app, testSource())
 
 	mkFile(t, app, alice, "alices.txt", "", "hers")
 
@@ -510,6 +535,7 @@ func TestHooksDenyWriteAndDelete(t *testing.T) {
 // The quota hook must see the true byte delta and be able to refuse the write.
 func TestQuotaHookRejectsWrite(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	src := testSource()
 
 	var sawDelta int64
@@ -543,6 +569,7 @@ func TestQuotaHookRejectsWrite(t *testing.T) {
 // must charge quota only the DELTA, not the whole new size.
 func TestOverwriteCallsHooksWithDelta(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	src := testSource()
 
 	var overwrote bool
@@ -590,6 +617,7 @@ func TestOverwriteCallsHooksWithDelta(t *testing.T) {
 // lose the write the user actually asked for.
 func TestBeforeOverwriteFailureDoesNotFailWrite(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	src := testSource()
 	src.Hooks.BeforeOverwrite = func(_ core.App, _ string, _ *core.Record) error {
 		return errors.New("snapshot store unavailable")
@@ -619,6 +647,7 @@ func TestBeforeOverwriteFailureDoesNotFailWrite(t *testing.T) {
 // error — the middleware must always have run.
 func TestMissingUserInContextFails(t *testing.T) {
 	app, _, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 
 	if _, err := fs.Stat(context.Background(), "/files/"); err == nil {
@@ -670,6 +699,7 @@ func TestWellKnownPathIsProtocolNotPrefix(t *testing.T) {
 // duplicate pattern).
 func TestMultipleSourcesRegisterOneWellKnown(t *testing.T) {
 	app, _, _ := setupTree(t)
+	allowAuthenticated(t, app)
 
 	a := testSource()
 	b := testSource()

@@ -106,13 +106,69 @@ func (fs *FileSystem) resolveContext(ctx context.Context, name string) (*core.Re
 	return user, parsePath(fs.src.Prefix, name), nil
 }
 
-// canRead applies the feature's read check, if any. A nil hook means the tree
-// is unrestricted beyond authentication.
-func (fs *FileSystem) canRead(userID string, record *core.Record) error {
-	if fs.src.Hooks.CanRead == nil {
+// ruleKind selects which of a collection's access rules to evaluate.
+type ruleKind int
+
+const (
+	ruleList ruleKind = iota
+	ruleView
+	ruleUpdate
+	ruleDelete
+)
+
+// rule returns the collection's rule for the given operation. A nil *string
+// means "superusers only" and an empty string means "public" — CanAccessRecord
+// gives both their PocketBase meaning, so they are passed through untouched.
+func ruleFor(collection *core.Collection, kind ruleKind) *string {
+	switch kind {
+	case ruleList:
+		return collection.ListRule
+	case ruleView:
+		return collection.ViewRule
+	case ruleUpdate:
+		return collection.UpdateRule
+	case ruleDelete:
+		return collection.DeleteRule
+	}
+	return nil
+}
+
+// authorize evaluates the record's own collection rule for this user.
+//
+// WebDAV does not go through PocketBase's REST layer, so no rule is applied for
+// us — but reimplementing the check in Go would mean two definitions of the same
+// permission, free to drift. Instead we ask the rule engine the same question
+// the REST API would, with the DAV request's authenticated user.
+//
+// The listing path uses ListRule and single-record resolution uses ViewRule,
+// mirroring how PocketBase itself splits them.
+func (fs *FileSystem) authorize(user *core.Record, record *core.Record, kind ruleKind) error {
+	if record == nil {
 		return nil
 	}
-	return fs.src.Hooks.CanRead(fs.app, userID, record)
+
+	info := &core.RequestInfo{
+		Auth:    user,
+		Method:  "GET",
+		Context: core.RequestInfoContextDefault,
+	}
+
+	ok, err := fs.app.CanAccessRecord(record, info, ruleFor(record.Collection(), kind))
+	if err != nil {
+		// An unevaluable rule must not fail open.
+		fs.app.Logger().Warn("webdav: access rule evaluation failed",
+			"slug", fs.src.Slug, "id", record.Id, "error", err)
+		return os.ErrPermission
+	}
+	if !ok {
+		return os.ErrPermission
+	}
+	return nil
+}
+
+// canRead reports whether the user may resolve this record by path.
+func (fs *FileSystem) canRead(user *core.Record, record *core.Record) error {
+	return fs.authorize(user, record, ruleView)
 }
 
 // Stat resolves the path to either the synthetic root or a backing record.
@@ -133,7 +189,7 @@ func (fs *FileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error
 
 	// An entry the viewer may not read must be invisible, not forbidden:
 	// answering not-found avoids confirming that the path exists.
-	if err := fs.canRead(user.Id, record); err != nil {
+	if err := fs.canRead(user, record); err != nil {
 		return nil, os.ErrNotExist
 	}
 
@@ -158,7 +214,7 @@ func (fs *FileSystem) openForRead(ctx context.Context, name string) (webdav.File
 	}
 
 	if len(segments) == 0 {
-		children, err := fs.listChildren(ctx, "", user.Id)
+		children, err := fs.listChildren(ctx, "", user)
 		if err != nil {
 			return nil, err
 		}
@@ -174,12 +230,12 @@ func (fs *FileSystem) openForRead(ctx context.Context, name string) (webdav.File
 	}
 
 	// Same not-found masking as Stat.
-	if err := fs.canRead(user.Id, record); err != nil {
+	if err := fs.canRead(user, record); err != nil {
 		return nil, os.ErrNotExist
 	}
 
 	if record.GetBool(fs.src.Fields.IsFolder) {
-		children, err := fs.listChildren(ctx, record.Id, user.Id)
+		children, err := fs.listChildren(ctx, record.Id, user)
 		if err != nil {
 			return nil, err
 		}
@@ -305,10 +361,8 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) error {
 		return err
 	}
 
-	if fs.src.Hooks.CanDelete != nil {
-		if err := fs.src.Hooks.CanDelete(fs.app, user.Id, record.Id); err != nil {
-			return err
-		}
+	if err := fs.authorize(user, record, ruleDelete); err != nil {
+		return err
 	}
 
 	if err := fs.hookBeforeDelete(ctx, user, record, name); err != nil {
@@ -338,10 +392,8 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) error
 		return err
 	}
 
-	if fs.src.Hooks.CanWrite != nil {
-		if err := fs.src.Hooks.CanWrite(fs.app, user.Id, srcRecord.Id); err != nil {
-			return err
-		}
+	if err := fs.authorize(user, srcRecord, ruleUpdate); err != nil {
+		return err
 	}
 
 	if existing, _ := fs.resolveByPath(destSegments); existing != nil {
@@ -379,10 +431,11 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) error
 // listChildren returns the immediate children of a parent (or of the root for
 // an empty parentID), limited to entries the viewer may read.
 //
-// WebDAV bypasses PocketBase's rule engine, so the collection's view rule has
-// to be reapplied here by hand — being authenticated must not expose every
-// user's files.
-func (fs *FileSystem) listChildren(ctx context.Context, parentID, viewerUserID string) ([]os.FileInfo, error) {
+// FindRecordsByFilter does not apply the collection's rules, so each candidate
+// is put through ListRule — being authenticated must not expose every user's
+// files. An entry that fails is silently omitted, which is what a listing
+// should do.
+func (fs *FileSystem) listChildren(ctx context.Context, parentID string, user *core.Record) ([]os.FileInfo, error) {
 	f := fs.src.Fields
 
 	var filter string
@@ -401,13 +454,13 @@ func (fs *FileSystem) listChildren(ctx context.Context, parentID, viewerUserID s
 
 	infos := make([]os.FileInfo, 0, len(records))
 	for _, r := range records {
-		if fs.canRead(viewerUserID, r) != nil {
+		if fs.authorize(user, r, ruleList) != nil {
 			continue
 		}
 		infos = append(infos, fs.recordToFileInfo(r))
 	}
 
-	return fs.hookFilterList(ctx, viewerUserID, infos)
+	return fs.hookFilterList(ctx, user.Id, infos)
 }
 
 // rootName is the display name of the synthetic root directory: the mount

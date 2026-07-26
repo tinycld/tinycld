@@ -34,6 +34,7 @@ func (f *fakeHookPoint) Call(payload map[string]any) (any, bool, error) {
 // an org customizing nothing never pays for a VM borrow.
 func TestFastPathNeverCallsDisabledHooks(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 
 	points := map[string]*fakeHookPoint{
@@ -85,6 +86,7 @@ func TestFastPathNeverCallsDisabledHooks(t *testing.T) {
 
 func TestBeforeWriteHookVetoesPut(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 
 	hp := &fakeHookPoint{enabled: true, err: errors.New("blocked by policy")}
@@ -107,6 +109,7 @@ func TestBeforeWriteHookVetoesPut(t *testing.T) {
 
 func TestBeforeWriteHookVetoesMkcol(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 	fs.SetTSHooks(TSHooks{BeforeWrite: &fakeHookPoint{enabled: true, err: errors.New("no folders")}})
 
@@ -120,6 +123,7 @@ func TestBeforeWriteHookVetoesMkcol(t *testing.T) {
 
 func TestBeforeDeleteHookVetoes(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 	mkFile(t, app, alice, "keep.txt", "", "x")
 
@@ -139,6 +143,7 @@ func TestBeforeDeleteHookVetoes(t *testing.T) {
 
 func TestBeforeMoveHookVetoes(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 	mkFile(t, app, alice, "pinned.txt", "", "x")
 
@@ -158,6 +163,7 @@ func TestBeforeMoveHookVetoes(t *testing.T) {
 
 func TestCanReadHookNarrowsListing(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 	mkItem(t, app, alice, "visible", "", true)
 	mkItem(t, app, alice, "hidden", "", true)
@@ -183,9 +189,8 @@ func TestCanReadHookNarrowsListing(t *testing.T) {
 // returns names Go never authorized must not add them to the listing.
 func TestFilterListCannotRevealUnauthorizedEntries(t *testing.T) {
 	app, alice, bob := setupTree(t)
-	src := testSource()
-	src.Hooks = ownerOnlyHooks()
-	fs := newFS(t, app, src)
+	restrictToOwner(t, app)
+	fs := newFS(t, app, testSource())
 
 	mkItem(t, app, alice, "alice-secret", "", true)
 	mkItem(t, app, bob, "bob-own", "", true)
@@ -212,6 +217,7 @@ func TestFilterListCannotRevealUnauthorizedEntries(t *testing.T) {
 
 func TestFilterListHidesEntries(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 	mkItem(t, app, alice, "shown", "", true)
 	mkItem(t, app, alice, ".hidden", "", true)
@@ -238,6 +244,7 @@ func TestFilterListHidesEntries(t *testing.T) {
 // hot path affordable.
 func TestFilterListIsCalledOncePerDirectory(t *testing.T) {
 	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
 	fs := newFS(t, app, testSource())
 	for _, n := range []string{"a", "b", "c", "d", "e"} {
 		mkItem(t, app, alice, n, "", true)
@@ -267,9 +274,8 @@ func TestFilterListIsCalledOncePerDirectory(t *testing.T) {
 // a way that leaks anything Go had already excluded.
 func TestFilterListIgnoresNonListReturn(t *testing.T) {
 	app, alice, bob := setupTree(t)
-	src := testSource()
-	src.Hooks = ownerOnlyHooks()
-	fs := newFS(t, app, src)
+	restrictToOwner(t, app)
+	fs := newFS(t, app, testSource())
 
 	mkItem(t, app, alice, "alice-only", "", true)
 	mkItem(t, app, bob, "bob-only", "", true)

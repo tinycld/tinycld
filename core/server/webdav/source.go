@@ -86,24 +86,24 @@ type FieldMap struct {
 	Updated string
 }
 
-// Hooks are the per-feature decisions the protocol defers to the package.
+// Hooks are the per-feature side effects the protocol defers to the package.
 //
-// Permission hooks are AND-only by construction: returning nil means "allowed
-// as far as this feature is concerned", and the server has no way to grant
-// access a hook denied. A nil hook means unrestricted — appropriate only for a
-// tree whose collection rules already scope every row to its owner.
+// Authorization is deliberately NOT here. WebDAV evaluates the collection's own
+// PocketBase access rules (List/View/Update/Delete) via app.CanAccessRecord, so
+// there is exactly one place a tree's permissions are defined — the migration —
+// and the DAV path cannot drift from what the REST API and the web UI enforce.
+//
+// It also has to be that way for multi-org. A rule is a string and travels in
+// the schema; a Go closure cannot cross a process boundary. Were authorization
+// a hook, a tenant process (which links no feature Go) would serve the tree with
+// no per-record checks at all.
+//
+// What remains here is the work that genuinely is not an access decision.
+//
+// NOTE: these hooks are nil in a tenant process for the reason above, so a
+// tenant-served write skips quota accounting and does not archive the previous
+// version. Tracked in the router's HANDOFF.
 type Hooks struct {
-	// CanRead reports whether user may see record. Returning a non-nil error
-	// makes the entry invisible: the server answers not-found rather than
-	// permission-denied so a probe cannot confirm the path exists.
-	CanRead func(app core.App, userID string, record *core.Record) error
-
-	// CanWrite reports whether user may modify the record with the given id.
-	CanWrite func(app core.App, userID, recordID string) error
-
-	// CanDelete reports whether user may delete the record with the given id.
-	CanDelete func(app core.App, userID, recordID string) error
-
 	// CheckQuota is called before a write commits, with the byte delta the
 	// write would add (never negative). A non-nil error rejects the write.
 	CheckQuota func(app core.App, userID string, delta int64) error

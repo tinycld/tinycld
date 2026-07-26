@@ -165,10 +165,12 @@ func (f *davFile) persistWrite() error {
 	hooks := fs.src.Hooks
 
 	if f.existing != nil {
-		if hooks.CanWrite != nil {
-			if err := hooks.CanWrite(fs.app, f.user.Id, f.existing.Id); err != nil {
-				return err
-			}
+		// Overwriting an existing entry is an update; the collection's own
+		// UpdateRule decides. Checked here rather than at open because the
+		// handler has already streamed the body by now — but before anything
+		// is persisted, so a denied write leaves no trace.
+		if err := fs.authorize(f.user, f.existing, ruleUpdate); err != nil {
+			return err
 		}
 
 		if hooks.CheckQuota != nil {
