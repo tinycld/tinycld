@@ -49,11 +49,12 @@ async function verifyInviteeMailbox(page: Page) {
     expect(mb.address, 'mailbox has an address').toBeTruthy()
     expect(mb.domain, 'mailbox links a domain').toBeTruthy()
 
-    // The linked domain exists, belongs to this org, and is verified.
-    const dom = await get<{ org?: string; verified?: boolean }>(
+    // The linked domain exists and is verified. Single-org: mail_domains no
+    // longer carries an `org` relation (the deployment IS the org), so there is
+    // no ownership field left to assert on.
+    const dom = await get<{ verified?: boolean }>(
         `/api/collections/mail_domains/records/${mb.domain}`
     )
-    expect(dom.org, 'domain belongs to an org').toBeTruthy()
     expect(dom.verified, 'domain is verified').toBe(true)
 }
 // End-to-end invite flow:
