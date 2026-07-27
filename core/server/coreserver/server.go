@@ -217,7 +217,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	RegisterDisabledUserGuard(app)
 
 	registerSchemaHooks(app, opts.TypesDir)
-	// Keep the /carddav (and /caldav, /drive) CORS bypass here even though core no
+	// Keep the /carddav (and /caldav, /dav) CORS bypass here even though core no
 	// longer serves a protocol handler itself: a package's own Go server (e.g.
 	// contacts) mounts /carddav via OnServe and relies on this bypass for
 	// non-browser DAV clients.
@@ -232,7 +232,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 }
 
 // registerDavCorsBypass wraps PocketBase's default CORS middleware so that
-// requests under /caldav, /carddav, and /drive skip CORS entirely.
+// requests under /caldav, /carddav, and /dav skip CORS entirely.
 //
 // Why: the default middleware always returns 204 for OPTIONS requests
 // (including non-browser DAV clients like macOS Finder that send no Origin
@@ -260,10 +260,18 @@ func registerDavCorsBypass(app *pocketbase.PocketBase) {
 	})
 }
 
+// isDavPath reports whether a request belongs to a DAV protocol mount rather
+// than the SPA.
+//
+// `/dav` is the RESERVED namespace for protocol mounts; no package slug may
+// claim it. This used to list bare "/drive", which is also the in-app route:
+// once the single-org migration dropped the /a/<orgSlug> segment the two
+// collided, and since a literal route beats the SPA catch-all, a hard load of
+// /drive reached Basic-Auth WebDAV instead of the app.
 func isDavPath(path string) bool {
 	return strings.HasPrefix(path, "/caldav") ||
 		strings.HasPrefix(path, "/carddav") ||
-		strings.HasPrefix(path, "/drive") ||
+		strings.HasPrefix(path, "/dav") ||
 		strings.HasPrefix(path, "/.well-known/caldav") ||
 		strings.HasPrefix(path, "/.well-known/carddav") ||
 		strings.HasPrefix(path, "/.well-known/webdav")

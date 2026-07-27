@@ -13,7 +13,7 @@ import (
 // DAV has no login form and no session: every request carries Basic
 // credentials, and PocketBase's own rate limiter covers its REST routes, not
 // these. So an attacker can guess passwords against /carddav, /caldav or
-// /drive as fast as the server will answer, with nothing recording that it is
+// /dav/drive as fast as the server will answer, with nothing recording that it is
 // happening. bcrypt bounds the rate, but bounding is not preventing — an
 // online guessing attack against a weak password succeeds in hours.
 //

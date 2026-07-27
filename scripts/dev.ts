@@ -541,18 +541,22 @@ function spawnExpo(expoPort: number, onReady: () => void): ChildProcess {
 //   /_                    admin UI
 //   /caldav               calendar package's CalDAV handler
 //   /carddav              contacts package's CardDAV handler
-//   /drive                drive package's WebDAV handler (the in-app
-//                         /a/.../drive routes are caught by /a, which
-//                         Expo owns)
+//   /dav/drive            drive package's WebDAV handler
 //   /.well-known/caldav   service discovery (302s)
 //   /.well-known/carddav
 //   /.well-known/webdav
+//
+// /dav is RESERVED for protocol mounts and must never be a package slug.
+// WebDAV used to mount at bare /drive, which collided with the in-app /drive
+// route once the single-org migration dropped the /a/<orgSlug> segment: a
+// literal route beats Expo's catch-all, so a hard load of /drive reached
+// Basic-Auth WebDAV and the SPA was unreachable.
 const PB_PREFIXES = [
     '/api',
     '/_',
     '/caldav',
     '/carddav',
-    '/drive',
+    '/dav',
     '/.well-known/caldav',
     '/.well-known/carddav',
     '/.well-known/webdav',
