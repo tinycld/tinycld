@@ -51,6 +51,10 @@ func setupTree(t *testing.T) (*tests.TestApp, *core.Record, *core.Record) {
 	mkUser := func(email string) *core.Record {
 		u := core.NewRecord(users)
 		u.Set("email", email)
+		// Explicit, unique per email: PocketBase otherwise auto-fills username
+		// with a small random suffix, which can collide across the two users
+		// and fail the save ("username: Value must be unique") — a flake.
+		u.Set("username", strings.SplitN(email, "@", 2)[0])
 		u.Set("password", "password123")
 		if err := app.Save(u); err != nil {
 			t.Fatalf("save user %s: %v", email, err)
