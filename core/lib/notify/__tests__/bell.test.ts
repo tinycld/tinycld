@@ -1,3 +1,8 @@
+// NOTE: these tests hand-set the notify context, which is fine for asserting
+// what the CHANNEL does with a context — but it is why they could not catch
+// the context never being set in the running app. That path is covered by
+// core/tests/unit/notify-context-sync.test.tsx, which mounts the real
+// component. Keep both: this file tests the channel, that one tests the wiring.
 import { bellChannel } from '@tinycld/core/lib/notify/channels/bell'
 import { clearNotifyContext, setNotifyContext } from '@tinycld/core/lib/notify/context'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,13 +24,13 @@ describe('BellChannel', () => {
     })
 
     it('inserts a notification row with resolved context and input fields', async () => {
-        setNotifyContext({ orgId: 'o1', userId: 'u1' })
+        setNotifyContext({ userId: 'u1' })
 
         await bellChannel.dispatch({
             event: 'import.complete',
             title: 'Import done',
             body: '42 contacts',
-            url: '/a/acme/contacts',
+            url: '/contacts',
             data: { source: 'google-takeout', count: 42 },
             variant: 'success',
         })
@@ -39,7 +44,7 @@ describe('BellChannel', () => {
             type: 'import.complete',
             title: 'Import done',
             body: '42 contacts',
-            url: '/a/acme/contacts',
+            url: '/contacts',
             metadata: { source: 'google-takeout', count: 42 },
             read: false,
             dismissed: false,
@@ -61,7 +66,7 @@ describe('BellChannel', () => {
     })
 
     it('defaults body, url, and metadata when the input omits them', async () => {
-        setNotifyContext({ orgId: 'o1', userId: 'u1' })
+        setNotifyContext({ userId: 'u1' })
 
         await bellChannel.dispatch({
             event: 'import.complete',
