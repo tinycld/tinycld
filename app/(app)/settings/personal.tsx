@@ -129,7 +129,13 @@ function ProfileSection() {
 
             <View className="gap-4">
                 <TextInput control={control} name="name" label="Name" onBlur={saveIfValid} />
-                <TextInput control={control} name="email" label="Email" onBlur={saveIfValid} />
+                <TextInput
+                    control={control}
+                    name="email"
+                    label="Recovery Email"
+                    hint="Used to reach you if you're locked out. This is not a mailbox address."
+                    onBlur={saveIfValid}
+                />
             </View>
 
             <ChangePassword />

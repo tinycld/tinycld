@@ -552,7 +552,8 @@ function InviteView({ onDone }: { onDone: () => void }) {
                     <TextInput
                         control={control}
                         name="email"
-                        label="Email (optional)"
+                        label="Recovery Email (optional)"
+                        hint="Where we reach this person — their existing address, not a mailbox we host."
                         placeholder="alice@company.com"
                         autoCapitalize="none"
                         autoComplete="email"
