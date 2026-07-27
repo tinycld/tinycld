@@ -115,15 +115,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// plugins that read them (jsvm, migratecmd).
 	_ = app.RootCmd.ParseFlags(os.Args[1:])
 
-	// Sentry must register first so its router middleware sees every route.
-	// Middleware bound after a route is added does not apply retroactively.
-	RegisterSentry(app)
-
-	// System-wide settings (Sentry/web-push/mail creds). Loads the
-	// system_settings collection into the in-memory SystemConfig once the DB is
-	// ready and keeps it in sync on edits, so subsystems read current values
-	// without env vars and stateful ones (Sentry) re-init on change.
-	RegisterSystemConfig(app)
+	registerSharedEarly(app)
 
 	// Feature packages register BEFORE jsvm, and the order is load-bearing:
 	// jsvm.Register executes the hook files synchronously (its registerHooks
@@ -176,6 +168,89 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		Dir:          opts.MigrationsDir,
 	})
 
+	registerSharedCore(app)
+
+	// ---- Host-only registrations ----
+	// Everything below runs ONLY in the single-org app, never in a multi-org
+	// tenant. Each entry needs a reason a tenant must not have it, and a
+	// matching entry in the hostOnlyHookDiff allowlist in
+	// composition_parity_test.go — the parity test fails on an unexplained
+	// divergence between the two compositions.
+
+	// Package install/upgrade swaps the running binary and invokes the Go
+	// toolchain. In multi-org the ROUTER owns deploys (re-materialize + evict);
+	// a tenant that could rebuild or restart itself would escape the router's
+	// supervision.
+	RegisterPackageInstallEndpoints(app)
+	// The admin console lives on the control plane in multi-org; a tenant org
+	// must not manage the deployment-wide super-admin roster.
+	RegisterSuperAdminEndpoints(app)
+	// Admin-console panel endpoint. Tenant push keys will arrive via the org's
+	// system_settings (control-plane provisioned), not a self-serve panel.
+	RegisterVapidAdminEndpoints(app)
+	// OTA bundles are served from the host's build archive; an org dir has no
+	// build archive. Hosted-app OTA delivery is a separate open question.
+	RegisterAppUpdateEndpoints(app)
+	// First-run installer + TINYCLD_PUBLIC_URL sync. The control plane
+	// provisions tenants (bootstrapTenantOnce) and serve-org nils the
+	// installer; tenant AppURL is REMEDIATION-PLAN P2-4.
+	RegisterSetupBootstrap(app)
+	// Marketing-site demo machinery (shared demo user, nightly reset cron).
+	// Demos run on the single-org deployment, never inside a customer org.
+	RegisterDemoStart(app)
+	RegisterDemoLead(app)
+	RegisterDemoReset(app)
+
+	// Regenerates TypeScript schema files into the developer workspace on
+	// collection edits. A tenant has no workspace and no TypesDir.
+	registerSchemaHooks(app, opts.TypesDir)
+
+	// Feature Go (CardDAV, full-text search, audit registration) is contributed by
+	// each package's own server module via Options.RegisterExtras — not wired here.
+	// Core provides the reusable helpers those servers call (tinycld.org/core/audit,
+	// the RegisterJSVMBinder/$-binding seam); it links no feature package itself.
+
+	// Static/SPA serving is host-shaped (releases dir, asset pool, website).
+	// Tenant static serving is separate open work: the router materializes
+	// pb_public but nothing serves it yet.
+	registerStaticServe(app, opts)
+}
+
+// registerSharedEarly holds the registrations that must precede everything
+// else that binds OnServe, in BOTH compositions: Sentry's router middleware
+// only applies to routes registered after it, and SystemConfig must be
+// loading before any subsystem that reads it (mailer, push, Sentry init).
+//
+// SHARED COMPOSITION CONTRACT: this function and registerSharedCore are the
+// single source of truth for what the single-org app (Register) and a
+// multi-org tenant process (RegisterTenant) both run. A new registration goes
+// in one of them unless it genuinely must not run in a tenant — in which case
+// it goes in Register's host-only tail WITH a reason comment and an entry in
+// composition_parity_test.go's allowlist. See
+// multi-org/docs/FINDING-tenant-composition-gap.md for what silent divergence
+// cost.
+func registerSharedEarly(app *pocketbase.PocketBase) {
+	// Sentry must register first so its router middleware sees every route.
+	// Middleware bound after a route is added does not apply retroactively.
+	// The client only initializes when a DSN exists in system_settings, so in
+	// an unconfigured tenant this is an inert pass-through.
+	RegisterSentry(app)
+
+	// System-wide settings (Sentry/web-push/mail creds). Loads the
+	// system_settings collection into the in-memory SystemConfig once the DB is
+	// ready and keeps it in sync on edits, so subsystems read current values
+	// without env vars and stateful ones (Sentry) re-init on change. In a
+	// tenant this reads the org's own DB, so creds are per-org.
+	RegisterSystemConfig(app)
+}
+
+// registerSharedCore is the bulk of the shared composition: everything both
+// the single-org app and a multi-org tenant register after their respective
+// engine plugins (quota, jsvm) are in place. See the contract note on
+// registerSharedEarly. Order within this list is preserved from the original
+// single-org composition; the users hooks in particular bind in
+// guard → demo-audit → disabled order.
+func registerSharedCore(app *pocketbase.PocketBase) {
 	notify.Register(app)
 	notify.RegisterCommentMentionHooks(app)
 	// Teach the realtime broker how to verify anonymous share-session
@@ -201,34 +276,19 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	RegisterPasswordResetMailer(app)
 	RegisterAuditHooks(app)
 	RegisterOrgPkgEnabledHooks(app)
-	RegisterPackageInstallEndpoints(app)
-	RegisterSuperAdminEndpoints(app)
-	RegisterVapidAdminEndpoints(app)
-	RegisterAppUpdateEndpoints(app)
-	RegisterSetupBootstrap(app)
 	RegisterAccountDelete(app)
 	RegisterAdminOffboard(app)
 	userorg.Register(app)
-	RegisterDemoStart(app)
-	RegisterDemoLead(app)
-	RegisterDemoReset(app)
 	RegisterUsersFieldGuard(app)
 	RegisterUsersDemoAuditHook(app)
 	RegisterDisabledUserGuard(app)
 
-	registerSchemaHooks(app, opts.TypesDir)
 	// Keep the /carddav (and /caldav, /dav) CORS bypass here even though core no
 	// longer serves a protocol handler itself: a package's own Go server (e.g.
 	// contacts) mounts /carddav via OnServe and relies on this bypass for
-	// non-browser DAV clients.
+	// non-browser DAV clients. A tenant mounts the same protocols from
+	// materialized config, so it needs the bypass for the same reason.
 	registerDavCorsBypass(app)
-
-	// Feature Go (CardDAV, full-text search, audit registration) is contributed by
-	// each package's own server module via Options.RegisterExtras — not wired here.
-	// Core provides the reusable helpers those servers call (tinycld.org/core/audit,
-	// the RegisterJSVMBinder/$-binding seam); it links no feature package itself.
-
-	registerStaticServe(app, opts)
 }
 
 // registerDavCorsBypass wraps PocketBase's default CORS middleware so that

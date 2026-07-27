@@ -299,7 +299,7 @@ func TestStatic_NonHTMLAssetKeepsDefault(t *testing.T) {
 
 func TestIsDavPath(t *testing.T) {
 	for _, p := range []string{
-		"/caldav", "/caldav/u/cal/x/", "/carddav", "/drive",
+		"/caldav", "/caldav/u/cal/x/", "/carddav", "/dav", "/dav/x",
 		"/.well-known/caldav", "/.well-known/carddav", "/.well-known/webdav",
 	} {
 		if !isDavPath(p) {
@@ -307,6 +307,11 @@ func TestIsDavPath(t *testing.T) {
 		}
 	}
 	for _, p := range []string{
+		// "/drive" is deliberately NOT a DAV path: it is the in-app SPA route,
+		// and matching it here would route a hard load of /drive to Basic-Auth
+		// WebDAV instead of the app (see isDavPath's comment). Protocol mounts
+		// live under the reserved "/dav" namespace instead.
+		"/drive",
 		"/", "/api/health", "/settings", "/.well-known/apple-app-site-association",
 	} {
 		if isDavPath(p) {
