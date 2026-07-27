@@ -214,12 +214,14 @@ func TestCheckMatrix(t *testing.T) {
 	creator := mkUser(t, app, "creator@test.local")
 	ownerShare := mkUser(t, app, "ownershare@test.local")
 	editor := mkUser(t, app, "editor@test.local")
+	commentor := mkUser(t, app, "commentor@test.local")
 	viewer := mkUser(t, app, "viewer@test.local")
 	stranger := mkUser(t, app, "stranger@test.local")
 
 	item := mkItem(t, app, creator, "doc")
 	grant(t, app, item, ownerShare, RoleOwner)
 	grant(t, app, item, editor, RoleEditor)
+	grant(t, app, item, commentor, RoleCommentor)
 	grant(t, app, item, viewer, RoleViewer)
 
 	cases := []struct {
@@ -230,6 +232,14 @@ func TestCheckMatrix(t *testing.T) {
 		{"creator (no share row)", creator.Id, true, true, true},
 		{"owner share", ownerShare.Id, true, true, true},
 		{"editor share", editor.Id, true, true, false},
+		// A commentor reads and comments; it never edits. Both halves of that
+		// matter and both were wrong: rank() returned 0 for an unrecognized
+		// role, so a signed-in commentor was denied even READ on every path
+		// this package gates — download tokens, text/calc render, realtime
+		// admission — leaving them with less access than an anonymous visitor
+		// on the same share link. Meanwhile the collection rules said
+		// `role ?!= "viewer"`, which admitted them to UPDATE.
+		{"commentor share", commentor.Id, true, false, false},
 		{"viewer share", viewer.Id, true, false, false},
 		{"no share", stranger.Id, false, false, false},
 		{"empty user id", "", false, false, false},
@@ -281,6 +291,7 @@ func TestRoleCanWrite(t *testing.T) {
 	}{
 		{RoleOwner, true},
 		{RoleEditor, true},
+		{RoleCommentor, false},
 		{RoleViewer, false},
 		{RoleNone, false},
 		{Role("archivist"), false},
@@ -289,6 +300,62 @@ func TestRoleCanWrite(t *testing.T) {
 		if got := tc.role.CanWrite(); got != tc.want {
 			t.Errorf("Role(%q).CanWrite(): got %v, want %v", tc.role, got, tc.want)
 		}
+	}
+}
+
+// A commentor's whole purpose is commenting, which requires reading the
+// document it comments on. CanRead is what gates realtime room admission and
+// the render endpoints, so a commentor ranking as an unknown role locks them
+// out of the one thing they exist for.
+func TestRoleCanRead(t *testing.T) {
+	cases := []struct {
+		role Role
+		want bool
+	}{
+		{RoleOwner, true},
+		{RoleEditor, true},
+		{RoleCommentor, true},
+		{RoleViewer, true},
+		{RoleNone, false},
+		{Role("archivist"), false},
+	}
+	for _, tc := range cases {
+		if got := tc.role.CanRead(); got != tc.want {
+			t.Errorf("Role(%q).CanRead(): got %v, want %v", tc.role, got, tc.want)
+		}
+	}
+}
+
+// Roles are ranked so ResolveRole can pick the highest when a user somehow
+// holds several share rows. Commentor sits between viewer and editor: strictly
+// more than read-only, strictly less than write.
+func TestRoleRanking(t *testing.T) {
+	if !(rank(RoleOwner) > rank(RoleEditor) &&
+		rank(RoleEditor) > rank(RoleCommentor) &&
+		rank(RoleCommentor) > rank(RoleViewer) &&
+		rank(RoleViewer) > rank(RoleNone)) {
+		t.Errorf("role ranking is not strictly ordered: owner=%d editor=%d commentor=%d viewer=%d none=%d",
+			rank(RoleOwner), rank(RoleEditor), rank(RoleCommentor), rank(RoleViewer), rank(RoleNone))
+	}
+}
+
+// And the ranking has to hold end-to-end: a user with both a viewer and a
+// commentor row resolves to commentor.
+func TestResolveRole_CommentorOutranksViewer(t *testing.T) {
+	app := setupApp(t)
+	creator := mkUser(t, app, "creator@test.local")
+	both := mkUser(t, app, "both@test.local")
+	item := mkItem(t, app, creator, "doc")
+
+	grant(t, app, item, both, RoleViewer)
+	grant(t, app, item, both, RoleCommentor)
+
+	role, err := ResolveRole(app, both.Id, item.Id)
+	if err != nil {
+		t.Fatalf("ResolveRole: %v", err)
+	}
+	if role != RoleCommentor {
+		t.Errorf("role = %q, want %q", role, RoleCommentor)
 	}
 }
 

@@ -72,7 +72,7 @@ type Options struct {
 	//
 	// Core binds the enforcement hooks rather than the feature, so the limit
 	// holds on every write path and in a tenant process (which links no
-	// feature Go). Empty disables enforcement.
+	// feature package). Empty disables enforcement.
 	QuotaSources []quota.Source
 
 	// QuotaLimits resolves the ceilings. Defaults to quota.SettingsLimits,

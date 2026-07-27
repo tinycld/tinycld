@@ -79,8 +79,8 @@ These are **libraries, not boot-time wiring**: a package contributes the config
 (a `carddav.Source`, an `fts.Config`, an audit label extractor) from its own Go so
 there is exactly one copy of the heavy protocol/index code, shared by every
 consumer — the single-tenant app (via each package's `Register`) and the multi-org
-host (which imports `carddav.HandlerFor` directly to serve stock-PB tenants that
-have no feature Go of their own). See `contacts/server/register.go` for the
+host (which imports `carddav.HandlerFor` directly to serve tenants, which link
+no feature package of their own). See `contacts/server/register.go` for the
 reference: it builds a `carddav.Source` + `fts.Config` and calls these.
 
 Go server hooks use SDK methods that **bypass PocketBase API rules** — they

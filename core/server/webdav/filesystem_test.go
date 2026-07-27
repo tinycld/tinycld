@@ -142,34 +142,47 @@ func mkFile(t *testing.T, app *tests.TestApp, owner *core.Record, name, parent, 
 // say so, exactly as a real package's migration would.
 func allowAuthenticated(t *testing.T, app *tests.TestApp) {
 	t.Helper()
-	col, err := app.FindCollectionByNameOrId("tree_items")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rule := "@request.auth.id != \"\""
-	col.ListRule = &rule
-	col.ViewRule = &rule
-	col.CreateRule = &rule
-	col.UpdateRule = &rule
-	col.DeleteRule = &rule
-	if err := app.Save(col); err != nil {
-		t.Fatalf("set access rules: %v", err)
-	}
+	setRules(t, app, ruleSet{
+		list: "@request.auth.id != \"\"", view: "@request.auth.id != \"\"",
+		create: "@request.auth.id != \"\"", update: "@request.auth.id != \"\"",
+		del: "@request.auth.id != \"\"",
+	})
 }
 
 func restrictToOwner(t *testing.T, app *tests.TestApp) {
+	t.Helper()
+	own := "created_by = @request.auth.id"
+	setRules(t, app, ruleSet{
+		list: own, view: own, update: own, del: own,
+		create: "@request.auth.id != \"\"",
+	})
+}
+
+// ruleSet is the collection's five access rules. An empty string means "the
+// PocketBase default for a fresh collection" — nil, i.e. superusers only —
+// which is what a rule this fixture does not name should be, so that a code
+// path failing to consult it cannot pass by accident.
+type ruleSet struct {
+	list, view, create, update, del string
+}
+
+func setRules(t *testing.T, app *tests.TestApp, rs ruleSet) {
 	t.Helper()
 	col, err := app.FindCollectionByNameOrId("tree_items")
 	if err != nil {
 		t.Fatal(err)
 	}
-	own := "created_by = @request.auth.id"
-	col.ListRule = &own
-	col.ViewRule = &own
-	col.UpdateRule = &own
-	col.DeleteRule = &own
-	authed := "@request.auth.id != \"\""
-	col.CreateRule = &authed
+	ptr := func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return &s
+	}
+	col.ListRule = ptr(rs.list)
+	col.ViewRule = ptr(rs.view)
+	col.CreateRule = ptr(rs.create)
+	col.UpdateRule = ptr(rs.update)
+	col.DeleteRule = ptr(rs.del)
 	if err := app.Save(col); err != nil {
 		t.Fatalf("set access rules: %v", err)
 	}
@@ -329,6 +342,123 @@ func TestUnreadableEntryIsNotFoundNotForbidden(t *testing.T) {
 	}
 }
 
+// The read verbs mask existence correctly (see above), but the write verbs did
+// not: DELETE and MOVE answered 403 and MKCOL/MOVE-onto answered ErrExist for a
+// record the caller cannot see. Either answer confirms "something is here",
+// so a client that cannot read a byte of another user's tree could still map
+// it by probing names — the exact fact the 404 on reads exists to withhold.
+func TestWriteVerbsDoNotLeakExistence(t *testing.T) {
+	t.Run("RemoveAll on an invisible entry", func(t *testing.T) {
+		app, alice, bob := setupTree(t)
+		restrictToOwner(t, app)
+		fs := newFS(t, app, testSource())
+		mkFile(t, app, alice, "secret.txt", "", "classified")
+
+		err := fs.RemoveAll(ctxAs(bob), "/files/secret.txt")
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("err = %v, want os.ErrNotExist", err)
+		}
+		if errors.Is(err, os.ErrPermission) {
+			t.Fatal("a denied delete must not surface as permission-denied")
+		}
+	})
+
+	t.Run("Rename of an invisible entry", func(t *testing.T) {
+		app, alice, bob := setupTree(t)
+		restrictToOwner(t, app)
+		fs := newFS(t, app, testSource())
+		mkFile(t, app, alice, "secret.txt", "", "classified")
+
+		err := fs.Rename(ctxAs(bob), "/files/secret.txt", "/files/moved.txt")
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("err = %v, want os.ErrNotExist", err)
+		}
+	})
+
+	t.Run("Mkdir onto an invisible name", func(t *testing.T) {
+		app, alice, bob := setupTree(t)
+		restrictToOwner(t, app)
+		fs := newFS(t, app, testSource())
+		mkItem(t, app, alice, "SecretFolder", "", true)
+
+		// The (parent, name) namespace is globally unique, so this create
+		// genuinely cannot succeed — but the refusal must not distinguish
+		// "taken by someone you cannot see" from any other conflict.
+		err := fs.Mkdir(ctxAs(bob), "/files/SecretFolder", 0o755)
+		if err == nil {
+			t.Fatal("creating over an existing invisible name must fail")
+		}
+		if errors.Is(err, os.ErrExist) {
+			t.Fatal("ErrExist confirms another user's folder exists; " +
+				"a generic conflict must be returned instead")
+		}
+	})
+
+	t.Run("Rename onto an invisible destination", func(t *testing.T) {
+		app, alice, bob := setupTree(t)
+		restrictToOwner(t, app)
+		fs := newFS(t, app, testSource())
+		mkItem(t, app, alice, "SecretFolder", "", true)
+		mkFile(t, app, bob, "mine.txt", "", "bob's")
+
+		err := fs.Rename(ctxAs(bob), "/files/mine.txt", "/files/SecretFolder")
+		if err == nil {
+			t.Fatal("moving onto an existing invisible name must fail")
+		}
+		if errors.Is(err, os.ErrExist) {
+			t.Fatal("ErrExist confirms another user's entry exists")
+		}
+	})
+
+	t.Run("PUT onto an invisible name", func(t *testing.T) {
+		app, alice, bob := setupTree(t)
+		restrictToOwner(t, app)
+		fs := newFS(t, app, testSource())
+		mkFile(t, app, alice, "secret.txt", "", "classified")
+
+		// Without masking this is treated as an overwrite and refused by the
+		// update rule — a different outcome from a clean create, which is
+		// itself the leak.
+		_, err := fs.OpenFile(ctxAs(bob), "/files/secret.txt", os.O_WRONLY|os.O_CREATE, 0o644)
+		if err == nil {
+			t.Fatal("writing over an invisible entry must fail")
+		}
+		if errors.Is(err, os.ErrExist) {
+			t.Fatal("ErrExist confirms another user's file exists")
+		}
+
+		// And nothing may have been written to the victim's record.
+		rec, rErr := fs.resolveByPath([]string{"secret.txt"})
+		if rErr != nil {
+			t.Fatal(rErr)
+		}
+		if rec.GetString("created_by") != alice.Id {
+			t.Fatal("the victim's record was taken over")
+		}
+	})
+
+	// The positive controls: the same verbs still work on the caller's own
+	// entries, and a genuine visible conflict still reports ErrExist (which is
+	// what the WebDAV handler maps to 405 and clients rely on).
+	t.Run("owner can still delete, move, and sees real conflicts", func(t *testing.T) {
+		app, alice, _ := setupTree(t)
+		restrictToOwner(t, app)
+		fs := newFS(t, app, testSource())
+		mkFile(t, app, alice, "mine.txt", "", "hello")
+		mkItem(t, app, alice, "Existing", "", true)
+
+		if err := fs.Rename(ctxAs(alice), "/files/mine.txt", "/files/renamed.txt"); err != nil {
+			t.Fatalf("owner rename: %v", err)
+		}
+		if err := fs.RemoveAll(ctxAs(alice), "/files/renamed.txt"); err != nil {
+			t.Fatalf("owner delete: %v", err)
+		}
+		if err := fs.Mkdir(ctxAs(alice), "/files/Existing", 0o755); !errors.Is(err, os.ErrExist) {
+			t.Fatalf("a visible conflict should still be ErrExist, got %v", err)
+		}
+	})
+}
+
 func TestListingHidesUnreadableEntries(t *testing.T) {
 	app, alice, bob := setupTree(t)
 	restrictToOwner(t, app)
@@ -436,6 +566,87 @@ func TestWriteCreatesFileWithMime(t *testing.T) {
 	if rec.GetString("created_by") != alice.Id {
 		t.Fatal("created_by not stamped on write")
 	}
+}
+
+// PUT-of-a-new-file and MKCOL are creates, and CreateRule is where a package
+// puts the clauses that apply only to creates — drive's guest exclusion and
+// the disabled-user clause both live there and nowhere else. Evaluating no
+// rule on those two verbs means a user the collection forbids from creating
+// anything creates it anyway, over WebDAV.
+func TestCreateDeniedByCreateRule(t *testing.T) {
+	// A rule nobody satisfies: a create that consults it must fail, and one
+	// that consults nothing will sail through.
+	deny := "created_by = \"nobody\""
+	permissive := "@request.auth.id != \"\""
+
+	t.Run("PUT of a new file", func(t *testing.T) {
+		app, alice, _ := setupTree(t)
+		setRules(t, app, ruleSet{
+			list: permissive, view: permissive, update: permissive, del: permissive,
+			create: deny,
+		})
+		fs := newFS(t, app, testSource())
+
+		f, err := fs.OpenFile(ctxAs(alice), "/files/blocked.txt", os.O_WRONLY|os.O_CREATE, 0o644)
+		if err != nil {
+			// Refusing at open is equally correct.
+			if !errors.Is(err, os.ErrPermission) {
+				t.Fatalf("open err = %v, want os.ErrPermission", err)
+			}
+			return
+		}
+		if _, err := f.Write([]byte("should not persist")); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); !errors.Is(err, os.ErrPermission) {
+			t.Fatalf("close err = %v, want os.ErrPermission", err)
+		}
+
+		// And nothing may be left behind: a rolled-back create must not leave
+		// a half-written row for the next PROPFIND to find.
+		if _, err := fs.resolveByPath([]string{"blocked.txt"}); err == nil {
+			t.Fatal("a denied create persisted a record")
+		}
+	})
+
+	t.Run("MKCOL", func(t *testing.T) {
+		app, alice, _ := setupTree(t)
+		setRules(t, app, ruleSet{
+			list: permissive, view: permissive, update: permissive, del: permissive,
+			create: deny,
+		})
+		fs := newFS(t, app, testSource())
+
+		if err := fs.Mkdir(ctxAs(alice), "/files/Blocked", 0o755); !errors.Is(err, os.ErrPermission) {
+			t.Fatalf("err = %v, want os.ErrPermission", err)
+		}
+		if _, err := fs.resolveByPath([]string{"Blocked"}); err == nil {
+			t.Fatal("a denied MKCOL persisted a folder")
+		}
+	})
+
+	// The positive control: with a create rule the user does satisfy, both
+	// verbs still work. Without this, deleting the rule check entirely would
+	// leave the deny-tests red but tell us nothing about over-blocking.
+	t.Run("allowed creates still succeed", func(t *testing.T) {
+		app, alice, _ := setupTree(t)
+		allowAuthenticated(t, app)
+		fs := newFS(t, app, testSource())
+
+		if err := fs.Mkdir(ctxAs(alice), "/files/Allowed", 0o755); err != nil {
+			t.Fatalf("MKCOL: %v", err)
+		}
+		f, err := fs.OpenFile(ctxAs(alice), "/files/allowed.txt", os.O_WRONLY|os.O_CREATE, 0o644)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		if _, err := f.Write([]byte("ok")); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+	})
 }
 
 func TestWriteWithoutCreateFlagOnMissingFails(t *testing.T) {

@@ -46,6 +46,26 @@ var adminEditableUserFields = map[string]bool{
 	"disabled": true,
 }
 
+// revokeSessionsOnDisable rotates the auth token key when an admin flips
+// `disabled` on, so every JWT already issued to that account stops working.
+//
+// Without it a suspension is advisory until the last token expires — hours in
+// which a compromised account an admin has just locked keeps its live
+// sessions, which is the case suspension exists for. Self-disable already does
+// this (see the /api/account/disable handler); this is the admin-side copy.
+//
+// The cost is that re-enabling forces a fresh sign-in on every device. That
+// trade is already accepted for self-disable, and it is the right one: a
+// suspension you can wait out is not a suspension.
+//
+// Only the false→true edge rotates. Re-enabling, and any other admin edit,
+// must leave sessions alone — otherwise a name change signs the user out.
+func revokeSessionsOnDisable(record *core.Record, original *core.Record) {
+	if record.GetBool("disabled") && !original.GetBool("disabled") {
+		record.RefreshTokenKey()
+	}
+}
+
 // RegisterUsersDemoAuditHook writes an audit_logs entry every time the
 // is_demo flag flips on a user record. Demo state changes are
 // operationally interesting (App Review setup, prospect demos, accidental
@@ -119,16 +139,20 @@ func registerUsersFieldGuardCore(app core.App) {
 			return e.UnauthorizedError("Authentication required", nil)
 		}
 
+		original := e.Record.Original()
+
 		// Superusers bypass the field allowlist. The guard exists to constrain
 		// regular API clients (self-edits, org-admin edits); superusers already
 		// bypass collection rules and are trusted with full administrative
 		// writes (seed/reset scripts overwrite email/password on the demo
-		// account, operators reset locked-out users, etc.).
+		// account, operators reset locked-out users, etc.). Suspension still
+		// ends sessions on this path: an operator locking a compromised
+		// account has the same expectation an org admin does.
 		if e.Auth.IsSuperuser() {
+			revokeSessionsOnDisable(e.Record, original)
 			return e.Next()
 		}
 
-		original := e.Record.Original()
 		isSelf := e.Auth.Id == e.Record.Id
 
 		// Demo accounts are shared across anonymous visitors via /api/demo/start.
@@ -175,6 +199,10 @@ func registerUsersFieldGuardCore(app core.App) {
 		if !isOrgAdmin(e.Auth) {
 			return e.ForbiddenError("Org admin role required", nil)
 		}
+
+		// After the allowlist walk, not before: rotating the key changes
+		// `tokenKey`, which the walk would then reject as an unpermitted field.
+		revokeSessionsOnDisable(e.Record, original)
 		return e.Next()
 	})
 }

@@ -33,8 +33,16 @@ func Register(app *pocketbase.PocketBase, sources []Source) {
 				davauth.Challenge(re.Response, basicRealm)
 				return nil
 			}
-			ctx := context.WithValue(re.Request.Context(), httpRequestKey, re.Request)
-			handler.ServeHTTP(re.Response, re.Request.WithContext(ctx))
+			if davauth.TooManyFailures(re.Request) {
+				http.Error(re.Response, "Too many failed attempts", http.StatusTooManyRequests)
+				return nil
+			}
+			// One bcrypt verification per request, not per backend call. The
+			// backend re-authenticates in every method it implements and a
+			// single PROPFIND drives several of them.
+			r := davauth.WithRequestCache(re.Request)
+			ctx := context.WithValue(r.Context(), httpRequestKey, r)
+			handler.ServeHTTP(re.Response, r.WithContext(ctx))
 			return nil
 		}
 
@@ -79,6 +87,12 @@ func HandlerFor(app core.App, sources []Source) http.Handler {
 			davauth.Challenge(w, basicRealm)
 			return
 		}
+		if davauth.TooManyFailures(r) {
+			http.Error(w, "Too many failed attempts", http.StatusTooManyRequests)
+			return
+		}
+		// See Register: one verification per request, not per backend call.
+		r = davauth.WithRequestCache(r)
 		ctx := context.WithValue(r.Context(), httpRequestKey, r)
 		dav.ServeHTTP(w, r.WithContext(ctx))
 	}

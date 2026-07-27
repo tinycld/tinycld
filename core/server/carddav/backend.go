@@ -3,6 +3,7 @@ package carddav
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -164,7 +165,7 @@ func (b *Backend) PutAddressObject(ctx context.Context, path string, card vcard.
 	existing, bookPath, _ := b.resolveObjectByPath(ctx, src, path)
 	if existing != nil {
 		applyVCardToRecord(card, existing, src.VCard)
-		if err := b.app.Save(existing); err != nil {
+		if err := b.saveAuthorized(user, existing, ruleUpdate); err != nil {
 			return nil, err
 		}
 		return b.recordToAddressObject(src, existing, bookPath, nil)
@@ -188,11 +189,79 @@ func (b *Backend) PutAddressObject(ctx context.Context, path string, card vcard.
 	record.Set(src.OwnerField, ownerID)
 	applyVCardToRecord(card, record, src.VCard)
 
-	if err := b.app.Save(record); err != nil {
+	if err := b.saveAuthorized(user, record, ruleCreate); err != nil {
 		return nil, err
 	}
 
 	return b.recordToAddressObject(src, record, newBookPath, nil)
+}
+
+// ruleKind selects which of a collection's access rules a write is judged by.
+type ruleKind int
+
+const (
+	ruleCreate ruleKind = iota
+	ruleUpdate
+)
+
+// errDenied is returned when a collection rule refuses the write. Distinct
+// from a validation or storage failure so callers can tell "you may not" from
+// "it did not work".
+var errDenied = errors.New("carddav: write denied by collection rule")
+
+// saveAuthorized persists a record only if the collection's own rule admits it.
+//
+// CardDAV does not go through PocketBase's REST layer, so no rule is applied
+// for us. Reimplementing the check in Go would mean two definitions of the same
+// permission, free to drift — and drift is not hypothetical here: the write
+// path previously evaluated nothing at all and was correct only because the
+// collection happened to be owner-scoped. Ask the rule engine the same question
+// the REST API would.
+//
+// The save happens inside a transaction and rolls back on refusal, because
+// CanAccessRecord evaluates a rule as a query filtered to `id = record.Id`: an
+// unsaved record matches nothing, so every create rule would deny. This is what
+// PocketBase's own record-create API does, and what core/webdav and core/caldav
+// both do.
+func (b *Backend) saveAuthorized(user *core.Record, record *core.Record, kind ruleKind) error {
+	method := http.MethodPost
+	if kind == ruleUpdate {
+		method = http.MethodPatch
+	}
+
+	err := b.app.RunInTransaction(func(txApp core.App) error {
+		if err := txApp.Save(record); err != nil {
+			return err
+		}
+
+		var rule *string
+		if kind == ruleCreate {
+			rule = record.Collection().CreateRule
+		} else {
+			rule = record.Collection().UpdateRule
+		}
+
+		ok, err := txApp.CanAccessRecord(record, &core.RequestInfo{
+			Auth:    user,
+			Method:  method,
+			Context: core.RequestInfoContextDefault,
+		}, rule)
+		if err != nil {
+			// An unevaluable rule must not fail open.
+			b.app.Logger().Warn("carddav: rule evaluation failed",
+				"id", record.Id, "error", err)
+			return errDenied
+		}
+		if !ok {
+			return errDenied
+		}
+		return nil
+	})
+
+	if errors.Is(err, errDenied) {
+		return errDenied
+	}
+	return err
 }
 
 func (b *Backend) DeleteAddressObject(ctx context.Context, path string) error {
@@ -218,7 +287,18 @@ func (b *Backend) authFromContext(ctx context.Context) (*core.Record, error) {
 	if !ok {
 		return nil, davauth.ErrUnauthorized
 	}
-	return davauth.Authenticate(b.app, r)
+	// Failures are recorded here rather than at the route, because CardDAV
+	// authenticates inside the backend — the route only knows whether a
+	// credential was PRESENT, not whether it was right. The per-request cache
+	// means this runs once even though several backend methods call it, so a
+	// single request counts as a single failure.
+	user, err := davauth.Authenticate(b.app, r)
+	if err != nil {
+		davauth.NoteFailure(r)
+		return nil, err
+	}
+	davauth.NoteSuccess(r)
+	return user, nil
 }
 
 func (b *Backend) recordToAddressObject(src Source, record *core.Record, bookPath string, _ *carddav.AddressDataRequest) (*carddav.AddressObject, error) {

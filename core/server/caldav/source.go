@@ -4,10 +4,16 @@
 // "calendars containing events", driven by per-package config (a Source,
 // materialized from each package's manifest `caldav` block).
 //
-// Why it lives in core, not per-feature: in the multi-org model a tenant runs
-// stock PocketBase with no feature Go, so the protocol server must be trusted
-// core code fed by materialized config, never feature Go with full $app reach.
-// Core imports no feature package.
+// Why it lives in core, not per-feature: a protocol server has to be reachable
+// on a port, and the multi-org router owns every listening socket — a tenant
+// serves on a unix socket handed down to it. Anything that must be *bound*
+// therefore belongs to core, where the router can open it. The rule is about
+// ports, not about Go: performance-sensitive work belongs in Go, and this
+// package is Go.
+//
+// Separately, `serve-org` links no feature package today, so the Source cannot
+// be a Go literal the feature registers — it arrives as data the router
+// materialized from the manifest. Core imports no feature package.
 //
 // What a package contributes:
 //
@@ -151,7 +157,7 @@ type EventMap struct {
 	// This has to be data rather than a Go hook: a required select with no
 	// schema default (calendar's busy_status and visibility are both) rejects
 	// the save outright when a client PUTs a minimal VEVENT carrying neither
-	// TRANSP nor CLASS. A tenant process links no feature Go, so a callback
+	// TRANSP nor CLASS. A tenant process links no feature package, so a callback
 	// could not supply them there — the write would simply fail.
 	//
 	// Applied before the codec, so anything the VEVENT does specify wins.

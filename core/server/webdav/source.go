@@ -3,10 +3,16 @@
 // feature collection shaped as a file tree, driven by per-package config (a
 // Source, materialized from each package's manifest `webdav` block).
 //
-// Why it lives in core, not per-feature: in the multi-org model a tenant runs
-// stock PocketBase with no feature Go, so the protocol server must be trusted
-// core code fed by materialized config, never feature Go with full $app reach.
-// Core imports no feature package.
+// Why it lives in core, not per-feature: a protocol server has to be reachable
+// on a port, and the multi-org router owns every listening socket — a tenant
+// serves on a unix socket handed down to it. Anything that must be *bound*
+// therefore belongs to core, where the router can open it. The rule is about
+// ports, not about Go: performance-sensitive work belongs in Go, and this
+// package is Go.
+//
+// Separately, `serve-org` links no feature package today, so the Source cannot
+// be a Go literal the feature registers — it arrives as data the router
+// materialized from the manifest. Core imports no feature package.
 //
 // What a package contributes:
 //
@@ -96,7 +102,7 @@ type FieldMap struct {
 //
 // It also has to be that way for multi-org. A rule is a string and travels in
 // the schema; a Go closure cannot cross a process boundary. Were authorization
-// a hook, a tenant process (which links no feature Go) would serve the tree with
+// a hook, a tenant process (which links no feature package) would serve the tree with
 // no per-record checks at all.
 //
 // What remains here is the work that genuinely is not an access decision.

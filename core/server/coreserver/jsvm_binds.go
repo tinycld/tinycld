@@ -16,7 +16,7 @@ import (
 // this surface minimal is a deliberate security goal (see the multi-org
 // HANDOFF): powerful Go capabilities (raw SQL, protocol codecs, filesystem)
 // stay host-side and are exposed only through these enumerable bindings, never
-// as arbitrary feature Go with full $app reach.
+// as an open-ended $app surface.
 //
 // Data-plane work that fires on record events (FTS sync, thumbnails, audit) is
 // deliberately NOT a binding — core registers those as its own config-driven Go

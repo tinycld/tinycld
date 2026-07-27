@@ -197,7 +197,14 @@ func (f *davFile) persistWrite() error {
 		record.Set(fields.MimeType, guessMimeType(f.wrName))
 	}
 
-	if err := fs.writeBlobFromPath(record, uploadPath); err != nil {
+	// A new file is a create, so the collection's CreateRule decides — the one
+	// rule that carries clauses applying to creates alone. Checked here rather
+	// than at open because the handler has already streamed the body by now,
+	// but the record and its blob are both written inside the authorizing
+	// transaction, so a refusal leaves nothing behind.
+	if err := fs.saveAuthorizedCreate(f.user, record, func(txApp core.App) error {
+		return fs.writeBlobFromPathVia(txApp, record, uploadPath)
+	}); err != nil {
 		return err
 	}
 

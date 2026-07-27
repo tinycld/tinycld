@@ -20,6 +20,13 @@ const seekableMemoryThreshold = 32 * 1024 * 1024 // 32 MiB
 // are not re-buffered in RAM. The caller owns path: this does not rename, move
 // or remove it on either success or failure.
 func (fs *FileSystem) writeBlobFromPath(record *core.Record, path string) error {
+	return fs.writeBlobFromPathVia(fs.app, record, path)
+}
+
+// writeBlobFromPathVia is writeBlobFromPath against a caller-supplied app
+// handle, so a create can attach its blob inside the transaction that
+// authorizes it — a rolled-back create must not leave a stored row.
+func (fs *FileSystem) writeBlobFromPathVia(app core.App, record *core.Record, path string) error {
 	f, err := filesystem.NewFileFromPath(path)
 	if err != nil {
 		return err
@@ -28,7 +35,7 @@ func (fs *FileSystem) writeBlobFromPath(record *core.Record, path string) error 
 	record.Set(fs.src.Fields.File, f)
 	record.Set(fs.src.Fields.Size, f.Size)
 
-	return fs.app.Save(record)
+	return app.Save(record)
 }
 
 // openSeekableBlob returns a seekable reader over a record's blob. Files at or

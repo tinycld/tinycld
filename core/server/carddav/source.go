@@ -3,13 +3,19 @@
 // feature collection, driven by per-package config (a Source, materialized from
 // each package's manifest `carddav` block).
 //
-// Why it lives in core, not per-feature: in the multi-org model a tenant runs
-// stock PocketBase with no feature Go, so the protocol server and its per-feature
-// record↔vCard mapping must be trusted core code fed by materialized config,
-// never feature Go with full $app reach. Core imports no feature package; a
-// package contributes only data (the Source) plus, for anything a field map
-// can't express, TS record hooks. The vCard codec stays Go here — only the
-// field map is data.
+// Why it lives in core, not per-feature: CardDAV is a protocol server, and a
+// protocol server has to be reachable on a port. The multi-org router owns
+// every listening socket — a tenant serves on a unix socket handed down to it —
+// so anything that must be *bound* belongs to core, where the router can open
+// it. That is the rule; it is about ports, not about Go being unwelcome.
+//
+// A second, independent fact shapes the config seam: `serve-org` links no
+// feature package today, so a Source cannot be a Go literal registered by the
+// feature — it arrives as data the router materialized from the manifest.
+// Core imports no feature package; a package contributes the Source plus, for
+// anything a field map can't express, TS record hooks. The vCard codec stays
+// Go here — performance-sensitive work belongs in Go — and only the field map
+// is data.
 //
 // Where it runs: in the single-tenant app, in-process. Under multi-org's
 // per-process tenant isolation, inside each org's own process — the router

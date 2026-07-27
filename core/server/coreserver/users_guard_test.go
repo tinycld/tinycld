@@ -24,6 +24,7 @@ func setupGuardTestApp(t *testing.T) *tests.TestApp {
 		t.Fatalf("find users: %v", err)
 	}
 	users.Fields.Add(&core.BoolField{Name: "is_demo"})
+	users.Fields.Add(&core.BoolField{Name: "disabled"})
 	users.Fields.Add(&core.SelectField{
 		Name: "role", MaxSelect: 1,
 		Values: []string{"owner", "admin", "member", "guest"},
@@ -278,6 +279,99 @@ func TestUsersGuard_AdminCanFlipIsDemo(t *testing.T) {
 	fresh, _ := app.FindRecordById("users", target.Id)
 	if !fresh.GetBool("is_demo") {
 		t.Error("is_demo not persisted")
+	}
+}
+
+// Suspending an account has to end its sessions, or the suspension is
+// advisory until every issued JWT expires — which is exactly the window an
+// admin disabling a compromised account is racing against. Self-disable
+// (POST /api/account/disable) already rotates the token key; the admin path
+// runs through the users field guard instead, so the rotation has to happen
+// there too.
+//
+// Rotating invalidates every token, so re-enabling forces a fresh sign-in on
+// every device. That trade is already accepted for self-disable.
+func TestUsersGuard_AdminDisableRevokesExistingSessions(t *testing.T) {
+	app := setupGuardTestApp(t)
+	admin := makeUserWithRole(t, app, "admin-disable@test.local", "admin")
+	target := makeUserWithRole(t, app, "suspendme@test.local", "member")
+
+	// The token the suspended user is already holding.
+	token, err := target.NewAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth); err != nil {
+		t.Fatalf("token should be valid before the disable: %v", err)
+	}
+
+	if err := updateAsAuthenticated(t, app, admin, target, func(r *core.Record) {
+		r.Set("disabled", true)
+	}); err != nil {
+		t.Fatalf("admin disabling a member should be allowed: %v", err)
+	}
+
+	fresh, err := app.FindRecordById("users", target.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fresh.GetBool("disabled") {
+		t.Fatal("disabled flag not persisted")
+	}
+	if _, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth); err == nil {
+		t.Fatal("the suspended user's existing token still authenticates")
+	}
+}
+
+// Superusers skip the field allowlist, so the rotation has to sit above that
+// bypass: an operator suspending a compromised account expects the same
+// immediacy an org admin gets.
+func TestUsersGuard_SuperuserDisableRevokesExistingSessions(t *testing.T) {
+	app := setupGuardTestApp(t)
+	target := makeUserWithRole(t, app, "su-suspendme@test.local", "member")
+
+	superuser, err := app.FindFirstRecordByFilter(core.CollectionNameSuperusers, "id != ''")
+	if err != nil {
+		t.Fatalf("find superuser: %v", err)
+	}
+
+	token, err := target.NewAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := updateAsAuthenticated(t, app, superuser, target, func(r *core.Record) {
+		r.Set("disabled", true)
+	}); err != nil {
+		t.Fatalf("superuser disabling a member should be allowed: %v", err)
+	}
+
+	if _, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth); err == nil {
+		t.Fatal("the suspended user's existing token still authenticates")
+	}
+}
+
+// The counterpart: an ordinary admin edit must not sign the user out. Without
+// this control, rotating on every users write would pass the test above while
+// logging people out for a name change.
+func TestUsersGuard_AdminNameEditKeepsSessions(t *testing.T) {
+	app := setupGuardTestApp(t)
+	admin := makeUserWithRole(t, app, "admin-rename@test.local", "admin")
+	target := makeUserWithRole(t, app, "renameme@test.local", "member")
+
+	token, err := target.NewAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := updateAsAuthenticated(t, app, admin, target, func(r *core.Record) {
+		r.Set("name", "Renamed")
+	}); err != nil {
+		t.Fatalf("admin renaming a member should be allowed: %v", err)
+	}
+
+	if _, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth); err != nil {
+		t.Fatalf("a name change signed the user out: %v", err)
 	}
 }
 

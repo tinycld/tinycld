@@ -26,7 +26,11 @@ const RESOURCE_TYPE_OPTIONS = [
     { label: 'Mail', value: 'mail_messages' },
     { label: 'Mailboxes', value: 'mail_mailboxes' },
     { label: 'Domains', value: 'mail_domains' },
-    { label: 'Members', value: 'user_org' },
+    // Single-org: membership lives on the users record, and every writer
+    // (leave_org.go, users_guard.go) stamps resource_type='users'. Filtering
+    // on the deleted junction's name matched nothing, so this option silently
+    // returned an empty list.
+    { label: 'Members', value: 'users' },
     { label: 'Labels', value: 'labels' },
     { label: 'Settings', value: 'settings' },
     { label: 'Packages', value: 'org_pkg_enabled' },

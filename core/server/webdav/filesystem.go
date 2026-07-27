@@ -112,6 +112,7 @@ type ruleKind int
 const (
 	ruleList ruleKind = iota
 	ruleView
+	ruleCreate
 	ruleUpdate
 	ruleDelete
 )
@@ -125,6 +126,8 @@ func ruleFor(collection *core.Collection, kind ruleKind) *string {
 		return collection.ListRule
 	case ruleView:
 		return collection.ViewRule
+	case ruleCreate:
+		return collection.CreateRule
 	case ruleUpdate:
 		return collection.UpdateRule
 	case ruleDelete:
@@ -169,6 +172,98 @@ func (fs *FileSystem) authorize(user *core.Record, record *core.Record, kind rul
 // canRead reports whether the user may resolve this record by path.
 func (fs *FileSystem) canRead(user *core.Record, record *core.Record) error {
 	return fs.authorize(user, record, ruleView)
+}
+
+// errConflict is the namespace collision reported when a create or move lands
+// on a name that is already taken by a record the caller cannot see.
+//
+// It is deliberately NOT os.ErrExist. The (parent, name) namespace is globally
+// unique, so the write genuinely cannot proceed — but ErrExist is the handler's
+// signal for "this path is occupied", which tells the caller that a specific
+// name exists in a tree they cannot read. Probing names would then map another
+// user's whole directory. A generic conflict refuses the write without
+// answering the question.
+//
+// x/net/webdav maps an unrecognized error to 500. That is a worse status than
+// the 405 ErrExist would produce and a fair trade for not leaking, but a caller
+// wanting a nicer surface should translate this at the handler.
+var errConflict = errors.New("webdav: name is unavailable")
+
+// authorizeOrMask evaluates a rule and converts a refusal into "not found".
+//
+// Read verbs already did this (see Stat and openForRead) so an entry the caller
+// cannot see is invisible rather than forbidden. The write verbs did not: a 403
+// on DELETE/MOVE confirms the path exists just as loudly as a 200 would, which
+// makes the read-side masking pointless — a client just probes with a verb that
+// still answers honestly.
+func (fs *FileSystem) authorizeOrMask(user *core.Record, record *core.Record, kind ruleKind) error {
+	if err := fs.authorize(user, record, kind); err != nil {
+		return os.ErrNotExist
+	}
+	return nil
+}
+
+// nameIsTaken reports whether a path resolves to a record, and whether the
+// caller may see it. A create or move onto a taken name must fail either way;
+// only the error differs, and only so the refusal reveals nothing.
+func (fs *FileSystem) nameIsTaken(user *core.Record, segments []string) error {
+	existing, _ := fs.resolveByPath(segments)
+	if existing == nil {
+		return nil
+	}
+	if fs.canRead(user, existing) != nil {
+		return errConflict
+	}
+	return os.ErrExist
+}
+
+// saveAuthorizedCreate persists a new record only if the collection's
+// CreateRule admits it.
+//
+// CanAccessRecord evaluates a rule as a query filtered to `id = record.Id`, so
+// an unsaved record matches nothing and every create rule would deny — and a
+// create rule that traverses a relation could not be evaluated any other way.
+// So save inside a transaction, ask the rule, and roll back if it says no.
+// This is what PocketBase's own record-create API does, and what CalDAV's
+// PutCalendarObject already did.
+//
+// Without this, PUT-of-new-file and MKCOL evaluate no rule at all — and
+// CreateRule is the only place a package can put a clause that applies to
+// creates alone, which is where drive's guest exclusion and the disabled-user
+// clause both live.
+// persist does the actual save on the transaction's handle; it is a parameter
+// because a file create must attach its blob in the same transaction that
+// authorizes it, while a folder create is a bare save.
+func (fs *FileSystem) saveAuthorizedCreate(user *core.Record, record *core.Record, persist func(core.App) error) error {
+	denied := errors.New("webdav: create denied by rule")
+
+	err := fs.app.RunInTransaction(func(txApp core.App) error {
+		if err := persist(txApp); err != nil {
+			return err
+		}
+
+		info := &core.RequestInfo{
+			Auth:    user,
+			Method:  "POST",
+			Context: core.RequestInfoContextDefault,
+		}
+		ok, err := txApp.CanAccessRecord(record, info, ruleFor(record.Collection(), ruleCreate))
+		if err != nil {
+			// An unevaluable rule must not fail open.
+			fs.app.Logger().Warn("webdav: create rule evaluation failed",
+				"slug", fs.src.Slug, "id", record.Id, "error", err)
+			return denied
+		}
+		if !ok {
+			return denied
+		}
+		return nil
+	})
+
+	if errors.Is(err, denied) {
+		return os.ErrPermission
+	}
+	return err
 }
 
 // Stat resolves the path to either the synthetic root or a backing record.
@@ -276,6 +371,13 @@ func (fs *FileSystem) openForWrite(ctx context.Context, name string, flag int) (
 	}
 
 	existing, _ := fs.resolveByPath(segments)
+	// An entry the caller cannot see must not be treated as an overwrite
+	// target: the write would be refused later by the update rule, and the
+	// difference between that refusal and a clean create is enough to prove
+	// the name is taken in a tree they cannot read.
+	if existing != nil && fs.canRead(user, existing) != nil {
+		return nil, errConflict
+	}
 	if existing != nil && existing.GetBool(fs.src.Fields.IsFolder) {
 		return nil, os.ErrPermission
 	}
@@ -321,8 +423,8 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, _ os.FileMode) err
 		return err
 	}
 
-	if existing, _ := fs.resolveByPath(segments); existing != nil {
-		return os.ErrExist
+	if err := fs.nameIsTaken(user, segments); err != nil {
+		return err
 	}
 
 	if err := fs.hookBeforeWrite(ctx, user, folderName, name, true); err != nil {
@@ -341,7 +443,9 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, _ os.FileMode) err
 	record.Set(f.Parent, parentID)
 	record.Set(f.Owner, user.Id)
 
-	return fs.app.Save(record)
+	return fs.saveAuthorizedCreate(user, record, func(txApp core.App) error {
+		return txApp.Save(record)
+	})
 }
 
 // RemoveAll deletes the record at the given path. PocketBase cascade rules
@@ -361,7 +465,9 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) error {
 		return err
 	}
 
-	if err := fs.authorize(user, record, ruleDelete); err != nil {
+	// Masked, not forbidden: a 403 here would confirm the path exists to a
+	// caller who cannot read it.
+	if err := fs.authorizeOrMask(user, record, ruleDelete); err != nil {
 		return err
 	}
 
@@ -392,12 +498,12 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) error
 		return err
 	}
 
-	if err := fs.authorize(user, srcRecord, ruleUpdate); err != nil {
+	if err := fs.authorizeOrMask(user, srcRecord, ruleUpdate); err != nil {
 		return err
 	}
 
-	if existing, _ := fs.resolveByPath(destSegments); existing != nil {
-		return os.ErrExist
+	if err := fs.nameIsTaken(user, destSegments); err != nil {
+		return err
 	}
 
 	destParentID, destName, err := fs.resolveParentByPath(destSegments)

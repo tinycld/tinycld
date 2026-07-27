@@ -10,7 +10,7 @@
 // and anything a future feature adds. A check that lived in one protocol's
 // handler would leave the others open.
 //
-// It also has to be core rather than feature Go because of multi-org: a tenant
+// It also has to be core rather than a feature's own hook because of multi-org: a tenant
 // process links no feature package, so a limit enforced by a feature's own hook
 // would simply not exist there — the org could fill the host's disk. Config
 // crosses a process boundary; a Go closure does not. (Same reasoning as the

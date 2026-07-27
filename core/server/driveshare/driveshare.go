@@ -6,12 +6,21 @@
 // endpoints — and because those packages are separate Go modules whose
 // only shared dependency is core.
 //
-// It is the Go-side mirror of the PocketBase collection rules installed
-// by drive migration 1716200001:
+// It is the Go-side mirror of the PocketBase collection rules on
+// drive_items, as they stand after drive migration 1782100000:
 //
-//	view:   created_by ?= @request.auth.id || drive_shares_via_item.user ?= @request.auth.id
-//	update: created_by ?= @request.auth.id || (has-share && role ?!= "viewer")
-//	delete: created_by ?= @request.auth.id
+//	view:   disabled != true && (created_by ?= auth.id || has-share)
+//	update: disabled != true && (created_by ?= auth.id ||
+//	                             (has-share && role ?= "editor" || role ?= "owner"))
+//	delete: disabled != true && created_by ?= auth.id
+//
+// Two clauses there are easy to lose and both have been lost before:
+//
+//   - the `disabled != true` guard (1782000000), without which a suspended
+//     account keeps reaching everything shared with it; and
+//   - naming the roles that may WRITE rather than excluding viewer. The old
+//     `role ?!= "viewer"` idiom admitted every role that was not viewer, so
+//     `commentor` silently gained update the day it was added to the schema.
 //
 // Every function here bypasses PocketBase's rule engine — the SDK's
 // FindRecordById / FindRecordsByFilter do — so each Go path that serves
@@ -54,14 +63,25 @@ const (
 // working unchanged.
 var ErrNoAccess = fmt.Errorf("driveshare: no access to drive item: %w", os.ErrPermission)
 
-// Role is a drive_shares.role value. Owner and editor may write; viewer
-// may read only.
+// Role is a drive_shares.role value. Owner and editor may write; commentor
+// and viewer may read only.
 type Role string
 
 const (
 	RoleOwner  Role = "owner"
 	RoleEditor Role = "editor"
-	RoleViewer Role = "viewer"
+	// RoleCommentor reads and comments; it never edits. Ranked between viewer
+	// and editor: strictly more than read-only, strictly less than write.
+	//
+	// It was added to the drive_shares schema by migration 1781100000 but
+	// never taught to this package, so rank() answered 0 — an unknown role —
+	// and a signed-in commentor was denied even READ on every path gated here:
+	// download tokens, text/calc render, realtime admission. That left them
+	// with strictly less access than an anonymous visitor on the same share
+	// link, while the collection rules were separately over-granting them
+	// UPDATE. Both halves are corrected; see drive migration 1782100000.
+	RoleCommentor Role = "commentor"
+	RoleViewer    Role = "viewer"
 	// RoleNone is the zero Role: no share row and not the creator.
 	RoleNone Role = ""
 )
@@ -100,8 +120,10 @@ func isDisabled(app core.App, userID string) bool {
 func rank(r Role) int {
 	switch r {
 	case RoleOwner:
-		return 3
+		return 4
 	case RoleEditor:
+		return 3
+	case RoleCommentor:
 		return 2
 	case RoleViewer:
 		return 1

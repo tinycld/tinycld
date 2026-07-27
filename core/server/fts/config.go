@@ -2,10 +2,11 @@
 // SQLite FTS5 index sync + query for any feature collection, driven by
 // per-package config (materialized from each package's manifest `fts` block).
 //
-// Why it lives in core, not per-feature: the host runs stock PocketBase with no
-// feature Go, so raw-SQL FTS work must run host-side in the trusted core
-// process. Keeping it here also means the SQL surface never crosses the
-// untrusted tenant-TS boundary — packages declare an `fts` config block and
+// Why it lives in core, not per-feature: a tenant process links no feature
+// package, so index-sync hooks registered by a feature would simply not run
+// there and the index would silently rot. Keeping it here also means the raw
+// SQL surface never crosses the untrusted tenant-TS boundary — packages
+// declare an `fts` config block and
 // core registers the index-sync record hooks + the search route itself. The
 // `$fts` JS binding (bindings.go) exists for the rare package that must query
 // imperatively from TS, but the data-plane path is pure core Go.

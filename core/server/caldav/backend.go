@@ -59,8 +59,9 @@ var errNotFound = webdav.NewHTTPError(http.StatusNotFound, errNotFoundCause)
 //
 // This is also what makes the package safe to run inside a tenant process. A
 // rule is a string and travels in the schema; a Go closure cannot cross a
-// process boundary. Were authorization a Source callback, a tenant (which links
-// no feature Go) would serve every calendar with no per-record checks at all.
+// process boundary. Were authorization a Source callback, a tenant (which
+// links no feature package) would serve every calendar with no per-record
+// checks at all.
 //
 // The event rules already encode the viewer/editor distinction the old
 // per-feature code enforced by hand, so CanAccessRecord subsumes both the

@@ -15,7 +15,7 @@ import (
 //
 // These are the ones that matter. The lifted backend has NO Go permission
 // callbacks: it asks the collections' own PocketBase rules via CanAccessRecord,
-// which is what lets a tenant process (linking no feature Go) enforce exactly
+// which is what lets a tenant process (linking no feature package) enforce exactly
 // what the single-tenant app does. So the property under test is not "the Go
 // checks membership" but "the shipped rule is what decides", including the
 // viewer/editor split the old requireEditorRole enforced by hand.
@@ -533,7 +533,7 @@ func TestPutCalendarObject_CreatePreservesRecurrence(t *testing.T) {
 // exactly what a live PUT returned before Defaults existed.
 //
 // Defaults are data, not a Go callback, precisely so a tenant process (which
-// links no feature Go) gets them too.
+// links no feature package) gets them too.
 func TestPutCalendarObject_MinimalVEventUsesDefaults(t *testing.T) {
 	env := setupAuthzEnv(t)
 
