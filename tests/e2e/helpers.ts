@@ -9,7 +9,12 @@ export const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
 // prefix — they are bare `/contacts`, `/settings/...`, `/admin/...`. LANDED_URL
 // matches "we're inside the authenticated app shell" (any of those sections, or
 // the bare root while the index redirect to the first package is mid-flight).
-const APP_SECTIONS = 'contacts|settings|admin|help|mail|drive|calendar|calc|text'
+// `shortcut-stub` is in the list because the app-shell CI job assembles app +
+// core ONLY and scaffolds the stub, making it the sole nav package — so the
+// post-login index redirect lands on /shortcut-stub. Omitting it made every
+// waitForURL(LANDED_URL) time out on CI while passing locally (where the real
+// feature packages are present and the redirect lands on /contacts).
+const APP_SECTIONS = 'contacts|settings|admin|help|mail|drive|calendar|calc|text|shortcut-stub'
 export const LANDED_URL = new RegExp(`/(?:${APP_SECTIONS})(?:/|$|\\?)`)
 export const TEST_USER_PASSWORD = process.env.TEST_USER_PW || 'TestUser1234!'
 export const TEST_USER_USERNAME = process.env.TEST_USER_USERNAME ?? 'tester'
