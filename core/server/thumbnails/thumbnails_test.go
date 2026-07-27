@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"image/jpeg"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -74,6 +75,32 @@ func TestGenerateDocumentFormats(t *testing.T) {
 	}
 }
 
+// The one binary fixture in this suite: doctaculous decodes HEIF but does not
+// encode it, so a HEIC render can't build its fixture from Markdown the way
+// the document formats above do. 532 bytes, from doctaculous's own decoder
+// corpus (a 64x48 sips-encoded quad).
+func TestGenerateHEIC(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/sips-quad-64x48.heic")
+	if err != nil {
+		t.Fatalf("read heic fixture: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = Generate(context.Background(), &out, bytes.NewReader(fixture), "image/heic", DefaultWidth, DefaultHeight)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	img, err := jpeg.Decode(&out)
+	if err != nil {
+		t.Fatalf("output is not a JPEG: %v", err)
+	}
+	b := img.Bounds()
+	if b.Dx() != 64 || b.Dy() != 48 {
+		t.Fatalf("thumbnail = %dx%d, want the source's 64x48 (fits inside the default box, so no scaling)", b.Dx(), b.Dy())
+	}
+}
+
 func TestCanGenerate(t *testing.T) {
 	cases := []struct {
 		mime string
@@ -89,6 +116,10 @@ func TestCanGenerate(t *testing.T) {
 		{"image/heic", true},
 		{"image/heif", true},
 		{"IMAGE/HEIC ", true}, // normalizeMime lowercases + trims
+		// Sequences are refused: doctaculous decodes HEIF stills only, so
+		// claiming these would fail every render.
+		{"image/heic-sequence", false},
+		{"image/heif-sequence", false},
 		// Legacy binary Office: deliberately unsupported since the doctaculous
 		// migration (no thumbnail is rendered for these).
 		{"application/msword", false},

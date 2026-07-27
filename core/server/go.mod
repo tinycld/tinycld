@@ -24,9 +24,8 @@ require (
 	github.com/getsentry/sentry-go v0.44.1
 	github.com/google/uuid v1.6.0
 	github.com/grafana/sobek v0.0.0-20260722203707-64fef69693b6
-	github.com/jdeng/goheif v0.0.0-20260407171156-9bf5264f67af
 	github.com/mrz1836/postmark v1.9.0
-	github.com/nathanstitt/doctaculous v0.0.2
+	github.com/nathanstitt/doctaculous v0.0.6
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.39.8
 	github.com/spf13/cobra v1.10.2
