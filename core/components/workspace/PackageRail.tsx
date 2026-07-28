@@ -112,7 +112,7 @@ function PackageRailItem({
     const orgHref = useOrgHref()
     const lastHref = useWorkspaceStore(s => s.lastPackageHref[slug])
     // lastHref is a fully-formed pathname captured at runtime when a
-    // file screen mounted (e.g. /a/acme/calc/abc123). Expo Router's
+    // file screen mounted (e.g. /calc/abc123). Expo Router's
     // typed-routes can't statically verify a runtime-built string, so we
     // cast through Href. orgHref(slug as never) handles the same gap on
     // the fallback path — slug is a string at compile time, the typed

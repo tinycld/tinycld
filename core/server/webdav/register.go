@@ -16,7 +16,7 @@ const basicRealm = "TinyCld WebDAV"
 
 // Register mounts the WebDAV routes for each source on the single-app router,
 // and — when host is non-nil — installs the `webdavHook` binding so package TS
-// can register handlers against the four interception points. A no-op when no
+// can register handlers against the five interception points. A no-op when no
 // sources are given. Core already installs the /drive CORS bypass, so this adds
 // only the protocol handler, the Basic-Auth challenge, and the .well-known
 // redirect.

@@ -1,7 +1,6 @@
 export type OrgRole = 'owner' | 'admin' | 'member' | 'guest'
 
 export interface MemberRow {
-    userOrgId: string
     userId: string
     username: string
     name: string
@@ -11,10 +10,7 @@ export interface MemberRow {
     isDemo: boolean
 }
 
-export type DrawerMode =
-    | { kind: 'closed' }
-    | { kind: 'invite' }
-    | { kind: 'view'; userOrgId: string }
+export type DrawerMode = { kind: 'closed' } | { kind: 'invite' } | { kind: 'view'; userId: string }
 
 export const ROLE_DESCRIPTIONS: Record<OrgRole, string> = {
     owner: 'Full control — including billing and deleting the organization.',

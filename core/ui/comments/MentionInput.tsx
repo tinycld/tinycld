@@ -22,7 +22,7 @@ import { detectTrigger } from './mention-input-helpers'
 // followed by a space. The token is what gets stored in the comment
 // body — `parseMentions` (lib/comments/mentions.ts) extracts it later
 // for the comment_mentions rows. Read-mode rendering is the consumer's
-// concern (they have access to the user_org → display name map).
+// concern (they have access to the user id → display name map).
 //
 // Why not parse the token in this component: rendering tokens as
 // pretty pills inside a controlled <TextInput> means re-implementing
@@ -46,7 +46,7 @@ export type MentionInputProps<T extends FieldValues = Record<string, unknown>> =
     name: Path<T>
     control: Control<T>
     // Caller supplies the full pool of candidates (typically the
-    // org's user_org rows joined with users). We filter client-side
+    // deployment's users). We filter client-side
     // against the active @-query — pools are small enough (tens, not
     // thousands) that a remote search isn't worth the round trip.
     suggestions: MentionSuggestion[]

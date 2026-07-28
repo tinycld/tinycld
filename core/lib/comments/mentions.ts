@@ -1,5 +1,5 @@
 // Mention tokens inside a comment body. The wire format is
-// `[[@<user_id>]]` — a literal user_org record id wrapped in
+// `[[@<user_id>]]` — a literal users record id wrapped in
 // double brackets. The token survives copy/paste, is grep-friendly,
 // and side-steps the ambiguity of bare @-handles (display names
 // aren't unique). Display rendering is the consumer's job; this

@@ -40,9 +40,9 @@ export function CommentThread<R extends BaseCommentRow>(props: CommentThreadProp
     const isResolved = thread.resolvedAt != null
     const dim = isResolved || isOrphaned
 
-    // Build the user_org → display name map once per render so every
+    // Build the user id → display name map once per render so every
     // CommentLine's mention rendering is O(1) per token.
-    const nameByUserOrgId = useMemo(() => {
+    const nameByUserId = useMemo(() => {
         const m = new Map<string, string>()
         for (const s of props.mentionSuggestions ?? []) {
             m.set(s.userId, s.displayName)
@@ -67,7 +67,7 @@ export function CommentThread<R extends BaseCommentRow>(props: CommentThreadProp
                 isOwn={thread.root.author === props.currentUserId}
                 onEdit={props.onEdit}
                 onDelete={props.onDelete}
-                nameByUserOrgId={nameByUserOrgId}
+                nameByUserId={nameByUserId}
             />
             {thread.replies.map(reply => (
                 <View key={reply.id} className="mt-2 ml-3">
@@ -76,7 +76,7 @@ export function CommentThread<R extends BaseCommentRow>(props: CommentThreadProp
                         isOwn={reply.author === props.currentUserId}
                         onEdit={props.onEdit}
                         onDelete={props.onDelete}
-                        nameByUserOrgId={nameByUserOrgId}
+                        nameByUserId={nameByUserId}
                     />
                 </View>
             ))}
@@ -125,20 +125,20 @@ interface CommentLineProps<R extends BaseCommentRow> {
     isOwn: boolean
     onEdit: (id: string, body: string) => void
     onDelete: (id: string) => void
-    // user_org → display name map used to render `[[@id]]` tokens as
+    // user id → display name map used to render `[[@id]]` tokens as
     // `@<displayName>`. Empty map = literal pass-through, which leaves
     // the raw token visible. Passing the map down (rather than the
     // suggestion list directly) lets the parent batch the lookup once
     // for every line.
-    nameByUserOrgId: Map<string, string>
+    nameByUserId: Map<string, string>
 }
 
 function CommentLine<R extends BaseCommentRow>(props: CommentLineProps<R>) {
     const { comment } = props
     const [editing, setEditing] = useState(false)
     const displayBody = useMemo(
-        () => renderMentionsToText(comment.body, props.nameByUserOrgId),
-        [comment.body, props.nameByUserOrgId]
+        () => renderMentionsToText(comment.body, props.nameByUserId),
+        [comment.body, props.nameByUserId]
     )
     const { control, handleSubmit, reset } = useForm<EditValues>({
         resolver: zodResolver(editSchema),

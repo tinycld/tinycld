@@ -38,7 +38,7 @@ interface ContactSuggestionsProps {
 }
 
 /**
- * Subscribes to the current user_org's contacts and renders via a
+ * Subscribes to the current user's contacts and renders via a
  * children-as-function. Splits the runtime gate (is the contacts package
  * even linked?) from the data subscription so we never call
  * `useStore('contacts')` when the collection isn't registered — which would

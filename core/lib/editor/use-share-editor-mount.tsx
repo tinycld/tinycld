@@ -44,7 +44,7 @@ export function buildAnonMount(session: ShareSession): EditorMount {
 }
 
 // Capabilities by role for a guest visitor (signed in via OTP, has a
-// drive_shares row + user_org row with role='guest').
+// drive_shares row and a users record with role='guest').
 //   - viewer:    defensive — viewer links don't require sign-in, but if a
 //                guest somehow lands here their caps are all false.
 //   - commentor: canComment only. NO file actions and NO mention support

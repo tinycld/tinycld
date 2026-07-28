@@ -58,9 +58,9 @@ export function UserMenu() {
     )
 }
 
-// Cross-org switching is deferred (no in-app org list yet), so this renders
-// nothing while useUserOrgs() returns []. Kept as a component so the switcher
-// lights up automatically once useUserOrgs is wired to a real source.
+// Cross-org switching is deferred to a router-set parent-domain cookie that is
+// not built yet (see useUserOrgs), so this renders nothing while useUserOrgs()
+// returns []. Kept so the switcher lights up if that source ever lands.
 function OrganizationsSection({ orgs, orgSlug }: { orgs: UserOrgEntry[]; orgSlug: string }) {
     if (orgs.length === 0) return null
     return (

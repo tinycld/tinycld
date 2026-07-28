@@ -60,7 +60,7 @@ interface Props {
 export function MembersDrawer({ mode, onClose, members, isCurrentUserOwner }: Props) {
     const isOpen = mode.kind !== 'closed'
     const selectedMember =
-        mode.kind === 'view' ? (members.find(m => m.userOrgId === mode.userOrgId) ?? null) : null
+        mode.kind === 'view' ? (members.find(m => m.userId === mode.userId) ?? null) : null
 
     return (
         <Drawer isOpen={isOpen} onClose={onClose} anchor="right" size="md">
@@ -124,7 +124,7 @@ function ViewMember({
     // any time the member owned records that the schema marked
     // required+cascadeDelete:false (calendar_events.created_by, drive_items,
     // etc.). Route through RemoveMemberFlow so the admin gets a reassign/delete
-    // choice for the member's content before the user_org goes away.
+    // choice for the member's content before the account goes away.
     const [removeOpen, setRemoveOpen] = useState(false)
 
     // is_demo lives on the users record. Migration 1810000000 relaxes
@@ -201,7 +201,7 @@ function ViewMember({
                                 </Text>
                                 <View className="gap-2">
                                     <Pressable
-                                        testID={`show-invite-link-${member.userOrgId}`}
+                                        testID={`show-invite-link-${member.userId}`}
                                         onPress={() => setShowLink(prev => !prev)}
                                         className="flex-row items-center gap-1.5 self-start rounded-md border border-border"
                                         style={{
@@ -466,10 +466,10 @@ function InviteView({ onDone }: { onDone: () => void }) {
     const invite = useMutation({
         mutationFn: async (data: InviteFormValues) => {
             // Single-org: /api/invite-member returns `userId` (the user_org
-            // junction is gone). Reading `userOrgId` here yielded undefined, so
-            // the link panel called /api/invite-link/undefined/{rotate,send}
-            // and got a 404 — the invite itself succeeded, only its follow-up
-            // actions were broken.
+            // junction is gone). Reading a junction-row id here yielded
+            // undefined, so the link panel called
+            // /api/invite-link/undefined/{rotate,send} and got a 404 — the
+            // invite itself succeeded, only its follow-up actions were broken.
             return pb.send<{ userId: string; inviteUrl: string }>('/api/invite-member', {
                 method: 'POST',
                 body: JSON.stringify({

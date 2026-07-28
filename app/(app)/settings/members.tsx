@@ -52,9 +52,6 @@ export default function MembersSettings() {
     const members: MemberRow[] = useMemo(
         () =>
             (memberRows ?? []).map(row => ({
-                // userOrgId is now the user id (the user_org junction is gone); it
-                // stays as the opaque member key the drawer/rows are keyed on.
-                userOrgId: row.userId,
                 userId: row.userId,
                 username: row.username ?? '',
                 name: row.name ?? '',
@@ -267,7 +264,7 @@ export default function MembersSettings() {
                                         onSelect={m =>
                                             setDrawerMode({
                                                 kind: 'view',
-                                                userOrgId: m.userOrgId,
+                                                userId: m.userId,
                                             })
                                         }
                                     />
@@ -334,7 +331,7 @@ function MemberGroup({
             <View className="rounded-xl overflow-hidden bg-surface-secondary border border-border">
                 {rows.map((member, idx) => (
                     <MemberRowItem
-                        key={member.userOrgId}
+                        key={member.userId}
                         member={member}
                         isFirst={idx === 0}
                         onPress={() => onSelect(member)}
