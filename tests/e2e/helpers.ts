@@ -140,7 +140,10 @@ export async function createInvitedUser(
     // --- Owner sends the invite (username + email) from Settings → Members ---
     await login(page)
     await navigateToPackage(page, 'settings')
-    await page.goto('/settings/members')
+    // SPA-click into Members — a page.goto here is the hard-nav this file's
+    // own docs forbid (tears down the SPA and cancels in-flight chunk loads).
+    await page.getByText('Members', { exact: true }).first().click()
+    await page.waitForURL(/\/settings\/members/)
     await page.getByText('Invite', { exact: true }).click()
     await expect(page.getByText('Invite a teammate', { exact: true })).toBeVisible({
         timeout: 10_000,

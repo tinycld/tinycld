@@ -138,9 +138,9 @@ test.describe('Invite flow', () => {
         await invitee.getByPlaceholder('Password').fill(invitePassword)
         await invitee.getByText('Sign in', { exact: true }).last().click()
         await invitee.waitForURL(LANDED_URL, { timeout: 15_000, waitUntil: 'commit' })
-
-        // Sanity: URL is under the owner's org (the invitee is now a member).
-        expect(invitee.url()).toContain(`/`)
+        // (waitForURL(LANDED_URL) above IS the membership assertion — the
+        // invitee reached the authenticated shell. A url().toContain('/')
+        // check that used to follow it was vacuous: every URL contains '/'.)
 
         // Guard: original test user can still sign in (password unchanged).
         // This catches regressions where accept-invite accidentally overwrites
