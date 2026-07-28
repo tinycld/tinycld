@@ -71,6 +71,13 @@ func handleVersionChange(app *pocketbase.PocketBase, re *core.RequestEvent) erro
 		}
 	}
 
+	// Pre-flight compat gate. The Versions UI runs the same solve as an
+	// advisory check; this is the authoritative refusal, so a direct POST to
+	// /versions/apply cannot install an incompatible set.
+	if err := checkVersionChangeCompat(app, body.Changes); err != nil {
+		return re.BadRequestError(err.Error(), err)
+	}
+
 	installMu.Lock()
 	if currentJob != nil {
 		info := map[string]any{

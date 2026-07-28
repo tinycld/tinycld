@@ -13,7 +13,9 @@ interface DeleteAccountModalProps {
     onClose: () => void
 }
 
-export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalProps) {
+// useDeleteAccountForm owns the whole flow so the submit contract is testable:
+// what the picker shows and what the mutation sends must be the same thing.
+export function useDeleteAccountForm(onClose: () => void) {
     const { user, logout } = useAuth()
     const [typed, setTyped] = useState('')
     const [error, setError] = useState<string | null>(null)
@@ -22,10 +24,6 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
     // the plan stays undefined — content is left attributed to "Deleted user".
     const peers = usePeers(user.id)
     const [plan, setPlan] = useState<OffboardPlan | undefined>(undefined)
-
-    const mutedColor = useThemeColor('muted-foreground')
-    const backdropColor = useThemeColor('overlay-backdrop')
-    const dangerFg = useThemeColor('danger-foreground')
 
     const mutation = useMutation({
         mutationFn: async (email: string) => {
@@ -38,10 +36,14 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
         onError: err => setError(errorToString(err)),
     })
 
-    if (!isVisible) return null
-
     const expected = user.email.trim().toLowerCase()
-    const canSubmit = typed.trim().toLowerCase() === expected && !mutation.isPending
+    // The picker starts unselected and submit stays blocked until a plan is
+    // chosen: a destructive option must never be pre-selected, and what the
+    // picker shows must be what the mutation sends. With no peers the picker
+    // is hidden and the undefined plan is the deliberate leave-content path.
+    const needsPlanChoice = peers.length > 0 && plan === undefined
+    const canSubmit =
+        typed.trim().toLowerCase() === expected && !needsPlanChoice && !mutation.isPending
 
     const handleCancel = () => {
         if (mutation.isPending) return
@@ -55,6 +57,42 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
         setError(null)
         mutation.mutate(typed.trim())
     }
+
+    return {
+        user,
+        typed,
+        setTyped,
+        error,
+        peers,
+        plan,
+        setPlan,
+        isPending: mutation.isPending,
+        canSubmit,
+        handleCancel,
+        handleSubmit,
+    }
+}
+
+export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalProps) {
+    const {
+        user,
+        typed,
+        setTyped,
+        error,
+        peers,
+        plan,
+        setPlan,
+        isPending,
+        canSubmit,
+        handleCancel,
+        handleSubmit,
+    } = useDeleteAccountForm(onClose)
+
+    const mutedColor = useThemeColor('muted-foreground')
+    const backdropColor = useThemeColor('overlay-backdrop')
+    const dangerFg = useThemeColor('danger-foreground')
+
+    if (!isVisible) return null
 
     return (
         <View
@@ -87,9 +125,9 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
                     <ContentPlanPicker
                         peers={peers}
                         subjectLabel="your"
-                        value={plan ?? { mode: 'delete_my_data' }}
+                        value={plan}
                         onChange={setPlan}
-                        disabled={mutation.isPending}
+                        disabled={isPending}
                     />
                 </View>
 
@@ -112,7 +150,7 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
                         keyboardType="email-address"
                         autoCapitalize="none"
                         autoComplete="email"
-                        editable={!mutation.isPending}
+                        editable={!isPending}
                         onSubmitEditing={handleSubmit}
                     />
                 </View>
@@ -122,7 +160,7 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
                     onPress={handleSubmit}
                     disabled={!canSubmit}
                 >
-                    {mutation.isPending ? (
+                    {isPending ? (
                         <ActivityIndicator color={dangerFg} size="small" />
                     ) : (
                         <Text className="text-base font-semibold text-danger-foreground">
@@ -132,9 +170,9 @@ export function DeleteAccountModal({ isVisible, onClose }: DeleteAccountModalPro
                 </Pressable>
 
                 <Pressable
-                    className={`rounded-lg items-center p-3.5 border border-border ${mutation.isPending ? 'opacity-50' : 'opacity-100'}`}
+                    className={`rounded-lg items-center p-3.5 border border-border ${isPending ? 'opacity-50' : 'opacity-100'}`}
                     onPress={handleCancel}
-                    disabled={mutation.isPending}
+                    disabled={isPending}
                 >
                     <Text className="text-base font-semibold text-foreground">Cancel</Text>
                 </Pressable>

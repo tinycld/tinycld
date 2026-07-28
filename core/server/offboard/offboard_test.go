@@ -1,4 +1,4 @@
-package userorg
+package offboard
 
 import (
 	"errors"

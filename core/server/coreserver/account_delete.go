@@ -9,7 +9,7 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
-	"tinycld.org/core/userorg"
+	"tinycld.org/core/offboard"
 )
 
 // accountDeleteRequest is the per-call payload. The caller confirms by
@@ -17,7 +17,7 @@ import (
 // authored.
 type accountDeleteRequest struct {
 	Email string       `json:"email"`
-	Plan  userorg.Plan `json:"plan"`
+	Plan  offboard.Plan `json:"plan"`
 }
 
 // accountDisableRequest confirms a self-disable by re-typed email — the same
@@ -102,7 +102,7 @@ func handleAccountDelete(app core.App, re *core.RequestEvent) error {
 	// request must never be read as "delete everything I ever wrote".
 	// Reassign and delete_my_data stay explicit opt-ins.
 	if strings.TrimSpace(string(req.Plan.Mode)) == "" {
-		if err := userorg.AnonymizeUser(app, authRecord.Id); err != nil {
+		if err := offboard.AnonymizeUser(app, authRecord.Id); err != nil {
 			return re.InternalServerError("anonymize", err)
 		}
 		return re.NoContent(204)
@@ -113,9 +113,9 @@ func handleAccountDelete(app core.App, re *core.RequestEvent) error {
 	// in one transaction, so a failure part-way leaves no orphaned rows. The
 	// previous implementation called anonymizeUser unconditionally, so a
 	// caller's choice was silently ignored and content always stayed behind.
-	result, err := userorg.OffboardUser(app, authRecord.Id, req.Plan, authRecord.Id)
+	result, err := offboard.OffboardUser(app, authRecord.Id, req.Plan, authRecord.Id)
 	if err != nil {
-		if errors.Is(err, userorg.ErrInvalidPlan) {
+		if errors.Is(err, offboard.ErrInvalidPlan) {
 			return re.BadRequestError(err.Error(), err)
 		}
 		return re.InternalServerError("offboard", err)

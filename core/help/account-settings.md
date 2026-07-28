@@ -29,7 +29,9 @@ deleting it. In **Settings → Personal**, under **Account access**, select
 **Disable my account** and type your email to confirm.
 
 Disabling takes effect immediately: you're signed out everywhere, you can't sign
-in, and links you've shared stop working. Your content stays exactly where it is.
+in, and links you've shared stop working. Your content stays exactly where it is,
+and mail sent to your mailbox keeps arriving — it's waiting for you when the
+account is re-enabled. Senders aren't told the account is suspended.
 
 Only an organization **owner or admin** can re-enable a disabled account. After
 re-enabling, sign in again with your usual password — earlier sessions aren't

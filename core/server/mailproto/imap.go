@@ -17,6 +17,36 @@ import (
 // the listener around it.
 type NewIMAPSession func(app core.App, conn *imapserver.Conn) imapserver.Session
 
+// ListenFunc opens the socket a mail service serves on, given the address the
+// service would otherwise bind. mailproto's default is a plain TCP bind of
+// that address; a multi-org host injects its own function returning a
+// listener the ROUTER opened (or handed down over an inherited fd), so a
+// tenant process never binds a port — the prerequisite for IMAP/SMTP
+// following CardDAV into per-org tenant processes (multi-org HANDOFF §6).
+//
+// The returned listener must carry raw (pre-TLS) connections: TLS wrapping
+// stays in mailproto either way, so injection changes where the socket comes
+// from, never the TLS policy around it.
+type ListenFunc func(addr string) (net.Listener, error)
+
+// listenWith resolves the injected listener or falls back to a TCP bind.
+func listenWith(listen ListenFunc, addr string) (net.Listener, error) {
+	if listen != nil {
+		return listen(addr)
+	}
+	return net.Listen("tcp", addr)
+}
+
+// IMAPOptions configures StartIMAP beyond the app/cert wiring.
+type IMAPOptions struct {
+	// NewSession supplies the per-connection session (feature-owned).
+	NewSession NewIMAPSession
+
+	// Listen, when non-nil, replaces every TCP bind (both the implicit-TLS
+	// and, in dev, the plain listener). Nil = bind the configured addresses.
+	Listen ListenFunc
+}
+
 // IMAPCaps is the capability set advertised to clients.
 var IMAPCaps = imap.CapSet{
 	imap.CapIMAP4rev1:   {},
@@ -34,7 +64,7 @@ var IMAPCaps = imap.CapSet{
 // listener on :993 is started — no plain-text IMAP is exposed.
 // In dev mode, a plain listener on :1143 is started with optional STARTTLS
 // and an optional implicit TLS listener on :1993.
-func StartIMAP(app core.App, certManager *autocert.Manager, newSession NewIMAPSession) (func(), error) {
+func StartIMAP(app core.App, certManager *autocert.Manager, opts IMAPOptions) (func(), error) {
 	if os.Getenv("IMAP_ENABLED") == "false" {
 		app.Logger().Info("IMAP server disabled via IMAP_ENABLED=false")
 		return func() {}, nil
@@ -47,7 +77,7 @@ func StartIMAP(app core.App, certManager *autocert.Manager, newSession NewIMAPSe
 
 	// In production with TLS: only implicit TLS, no plain listener
 	if !app.IsDev() && tlsConfig != nil {
-		return startIMAPTLSOnly(app, tlsConfig, newSession)
+		return startIMAPTLSOnly(app, tlsConfig, opts)
 	}
 
 	// Production but no TLS source: refuse to silently fall through to the dev
@@ -66,21 +96,22 @@ func StartIMAP(app core.App, certManager *autocert.Manager, newSession NewIMAPSe
 	}
 
 	// Dev mode: plain listener with optional STARTTLS + optional implicit TLS
-	return startIMAPDev(app, tlsConfig, newSession)
+	return startIMAPDev(app, tlsConfig, opts)
 }
 
-func startIMAPTLSOnly(app core.App, tlsConfig *tls.Config, newSession NewIMAPSession) (func(), error) {
+func startIMAPTLSOnly(app core.App, tlsConfig *tls.Config, opts IMAPOptions) (func(), error) {
 	imapsAddr := os.Getenv("IMAPS_ADDR")
 	if imapsAddr == "" {
 		imapsAddr = ":993"
 	}
 
-	server := newIMAPServerInstance(app, tlsConfig, false, newSession)
+	server := newIMAPServerInstance(app, tlsConfig, false, opts.NewSession)
 
-	tlsLn, err := tls.Listen("tcp", imapsAddr, tlsConfig)
+	rawLn, err := listenWith(opts.Listen, imapsAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", imapsAddr, err)
 	}
+	tlsLn := tls.NewListener(rawLn, tlsConfig)
 	app.Logger().Info("IMAPS server listening (implicit TLS, no plain listener)", "addr", imapsAddr)
 	go func() {
 		if err := server.Serve(tlsLn); err != nil {
@@ -95,16 +126,16 @@ func startIMAPTLSOnly(app core.App, tlsConfig *tls.Config, newSession NewIMAPSes
 	}, nil
 }
 
-func startIMAPDev(app core.App, tlsConfig *tls.Config, newSession NewIMAPSession) (func(), error) {
+func startIMAPDev(app core.App, tlsConfig *tls.Config, opts IMAPOptions) (func(), error) {
 	addr := os.Getenv("IMAP_ADDR")
 	if addr == "" {
 		addr = ":1143"
 	}
 
 	insecureAuth := os.Getenv("IMAP_INSECURE_AUTH") == "true" || app.IsDev()
-	server := newIMAPServerInstance(app, tlsConfig, insecureAuth, newSession)
+	server := newIMAPServerInstance(app, tlsConfig, insecureAuth, opts.NewSession)
 
-	plainLn, err := net.Listen("tcp", addr)
+	plainLn, err := listenWith(opts.Listen, addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
@@ -121,11 +152,12 @@ func startIMAPDev(app core.App, tlsConfig *tls.Config, newSession NewIMAPSession
 		if imapsAddr == "" {
 			imapsAddr = ":1993"
 		}
-		tlsLn, err = tls.Listen("tcp", imapsAddr, tlsConfig)
+		rawLn, err := listenWith(opts.Listen, imapsAddr)
 		if err != nil {
 			plainLn.Close()
 			return nil, fmt.Errorf("failed to listen on %s: %w", imapsAddr, err)
 		}
+		tlsLn = tls.NewListener(rawLn, tlsConfig)
 		app.Logger().Info("IMAPS server listening (implicit TLS)", "addr", imapsAddr)
 		go func() {
 			if err := server.Serve(tlsLn); err != nil {

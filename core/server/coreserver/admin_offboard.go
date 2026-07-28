@@ -7,14 +7,14 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
-	"tinycld.org/core/userorg"
+	"tinycld.org/core/offboard"
 )
 
 // adminOffboardRequest names the user to offboard plus what happens to the
 // content they authored.
 type adminOffboardRequest struct {
 	UserID string       `json:"user_id"`
-	Plan   userorg.Plan `json:"plan"`
+	Plan   offboard.Plan `json:"plan"`
 }
 
 // RegisterAdminOffboard wires POST /api/admin/users/offboard.
@@ -62,9 +62,9 @@ func handleAdminOffboard(app core.App, re *core.RequestEvent) error {
 	}
 
 	// actorUserID is the admin, recorded so the offboard is attributable.
-	result, err := userorg.OffboardUser(app, req.UserID, req.Plan, authRecord.Id)
+	result, err := offboard.OffboardUser(app, req.UserID, req.Plan, authRecord.Id)
 	if err != nil {
-		if errors.Is(err, userorg.ErrInvalidPlan) {
+		if errors.Is(err, offboard.ErrInvalidPlan) {
 			return re.BadRequestError(err.Error(), err)
 		}
 		return re.InternalServerError("offboard", err)

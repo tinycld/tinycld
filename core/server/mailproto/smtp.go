@@ -47,6 +47,11 @@ type SMTPOptions struct {
 	MaxMessageBytes int64
 	// AuthDisabled advertises no AUTH mechanisms (inbound MX).
 	AuthDisabled bool
+
+	// Listen, when non-nil, replaces every TCP bind for this service (see
+	// ListenFunc — the multi-org injection seam). Nil = bind the configured
+	// addresses.
+	Listen ListenFunc
 }
 
 // StartSMTP builds an SMTP listener from opts, starts it, and returns a
@@ -110,10 +115,11 @@ func startSMTPTLSOnly(app core.App, tlsConfig *tls.Config, opts SMTPOptions) (fu
 	server := newSMTPServerInstance(tlsConfig, false, opts)
 	server.Addr = addr
 
-	tlsLn, err := tls.Listen("tcp", addr, tlsConfig)
+	rawLn, err := listenWith(opts.Listen, addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
+	tlsLn := tls.NewListener(rawLn, tlsConfig)
 	app.Logger().Info(opts.Label+" server listening (implicit TLS, no plain listener)", "addr", addr)
 	go func() {
 		if err := server.Serve(tlsLn); err != nil {
@@ -141,7 +147,7 @@ func startSMTPDev(app core.App, tlsConfig *tls.Config, opts SMTPOptions) (func()
 	server := newSMTPServerInstance(tlsConfig, insecureAuth, opts)
 	server.Addr = addr
 
-	plainLn, err := net.Listen("tcp", addr)
+	plainLn, err := listenWith(opts.Listen, addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
@@ -158,11 +164,12 @@ func startSMTPDev(app core.App, tlsConfig *tls.Config, opts SMTPOptions) (func()
 		if tlsAddr == "" {
 			tlsAddr = opts.DefaultDevTLSAddr
 		}
-		tlsLn, err = tls.Listen("tcp", tlsAddr, tlsConfig)
+		rawLn, err := listenWith(opts.Listen, tlsAddr)
 		if err != nil {
 			plainLn.Close()
 			return nil, fmt.Errorf("failed to listen on %s: %w", tlsAddr, err)
 		}
+		tlsLn = tls.NewListener(rawLn, tlsConfig)
 		app.Logger().Info(opts.Label+" server listening (implicit TLS)", "addr", tlsAddr)
 		go func() {
 			if err := server.Serve(tlsLn); err != nil {

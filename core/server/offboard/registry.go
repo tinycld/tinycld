@@ -1,5 +1,6 @@
-// Package userorg owns account offboarding (formerly the "leave an org"
-// workflow).
+// Package offboard owns account offboarding (formerly the "leave an org"
+// workflow, and formerly named userorg for the user_org junction that no
+// longer exists).
 //
 // Single-org: the process IS one org, so "leaving the org" is no longer a
 // distinct action — an account is either kept or deleted. What survives is
@@ -21,7 +22,7 @@
 // The reassignable registry is process-global (one app instance per process)
 // and is meant to be populated at startup. Tests can reset it with
 // ResetReassignableForTesting.
-package userorg
+package offboard
 
 import (
 	"sync"

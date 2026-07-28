@@ -2,19 +2,17 @@ import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
-import { getOrgHrefString, navigateToOrg } from '@tinycld/core/lib/org-url'
+import { navigateToOrgUrl } from '@tinycld/core/lib/org-url'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgSlug } from '@tinycld/core/lib/use-org-slug'
 import { Menu, Separator } from '@tinycld/core/ui/menu'
 import { useRouter } from 'expo-router'
 import { LogOut, Settings, User } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
-import { type UserOrgEntry, useUserOrgs } from './useUserOrgs'
+import { isCurrentOrg, type UserOrgEntry, useUserOrgs } from './useUserOrgs'
 
 export function UserMenu() {
     const railActiveText = useThemeColor('rail-active-text')
     const { user, logout } = useAuth()
-    const orgSlug = useOrgSlug()
     const orgHref = useOrgHref()
     const router = useRouter()
     const orgs = useUserOrgs()
@@ -47,7 +45,7 @@ export function UserMenu() {
                         onPress={() => router.push(orgHref('settings/personal'))}
                     />
 
-                    <OrganizationsSection orgs={orgs} orgSlug={orgSlug} />
+                    <OrganizationsSection orgs={orgs} />
 
                     <Separator />
 
@@ -58,10 +56,10 @@ export function UserMenu() {
     )
 }
 
-// Cross-org switching is deferred to a router-set parent-domain cookie that is
-// not built yet (see useUserOrgs), so this renders nothing while useUserOrgs()
-// returns []. Kept so the switcher lights up if that source ever lands.
-function OrganizationsSection({ orgs, orgSlug }: { orgs: UserOrgEntry[]; orgSlug: string }) {
+// Cross-org switching: entries come from the parent-domain cookie the tenants
+// write at login (useUserOrgs); each row is a full page load on the target
+// org's own origin. Renders nothing on a standalone deployment (empty cookie).
+function OrganizationsSection({ orgs }: { orgs: UserOrgEntry[] }) {
     if (orgs.length === 0) return null
     return (
         <>
@@ -72,9 +70,9 @@ function OrganizationsSection({ orgs, orgSlug }: { orgs: UserOrgEntry[]; orgSlug
                     key={org.id}
                     label={org.name}
                     leading={<OrgLogo org={org} size={18} />}
-                    isActive={org.slug === orgSlug}
-                    href={getOrgHrefString(org.slug)}
-                    onPress={() => navigateToOrg(org.slug)}
+                    isActive={isCurrentOrg(org)}
+                    href={org.url}
+                    onPress={() => navigateToOrgUrl(org.url)}
                 />
             ))}
         </>

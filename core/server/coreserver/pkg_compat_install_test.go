@@ -92,3 +92,52 @@ func TestCompatError_NilForEmpty(t *testing.T) {
 		t.Fatalf("compatError(empty) = %v, want nil", err)
 	}
 }
+
+// registryRowWithManifest inserts a pkg_registry row carrying a manifest_json
+// blob, so solveRegistryCompat resolves its peerVersions.
+func registryRowWithManifest(t *testing.T, app core.App, slug, version, manifestJSON string) {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("pkg_registry")
+	if err != nil {
+		t.Fatalf("find pkg_registry: %v", err)
+	}
+	rec := core.NewRecord(col)
+	rec.Set("slug", slug)
+	rec.Set("version", version)
+	rec.Set("status", "installed")
+	rec.Set("manifest_json", manifestJSON)
+	if err := app.Save(rec); err != nil {
+		t.Fatalf("save registry row %s: %v", slug, err)
+	}
+}
+
+// The apply pre-flight gate: a proposed core change that violates an installed
+// package's declared range must be refused before any job is created.
+func TestCheckVersionChangeCompat_RefusesViolatingChange(t *testing.T) {
+	app := newRegistryOnlyApp(t)
+	installRegistryRow(t, app, "core", "0.0.4")
+	registryRowWithManifest(t, app, "mail", "1.0.0",
+		`{"peerVersions":{"@tinycld/core":">=0.0.4 <0.1.0"}}`)
+
+	err := checkVersionChangeCompat(app, []versionChange{{Slug: "core", TargetVersion: "0.5.0"}})
+	if err == nil {
+		t.Fatal("expected the gate to refuse core 0.5.0 against mail's >=0.0.4 <0.1.0")
+	}
+	for _, want := range []string{"mail", ">=0.0.4 <0.1.0", "0.5.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error should name %q, got: %v", want, err)
+		}
+	}
+}
+
+// A compatible change passes the same gate (positive control).
+func TestCheckVersionChangeCompat_AllowsCompatibleChange(t *testing.T) {
+	app := newRegistryOnlyApp(t)
+	installRegistryRow(t, app, "core", "0.0.4")
+	registryRowWithManifest(t, app, "mail", "1.0.0",
+		`{"peerVersions":{"@tinycld/core":">=0.0.4 <0.1.0"}}`)
+
+	if err := checkVersionChangeCompat(app, []versionChange{{Slug: "core", TargetVersion: "0.0.9"}}); err != nil {
+		t.Fatalf("expected core 0.0.9 to satisfy >=0.0.4 <0.1.0, got %v", err)
+	}
+}

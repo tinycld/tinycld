@@ -44,11 +44,11 @@ interface DocumentTitleProps {
  * from app.json's expo.name), so a fork rebrands the whole app by
  * editing app.json alone.
  *
- * Because it's web-only, the org lookup (useOrgInfo → pbtsdb useStore)
- * lives in the inner web component, which only mounts on web where the
- * full Providers stack (incl. PBTSDBProvider) is guaranteed. Calling it
- * on native would crash on pre-auth screens like /connect, which render
- * under MinimalProviders without pbtsdb.
+ * Because it's web-only, the org lookup (useOrgInfo → react-query over
+ * /api/org-info) lives in the inner web component, which only mounts on
+ * web where the full Providers stack (incl. QueryClientProvider) is
+ * guaranteed. Calling it on native would crash on pre-auth screens like
+ * /connect, which render under MinimalProviders.
  */
 export function DocumentTitle(props: DocumentTitleProps) {
     if (Platform.OS !== 'web') return null
@@ -62,13 +62,16 @@ function DocumentTitleWeb({
     maxDetailChars = 40,
 }: DocumentTitleProps) {
     const brand = getCoreConfigOptional()?.brandName ?? 'TinyCld'
-    // useOrgInfo is safe outside OrgSlugProvider: useOrgSlug() returns ''
-    // when there's no provider and no URL param, the live query matches
-    // no rows, and org collapses to null.
     const { org } = useOrgInfo()
 
     const segments: string[] = []
-    if (includeOrg && org?.name?.trim()) segments.push(org.name.trim())
+    const orgName = org?.name?.trim() ?? ''
+    // Suppress the org segment when it just repeats the brand — a standalone
+    // deployment whose setup-wizard app name is the default would otherwise
+    // title every tab "TinyCld: tinycld — …".
+    if (includeOrg && orgName && orgName.toLowerCase() !== brand.toLowerCase()) {
+        segments.push(orgName)
+    }
     if (pkg?.trim()) segments.push(pkg.trim())
     const leaf = typeof title === 'string' ? title.trim() : ''
     if (leaf) {

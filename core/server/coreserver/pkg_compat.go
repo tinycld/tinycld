@@ -22,13 +22,12 @@ import (
 // current version) and reports every declared range the resolved set violates.
 //
 // peerVersions can differ between versions of the same package. The check
-// endpoint and the apply pipeline's pre-flight gate both resolve peerVersions
-// from the CURRENTLY installed manifests (pkg_registry.manifest_json) — a
-// best-effort early guard. In addition, the apply pipeline re-checks each
-// changing package's OWN peerVersions against the resolved set using the
-// freshly-fetched target manifest (verifyTargetPeerVersions), right after the
-// target files are swapped in — so a target version that tightens its own
-// requirements is still caught before its migrations run.
+// endpoint and the apply pipeline's pre-flight gate (checkVersionChangeCompat)
+// both resolve peerVersions from the CURRENTLY installed manifests
+// (pkg_registry.manifest_json). A target version that tightens its OWN
+// requirements relative to its installed manifest is therefore not visible to
+// either — re-checking the freshly-fetched target manifest after the file swap
+// is a known follow-up, not an implemented guarantee.
 
 const corePackageKey = "@tinycld/core"
 
@@ -116,9 +115,25 @@ func handleVersionsCheck(app *pocketbase.PocketBase, re *core.RequestEvent) erro
 		return re.BadRequestError("Invalid request body", err)
 	}
 
-	records, err := app.FindRecordsByFilter("pkg_registry", "id != ''", "slug", 0, 0)
+	violations, err := solveRegistryCompat(app, body.Changes)
 	if err != nil {
 		return re.InternalServerError("Failed to load package registry", err)
+	}
+	return re.JSON(http.StatusOK, map[string]any{
+		"ok":         len(violations) == 0,
+		"violations": violations,
+	})
+}
+
+// solveRegistryCompat resolves the registry's current versions with the
+// proposed changes overlaid (keyed by registry slug) and runs the solver
+// against every installed package's declared peerVersions. Shared by the
+// advisory check endpoint and the apply pre-flight gate so the two cannot
+// drift.
+func solveRegistryCompat(app core.App, changes map[string]string) ([]compatViolation, error) {
+	records, err := app.FindRecordsByFilter("pkg_registry", "id != ''", "slug", 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("load package registry for compat check: %w", err)
 	}
 
 	resolved := map[string]string{}
@@ -126,11 +141,10 @@ func handleVersionsCheck(app *pocketbase.PocketBase, re *core.RequestEvent) erro
 
 	for _, rec := range records {
 		slug := rec.GetString("slug")
-		current := rec.GetString("version")
-		if target, changing := body.Changes[slug]; changing {
+		if target, changing := changes[slug]; changing {
 			resolved[slug] = target
 		} else {
-			resolved[slug] = current
+			resolved[slug] = rec.GetString("version")
 		}
 		if peers := peerVersionsFromManifest(rec.GetString("manifest_json")); len(peers) > 0 {
 			peerVersionsBySlug[slug] = peers
@@ -144,11 +158,23 @@ func handleVersionsCheck(app *pocketbase.PocketBase, re *core.RequestEvent) erro
 		resolved[corePackageKey] = coreVer
 	}
 
-	violations := solveCompat(resolved, peerVersionsBySlug)
-	return re.JSON(http.StatusOK, map[string]any{
-		"ok":         len(violations) == 0,
-		"violations": violations,
-	})
+	return solveCompat(resolved, peerVersionsBySlug), nil
+}
+
+// checkVersionChangeCompat is the apply pipeline's pre-flight gate: the same
+// solve the Versions UI runs, enforced server-side so posting straight to
+// /versions/apply cannot bypass the UI's advisory check (docs/packages.md
+// promises the server is authoritative — this is that check).
+func checkVersionChangeCompat(app core.App, changes []versionChange) error {
+	proposed := make(map[string]string, len(changes))
+	for _, c := range changes {
+		proposed[c.Slug] = c.TargetVersion
+	}
+	violations, err := solveRegistryCompat(app, proposed)
+	if err != nil {
+		return err
+	}
+	return compatError(violations)
 }
 
 // peerVersionsFromManifest extracts the peerVersions map from a stored

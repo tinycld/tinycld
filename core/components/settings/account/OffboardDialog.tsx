@@ -138,6 +138,13 @@ export function ConfirmInput({
 
 // ContentPlanPicker: reassign the subject's records to a peer, or delete them.
 // Returns the plan the caller submits.
+//
+// `value` may be undefined — nothing highlighted — for callers that require an
+// explicit choice before submitting (self-delete). Callers with an honest
+// pre-selected default (admin remove, which submits exactly what it shows)
+// pass a definite plan. Either way the highlight must always equal what would
+// be sent: highlighting an option the submit doesn't send is the bug this
+// shape exists to prevent.
 export function ContentPlanPicker({
     peers,
     subjectLabel,
@@ -147,7 +154,7 @@ export function ContentPlanPicker({
 }: {
     peers: Peer[]
     subjectLabel: string
-    value: OffboardPlan
+    value: OffboardPlan | undefined
     onChange: (plan: OffboardPlan) => void
     disabled?: boolean
 }) {
@@ -155,7 +162,8 @@ export function ContentPlanPicker({
     // is delete-or-keep. Hide the picker rather than offer a dead option.
     if (peers.length === 0) return null
 
-    const isReassign = value.mode === 'reassign'
+    const isReassign = value?.mode === 'reassign'
+    const isDelete = value?.mode === 'delete_my_data'
     return (
         <View className="gap-2">
             <Text className="text-foreground text-sm font-semibold">
@@ -183,7 +191,7 @@ export function ContentPlanPicker({
                                 onChange({ mode: 'reassign', successor_user_id: peer.id })
                             }
                             className={`rounded-lg border px-3 py-2 ${
-                                value.successor_user_id === peer.id
+                                value?.successor_user_id === peer.id
                                     ? 'border-primary'
                                     : 'border-border'
                             }`}
@@ -198,7 +206,7 @@ export function ContentPlanPicker({
             <Pressable
                 disabled={disabled}
                 onPress={() => onChange({ mode: 'delete_my_data' })}
-                className={`rounded-lg border p-3 ${!isReassign ? 'border-error' : 'border-border'}`}
+                className={`rounded-lg border p-3 ${isDelete ? 'border-error' : 'border-border'}`}
             >
                 <Text className="text-foreground font-semibold">Delete everything</Text>
                 <Text className="text-muted-foreground text-[13px]">

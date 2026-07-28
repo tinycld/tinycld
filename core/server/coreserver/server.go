@@ -18,7 +18,7 @@ import (
 	"tinycld.org/core/quota"
 	"tinycld.org/core/realtime"
 	"tinycld.org/core/sharelink"
-	"tinycld.org/core/userorg"
+	"tinycld.org/core/offboard"
 )
 
 // Options configure the core server's registered plugins, flags, and wiring.
@@ -274,12 +274,13 @@ func registerSharedCore(app *pocketbase.PocketBase) {
 	realtime.Register(app, realtime.Options{})
 	RegisterInviteEndpoint(app)
 	RegisterInviteLinkEndpoints(app)
+	RegisterOrgInfoEndpoint(app)
 	RegisterPasswordResetMailer(app)
 	RegisterAuditHooks(app)
 	RegisterOrgPkgEnabledHooks(app)
 	RegisterAccountDelete(app)
 	RegisterAdminOffboard(app)
-	userorg.Register(app)
+	offboard.Register(app)
 	RegisterUsersFieldGuard(app)
 	RegisterUsersDemoAuditHook(app)
 	RegisterDisabledUserGuard(app)

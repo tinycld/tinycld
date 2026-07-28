@@ -476,10 +476,20 @@ function printLoginSummary(config: SeedConfig, login: SeedLoginResult): void {
     ])
 }
 
+// Give the deployment a branding name, matching what the setup wizard (or the
+// multi-org router's display_name materialization) would set in a real
+// deployment. /api/org-info serves it and DocumentTitle renders it as the org
+// segment — the document-title e2e asserts this exact value.
+async function seedAppName(pb: PocketBase): Promise<void> {
+    await pb.settings.update({ meta: { appName: 'Test Organization' } })
+    log('Set settings meta.appName = "Test Organization"')
+}
+
 async function main() {
     const config = parseArgs()
     log(`Mode: ${config.mode} (user=${config.userEmail})`)
     const pb = await authSuperuser(config)
+    await seedAppName(pb)
     await ensureAdminAppUser(pb, config)
     const login = await seedForUser(pb, config)
     log('Seeding complete!')

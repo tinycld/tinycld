@@ -18,3 +18,12 @@ export function navigateToOrg(_orgSlug?: string): void {
     trace('navigateToOrg push', { path })
     router.push(path)
 }
+
+// Cross-org navigation is a full page load on the target org's own origin —
+// each org is its own process, DB and client bundle, so there is no in-app
+// route to it. The URL comes from the parent-domain switcher cookie
+// (lib/org-cookie.ts). No-op outside the browser.
+export function navigateToOrgUrl(url: string): void {
+    trace('navigateToOrgUrl assign', { url })
+    if (typeof window !== 'undefined') window.location.assign(url)
+}
