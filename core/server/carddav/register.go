@@ -37,10 +37,19 @@ func Register(app *pocketbase.PocketBase, sources []Source) {
 				http.Error(re.Response, "Too many failed attempts", http.StatusTooManyRequests)
 				return nil
 			}
-			// One bcrypt verification per request, not per backend call. The
-			// backend re-authenticates in every method it implements and a
-			// single PROPFIND drives several of them.
+			// Authenticate at the route, like CalDAV and WebDAV. Left to the
+			// backend, a bad credential surfaces as a bare error that go-webdav
+			// turns into a 500 with no WWW-Authenticate — clients read that as
+			// a server fault and never re-prompt. The request cache also means
+			// one bcrypt verification per request, not per backend call (a
+			// single PROPFIND drives several).
 			r := davauth.WithRequestCache(re.Request)
+			if _, err := davauth.Authenticate(app, r); err != nil {
+				davauth.NoteFailure(r)
+				davauth.Challenge(re.Response, basicRealm)
+				return nil
+			}
+			davauth.NoteSuccess(r)
 			ctx := context.WithValue(r.Context(), httpRequestKey, r)
 			handler.ServeHTTP(re.Response, r.WithContext(ctx))
 			return nil
@@ -91,8 +100,16 @@ func HandlerFor(app core.App, sources []Source) http.Handler {
 			http.Error(w, "Too many failed attempts", http.StatusTooManyRequests)
 			return
 		}
-		// See Register: one verification per request, not per backend call.
+		// See Register: authenticate at the route so a bad credential is a 401
+		// with a challenge, not a backend error go-webdav reports as 500; the
+		// cache keeps it to one verification per request.
 		r = davauth.WithRequestCache(r)
+		if _, err := davauth.Authenticate(app, r); err != nil {
+			davauth.NoteFailure(r)
+			davauth.Challenge(w, basicRealm)
+			return
+		}
+		davauth.NoteSuccess(r)
 		ctx := context.WithValue(r.Context(), httpRequestKey, r)
 		dav.ServeHTTP(w, r.WithContext(ctx))
 	}

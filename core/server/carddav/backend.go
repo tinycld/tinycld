@@ -287,18 +287,11 @@ func (b *Backend) authFromContext(ctx context.Context) (*core.Record, error) {
 	if !ok {
 		return nil, davauth.ErrUnauthorized
 	}
-	// Failures are recorded here rather than at the route, because CardDAV
-	// authenticates inside the backend — the route only knows whether a
-	// credential was PRESENT, not whether it was right. The per-request cache
-	// means this runs once even though several backend methods call it, so a
-	// single request counts as a single failure.
-	user, err := davauth.Authenticate(b.app, r)
-	if err != nil {
-		davauth.NoteFailure(r)
-		return nil, err
-	}
-	davauth.NoteSuccess(r)
-	return user, nil
+	// The route wrapper already authenticated and settled the per-request
+	// cache (and recorded the failure/success for rate limiting), so this
+	// resolves from the cache without another bcrypt. It stays fail-closed as
+	// a backstop for any caller that reaches the backend without the wrapper.
+	return davauth.Authenticate(b.app, r)
 }
 
 func (b *Backend) recordToAddressObject(src Source, record *core.Record, bookPath string, _ *carddav.AddressDataRequest) (*carddav.AddressObject, error) {
