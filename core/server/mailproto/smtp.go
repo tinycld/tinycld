@@ -52,6 +52,12 @@ type SMTPOptions struct {
 	// ListenFunc — the multi-org injection seam). Nil = bind the configured
 	// addresses.
 	Listen ListenFunc
+
+	// ExternalTLS declares that the host terminates TLS before connections
+	// reach the injected listener — same contract and rationale as
+	// IMAPOptions.ExternalTLS: no cert resolution, one listener, auth over
+	// plaintext allowed, no STARTTLS. Requires Listen.
+	ExternalTLS bool
 }
 
 // StartSMTP builds an SMTP listener from opts, starts it, and returns a
@@ -62,6 +68,10 @@ func StartSMTP(app core.App, certManager *autocert.Manager, opts SMTPOptions) (f
 	if opts.EnabledEnv != "" && os.Getenv(opts.EnabledEnv) == "false" {
 		app.Logger().Info(opts.Label + " server disabled via " + opts.EnabledEnv + "=false")
 		return func() {}, nil
+	}
+
+	if opts.ExternalTLS {
+		return startSMTPExternalTLS(app, opts)
 	}
 
 	tlsConfig, err := ResolveTLSConfig(
@@ -104,6 +114,42 @@ func newSMTPServerInstance(tlsConfig *tls.Config, insecureAuth bool, opts SMTPOp
 		server.TLSConfig = tlsConfig
 	}
 	return server
+}
+
+// startSMTPExternalTLS serves plaintext SMTP on the injected listener with the
+// TLS-terminated posture ExternalTLS documents: auth allowed, no STARTTLS.
+func startSMTPExternalTLS(app core.App, opts SMTPOptions) (func(), error) {
+	if opts.Listen == nil {
+		return nil, fmt.Errorf("%s ExternalTLS requires an injected listener (SMTPOptions.Listen)", opts.Label)
+	}
+
+	addr := os.Getenv(opts.TLSAddrEnv)
+	if addr == "" {
+		addr = opts.DefaultTLSAddr
+	}
+	if addr == "" {
+		addr = opts.DefaultAddr
+	}
+
+	server := newSMTPServerInstance(nil, true, opts)
+	server.Addr = addr
+
+	ln, err := opts.Listen(addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
+	}
+	app.Logger().Info(opts.Label+" server listening (external TLS termination)", "addr", addr)
+	go func() {
+		if err := server.Serve(ln); err != nil {
+			app.Logger().Error(opts.Label+" server error", "addr", addr, "error", err)
+		}
+	}()
+
+	return func() {
+		app.Logger().Info("Shutting down " + opts.Label + " server")
+		ln.Close()
+		server.Close()
+	}, nil
 }
 
 func startSMTPTLSOnly(app core.App, tlsConfig *tls.Config, opts SMTPOptions) (func(), error) {

@@ -24,9 +24,12 @@ type NewIMAPSession func(app core.App, conn *imapserver.Conn) imapserver.Session
 // tenant process never binds a port — the prerequisite for IMAP/SMTP
 // following CardDAV into per-org tenant processes (multi-org HANDOFF §6).
 //
-// The returned listener must carry raw (pre-TLS) connections: TLS wrapping
-// stays in mailproto either way, so injection changes where the socket comes
-// from, never the TLS policy around it.
+// The returned listener carries raw (pre-TLS) connections: by default TLS
+// wrapping stays in mailproto, so injection changes where the socket comes
+// from, never the TLS policy around it. The one deliberate exception is
+// ExternalTLS (on IMAPOptions/SMTPOptions), where the HOST terminates TLS
+// before connections reach the injected listener — that mode exists so a
+// multi-org tenant never holds the wildcard private key.
 type ListenFunc func(addr string) (net.Listener, error)
 
 // listenWith resolves the injected listener or falls back to a TCP bind.
@@ -45,6 +48,17 @@ type IMAPOptions struct {
 	// Listen, when non-nil, replaces every TCP bind (both the implicit-TLS
 	// and, in dev, the plain listener). Nil = bind the configured addresses.
 	Listen ListenFunc
+
+	// ExternalTLS declares that the host terminates TLS BEFORE connections
+	// reach the injected listener — the multi-org tenant shape: the router
+	// holds the wildcard cert, handshakes on :993 to read SNI, and forwards
+	// plaintext over a private per-org unix socket, so the tenant process
+	// never sees the private key. mailproto then resolves no cert material
+	// (a tenant's allowlist env has none), serves exactly one listener,
+	// allows auth over the plaintext transport (the public hop was TLS), and
+	// advertises no STARTTLS. Requires Listen: without an injected listener
+	// this mode would plaintext-bind a public port, so it refuses to start.
+	ExternalTLS bool
 }
 
 // IMAPCaps is the capability set advertised to clients.
@@ -68,6 +82,10 @@ func StartIMAP(app core.App, certManager *autocert.Manager, opts IMAPOptions) (f
 	if os.Getenv("IMAP_ENABLED") == "false" {
 		app.Logger().Info("IMAP server disabled via IMAP_ENABLED=false")
 		return func() {}, nil
+	}
+
+	if opts.ExternalTLS {
+		return startIMAPExternalTLS(app, opts)
 	}
 
 	tlsConfig, err := ResolveTLSConfig("IMAP_TLS_CERT", "IMAP_TLS_KEY", "", "", certManager)
@@ -97,6 +115,38 @@ func StartIMAP(app core.App, certManager *autocert.Manager, opts IMAPOptions) (f
 
 	// Dev mode: plain listener with optional STARTTLS + optional implicit TLS
 	return startIMAPDev(app, tlsConfig, opts)
+}
+
+// startIMAPExternalTLS serves plaintext IMAP on the injected listener with the
+// TLS-terminated posture ExternalTLS documents: auth allowed, no STARTTLS.
+func startIMAPExternalTLS(app core.App, opts IMAPOptions) (func(), error) {
+	if opts.Listen == nil {
+		return nil, fmt.Errorf("IMAP ExternalTLS requires an injected listener (IMAPOptions.Listen)")
+	}
+
+	imapsAddr := os.Getenv("IMAPS_ADDR")
+	if imapsAddr == "" {
+		imapsAddr = ":993"
+	}
+
+	server := newIMAPServerInstance(app, nil, true, opts.NewSession)
+
+	ln, err := opts.Listen(imapsAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to listen on %s: %w", imapsAddr, err)
+	}
+	app.Logger().Info("IMAP server listening (external TLS termination)", "addr", imapsAddr)
+	go func() {
+		if err := server.Serve(ln); err != nil {
+			app.Logger().Error("IMAP server error", "addr", imapsAddr, "error", err)
+		}
+	}()
+
+	return func() {
+		app.Logger().Info("Shutting down IMAP server")
+		ln.Close()
+		server.Close()
+	}, nil
 }
 
 func startIMAPTLSOnly(app core.App, tlsConfig *tls.Config, opts IMAPOptions) (func(), error) {

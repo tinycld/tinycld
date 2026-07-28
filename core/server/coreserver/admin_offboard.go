@@ -13,7 +13,7 @@ import (
 // adminOffboardRequest names the user to offboard plus what happens to the
 // content they authored.
 type adminOffboardRequest struct {
-	UserID string       `json:"user_id"`
+	UserID string        `json:"user_id"`
 	Plan   offboard.Plan `json:"plan"`
 }
 

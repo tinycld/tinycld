@@ -16,7 +16,7 @@ import (
 // re-typing their own email, and chooses what happens to the content they
 // authored.
 type accountDeleteRequest struct {
-	Email string       `json:"email"`
+	Email string        `json:"email"`
 	Plan  offboard.Plan `json:"plan"`
 }
 

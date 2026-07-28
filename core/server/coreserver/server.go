@@ -15,10 +15,10 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 
 	"tinycld.org/core/notify"
+	"tinycld.org/core/offboard"
 	"tinycld.org/core/quota"
 	"tinycld.org/core/realtime"
 	"tinycld.org/core/sharelink"
-	"tinycld.org/core/offboard"
 )
 
 // Options configure the core server's registered plugins, flags, and wiring.
