@@ -231,7 +231,7 @@ const manifest = {
     version: '0.1.0',
     description: 'Shared contacts for your organization',
 
-    routes: { directory: 'screens' },          // org-scoped routes
+    routes: { directory: 'screens' },          // signed-in app routes
     publicRoutes: { directory: 'public-screens' }, // public top-level routes
 
     nav: {                                     // nav-rail entry
@@ -346,7 +346,7 @@ export function registerCollections(
 ) {
     const contacts = newCollection('contacts', {
         omitOnInsert: ['created', 'updated', 'deleted_at'] as const,
-        expand: { owner: coreStores.user_org },
+        expand: { owner: coreStores.users },
         collectionOptions: { autoIndex: 'eager' as const, defaultIndexType: BasicIndex },
     })
     return { contacts }
@@ -367,15 +367,16 @@ through `createCollection<MergedSchema>`). At runtime, `buildPackageStores`
 ### `seed.ts`
 
 A package's seed exports a **default async function** receiving a `SeedContext`
-that always provides `org` and `userOrg`, and optionally `user`:
+carrying the seeded user (single-org: seeds own data by the user id directly):
 
 ```ts
 import type PocketBase from 'pocketbase'
 
 interface SeedContext {
-    user: { id: string; email: string; name: string }
-    org: { id: string }
-    userOrg: { id: string }
+    // `username` is what mail derives mailbox addresses from — derive from it,
+    // never from the email local-part, or seeded users get a different address
+    // than the server would provision.
+    user: { id: string; username: string; email: string; name: string }
 }
 
 export default async function seed(pb: PocketBase, ctx: SeedContext): Promise<void> {
@@ -446,7 +447,7 @@ is gitignored — never commit any of it.**
 
 For each linked package it reads `manifest.ts` and emits **only**:
 
-### A. Route re-exports → `app/a/[orgSlug]/<slug>/**`
+### A. Route re-exports → `app/(app)/<slug>/**`
 
 For each file under `routes.directory`, a one-line re-export shim that plugs a
 sibling screen into Expo Router's filesystem routing — Expo Router needs real
@@ -456,11 +457,10 @@ files on disk, so these can't be derived at runtime:
 export { default } from '@tinycld/contacts/screens/index'
 ```
 
-`publicRoutes` work the same way but land at the public top level — `app/<path>`
-(e.g. drive's share routes) — rather than under the org-scoped
-`app/a/[orgSlug]/` tree. The generated public-route shims are gitignored; any
-hand-written layout/index files in the public tree stay tracked and are
-force-added despite the gitignore.
+`publicRoutes` work the same way but land under the public tree — `app/p/<path>`
+(e.g. drive's share routes) — rather than the signed-in `app/(app)/` tree. The
+generated public-route shims are gitignored; any hand-written layout/index files
+in the public tree stay tracked and are force-added despite the gitignore.
 
 ### B. `tinycld.config.ts` (via `scripts/generate-config.ts`)
 
@@ -582,9 +582,9 @@ definePackageEntry<MailSchema>()({
 export const packageSettings = deriveSettings(tinycldConfig)
 // → PackageSettingsGroup[] grouped by package
 
-// app/app/a/[orgSlug]/settings/index.tsx
+// app/(app)/settings/index.tsx
 packageSettings.map(group => group.panels.map(panel => /* render link */))
-// app/app/a/[orgSlug]/settings/[...section].tsx
+// app/(app)/settings/[...section].tsx
 // looks up the matching panel by [pkgSlug, panelSlug] and renders panel.Component
 ```
 
@@ -809,17 +809,18 @@ on every `packages:generate`:
   `tinycld-config.ts`, `package-help.ts`, `package-icons.ts`,
   `uniwind-sources.css`)
 - `tinycld/tinycld.config.ts` and `tinycld/tinycld.seeds.ts`
-- generated org-scoped routes under `tinycld/app/a/[orgSlug]/<slug>/**` and the
-  generated public routes under `tinycld/app/<path>`
+- generated app routes under `tinycld/app/(app)/<slug>/**` and the
+  generated public routes under `tinycld/app/p/<path>`
 - `tinycld/server/pb_migrations/` + `tinycld/server/pb_hooks/` (symlinks),
   `server/package_extensions.go`, `server/go.work`
 - `tinycld/core/types/pbSchema.ts` and `pbZodSchema.ts` (regenerated from the
   on-disk PocketBase migrations every install — the source of truth)
 
 (The `node_modules/@tinycld/*` symlinks are also local-only state, created by
-`link-members.ts` — never `git add` them. The app-owned files
-`app/a/[orgSlug]/_layout.tsx` and `app/a/[orgSlug]/settings/*` are force-added
-to git despite living under a gitignored tree.)
+`link-members.ts` — never `git add` them. The app-owned route dirs
+`app/(app)/settings/`, `app/(app)/help/`, and `app/(app)/admin/`, plus
+`app/(app)/_layout.tsx` and `app/p/_layout.tsx`, are tracked via `.gitignore`
+carve-outs despite living under a gitignored tree.)
 
 ---
 
