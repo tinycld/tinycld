@@ -306,6 +306,49 @@ func TestWebDAVHookRejectsUnknownName(t *testing.T) {
 	_ = pbApp.Bootstrap()
 }
 
+// A typo'd key must fail the WHOLE call: a valid sibling handler in the same
+// webdavHook({...}) must not survive it. Validation therefore has to run
+// before any handler is compiled and added — validating after (webdav's
+// original order) left the valid handler registered on a hook file that
+// errored, i.e. partial registration.
+func TestWebDAVHookTypoRegistersNothing(t *testing.T) {
+	resetHookPointsForTesting()
+	resetLoaderBindersForTesting()
+
+	hooksDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(hooksDir, "typo.pb.ts"), []byte(`
+        webdavHook({ beforeWrite(e) {}, beforeWrit(e) {} })
+    `), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	hooks := webdav.RegisterTSHooks(WebDAVHostBindings(), testWebDAVSource())
+
+	testApp, _ := tests.NewTestApp()
+	t.Cleanup(testApp.Cleanup)
+	pbApp := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: testApp.DataDir()})
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("a misspelled hook name must fail the hook file, not be ignored")
+			}
+		}()
+		_ = jsvm.Register(pbApp, jsvm.Config{
+			HooksDir:      hooksDir,
+			MigrationsDir: t.TempDir(),
+			HooksPoolSize: 1,
+			OnInit:        buildJsvmOnInit(pbApp),
+			OnLoaderInit:  buildJsvmOnLoaderInit(pbApp),
+		})
+		_ = pbApp.Bootstrap()
+	}()
+
+	if hooks.BeforeWrite.Enabled() {
+		t.Fatal("valid handler from a failed webdavHook call was registered — partial registration")
+	}
+}
+
 // Two packages serving trees must not share handlers: points are namespaced by
 // slug, so registering for "drive" leaves another source's points untouched.
 func TestWebDAVHookPointsAreNamespacedBySlug(t *testing.T) {

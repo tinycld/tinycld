@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/davhooks"
 )
 
 // fakePoint is a TSHookPoint whose behaviour the test dictates, standing in for
@@ -246,47 +248,23 @@ func TestFilterListErrorPropagates(t *testing.T) {
 // --- the JS registration surface -------------------------------------------
 
 func TestPointNamesAreSlugNamespaced(t *testing.T) {
-	if got := pointName("calendar", "beforeWrite"); got != "caldav.calendar.beforeWrite" {
-		t.Errorf("pointName = %q", got)
+	if got := davhooks.PointName("caldav", "calendar", "beforeWrite"); got != "caldav.calendar.beforeWrite" {
+		t.Errorf("PointName = %q", got)
 	}
 	// Two packages serving calendars must not share a handler.
-	if pointName("calendar", "canRead") == pointName("rooms", "canRead") {
+	if davhooks.PointName("caldav", "calendar", "canRead") == davhooks.PointName("caldav", "rooms", "canRead") {
 		t.Error("hook points collide across source slugs")
 	}
 }
 
-// Method shorthand stringifies to a method DEFINITION, which is not an
-// expression and fails to compile standalone. This is the drive-migration bug
-// that unit tests missed.
-func TestNormalizeHandlerSourceFixesMethodShorthand(t *testing.T) {
-	got := normalizeHandlerSource("beforeWrite", "beforeWrite(e) { return true }")
-	if got != "function beforeWrite(e) { return true }" {
-		t.Errorf("shorthand not normalized: %q", got)
-	}
-}
-
-func TestNormalizeHandlerSourceLeavesValidExpressions(t *testing.T) {
-	for _, src := range []string{
-		"function (e) { return true }",
-		"(e) => { return true }",
-		"e => true",
-	} {
-		if got := normalizeHandlerSource("beforeWrite", src); got != src {
-			t.Errorf("normalizeHandlerSource rewrote a valid expression %q → %q", src, got)
-		}
-	}
-}
-
-func TestIsKnownHookName(t *testing.T) {
-	for _, name := range []string{"beforeWrite", "beforeDelete", "canRead", "filterList"} {
-		if !isKnownHookName(name) {
-			t.Errorf("%q should be a known hook", name)
-		}
-	}
-	// beforeMove belongs to WebDAV, not here — CalDAV has no cross-calendar MOVE.
-	for _, name := range []string{"beforeMove", "beforeRead", "", "canWrite"} {
-		if isKnownHookName(name) {
-			t.Errorf("%q should not be a known hook", name)
+// The normalize/known-name machinery moved to core/davhooks (shared with
+// webdav) and is unit-tested there. What stays caldav's own contract is the
+// hook-name list — beforeMove belongs to WebDAV, not here, because CalDAV has
+// no cross-calendar MOVE.
+func TestHookNamesHaveNoBeforeMove(t *testing.T) {
+	for _, name := range hookPointNames {
+		if name == "beforeMove" {
+			t.Fatal("CalDAV must not declare beforeMove — it has no cross-calendar MOVE")
 		}
 	}
 }
