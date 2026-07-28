@@ -355,7 +355,12 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
     }
 
     const seedContext = {
-        user: { id: user.id, email: config.userEmail, name: config.userName },
+        user: {
+            id: user.id,
+            username: config.userUsername,
+            email: config.userEmail,
+            name: config.userName,
+        },
     }
     const orderedSeeds = deriveSeeds(tinycldSeeds)
     log(`Running ${orderedSeeds.length} package seed(s)...`)
