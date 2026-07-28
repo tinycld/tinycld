@@ -89,8 +89,15 @@ export function useShareLinkVisitorRole(token: string): ShareVisitorRoleResult {
                     }),
                     { expand: 'user' }
                 )
-            } catch {
-                // 404 / no row found → treat as no membership for this item.
+            } catch (err) {
+                // 404 / no row found is a genuine "no membership". Anything
+                // else — network, auth, schema drift — is exactly the class
+                // this bare catch once hid (the user_org filter bug), so it
+                // must reach Sentry even though the safe fallback is the same.
+                const status = (err as { status?: number } | null)?.status
+                if (status !== 404) {
+                    captureException('editor.shareVisitorRole.membership', err, { itemId })
+                }
                 return null
             }
         },
