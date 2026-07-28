@@ -1,28 +1,30 @@
 ---
 title: Organizations
-summary: Switching between organizations and understanding org-scoped data
-tags: [org, switching, roles]
+summary: How your organization's workspace works and what member roles mean
+tags: [org, workspace, roles]
 order: 20
 ---
 
 ## What is an organization?
 
-An **organization** (org) is a workspace that holds its own contacts, mail, files, and everything else. Most users belong to one org, but you can belong to several — for example a personal org and a work org.
+An **organization** (org) is a workspace that holds its own contacts, mail,
+files, and everything else. Each organization runs at its own web address — the
+address in your browser is the organization, and everything you see there
+belongs to it.
 
-Almost all data is scoped to an org. Switching orgs gives you a clean view of just that org's data.
-
-## Switching orgs
-
-The current org name is shown at the top of the nav rail. Click it to open the org switcher and pick another org you belong to.
-
-The URL also reflects the current org: paths look like `/a/<your-org-slug>/...`. Sharing a link with a teammate who belongs to the same org will take them straight to the right place.
+If you belong to more than one organization — say a personal one and a work
+one — each has its own address and its own sign-in. Open the other
+organization's address to work there.
 
 ## Roles
 
-Within an org, every member has a role:
+Every member has one role on their account:
 
-- **admin** — full access including settings and member management
-- **clerical** — can edit most data but not org-level settings
-- **workforce** — read-only or limited-write access depending on the package
+- **owner** / **admin** — manage the organization: settings, members and
+  invites, and installed packages, in addition to everyday use.
+- **member** — everyday use of the installed packages: create and edit your own
+  content and anything shared with you.
+- **guest** — limited access granted through shared links and invites. Guests
+  can view (and comment, where invited) but can't create workspace content.
 
-A given user can have a different role in each org they belong to.
+Owners and admins set roles under **Settings → Members**.
