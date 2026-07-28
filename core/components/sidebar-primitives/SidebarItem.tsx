@@ -12,6 +12,7 @@ interface SidebarItemProps {
     badge?: string | number
     closesDrawer?: boolean
     onPress?: () => void
+    testID?: string
 }
 
 export function SidebarItem({
@@ -22,6 +23,7 @@ export function SidebarItem({
     badge,
     closesDrawer,
     onPress,
+    testID,
 }: SidebarItemProps) {
     const activeIndicatorColor = useThemeColor('active-indicator')
     const mutedColor = useThemeColor('muted-foreground')
@@ -37,6 +39,7 @@ export function SidebarItem({
 
     return (
         <Pressable
+            testID={testID}
             onPress={handlePress}
             className="flex-row items-center gap-2.5 px-3 py-2 rounded-lg"
             style={isActive ? { backgroundColor: `${activeIndicatorColor}18` } : undefined}
