@@ -160,7 +160,9 @@ export async function createInvitedUser(
     const inviteeContext = await page.context().browser()!.newContext()
     const inviteePage = await inviteeContext.newPage()
     await inviteePage.goto(`/accept-invite/${tokenMatch[1]}`)
-    await expect(inviteePage.getByText(/Welcome to/i)).toBeVisible({ timeout: 10_000 })
+    await expect(inviteePage.getByText("You're invited", { exact: true })).toBeVisible({
+        timeout: 10_000,
+    })
     await inviteePage.getByTestId('name').fill('Invited Tester')
     await inviteePage.getByTestId('password').fill(user.password)
     await inviteePage.getByTestId('confirmPassword').fill(user.password)

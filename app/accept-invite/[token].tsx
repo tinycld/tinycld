@@ -9,11 +9,14 @@ import { CheckCircle2, KeyRound } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
+// Mirrors handleGetAcceptInvite's response. Single-org: there is no org name
+// or slug to send — the deployment IS the org, and org branding has no source
+// yet (HANDOFF §6) — so the copy must not interpolate one. An earlier version
+// typed orgName/orgSlug the handler never sent and rendered "Welcome to "
+// with an empty name.
 interface InviteInfo {
     username: string
     email: string
-    orgName: string
-    orgSlug: string
     role: string
 }
 
@@ -169,7 +172,7 @@ function AcceptForm({ token, info }: { token: string; info: InviteInfo }) {
                     )}
                 </View>
                 <Text className="text-xl font-semibold text-foreground text-center">
-                    Welcome to {info.orgName}
+                    You're invited
                 </Text>
                 <Text
                     className="text-center text-[13px] text-muted-foreground"

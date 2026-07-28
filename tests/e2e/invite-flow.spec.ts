@@ -102,7 +102,9 @@ test.describe('Invite flow', () => {
         const invitee = await inviteePage.newPage()
 
         await invitee.goto(`/accept-invite/${token}`)
-        await expect(invitee.getByText(/Welcome to/i)).toBeVisible({ timeout: 10_000 })
+        await expect(invitee.getByText("You're invited", { exact: true })).toBeVisible({
+            timeout: 10_000,
+        })
 
         await invitee.getByTestId('name').fill('Test Invitee')
         await invitee.getByTestId('password').fill(invitePassword)
