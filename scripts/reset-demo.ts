@@ -177,6 +177,7 @@ async function wipeOwnedData(pb: PocketBase, userId: string): Promise<number> {
     }
 
     deleted += await wipeMailboxes(pb, userId)
+    deleted += await wipeOrphanedRealtimeJournal(pb)
     return deleted
 }
 
@@ -202,6 +203,45 @@ async function wipeMailboxes(pb: PocketBase, userId: string): Promise<number> {
             if (!isNotFound(err)) throw err
         }
     }
+    return deleted
+}
+
+// wipeOrphanedRealtimeJournal clears realtime_doc_updates rows whose room is
+// gone. The journal has no owner FK and nothing cascades into it (it outlives
+// its room by design so a crashed room can replay), so the per-collection
+// wipe above never touches it and rows for deleted rooms accumulate forever.
+// Rooms are drive_items; keying on room existence rather than this run's
+// deletions also drains rows leaked by resets that ran before this cleanup
+// existed. Must run AFTER the drive_items wipe so those rooms read as gone.
+async function wipeOrphanedRealtimeJournal(pb: PocketBase): Promise<number> {
+    if (!(await hasCollection(pb, 'realtime_doc_updates'))) return 0
+
+    const rows = await pb
+        .collection('realtime_doc_updates')
+        .getFullList<{ id: string; room_id: string }>({ fields: 'id,room_id' })
+    if (rows.length === 0) return 0
+
+    const liveRooms = new Set<string>()
+    for (const roomId of new Set(rows.map(r => r.room_id).filter(Boolean))) {
+        try {
+            await pb.collection('drive_items').getOne(roomId, { fields: 'id' })
+            liveRooms.add(roomId)
+        } catch (err) {
+            if (!isNotFound(err)) throw err
+        }
+    }
+
+    let deleted = 0
+    for (const row of rows) {
+        if (row.room_id && liveRooms.has(row.room_id)) continue
+        try {
+            await pb.collection('realtime_doc_updates').delete(row.id)
+            deleted++
+        } catch (err) {
+            if (!isNotFound(err)) throw err
+        }
+    }
+    if (deleted > 0) log(`Wiping ${deleted} orphaned realtime_doc_updates record(s)`)
     return deleted
 }
 
