@@ -40,12 +40,12 @@ export default function MembersSettings() {
     const { data: memberRows } = useOrgLiveQuery(query =>
         query.from({ u: usersCollection }).select(({ u }) => ({
             userId: u.id,
-            username: (u as unknown as { username: string }).username,
+            username: u.username,
             name: u.name,
             email: u.email,
-            role: (u as unknown as { role: OrgRole }).role,
+            role: u.role,
             verified: u.verified,
-            isDemo: (u as unknown as { is_demo: boolean }).is_demo,
+            isDemo: u.is_demo,
         }))
     )
 
