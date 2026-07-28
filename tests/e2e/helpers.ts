@@ -73,7 +73,28 @@ export function skipWithoutShortcutStub(): boolean {
 // timeout.
 export async function login(page: Page) {
     await page.goto('/')
-    await page.getByTestId('identifier').fill(TEST_USER_EMAIL)
+    // Idempotent: a helper earlier in the same test (createInvitedUser) may
+    // have left the fixture session authenticated, in which case '/' redirects
+    // straight into the shell and NO login form exists — filling it would hang
+    // until the test budget dies. Race the two possible landings and
+    // short-circuit when the shell is already up. (Cross-user sign-in goes
+    // through loginAs, which clears storage first — this helper only ever
+    // establishes the fixture user.)
+    const identifierField = page.getByTestId('identifier')
+    const landed = await Promise.race([
+        identifierField
+            .waitFor({ state: 'visible', timeout: 15_000 })
+            .then(() => 'login-form' as const)
+            .catch(() => 'neither' as const),
+        page
+            .getByTestId('nav-home')
+            .waitFor({ state: 'visible', timeout: 15_000 })
+            .then(() => 'shell' as const)
+            .catch(() => 'neither' as const),
+    ])
+    if (landed === 'shell') return
+
+    await identifierField.fill(TEST_USER_EMAIL)
     await page.getByPlaceholder('Password').fill(TEST_USER_PASSWORD)
 
     // "We're in" = the authenticated app shell mounted. Single-org: post-login
