@@ -84,8 +84,16 @@ const (
 // control flow (ordering, failure handling, rollback) is unit-testable without
 // running a real build.
 type rebuildDeps struct {
-	assemble  func(m RebuildManifest, buildDir string) error
-	pipeline  func(job *installJob, buildDir string) (buildOutput, error)
+	assemble func(m RebuildManifest, buildDir string) error
+	// verifyCompat re-checks peerVersions from the manifests assemble actually
+	// fetched into the build dir. The pre-flight gates read only the INSTALLED
+	// manifests, so a target version that tightens its own requirements is
+	// invisible to them — this is the authoritative check. Runs after assemble,
+	// before the build pipeline; a failure discards the build dir with live
+	// state untouched. Optional (nil-safe) for orchestrator tests only — the
+	// production wiring in rebuild() always sets it.
+	verifyCompat func(m RebuildManifest, buildDir string) error
+	pipeline     func(job *installJob, buildDir string) (buildOutput, error)
 	backupDB  func() error
 	restoreDB func() error
 	syncMig   func(buildDir string) (SyncResult, error)
@@ -134,6 +142,14 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	emitProgress(job, "Assembling build", progAssembleStart, memberSetSummary(m))
 	if err := timeStep(job, "assemble", func() error { return d.assemble(m, buildDir) }); err != nil {
 		return d.fail(job, "assemble", err)
+	}
+	if d.verifyCompat != nil {
+		emitProgress(job, "Verifying compatibility", progAssembleEnd, "Checking peer versions from fetched manifests")
+		if err := timeStep(job, "verify peer versions", func() error { return d.verifyCompat(m, buildDir) }); err != nil {
+			jobLogf(job, "peer-version verify failed — discarding build dir %s (live state untouched)", buildDir)
+			_ = os.RemoveAll(buildDir)
+			return d.fail(job, "compat", err)
+		}
 	}
 	out, err := d.pipeline(job, buildDir)
 	if err != nil {
@@ -255,13 +271,22 @@ func failJob(job *installJob, step string, err error) error {
 // logRecord is the pkg_install_log row the status endpoint polls; it is
 // finalized (success/failed) before the restart so the UI poller terminates.
 func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, logRecord *core.Record) error {
+	return rebuildWith(job, m, productionRebuildDeps(app, job, m, logRecord))
+}
+
+// productionRebuildDeps builds the real dependency set rebuild() runs with.
+// Split from rebuild() so a test can assert the production wiring (e.g. that
+// verifyCompat is actually bound to verifyTargetPeerVersions) instead of only
+// exercising the orchestrator with stubs.
+func productionRebuildDeps(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, logRecord *core.Record) rebuildDeps {
 	buildDir := filepath.Join(stateBuildsDir(), m.BuildID)
 
 	// backupDatabase returns the restore closure; capture it across steps.
 	var restoreClosure func() error
 
-	deps := rebuildDeps{
-		assemble: func(mm RebuildManifest, bd string) error { return assembleBuild(job, mm, bd) },
+	return rebuildDeps{
+		assemble:     func(mm RebuildManifest, bd string) error { return assembleBuild(job, mm, bd) },
+		verifyCompat: verifyTargetPeerVersions,
 		pipeline: func(j *installJob, bd string) (buildOutput, error) {
 			return runBuildPipeline(j, bd, m.BuildID)
 		},
@@ -337,7 +362,6 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 			requestRestart("")
 		},
 	}
-	return rebuildWith(job, m, deps)
 }
 
 // recordRebuildBuild persists the pkg_build row for a freshly-activated build:

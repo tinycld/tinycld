@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -24,10 +25,13 @@ import (
 // peerVersions can differ between versions of the same package. The check
 // endpoint and the apply pipeline's pre-flight gate (checkVersionChangeCompat)
 // both resolve peerVersions from the CURRENTLY installed manifests
-// (pkg_registry.manifest_json). A target version that tightens its OWN
-// requirements relative to its installed manifest is therefore not visible to
-// either — re-checking the freshly-fetched target manifest after the file swap
-// is a known follow-up, not an implemented guarantee.
+// (pkg_registry.manifest_json), so a target version that tightens its OWN
+// requirements relative to its installed manifest is invisible to both.
+// verifyTargetPeerVersions closes that gap: after assemble fetches the real
+// files, the rebuild re-runs the solve against the manifests on disk in the
+// build dir and refuses before the build pipeline runs (build dir discarded,
+// live state untouched). The pre-flight gate remains the friendly synchronous
+// refusal for what it can see; the post-assemble verify is the guarantee.
 
 const corePackageKey = "@tinycld/core"
 
@@ -175,6 +179,52 @@ func checkVersionChangeCompat(app core.App, changes []versionChange) error {
 		return err
 	}
 	return compatError(violations)
+}
+
+// verifyTargetPeerVersions re-runs the peer-version solve against what
+// assemble actually fetched into the build dir, reading every member's
+// manifest fresh from disk. This is the authoritative post-fetch check: the
+// pre-flight gates see only the installed manifests, so a target version that
+// tightens its own requirements — or an uninstall that strands a remaining
+// package's declared peer (the uninstall path runs no pre-flight solve at
+// all) — is caught only here. A member whose manifest cannot be read fails
+// the verify outright: requirements we cannot see are not requirements we can
+// vouch for.
+//
+// The base (tinycld) member is special: it ships no root manifest.ts, and the
+// version peer ranges on @tinycld/core compare against is CORE's — the nested
+// tinycld/core/package.json — mirroring changedMemberVersion.
+func verifyTargetPeerVersions(m RebuildManifest, buildDir string) error {
+	resolved := map[string]string{}
+	peerVersionsBySlug := map[string]map[string]string{}
+
+	for _, ms := range m.Members {
+		regSlug := memberSlugToRegistry(ms.Slug)
+		if ms.Slug == baseMemberSlug {
+			version := packageJSONVersion(filepath.Join(buildDir, baseMemberSlug, "core", "package.json"))
+			if version == "" {
+				version = ms.Version
+			}
+			resolved[regSlug] = version
+			continue
+		}
+		manifest, err := parseManifestViaNode(filepath.Join(buildDir, ms.Slug))
+		if err != nil {
+			return fmt.Errorf("verify peer versions: read %s's manifest from the build: %w", ms.Slug, err)
+		}
+		version := manifest.Version
+		if version == "" {
+			version = ms.Version
+		}
+		resolved[regSlug] = version
+		if len(manifest.PeerVersions) > 0 {
+			peerVersionsBySlug[regSlug] = manifest.PeerVersions
+		}
+	}
+	if coreVer, ok := resolved[baseRegistrySlug]; ok {
+		resolved[corePackageKey] = coreVer
+	}
+	return compatError(solveCompat(resolved, peerVersionsBySlug))
 }
 
 // peerVersionsFromManifest extracts the peerVersions map from a stored
