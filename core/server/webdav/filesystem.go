@@ -43,6 +43,9 @@ func NewFileSystem(app core.App, src Source) (*FileSystem, error) {
 	if err := validateSource(src); err != nil {
 		return nil, err
 	}
+	// A materialized (tenant) source carries no Go hooks — adopt any the
+	// linked feature Go registered for this slug (see RegisterSourceHooks).
+	src = adoptRegisteredHooks(app, src)
 	return &FileSystem{app: app, src: src}, nil
 }
 

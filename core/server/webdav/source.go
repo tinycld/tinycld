@@ -112,8 +112,10 @@ type FieldMap struct {
 // write path — including this one, whose writes go through app.Save — passes
 // through by construction.
 //
-// NOTE: BeforeOverwrite is nil in a tenant process, so a tenant-served write
-// does not archive the previous version. Tracked in the router's HANDOFF.
+// A tenant's materialized Source arrives with zero Hooks (a Go closure cannot
+// travel through config), but linked feature Go registers its hooks by slug
+// via RegisterSourceHooks and NewFileSystem adopts them — so a tenant-served
+// write archives versions the same as the host (R7).
 type Hooks struct {
 	// BeforeOverwrite runs just before an existing entry's blob is replaced —
 	// drive uses it to snapshot the outgoing version. An error here is logged,

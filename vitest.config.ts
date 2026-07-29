@@ -116,6 +116,10 @@ export default defineConfig({
             'tests/**/*.test.{ts,tsx}',
             'scripts/**/__tests__/**/*.test.{ts,tsx}',
             'core/**/*.test.{ts,tsx}',
+            // package-scripts is nested like core (never its own tinycld-pkg
+            // --all target), so its tests must also ride the app shell's run —
+            // they were orphaned from every runner until this glob (P3-6/R2).
+            'package-scripts/tests/**/*.test.{ts,tsx}',
         ],
         // The app shell has no tests/ of its own yet; self-mode `npm test`
         // (tinycld-pkg test from app/) must not fail on an empty match.

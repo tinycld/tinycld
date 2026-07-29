@@ -894,3 +894,85 @@ func TestMultipleSourcesRegisterOneWellKnown(t *testing.T) {
 		t.Fatal("expected a handler")
 	}
 }
+
+// A TENANT's sources are materialized from JSON, so they arrive with zero
+// Hooks — a Go closure cannot travel through config. RegisterSourceHooks is
+// the seam that closes the gap (R7): feature Go (RegisterExtras, which runs
+// before the sources mount) registers its hooks by slug, and the constructor
+// adopts them onto the matching source. Without this, a tenant-served
+// overwrite silently skipped version archiving.
+func TestMaterializedSourceAdoptsRegisteredHooks(t *testing.T) {
+	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
+
+	// Shaped like a tenant mount: same source, but Hooks zero.
+	src := testSource()
+	src.Hooks = Hooks{}
+
+	var overwrote bool
+	RegisterSourceHooks(app, src.Slug, Hooks{
+		BeforeOverwrite: func(_ core.App, _ string, _ *core.Record) error {
+			overwrote = true
+			return nil
+		},
+	})
+
+	fs := newFS(t, app, src)
+	mkFile(t, app, alice, "doc.txt", "", "12345")
+
+	f, err := fs.OpenFile(ctxAs(alice), "/files/doc.txt", os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("1234567890")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !overwrote {
+		t.Fatal("registered hooks were not adopted: BeforeOverwrite did not fire on a materialized-shaped source")
+	}
+}
+
+// Explicit hooks on the source win — the registry only fills the gap left by
+// materialization, it must not override a composition that set its own.
+func TestExplicitSourceHooksBeatRegistered(t *testing.T) {
+	app, alice, _ := setupTree(t)
+	allowAuthenticated(t, app)
+
+	var explicitRan, registeredRan bool
+	src := testSource()
+	src.Hooks.BeforeOverwrite = func(_ core.App, _ string, _ *core.Record) error {
+		explicitRan = true
+		return nil
+	}
+	RegisterSourceHooks(app, src.Slug, Hooks{
+		BeforeOverwrite: func(_ core.App, _ string, _ *core.Record) error {
+			registeredRan = true
+			return nil
+		},
+	})
+
+	fs := newFS(t, app, src)
+	mkFile(t, app, alice, "doc.txt", "", "12345")
+
+	f, err := fs.OpenFile(ctxAs(alice), "/files/doc.txt", os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("1234567890")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !explicitRan {
+		t.Fatal("explicit source hook did not run")
+	}
+	if registeredRan {
+		t.Fatal("registered hook overrode the source's explicit hook")
+	}
+}
