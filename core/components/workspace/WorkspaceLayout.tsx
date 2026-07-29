@@ -38,6 +38,13 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
 
     return (
         <View
+            // Names the package currently mounted in the shell. Set from the
+            // route only after `app/(app)/_layout` has committed it, so it is a
+            // "this screen is showing" signal — unlike the URL, which changes at
+            // the start of a SPA transition while the target chunk is still
+            // loading. E2E gates on this instead of waitForURL; see
+            // navigateToPackage in tests/e2e/helpers.ts.
+            testID={activePkgSlug ? `pkg-active-${activePkgSlug}` : undefined}
             className="flex-1"
             style={[
                 {

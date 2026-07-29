@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { LANDED_URL } from './helpers'
+import { appShell } from './helpers'
 
 // The webServer started by playwright.config.ts serves the SPA and /api/*
 // from a single PocketBase listener on this port (static serve, no proxy).
@@ -40,7 +40,7 @@ async function enterDemo(page: Page) {
 test.describe('demo lead capture', () => {
     test('submits via the welcome modal on first arrival', async ({ page }) => {
         await enterDemo(page)
-        await page.waitForURL(LANDED_URL)
+        await appShell(page).waitFor({ state: 'visible' })
 
         await expect(page.getByText("You're in the demo workspace")).toBeVisible()
 
@@ -54,7 +54,7 @@ test.describe('demo lead capture', () => {
 
     test('skipped on first arrival, submitted later via banner link', async ({ page }) => {
         await enterDemo(page)
-        await page.waitForURL(LANDED_URL)
+        await appShell(page).waitFor({ state: 'visible' })
 
         await page.getByRole('button', { name: 'Skip for now' }).click()
         await expect(page.getByText("You're in the demo workspace")).not.toBeVisible()
@@ -73,7 +73,7 @@ test.describe('demo lead capture', () => {
 
     test('invalid email keeps the welcome modal open with an error', async ({ page }) => {
         await enterDemo(page)
-        await page.waitForURL(LANDED_URL)
+        await appShell(page).waitFor({ state: 'visible' })
 
         await expect(page.getByText("You're in the demo workspace")).toBeVisible()
 

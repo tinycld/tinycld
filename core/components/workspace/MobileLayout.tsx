@@ -20,10 +20,17 @@ export const MobileLayout = memo(function MobileLayout({ isReady = true }: { isR
     const isDrawerOpen = useWorkspaceStore(s => s.isDrawerOpen)
     const insets = useSafeAreaInsets()
     const bgColor = useThemeColor('background')
+    // Subscribed rather than read once: the testID must re-render when the
+    // active package changes, or it would keep naming whichever package mounted
+    // first. This does re-render the subtree per tab switch — the cost the
+    // memo() above avoids for its other props — but activePkgSlug changes only
+    // on an actual package switch, which is already a full screen transition.
+    const activePkgSlug = useWorkspaceStore(s => s.activePkgSlug)
 
     return (
         <PackageProviderWrapper>
             <View
+                testID={activePkgSlug ? `pkg-active-${activePkgSlug}` : undefined}
                 className="flex-1"
                 style={[
                     {

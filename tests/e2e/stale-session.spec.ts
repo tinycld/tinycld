@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { LANDED_URL, login } from './helpers'
+import { appShell, login } from './helpers'
 
 // A PocketBase auth token carries a JWT `exp`; when a session outlives it the
 // token string is still sitting in storage but every request now fails. The old
@@ -10,7 +10,7 @@ import { LANDED_URL, login } from './helpers'
 // the login gate instead of that broken half-session.
 test('an expired token recovers to the login gate, not a broken half-session', async ({ page }) => {
     await login(page)
-    await expect(page).toHaveURL(LANDED_URL)
+    await expect(appShell(page)).toBeVisible()
 
     // Read the app's own stored auth, expire its token, write it back — exactly
     // the on-disk state of a session whose token lapsed while the app was closed.

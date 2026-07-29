@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { createInvitedUser, type InvitedUser, LANDED_URL } from './helpers'
+import { appShell, createInvitedUser, type InvitedUser } from './helpers'
 
 // Password changes need a real, mutable account. Rather than mutate the shared
 // TEST_USER (whose password every other spec's login() depends on — a mutation
@@ -29,7 +29,10 @@ test.describe('change password', () => {
     async function openPersonalSettings(page: Page) {
         await page.getByLabel('User menu').click()
         await page.getByText('Settings', { exact: true }).click()
-        await page.waitForURL(/\/settings\/personal/)
+        // Gate on the control the callers use, not the URL: the route changes
+        // as soon as the router accepts the push, while the screen is still
+        // mounting, so a URL wait can return before 'Change password' exists.
+        await page.getByText('Change password').waitFor({ state: 'visible' })
     }
 
     async function fillPasswordForm(page: Page, current: string, next: string, confirm: string) {
@@ -70,6 +73,6 @@ test.describe('change password', () => {
         await inviteePage.getByTestId('identifier').fill(invited.username)
         await inviteePage.getByPlaceholder('Password').fill(NEW_PASSWORD)
         await inviteePage.getByText('Sign in', { exact: true }).last().click()
-        await inviteePage.waitForURL(LANDED_URL, { timeout: 15_000 })
+        await appShell(inviteePage).waitFor({ state: 'visible', timeout: 15_000 })
     })
 })

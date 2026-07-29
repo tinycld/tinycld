@@ -1,6 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 import { clearEmailLog, waitForEmailTo } from './email-log-helpers'
-import { isPackageLinked, LANDED_URL, login, TEST_USER_EMAIL, TEST_USER_PASSWORD } from './helpers'
+import { appShell, isPackageLinked, login, TEST_USER_EMAIL, TEST_USER_PASSWORD } from './helpers'
 
 // SPA-navigate to Settings → Members via the shell chrome (rail → settings
 // index → Members). A page.goto here would tear down the SPA and cancel the
@@ -8,9 +8,13 @@ import { isPackageLinked, LANDED_URL, login, TEST_USER_EMAIL, TEST_USER_PASSWORD
 // so we click through expo-router instead.
 async function openMembersSettings(page: Page) {
     await page.getByTestId('nav-settings').click()
-    await page.waitForURL(/\/settings(\/|$|\?)/)
+    // No URL wait between the clicks: getByText auto-waits for 'Members' to be
+    // actionable, which is a stronger signal than the settings URL (that
+    // changes as soon as the router accepts the push, before the index screen
+    // has rendered its links). Gate the end on the Invite control — the one
+    // every caller goes on to click — so we return when the screen is usable.
     await page.getByText('Members', { exact: true }).click()
-    await page.waitForURL(/\/settings\/members/)
+    await page.getByText('Invite', { exact: true }).waitFor({ state: 'visible' })
 }
 // Reads the logged-in PocketBase auth token from the web auth store (the
 // AsyncStorage→localStorage 'pb_auth' entry, JSON.stringify({ token, record })).
@@ -112,7 +116,7 @@ test.describe('Invite flow', () => {
         await invitee.getByText(/Set password and sign in/i).click()
 
         // Auto-login + router.replace should land us in the app shell.
-        await invitee.waitForURL(LANDED_URL, { timeout: 15_000, waitUntil: 'commit' })
+        await appShell(invitee).waitFor({ state: 'visible', timeout: 15_000 })
 
         // Joining fires mail's user hook, which provisions a personal mailbox
         // under the verified domain. Verify it landed (mail only).
@@ -137,10 +141,9 @@ test.describe('Invite flow', () => {
         await invitee.getByTestId('identifier').fill(inviteUsername)
         await invitee.getByPlaceholder('Password').fill(invitePassword)
         await invitee.getByText('Sign in', { exact: true }).last().click()
-        await invitee.waitForURL(LANDED_URL, { timeout: 15_000, waitUntil: 'commit' })
-        // (waitForURL(LANDED_URL) above IS the membership assertion — the
-        // invitee reached the authenticated shell. A url().toContain('/')
-        // check that used to follow it was vacuous: every URL contains '/'.)
+        await appShell(invitee).waitFor({ state: 'visible', timeout: 15_000 })
+        // (The appShell wait above IS the membership assertion — the invitee
+        // reached the authenticated shell.)
 
         // Guard: original test user can still sign in (password unchanged).
         // This catches regressions where accept-invite accidentally overwrites
@@ -153,7 +156,7 @@ test.describe('Invite flow', () => {
         await invitee.getByTestId('identifier').fill(TEST_USER_EMAIL)
         await invitee.getByPlaceholder('Password').fill(TEST_USER_PASSWORD)
         await invitee.getByText('Sign in', { exact: true }).last().click()
-        await invitee.waitForURL(LANDED_URL, { timeout: 15_000, waitUntil: 'commit' })
+        await appShell(invitee).waitFor({ state: 'visible', timeout: 15_000 })
 
         await inviteePage.close()
     })
