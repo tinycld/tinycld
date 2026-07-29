@@ -239,6 +239,16 @@ cd tinycld && pnpm run dev       # boots Expo + PocketBase
 
 Add a feature later with `npx @tinycld/bootstrap@latest --assemble-only --with <slug>` (it skips members already present), then `pnpm install`. Remove one by deleting its sibling dir and running `pnpm install` again. pnpm silently ignores absent member dirs, so a partial assembly installs and runs cleanly — the app boots as a lean shell with whatever feature set happens to be present.
 
+### Pinning members to a branch or tag (and why CI does)
+
+`--with <name>@<ref>` pins that member's clone to a branch or tag; `tinycld` itself accepts the same form (`--with tinycld@multi-org`). Without a ref, every member is cloned at its **default branch**.
+
+That default is the right one for a developer and the wrong one for cross-repo work, which is worth understanding before it costs you an afternoon. **Coordinated changes span repos on the same branch name** — the single-org migration lived on `multi-org` in nine repos at once. A feature repo whose CI assembles `tinycld` from `main` then typechecks the branch's code against a core that predates it: the APIs the branch depends on are simply absent, and the errors look like defects in the PR (`Property 'userId' does not exist on type 'OrgScope'`) rather than a mismatched workspace. It reads as "this PR is broken" when nothing is.
+
+So each feature repo's `ci.yml` resolves sibling refs before assembling: prefer a branch matching the PR's HEAD, fall back to the default branch when none exists. Ordinary single-repo PRs are unaffected — they assemble against released siblings, which is what you want. `text` and `calc` pin `drive` the same way, since they clone it too.
+
+If you are ever debugging a feature repo that is red in CI but green locally, check this first: the assembly is the most common difference between the two.
+
 **Run `pnpm install` only at the workspace root, never inside a member.** The root install does two things in order, and the order matters:
 
 1. The **generator** runs first (the postinstall). It materializes `tinycld/lib/generated/` — including the `package.json` that turns that directory into the `@tinycld/app-generated` package — so the symlink target exists before anything tries to link it.
