@@ -73,7 +73,11 @@ async function createGrantTarget(page: Page) {
 }
 
 async function loginAsSuperuser(page: Page) {
-    await page.goto('/admin')
+    // /setup, not /admin: the pre-auth bootstrap + superuser-login console moved
+    // there in the single-org migration (app/admin.tsx → app/setup.tsx). /admin
+    // is now the authenticated console behind AuthGate, which renders a
+    // LoginModal rather than the superuser form.
+    await page.goto('/setup')
     await expect(page.getByText('Superuser Login')).toBeVisible()
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
     await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
@@ -85,13 +89,13 @@ async function loginAsSuperuser(page: Page) {
 test.describe.configure({ mode: 'serial' })
 
 test.describe('first-run install', () => {
-    test('bootstrap superuser via /admin wizard', async ({ page }) => {
+    test('bootstrap superuser via /setup wizard', async ({ page }) => {
         test.skip(
             !SETUP_TOKEN,
             'PW_SETUP_TOKEN not set — workflow must scrape it from `docker logs` and export before running'
         )
 
-        await page.goto(`/admin?token=${SETUP_TOKEN}`)
+        await page.goto(`/setup?token=${SETUP_TOKEN}`)
 
         await expect(page.getByText('Welcome to TinyCld')).toBeVisible()
 

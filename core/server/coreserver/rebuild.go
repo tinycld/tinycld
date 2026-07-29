@@ -94,10 +94,10 @@ type rebuildDeps struct {
 	// production wiring in rebuild() always sets it.
 	verifyCompat func(m RebuildManifest, buildDir string) error
 	pipeline     func(job *installJob, buildDir string) (buildOutput, error)
-	backupDB  func() error
-	restoreDB func() error
-	syncMig   func(buildDir string) (SyncResult, error)
-	activate  func(buildID string) error
+	backupDB     func() error
+	restoreDB    func() error
+	syncMig      func(buildDir string) (SyncResult, error)
+	activate     func(buildID string) error
 	// recoverDB re-bootstraps the live app's DB pools after the out-of-band DB
 	// access of backupDB + syncMig, so the post-activate registry/build-record
 	// writes see the real tables. Optional (nil-safe).

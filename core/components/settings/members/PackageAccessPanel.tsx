@@ -1,9 +1,12 @@
 import { eq } from '@tanstack/db'
+import { ErrorMessage } from '@tinycld/core/components/settings/account/OffboardDialog'
+import { errorToString } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import type { PackageAccessLevel } from '@tinycld/core/lib/use-pkg-access'
+import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 const ACCESS_OPTIONS: { label: string; value: PackageAccessLevel | 'default' }[] = [
@@ -29,7 +32,15 @@ export function PackageAccessPanel({ userId }: { userId: string }) {
         (overrides ?? []).map(o => [o.pkg, { id: o.id, access: o.access as PackageAccessLevel }])
     )
 
+    // Without this, a rejected write is invisible: the optimistic update paints
+    // the new chip, the server refuses it, and the chip springs back with no
+    // explanation. That is precisely how the superuser-only rules on this
+    // collection went unnoticed — every toggle looked like it worked for a
+    // moment and then silently undid itself.
+    const [error, setError] = useState<string | null>(null)
+
     const upsertAccess = useMutation({
+        onError: e => setError(errorToString(e)),
         mutationFn: mutation(function* ({
             pkg,
             access,
@@ -56,6 +67,7 @@ export function PackageAccessPanel({ userId }: { userId: string }) {
     })
 
     const clearAccess = useMutation({
+        onError: e => setError(errorToString(e)),
         mutationFn: mutation(function* ({ pkg }: { pkg: string }) {
             const existing = overrideMap.get(pkg)
             if (existing) {
@@ -86,6 +98,8 @@ export function PackageAccessPanel({ userId }: { userId: string }) {
                     role.
                 </Text>
             </View>
+
+            <ErrorMessage message={error} />
 
             <View className="rounded-xl overflow-hidden border border-border">
                 {packages.map((pkg, idx) => {

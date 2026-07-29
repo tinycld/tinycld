@@ -57,7 +57,7 @@ export function ModalShell({ children }: { children: React.ReactNode }) {
 
 export function ErrorMessage({ message }: { message: string | null }) {
     if (!message) return null
-    return <Text className="text-error text-sm">{message}</Text>
+    return <Text className="text-danger text-sm">{message}</Text>
 }
 
 export function DangerButton({
@@ -78,12 +78,12 @@ export function DangerButton({
             testID={testID}
             onPress={onPress}
             disabled={disabled}
-            className={`rounded-lg px-4 py-3 items-center ${disabled ? 'bg-error/50' : 'bg-error'}`}
+            className={`rounded-lg px-4 py-3 items-center ${disabled ? 'bg-danger/50' : 'bg-danger'}`}
         >
             {isPending ? (
                 <ActivityIndicator />
             ) : (
-                <Text className="text-on-error font-semibold">{label}</Text>
+                <Text className="text-danger-foreground font-semibold">{label}</Text>
             )}
         </Pressable>
     )

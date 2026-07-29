@@ -120,7 +120,10 @@ const TODO_TEXT = 'Buy milk'
 const TAG_TEXT = 'errand'
 
 async function loginAsSuperuser(page: Page, timeoutMs?: number) {
-    await page.goto('/admin', timeoutMs ? { timeout: timeoutMs } : undefined)
+    // /setup, not /admin: the superuser-login console moved there in the
+    // single-org migration. /admin is now behind AuthGate and shows the app's
+    // LoginModal instead of the 'Superuser Login' form asserted below.
+    await page.goto('/setup', timeoutMs ? { timeout: timeoutMs } : undefined)
     await expect(page.getByText('Superuser Login')).toBeVisible(
         timeoutMs ? { timeout: timeoutMs } : undefined
     )
@@ -860,7 +863,7 @@ test.describe('todo version change', () => {
             'PW_TODO_SETUP_TOKEN not set — the runner must scrape it from `docker logs`'
         )
 
-        await page.goto(`/admin?token=${SETUP_TOKEN}`)
+        await page.goto(`/setup?token=${SETUP_TOKEN}`)
         await expect(page.getByText('Welcome to TinyCld')).toBeVisible()
 
         await page
