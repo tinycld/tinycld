@@ -101,9 +101,14 @@ export async function login(page: Page) {
     // lands on the bare root `/`, which then client-side <Redirect>s to the first
     // nav package — a SPA transition that doesn't fire a `load` event and whose
     // interim URL is the section-less `/`, so a waitForURL(LANDED_URL) hangs.
-    // Gate on the package rail (always present in the shell) instead — it's
-    // timing- and route-independent. nav-home is the workspace rail's home entry.
-    const shellReady = page.getByTestId('nav-home')
+    // Gate on the shell chrome instead — timing- and route-independent.
+    //
+    // WHICH chrome depends on the viewport: WorkspaceLayout renders MobileLayout
+    // (MobileTabBar, testID nav-more) below the mobile breakpoint and PackageRail
+    // (testID nav-home) at or above it. Gating on nav-home alone made login()
+    // unusable in any mobile-viewport spec — it waited out the full timeout for
+    // an element that layout never renders. Accept either.
+    const shellReady = page.getByTestId('nav-home').or(page.getByTestId('nav-more')).first()
     const authError = page.getByText('Failed to authenticate', { exact: false })
     const maxAttempts = 3
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
