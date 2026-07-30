@@ -368,7 +368,7 @@ func (fs *FileSystem) openForWrite(ctx context.Context, name string, flag int) (
 		return nil, os.ErrPermission
 	}
 
-	parentID, itemName, err := fs.resolveParentByPath(segments)
+	parentID, itemName, err := fs.resolveParentByPath(user, segments)
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +421,7 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, _ os.FileMode) err
 		return os.ErrPermission
 	}
 
-	parentID, folderName, err := fs.resolveParentByPath(segments)
+	parentID, folderName, err := fs.resolveParentByPath(user, segments)
 	if err != nil {
 		return err
 	}
@@ -509,7 +509,7 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) error
 		return err
 	}
 
-	destParentID, destName, err := fs.resolveParentByPath(destSegments)
+	destParentID, destName, err := fs.resolveParentByPath(user, destSegments)
 	if err != nil {
 		return err
 	}

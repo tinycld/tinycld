@@ -261,3 +261,18 @@ func CheckDelete(app core.App, userID, itemID string) error {
 func IsOwner(app core.App, userID, itemID string) bool {
 	return CheckDelete(app, userID, itemID) == nil
 }
+
+// IsSuspended reports whether the account is disabled, for the paths that
+// authorize a whole query rather than one record and so cannot go through
+// ResolveRole — drive's FTS search is the case that needs it.
+//
+// Exported so those paths share this definition (including its fail-closed
+// behaviour on a lookup error) rather than re-deriving "is the account active"
+// alongside it, which is how the guard came to cover every drive read path
+// except search.
+func IsSuspended(app core.App, userID string) bool {
+	if userID == "" {
+		return true
+	}
+	return isDisabled(app, userID)
+}

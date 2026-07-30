@@ -64,15 +64,44 @@ var defaultThrottle = &throttle{
 // TooManyFailures reports whether this (ip, identifier) pair has exhausted its
 // attempts. Callers answer 429 without touching the database — the point is to
 // stop spending bcrypt on an attacker.
+//
+// A request carrying no credentials at all is never throttled: see isChallenge.
 func TooManyFailures(r *http.Request) bool {
+	if isChallenge(r) {
+		return false
+	}
 	identifier, _, _ := r.BasicAuth()
 	return defaultThrottle.blocked(clientIP(r), identifier)
 }
 
-// NoteFailure records one failed authentication.
+// NoteFailure records one failed authentication. A credential-less request is
+// not one — see isChallenge.
 func NoteFailure(r *http.Request) {
+	if isChallenge(r) {
+		return
+	}
 	identifier, _, _ := r.BasicAuth()
 	defaultThrottle.note(clientIP(r), identifier)
+}
+
+// isChallenge reports whether the request supplied no Basic credentials at all.
+//
+// Every DAV client's first request is exactly this: it asks for the challenge,
+// then re-sends with credentials. Counted as a failure it lands in the (ip, "")
+// bucket — which NoteSuccess can never clear, because success clears
+// (ip, identifier) — so the bucket only accumulates. Around ten mounts behind
+// one NAT and the challenge itself starts answering 429, locking out every
+// client from that address; since clients retry, it refills as fast as it ages
+// out.
+//
+// Excluding it costs nothing: with no credentials there is nothing to guess
+// with, no identity to resolve, and no bcrypt to spend. A supplied-but-empty
+// username (`Authorization: Basic OnBhc3N3b3Jk`) is still a guess and still
+// counts — the discriminator is whether the header parsed, not whether the
+// username is non-empty.
+func isChallenge(r *http.Request) bool {
+	_, _, ok := r.BasicAuth()
+	return !ok
 }
 
 // NoteSuccess clears the counter: a correct password means this pair is not an

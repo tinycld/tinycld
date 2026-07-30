@@ -134,13 +134,22 @@ func (fs *FileSystem) resolveByPath(segments []string) (*core.Record, error) {
 	return record, nil
 }
 
-// resolveParentByPath resolves the parent folder for a given path. Returns the
-// parent's record id (empty for the root) and the final segment name. The
-// parent must exist and be a folder.
+// resolveParentByPath resolves the parent folder for a given path, checking
+// that user may READ it. Returns the parent's record id (empty for the root)
+// and the final segment name. The parent must exist, be a folder, and be
+// visible to the caller.
 //
-// Callers (Mkdir, openForWrite, Rename) only read the parent's id, so this
-// skips hydrating the record and stays at one SQL roundtrip.
-func (fs *FileSystem) resolveParentByPath(segments []string) (parentID, name string, err error) {
+// The read check is not optional. Without it a write verb resolved a parent by
+// id alone, which let a caller plant a record inside a folder they cannot see —
+// squatting the globally-unique (parent, name) namespace inside another user's
+// tree — and made "that folder exists but isn't yours" distinguishable from
+// "that folder doesn't exist", reopening the existence oracle the leaf-name
+// masking closes. No package's createRule carries a parent clause, so the rule
+// engine does not cover this on its own.
+//
+// A parent the caller cannot read is reported as os.ErrNotExist, identical to a
+// parent that isn't there.
+func (fs *FileSystem) resolveParentByPath(user *core.Record, segments []string) (parentID, name string, err error) {
 	if len(segments) == 0 {
 		return "", "", os.ErrNotExist
 	}
@@ -149,6 +158,8 @@ func (fs *FileSystem) resolveParentByPath(segments []string) (parentID, name str
 	parentSegments := segments[:len(segments)-1]
 
 	if len(parentSegments) == 0 {
+		// The mount root is synthetic — there is no record to authorize, and the
+		// collection's create rule remains the gate.
 		return "", name, nil
 	}
 
@@ -157,6 +168,14 @@ func (fs *FileSystem) resolveParentByPath(segments []string) (parentID, name str
 		return "", "", os.ErrNotExist
 	}
 	if !isFolder {
+		return "", "", os.ErrNotExist
+	}
+
+	parent, err := fs.app.FindRecordById(fs.src.Collection, id)
+	if err != nil {
+		return "", "", os.ErrNotExist
+	}
+	if err := fs.canRead(user, parent); err != nil {
 		return "", "", os.ErrNotExist
 	}
 	return id, name, nil

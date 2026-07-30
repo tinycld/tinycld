@@ -120,20 +120,32 @@ func (f *davFile) Close() error {
 
 // persistWrite commits the accumulated bytes on Close. It owns one filesystem
 // path at a time — either the original temp file or, after a successful rename,
-// the renamed file — and the deferred cleanup always points at whichever one
-// exists, so every failure path is leak-free.
+// the renamed file inside a private directory — and the deferred cleanup always
+// removes whichever exists, so every failure path is leak-free.
 //
 // Why the rename: PocketBase's filesystem.NewFileFromPath derives the blob's
 // stored Name from the source file's basename, and that Name is what a
 // download endpoint serves as the Content-Disposition filename. The temp file
 // is named "tinycld-dav-XXXX", so it is renamed to the user's intended
-// filename in the same directory before being handed to NewFileFromPath.
+// filename before being handed to NewFileFromPath.
+//
+// Why the rename target is a FRESH directory rather than the temp file's own:
+// the basename comes from the client, so renaming in the shared process temp
+// dir put every upload of "report.txt" on one path. Two concurrent PUTs of the
+// same basename — by any two users, in any two folders — collided there, and
+// os.Rename silently replaces: one request's record could ingest the other's
+// bytes, or lose the file out from under itself. A per-upload directory makes
+// the destination unshared by construction.
 func (f *davFile) persistWrite() error {
 	tmpPath := f.wrBuf.Name()
 	owned := tmpPath
+	ownedDir := ""
 	defer func() {
 		if owned != "" {
 			_ = os.Remove(owned)
+		}
+		if ownedDir != "" {
+			_ = os.Remove(ownedDir)
 		}
 	}()
 
@@ -146,7 +158,13 @@ func (f *davFile) persistWrite() error {
 	}
 
 	uploadPath := tmpPath
-	if renamed := filepath.Join(filepath.Dir(tmpPath), filepath.Base(f.wrName)); renamed != tmpPath {
+	if base := filepath.Base(f.wrName); base != filepath.Base(tmpPath) {
+		dir, err := os.MkdirTemp(filepath.Dir(tmpPath), "tinycld-dav-up-*")
+		if err != nil {
+			return err
+		}
+		ownedDir = dir
+		renamed := filepath.Join(dir, base)
 		if err := os.Rename(tmpPath, renamed); err != nil {
 			return err
 		}
