@@ -107,6 +107,7 @@ available in production.
       onError: handleMutationErrorsWithForm({ setError, getValues }),
   })
   ```
+- A mutation that fails without an explicit `onError` surfaces a **default error toast + Sentry capture**, so optimistic updates never revert silently. Provide `onError` only to handle the failure better (a form via `handleMutationErrorsWithForm`, inline UI); pass a no-op only when a failure is genuinely fine to swallow, with a comment saying why.
 - For multi-step mutations, yield each Transaction sequentially, or yield an array for parallel execution
 - Use `performMutations` from `@tinycld/core/lib/mutations` when you need to await Transactions inside an async function
 - Core collections are configured in `tinycld/core/lib/pocketbase.ts` with expand relations; each feature registers its own in `collections.ts` (via the manifest's `collections.register`)

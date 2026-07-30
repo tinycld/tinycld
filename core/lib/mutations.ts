@@ -4,6 +4,8 @@ import {
     type UseMutationResult,
     useMutation as useTanStackMutation,
 } from '@tanstack/react-query'
+import { captureException, errorToString } from '@tinycld/core/lib/errors'
+import { notify } from '@tinycld/core/lib/notify/dispatcher'
 
 /**
  * Awaits each yielded Transaction sequentially, or an array of Transactions in parallel.
@@ -111,10 +113,37 @@ export function mutation<TData = void, TVariables = void>(
     return (variables: TVariables) => performMutations(() => genFn(variables))
 }
 
+// The default onError for mutations that don't supply one. Without it a
+// failed mutation is an optimistic update that silently reverts — a toggle or
+// rename that just no-ops with no feedback and nothing in Sentry (the
+// pre-multi-org review counted ~36 such call sites). Mirrors the two halves
+// that already exist elsewhere: the toast is what handleMutationErrorsWithForm
+// does for non-validation errors, the capture is what the global QueryCache
+// onError does for reads.
+function reportUnhandledMutationError(mutationKey: readonly unknown[] | undefined) {
+    return (error: unknown) => {
+        const operation = mutationKey ? mutationKey.join('.') : 'unhandled'
+        const message = errorToString(error)
+        captureException('mutation.error', error, { operation })
+        notify.emit({
+            event: 'mutation.error',
+            title: 'Something went wrong',
+            body: message,
+            data: { operation, error: message },
+        })
+    }
+}
+
 /**
  * Wraps TanStack Query's useMutation with support for generator-based mutation functions.
  * Generator functions are auto-wrapped with performMutations so each yielded
  * Transaction is awaited before proceeding.
+ *
+ * A mutation that fails without an explicit `onError` surfaces a default
+ * error toast and reports to Sentry, so optimistic updates never revert
+ * silently. Passing `onError` (e.g. handleMutationErrorsWithForm) replaces
+ * the default entirely; pass a no-op only when a failure is genuinely fine
+ * to swallow, with a comment saying why.
  *
  * @example Generator-based (recommended for pbtsdb operations)
  * ```ts
@@ -169,6 +198,7 @@ export function useMutation<TData = unknown, TError = Error, TVariables = void>(
 
     return useTanStackMutation({
         ...restOptions,
+        onError: restOptions.onError ?? reportUnhandledMutationError(restOptions.mutationKey),
         mutationFn: wrappedMutationFn,
     } as UseMutationOptions<TData, TError, TVariables>)
 }
