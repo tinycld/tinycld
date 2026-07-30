@@ -16,10 +16,11 @@ const goldenTSFixture = `interface Hook {
     name: string
 }
 const h: Hook = { name: 'golden' }
-export const picked = h?.name ?? 'fallback'
+const picked = h?.name ?? 'fallback'
+routerAdd('GET', '/golden', (e) => e.string(200, picked))
 `
 
-const goldenJSOutput = "const h = { name: \"golden\" };\nexport const picked = h?.name ?? \"fallback\";\n//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiPHN0ZGluPiJdLAogICJzb3VyY2VzQ29udGVudCI6IFsiaW50ZXJmYWNlIEhvb2sge1xuICAgIG5hbWU6IHN0cmluZ1xufVxuY29uc3QgaDogSG9vayA9IHsgbmFtZTogJ2dvbGRlbicgfVxuZXhwb3J0IGNvbnN0IHBpY2tlZCA9IGg/Lm5hbWUgPz8gJ2ZhbGxiYWNrJ1xuIl0sCiAgIm1hcHBpbmdzIjogIkFBR0EsTUFBTSxJQUFVLEVBQUUsTUFBTSxTQUFTO0FBQzFCLGFBQU0sU0FBUyxHQUFHLFFBQVE7IiwKICAibmFtZXMiOiBbXQp9Cg==\n"
+const goldenJSOutput = "const h = { name: \"golden\" };\nconst picked = h?.name ?? \"fallback\";\nrouterAdd(\"GET\", \"/golden\", (e) => e.string(200, picked));\n//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiPHN0ZGluPiJdLAogICJzb3VyY2VzQ29udGVudCI6IFsiaW50ZXJmYWNlIEhvb2sge1xuICAgIG5hbWU6IHN0cmluZ1xufVxuY29uc3QgaDogSG9vayA9IHsgbmFtZTogJ2dvbGRlbicgfVxuY29uc3QgcGlja2VkID0gaD8ubmFtZSA/PyAnZmFsbGJhY2snXG5yb3V0ZXJBZGQoJ0dFVCcsICcvZ29sZGVuJywgKGUpID0+IGUuc3RyaW5nKDIwMCwgcGlja2VkKSlcbiJdLAogICJtYXBwaW5ncyI6ICJBQUdBLE1BQU0sSUFBVSxFQUFFLE1BQU0sU0FBUztBQUNqQyxNQUFNLFNBQVMsR0FBRyxRQUFRO0FBQzFCLFVBQVUsT0FBTyxXQUFXLENBQUMsTUFBTSxFQUFFLE9BQU8sS0FBSyxNQUFNLENBQUM7IiwKICAibmFtZXMiOiBbXQp9Cg==\n"
 
 func TestTransformSource_MatchesRouterGolden(t *testing.T) {
 	got, err := transformSource("fixture.pb.ts", []byte(goldenTSFixture))
