@@ -4,7 +4,7 @@ import { packageSettings } from '@tinycld/core/lib/packages/derive-components'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useRouter } from 'expo-router'
-import { Building2, ChevronRight, Package, ScrollText, Tag, User, Users } from 'lucide-react-native'
+import { ChevronRight, HardDrive, Package, ScrollText, Tag, User, Users } from 'lucide-react-native'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 export default function SettingsIndex() {
@@ -43,9 +43,9 @@ function AdminSettings({ isVisible }: { isVisible: boolean }) {
         <>
             <SettingsGroup label="Organization">
                 <SettingsLink
-                    label="General"
-                    onPress={() => router.push(orgHref('settings/organization'))}
-                    icon={<Building2 size={20} color={foregroundColor} />}
+                    label="Storage"
+                    onPress={() => router.push(orgHref('settings/storage'))}
+                    icon={<HardDrive size={20} color={foregroundColor} />}
                 />
                 <SettingsLink
                     label="Members"

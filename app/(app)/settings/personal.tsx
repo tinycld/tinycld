@@ -133,7 +133,7 @@ function ProfileSection() {
                     control={control}
                     name="email"
                     label="Recovery Email"
-                    hint="Used to reach you if you're locked out. This is not a mailbox address."
+                    hint="Used to reach you if you're locked out. You can also sign in with it — here and in mail or calendar apps — but it is not a mailbox address TinyCld hosts."
                     onBlur={saveIfValid}
                 />
             </View>

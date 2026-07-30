@@ -13,7 +13,7 @@ export interface MemberRow {
 export type DrawerMode = { kind: 'closed' } | { kind: 'invite' } | { kind: 'view'; userId: string }
 
 export const ROLE_DESCRIPTIONS: Record<OrgRole, string> = {
-    owner: 'Full control — including billing and deleting the organization.',
+    owner: 'Full control — manages members, every setting, and every role including owner.',
     admin: 'Can manage members, settings, and all organization data.',
     member: 'Can use the organization day-to-day across installed packages.',
     guest: 'Limited access. Scoped to whatever you grant per package.',

@@ -17,9 +17,10 @@ import { newRecordId } from 'pbtsdb/core'
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
-// Single-org deployment: org branding (name / slug / logo) is owned by the
-// deployment (the multi-org router), not editable in-app. What remains here is
-// the storage usage + per-user limit, scoped to this one org (the whole DB).
+// Storage usage + per-user limit for this deployment. Org branding (name /
+// slug / logo) is owned by the deployment (the multi-org router) and is not
+// editable in-app, so storage is what this screen manages — the route, title,
+// and nav label all say so rather than promising organization management.
 
 const storageLimitSchema = z.object({
     limitGb: z.number().min(0, 'Must be 0 or greater'),
@@ -29,7 +30,7 @@ function formatStorageBytes(bytes: number): string {
     return bytes === 0 ? '0 B' : formatBytes(bytes)
 }
 
-export default function OrganizationSettings() {
+export default function StorageSettings() {
     const orgHref = useOrgHref()
     const navigateBack = useNavigateBack(() => orgHref('settings'))
     const { isAdmin } = useCurrentRole()
@@ -38,9 +39,9 @@ export default function OrganizationSettings() {
     if (!isAdmin) {
         return (
             <View className="flex-1 p-5 items-center justify-center bg-background">
-                <DocumentTitle pkg="Settings" title="Organization" />
+                <DocumentTitle pkg="Settings" title="Storage" />
                 <Text className="text-muted-foreground" style={{ fontSize: 16 }}>
-                    Only admins can manage organization settings.
+                    Only admins can manage storage settings.
                 </Text>
             </View>
         )
@@ -48,14 +49,14 @@ export default function OrganizationSettings() {
 
     return (
         <ScrollView contentContainerStyle={{ flexGrow: 1 }} className="bg-background">
-            <DocumentTitle pkg="Settings" title="Organization" />
+            <DocumentTitle pkg="Settings" title="Storage" />
             <View className="flex-1 p-5 max-w-[600px]">
                 <View className="flex-row gap-3 items-center mb-5">
                     <Pressable onPress={navigateBack}>
                         <ArrowLeft size={24} color={fgColor} />
                     </Pressable>
                     <Text className="text-foreground" style={{ fontSize: 22, fontWeight: 'bold' }}>
-                        Organization
+                        Storage
                     </Text>
                 </View>
 
@@ -139,9 +140,6 @@ function StorageSection() {
     if (isLoading) {
         return (
             <View className="gap-3">
-                <Text className="text-foreground" style={{ fontSize: 18, fontWeight: 'bold' }}>
-                    Storage
-                </Text>
                 <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
                     Loading...
                 </Text>
@@ -165,10 +163,6 @@ function StorageSection() {
 
     return (
         <View className="gap-4">
-            <Text className="text-foreground" style={{ fontSize: 18, fontWeight: 'bold' }}>
-                Storage
-            </Text>
-
             <View className="gap-2">
                 <Text className="text-primary" style={{ fontSize: 13 }}>
                     Your Usage
