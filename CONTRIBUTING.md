@@ -171,6 +171,30 @@ There is **no** central `log` helper. **Don't import `@tinycld/core/lib/logger` 
 - `pnpm run test:e2e` and `pnpm run test:server` cover the Playwright suite and supporting services.
    - never start or kill servers when running Playwright. It will manage it's own service and test data. If you see network errors or other issues, stop and ask for advice
 - `pnpm run test:e2e <test file>` will run a single test.  This will also start the dev server for testing.
+
+**Waiting in e2e: gate on the rendered screen, never on the URL.** A URL changes
+the moment the router *accepts* a navigation — before the target's lazy chunk has
+loaded, let alone committed. Gating on it is slower (a poll on something already
+true) and wrong in both directions: it can return while the screen is still
+mounting, and when the route shape shifts underneath it, it hangs for the full
+timeout while the app works perfectly. That second mode has bitten this repo
+twice — a leftover `/a/<org>` pattern after the single-org migration, and a
+`LANDED_URL` whose hardcoded package list stopped matching when CI assembled a
+leaner shell. Use these instead, from `tests/e2e/helpers.ts` (re-exported as
+`@tinycld/core/e2e-helpers`):
+
+- `appShell(page)` — the authenticated shell mounted, whichever chrome the
+  viewport renders (`PackageRail` on desktop/tablet, `MobileTabBar` on mobile).
+- `packageScreen(page, slug)` — that package's screen is mounted, via the
+  `pkg-active-<slug>` testID the workspace layout stamps from `activePkgSlug`
+  *after* the route commits. `settings` and `help` are chrome, not packages, and
+  deliberately have no marker — gate those on their heading.
+- Otherwise assert the element the test is about to interact with. Playwright
+  auto-waits for it, so an explicit wait beforehand is usually redundant.
+
+A URL wait is right only when the URL itself is the observable under test — see
+`drive/tests/open-in-app.spec.ts`, where a query param is how the stub opener
+signals it ran.
 - `pnpm run export:web` runs `expo export --platform web` for production web builds.
 - `pnpm run export:ios` and `pnpm run export:android` produce platform-specific exports (used by the docker/EAS build pipelines, not for local launch).
 
@@ -286,6 +310,8 @@ Biome runs in **three tiers**, because Biome only searches *upward* for its conf
 3. **Per-member overrides — optional.** A member ships **no `biome.json` by default** and inherits the canonical rules through the root config. A member adds its own only to override a specific rule, and it must extend canonical and be committed in that member's repo: `{ "root": false, "extends": ["../tinycld/biome.json"], <overrides> }`.
 
 The canonical config excludes generated artifacts — `server`, `lib/generated`, route re-exports, `core/types/pb*Schema.ts`, `pb-migrations`, `pb-hooks`, `dist`, `test-results`, and so on. **Keep that exclude list current whenever you add a new kind of generated file**, or Biome will start linting machine-owned output.
+
+**The Biome version in `tinycld/package.json` is pinned exactly (`"2.5.1"`, no `~` or `^`) — leave it that way.** CI installs with `--no-frozen-lockfile`, and it has to: bootstrap assembles a fresh workspace whose member set the lockfile cannot match. A range therefore floats to whatever patch is newest at run time, while a developer keeps whatever the lockfile pinned. Biome patches change formatting, so the two disagree — and the failure is maddening: `tinycld-pkg check` passes locally and fails in CI, on files the PR never touched, with no version stated anywhere in the error. It is not fixable by reformatting either, since the versions disagree in both directions. Upgrading Biome is fine; do it deliberately, in one commit, with the reformat it implies.
 
 ## In-app help
 - Packages contribute help via a `help/` directory of `<id>.md` files. Each file is a markdown document with a YAML frontmatter block (`title`, `summary` required; `tags: [..]` and `order: N` optional). The filename (without `.md`) is the topic ID. Declare it in `manifest.ts` with `help: { directory: 'help' }`. The generator writes `tinycld/lib/generated/package-help.ts`; topics surface in the global hub at `/help`, the per-package help screen, and the right-slide drawer.
