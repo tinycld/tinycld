@@ -16,6 +16,7 @@ jobs:
   checks:
     name: Lint, Typecheck, Unit (app)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       # This repo (the merged app shell + core) is the triggering checkout. It IS
       # the `tinycld` workspace member, so check it out into the ws/tinycld slot —
@@ -51,6 +52,7 @@ jobs:
   go:
     name: Go build & test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       # Same minimal assembly as the checks job — app+core only. The generator
       # always emits server/go.work listing core (so even a zero-feature build
@@ -88,6 +90,7 @@ jobs:
   e2e:
     name: E2E (app shell)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       # app+core assembled by bootstrap as usual, then we scaffold a tiny
       # shortcut-stub package locally so the keyboard-shortcut tests have

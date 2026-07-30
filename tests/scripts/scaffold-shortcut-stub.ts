@@ -49,6 +49,13 @@ export const STUB_NAV_LABEL = 'Shortcut Stub'
 // deliberately when adopting a new bootstrap that changes scaffold output.
 const BOOTSTRAP_VERSION = '@tinycld/bootstrap@2.4.0'
 
+// Every subprocess this script runs finishes in well under a minute; an
+// unbounded spawnSync turns a rare wedge (seen once in CI: `pnpm run
+// packages:generate` produced no output and sat until the job was
+// cancelled 68 minutes later) into a silent runner burn. A bounded call
+// fails loudly with the step name instead.
+const SUBPROCESS_TIMEOUT_MS = 5 * 60_000
+
 function workspaceRoot(): string {
     // tinycld/tests/scripts/scaffold-shortcut-stub.ts → tinycld/ → workspace root
     return resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..')
@@ -82,7 +89,7 @@ function ensureBootstrapped(wsRoot: string): void {
             '--target',
             stubDir,
         ],
-        { stdio: 'inherit', cwd: wsRoot }
+        { stdio: 'inherit', cwd: wsRoot, timeout: SUBPROCESS_TIMEOUT_MS }
     )
 }
 
@@ -191,10 +198,15 @@ function ensureMember(wsRoot: string): void {
     // (CI runs pnpm install before invoking this script) — the first-time
     // scaffold path needs a second install to wire the symlink; subsequent
     // runs are no-ops. corepack enable selects the pinned pnpm.
-    spawnSync('corepack', ['enable'], { cwd: wsRoot, stdio: 'inherit' })
+    spawnSync('corepack', ['enable'], {
+        cwd: wsRoot,
+        stdio: 'inherit',
+        timeout: SUBPROCESS_TIMEOUT_MS,
+    })
     const r = spawnSync('pnpm', ['install', '--no-frozen-lockfile'], {
         cwd: wsRoot,
         stdio: 'inherit',
+        timeout: SUBPROCESS_TIMEOUT_MS,
     })
     if (r.status !== 0) {
         throw new Error(
@@ -231,9 +243,13 @@ function regenerateConfig(wsRoot: string): void {
     const r = spawnSync('pnpm', ['run', 'packages:generate'], {
         cwd: join(wsRoot, 'tinycld'),
         stdio: 'inherit',
+        timeout: SUBPROCESS_TIMEOUT_MS,
     })
     if (r.status !== 0) {
-        throw new Error('packages:generate failed; shortcut-stub will not be loaded by the app')
+        const cause = r.error ? ` (${r.error.message})` : ''
+        throw new Error(
+            `packages:generate failed${cause}; shortcut-stub will not be loaded by the app`
+        )
     }
 }
 
