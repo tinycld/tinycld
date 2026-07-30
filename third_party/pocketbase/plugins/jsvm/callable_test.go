@@ -23,7 +23,7 @@ func newTestCompiler(t *testing.T, poolSize int) (Compiler, *vmsPool, func()) {
 		return vm
 	}
 
-	pool := newPool(poolSize, createVM)
+	pool := newPool(poolSize, 0, createVM)
 	p := &plugin{app: testApp}
 
 	return p.newCompiler(pool), pool, testApp.Cleanup

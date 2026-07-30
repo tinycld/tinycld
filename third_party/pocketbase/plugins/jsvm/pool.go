@@ -2,6 +2,7 @@ package jsvm
 
 import (
 	"sync"
+	"time"
 
 	"github.com/grafana/sobek"
 )
@@ -16,13 +17,19 @@ type vmsPool struct {
 	mux     sync.RWMutex
 	factory func() *sobek.Runtime
 	items   []*poolItem
+
+	// budget bounds each run's execution (see Config.ExecTimeout); 0 = none.
+	// Without it a single runaway handler occupies its executor forever, and
+	// pool-size runaways wedge every hook in the app.
+	budget time.Duration
 }
 
 // newPool creates a new pool with pre-warmed vms generated from the specified factory.
-func newPool(size int, factory func() *sobek.Runtime) *vmsPool {
+func newPool(size int, budget time.Duration, factory func() *sobek.Runtime) *vmsPool {
 	pool := &vmsPool{
 		factory: factory,
 		items:   make([]*poolItem, size),
+		budget:  budget,
 	}
 
 	for i := 0; i < size; i++ {
@@ -59,10 +66,11 @@ func (p *vmsPool) run(call func(vm *sobek.Runtime) error) error {
 	// note: if turned out not efficient we may change this in the future
 	// by adding the created item in the pool with some timer for removal
 	if freeItem == nil {
-		return call(p.factory())
+		vm := p.factory()
+		return runBudgeted(vm, p.budget, func() error { return call(vm) })
 	}
 
-	execErr := call(freeItem.vm)
+	execErr := runBudgeted(freeItem.vm, p.budget, func() error { return call(freeItem.vm) })
 
 	// "free" the vm
 	freeItem.mux.Lock()

@@ -25,7 +25,7 @@ func TestHooksAppReset(t *testing.T) {
 
 	loader := createVM()
 
-	pool := newPool(1, createVM)
+	pool := newPool(1, 0, createVM)
 
 	(&plugin{app: testApp}).hooksBinds(loader, pool)
 
@@ -85,7 +85,7 @@ func TestRouterHandlerAppReset(t *testing.T) {
 
 	loader := createVM()
 
-	pool := newPool(1, createVM)
+	pool := newPool(1, 0, createVM)
 
 	(&plugin{app: testApp}).routerBinds(loader, pool)
 
@@ -165,7 +165,7 @@ func TestRouterMiddlewareFuncAppReset(t *testing.T) {
 
 	loader := createVM()
 
-	pool := newPool(1, createVM)
+	pool := newPool(1, 0, createVM)
 
 	(&plugin{app: testApp}).routerBinds(loader, pool)
 
@@ -247,7 +247,7 @@ func TestRouterMiddlewareClassAppReset(t *testing.T) {
 
 	loader := createVM()
 
-	pool := newPool(1, createVM)
+	pool := newPool(1, 0, createVM)
 
 	(&plugin{app: testApp}).routerBinds(loader, pool)
 

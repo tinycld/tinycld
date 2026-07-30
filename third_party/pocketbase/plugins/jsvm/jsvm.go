@@ -90,6 +90,17 @@ type Config struct {
 	// Default false preserves the full stock single-app API (byte-for-byte).
 	Sandboxed bool
 
+	// ExecTimeout bounds every single JS execution: load-time evaluation of
+	// hook and migration files, registered migration up/down runs, and each
+	// pooled handler invocation. Withheld bindings do not bound COMPUTE — a
+	// `while(true){}` at the top of a hostile package's hook file otherwise
+	// spins the loading goroutine forever, which for a tenant is a boot that
+	// never completes.
+	//
+	// Zero picks the default: 30s when Sandboxed, unlimited otherwise (stock
+	// behavior). Negative disables the budget explicitly.
+	ExecTimeout time.Duration
+
 	// HooksWatch enables auto app restarts when a JS app hook file changes.
 	//
 	// Note that currently the application cannot be automatically restarted on Windows
@@ -206,6 +217,42 @@ type plugin struct {
 	config Config
 }
 
+// defaultSandboxExecTimeout is generous for real package code — hook farms
+// compile in milliseconds and migrations run in well under a second — while
+// still turning a deliberate wedge into a classifiable error.
+const defaultSandboxExecTimeout = 30 * time.Second
+
+// execTimeout resolves the effective per-execution budget from the config.
+func (p *plugin) execTimeout() time.Duration {
+	switch {
+	case p.config.ExecTimeout > 0:
+		return p.config.ExecTimeout
+	case p.config.ExecTimeout < 0:
+		return 0
+	case p.config.Sandboxed:
+		return defaultSandboxExecTimeout
+	default:
+		return 0 // stock single-app behavior: trusted code, no budget
+	}
+}
+
+// runBudgeted executes fn with a wall-clock budget on vm. The interrupt is
+// cleared afterwards either way, so a pooled VM that overran once is usable
+// for the next invocation.
+func runBudgeted(vm *sobek.Runtime, budget time.Duration, fn func() error) error {
+	if budget <= 0 {
+		return fn()
+	}
+	timer := time.AfterFunc(budget, func() {
+		vm.Interrupt(fmt.Sprintf("JS execution exceeded the %s budget", budget))
+	})
+	defer func() {
+		timer.Stop()
+		vm.ClearInterrupt()
+	}()
+	return fn()
+}
+
 // newRequireRegistry builds the require registry for a plugin's VMs. When
 // sandboxed it installs a loader that refuses every file-based require (native
 // modules like process/console/buffer bypass the loader and still work), so
@@ -274,15 +321,31 @@ func (p *plugin) registerMigrations() error {
 		setTemplateBinding(vm, templateRegistry, p.config.Sandboxed)
 		vm.Set("__hooks", absHooksDir)
 
+		// The up/down callbacks execute LATER (RunAllMigrations, against the
+		// tenant's DB) on this same vm, so they carry the budget with them —
+		// bounding only the file's top level would leave the actual migration
+		// run free to spin.
+		budget := p.execTimeout()
+		wrapMigration := func(fn func(txApp core.App) error) func(core.App) error {
+			if fn == nil || budget <= 0 {
+				return fn
+			}
+			return func(txApp core.App) error {
+				return runBudgeted(vm, budget, func() error { return fn(txApp) })
+			}
+		}
 		vm.Set("migrate", func(up, down func(txApp core.App) error) {
-			core.AppMigrations.Register(up, down, file)
+			core.AppMigrations.Register(wrapMigration(up), wrapMigration(down), file)
 		})
 
 		if p.config.OnInit != nil {
 			p.config.OnInit(vm)
 		}
 
-		_, err := vm.RunScript(defaultScriptPath, string(content))
+		err := runBudgeted(vm, budget, func() error {
+			_, rerr := vm.RunScript(defaultScriptPath, string(content))
+			return rerr
+		})
 		if err != nil {
 			return fmt.Errorf("failed to run migration %s: %w", file, err)
 		}
@@ -380,7 +443,7 @@ func (p *plugin) registerHooks() error {
 	}
 
 	// initiliaze the executor vms
-	executors := newPool(p.config.HooksPoolSize, func() *sobek.Runtime {
+	executors := newPool(p.config.HooksPoolSize, p.execTimeout(), func() *sobek.Runtime {
 		executor := sobek.New()
 		sharedBinds(executor)
 		return executor
@@ -438,7 +501,13 @@ func (p *plugin) compileHookFiles(loader *sobek.Runtime, files map[string][]byte
 			if cerr != nil {
 				panic(cerr)
 			}
-			if _, rerr := loader.RunProgram(prog); rerr != nil {
+			// Budgeted per file: a hostile hook file's top-level spin must
+			// fail THIS load, not wedge the whole app's boot.
+			rerr := runBudgeted(loader, p.execTimeout(), func() error {
+				_, err := loader.RunProgram(prog)
+				return err
+			})
+			if rerr != nil {
 				panic(rerr)
 			}
 		}()

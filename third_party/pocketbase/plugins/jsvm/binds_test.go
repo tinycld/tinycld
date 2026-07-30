@@ -1594,7 +1594,7 @@ func TestCronBindsCount(t *testing.T) {
 
 	vm := sobek.New()
 
-	pool := newPool(1, func() *sobek.Runtime { return sobek.New() })
+	pool := newPool(1, 0, func() *sobek.Runtime { return sobek.New() })
 
 	(&plugin{app: app}).cronBinds(vm, pool)
 
@@ -1632,7 +1632,7 @@ func TestHooksBinds(t *testing.T) {
 		return vm
 	}
 
-	pool := newPool(1, vmFactory)
+	pool := newPool(1, 0, vmFactory)
 
 	vm := vmFactory()
 	(&plugin{app: app}).hooksBinds(vm, pool)
@@ -1718,7 +1718,7 @@ func TestHooksExceptionUnwrapping(t *testing.T) {
 		return vm
 	}
 
-	pool := newPool(1, vmFactory)
+	pool := newPool(1, 0, vmFactory)
 
 	vm := vmFactory()
 	(&plugin{app: app}).hooksBinds(vm, pool)
@@ -1773,7 +1773,7 @@ func TestRouterBinds(t *testing.T) {
 		return vm
 	}
 
-	pool := newPool(1, vmFactory)
+	pool := newPool(1, 0, vmFactory)
 
 	vm := vmFactory()
 	(&plugin{app: app}).routerBinds(vm, pool)
