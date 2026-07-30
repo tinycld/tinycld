@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/emersion/go-vcard"
+	"github.com/emersion/go-webdav"
 	"github.com/emersion/go-webdav/carddav"
 	"github.com/google/uuid"
 	"github.com/pocketbase/pocketbase/core"
@@ -17,7 +18,20 @@ import (
 
 	"tinycld.org/core/davauth"
 	"tinycld.org/core/davcond"
+	"tinycld.org/core/pkgaccess"
 )
+
+// requirePkgWrite refuses the write when the caller's org_pkg_access level
+// for this source's package is not full. CardDAV bypasses the REST layer
+// (where core's request-hook guard lives), so a readonly user's address-book
+// client could otherwise still create, edit, and delete contacts. Reads are
+// untouched: readonly means read.
+func (b *Backend) requirePkgWrite(user *core.Record, src Source) error {
+	if err := pkgaccess.WriteError(b.app, user, src.Slug); err != nil {
+		return webdav.NewHTTPError(http.StatusForbidden, err)
+	}
+	return nil
+}
 
 type contextKey string
 
@@ -163,6 +177,10 @@ func (b *Backend) PutAddressObject(ctx context.Context, path string, card vcard.
 
 	uid := card.Value(vcard.FieldUID)
 
+	if err := b.requirePkgWrite(user, src); err != nil {
+		return nil, err
+	}
+
 	existing, bookPath, _ := b.resolveObjectByPath(ctx, src, path)
 
 	if opts != nil {
@@ -283,6 +301,13 @@ func (b *Backend) DeleteAddressObject(ctx context.Context, path string) error {
 	src, ok := b.source()
 	if !ok {
 		return fmt.Errorf("no carddav source registered")
+	}
+	user, err := b.authFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	if err := b.requirePkgWrite(user, src); err != nil {
+		return err
 	}
 	record, _, err := b.resolveObjectByPath(ctx, src, path)
 	if err != nil {

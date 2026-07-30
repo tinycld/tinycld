@@ -370,6 +370,10 @@ func (fs *FileSystem) openForWrite(ctx context.Context, name string, flag int) (
 		return nil, err
 	}
 
+	if err := fs.requirePkgWrite(user); err != nil {
+		return nil, err
+	}
+
 	if len(segments) == 0 {
 		return nil, os.ErrPermission
 	}
@@ -430,6 +434,10 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, _ os.FileMode) err
 		return err
 	}
 
+	if err := fs.requirePkgWrite(user); err != nil {
+		return err
+	}
+
 	if len(segments) == 0 {
 		return os.ErrPermission
 	}
@@ -474,6 +482,10 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) error {
 		return err
 	}
 
+	if err := fs.requirePkgWrite(user); err != nil {
+		return err
+	}
+
 	if len(segments) == 0 {
 		return os.ErrPermission
 	}
@@ -510,6 +522,10 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) error {
 func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) error {
 	user, srcSegments, err := fs.resolveContext(ctx, oldName)
 	if err != nil {
+		return err
+	}
+
+	if err := fs.requirePkgWrite(user); err != nil {
 		return err
 	}
 

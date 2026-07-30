@@ -300,6 +300,24 @@ combination. The manifest is read by the generator with a regex +
 `new Function` (not a real `import`), so it must be a plain object literal with
 no runtime imports.
 
+### Collection naming and package access enforcement
+
+**Name every collection your package creates `<slug>_*` (or exactly the
+slug).** That is more than a style rule: `core/server/pkgaccess` resolves
+which installed package (pkg_registry) owns a collection by this convention —
+dashes in a slug match underscores in the name — and enforces the per-user
+`org_pkg_access` level on it server-side. A `readonly` or `none` user's
+writes to owned collections are refused on the REST record endpoints, the
+DAV protocol servers, and mail's IMAP/SMTP sessions; reads stay governed by
+the collection's own rules. The client mirrors the same resolution in
+`usePkgAccess` for UI gating.
+
+Because ownership is name-derived, enforcement covers TS-only packages with
+no Go of their own. A collection named outside the convention is treated as
+core/shared data and gets **no** package-access enforcement — deliberate for
+genuinely shared infrastructure (drive's polymorphic `comment_mentions`),
+a silent hole for anything else.
+
 ### Manifest variation across shipped packages
 
 - **contacts / mail** use `sidebar`; **calc** uses `provider`.

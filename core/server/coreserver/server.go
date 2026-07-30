@@ -16,6 +16,7 @@ import (
 
 	"tinycld.org/core/notify"
 	"tinycld.org/core/offboard"
+	"tinycld.org/core/pkgaccess"
 	"tinycld.org/core/quota"
 	"tinycld.org/core/realtime"
 	"tinycld.org/core/sharelink"
@@ -285,6 +286,7 @@ func registerSharedCore(app *pocketbase.PocketBase) {
 	RegisterLastOwnerGuard(app)
 	RegisterUsersDemoAuditHook(app)
 	RegisterDisabledUserGuard(app)
+	pkgaccess.Register(app)
 
 	// Keep the /carddav (and /caldav, /dav) CORS bypass here even though core no
 	// longer serves a protocol handler itself: a package's own Go server (e.g.

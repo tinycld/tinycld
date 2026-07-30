@@ -15,7 +15,20 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/davcond"
+	"tinycld.org/core/pkgaccess"
 )
+
+// requirePkgWrite refuses the write when the caller's org_pkg_access level
+// for this source's package is not full. CalDAV bypasses the REST layer
+// (where core's request-hook guard lives), so a readonly user's calendar
+// client could otherwise still create, edit, and delete events. Reads are
+// untouched: readonly means read.
+func (b *Backend) requirePkgWrite(user *core.Record) error {
+	if err := pkgaccess.WriteError(b.app, user, b.src.Slug); err != nil {
+		return webdav.NewHTTPError(http.StatusForbidden, err)
+	}
+	return nil
+}
 
 // Backend implements go-webdav's caldav.Backend against a PocketBase app,
 // driven by one Source.
@@ -287,6 +300,10 @@ func (b *Backend) PutCalendarObject(ctx context.Context, path string, cal *ical.
 		return nil, err
 	}
 
+	if err := b.requirePkgWrite(user); err != nil {
+		return nil, err
+	}
+
 	calRecord, err := b.calendarByPath(user, path, ruleView)
 	if err != nil {
 		return nil, err
@@ -388,6 +405,10 @@ func (b *Backend) PutCalendarObject(ctx context.Context, path string, cal *ical.
 func (b *Backend) DeleteCalendarObject(ctx context.Context, path string) error {
 	user, err := b.userFromContext(ctx)
 	if err != nil {
+		return err
+	}
+
+	if err := b.requirePkgWrite(user); err != nil {
 		return err
 	}
 
