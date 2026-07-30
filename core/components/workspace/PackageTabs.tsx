@@ -1,4 +1,6 @@
 import { Tabs } from 'expo-router'
+import { View } from 'react-native'
+import { PackageAccessDenied } from './PackageAccessDenied'
 
 /**
  * Org-level package switcher — the navigator that swaps between packages
@@ -26,15 +28,18 @@ import { Tabs } from 'expo-router'
  */
 export function PackageTabs() {
     return (
-        <Tabs
-            tabBar={() => null}
-            backBehavior="history"
-            screenOptions={{
-                headerShown: false,
-                freezeOnBlur: true,
-                lazy: true,
-                animation: 'none',
-            }}
-        />
+        <View className="flex-1" style={{ minHeight: 0 }}>
+            <Tabs
+                tabBar={() => null}
+                backBehavior="history"
+                screenOptions={{
+                    headerShown: false,
+                    freezeOnBlur: true,
+                    lazy: true,
+                    animation: 'none',
+                }}
+            />
+            <PackageAccessDenied />
+        </View>
     )
 }

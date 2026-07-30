@@ -6,7 +6,15 @@ import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 
 export type PackageAccessLevel = 'full' | 'readonly' | 'none'
 
-export function usePkgAccess(pkgSlug: string): PackageAccessLevel {
+export interface PkgAccessResult {
+    access: PackageAccessLevel
+    // False until the caller's override row has loaded. `access` is 'none'
+    // during that window (default-deny); callers that show a "no access"
+    // surface must wait for isReady or they flash it at every member.
+    isReady: boolean
+}
+
+export function usePkgAccessResult(pkgSlug: string): PkgAccessResult {
     const { role } = useCurrentRole()
     const { user } = useAuth()
     const userId = user.id
@@ -23,21 +31,25 @@ export function usePkgAccess(pkgSlug: string): PackageAccessLevel {
     )
 
     // Owners/admins always have full access — no override row to wait for.
-    if (role === 'owner' || role === 'admin') return 'full'
+    if (role === 'owner' || role === 'admin') return { access: 'full', isReady: true }
 
     // Default-DENY until the override query has loaded: a member with a
     // readonly/none override otherwise reads 'full' during the load window and
     // flashes forbidden UI. Once loaded we apply the real default (member: full
     // unless overridden; guest: none unless overridden). The 'none' floor here
     // is transient — it resolves as soon as the org_pkg_access query is ready.
-    if (!isReady) return 'none'
+    if (!isReady) return { access: 'none', isReady: false }
 
     const override = overrides?.[0]
 
     if (role === 'guest') {
-        return (override?.access as PackageAccessLevel) ?? 'none'
+        return { access: (override?.access as PackageAccessLevel) ?? 'none', isReady: true }
     }
 
     // member: default full, override to restrict
-    return (override?.access as PackageAccessLevel) ?? 'full'
+    return { access: (override?.access as PackageAccessLevel) ?? 'full', isReady: true }
+}
+
+export function usePkgAccess(pkgSlug: string): PackageAccessLevel {
+    return usePkgAccessResult(pkgSlug).access
 }

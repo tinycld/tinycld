@@ -1,10 +1,13 @@
+import { GuestEmptyState } from '@tinycld/core/components/GuestEmptyState'
 import { trace } from '@tinycld/core/lib/debug-trace'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
+import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useSortedPackagesResult } from '@tinycld/core/lib/use-sorted-packages'
 import { Redirect } from 'expo-router'
 
 export default function OrgIndex() {
     const { packages: sorted, isReady } = useSortedPackagesResult()
+    const { isGuest } = useCurrentRole()
     const orgHref = useOrgHref()
     const first = sorted[0]
 
@@ -25,6 +28,15 @@ export default function OrgIndex() {
         const href = orgHref(first.slug as never)
         trace('OrgIndex redirect to package', { firstSlug: first.slug, href: JSON.stringify(href) })
         return <Redirect href={href} />
+    }
+
+    // A guest with zero accessible packages is the expected state for a
+    // share-link visitor, not a broken assembly: explain it instead of
+    // silently dumping them into Settings with no way to understand why the
+    // app looks empty.
+    if (isGuest) {
+        trace('OrgIndex guest empty state')
+        return <GuestEmptyState />
     }
 
     // No nav package to land on — a package-less shell, or an org whose only
