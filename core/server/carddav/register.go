@@ -33,7 +33,7 @@ func Register(app *pocketbase.PocketBase, sources []Source) {
 				davauth.Challenge(re.Response, basicRealm)
 				return nil
 			}
-			if davauth.TooManyFailures(re.Request) {
+			if davauth.TooManyFailures(app, re.Request) {
 				http.Error(re.Response, "Too many failed attempts", http.StatusTooManyRequests)
 				return nil
 			}
@@ -45,11 +45,11 @@ func Register(app *pocketbase.PocketBase, sources []Source) {
 			// single PROPFIND drives several).
 			r := davauth.WithRequestCache(re.Request)
 			if _, err := davauth.Authenticate(app, r); err != nil {
-				davauth.NoteFailure(r)
+				davauth.NoteFailure(app, r)
 				davauth.Challenge(re.Response, basicRealm)
 				return nil
 			}
-			davauth.NoteSuccess(r)
+			davauth.NoteSuccess(app, r)
 			ctx := context.WithValue(r.Context(), httpRequestKey, r)
 			handler.ServeHTTP(re.Response, r.WithContext(ctx))
 			return nil
@@ -96,7 +96,7 @@ func HandlerFor(app core.App, sources []Source) http.Handler {
 			davauth.Challenge(w, basicRealm)
 			return
 		}
-		if davauth.TooManyFailures(r) {
+		if davauth.TooManyFailures(app, r) {
 			http.Error(w, "Too many failed attempts", http.StatusTooManyRequests)
 			return
 		}
@@ -105,11 +105,11 @@ func HandlerFor(app core.App, sources []Source) http.Handler {
 		// cache keeps it to one verification per request.
 		r = davauth.WithRequestCache(r)
 		if _, err := davauth.Authenticate(app, r); err != nil {
-			davauth.NoteFailure(r)
+			davauth.NoteFailure(app, r)
 			davauth.Challenge(w, basicRealm)
 			return
 		}
-		davauth.NoteSuccess(r)
+		davauth.NoteSuccess(app, r)
 		ctx := context.WithValue(r.Context(), httpRequestKey, r)
 		dav.ServeHTTP(w, r.WithContext(ctx))
 	}

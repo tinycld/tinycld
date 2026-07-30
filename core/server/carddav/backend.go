@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 
 	"tinycld.org/core/davauth"
+	"tinycld.org/core/davcond"
 )
 
 type contextKey string
@@ -150,7 +151,7 @@ func (b *Backend) QueryAddressObjects(ctx context.Context, path string, query *c
 	return b.ListAddressObjects(ctx, path, &query.DataRequest)
 }
 
-func (b *Backend) PutAddressObject(ctx context.Context, path string, card vcard.Card, _ *carddav.PutAddressObjectOptions) (*carddav.AddressObject, error) {
+func (b *Backend) PutAddressObject(ctx context.Context, path string, card vcard.Card, opts *carddav.PutAddressObjectOptions) (*carddav.AddressObject, error) {
 	src, ok := b.source()
 	if !ok {
 		return nil, fmt.Errorf("no carddav source registered")
@@ -163,6 +164,20 @@ func (b *Backend) PutAddressObject(ctx context.Context, path string, card vcard.
 	uid := card.Value(vcard.FieldUID)
 
 	existing, bookPath, _ := b.resolveObjectByPath(ctx, src, path)
+
+	if opts != nil {
+		// The stored ETag is the record's `updated` stamp (see
+		// recordToAddressObject); enforce the client's conditional headers
+		// against it or a concurrent edit silently loses to last-writer-wins.
+		etag := ""
+		if existing != nil {
+			etag = existing.GetString("updated")
+		}
+		if err := davcond.Check(opts.IfNoneMatch, opts.IfMatch, etag, existing != nil); err != nil {
+			return nil, err
+		}
+	}
+
 	if existing != nil {
 		applyVCardToRecord(card, existing, src.VCard)
 		if err := b.saveAuthorized(user, existing, ruleUpdate); err != nil {

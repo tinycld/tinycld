@@ -56,10 +56,35 @@ type Source struct {
 	// Fields maps the tree's structural roles onto collection fields.
 	Fields FieldMap
 
+	// Trash binds the feature's soft-delete state, when it has one. Set, a
+	// DAV DELETE stamps the per-user trash row (restorable from the feature's
+	// own trash UI) instead of destroying the record; nil keeps hard delete.
+	// Config rather than a hook because a tenant's Source arrives as data.
+	Trash *TrashConfig
+
 	// Hooks are the optional feature side effects. A nil hook means "no extra
 	// work"; it can no longer mean "no restriction", since nothing that
 	// restricts lives here any more.
 	Hooks Hooks
+}
+
+// TrashConfig names the per-user soft-delete state collection — drive's
+// `drive_item_state` — and its fields. One row per (item, user): a non-empty
+// trash stamp hides the entry from THAT user's DAV view; other users (and the
+// feature's trash screen, which restores by clearing the stamp) still see it.
+type TrashConfig struct {
+	// Collection is the state collection (e.g. "drive_item_state").
+	Collection string
+
+	// ItemField is the relation to the tree collection (e.g. "item").
+	ItemField string
+
+	// UserField is the relation to users (e.g. "user").
+	UserField string
+
+	// TrashedAtField is the text/date field stamped on trash; empty value =
+	// not trashed (e.g. "trashed_at").
+	TrashedAtField string
 }
 
 // FieldMap binds tree semantics to collection field names.

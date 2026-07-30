@@ -3,9 +3,12 @@ package davauth
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // Failed-authentication throttling for the DAV protocols.
@@ -63,25 +66,27 @@ var defaultThrottle = &throttle{
 
 // TooManyFailures reports whether this (ip, identifier) pair has exhausted its
 // attempts. Callers answer 429 without touching the database — the point is to
-// stop spending bcrypt on an attacker.
+// stop spending bcrypt on an attacker. The app supplies the TrustedProxy
+// settings that decide whether forwarded headers may name the client; nil is
+// valid and means "trust nothing but the socket peer".
 //
 // A request carrying no credentials at all is never throttled: see isChallenge.
-func TooManyFailures(r *http.Request) bool {
+func TooManyFailures(app core.App, r *http.Request) bool {
 	if isChallenge(r) {
 		return false
 	}
 	identifier, _, _ := r.BasicAuth()
-	return defaultThrottle.blocked(clientIP(r), identifier)
+	return defaultThrottle.blocked(clientIP(app, r), identifier)
 }
 
 // NoteFailure records one failed authentication. A credential-less request is
 // not one — see isChallenge.
-func NoteFailure(r *http.Request) {
+func NoteFailure(app core.App, r *http.Request) {
 	if isChallenge(r) {
 		return
 	}
 	identifier, _, _ := r.BasicAuth()
-	defaultThrottle.note(clientIP(r), identifier)
+	defaultThrottle.note(clientIP(app, r), identifier)
 }
 
 // isChallenge reports whether the request supplied no Basic credentials at all.
@@ -107,9 +112,9 @@ func isChallenge(r *http.Request) bool {
 // NoteSuccess clears the counter: a correct password means this pair is not an
 // attacker, and a user who mistyped twice before getting it right should not
 // carry those failures forward.
-func NoteSuccess(r *http.Request) {
+func NoteSuccess(app core.App, r *http.Request) {
 	identifier, _, _ := r.BasicAuth()
-	defaultThrottle.clear(clientIP(r), identifier)
+	defaultThrottle.clear(clientIP(app, r), identifier)
 }
 
 func (t *throttle) key(ip, identifier string) string {
@@ -177,18 +182,43 @@ func (t *throttle) sweepLocked() {
 	}
 }
 
-// clientIP extracts the caller's address, preferring the proxy chain.
+// clientIP resolves the throttle-bucket address for a request.
 //
-// Under the multi-org router every tenant request arrives over a unix socket,
-// where RemoteAddr is empty — so without the forwarded header every caller
-// would share one bucket and the limiter would throttle the whole deployment
-// once any single attacker tripped it. The leftmost XFF entry is the original
-// client. That header is spoofable by anyone talking to the server directly,
-// which is why this is a cost-raising measure and not an access control.
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		client, _, _ := strings.Cut(xff, ",")
-		return strings.TrimSpace(client)
+// Forwarded headers are honored ONLY when the app's TrustedProxy settings name
+// them — the same switch PocketBase's own RealIP() uses. The multi-org router
+// materializes it for every tenant (whose requests arrive over a unix socket,
+// where RemoteAddr identifies nobody), and a standalone operator sets it when
+// deploying behind a proxy. Trusting the header unconditionally handed it to
+// the CLIENT on any direct connection: rotating it minted a fresh bucket per
+// request (throttle bypass), and naming a victim's egress IP filled the
+// victim's bucket remotely (targeted, refreshable lockout).
+//
+// When a trusted header is read, the RIGHTMOST parseable entry of its LAST
+// value wins (unless UseLeftmostIP) — that is the entry the proxy appended;
+// leftmost values are whatever the client sent. Mirrors core's RealIP.
+func clientIP(app core.App, r *http.Request) string {
+	if app != nil {
+		settings := app.Settings()
+		for _, h := range settings.TrustedProxy.Headers {
+			values := r.Header.Values(h)
+			if len(values) == 0 {
+				continue
+			}
+			ips := strings.Split(values[len(values)-1], ",")
+			if settings.TrustedProxy.UseLeftmostIP {
+				for _, ip := range ips {
+					if parsed, err := netip.ParseAddr(strings.TrimSpace(ip)); err == nil {
+						return parsed.StringExpanded()
+					}
+				}
+			} else {
+				for i := len(ips) - 1; i >= 0; i-- {
+					if parsed, err := netip.ParseAddr(strings.TrimSpace(ips[i])); err == nil {
+						return parsed.StringExpanded()
+					}
+				}
+			}
+		}
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host

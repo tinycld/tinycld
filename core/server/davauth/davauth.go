@@ -45,7 +45,20 @@ func authenticate(app core.App, r *http.Request) (*core.Record, error) {
 	if !ok || identifier == "" {
 		return nil, ErrUnauthorized
 	}
+	return VerifyCredentials(app, identifier, password)
+}
 
+// VerifyCredentials is the one credential check every protocol server shares —
+// DAV Basic auth here, and mail's IMAP LOGIN / SMTP AUTH, which authenticate
+// against the record directly (PocketBase's auth hooks never run for them).
+// Single-sourcing it is what keeps the identifier contract ("username or
+// email") and the disabled cutoff identical across protocols.
+//
+// The identifier may be a bare username or a full email (the discriminator is
+// '@'), mirroring PocketBase's identityFields for `users`. Returns
+// ErrUnauthorized for a missing user, wrong password, or disabled account —
+// deliberately indistinguishable.
+func VerifyCredentials(app core.App, identifier, password string) (*core.Record, error) {
 	var record *core.Record
 	var err error
 	if strings.Contains(identifier, "@") {
@@ -63,8 +76,8 @@ func authenticate(app core.App, r *http.Request) (*core.Record, error) {
 		// Without this the miss path returns in microseconds while a hit pays
 		// the full bcrypt cost — measured at ~700x on a developer machine —
 		// which is a username oracle: an attacker learns which accounts exist
-		// without guessing a single password. DAV has no login form to rate
-		// limit behind, so the timing IS the signal.
+		// without guessing a single password. These protocols have no login
+		// form to rate limit behind, so the timing IS the signal.
 		compareAgainstDummyHash(password)
 		return nil, ErrUnauthorized
 	}
@@ -73,9 +86,9 @@ func authenticate(app core.App, r *http.Request) (*core.Record, error) {
 		return nil, ErrUnauthorized
 	}
 
-	// DAV is Basic-per-request — there is no session token to revoke — so this
-	// check is the only thing that cuts a suspended account off from CardDAV,
-	// CalDAV and WebDAV.
+	// Protocol logins are per-request or per-session — there is no token to
+	// revoke — so this check is the only thing that cuts a suspended account
+	// off from CardDAV, CalDAV, WebDAV, IMAP and SMTP.
 	if record.GetBool("disabled") {
 		return nil, ErrUnauthorized
 	}

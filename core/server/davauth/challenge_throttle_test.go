@@ -55,11 +55,11 @@ func TestCredentiallessRequestsAreNotThrottled(t *testing.T) {
 
 	for i := 0; i < maxFailures*5; i++ {
 		r := davRequest(t, "198.51.100.4", "", "")
-		if TooManyFailures(r) {
+		if TooManyFailures(nil, r) {
 			t.Fatalf("challenge request %d was throttled — clients behind one NAT "+
 				"cannot authenticate at all once this trips", i+1)
 		}
-		NoteFailure(r)
+		NoteFailure(nil, r)
 	}
 
 	// The bucket must be empty, not merely under the limit: a recorded failure
@@ -78,11 +78,11 @@ func TestBlankIdentifierWithPasswordStillCounts(t *testing.T) {
 	for i := 0; i < maxFailures; i++ {
 		r := davRequest(t, "198.51.100.6", "", "")
 		r.Header.Set("Authorization", "Basic OnBhc3N3b3Jk") // ":password"
-		NoteFailure(r)
+		NoteFailure(nil, r)
 	}
 	probe := davRequest(t, "198.51.100.6", "", "")
 	probe.Header.Set("Authorization", "Basic OnBhc3N3b3Jk")
-	if !TooManyFailures(probe) {
+	if !TooManyFailures(nil, probe) {
 		t.Fatal("an empty username with a supplied password evades the limiter")
 	}
 }
@@ -93,13 +93,13 @@ func TestCredentialedFailuresStillThrottle(t *testing.T) {
 	swapThrottle(t)
 
 	for i := 0; i < maxFailures; i++ {
-		NoteFailure(davRequest(t, "198.51.100.5", "victim@example.com", "guess"))
+		NoteFailure(nil, davRequest(t, "198.51.100.5", "victim@example.com", "guess"))
 	}
-	if !TooManyFailures(davRequest(t, "198.51.100.5", "victim@example.com", "guess")) {
+	if !TooManyFailures(nil, davRequest(t, "198.51.100.5", "victim@example.com", "guess")) {
 		t.Fatal("credentialed guessing is no longer throttled")
 	}
 	// A different account from the same host keeps its own budget.
-	if TooManyFailures(davRequest(t, "198.51.100.5", "other@example.com", "guess")) {
+	if TooManyFailures(nil, davRequest(t, "198.51.100.5", "other@example.com", "guess")) {
 		t.Fatal("an unrelated account was throttled")
 	}
 }

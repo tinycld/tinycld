@@ -58,17 +58,17 @@ func Register(app *pocketbase.PocketBase, sources []Source, host HostBindings) [
 			serve := func(re *core.RequestEvent) error {
 				// Refuse before spending bcrypt: the point of the limit is to
 				// stop an attacker making the server do the expensive part.
-				if davauth.TooManyFailures(re.Request) {
+				if davauth.TooManyFailures(app, re.Request) {
 					http.Error(re.Response, "Too many failed attempts", http.StatusTooManyRequests)
 					return nil
 				}
 				user, err := davauth.Authenticate(app, re.Request)
 				if err != nil {
-					davauth.NoteFailure(re.Request)
+					davauth.NoteFailure(app, re.Request)
 					davauth.Challenge(re.Response, basicRealm)
 					return nil
 				}
-				davauth.NoteSuccess(re.Request)
+				davauth.NoteSuccess(app, re.Request)
 				// Auth once per request; backend methods read the user off the
 				// context rather than re-verifying per call.
 				handler.ServeHTTP(re.Response, re.Request.WithContext(withUser(re.Request.Context(), user)))
@@ -124,17 +124,17 @@ func HandlerFor(app core.App, sources []Source, host HostBindings) (http.Handler
 		}
 		serve := func(w http.ResponseWriter, r *http.Request) {
 			// See Register: refuse before spending bcrypt on an attacker.
-			if davauth.TooManyFailures(r) {
+			if davauth.TooManyFailures(app, r) {
 				http.Error(w, "Too many failed attempts", http.StatusTooManyRequests)
 				return
 			}
 			user, err := davauth.Authenticate(app, r)
 			if err != nil {
-				davauth.NoteFailure(r)
+				davauth.NoteFailure(app, r)
 				davauth.Challenge(w, basicRealm)
 				return
 			}
-			davauth.NoteSuccess(r)
+			davauth.NoteSuccess(app, r)
 			handler.ServeHTTP(w, r.WithContext(withUser(r.Context(), user)))
 		}
 

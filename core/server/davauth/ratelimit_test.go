@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tests"
 )
 
 // newTestThrottle returns a throttle with a controllable clock, so the sliding
@@ -121,21 +124,33 @@ func TestThrottle_SweepsExpiredEntries(t *testing.T) {
 	}
 }
 
-// Under the multi-org router a tenant request arrives over a unix socket where
-// RemoteAddr is empty. Without reading the forwarded chain every caller would
-// share one bucket, so a single attacker would throttle the whole deployment.
-func TestClientIP_PrefersForwardedChain(t *testing.T) {
+// The forwarded chain is honored only when the app's TrustedProxy settings
+// name the header (see ratelimit_spoof_test.go for why); a nil app or an
+// unconfigured one keys strictly on the socket peer. Under the multi-org
+// router the tenant's settings always carry X-Forwarded-For (materialized
+// into app.json), so unix-socket requests — whose RemoteAddr identifies
+// nobody — still get per-client buckets.
+func TestClientIP_TrustSwitch(t *testing.T) {
+	trusted, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer trusted.Cleanup()
+	trusted.Settings().TrustedProxy.Headers = []string{"X-Forwarded-For"}
+
 	cases := []struct {
 		name       string
+		app        core.App
 		remoteAddr string
 		xff        string
 		want       string
 	}{
-		{"direct connection", "192.0.2.7:51234", "", "192.0.2.7"},
-		{"behind a proxy", "", "203.0.113.9", "203.0.113.9"},
-		{"proxy chain uses the original client", "", "203.0.113.9, 70.41.3.18", "203.0.113.9"},
-		{"chain with spaces", "", "  203.0.113.9 , 70.41.3.18", "203.0.113.9"},
-		{"unix socket, no chain", "", "", ""},
+		{"direct connection", nil, "192.0.2.7:51234", "", "192.0.2.7"},
+		{"direct connection ignores spoofed header", nil, "192.0.2.7:51234", "203.0.113.9", "192.0.2.7"},
+		{"trusted proxy reads the header", trusted, "", "203.0.113.9", "203.0.113.9"},
+		{"trusted proxy uses the proxy-appended (rightmost) entry", trusted, "", "10.9.9.9, 203.0.113.9", "203.0.113.9"},
+		{"trusted chain with spaces", trusted, "", " 10.9.9.9 , 203.0.113.9 ", "203.0.113.9"},
+		{"unix socket, no chain", trusted, "", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,7 +162,7 @@ func TestClientIP_PrefersForwardedChain(t *testing.T) {
 			if tc.xff != "" {
 				r.Header.Set("X-Forwarded-For", tc.xff)
 			}
-			if got := clientIP(r); got != tc.want {
+			if got := clientIP(tc.app, r); got != tc.want {
 				t.Errorf("clientIP() = %q, want %q", got, tc.want)
 			}
 		})

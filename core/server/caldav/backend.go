@@ -13,6 +13,8 @@ import (
 	"github.com/emersion/go-webdav/caldav"
 	"github.com/google/uuid"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/davcond"
 )
 
 // Backend implements go-webdav's caldav.Backend against a PocketBase app,
@@ -279,7 +281,7 @@ func (b *Backend) QueryCalendarObjects(ctx context.Context, path string, _ *cald
 	return b.ListCalendarObjects(ctx, path, nil)
 }
 
-func (b *Backend) PutCalendarObject(ctx context.Context, path string, cal *ical.Calendar, _ *caldav.PutCalendarObjectOptions) (*caldav.CalendarObject, error) {
+func (b *Backend) PutCalendarObject(ctx context.Context, path string, cal *ical.Calendar, opts *caldav.PutCalendarObjectOptions) (*caldav.CalendarObject, error) {
 	user, err := b.userFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -301,6 +303,19 @@ func (b *Backend) PutCalendarObject(ctx context.Context, path string, cal *ical.
 	}
 
 	existing := b.findEventByUID(calID, icalUID)
+
+	if opts != nil {
+		// The stored ETag is the record's `updated` stamp (see
+		// toCalendarObject); enforce the client's conditional headers against
+		// it or a concurrent edit silently loses to last-writer-wins.
+		etag := ""
+		if existing != nil && b.src.Event.Updated != "" {
+			etag = existing.GetString(b.src.Event.Updated)
+		}
+		if err := davcond.Check(opts.IfNoneMatch, opts.IfMatch, etag, existing != nil); err != nil {
+			return nil, err
+		}
+	}
 
 	if err := b.hookBeforeWrite(user.Id, calID, icalUID, existing == nil); err != nil {
 		return nil, err

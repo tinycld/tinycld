@@ -290,6 +290,9 @@ func (fs *FileSystem) Stat(ctx context.Context, name string) (os.FileInfo, error
 	if err := fs.canRead(user, record); err != nil {
 		return nil, os.ErrNotExist
 	}
+	if err := fs.maskTrashed(user, record); err != nil {
+		return nil, err
+	}
 
 	return fs.recordToFileInfo(record), nil
 }
@@ -330,6 +333,9 @@ func (fs *FileSystem) openForRead(ctx context.Context, name string) (webdav.File
 	// Same not-found masking as Stat.
 	if err := fs.canRead(user, record); err != nil {
 		return nil, os.ErrNotExist
+	}
+	if err := fs.maskTrashed(user, record); err != nil {
+		return nil, err
 	}
 
 	if record.GetBool(fs.src.Fields.IsFolder) {
@@ -379,6 +385,13 @@ func (fs *FileSystem) openForWrite(ctx context.Context, name string, flag int) (
 	// difference between that refusal and a clean create is enough to prove
 	// the name is taken in a tree they cannot read.
 	if existing != nil && fs.canRead(user, existing) != nil {
+		return nil, errConflict
+	}
+	// Nor may an entry in the caller's trash: writing into it would silently
+	// resurrect (and overwrite) trashed content. The record still owns the
+	// (parent, name) slot, so the honest answer is the same conflict the web
+	// UI reports for a taken name.
+	if existing != nil && fs.isTrashedFor(user, existing) {
 		return nil, errConflict
 	}
 	if existing != nil && existing.GetBool(fs.src.Fields.IsFolder) {
@@ -451,8 +464,10 @@ func (fs *FileSystem) Mkdir(ctx context.Context, name string, _ os.FileMode) err
 	})
 }
 
-// RemoveAll deletes the record at the given path. PocketBase cascade rules
-// handle recursive deletion of a folder's children.
+// RemoveAll handles DELETE. With a Trash binding the record is stamped into
+// the user's trash — the same write the feature's own trash action performs,
+// restorable from its trash screen — and only an unbound source destroys the
+// record (PocketBase cascade rules then handle a folder's children).
 func (fs *FileSystem) RemoveAll(ctx context.Context, name string) error {
 	user, segments, err := fs.resolveContext(ctx, name)
 	if err != nil {
@@ -468,6 +483,11 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) error {
 		return err
 	}
 
+	// Already in this user's trash ⇒ gone from their DAV view.
+	if err := fs.maskTrashed(user, record); err != nil {
+		return err
+	}
+
 	// Masked, not forbidden: a 403 here would confirm the path exists to a
 	// caller who cannot read it.
 	if err := fs.authorizeOrMask(user, record, ruleDelete); err != nil {
@@ -478,6 +498,9 @@ func (fs *FileSystem) RemoveAll(ctx context.Context, name string) error {
 		return err
 	}
 
+	if fs.src.Trash != nil {
+		return fs.moveToTrash(user, record)
+	}
 	return fs.app.Delete(record)
 }
 
@@ -498,6 +521,11 @@ func (fs *FileSystem) Rename(ctx context.Context, oldName, newName string) error
 
 	srcRecord, err := fs.resolveByPath(srcSegments)
 	if err != nil {
+		return err
+	}
+
+	// An entry in the caller's trash cannot be MOVEd — it is not in their view.
+	if err := fs.maskTrashed(user, srcRecord); err != nil {
 		return err
 	}
 
@@ -561,8 +589,17 @@ func (fs *FileSystem) listChildren(ctx context.Context, parentID string, user *c
 		return nil, err
 	}
 
+	// One query for the caller's whole trash, not one per row.
+	trashed, err := fs.trashedIDsFor(user)
+	if err != nil {
+		return nil, err
+	}
+
 	infos := make([]os.FileInfo, 0, len(records))
 	for _, r := range records {
+		if trashed[r.Id] {
+			continue
+		}
 		if fs.authorize(user, r, ruleList) != nil {
 			continue
 		}
