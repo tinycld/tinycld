@@ -320,6 +320,7 @@ The canonical config excludes generated artifacts — `server`, `lib/generated`,
 - **Whenever you implement or significantly change a user-facing feature, add or update a help topic for it.** The feature is not "done" until a user can find out how to use it from inside the app.
 - Open the drawer to a specific topic from anywhere with `openHelp('<pkg>:<id>')` from `@tinycld/core/lib/help/open-help`. Render `<HelpIcon topic="<pkg>:<id>" />` from `@tinycld/core/components/help/HelpIcon` next to UI controls. Cross-link between topics inside markdown bodies with `[label](help://<pkg>:<id>)` — the renderer intercepts that scheme and reopens the drawer instead of navigating away.
 - Permalinks: `/help/[pkg]/[topic]` is a real route — shareable in conversation. The hub has full-text search (substring, weighted: title > tags > summary > body).
+- **Deployment tokens:** write `{{server-host}}` wherever a body needs the deployment's hostname (connection settings, example URLs) — the viewer substitutes the hostname the app actually talks to (`core/lib/help/tokens.ts`). It is a whole-body text replacement, so it works inside code spans and fenced blocks. Never hand-author an example hostname like `mail.example.com` for a value the reader must copy.
 
 ## Forms and other components
 - All form UI components live in `@tinycld/core/ui/form/` (barrel at `tinycld/core/ui/form/index.ts`) and are imported from `@tinycld/core/ui/form`

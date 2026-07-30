@@ -1,4 +1,4 @@
-import { orgUrlForSlug, parseOrgsCookie } from '@tinycld/core/lib/org-cookie'
+import { apexUrlForHost, orgUrlForSlug, parseOrgsCookie } from '@tinycld/core/lib/org-cookie'
 import { Platform } from 'react-native'
 
 // The orgs this browser has signed into, from the parent-domain cookie each
@@ -26,6 +26,15 @@ export function useUserOrgs(): UserOrgEntry[] {
         entries.push({ id: entry.slug, name: entry.name, slug: entry.slug, url })
     }
     return entries
+}
+
+/** The apex org-finder URL (the router's discovery page for orgs this browser
+ *  has NOT signed into), derived from this page's own parent domain. Null on
+ *  native, standalone deployments, and bare hosts — anywhere there is no
+ *  router apex to link to. */
+export function useApexUrl(): string | null {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return null
+    return apexUrlForHost(window.location.hostname)
 }
 
 /** Whether an org entry points at the origin the app is currently served

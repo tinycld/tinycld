@@ -1,4 +1,5 @@
 import { Text, View } from 'react-native'
+import { substituteHelpTokens } from '../../lib/help/tokens'
 import type { HelpTopic } from '../../lib/help/types'
 import { MarkdownRenderer } from './MarkdownRenderer'
 
@@ -16,7 +17,7 @@ export function HelpTopicView({ topic, showTitle = true }: Props) {
                     <Text className="text-sm text-muted-foreground mt-1">{topic.summary}</Text>
                 </View>
             )}
-            <MarkdownRenderer body={topic.body} />
+            <MarkdownRenderer body={substituteHelpTokens(topic.body)} />
         </View>
     )
 }

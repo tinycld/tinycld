@@ -72,3 +72,16 @@ export function orgUrlForSlug(slug: string, currentHostname: string): string | n
     if (dot < 0 || dot === currentHostname.length - 1) return null
     return `https://${slug}${currentHostname.slice(dot)}`
 }
+
+/** Derives the apex origin (the router's org-finder page) from the hostname
+ *  this app is served from: https://<parent-of-currentHostname>. The parent
+ *  must itself contain a dot — the "parent" of a bare registrable domain is a
+ *  TLD, not an apex we host — so a standalone deployment on its own domain
+ *  gets null and no finder link. */
+export function apexUrlForHost(currentHostname: string): string | null {
+    const dot = currentHostname.indexOf('.')
+    if (dot < 0) return null
+    const parent = currentHostname.slice(dot + 1)
+    if (!parent.includes('.') || parent.endsWith('.')) return null
+    return `https://${parent}`
+}

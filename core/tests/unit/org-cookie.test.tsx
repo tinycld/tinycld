@@ -1,7 +1,12 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from 'vitest'
 
-import { ORGS_COOKIE_NAME, orgUrlForSlug, parseOrgsCookie } from '../../lib/org-cookie'
+import {
+    apexUrlForHost,
+    ORGS_COOKIE_NAME,
+    orgUrlForSlug,
+    parseOrgsCookie,
+} from '../../lib/org-cookie'
 
 function cookieFor(value: unknown): string {
     return `${ORGS_COOKIE_NAME}=${encodeURIComponent(JSON.stringify(value))}`
@@ -71,5 +76,21 @@ describe('orgUrlForSlug', () => {
         expect(orgUrlForSlug('beta', 'localhost')).toBeNull()
         expect(orgUrlForSlug('evil.example/x', 'acme.tinycld.org')).toBeNull()
         expect(orgUrlForSlug('', 'acme.tinycld.org')).toBeNull()
+    })
+})
+
+// The apex hosts the router's org-finder page — the discovery path for a user
+// whose other orgs this browser has never signed into.
+describe('apexUrlForHost', () => {
+    it('derives the parent-domain origin from the current hostname', () => {
+        expect(apexUrlForHost('acme.tinycld.org')).toBe('https://tinycld.org')
+        expect(apexUrlForHost('acme.tenants.example.test')).toBe('https://tenants.example.test')
+    })
+
+    it('refuses hosts with no usable parent domain', () => {
+        expect(apexUrlForHost('localhost')).toBeNull()
+        expect(apexUrlForHost('tinycld.org.')).toBeNull()
+        // A bare registrable domain's "parent" is a TLD, not an apex we host.
+        expect(apexUrlForHost('tinycld.org')).toBeNull()
     })
 })

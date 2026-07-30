@@ -6,9 +6,9 @@ import { navigateToOrgUrl } from '@tinycld/core/lib/org-url'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu, Separator } from '@tinycld/core/ui/menu'
 import { useRouter } from 'expo-router'
-import { LogOut, Settings, User } from 'lucide-react-native'
+import { Globe, LogOut, Settings, User } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
-import { isCurrentOrg, type UserOrgEntry, useUserOrgs } from './useUserOrgs'
+import { isCurrentOrg, type UserOrgEntry, useApexUrl, useUserOrgs } from './useUserOrgs'
 
 export function UserMenu() {
     const railActiveText = useThemeColor('rail-active-text')
@@ -59,7 +59,10 @@ export function UserMenu() {
 // Cross-org switching: entries come from the parent-domain cookie the tenants
 // write at login (useUserOrgs); each row is a full page load on the target
 // org's own origin. Renders nothing on a standalone deployment (empty cookie).
+// The cookie only knows orgs this browser has signed into, so the section ends
+// with a link to the apex org-finder page — the discovery path for the rest.
 function OrganizationsSection({ orgs }: { orgs: UserOrgEntry[] }) {
+    const apexUrl = useApexUrl()
     if (orgs.length === 0) return null
     return (
         <>
@@ -75,6 +78,14 @@ function OrganizationsSection({ orgs }: { orgs: UserOrgEntry[] }) {
                     onPress={() => navigateToOrgUrl(org.url)}
                 />
             ))}
+            {apexUrl !== null && (
+                <MenuActionItem
+                    label="Open another organization…"
+                    icon={Globe}
+                    href={apexUrl}
+                    onPress={() => navigateToOrgUrl(apexUrl)}
+                />
+            )}
         </>
     )
 }
