@@ -1,4 +1,4 @@
-import { parseOrgsCookie } from '@tinycld/core/lib/org-cookie'
+import { orgUrlForSlug, parseOrgsCookie } from '@tinycld/core/lib/org-cookie'
 import { Platform } from 'react-native'
 
 // The orgs this browser has signed into, from the parent-domain cookie each
@@ -10,18 +10,22 @@ export interface UserOrgEntry {
     id: string
     name: string
     slug: string
-    /** Absolute URL of the org's own origin (https://<slug>.<base>). */
+    /** Absolute URL of the org's own origin — derived from the slug and this
+     *  page's own parent domain, never read from the (client-writable)
+     *  cookie. */
     url: string
 }
 
 export function useUserOrgs(): UserOrgEntry[] {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return []
-    return parseOrgsCookie(document.cookie).map(entry => ({
-        id: entry.slug,
-        name: entry.name,
-        slug: entry.slug,
-        url: entry.url,
-    }))
+    const hostname = window.location.hostname
+    const entries: UserOrgEntry[] = []
+    for (const entry of parseOrgsCookie(document.cookie)) {
+        const url = orgUrlForSlug(entry.slug, hostname)
+        if (!url) continue
+        entries.push({ id: entry.slug, name: entry.name, slug: entry.slug, url })
+    }
+    return entries
 }
 
 /** Whether an org entry points at the origin the app is currently served
