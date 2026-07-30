@@ -103,7 +103,10 @@ function ViewMember({
     const ownerCount = members.filter(m => m.role === 'owner').length
     const isLastOwner = member.role === 'owner' && ownerCount <= 1
     const canRemove = !isSelf && !isLastOwner
-    const canChangeRole = !isSelf && (isCurrentUserOwner || member.role !== 'owner')
+    // isLastOwner must actually disable the picker, not just render helper
+    // text — the server backstop (RegisterLastOwnerGuard) rejects it anyway,
+    // but the control should not offer an action that always fails.
+    const canChangeRole = !isSelf && !isLastOwner && (isCurrentUserOwner || member.role !== 'owner')
     const showPackageAccess = member.role === 'member' || member.role === 'guest'
 
     const availableRoles: OrgRole[] = isCurrentUserOwner

@@ -282,6 +282,7 @@ func registerSharedCore(app *pocketbase.PocketBase) {
 	RegisterAdminOffboard(app)
 	offboard.Register(app)
 	RegisterUsersFieldGuard(app)
+	RegisterLastOwnerGuard(app)
 	RegisterUsersDemoAuditHook(app)
 	RegisterDisabledUserGuard(app)
 

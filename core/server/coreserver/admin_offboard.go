@@ -61,6 +61,14 @@ func handleAdminOffboard(app core.App, re *core.RequestEvent) error {
 		return re.BadRequestError("use /api/account/delete to remove your own account", nil)
 	}
 
+	// Offboarding mutates through model-level saves, so the record-request
+	// last-owner guard never sees it — check here.
+	if target, err := app.FindRecordById("users", req.UserID); err == nil {
+		if err := requireNotLastActiveOwner(app, re, target); err != nil {
+			return err
+		}
+	}
+
 	// actorUserID is the admin, recorded so the offboard is attributable.
 	result, err := offboard.OffboardUser(app, req.UserID, req.Plan, authRecord.Id)
 	if err != nil {

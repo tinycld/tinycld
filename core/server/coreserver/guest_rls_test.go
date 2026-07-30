@@ -150,11 +150,17 @@ func TestGuestRLS_ShippedRulesCarryGuestClause(t *testing.T) {
 		{"labels", "list"},
 		{"labels", "create"},
 		{"settings", "list"},
-		{"audit_logs", "list"},
 		{"org_pkg_enabled", "list"},
 	} {
 		rlstest.RequireRuleContains(t, env.app, c.collection, c.kind,
 			`@request.auth.role != "guest"`)
+	}
+	// audit_logs is stricter than non-guest: the trail carries member emails
+	// and role changes, and the UI only shows it to admins — the rule must
+	// match, so a member's REST client can't read what the screen hides.
+	for _, kind := range []string{"list", "view"} {
+		rlstest.RequireRuleContains(t, env.app, "audit_logs", kind,
+			`@request.auth.role = "owner" || @request.auth.role = "admin"`)
 	}
 }
 
@@ -293,7 +299,10 @@ func TestGuestRLS_AuditLogs_GuestCannotRead(t *testing.T) {
 	runListScenario(t, env.app, "audit_logs", env.guestToken, []string{`"totalItems":0`})
 }
 
-func TestGuestRLS_AuditLogs_MemberCanRead(t *testing.T) {
+// The audit trail records member emails and role changes; the UI shows it
+// only to admins (settings/audit-log.tsx gates on isAdmin). A plain member's
+// REST client must not read what the screen hides.
+func TestGuestRLS_AuditLogs_MemberCannotRead(t *testing.T) {
 	env := setupGuestRLSApp(t)
 	auditCol, _ := env.app.FindCollectionByNameOrId("audit_logs")
 	a := core.NewRecord(auditCol)
@@ -303,7 +312,26 @@ func TestGuestRLS_AuditLogs_MemberCanRead(t *testing.T) {
 	if err := env.app.Save(a); err != nil {
 		t.Fatal(err)
 	}
-	runListScenario(t, env.app, "audit_logs", env.memberToken, []string{`"totalItems":1`})
+	runListScenario(t, env.app, "audit_logs", env.memberToken, []string{`"totalItems":0`})
+}
+
+func TestGuestRLS_AuditLogs_AdminCanRead(t *testing.T) {
+	env := setupGuestRLSApp(t)
+	admin := guestRLSUser(t, env.app, "auditadmin@test.local", "admin")
+	adminToken, err := admin.NewAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	auditCol, _ := env.app.FindCollectionByNameOrId("audit_logs")
+	a := core.NewRecord(auditCol)
+	a.Set("action", "created")
+	a.Set("resource_type", "drive_items")
+	a.Set("resource_id", "abc123")
+	if err := env.app.Save(a); err != nil {
+		t.Fatal(err)
+	}
+	runListScenario(t, env.app, "audit_logs", adminToken, []string{`"totalItems":1`})
 }
 
 // ============================ org_pkg_enabled ============================

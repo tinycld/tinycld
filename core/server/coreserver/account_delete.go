@@ -96,6 +96,9 @@ func handleAccountDelete(app core.App, re *core.RequestEvent) error {
 	if err := confirmEmailMatches(re, authRecord, req.Email); err != nil {
 		return err
 	}
+	if err := requireNotLastActiveOwner(app, re, authRecord); err != nil {
+		return err
+	}
 
 	// An omitted plan means "just anonymize me, leave what I authored" — the
 	// long-standing behavior, and the safe default: a malformed or truncated
@@ -135,6 +138,9 @@ func handleAccountDisable(app core.App, re *core.RequestEvent) error {
 		return re.BadRequestError("Invalid request body", err)
 	}
 	if err := confirmEmailMatches(re, authRecord, req.Email); err != nil {
+		return err
+	}
+	if err := requireNotLastActiveOwner(app, re, authRecord); err != nil {
 		return err
 	}
 
