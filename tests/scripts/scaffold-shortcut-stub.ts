@@ -198,15 +198,21 @@ function ensureMember(wsRoot: string): void {
     // (CI runs pnpm install before invoking this script) — the first-time
     // scaffold path needs a second install to wire the symlink; subsequent
     // runs are no-ops. corepack enable selects the pinned pnpm.
+    // COREPACK_ENABLE_DOWNLOAD_PROMPT=0: corepack's interactive "download
+    // pnpm?" confirmation is a silent stdin-wait in any non-TTY context that
+    // still looks TTY-ish — one of the ways this step can hang without output.
+    const env = { ...process.env, COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' }
     spawnSync('corepack', ['enable'], {
         cwd: wsRoot,
         stdio: 'inherit',
         timeout: SUBPROCESS_TIMEOUT_MS,
+        env,
     })
     const r = spawnSync('pnpm', ['install', '--no-frozen-lockfile'], {
         cwd: wsRoot,
         stdio: 'inherit',
         timeout: SUBPROCESS_TIMEOUT_MS,
+        env,
     })
     if (r.status !== 0) {
         throw new Error(
