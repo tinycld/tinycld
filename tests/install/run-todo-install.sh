@@ -443,12 +443,14 @@ provision_base_remote() {
         # these breaks a base rebuild: package-scripts -> pnpm 404; plugins/modules
         # -> expo export PluginError (app.json references the with-app-updater plugin
         # and metro maps the app-updater specifier to modules); assets/lib/public/
-        # global.css/babel/tsconfig/uniwind -> metro resolution failures.
+        # global.css/babel/tsconfig/uniwind -> metro resolution failures;
+        # third_party -> the generator hard-fails on the missing vendored
+        # PocketBase fork (core go.mod replaces ../../third_party/pocketbase).
         # NOTE: this comment lives inside a single-quoted sh -lc body, so NO
         # apostrophes here (one would close the quote and break the parse).
         for d in app assets babel.config.cjs core expo-env.d.ts global.css lib \
                  metro.config.cjs modules package-scripts plugins public scripts \
-                 server tsconfig.json uniwind-types.d.ts app.json package.json; do
+                 server third_party tsconfig.json uniwind-types.d.ts app.json package.json; do
             [ -e "/workspace/current/$d" ] && cp -a "/workspace/current/$d" .
         done
         git add -A && git commit -qm "base v'"${CORE_CUR}"'"

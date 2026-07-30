@@ -1,14 +1,25 @@
 import { createRequire } from 'node:module'
 import { expect, type Page, test } from '@playwright/test'
 
-// Read the app version via createRequire rather than a static ESM JSON import:
-// under Node's ESM loader (which Playwright drives the spec through) a plain
-// `import … from '../../package.json'` is rejected with "needs an import
-// attribute of type: json", and the import-attribute form isn't reliably
-// preserved through Playwright's transpile. createRequire is the same pattern
-// playwright.config.ts already uses to reach workspace modules from ESM.
-const APP_VERSION = (createRequire(import.meta.url)('../../package.json') as { version: string })
-    .version
+// Read the OTA runtime version from app.json's `expo.version` — NOT from
+// package.json. The server publishes native bundles under the appVersion
+// policy, which exportNativeBundles() sources from app.json (see
+// core/server/coreserver/app_native_export.go: "runtimeVersion is the app
+// version (appVersion policy)", and it hard-errors when expo.version is
+// absent). The two files drift independently (package.json is the npm package
+// version), so reading package.json here made /api/app/update query a runtime
+// version no bundle was ever published under — a permanent HTTP 204 that looks
+// exactly like "no bundles were produced".
+//
+// createRequire rather than a static ESM JSON import: under Node's ESM loader
+// (which Playwright drives the spec through) a plain `import … from
+// '../../app.json'` is rejected with "needs an import attribute of type: json",
+// and the import-attribute form isn't reliably preserved through Playwright's
+// transpile. createRequire is the same pattern playwright.config.ts already
+// uses to reach workspace modules from ESM.
+const APP_VERSION = (
+    createRequire(import.meta.url)('../../app.json') as { expo: { version: string } }
+).expo.version
 
 // Integration test for the per-package VERSION-CHANGE flow in /admin, driven
 // through the real in-app installer + Versions tab against an already-running
@@ -626,12 +637,16 @@ async function postAdminPackageOp(page: Page, path: string, payload: Record<stri
     }
 }
 
-// The app version the native bundles are stamped with as their runtimeVersion
-// (app.config.ts injects package.json's version; the server's appVersionFromManifest
-// reads the same). /api/app/update keys updates by runtimeVersion, so the OTA check
-// must send the same value a real device on this build reports. Derived from the
-// app's package.json (NOT a hardcoded literal) so it never drifts when the version
-// is bumped — a stale literal here made the OTA assertion 204 (runtime mismatch).
+// The app version the native bundles are stamped with as their runtimeVersion.
+// app.config.ts sets `runtimeVersion: config.version` from app.json's
+// expo.version, and the server's appVersionFromManifest reads app.json's
+// expo.version too — the store/OTA version is deliberately DECOUPLED from
+// package.json so a `pnpm version` bump never changes what ships (see the
+// header comment in app.config.ts). /api/app/update keys updates by
+// runtimeVersion, so the OTA check must send the same value a real device on
+// this build reports. Derived from app.json (NOT package.json, and NOT a
+// hardcoded literal): either wrong source makes the OTA assertion a permanent
+// 204 that reads as "no bundles were produced".
 const RUNTIME_VERSION = APP_VERSION
 
 // Polls the public OTA endpoint /api/app/update until it advertises a new bundle
@@ -694,9 +709,13 @@ async function waitForExpoUpdate(
         await page.waitForTimeout(2_000)
     }
     throw new Error(
-        `/api/app/update never advertised a ${platform} update within ${timeoutMs}ms (last=${last}). ` +
-            `A persistent 204 means native bundles weren't produced — the build image is missing the ` +
-            `RN toolchain (node_modules/expo), so 'expo export --platform ${platform}' was skipped.`
+        `/api/app/update never advertised a ${platform} update within ${timeoutMs}ms ` +
+            `(last=${last}, runtimeVersion=${RUNTIME_VERSION}). A persistent 204 means the server has ` +
+            `no bundle for THIS runtime version — either (a) runtimeVersion mismatch: bundles are ` +
+            `published under app.json's expo.version, so querying any other value (e.g. package.json's ` +
+            `version) 204s forever, or (b) native bundles weren't produced — check the install log for ` +
+            `"native OTA bundles produced: N"; N=0 means the build image lacks the RN toolchain ` +
+            `(node_modules/expo) and 'expo export --platform ${platform}' was skipped.`
     )
 }
 
