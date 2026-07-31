@@ -75,6 +75,7 @@ server/pb_test_releases/
 /tinycld.config.ts
 /tinycld.seeds.ts
 /server/package_extensions.go
+/server/package_extensions_tenant.go
 /server/go.work
 /server/go.work.sum
 /server/bundled-packages.json

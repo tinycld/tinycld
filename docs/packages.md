@@ -280,7 +280,7 @@ export default manifest
 | `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order? }` is generator-validated. |
 | `help.directory` | `<id>.md` topics surfaced in the in-app help hub. |
 | `seed.script` | Dev sample-data function. |
-| `server` | Go server extension: `package` is the subdir, `module` is its Go module path. |
+| `server` | Go server extension: `package` is the subdir, `module` is its Go module path. Optional `mailListeners: true` declares that the package's tenant entry consumes router-managed mail listener sockets — the generated tenant registrar then calls `RegisterTenantWithListeners(app, <pkg>.TenantListeners{...})` instead of `RegisterTenant(app)` (the router owns every listening port; a tenant serves mail on unix sockets it hands down). Host mode is unaffected. |
 | `carddav` / `caldav` / `webdav` | Declarative protocol config, served by the matching core library. Each block **mirrors the `Source` literal the package's own Go registers**, and exists so a multi-org tenant — which links no feature package — can still serve the protocol: the router materializes the block into `<orgDir>/.runtime/<proto>.json` and core reads it there. Keep the two in sync. **Mount protocol handlers under the reserved `/dav` prefix** (e.g. `/dav/drive`): a DAV `prefix` becomes a literal server route, which beats the SPA catch-all, so mounting at a bare package slug makes the in-app route of the same name unreachable on a hard load — WebDAV at `/drive` shadowed the `/drive` screen exactly this way. `/dav` is reserved and must never be a package slug. Authorization is deliberately absent from all three: core evaluates the collections' own PocketBase rules, which travel in the schema (a Go closure cannot cross a process boundary). See [hooks.md](hooks.md). |
 | `quota` | `[{ collection, sizeField, ownerField? }]` — storage-bearing collections `core/quota` enforces ceilings on, as record hooks. A source with no `ownerField` counts toward the org ceiling only. |
 | `build.script` | A build script run before bundling (e.g. an embedded webview bundle). |
@@ -545,6 +545,14 @@ files — regenerate by re-running the install/generate. (Likewise the per-packa
 ### G. Go server wiring → `server/package_extensions.go` + `server/go.work`
 
 See [the Go server section](#the-go-pocketbase-server-side).
+
+The generator also emits `server/package_extensions_tenant.go` — the
+TENANT-mode registrar of the dual-mode binary (DESIGN-org-package-agency D5):
+`registerTenantPackageExtensions(app, tenantmain.Extras)` calls each linked
+package's `RegisterTenant` (or `RegisterTenantWithListeners` for a
+`server.mailListeners` package). `server/main.go` dispatches to tenant mode
+when invoked with `--org-dir` — the same flag contract a multi-org router uses
+for serve-org, which makes a per-org build artifact a drop-in tenant binary.
 
 What the generator **no longer** emits: `package-collections.ts`,
 `package-registry.ts`, `package-sidebars.ts`, `package-providers.ts`,

@@ -13,6 +13,7 @@ import {
     buildGoWork,
     buildMemberGoWork,
     buildPackageExtensionsGo,
+    buildTenantPackageExtensionsGo,
     replaceSymlink,
     type ServerPkg,
 } from './gen-server'
@@ -459,10 +460,15 @@ function emitGoWiring(features: Feature[]) {
         slug: f.manifest.slug,
         module: f.manifest.server!.module!,
         serverRelPath: path.relative(SERVER_DIR, path.join(f.dir, f.manifest.server!.package!)),
+        mailListeners: f.manifest.server!.mailListeners,
     }))
     fs.writeFileSync(
         path.join(SERVER_DIR, 'package_extensions.go'),
         buildPackageExtensionsGo(serverPkgs)
+    )
+    fs.writeFileSync(
+        path.join(SERVER_DIR, 'package_extensions_tenant.go'),
+        buildTenantPackageExtensionsGo(serverPkgs)
     )
     const coreServerDir = path.join(memberDir('@tinycld/core'), 'server')
     const coreServerRel = path.relative(SERVER_DIR, coreServerDir)

@@ -7,6 +7,7 @@ import {
     buildGoWork,
     buildMemberGoWork,
     buildPackageExtensionsGo,
+    buildTenantPackageExtensionsGo,
     replaceSymlink,
     type ServerPkg,
 } from '../gen-server'
@@ -32,6 +33,43 @@ describe('buildPackageExtensionsGo', () => {
     it('rejects a module path that would break out of the generated Go import', () => {
         const bad: ServerPkg = { ...contacts, module: 'tinycld.org/x"; evil()//' }
         expect(() => buildPackageExtensionsGo([bad])).toThrow(/unsafe value/)
+    })
+})
+
+describe('buildTenantPackageExtensionsGo', () => {
+    it('emits a no-op with the Extras signature when no packages have servers', () => {
+        const go = buildTenantPackageExtensionsGo([])
+        expect(go).toContain(
+            'func registerTenantPackageExtensions(_ *pocketbase.PocketBase, _ tenantmain.Extras) {}'
+        )
+        expect(go).toContain('"tinycld.org/core/tenantmain"')
+    })
+
+    it('registers each package unconditionally via RegisterTenant', () => {
+        const go = buildTenantPackageExtensionsGo([contacts])
+        expect(go).toContain('contacts "tinycld.org/packages/contacts"')
+        expect(go).toContain('contacts.RegisterTenant(app)')
+        expect(go).not.toContain('RegisterTenantWithListeners')
+    })
+
+    it('injects router-managed mail listeners for a server.mailListeners package', () => {
+        const mail: ServerPkg = {
+            slug: 'mail',
+            module: 'tinycld.org/packages/mail',
+            serverRelPath: '../../mail/server',
+            mailListeners: true,
+        }
+        const go = buildTenantPackageExtensionsGo([contacts, mail])
+        expect(go).toContain('contacts.RegisterTenant(app)')
+        expect(go).toContain('mail.RegisterTenantWithListeners(app, mail.TenantListeners{')
+        expect(go).toContain('IMAP:       ex.Mail.IMAP,')
+        expect(go).toContain('Submission: ex.Mail.Submission,')
+        expect(go).toContain('InboundMX:  ex.Mail.InboundMX,')
+    })
+
+    it('rejects a module path that would break out of the generated Go import', () => {
+        const bad: ServerPkg = { ...contacts, module: 'tinycld.org/x"; evil()//' }
+        expect(() => buildTenantPackageExtensionsGo([bad])).toThrow(/unsafe value/)
     })
 })
 

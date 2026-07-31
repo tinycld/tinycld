@@ -337,6 +337,14 @@ func writePnpmWorkspaceYAML(buildDir string, members []string, storeDir string) 
 	return os.WriteFile(filepath.Join(buildDir, "pnpm-workspace.yaml"), []byte(sb.String()), 0o644)
 }
 
+// ReadOverrides loads the version pins from package-versions.json under root —
+// the overrides input of RecipeHash. Exported for hosts that must compute the
+// recipe hash from the scaffold source BEFORE a build dir exists (the multi-org
+// builder's cache-hit check); RecipeHashForBuild covers the post-assemble case.
+func ReadOverrides(root string) (map[string]string, error) {
+	return readOverrides(root)
+}
+
 // readOverrides loads the version pins from package-versions.json in buildDir
 // (copied there as a scaffold extra). The pins force the framework/native/
 // styling stack to the embedded-binary versions so the OTA rebuild's
