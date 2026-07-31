@@ -110,9 +110,19 @@ func readBuildMembers(m RebuildManifest, buildDir string) ([]buildMember, error)
 		if version == "" {
 			version = ms.Version
 		}
+		// Name is the member's NPM identity from its package.json — the
+		// manifest's `name` is a display string ("Mail"), which an earlier
+		// revision recorded here and which broke every consumer that treats
+		// Name as the lockfile/npm key. Every npm tarball (and workspace
+		// member) carries a named package.json; one we cannot read is not a
+		// member we can identify.
+		npmName := PackageJSONName(filepath.Join(buildDir, ms.Slug, "package.json"))
+		if npmName == "" {
+			return nil, fmt.Errorf("member %s has no readable package.json name — cannot establish its npm identity", ms.Slug)
+		}
 		out = append(out, buildMember{
 			ResolvedMember: ResolvedMember{
-				Slug: ms.Slug, Name: manifest.Name, Version: version, FromCurrent: ms.FromCurrent,
+				Slug: ms.Slug, Name: npmName, Version: version, FromCurrent: ms.FromCurrent,
 			},
 			PeerVersions: manifest.PeerVersions,
 		})

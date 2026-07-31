@@ -98,6 +98,36 @@ func peerVersionsFromManifest(manifestJSON string) map[string]string {
 	return pkgbuild.PeerVersionsFromManifest(manifestJSON)
 }
 
+// Version discovery (moved from pkg_versions.go). Consumers: the versions
+// endpoint, pkg_version_change.go, rebuild_pipelines.go.
+type pkgSource = pkgbuild.PkgSource
+
+const (
+	sourceNpm     = pkgbuild.SourceNpm
+	sourceGit     = pkgbuild.SourceGit
+	sourceUnknown = pkgbuild.SourceUnknown
+)
+
+func classifySpec(spec string) (pkgSource, string) { return pkgbuild.ClassifySpec(spec) }
+
+func stripNpmVersion(spec string) string { return pkgbuild.StripNpmVersion(spec) }
+
+func versionsForSpec(spec string) (pkgSource, []string, string) {
+	return pkgbuild.VersionsForSpec(spec)
+}
+
+func sortVersionsDesc(versions []string) []string { return pkgbuild.SortVersionsDesc(versions) }
+
+func specForVersion(sourceSpec, targetVersion string) (string, error) {
+	return pkgbuild.SpecForVersion(sourceSpec, targetVersion)
+}
+
+func gitRemoteURL(spec string) string { return pkgbuild.GitRemoteURL(spec) }
+
+func errFromCmd(label, out string, err error) error { return pkgbuild.ErrFromCmd(label, out, err) }
+
+func isNewer(candidate, current string) bool { return pkgbuild.IsNewerVersion(candidate, current) }
+
 // Build pipeline + native export (moved from rebuild_pipeline.go /
 // app_native_export.go / pkg_install.go / pkg_go_build.go). Consumers:
 // rebuild.go, rebuild_pipelines.go, pkg_build.go, app_updates.go,

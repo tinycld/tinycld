@@ -31,11 +31,18 @@ func WriteBuildMember(t *testing.T, buildDir, slug, version string, peerVersions
 		}
 		peers = fmt.Sprintf("    peerVersions: { %s },\n", strings.Join(entries, ", "))
 	}
+	// Manifest name is a DISPLAY string; the npm identity readBuildMembers
+	// records comes from package.json. Written differently on purpose so code
+	// reading the wrong one fails tests.
 	manifest := fmt.Sprintf(
-		"export default {\n    name: '@tinycld/%s',\n    slug: '%s',\n    version: '%s',\n    description: 'test member',\n%s}\n",
+		"export default {\n    name: 'Display %s',\n    slug: '%s',\n    version: '%s',\n    description: 'test member',\n%s}\n",
 		slug, slug, version, peers,
 	)
 	if err := os.WriteFile(filepath.Join(dir, "manifest.ts"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkgJSON := fmt.Sprintf("{\"name\": \"@tinycld/%s\", \"version\": \"%s\"}\n", slug, version)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

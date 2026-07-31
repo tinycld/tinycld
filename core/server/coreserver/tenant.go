@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/jsvm"
 
 	"tinycld.org/core/caldav"
@@ -22,6 +23,27 @@ type TenantOptions struct {
 	HooksDir      string
 	MigrationsDir string
 	HooksPoolSize int
+
+	// OrgDir is the org's root directory (pb_data, .runtime, .deploy).
+	// ArtifactDir is the directory of the build artifact this tenant booted
+	// from — the tenant binary's own directory when a recipe.json sits beside
+	// it (DESIGN-org-package-agency D4). When BOTH are set the tenant is
+	// artifact-booted and RegisterTenant binds the boot-time package-state
+	// reconcile: consume .runtime/deploy-result.json into pkg_install_log and
+	// mirror the artifact's built-in set into pkg_registry. Empty on the
+	// shared serve-org binary and standalone deployments — they have no
+	// built-in set to reconcile from.
+	OrgDir      string
+	ArtifactDir string
+
+	// ControlSocket is the ROUTER-bound unix socket for deploy proposals
+	// (design D1). When set on an artifact-booted tenant, RegisterTenant
+	// serves the hosted Packages UI endpoints (pkg_hosted.go): the same
+	// /api/admin/packages surface as the single-tenant app, proposing
+	// deploys over this socket instead of rebuilding in-process. Empty =
+	// no deploy channel, no package endpoints (the pinned-menu serve-org
+	// posture).
+	ControlSocket string
 
 	// RegisterExtras is the tenant's seam for FEATURE package Go — the
 	// counterpart of Options.RegisterExtras in the single-org composition.
@@ -139,5 +161,25 @@ func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
 	}
 
 	registerSharedCore(app)
+
+	// Artifact-booted tenants reconcile their durable package state at boot
+	// (after RunAllMigrations — apis.Serve orders that before OnServe): the
+	// deploy-result consume and the pkg_registry mirror of the built-in set.
+	// See tenant_pkg_state.go.
+	if opts.OrgDir != "" && opts.ArtifactDir != "" {
+		orgDir, artifactDir := opts.OrgDir, opts.ArtifactDir
+		app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+			reconcileTenantPackageState(e.App, orgDir, artifactDir)
+			return e.Next()
+		})
+
+		// The hosted Packages UI needs both the built-in set (above) and a
+		// deploy channel; without a control socket the tenant has no way to
+		// propose, so the endpoints are simply absent (as they were for every
+		// tenant before step 4).
+		if opts.ControlSocket != "" {
+			RegisterHostedPackageEndpoints(app, NewDeployChannel(opts.ControlSocket), orgDir, artifactDir)
+		}
+	}
 	return nil
 }

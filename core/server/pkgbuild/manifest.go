@@ -79,3 +79,21 @@ func PackageJSONVersion(path string) string {
 	}
 	return pkg.Version
 }
+
+// PackageJSONName reads the "name" field from a package.json, or "" on any
+// error. This — not the manifest's display `name` ("Mail") — is a member's
+// npm identity (@tinycld/mail): the org-lockfile key, the version-discovery
+// source, and the ResolvedMember.Name contract.
+func PackageJSONName(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var pkg struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return ""
+	}
+	return pkg.Name
+}

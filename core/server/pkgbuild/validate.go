@@ -132,13 +132,23 @@ try {
 		return nil, fmt.Errorf("failed to run node: %w", err)
 	}
 
+	return DecodeManifestJSON(out)
+}
+
+// DecodeManifestJSON decodes an ALREADY-EVALUATED manifest (the JSON a
+// manifest evaluator emitted — this file's node script, the multi-org
+// manifesteval subprocess, or an artifact's staged manifests/<slug>/
+// manifest.json) into a ParsedManifest, populating the derived fields
+// (RawJSON, HasServer) exactly like ParseManifestViaNode. It runs no code:
+// use it wherever the evaluation already happened somewhere trusted.
+func DecodeManifestJSON(data []byte) (*ParsedManifest, error) {
 	var raw map[string]any
-	if err := json.Unmarshal(out, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("invalid manifest JSON: %w", err)
 	}
 
 	var manifest ParsedManifest
-	if err := json.Unmarshal(out, &manifest); err != nil {
+	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, fmt.Errorf("manifest structure invalid: %w", err)
 	}
 	manifest.RawJSON = raw

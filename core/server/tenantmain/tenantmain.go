@@ -254,6 +254,9 @@ func run(cfg runConfig) error {
 		HooksDir:      filepath.Join(cfg.orgDir, "pb_hooks"),
 		MigrationsDir: filepath.Join(cfg.orgDir, "pb_migrations"),
 		HooksPoolSize: cfg.hooksPool,
+		OrgDir:        cfg.orgDir,
+		ArtifactDir:   detectArtifactDir(),
+		ControlSocket: cfg.ctlSocket,
 		RegisterExtras: func(app *pocketbase.PocketBase) {
 			if cfg.extras == nil {
 				return
@@ -403,6 +406,24 @@ func run(cfg runConfig) error {
 		return err
 	}
 	return nil
+}
+
+// detectArtifactDir reports the directory of the build artifact this process
+// booted from — its own binary's directory, iff a recipe.json sits beside it
+// (the committed-artifact marker, DESIGN-org-package-agency D4). The shared
+// serve-org binary and dev builds have none, so they return "" and the
+// artifact-only behaviors (package-state reconcile, hosted Packages UI) stay
+// off.
+func detectArtifactDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Dir(exe)
+	if _, ok, err := tenantcfg.LoadArtifactRecipe(dir); err != nil || !ok {
+		return ""
+	}
+	return dir
 }
 
 // BindTenantSocket binds a unix socket the router handed us — the HTTP socket
