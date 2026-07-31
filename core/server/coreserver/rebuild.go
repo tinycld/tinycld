@@ -15,42 +15,6 @@ import (
 	"tinycld.org/core/pkgbuild"
 )
 
-// MemberSpec describes one workspace member to assemble into a build.
-// Spec is the fetch spec passed to `npm pack` — an npm name+range
-// (@tinycld/mail@0.3.1), a git URL (git+https://…#tag), or a local
-// git+file:// remote (used by the integration test).
-//
-// FromCurrent marks a member that should be COPIED from the currently-active
-// build rather than re-fetched. Only the member(s) a delta actually changes are
-// fetched fresh; everything else is copied from the live build so an install of
-// one package can't silently re-resolve another member's spec to a drifted
-// remote state (e.g. re-fetching the tinycld base from github HEAD, which may be
-// behind the running base — and would drop migrations the running base ships).
-type MemberSpec struct {
-	Slug        string `json:"slug"`
-	Version     string `json:"version"`
-	Spec        string `json:"spec"`
-	FromCurrent bool   `json:"fromCurrent,omitempty"`
-}
-
-// RebuildManifest is the complete desired package set for one build. It is
-// written verbatim to builds/<id>/manifest.json before the build runs and
-// serves as the build's input AND its rollback record.
-type RebuildManifest struct {
-	BuildID string       `json:"buildId"`
-	Members []MemberSpec `json:"members"`
-}
-
-// MemberBySlug returns the member spec for slug, if present.
-func (m RebuildManifest) MemberBySlug(slug string) (MemberSpec, bool) {
-	for _, ms := range m.Members {
-		if ms.Slug == slug {
-			return ms, true
-		}
-	}
-	return MemberSpec{}, false
-}
-
 // buildsToKeep is how many recent build dirs the prune step retains (beyond
 // the current one). Each is mostly hardlinks into the shared pnpm store, so
 // the real disk cost per retained build is small.
@@ -447,27 +411,6 @@ func changedMember(m RebuildManifest, buildDir string) (slug, version string) {
 	return baseRegistrySlug, ""
 }
 
-// The base platform is the `tinycld` workspace member, but its pkg_registry row
-// (and the /admin UI delta) uses the historical slug "core". These map between
-// the two namespaces so the desired set always speaks member slugs while the
-// registry keeps its slug.
-const baseRegistrySlug = "core"
-const baseMemberSlug = "tinycld"
-
-func registrySlugToMember(slug string) string {
-	if slug == baseRegistrySlug {
-		return baseMemberSlug
-	}
-	return slug
-}
-
-func memberSlugToRegistry(slug string) string {
-	if slug == baseMemberSlug {
-		return baseRegistrySlug
-	}
-	return slug
-}
-
 // buildCurrentMemberSet reads installed/bundled pkg_registry rows into the
 // member set the current live build represents. The base row (slug "core") maps
 // to the tinycld member. Always includes tinycld.
@@ -608,22 +551,6 @@ func changedMemberVersion(buildDir, regSlug, memberSlug string) string {
 		}
 	}
 	return manifestVersionFromBuild(buildDir, memberSlug)
-}
-
-// packageJSONVersion reads the "version" field from a package.json, or "" on any
-// error. A small, dependency-free read (no node subprocess).
-func packageJSONVersion(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var pkg struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return ""
-	}
-	return pkg.Version
 }
 
 // createRegistryRowFromBuild parses the member's manifest out of the build dir

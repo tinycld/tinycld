@@ -61,6 +61,43 @@ var (
 	versionTokenPattern = pkgbuild.VersionTokenPattern
 )
 
+// Manifest types + slug mapping (moved from rebuild.go). Consumers: the
+// rebuild orchestrator + its host tails, rebuild_pipelines.go, pkg_build.go,
+// and the orchestrator tests' stubs.
+type MemberSpec = pkgbuild.MemberSpec
+
+type RebuildManifest = pkgbuild.RebuildManifest
+
+const (
+	baseRegistrySlug = pkgbuild.BaseRegistrySlug
+	baseMemberSlug   = pkgbuild.BaseMemberSlug
+	corePackageKey   = pkgbuild.CorePackageKey
+)
+
+func registrySlugToMember(slug string) string { return pkgbuild.RegistrySlugToMember(slug) }
+
+func memberSlugToRegistry(slug string) string { return pkgbuild.MemberSlugToRegistry(slug) }
+
+func packageJSONVersion(path string) string { return pkgbuild.PackageJSONVersion(path) }
+
+// Compat solver + post-assemble verify (moved from pkg_compat.go). The
+// DB-backed pre-flight gates that stay in pkg_compat.go call through these.
+type compatViolation = pkgbuild.Violation
+
+func solveCompat(resolved map[string]string, peerVersionsBySlug map[string]map[string]string) []compatViolation {
+	return pkgbuild.SolveCompat(resolved, peerVersionsBySlug)
+}
+
+func compatError(violations []compatViolation) error { return pkgbuild.ViolationsError(violations) }
+
+func verifyTargetPeerVersions(m RebuildManifest, buildDir string) error {
+	return pkgbuild.VerifyTargetPeerVersions(m, buildDir)
+}
+
+func peerVersionsFromManifest(manifestJSON string) map[string]string {
+	return pkgbuild.PeerVersionsFromManifest(manifestJSON)
+}
+
 // installJobSink adapts an *installJob onto pkgbuild's ProgressSink: milestones
 // go through emitProgress (SSE + durable log line), detail lines through
 // jobLogf. A nil job degrades exactly like the underlying helpers do.
