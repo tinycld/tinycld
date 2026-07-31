@@ -2,7 +2,10 @@ package tenantcfg
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"path/filepath"
+	"syscall"
 
 	"tinycld.org/core/caldav"
 	"tinycld.org/core/carddav"
@@ -50,6 +53,49 @@ type AppConfig struct {
 	// entry of the (last) header is the best-known client IP — PocketBase's
 	// default resolution order (UseLeftmostIP false).
 	TrustedProxyHeaders []string `json:"trustedProxyHeaders"`
+}
+
+// WriteRuntimeFile writes body to <orgDir>/.runtime/<name> as a root-authored
+// tenant config, hardened against a hostile tenant.
+//
+// chownTree hands the whole org tree — including .runtime and its files — to
+// the tenant uid on every spawn, so a running tenant can replace .runtime (or
+// a file inside it) with a symlink. The next router write, running as ROOT,
+// would then follow that link onto an arbitrary host path: /etc/shadow, a
+// sibling org's data.db, or the org's own app.json (whose AppURL becomes its
+// auth-email hostname). Two guards close this:
+//   - the .runtime directory is refused if it is a symlink (Lstat), so the
+//     path is resolved beneath the org dir, not through a redirect;
+//   - the file open uses O_NOFOLLOW, so a symlink planted AT the destination
+//     fails the open rather than being written through.
+//
+// One ABI definition, used by the router's writers (orgmanager, the deployer)
+// so the hardening cannot drift between them.
+func WriteRuntimeFile(orgDir, name string, body []byte, mode os.FileMode) (string, error) {
+	runtimeDir := filepath.Join(orgDir, ".runtime")
+	if fi, err := os.Lstat(runtimeDir); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("refusing to write %s: .runtime is a symlink", name)
+		}
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(runtimeDir, name)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, mode)
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.Write(body); err != nil {
+		f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // loadJSON reads path into out. Empty path or missing file leaves out at its
