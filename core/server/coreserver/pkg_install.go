@@ -588,43 +588,6 @@ func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg
 
 // ---------- release staging ----------
 
-// stageRelease moves the freshly-built <appDir>/dist into
-// <appDir>/release-staging/<id>/ with a release-id.txt and index.html renamed
-// to app.html, matching the layout entrypoint.sh's promote_release expects. The
-// entrypoint promotes the staged release (merging assets into releases/_static/
-// and pointing releases/current at it) on the next boot — which the install /
-// uninstall pipelines trigger via requestRestart. Returns the staged dir.
-func stageRelease(appDir string) (string, error) {
-	releaseID := fmt.Sprintf("install-%d", time.Now().UnixMilli())
-	distDir := filepath.Join(appDir, "dist")
-	stagingDir := filepath.Join(appDir, "release-staging")
-	stageDest := filepath.Join(stagingDir, releaseID)
-
-	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
-		return "", err
-	}
-	// Prefer a rename (atomic, same filesystem); fall back to copy across
-	// devices or when the destination can't be renamed into.
-	if err := os.Rename(distDir, stageDest); err != nil {
-		if cpErr := copyDir(distDir, stageDest); cpErr != nil {
-			return "", fmt.Errorf("move dist failed: %v; copy fallback failed: %w", err, cpErr)
-		}
-		os.RemoveAll(distDir)
-	}
-
-	if err := os.WriteFile(filepath.Join(stageDest, "release-id.txt"), []byte(releaseID), 0o644); err != nil {
-		return "", err
-	}
-	stagedIndex := filepath.Join(stageDest, "index.html")
-	stagedApp := filepath.Join(stageDest, "app.html")
-	if _, statErr := os.Stat(stagedIndex); statErr == nil {
-		if err := os.Rename(stagedIndex, stagedApp); err != nil {
-			return "", fmt.Errorf("rename index.html → app.html: %w", err)
-		}
-	}
-	return stageDest, nil
-}
-
 // ---------- pkg_registry helpers ----------
 
 func upsertPkgRegistry(app core.App, m *parsedManifest, npmPkg string, manifestJSON []byte) error {

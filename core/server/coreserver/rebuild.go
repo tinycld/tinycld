@@ -168,7 +168,7 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 			jobLogf(job, "WARNING: recordBuild failed (OTA + rollback-target metadata missing): %v", err)
 		} else {
 			jobLogf(job, "recorded pkg_build %s (release %s, %d native bundle(s))",
-				m.BuildID, out.releaseID, len(out.bundles))
+				m.BuildID, out.ReleaseID, len(out.Bundles))
 		}
 	}
 	emitProgress(job, "Finalizing", progCommit, "Recording build + registry")
@@ -347,8 +347,8 @@ func recordRebuildBuild(app core.App, m RebuildManifest, buildDir string, out bu
 	// /api/app/bundle can serve them (see archiveNativeBundlesToRelease). Done
 	// before recording the row so a failed archive aborts BEFORE we advertise a
 	// bundle URL that would 404.
-	if len(out.bundles) > 0 {
-		if err := archiveNativeBundlesToRelease(m.BuildID, out.stageDir); err != nil {
+	if len(out.Bundles) > 0 {
+		if err := archiveNativeBundlesToRelease(m.BuildID, out.StageDir); err != nil {
 			return err
 		}
 	}
@@ -359,8 +359,8 @@ func recordRebuildBuild(app core.App, m RebuildManifest, buildDir string, out bu
 		"version":         version,
 		"action":          "install",
 		"binary_archived": true,
-		"release_id":      out.releaseID,
-		"bundles":         serializeBundles(out.bundles),
+		"release_id":      out.ReleaseID,
+		"bundles":         serializeBundles(out.Bundles),
 	}
 	_, err := recordBuild(app, fields)
 	return err

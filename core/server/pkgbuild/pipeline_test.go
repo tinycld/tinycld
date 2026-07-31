@@ -1,36 +1,47 @@
-package coreserver
+package pkgbuild
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestRunBuildPipeline_StepOrder(t *testing.T) {
+func TestPipelineExecute_StepOrder(t *testing.T) {
 	build := t.TempDir()
 	var calls []string
-	runner := func(dir, name string, args ...string) (string, error) {
+	record := func(name string, args []string) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
-		return "", nil
 	}
-	// pnpm install and expo export run via the streaming runners — stub both to
-	// record their calls alongside the buffered ones so the step-order check still
-	// sees "pnpm install" and "expo".
-	defer stubPnpmStream(&calls)()
-	defer stubExpoStream(&calls)()
 	staged := false
-	stage := func(appDir string) (string, error) {
-		staged = true
-		return filepath.Join(appDir, "release-staging", "rel-1"), nil
-	}
 	nativeExported := false
-	nativeExport := func(j *installJob, appDir, buildID, rv string) ([]bundleMeta, error) {
-		nativeExported = true
-		return nil, nil // toolchain-absent no-op
+	p := Pipeline{
+		Run: func(dir, name string, args ...string) (string, error) {
+			record(name, args)
+			return "", nil
+		},
+		// pnpm install and expo export run via the streaming runners — stub both to
+		// record their calls alongside the buffered ones so the step-order check
+		// still sees "pnpm install" and "expo".
+		PnpmStream: func(_ func(string), _, name string, args ...string) (string, error) {
+			record(name, args)
+			return "", nil
+		},
+		ExpoStream: func(_ func(string), _, name string, args ...string) (string, error) {
+			record(name, args)
+			return "", nil
+		},
+		Stage: func(appDir string) (string, error) {
+			staged = true
+			return filepath.Join(appDir, "release-staging", "rel-1"), nil
+		},
+		NativeExport: func(sink ProgressSink, appDir, buildID, rv string) ([]BundleMeta, error) {
+			nativeExported = true
+			return nil, nil // toolchain-absent no-op
+		},
 	}
-	job := &installJob{ID: "j", Done: make(chan struct{})}
-	out, err := runBuildPipelineWith(job, build, "build-1", runner, stage, nativeExport)
+	out, err := p.Execute(NopSink(), build, "build-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,30 +58,30 @@ func TestRunBuildPipeline_StepOrder(t *testing.T) {
 	if !nativeExported {
 		t.Fatal("native bundles were not exported after staging")
 	}
-	if out.releaseID != "rel-1" {
-		t.Fatalf("releaseID = %q, want rel-1", out.releaseID)
+	if out.ReleaseID != "rel-1" {
+		t.Fatalf("ReleaseID = %q, want rel-1", out.ReleaseID)
 	}
 }
 
-func TestRunBuildPipeline_StopsOnFailure(t *testing.T) {
+func TestPipelineExecute_StopsOnFailure(t *testing.T) {
 	build := t.TempDir()
 	// pnpm install (the first step) fails via the streaming runner; the buffered
 	// runner must then never be called (the pipeline stops before go build).
-	prev := pnpmStream
-	pnpmStream = func(_ func(string), _, _ string, _ ...string) (string, error) {
-		return "", &cmdErr{"boom"}
-	}
-	defer func() { pnpmStream = prev }()
-
 	var bufferedCalls int
-	runner := func(dir, name string, args ...string) (string, error) {
-		bufferedCalls++
-		return "", nil
+	p := Pipeline{
+		Run: func(dir, name string, args ...string) (string, error) {
+			bufferedCalls++
+			return "", nil
+		},
+		PnpmStream: func(_ func(string), _, _ string, _ ...string) (string, error) {
+			return "", &cmdErr{"boom"}
+		},
+		Stage: func(appDir string) (string, error) { return appDir, nil },
+		NativeExport: func(sink ProgressSink, appDir, buildID, rv string) ([]BundleMeta, error) {
+			return nil, nil
+		},
 	}
-	noopStage := func(appDir string) (string, error) { return appDir, nil }
-	noopNative := func(j *installJob, appDir, buildID, rv string) ([]bundleMeta, error) { return nil, nil }
-	job := &installJob{ID: "j", Done: make(chan struct{})}
-	if _, err := runBuildPipelineWith(job, build, "build-1", runner, noopStage, noopNative); err == nil {
+	if _, err := p.Execute(NopSink(), build, "build-1"); err == nil {
 		t.Fatal("expected error from failing pnpm step")
 	}
 	if bufferedCalls != 0 {
@@ -78,26 +89,34 @@ func TestRunBuildPipeline_StopsOnFailure(t *testing.T) {
 	}
 }
 
-// stubPnpmStream replaces the pnpm streaming runner with a no-op that records a
-// "pnpm install" entry into calls, and returns a restore func.
-func stubPnpmStream(calls *[]string) func() {
-	prev := pnpmStream
-	pnpmStream = func(_ func(string), _, name string, args ...string) (string, error) {
-		*calls = append(*calls, name+" "+strings.Join(args, " "))
-		return "", nil
+// TestPipelineExecute_UsesBinaryName pins the go-build output path to the
+// host-injected binary name — the entanglement the Pipeline.BinaryName field
+// exists to break (it was a coreserver package global).
+func TestPipelineExecute_UsesBinaryName(t *testing.T) {
+	build := t.TempDir()
+	var goBuildArgs []string
+	p := Pipeline{
+		BinaryName: "custom-binary",
+		Run: func(dir, name string, args ...string) (string, error) {
+			if name == "go" {
+				goBuildArgs = args
+			}
+			return "", nil
+		},
+		PnpmStream: func(_ func(string), _, _ string, _ ...string) (string, error) { return "", nil },
+		ExpoStream: func(_ func(string), _, _ string, _ ...string) (string, error) { return "", nil },
+		Stage:      func(appDir string) (string, error) { return filepath.Join(appDir, "r"), nil },
+		NativeExport: func(sink ProgressSink, appDir, buildID, rv string) ([]BundleMeta, error) {
+			return nil, nil
+		},
 	}
-	return func() { pnpmStream = prev }
-}
-
-// stubExpoStream replaces the expo streaming runner with a no-op that records the
-// "pnpm exec expo export …" invocation into calls, and returns a restore func.
-func stubExpoStream(calls *[]string) func() {
-	prev := expoStream
-	expoStream = func(_ func(string), _, name string, args ...string) (string, error) {
-		*calls = append(*calls, name+" "+strings.Join(args, " "))
-		return "", nil
+	if _, err := p.Execute(NopSink(), build, "b"); err != nil {
+		t.Fatal(err)
 	}
-	return func() { expoStream = prev }
+	joined := strings.Join(goBuildArgs, " ")
+	if !strings.Contains(joined, "custom-binary") {
+		t.Fatalf("go build args should target BinaryName, got %q", joined)
+	}
 }
 
 // TestPnpmLineProgress locks the parser to pnpm's real non-TTY reporter lines
@@ -121,10 +140,10 @@ func TestPnpmLineProgress(t *testing.T) {
 			t.Errorf("pnpmLineProgress(%q) = %d, want %d", c.line, got, c.want)
 		}
 	}
-	// Every recognized milestone must stay within [progPnpmInstall, progGoBuild).
+	// Every recognized milestone must stay within [ProgPnpmInstall, ProgGoBuild).
 	for _, pct := range []int{49, 54, 58} {
-		if pct < progPnpmInstall || pct >= progGoBuild {
-			t.Errorf("pnpm milestone %d outside install band [%d,%d)", pct, progPnpmInstall, progGoBuild)
+		if pct < ProgPnpmInstall || pct >= ProgGoBuild {
+			t.Errorf("pnpm milestone %d outside install band [%d,%d)", pct, ProgPnpmInstall, ProgGoBuild)
 		}
 	}
 }
@@ -158,48 +177,46 @@ func TestPnpmProgressThrottle_Allow(t *testing.T) {
 // Progress window is still open.
 func TestReportPnpmProgress_Throttled(t *testing.T) {
 	now := time.Unix(0, 0)
-	prev := nowFunc
-	nowFunc = func() time.Time { return now }
-	defer func() { nowFunc = prev }()
+	p := Pipeline{Now: func() time.Time { return now }}
 
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	sink := &recordingSink{}
 	throttle := newPnpmProgressThrottle()
 
 	// Five "Progress:" lines arriving within one second — only the first passes.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		now = now.Add(200 * time.Millisecond)
-		reportPnpmProgress(job, "Progress: resolved 1324, reused 1142, downloaded 43, added 1250", throttle)
+		p.reportPnpmProgress(sink, "Progress: resolved 1324, reused 1142, downloaded 43, added 1250", throttle)
 	}
-	if got := len(job.LogLines); got != 1 {
+	if got := len(sink.milestones); got != 1 {
 		t.Fatalf("Progress: burst within window forwarded %d updates, want 1", got)
 	}
 
 	// Non-"Progress:" milestones are NOT throttled — they forward even though the
 	// Progress window opened above is still wide open.
-	reportPnpmProgress(job, "Packages: +42", throttle)
-	reportPnpmProgress(job, "Done in 807ms using pnpm v11.3.0", throttle)
-	if got := len(job.LogLines); got != 3 {
+	p.reportPnpmProgress(sink, "Packages: +42", throttle)
+	p.reportPnpmProgress(sink, "Done in 807ms using pnpm v11.3.0", throttle)
+	if got := len(sink.milestones); got != 3 {
 		t.Fatalf("non-Progress milestones were throttled; total = %d, want 3", got)
 	}
 
 	// A further Progress: line is still gated (its window never re-armed because
 	// the milestones above don't touch the throttle).
 	now = now.Add(time.Second)
-	reportPnpmProgress(job, "Progress: resolved 1400, reused 1200, downloaded 60, added 1300", throttle)
-	if got := len(job.LogLines); got != 3 {
+	p.reportPnpmProgress(sink, "Progress: resolved 1400, reused 1200, downloaded 60, added 1300", throttle)
+	if got := len(sink.milestones); got != 3 {
 		t.Fatalf("Progress: line within window forwarded; total = %d, want 3", got)
 	}
 
 	// Cross the window — the next Progress: line forwards.
 	now = now.Add(pnpmProgressInterval)
-	reportPnpmProgress(job, "Progress: resolved 1500, reused 1300, downloaded 80, added 1400", throttle)
-	if got := len(job.LogLines); got != 4 {
+	p.reportPnpmProgress(sink, "Progress: resolved 1500, reused 1300, downloaded 80, added 1400", throttle)
+	if got := len(sink.milestones); got != 4 {
 		t.Fatalf("Progress: line past window dropped; total = %d, want 4", got)
 	}
 
 	// Non-milestone lines never forward.
-	reportPnpmProgress(job, "some postinstall noise", throttle)
-	if got := len(job.LogLines); got != 4 {
+	p.reportPnpmProgress(sink, "some postinstall noise", throttle)
+	if got := len(sink.milestones); got != 4 {
 		t.Fatalf("non-milestone line forwarded; total = %d, want 4", got)
 	}
 }
@@ -261,39 +278,90 @@ func TestBandPct(t *testing.T) {
 // terminal "Bundled"/"Exported" markers always pass and park at hi-1.
 func TestReportExpoProgress(t *testing.T) {
 	now := time.Unix(0, 0)
-	prev := nowFunc
-	nowFunc = func() time.Time { return now }
-	defer func() { nowFunc = prev }()
+	p := Pipeline{Now: func() time.Time { return now }}
 
 	lo, hi := 60, 72
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	sink := &recordingSink{}
 	throttle := newPnpmProgressThrottle()
 
 	// A burst of percentage lines within one window — only the first forwards.
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		now = now.Add(200 * time.Millisecond)
-		reportExpoProgress(job, "Web entry.js ▓▓░░ 40.0% (800/2000)", "Exporting web bundle", lo, hi, throttle)
+		p.reportExpoProgress(sink, "Web entry.js ▓▓░░ 40.0% (800/2000)", "Exporting web bundle", lo, hi, throttle)
 	}
-	if got := len(job.LogLines); got != 1 {
+	if got := len(sink.milestones); got != 1 {
 		t.Fatalf("percentage burst forwarded %d updates, want 1", got)
 	}
-	if got := job.Progress; got != bandPct(lo, hi, 0.4) {
+	if got := sink.lastPercent; got != bandPct(lo, hi, 0.4) {
 		t.Fatalf("first percentage forwarded progress %d, want %d", got, bandPct(lo, hi, 0.4))
 	}
 
 	// The "Bundled" marker is not throttled and parks at hi-1.
-	reportExpoProgress(job, "Web Bundled 10768ms entry.js (4343 modules)", "Exporting web bundle", lo, hi, throttle)
-	if got := len(job.LogLines); got != 2 {
+	p.reportExpoProgress(sink, "Web Bundled 10768ms entry.js (4343 modules)", "Exporting web bundle", lo, hi, throttle)
+	if got := len(sink.milestones); got != 2 {
 		t.Fatalf("Bundled marker was throttled; total = %d, want 2", got)
 	}
-	if got := job.Progress; got != hi-1 {
+	if got := sink.lastPercent; got != hi-1 {
 		t.Fatalf("Bundled marker progress %d, want %d", got, hi-1)
 	}
 
 	// Non-signal lines (the per-file dump) never forward.
-	reportExpoProgress(job, "_expo/static/js/web/entry-abc.js (1.3MB)", "Exporting web bundle", lo, hi, throttle)
-	if got := len(job.LogLines); got != 2 {
+	p.reportExpoProgress(sink, "_expo/static/js/web/entry-abc.js (1.3MB)", "Exporting web bundle", lo, hi, throttle)
+	if got := len(sink.milestones); got != 2 {
 		t.Fatalf("asset listing line forwarded; total = %d, want 2", got)
+	}
+}
+
+func TestStageReleaseLayout(t *testing.T) {
+	appDir := t.TempDir()
+	// Simulate an expo export output at <appDir>/dist.
+	distDir := filepath.Join(appDir, "dist")
+	if err := os.MkdirAll(filepath.Join(distDir, "_expo", "static"), 0o755); err != nil {
+		t.Fatalf("mkdir dist: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(distDir, "index.html"), []byte("<html></html>"), 0o644); err != nil {
+		t.Fatalf("write index.html: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(distDir, "_expo", "static", "app.js"), []byte("//"), 0o644); err != nil {
+		t.Fatalf("write asset: %v", err)
+	}
+
+	stageDest, err := StageRelease(appDir)
+	if err != nil {
+		t.Fatalf("StageRelease: %v", err)
+	}
+
+	// Staged under <appDir>/release-staging/<id>/.
+	stagingParent := filepath.Dir(stageDest)
+	if stagingParent != filepath.Join(appDir, "release-staging") {
+		t.Fatalf("expected stage under release-staging, got %s", stageDest)
+	}
+
+	// release-id.txt present and matches the dir name.
+	idBytes, err := os.ReadFile(filepath.Join(stageDest, "release-id.txt"))
+	if err != nil {
+		t.Fatalf("read release-id.txt: %v", err)
+	}
+	if string(idBytes) != filepath.Base(stageDest) {
+		t.Fatalf("release-id.txt %q != dir name %q", idBytes, filepath.Base(stageDest))
+	}
+
+	// index.html renamed to app.html; index.html gone.
+	if _, err := os.Stat(filepath.Join(stageDest, "app.html")); err != nil {
+		t.Fatalf("expected app.html, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stageDest, "index.html")); !os.IsNotExist(err) {
+		t.Fatalf("expected index.html removed, stat err = %v", err)
+	}
+
+	// Asset tree carried over.
+	if _, err := os.Stat(filepath.Join(stageDest, "_expo", "static", "app.js")); err != nil {
+		t.Fatalf("expected asset carried over, got %v", err)
+	}
+
+	// Original dist consumed (moved, not left behind).
+	if _, err := os.Stat(distDir); !os.IsNotExist(err) {
+		t.Fatalf("expected dist consumed, stat err = %v", err)
 	}
 }
 

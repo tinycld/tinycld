@@ -98,6 +98,25 @@ func peerVersionsFromManifest(manifestJSON string) map[string]string {
 	return pkgbuild.PeerVersionsFromManifest(manifestJSON)
 }
 
+// Build pipeline + native export (moved from rebuild_pipeline.go /
+// app_native_export.go / pkg_install.go / pkg_go_build.go). Consumers:
+// rebuild.go, rebuild_pipelines.go, pkg_build.go, app_updates.go,
+// serializeBundles.
+type buildOutput = pkgbuild.BuildOutput
+
+type bundleMeta = pkgbuild.BundleMeta
+
+type assetMeta = pkgbuild.AssetMeta
+
+const (
+	platformIOS     = pkgbuild.PlatformIOS
+	platformAndroid = pkgbuild.PlatformAndroid
+)
+
+func stageRelease(appDir string) (string, error) { return pkgbuild.StageRelease(appDir) }
+
+func checkGoBuildPrereqs() error { return pkgbuild.CheckBuildPrereqs() }
+
 // installJobSink adapts an *installJob onto pkgbuild's ProgressSink: milestones
 // go through emitProgress (SSE + durable log line), detail lines through
 // jobLogf. A nil job degrades exactly like the underlying helpers do.

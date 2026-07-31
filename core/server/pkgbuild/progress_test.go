@@ -8,12 +8,14 @@ import (
 )
 
 type recordingSink struct {
-	milestones []string
-	details    []string
+	milestones  []string
+	details     []string
+	lastPercent int
 }
 
 func (s *recordingSink) Progress(step string, percent int, message string) {
 	s.milestones = append(s.milestones, fmt.Sprintf("[%d%%] %s: %s", percent, step, message))
+	s.lastPercent = percent
 }
 
 func (s *recordingSink) Logf(format string, args ...any) {

@@ -54,16 +54,6 @@ func checkpointWAL(app *pocketbase.PocketBase) {
 	}
 }
 
-// checkGoBuildPrereqs verifies that Go and gcc are available on PATH.
-func checkGoBuildPrereqs() error {
-	for _, tool := range []string{"go", "gcc"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			return fmt.Errorf("%s not found on PATH: %w", tool, err)
-		}
-	}
-	return nil
-}
-
 // dbBackupPath / dbArmedMarkerPath are the deterministic locations the armed-
 // backup rollback protocol shares with the entrypoint (config/entrypoint.sh).
 // Both live under statePbDataDir() so they survive the per-build symlink swap.
