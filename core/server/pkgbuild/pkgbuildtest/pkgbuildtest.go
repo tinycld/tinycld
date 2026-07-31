@@ -40,6 +40,18 @@ func WriteBuildMember(t *testing.T, buildDir, slug, version string, peerVersions
 	}
 }
 
+// WriteTestOverrides drops a minimal package-versions.json into root so the
+// scaffold writer (which reads it to emit the `overrides:` block) has its
+// required source. A real build always carries this file (baked into the
+// image, copied from the active build); tests must supply it explicitly.
+func WriteTestOverrides(t *testing.T, root string) {
+	t.Helper()
+	body := `{"//":"doc","uniwind":"1.8.0","@sentry/react-native":"7.11.0"}`
+	if err := os.WriteFile(filepath.Join(root, pkgbuild.OverridesFile), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // WriteBuildBase fabricates the tinycld base member, which ships no root
 // manifest.ts — its version lives at core/package.json (the version peer
 // ranges on @tinycld/core compare against).
