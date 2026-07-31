@@ -164,3 +164,82 @@ func TestNoAttachDBConnect_PathWithQueryLikeText(t *testing.T) {
 		t.Fatal("ATTACH permitted on a path containing a space")
 	}
 }
+
+// The regression this file exists for.
+//
+// NoAttachDBConnect primes each pooled connection and pins the pool, but
+// BaseApp.initDataDB/initAuxDB set MaxOpenConns/MaxIdleConns/ConnMaxIdleTime
+// from the app config immediately after DBConnect returns. That silently
+// undid the restriction: connections past the primed cap were never primed,
+// and the 3-minute idle expiry retired primed connections in favour of fresh
+// unprimed ones — a full cross-tenant ATTACH escape, reached without touching
+// db_noattach.go. Booting a real app is the only level at which this shows up,
+// which is why the check lives here rather than on a bare pool.
+func TestNoAttachDBConnect_SurvivesAppPoolConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim.db")
+	vdb, err := DefaultDBConnect(victim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vdb.NewQuery("CREATE TABLE secrets (v TEXT)").Execute()
+	vdb.Close()
+
+	app := NewBaseApp(BaseAppConfig{DataDir: dir, DBConnect: NoAttachDBConnect})
+	if err := app.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	defer app.ResetBootstrapState()
+
+	// Every pool the app exposes to hook JS via $app, including the aux ones.
+	pools := map[string]*sql.DB{
+		"concurrentDB":       app.ConcurrentDB().(interface{ DB() *sql.DB }).DB(),
+		"nonconcurrentDB":    app.NonconcurrentDB().(interface{ DB() *sql.DB }).DB(),
+		"auxConcurrentDB":    app.AuxConcurrentDB().(interface{ DB() *sql.DB }).DB(),
+		"auxNonconcurrentDB": app.AuxNonconcurrentDB().(interface{ DB() *sql.DB }).DB(),
+	}
+
+	for name, sqlDB := range pools {
+		// The app must not have raised the cap past what priming covers.
+		if max := sqlDB.Stats().MaxOpenConnections; max > noAttachMaxConns {
+			t.Fatalf("%s: MaxOpenConns is %d, above the primed cap of %d — "+
+				"connections beyond the cap are unprimed and can ATTACH", name, max, noAttachMaxConns)
+		}
+
+		// Exhaust the pool's distinct connections and attack each one.
+		var held []*sql.Conn
+		for i := 0; i < sqlDB.Stats().MaxOpenConnections; i++ {
+			c, err := sqlDB.Conn(t.Context())
+			if err != nil {
+				t.Fatalf("%s: conn %d: %v", name, i, err)
+			}
+			held = append(held, c)
+			if _, err := c.ExecContext(t.Context(), "ATTACH DATABASE '"+victim+"' AS stolen"); err == nil {
+				_, _ = c.ExecContext(t.Context(), "DETACH DATABASE stolen")
+				for _, hc := range held {
+					hc.Close()
+				}
+				t.Fatalf("%s: connection %d permitted ATTACH after app pool configuration", name, i)
+			}
+		}
+		for _, c := range held {
+			c.Close()
+		}
+
+		// And after churn, which is what a non-zero ConnMaxIdleTime would have
+		// let expire out from under the priming.
+		for i := 0; i < 30; i++ {
+			c, err := sqlDB.Conn(t.Context())
+			if err != nil {
+				t.Fatalf("%s: churn conn %d: %v", name, i, err)
+			}
+			_, err = c.ExecContext(t.Context(), "ATTACH DATABASE '"+victim+"' AS stolen")
+			if err == nil {
+				_, _ = c.ExecContext(t.Context(), "DETACH DATABASE stolen")
+				c.Close()
+				t.Fatalf("%s: acquisition %d got an unprimed connection after churn", name, i)
+			}
+			c.Close()
+		}
+	}
+}

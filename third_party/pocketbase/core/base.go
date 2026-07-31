@@ -1182,6 +1182,13 @@ func (app *BaseApp) initDataDB() error {
 	concurrentDB.DB().SetMaxOpenConns(app.config.DataMaxOpenConns)
 	concurrentDB.DB().SetMaxIdleConns(app.config.DataMaxIdleConns)
 	concurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
+	// A DBConnect that restricts ATTACH (NoAttachDBConnect) primes each pooled
+	// connection and depends on the limits it set; the three lines above have
+	// just overwritten them. Re-prime, or untrusted JS regains cross-tenant
+	// file access. No-op for an unrestricted pool.
+	if err := ReapplyNoAttachLimits(concurrentDB.DB()); err != nil {
+		return err
+	}
 
 	nonconcurrentDB, err := app.config.DBConnect(dbPath)
 	if err != nil {
@@ -1190,6 +1197,9 @@ func (app *BaseApp) initDataDB() error {
 	nonconcurrentDB.DB().SetMaxOpenConns(1)
 	nonconcurrentDB.DB().SetMaxIdleConns(1)
 	nonconcurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
+	if err := ReapplyNoAttachLimits(nonconcurrentDB.DB()); err != nil {
+		return err
+	}
 
 	if app.IsDev() {
 		nonconcurrentDB.QueryLogFunc = func(ctx context.Context, t time.Duration, sql string, rows *sql.Rows, err error) {
@@ -1244,6 +1254,10 @@ func (app *BaseApp) initAuxDB() error {
 	concurrentDB.DB().SetMaxOpenConns(app.config.AuxMaxOpenConns)
 	concurrentDB.DB().SetMaxIdleConns(app.config.AuxMaxIdleConns)
 	concurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
+	// See initDataDB: re-prime a restricted pool after overwriting its limits.
+	if err := ReapplyNoAttachLimits(concurrentDB.DB()); err != nil {
+		return err
+	}
 
 	nonconcurrentDB, err := app.config.DBConnect(dbPath)
 	if err != nil {
@@ -1252,6 +1266,9 @@ func (app *BaseApp) initAuxDB() error {
 	nonconcurrentDB.DB().SetMaxOpenConns(1)
 	nonconcurrentDB.DB().SetMaxIdleConns(1)
 	nonconcurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
+	if err := ReapplyNoAttachLimits(nonconcurrentDB.DB()); err != nil {
+		return err
+	}
 
 	app.auxConcurrentDB = concurrentDB
 	app.auxNonconcurrentDB = nonconcurrentDB
