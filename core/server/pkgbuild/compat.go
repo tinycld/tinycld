@@ -3,7 +3,6 @@ package pkgbuild
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -113,30 +112,17 @@ func SolveCompat(
 // version peer ranges on @tinycld/core compare against is CORE's — the nested
 // tinycld/core/package.json — mirroring the host's changedMemberVersion.
 func VerifyTargetPeerVersions(m RebuildManifest, buildDir string) error {
+	members, err := readBuildMembers(m, buildDir)
+	if err != nil {
+		return fmt.Errorf("verify peer versions: %w", err)
+	}
 	resolved := map[string]string{}
 	peerVersionsBySlug := map[string]map[string]string{}
-
-	for _, ms := range m.Members {
-		regSlug := MemberSlugToRegistry(ms.Slug)
-		if ms.Slug == BaseMemberSlug {
-			version := PackageJSONVersion(filepath.Join(buildDir, BaseMemberSlug, "core", "package.json"))
-			if version == "" {
-				version = ms.Version
-			}
-			resolved[regSlug] = version
-			continue
-		}
-		manifest, err := ParseManifestViaNode(filepath.Join(buildDir, ms.Slug))
-		if err != nil {
-			return fmt.Errorf("verify peer versions: read %s's manifest from the build: %w", ms.Slug, err)
-		}
-		version := manifest.Version
-		if version == "" {
-			version = ms.Version
-		}
-		resolved[regSlug] = version
-		if len(manifest.PeerVersions) > 0 {
-			peerVersionsBySlug[regSlug] = manifest.PeerVersions
+	for _, bm := range members {
+		regSlug := MemberSlugToRegistry(bm.Slug)
+		resolved[regSlug] = bm.Version
+		if len(bm.PeerVersions) > 0 {
+			peerVersionsBySlug[regSlug] = bm.PeerVersions
 		}
 	}
 	if coreVer, ok := resolved[BaseRegistrySlug]; ok {

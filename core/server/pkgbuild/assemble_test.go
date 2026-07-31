@@ -14,13 +14,29 @@ import (
 
 // fakeSource is a MemberSource whose behaviors the test supplies inline.
 type fakeSource struct {
-	fetch func(ms pkgbuild.MemberSpec, buildDir string) error
-	copy  func(ms pkgbuild.MemberSpec, buildDir string) error
+	fetch func(ms pkgbuild.MemberSpec, buildDir string) (string, error)
+	copy  func(ms pkgbuild.MemberSpec, buildDir string) (string, error)
 }
 
-func (s fakeSource) Fetch(ms pkgbuild.MemberSpec, buildDir string) error { return s.fetch(ms, buildDir) }
+func (s fakeSource) Fetch(ms pkgbuild.MemberSpec, buildDir string) (string, error) {
+	return s.fetch(ms, buildDir)
+}
 
-func (s fakeSource) CopyCurrent(ms pkgbuild.MemberSpec, buildDir string) error { return s.copy(ms, buildDir) }
+func (s fakeSource) CopyCurrent(ms pkgbuild.MemberSpec, buildDir string) (string, error) {
+	return s.copy(ms, buildDir)
+}
+
+// materializeMember stands in for a real fetch/copy: it writes the member
+// content resolve later reads (the base's nested core/package.json, a feature
+// member's manifest.ts) exactly as a real materialization would.
+func materializeMember(t *testing.T, ms pkgbuild.MemberSpec, dir, version string) {
+	t.Helper()
+	if ms.Slug == pkgbuild.BaseMemberSlug {
+		pkgbuildtest.WriteBuildBase(t, dir, version)
+		return
+	}
+	pkgbuildtest.WriteBuildMember(t, dir, ms.Slug, version, nil)
+}
 
 func TestWriteWorkspaceScaffold(t *testing.T) {
 	dir := t.TempDir()
@@ -90,13 +106,14 @@ func TestWriteWorkspaceScaffold_CustomStoreDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(ws), "storeDir: /builder/store\n") {
-		t.Fatal("pkgbuild.ScaffoldOptions.PnpmStoreDir not honored")
+		t.Fatal("ScaffoldOptions.PnpmStoreDir not honored")
 	}
 }
 
 func TestAssembleBuild_FetchesAllAndScaffolds(t *testing.T) {
 	build := t.TempDir()
 	srcRoot := t.TempDir()
+	pkgbuildtest.WriteTestOverrides(t, srcRoot)
 	manifest := pkgbuild.RebuildManifest{
 		BuildID: "build-1",
 		Members: []pkgbuild.MemberSpec{
@@ -106,18 +123,13 @@ func TestAssembleBuild_FetchesAllAndScaffolds(t *testing.T) {
 	}
 	var fetched []string
 	src := fakeSource{
-		fetch: func(ms pkgbuild.MemberSpec, dir string) error {
+		fetch: func(ms pkgbuild.MemberSpec, dir string) (string, error) {
 			fetched = append(fetched, ms.Slug)
-			// The first member materialized also drops the override file the scaffold
-			// writer reads — standing in for the baked workspace-root file a real
-			// build always carries.
-			if len(fetched) == 1 {
-				pkgbuildtest.WriteTestOverrides(t, dir)
-			}
-			return os.MkdirAll(filepath.Join(dir, ms.Slug), 0o755)
+			materializeMember(t, ms, dir, "1.0.0")
+			return "sha256:fake-" + ms.Slug, nil
 		},
-		copy: func(ms pkgbuild.MemberSpec, dir string) error {
-			return fmt.Errorf("copy should not be called when no member is FromCurrent")
+		copy: func(ms pkgbuild.MemberSpec, dir string) (string, error) {
+			return "", fmt.Errorf("copy should not be called when no member is FromCurrent")
 		},
 	}
 	if err := pkgbuild.AssembleBuild(nil, manifest, build, src, srcRoot, pkgbuild.ScaffoldOptions{}); err != nil {
@@ -125,6 +137,26 @@ func TestAssembleBuild_FetchesAllAndScaffolds(t *testing.T) {
 	}
 	if len(fetched) != 2 {
 		t.Fatalf("expected 2 fetches, got %v", fetched)
+	}
+
+	// The assemble records the resolved set: on-disk versions + the integrities
+	// the source reported.
+	locked, err := pkgbuild.ReadMembersLock(build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(locked) != 2 {
+		t.Fatalf("members.lock.json should list both members, got %+v", locked)
+	}
+	bySlug := map[string]pkgbuild.ResolvedMember{}
+	for _, rm := range locked {
+		bySlug[rm.Slug] = rm
+	}
+	if bySlug["mail"].Integrity != "sha256:fake-mail" || bySlug["mail"].Name != "@tinycld/mail" {
+		t.Fatalf("mail lock entry = %+v", bySlug["mail"])
+	}
+	if bySlug["tinycld"].Name != pkgbuild.CorePackageKey || bySlug["tinycld"].Version != "1.0.0" {
+		t.Fatalf("base lock entry = %+v", bySlug["tinycld"])
 	}
 }
 
@@ -140,16 +172,19 @@ func TestAssembleBuild_CopiesFromCurrentVsFetch(t *testing.T) {
 	}
 	var fetched, copied []string
 	src := fakeSource{
-		fetch: func(ms pkgbuild.MemberSpec, dir string) error {
+		fetch: func(ms pkgbuild.MemberSpec, dir string) (string, error) {
 			fetched = append(fetched, ms.Slug)
-			return os.MkdirAll(filepath.Join(dir, ms.Slug), 0o755)
+			materializeMember(t, ms, dir, "2.0.0")
+			return "sha256:fresh", nil
 		},
-		copy: func(ms pkgbuild.MemberSpec, dir string) error {
+		copy: func(ms pkgbuild.MemberSpec, dir string) (string, error) {
 			copied = append(copied, ms.Slug)
+			materializeMember(t, ms, dir, "0.0.9")
 			// The unchanged "tinycld" member, copied from the current build, carries
 			// the workspace-root override file the scaffold writer reads.
 			pkgbuildtest.WriteTestOverrides(t, dir)
-			return os.MkdirAll(filepath.Join(dir, ms.Slug), 0o755)
+			// Carried forward from the active build's lock.
+			return "sha256:carried", nil
 		},
 	}
 	if err := pkgbuild.AssembleBuild(nil, manifest, build, src, srcRoot, pkgbuild.ScaffoldOptions{}); err != nil {
@@ -167,9 +202,17 @@ func TestAssembleBuild_CopiesFromCurrentVsFetch(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(build, "pnpm-workspace.yaml")); err != nil {
 		t.Fatalf("scaffold not written: %v", err)
 	}
+
+	// The copied member's carried-forward integrity lands in the lock.
+	if got := pkgbuild.LockedIntegrity(build, "tinycld"); got != "sha256:carried" {
+		t.Fatalf("carried integrity = %q, want sha256:carried", got)
+	}
+	if got := pkgbuild.LockedIntegrity(build, "mail"); got != "sha256:fresh" {
+		t.Fatalf("fetched integrity = %q, want sha256:fresh", got)
+	}
 }
 
-func TestFetchMember_PlacesExtractedDir(t *testing.T) {
+func TestFetchMember_PlacesExtractedDirAndReturnsIntegrity(t *testing.T) {
 	build := t.TempDir()
 	// Fake an already-extracted "package" dir as if npm pack + untar ran.
 	fakeExtract := t.TempDir()
@@ -181,11 +224,15 @@ func TestFetchMember_PlacesExtractedDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	packer := func(spec, into string) (string, error) {
-		return pkgDir, nil // pretend we packed+untarred
+	packer := func(spec, into string) (string, string, error) {
+		return pkgDir, "sha256:abc123", nil // pretend we packed+hashed+untarred
 	}
-	if err := pkgbuild.FetchMemberWith(pkgbuild.MemberSpec{Slug: "mail", Spec: "@tinycld/mail@0.3.1"}, build, packer); err != nil {
+	integrity, err := pkgbuild.FetchMemberWith(pkgbuild.MemberSpec{Slug: "mail", Spec: "@tinycld/mail@0.3.1"}, build, packer)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if integrity != "sha256:abc123" {
+		t.Fatalf("integrity = %q, want the packer's hash", integrity)
 	}
 	if _, err := os.Stat(filepath.Join(build, "mail", "manifest.ts")); err != nil {
 		t.Fatalf("expected build/mail/manifest.ts: %v", err)
@@ -193,7 +240,7 @@ func TestFetchMember_PlacesExtractedDir(t *testing.T) {
 }
 
 func TestNpmPackSource_CopyCurrentRefuses(t *testing.T) {
-	err := pkgbuild.NpmPackSource().CopyCurrent(pkgbuild.MemberSpec{Slug: "mail"}, t.TempDir())
+	_, err := pkgbuild.NpmPackSource().CopyCurrent(pkgbuild.MemberSpec{Slug: "mail"}, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "mail") {
 		t.Fatalf("fetch-only source must refuse CopyCurrent, got: %v", err)
 	}

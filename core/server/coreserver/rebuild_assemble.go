@@ -27,11 +27,11 @@ type hostMemberSource struct{}
 
 var _ pkgbuild.MemberSource = hostMemberSource{}
 
-func (hostMemberSource) Fetch(ms MemberSpec, buildDir string) error {
+func (hostMemberSource) Fetch(ms MemberSpec, buildDir string) (string, error) {
 	return pkgbuild.NpmPackSource().Fetch(ms, buildDir)
 }
 
-func (hostMemberSource) CopyCurrent(ms MemberSpec, buildDir string) error {
+func (hostMemberSource) CopyCurrent(ms MemberSpec, buildDir string) (string, error) {
 	return copyMemberFromCurrent(ms, buildDir)
 }
 
@@ -40,19 +40,27 @@ func (hostMemberSource) CopyCurrent(ms MemberSpec, buildDir string) error {
 // into buildDir. This keeps unchanged members byte-identical to what's running
 // instead of re-fetching (which could drift their spec below the running
 // version and drop migrations the running build ships).
-func copyMemberFromCurrent(ms MemberSpec, buildDir string) error {
+//
+// The member's integrity is carried forward from the active build's
+// members.lock.json — the bytes are the same bytes that lock recorded. "" when
+// the active build predates the lock file; RecipeHash refuses such a set, and
+// the next fetched build repopulates it.
+func copyMemberFromCurrent(ms MemberSpec, buildDir string) (string, error) {
 	src := filepath.Join(currentWorkspaceRoot(), ms.Slug)
 	if _, err := os.Stat(src); err != nil {
 		// The current build doesn't carry this member (shouldn't happen for an
 		// unchanged member). Surface it rather than silently producing a broken
 		// build — the caller fails the rebuild.
-		return fmt.Errorf("current build missing member %q at %s: %w", ms.Slug, src, err)
+		return "", fmt.Errorf("current build missing member %q at %s: %w", ms.Slug, src, err)
 	}
 	dest := filepath.Join(buildDir, ms.Slug)
 	if err := os.RemoveAll(dest); err != nil {
-		return err
+		return "", err
 	}
-	return copyDir(src, dest)
+	if err := copyDir(src, dest); err != nil {
+		return "", err
+	}
+	return pkgbuild.LockedIntegrity(currentWorkspaceRoot(), ms.Slug), nil
 }
 
 // assembleBuild materializes the desired member set into buildDir. Kept as the

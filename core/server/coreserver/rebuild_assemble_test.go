@@ -10,7 +10,7 @@ import (
 // current build doesn't actually carry must fail the rebuild loudly, not
 // produce a silently-incomplete build.
 func TestHostMemberSource_CopyCurrentMissingMemberFailsLoudly(t *testing.T) {
-	err := hostMemberSource{}.CopyCurrent(
+	_, err := hostMemberSource{}.CopyCurrent(
 		MemberSpec{Slug: "definitely-absent-member", FromCurrent: true}, t.TempDir())
 	if err == nil {
 		t.Fatal("expected copy of a member absent from the current build to fail")

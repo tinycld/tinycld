@@ -60,45 +60,55 @@ func (o ScaffoldOptions) storeDir() string {
 // host seam the design doc names: the single-tenant host fetches changed
 // members and copies unchanged ones from its currently-active build; the
 // multi-org builder always fetches (it has no "current build").
+//
+// Both methods report the member's tarball integrity ("sha256:<hex>" of the
+// exact bytes it was materialized from) — the fact RecipeHash keys the build
+// cache on. CopyCurrent carries it forward from the active build's
+// members.lock.json; "" means unknown (a current build that predates the
+// lock), which RecipeHash refuses rather than silently omitting.
 type MemberSource interface {
 	// Fetch materializes a changed member from its spec (npm pack).
-	Fetch(ms MemberSpec, buildDir string) error
+	Fetch(ms MemberSpec, buildDir string) (integrity string, err error)
 	// CopyCurrent materializes an unchanged (FromCurrent) member from the
 	// host's currently-active build.
-	CopyCurrent(ms MemberSpec, buildDir string) error
+	CopyCurrent(ms MemberSpec, buildDir string) (integrity string, err error)
 }
 
 // packFn packs spec (npm name / git URL / git+file://) and returns the path
-// to the extracted "package" directory. Injectable for tests.
-type packFn func(spec, workDir string) (extractedPackageDir string, err error)
+// to the extracted "package" directory plus the tarball's integrity.
+// Injectable for tests.
+type packFn func(spec, workDir string) (extractedPackageDir, integrity string, err error)
 
 type npmPackSource struct {
 	pack packFn
 }
 
 // NpmPackSource returns the standard fetch-only MemberSource: `npm pack` +
-// untar. Its CopyCurrent always fails — only a host with a currently-active
-// build can copy members from one, and such a host wraps this source with its
-// own CopyCurrent (coreserver's hostMemberSource).
+// sha256 + untar. Its CopyCurrent always fails — only a host with a
+// currently-active build can copy members from one, and such a host wraps
+// this source with its own CopyCurrent (coreserver's hostMemberSource).
 func NpmPackSource() MemberSource { return npmPackSource{pack: realPack} }
 
-func (s npmPackSource) Fetch(ms MemberSpec, buildDir string) error {
+func (s npmPackSource) Fetch(ms MemberSpec, buildDir string) (string, error) {
 	return fetchMemberWith(ms, buildDir, s.pack)
 }
 
-func (s npmPackSource) CopyCurrent(ms MemberSpec, buildDir string) error {
-	return fmt.Errorf("npm pack source has no current build to copy member %q from", ms.Slug)
+func (s npmPackSource) CopyCurrent(ms MemberSpec, buildDir string) (string, error) {
+	return "", fmt.Errorf("npm pack source has no current build to copy member %q from", ms.Slug)
 }
 
-// realPack runs `npm pack <spec>` in a fresh temp dir, untars the resulting
-// tarball, and returns the extracted package/ path.
-func realPack(spec, _ string) (string, error) {
+// realPack runs `npm pack <spec>` in a fresh temp dir, hashes the resulting
+// tarball, untars it, and returns the extracted package/ path plus the
+// tarball integrity. The hash is taken between pack and untar — the one
+// moment the exact fetched bytes exist as a single artifact — so the recipe
+// identity covers precisely what the build consumed.
+func realPack(spec, _ string) (string, string, error) {
 	tmp, err := os.MkdirTemp("", "tinycld-fetch-*")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if _, err := RunCmd(tmp, "npm", "pack", spec); err != nil {
-		return "", fmt.Errorf("npm pack %s: %w", spec, err)
+		return "", "", fmt.Errorf("npm pack %s: %w", spec, err)
 	}
 	entries, _ := os.ReadDir(tmp)
 	var tgz string
@@ -109,25 +119,32 @@ func realPack(spec, _ string) (string, error) {
 		}
 	}
 	if tgz == "" {
-		return "", fmt.Errorf("no .tgz after npm pack %s", spec)
+		return "", "", fmt.Errorf("no .tgz after npm pack %s", spec)
+	}
+	hash, err := sha256OfFile(filepath.Join(tmp, tgz))
+	if err != nil {
+		return "", "", fmt.Errorf("hash %s: %w", tgz, err)
 	}
 	if _, err := RunCmd(tmp, "tar", "xzf", tgz); err != nil {
-		return "", fmt.Errorf("untar %s: %w", tgz, err)
+		return "", "", fmt.Errorf("untar %s: %w", tgz, err)
 	}
 	// npm pack always extracts into a subdirectory named "package".
-	return filepath.Join(tmp, "package"), nil
+	return filepath.Join(tmp, "package"), "sha256:" + hash, nil
 }
 
-func fetchMemberWith(ms MemberSpec, buildDir string, pack packFn) error {
-	extracted, err := pack(ms.Spec, buildDir)
+func fetchMemberWith(ms MemberSpec, buildDir string, pack packFn) (string, error) {
+	extracted, integrity, err := pack(ms.Spec, buildDir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	dest := filepath.Join(buildDir, ms.Slug)
 	if err := os.RemoveAll(dest); err != nil {
-		return err
+		return "", err
 	}
-	return CopyDir(extracted, dest)
+	if err := CopyDir(extracted, dest); err != nil {
+		return "", err
+	}
+	return integrity, nil
 }
 
 // AssembleBuild writes the manifest, materializes every member (fetching the
@@ -150,6 +167,7 @@ func AssembleBuild(sink ProgressSink, m RebuildManifest, buildDir string, src Me
 		return err
 	}
 	members := make([]string, 0, len(m.Members))
+	integrities := make(map[string]string, len(m.Members))
 	for i, ms := range m.Members {
 		// Tick the progress bar across the assemble band [ProgAssembleStart,
 		// ProgAssembleEnd) as each member is materialized, BEFORE the work so a
@@ -158,21 +176,36 @@ func AssembleBuild(sink ProgressSink, m RebuildManifest, buildDir string, src Me
 		sink.Progress("Assembling build", assembleMemberPct(i, len(m.Members)), memberAssembleMsg(ms))
 		memStart := time.Now()
 		if ms.FromCurrent {
-			if err := src.CopyCurrent(ms, buildDir); err != nil {
+			integrity, err := src.CopyCurrent(ms, buildDir)
+			if err != nil {
 				return fmt.Errorf("copy %s from current: %w", ms.Slug, err)
 			}
+			integrities[ms.Slug] = integrity
 			sink.Logf("member %s: copied from current build in %s", ms.Slug, sinceRounded(memStart))
 		} else {
 			sink.Logf("member %s: fetching %s", ms.Slug, ms.Spec)
-			if err := src.Fetch(ms, buildDir); err != nil {
+			integrity, err := src.Fetch(ms, buildDir)
+			if err != nil {
 				return fmt.Errorf("fetch %s: %w", ms.Slug, err)
 			}
+			integrities[ms.Slug] = integrity
 			sink.Logf("member %s: fetched in %s", ms.Slug, sinceRounded(memStart))
 		}
 		members = append(members, ms.Slug)
 	}
 	sink.Logf("assembled %d members; writing workspace scaffold", len(members))
-	return WriteWorkspaceScaffold(buildDir, members, srcRoot, opts)
+	if err := WriteWorkspaceScaffold(buildDir, members, srcRoot, opts); err != nil {
+		return err
+	}
+	// Record the RESOLVED member set (names + semvers from the on-disk
+	// manifests, tarball integrities from the source) so the build carries its
+	// own identity — the RecipeHash input, and the integrity carry-forward
+	// source for the NEXT build's FromCurrent members.
+	resolvedMembers, err := ResolveMembers(m, buildDir, integrities)
+	if err != nil {
+		return err
+	}
+	return WriteMembersLock(buildDir, resolvedMembers)
 }
 
 func sinceRounded(t time.Time) string {
