@@ -11,6 +11,8 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/pkgbuild"
 )
 
 // MemberSpec describes one workspace member to assemble into a build.
@@ -55,20 +57,19 @@ func (m RebuildManifest) MemberBySlug(slug string) (MemberSpec, bool) {
 const buildsToKeep = 5
 
 // Progress milestones for the /admin progress bar, in the order a rebuild hits
-// them. The assemble band (members fetched/copied) runs from progAssembleStart
-// to progAssembleEnd with per-member ticks spread across it; the build pipeline
-// (pnpm/go/expo/native) owns the middle; the DB + activation phases own the tail.
-// Keeping the whole scale here (rather than scattered magic numbers) makes the
+// them. The assemble + build-pipeline bands (5..88) are owned by pkgbuild and
+// aliased here; the DB + activation phases own the host tail above pkgbuild's
+// ceiling. Keeping one scale (rather than scattered magic numbers) makes the
 // bar monotonic across all four rebuild paths.
 const (
-	progAssembleStart = 5
-	progAssembleEnd   = 42
-	progPnpmInstall   = 45
-	progGoBuild       = 60
-	progExpoWeb       = 72
-	progStageRelease  = 76
-	progNativeStart   = 80
-	progNativeEnd     = 88
+	progAssembleStart = pkgbuild.ProgAssembleStart
+	progAssembleEnd   = pkgbuild.ProgAssembleEnd
+	progPnpmInstall   = pkgbuild.ProgPnpmInstall
+	progGoBuild       = pkgbuild.ProgGoBuild
+	progExpoWeb       = pkgbuild.ProgExpoWeb
+	progStageRelease  = pkgbuild.ProgStageRelease
+	progNativeStart   = pkgbuild.ProgNativeStart
+	progNativeEnd     = pkgbuild.ProgNativeEnd
 	progBackupDB      = 90
 	progSyncMig       = 93
 	progActivate      = 96
