@@ -24,8 +24,7 @@ func transformSource(name string, content []byte) ([]byte, error) {
 	// Keep empty input empty: esbuild would emit a ~175-byte inline-sourcemap stub
 	// for "", but registerHooks (jsvm.go ~L255) relies on an empty .pb.ts staying
 	// 0 bytes to fire its types.d.ts-directive bootstrap for freshly-created dev
-	// hook files. The router's publish-time transpileForStore intentionally has NO
-	// such guard (the store is production; that dev bootstrap doesn't apply there).
+	// hook files.
 	if len(content) == 0 {
 		return content, nil
 	}
