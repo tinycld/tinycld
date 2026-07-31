@@ -18,9 +18,8 @@
 // It lives in CORE — not in the router repo — because the dual-mode binary a
 // per-org build produces must be able to run as a tenant, and that binary is
 // built from the org's own fetched workspace, pinned to its own core version
-// (DESIGN-org-package-agency.md D5). The router-side serve-org command and
-// the app shell's tenant mode both compose their feature registration on top
-// of this via Options.RegisterExtras.
+// (DESIGN-org-package-agency.md D5). The app shell's tenant mode composes its
+// feature registration on top of this via Options.RegisterExtras.
 //
 // The architectural rule about ports still holds: a service that must BIND A
 // PORT moves into core so the router can open it. A tenant serves on unix
@@ -74,9 +73,6 @@ type MailListeners struct {
 type Extras struct {
 	// Slug is the org's slug (identification and logging only).
 	Slug string
-	// PackageSlugs are the org's resolved package slugs from
-	// .runtime/packages.json.
-	PackageSlugs []string
 	// Mail are the router-managed mail listeners. The ListenFuncs bind
 	// lazily, during mail's OnServe — before readiness is reported, so a bind
 	// failure still fails the boot loudly.
@@ -96,9 +92,9 @@ type Options struct {
 	// mode selector). Nil means os.Args[1:].
 	Args []string
 
-	// RegisterExtras registers the tenant's feature Go. The pinned-menu
-	// serve-org adapts tenantpkgs here; a per-org build's dual-mode main
-	// registers exactly its linked package set.
+	// RegisterExtras registers the tenant's feature Go. A per-org build's
+	// dual-mode main registers exactly its linked package set (the artifact is
+	// the gate — no runtime slug filter).
 	RegisterExtras func(app *pocketbase.PocketBase, ex Extras)
 }
 
@@ -120,7 +116,6 @@ func Run(opts Options) error {
 		webdavConfig = fs.String("webdav-config", "", "path to the org's materialized webdav.json")
 		caldavConfig = fs.String("caldav-config", "", "path to the org's materialized caldav.json")
 		quotaConfig  = fs.String("quota-config", "", "path to the org's materialized quota.json")
-		pkgsConfig   = fs.String("packages-config", "", "path to the org's materialized packages.json (resolved slugs)")
 		appConfig    = fs.String("app-config", "", "path to the org's materialized app.json (public URL + proxy trust)")
 		davConfig    = fs.String("carddav-config", "", "path to the CardDAV source JSON")
 		imapSocket   = fs.String("imap-socket", "", "unix socket to serve IMAP on (router-managed; empty = no IMAP)")
@@ -152,12 +147,11 @@ func Run(opts Options) error {
 		slug:       *slug,
 		hooksPool:  *hooksPool,
 		configs: configPaths{
-			carddav:  *davConfig,
-			caldav:   *caldavConfig,
-			webdav:   *webdavConfig,
-			quota:    *quotaConfig,
-			packages: *pkgsConfig,
-			app:      *appConfig,
+			carddav: *davConfig,
+			caldav:  *caldavConfig,
+			webdav:  *webdavConfig,
+			quota:   *quotaConfig,
+			app:     *appConfig,
 		},
 		confinePkg: *confinePkg,
 		mailSocks:  mailSocketPaths{imap: *imapSocket, smtp: *smtpSocket, mx: *mxSocket},
@@ -180,7 +174,7 @@ type mailSocketPaths struct {
 }
 
 type configPaths struct {
-	carddav, caldav, webdav, quota, packages, app string
+	carddav, caldav, webdav, quota, app string
 }
 
 type runConfig struct {
@@ -221,10 +215,6 @@ func run(cfg runConfig) error {
 	if err != nil {
 		return fmt.Errorf("load quota config: %w", err)
 	}
-	pkgSlugs, err := tenantcfg.LoadPackageSlugs(cfg.configs.packages)
-	if err != nil {
-		return fmt.Errorf("load packages config: %w", err)
-	}
 	appCfg, err := tenantcfg.LoadAppConfig(cfg.configs.app)
 	if err != nil {
 		return fmt.Errorf("load app config: %w", err)
@@ -263,7 +253,6 @@ func run(cfg runConfig) error {
 			}
 			cfg.extras(app, Extras{
 				Slug:          cfg.slug,
-				PackageSlugs:  pkgSlugs,
 				Mail:          tenantMailListeners(cfg.mailSocks),
 				ControlSocket: cfg.ctlSocket,
 			})

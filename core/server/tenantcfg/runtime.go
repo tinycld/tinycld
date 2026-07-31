@@ -27,11 +27,6 @@ type QuotaConfig struct {
 	Sources           []QuotaSource `json:"sources"`
 }
 
-// PackagesConfig is .runtime/packages.json: the org's resolved package slugs.
-type PackagesConfig struct {
-	Slugs []string `json:"slugs"`
-}
-
 // AppConfig is .runtime/app.json.
 type AppConfig struct {
 	// AppURL is adopted as Settings().Meta.AppURL — the value PB interpolates
@@ -119,13 +114,6 @@ func LoadQuota(path string) (QuotaConfig, error) {
 	var cfg QuotaConfig
 	err := loadJSON(path, &cfg)
 	return cfg, err
-}
-
-// LoadPackageSlugs reads .runtime/packages.json.
-func LoadPackageSlugs(path string) ([]string, error) {
-	var cfg PackagesConfig
-	err := loadJSON(path, &cfg)
-	return cfg.Slugs, err
 }
 
 // LoadAppConfig reads .runtime/app.json.
