@@ -29,6 +29,38 @@ func copyDir(src, dst string) error {
 	return pkgbuild.CopyDir(src, dst)
 }
 
+// Manifest/spec validation (moved from pkg_validate.go). Consumers:
+// pkg_install.go, pkg_versions.go, pkg_version_change.go, pkg_compat.go,
+// pkg_seed.go, rebuild.go, rebuild_pipelines.go.
+type parsedManifest = pkgbuild.ParsedManifest
+
+type manifestRoutes = pkgbuild.ManifestRoutes
+
+type manifestNav = pkgbuild.ManifestNav
+
+type manifestServer = pkgbuild.ManifestServer
+
+func parseManifestViaNode(packageDir string) (*parsedManifest, error) {
+	return pkgbuild.ParseManifestViaNode(packageDir)
+}
+
+func validateManifest(m *parsedManifest, allowServer bool, bundledSlugs map[string]bool) error {
+	return pkgbuild.ValidateManifest(m, allowServer, bundledSlugs)
+}
+
+func validatePackageSpec(spec string) error { return pkgbuild.ValidatePackageSpec(spec) }
+
+func isTrustedScope(spec string) bool { return pkgbuild.IsTrustedScope(spec) }
+
+// Spec-shape patterns shared with the host-side version/change handlers.
+var (
+	slugPattern         = pkgbuild.SlugPattern
+	npmPackagePattern   = pkgbuild.NpmPackagePattern
+	gitSpecPattern      = pkgbuild.GitSpecPattern
+	npmVersionedPattern = pkgbuild.NpmVersionedPattern
+	versionTokenPattern = pkgbuild.VersionTokenPattern
+)
+
 // installJobSink adapts an *installJob onto pkgbuild's ProgressSink: milestones
 // go through emitProgress (SSE + durable log line), detail lines through
 // jobLogf. A nil job degrades exactly like the underlying helpers do.

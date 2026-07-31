@@ -1,4 +1,4 @@
-package coreserver
+package pkgbuild
 
 import (
 	"encoding/json"
@@ -8,15 +8,15 @@ import (
 	"strings"
 )
 
-// parsedManifest represents the validated fields from a package manifest.ts
-type parsedManifest struct {
+// ParsedManifest represents the validated fields from a package manifest.ts
+type ParsedManifest struct {
 	Name        string          `json:"name"`
 	Slug        string          `json:"slug"`
 	Version     string          `json:"version"`
 	Description string          `json:"description"`
-	Routes      *manifestRoutes `json:"routes"`
-	Nav         *manifestNav    `json:"nav"`
-	Server      *manifestServer `json:"server,omitempty"`
+	Routes      *ManifestRoutes `json:"routes"`
+	Nav         *ManifestNav    `json:"nav"`
+	Server      *ManifestServer `json:"server,omitempty"`
 	// PeerVersions is the package's enforced semver requirements on other
 	// packages (keyed by slug) / @tinycld/core. The install pipeline gates on
 	// these before any migration runs (checkInstallCompat); the version-change
@@ -26,31 +26,31 @@ type parsedManifest struct {
 	RawJSON      map[string]any    `json:"-"`
 }
 
-type manifestRoutes struct {
+type ManifestRoutes struct {
 	Directory string `json:"directory"`
 }
 
-type manifestNav struct {
+type ManifestNav struct {
 	Label string `json:"label"`
 	Icon  string `json:"icon"`
 	Order int    `json:"order,omitempty"`
 }
 
-type manifestServer struct {
+type ManifestServer struct {
 	Package string `json:"package"`
 	Module  string `json:"module"`
 }
 
-var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
-var npmPackagePattern = regexp.MustCompile(`^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$`)
+var SlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+var NpmPackagePattern = regexp.MustCompile(`^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$`)
 var goModulePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+(/[a-z0-9][a-z0-9_-]*)+$`)
 
-// gitSpecPattern matches the git/URL forms `npm pack` understands natively:
+// GitSpecPattern matches the git/URL forms `npm pack` understands natively:
 // host shorthand (github:owner/repo, gitlab:…, bitbucket:…), bare
 // owner/repo shorthand, and git+https / git+ssh / git+file / https URLs
 // (optionally .git-suffixed). Anchored, so the whole string must match — no
 // trailing junk that could smuggle a second argument.
-var gitSpecPattern = regexp.MustCompile(
+var GitSpecPattern = regexp.MustCompile(
 	`^(` +
 		`(github|gitlab|bitbucket):[\w.-]+/[\w.-]+` + // host:owner/repo
 		`|[a-zA-Z0-9][\w.-]*/[a-zA-Z0-9][\w.-]*` + // owner/repo shorthand (segments start alphanumeric, so no ../)
@@ -61,22 +61,22 @@ var gitSpecPattern = regexp.MustCompile(
 		`)$`,
 )
 
-// npmVersionedPattern matches a bare npm name (optionally @scoped) with an
+// NpmVersionedPattern matches a bare npm name (optionally @scoped) with an
 // optional trailing @<version> — e.g. `mail`, `mail@1.2.3`, `mail@latest`,
 // `@tinycld/mail@1.2.3`. The version segment is a tight charset (no slashes,
 // no metachars) so it can't smuggle a second npm-pack argument. The bare
-// npmPackagePattern (no version) still covers the un-suffixed case; this is
+// NpmPackagePattern (no version) still covers the un-suffixed case; this is
 // additive.
-var npmVersionedPattern = regexp.MustCompile(
+var NpmVersionedPattern = regexp.MustCompile(
 	`^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*(@[a-zA-Z0-9][a-zA-Z0-9.+-]*)?$`,
 )
 
-// versionTokenPattern constrains a target version / git tag to a safe charset
+// VersionTokenPattern constrains a target version / git tag to a safe charset
 // before it is concatenated into an `npm pack name@<v>` or git `remote#<v>` spec.
 // It must start alphanumeric (so a leading '-' can't be read as a flag) and
 // allows the semver/tag charset (digits, letters, dot, plus, hyphen) — covering
 // `1.2.3`, `1.2.3-beta.1`, `v1.0.0`, `latest`. Anchored, no whitespace/slashes.
-var versionTokenPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-]*$`)
+var VersionTokenPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-]*$`)
 
 // shellUnsafePattern flags any character that has no business in a package
 // spec. exec.Command uses no shell so these can't *execute*, but rejecting
@@ -84,7 +84,7 @@ var versionTokenPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+-]*$`)
 // as an npm flag.
 var shellUnsafePattern = regexp.MustCompile(`[\s;&|$<>` + "`" + `(){}\[\]'"\\]`)
 
-// parseManifestViaNode parses a manifest.ts by shelling out to Node, extracting
+// ParseManifestViaNode parses a manifest.ts by shelling out to Node, extracting
 // the object literal with a targeted regex and evaluating it via vm.runInNewContext.
 //
 // NOTE: the vm context here is NOT a security sandbox. Node's `vm` is escapable
@@ -94,7 +94,7 @@ var shellUnsafePattern = regexp.MustCompile(`[\s;&|$<>` + "`" + `(){}\[\]'"\\]`)
 // and runs AS the server (see runBuildPipelineWith), so member code already runs
 // with full server privileges by design. Installs are gated to super-admins; the
 // trust boundary is install authorization + source selection, not this parse.
-func parseManifestViaNode(packageDir string) (*parsedManifest, error) {
+func ParseManifestViaNode(packageDir string) (*ParsedManifest, error) {
 	script := `
 const fs = require('fs');
 const vm = require('vm');
@@ -137,7 +137,7 @@ try {
 		return nil, fmt.Errorf("invalid manifest JSON: %w", err)
 	}
 
-	var manifest parsedManifest
+	var manifest ParsedManifest
 	if err := json.Unmarshal(out, &manifest); err != nil {
 		return nil, fmt.Errorf("manifest structure invalid: %w", err)
 	}
@@ -147,7 +147,7 @@ try {
 	return &manifest, nil
 }
 
-// validateManifest performs the minimal pre-flight checks the install pipeline
+// ValidateManifest performs the minimal pre-flight checks the install pipeline
 // needs *before* it commits to a build: it confirms the manifest carries the
 // identity fields the pipeline reads up front (name/slug/version), and enforces
 // the env-specific gates the generator cannot make (slug shape + path-traversal
@@ -163,14 +163,14 @@ try {
 // rejecting valid slot-only contributor packages).
 //
 // If allowServer is false (Phase 2), packages with server fields are rejected.
-func validateManifest(m *parsedManifest, allowServer bool, bundledSlugs map[string]bool) error {
+func ValidateManifest(m *ParsedManifest, allowServer bool, bundledSlugs map[string]bool) error {
 	if m.Name == "" {
 		return fmt.Errorf("manifest missing required field: name")
 	}
 	if m.Slug == "" {
 		return fmt.Errorf("manifest missing required field: slug")
 	}
-	if !slugPattern.MatchString(m.Slug) {
+	if !SlugPattern.MatchString(m.Slug) {
 		return fmt.Errorf("invalid slug %q: must match ^[a-z0-9][a-z0-9-]*$", m.Slug)
 	}
 	if m.Version == "" {
@@ -217,19 +217,19 @@ func validateManifest(m *parsedManifest, allowServer bool, bundledSlugs map[stri
 	return nil
 }
 
-// validatePackageSpec checks that a string is a safe spec to hand to
+// ValidatePackageSpec checks that a string is a safe spec to hand to
 // `npm pack`: either a bare npm package name or one of the git/URL forms
 // npm pack understands natively. Rejects empty input, leading dashes
 // (flag injection), and any shell-metacharacter / whitespace.
 //
 // A git spec may carry a trailing `#<ref>` to pin a tag/branch/commit (e.g.
 // `github:tinycld/todo#v1.0.0`), which `npm pack` resolves by cloning at that
-// ref. `#` isn't part of gitSpecPattern, so the bare spec and the ref are
-// validated separately here: the bare part against gitSpecPattern, the ref
-// against versionTokenPattern (so it can't smuggle a flag or second arg).
+// ref. `#` isn't part of GitSpecPattern, so the bare spec and the ref are
+// validated separately here: the bare part against GitSpecPattern, the ref
+// against VersionTokenPattern (so it can't smuggle a flag or second arg).
 // npm specs never contain `#`, so this only affects git forms — matching how
 // classifySpec / specForVersion strip the ref downstream.
-func validatePackageSpec(spec string) error {
+func ValidatePackageSpec(spec string) error {
 	if spec == "" {
 		return fmt.Errorf("package spec is required")
 	}
@@ -247,24 +247,24 @@ func validatePackageSpec(spec string) error {
 	if hash := strings.Index(spec, "#"); hash >= 0 {
 		ref := spec[hash+1:]
 		bare = spec[:hash]
-		if !gitSpecPattern.MatchString(bare) {
+		if !GitSpecPattern.MatchString(bare) {
 			return fmt.Errorf("invalid package spec (only git specs may pin a #ref): %s", spec)
 		}
-		if !versionTokenPattern.MatchString(ref) {
+		if !VersionTokenPattern.MatchString(ref) {
 			return fmt.Errorf("invalid git ref %q in package spec: %s", ref, spec)
 		}
 		return nil
 	}
 
-	if npmPackagePattern.MatchString(bare) || npmVersionedPattern.MatchString(bare) || gitSpecPattern.MatchString(bare) {
+	if NpmPackagePattern.MatchString(bare) || NpmVersionedPattern.MatchString(bare) || GitSpecPattern.MatchString(bare) {
 		return nil
 	}
 	return fmt.Errorf("invalid package spec: %s", spec)
 }
 
-// isTrustedScope returns true only for bare @tinycld/* npm names. Any git
+// IsTrustedScope returns true only for bare @tinycld/* npm names. Any git
 // spec is third-party by definition and therefore untrusted, which makes
 // the install pipeline emit its "proceed with caution" warning.
-func isTrustedScope(spec string) bool {
-	return npmPackagePattern.MatchString(spec) && strings.HasPrefix(spec, "@tinycld/")
+func IsTrustedScope(spec string) bool {
+	return NpmPackagePattern.MatchString(spec) && strings.HasPrefix(spec, "@tinycld/")
 }
