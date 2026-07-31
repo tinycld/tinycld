@@ -81,6 +81,13 @@ type Extras struct {
 	// lazily, during mail's OnServe — before readiness is reported, so a bind
 	// failure still fails the boot loudly.
 	Mail MailListeners
+
+	// ControlSocket is the path of the ROUTER-bound control socket this
+	// tenant may dial to propose deploys (design D1 — the router owns the
+	// socket and the restart; the tenant only proposes). Empty on standalone
+	// deployments and on routers predating the deploy protocol: the tenant
+	// then has no deploy channel.
+	ControlSocket string
 }
 
 // Options composes a tenant on top of the transport.
@@ -119,6 +126,7 @@ func Run(opts Options) error {
 		imapSocket   = fs.String("imap-socket", "", "unix socket to serve IMAP on (router-managed; empty = no IMAP)")
 		smtpSocket   = fs.String("smtp-socket", "", "unix socket to serve SMTP submission on (router-managed; empty = no submission)")
 		mxSocket     = fs.String("mx-socket", "", "unix socket to serve inbound MX SMTP on (router-managed; empty = no inbound)")
+		ctlSocket    = fs.String("control-socket", "", "router-bound unix socket for deploy proposals (empty = no deploy channel)")
 		drain        = fs.Duration("drain", 10*time.Second, "graceful shutdown budget")
 		confinePkg   = fs.String("confine-packages", "", "remount this dir read-only in our mount namespace")
 	)
@@ -153,6 +161,7 @@ func Run(opts Options) error {
 		},
 		confinePkg: *confinePkg,
 		mailSocks:  mailSocketPaths{imap: *imapSocket, smtp: *smtpSocket, mx: *mxSocket},
+		ctlSocket:  *ctlSocket,
 		drain:      *drain,
 		ready:      ready,
 		extras:     opts.RegisterExtras,
@@ -180,6 +189,7 @@ type runConfig struct {
 	configs                  configPaths
 	confinePkg               string
 	mailSocks                mailSocketPaths
+	ctlSocket                string
 	drain                    time.Duration
 	ready                    *os.File
 	extras                   func(app *pocketbase.PocketBase, ex Extras)
@@ -249,9 +259,10 @@ func run(cfg runConfig) error {
 				return
 			}
 			cfg.extras(app, Extras{
-				Slug:         cfg.slug,
-				PackageSlugs: pkgSlugs,
-				Mail:         tenantMailListeners(cfg.mailSocks),
+				Slug:          cfg.slug,
+				PackageSlugs:  pkgSlugs,
+				Mail:          tenantMailListeners(cfg.mailSocks),
+				ControlSocket: cfg.ctlSocket,
 			})
 		},
 		QuotaSources:   tenantcfg.DecodeQuota(quotaCfg.Sources),

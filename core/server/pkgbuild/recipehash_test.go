@@ -63,14 +63,22 @@ func TestRecipeHash_OrderIndependent(t *testing.T) {
 // different hash.
 func TestRecipeHash_SensitiveToEachField(t *testing.T) {
 	mutations := map[string]func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain){
-		"member version":   func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { m[1].Version = "0.3.2" },
-		"member integrity": func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { m[1].Integrity = "sha256:0000" },
-		"member name":      func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { m[2].Name = "renamed-pkg" },
+		"member version": func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { m[1].Version = "0.3.2" },
+		"member integrity": func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) {
+			m[1].Integrity = "sha256:0000"
+		},
+		"member name": func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) {
+			m[2].Name = "renamed-pkg"
+		},
 		"override version": func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { o["uniwind"] = "1.9.0" },
-		"override added":   func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { o["extra-pin"] = "1.0.0" },
-		"toolchain go":     func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { tc.Go = "go1.27.0" },
-		"toolchain node":   func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { tc.Node = "v23.0.0" },
-		"toolchain pnpm":   func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { tc.Pnpm = "pnpm@12.0.0+sha512.x" },
+		"override added": func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) {
+			o["extra-pin"] = "1.0.0"
+		},
+		"toolchain go":   func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { tc.Go = "go1.27.0" },
+		"toolchain node": func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) { tc.Node = "v23.0.0" },
+		"toolchain pnpm": func(m []pkgbuild.ResolvedMember, o map[string]string, tc *pkgbuild.Toolchain) {
+			tc.Pnpm = "pnpm@12.0.0+sha512.x"
+		},
 	}
 	for label, mutate := range mutations {
 		members, overrides, tc := goldenRecipeFixture()
