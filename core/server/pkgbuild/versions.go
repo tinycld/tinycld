@@ -43,9 +43,19 @@ type versionCacheEntry struct {
 
 const versionCacheTTL = 60 * time.Second
 
+// versionCacheMax caps how many spec entries the cache holds. The router serves
+// /v1/versions for tenant-supplied specs; without a bound a tenant sending an
+// unbounded stream of distinct (but individually valid) specs grows the router
+// heap forever. 1024 comfortably covers every package an org's operators browse
+// while keeping the map's worst-case footprint trivially small. On overflow the
+// oldest-inserted entry is dropped (insertion order tracked in versionCacheKeys)
+// — cache eviction, not correctness: a dropped spec simply re-fetches.
+const versionCacheMax = 1024
+
 var (
-	versionCacheMu sync.Mutex
-	versionCache   = map[string]versionCacheEntry{}
+	versionCacheMu   sync.Mutex
+	versionCache     = map[string]versionCacheEntry{}
+	versionCacheKeys []string // insertion order, for drop-oldest eviction
 )
 
 func cachedVersions(spec string) (versionCacheEntry, bool) {
@@ -62,7 +72,42 @@ func storeVersions(spec string, e versionCacheEntry) {
 	versionCacheMu.Lock()
 	defer versionCacheMu.Unlock()
 	e.fetched = versionNow()
+	// Opportunistic sweep: drop entries whose TTL has expired. This bounds the
+	// map by time under a churny-but-slow spec stream (the common case), before
+	// the hard size cap has to fire.
+	sweepExpiredLocked()
+	if _, exists := versionCache[spec]; !exists {
+		// Enforce the hard cap by dropping the oldest-inserted entry until there
+		// is room for the newcomer. A loop, not a single drop: the sweep above
+		// may have removed nothing (all entries fresh) yet still be at the cap.
+		for len(versionCache) >= versionCacheMax && len(versionCacheKeys) > 0 {
+			oldest := versionCacheKeys[0]
+			versionCacheKeys = versionCacheKeys[1:]
+			delete(versionCache, oldest)
+		}
+		versionCacheKeys = append(versionCacheKeys, spec)
+	}
 	versionCache[spec] = e
+}
+
+// sweepExpiredLocked removes every entry past its TTL. Caller holds
+// versionCacheMu. Rebuilds versionCacheKeys in place, preserving insertion order
+// of the survivors.
+func sweepExpiredLocked() {
+	now := versionNow()
+	kept := versionCacheKeys[:0]
+	for _, k := range versionCacheKeys {
+		e, ok := versionCache[k]
+		if !ok {
+			continue
+		}
+		if now.Sub(e.fetched) > versionCacheTTL {
+			delete(versionCache, k)
+			continue
+		}
+		kept = append(kept, k)
+	}
+	versionCacheKeys = kept
 }
 
 // versionNow is overridable in tests; production uses time.Now.
