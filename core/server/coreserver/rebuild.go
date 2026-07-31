@@ -250,8 +250,14 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installJob, m Rebuil
 	var restoreClosure func() error
 
 	return rebuildDeps{
-		assemble:     func(mm RebuildManifest, bd string) error { return assembleBuild(job, mm, bd) },
-		verifyCompat: verifyTargetPeerVersions,
+		assemble: func(mm RebuildManifest, bd string) error { return assembleBuild(job, mm, bd) },
+		verifyCompat: func(mm RebuildManifest, bd string) error {
+			if err := verifyTargetPeerVersions(mm, bd); err != nil {
+				return err
+			}
+			logRecipeHashBreadcrumb(job, bd)
+			return nil
+		},
 		pipeline: func(j *installJob, bd string) (buildOutput, error) {
 			return runBuildPipeline(j, bd, m.BuildID)
 		},
@@ -327,6 +333,27 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installJob, m Rebuil
 			requestRestart("")
 		},
 	}
+}
+
+// logRecipeHashBreadcrumb best-effort computes and logs the build's recipe
+// hash (DESIGN-org-package-agency D4) from what assemble recorded, so
+// operators can correlate single-tenant builds with the multi-org build cache
+// once it exists. Never fatal — World A does not consume the hash. The common
+// unavailability reason today: a FromCurrent member copied from an active
+// build that predates members.lock.json carries no integrity, which
+// RecipeHash refuses by design.
+func logRecipeHashBreadcrumb(job *installJob, buildDir string) {
+	tc, err := pkgbuild.DetectToolchain(nil)
+	if err != nil {
+		jobLogf(job, "recipe hash unavailable: %v", err)
+		return
+	}
+	hash, err := pkgbuild.RecipeHashForBuild(buildDir, tc)
+	if err != nil {
+		jobLogf(job, "recipe hash unavailable: %v", err)
+		return
+	}
+	jobLogf(job, "recipe hash: %s", hash)
 }
 
 // recordRebuildBuild persists the pkg_build row for a freshly-activated build:
