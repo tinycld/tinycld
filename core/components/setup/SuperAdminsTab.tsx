@@ -34,9 +34,14 @@ async function adminFetch<T = unknown>(
             ...init?.headers,
         },
     })
-    const data = (await response.json().catch(() => ({}))) as T & { error?: string }
+    const data = (await response.json().catch(() => ({}))) as T & {
+        error?: string
+        message?: string
+    }
     if (!response.ok) {
-        throw new Error(data.error ?? 'Request failed')
+        // PB ApiError responses carry the text in `message`; without reading it
+        // every failure collapses to the generic fallback.
+        throw new Error(data.error ?? data.message ?? 'Request failed')
     }
     return data
 }

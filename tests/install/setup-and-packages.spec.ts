@@ -64,11 +64,19 @@ async function createGrantTarget(page: Page) {
             name: GRANT_TARGET_NAME,
             username: 'smokegrantee',
             verified: true,
+            // users.role is required (1940000000_backfill_and_require_users_role);
+            // omitting it 400s the create and the grant then fails "no user found".
+            role: 'member',
         },
     })
-    // 400 == already exists from an earlier run in the same container.
-    if (!res.ok() && res.status() !== 400) {
-        throw new Error(`create grant target failed: ${res.status()} ${await res.text()}`)
+    if (!res.ok()) {
+        const body = await res.text()
+        // Tolerate ONLY the uniqueness 400 (already exists from an earlier run in
+        // the same container). Swallowing every 400 once hid a required-field
+        // validation failure, which surfaced later as an unrelated grant error.
+        if (!(res.status() === 400 && body.includes('validation_not_unique'))) {
+            throw new Error(`create grant target failed: ${res.status()} ${body}`)
+        }
     }
 }
 
