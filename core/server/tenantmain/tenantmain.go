@@ -58,44 +58,18 @@ import (
 	"tinycld.org/core/tenantcfg"
 )
 
-// MailListeners are the router-managed mail sockets this tenant serves on,
-// as lazy ListenFuncs (nil = the org runs no such listener). Core-typed so
-// the feature adaptation (mail.TenantListeners) stays with the code that
-// imports the mail package — the RegisterExtras callback.
-type MailListeners struct {
-	IMAP       mailproto.ListenFunc
-	Submission mailproto.ListenFunc
-	InboundMX  mailproto.ListenFunc
-}
-
-// Extras is what a host hands its feature-registration callback: the facts
-// that vary per org and arrive through the tenant transport.
-type Extras struct {
-	// Slug is the org's slug (identification and logging only).
-	Slug string
-	// Mail are the router-managed mail listeners. The ListenFuncs bind
-	// lazily, during mail's OnServe — before readiness is reported, so a bind
-	// failure still fails the boot loudly.
-	Mail MailListeners
-
-	// ControlSocket is the path of the ROUTER-bound control socket this
-	// tenant may dial to propose deploys (design D1 — the router owns the
-	// socket and the restart; the tenant only proposes). Empty on standalone
-	// deployments and on routers predating the deploy protocol: the tenant
-	// then has no deploy channel.
-	ControlSocket string
-}
-
 // Options composes a tenant on top of the transport.
 type Options struct {
 	// Args are the command-line args to parse (without the program name /
 	// mode selector). Nil means os.Args[1:].
 	Args []string
 
-	// RegisterExtras registers the tenant's feature Go. A per-org build's
-	// dual-mode main registers exactly its linked package set (the artifact is
-	// the gate — no runtime slug filter).
-	RegisterExtras func(app *pocketbase.PocketBase, ex Extras)
+	// RegisterExtras registers the tenant's feature Go — the SAME generated
+	// registrar the host composition uses (single-Register contract): a
+	// per-org build links exactly its package set, the artifact is the gate,
+	// and per-org facts (slug, mail listeners, control socket) reach feature
+	// packages through coreserver's TenantContext, stamped before this runs.
+	RegisterExtras func(app *pocketbase.PocketBase)
 }
 
 // Run parses tenant flags, composes the org's app, and serves until
@@ -186,7 +160,7 @@ type runConfig struct {
 	ctlSocket                string
 	drain                    time.Duration
 	ready                    *os.File
-	extras                   func(app *pocketbase.PocketBase, ex Extras)
+	extras                   func(app *pocketbase.PocketBase)
 }
 
 func run(cfg runConfig) error {
@@ -199,18 +173,13 @@ func run(cfg runConfig) error {
 		}
 	}
 
-	sources, err := tenantcfg.LoadCardDAV(cfg.configs.carddav)
-	if err != nil {
-		return fmt.Errorf("load carddav config: %w", err)
-	}
-	davSources, err := tenantcfg.LoadWebDAV(cfg.configs.webdav)
-	if err != nil {
-		return fmt.Errorf("load webdav config: %w", err)
-	}
-	calSources, err := tenantcfg.LoadCalDAV(cfg.configs.caldav)
-	if err != nil {
-		return fmt.Errorf("load caldav config: %w", err)
-	}
+	// The DAV config flags (--carddav-config etc.) are still parsed — the
+	// router materializes and passes them for every org, and OLDER artifact
+	// binaries consume them — but THIS core version ignores them: under the
+	// single-Register contract each feature package mounts its own DAV server
+	// in both compositions, and a per-org build contains exactly the org's
+	// features, so the artifact is the gate (DESIGN-org-package-agency §5's
+	// DAV-materialization deletion candidate, now taken).
 	quotaCfg, err := tenantcfg.LoadQuota(cfg.configs.quota)
 	if err != nil {
 		return fmt.Errorf("load quota config: %w", err)
@@ -241,27 +210,17 @@ func run(cfg runConfig) error {
 	// config (FixedLimits), NOT this org's settings — its superusers must not
 	// be able to raise the plan they were sold.
 	if err := coreserver.RegisterTenant(app, coreserver.TenantOptions{
-		HooksDir:      filepath.Join(cfg.orgDir, "pb_hooks"),
-		MigrationsDir: filepath.Join(cfg.orgDir, "pb_migrations"),
-		HooksPoolSize: cfg.hooksPool,
-		OrgDir:        cfg.orgDir,
-		ArtifactDir:   detectArtifactDir(),
-		ControlSocket: cfg.ctlSocket,
-		RegisterExtras: func(app *pocketbase.PocketBase) {
-			if cfg.extras == nil {
-				return
-			}
-			cfg.extras(app, Extras{
-				Slug:          cfg.slug,
-				Mail:          tenantMailListeners(cfg.mailSocks),
-				ControlSocket: cfg.ctlSocket,
-			})
-		},
+		Slug:           cfg.slug,
+		HooksDir:       filepath.Join(cfg.orgDir, "pb_hooks"),
+		MigrationsDir:  filepath.Join(cfg.orgDir, "pb_migrations"),
+		HooksPoolSize:  cfg.hooksPool,
+		OrgDir:         cfg.orgDir,
+		ArtifactDir:    detectArtifactDir(),
+		ControlSocket:  cfg.ctlSocket,
+		RegisterExtras: cfg.extras,
+		MailListeners:  tenantMailListeners(cfg.mailSocks),
 		QuotaSources:   tenantcfg.DecodeQuota(quotaCfg.Sources),
 		QuotaLimits:    quota.FixedLimits(quotaCfg.StorageLimitBytes),
-		WebDAVSources:  davSources,
-		CalDAVSources:  calSources,
-		CardDAVSources: sources,
 	}); err != nil {
 		return fmt.Errorf("register tenant: %w", err)
 	}
@@ -450,14 +409,14 @@ func BindTenantSocket(path string) (net.Listener, error) {
 
 // tenantMailListeners adapts the router-managed mail socket paths into lazy
 // ListenFuncs. Empty path ⇒ nil ListenFunc ⇒ that service is not started.
-func tenantMailListeners(socks mailSocketPaths) MailListeners {
+func tenantMailListeners(socks mailSocketPaths) coreserver.MailListeners {
 	mk := func(path string) mailproto.ListenFunc {
 		if path == "" {
 			return nil
 		}
 		return func(string) (net.Listener, error) { return BindTenantSocket(path) }
 	}
-	return MailListeners{
+	return coreserver.MailListeners{
 		IMAP:       mk(socks.imap),
 		Submission: mk(socks.smtp),
 		InboundMX:  mk(socks.mx),

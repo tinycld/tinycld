@@ -13,7 +13,6 @@ import {
     buildGoWork,
     buildMemberGoWork,
     buildPackageExtensionsGo,
-    buildTenantPackageExtensionsGo,
     replaceSymlink,
     type ServerPkg,
 } from './gen-server'
@@ -460,16 +459,16 @@ function emitGoWiring(features: Feature[]) {
         slug: f.manifest.slug,
         module: f.manifest.server!.module!,
         serverRelPath: path.relative(SERVER_DIR, path.join(f.dir, f.manifest.server!.package!)),
-        mailListeners: f.manifest.server!.mailListeners,
     }))
     fs.writeFileSync(
         path.join(SERVER_DIR, 'package_extensions.go'),
         buildPackageExtensionsGo(serverPkgs)
     )
-    fs.writeFileSync(
-        path.join(SERVER_DIR, 'package_extensions_tenant.go'),
-        buildTenantPackageExtensionsGo(serverPkgs)
-    )
+    // Single-Register contract: one registrar serves both compositions (the
+    // tenant path stamps a TenantContext before calling it). Remove the
+    // pre-contract tenant registrar if a stale generated copy is on disk — it
+    // references RegisterTenant entries that no longer exist.
+    fs.rmSync(path.join(SERVER_DIR, 'package_extensions_tenant.go'), { force: true })
     const coreServerDir = path.join(memberDir('@tinycld/core'), 'server')
     const coreServerRel = path.relative(SERVER_DIR, coreServerDir)
     const goWork = path.join(SERVER_DIR, 'go.work')

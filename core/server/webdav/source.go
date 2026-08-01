@@ -137,10 +137,10 @@ type FieldMap struct {
 // write path — including this one, whose writes go through app.Save — passes
 // through by construction.
 //
-// A tenant's materialized Source arrives with zero Hooks (a Go closure cannot
-// travel through config), but linked feature Go registers its hooks by slug
-// via RegisterSourceHooks and NewFileSystem adopts them — so a tenant-served
-// write archives versions the same as the host (R7).
+// Hooks travel on the Source itself: under the single-Register contract each
+// feature mounts its own sources (host and tenant alike), so its closures ride
+// along directly — the old materialized-config mount that could not carry Go
+// closures (and needed a by-slug registry to close the gap, R7) is retired.
 type Hooks struct {
 	// BeforeOverwrite runs just before an existing entry's blob is replaced —
 	// drive uses it to snapshot the outgoing version. An error here is logged,

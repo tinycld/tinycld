@@ -27,9 +27,10 @@ export interface PackageManifest {
     seed?: { script: string }
     tests?: { directory: string }
     build?: { script: string }
-    // mailListeners: the package's tenant entry consumes router-managed mail
-    // listener sockets (RegisterTenantWithListeners) — see gen-server.ts's
-    // tenant registrar. Host mode is unaffected (Register binds its own ports).
+    // mailListeners: this package serves mail protocols, so the multi-org
+    // ROUTER creates per-org mail sockets for orgs whose set includes it; the
+    // package's single Register discovers them via coreserver's TenantContext
+    // (host mode binds its own ports instead).
     server?: { package: string; module: string; mailListeners?: boolean }
     // Protocol capabilities. Core serves these; a package contributes only the
     // config, so a multi-org tenant (which links no feature Go) still gets the

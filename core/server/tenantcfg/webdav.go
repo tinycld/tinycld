@@ -11,13 +11,10 @@ import (
 // field names staying stable across a repo boundary.
 //
 // Note what is NOT carried: webdav.Source.Hooks. Those are Go callbacks and
-// cannot cross a process boundary. Nothing boundary-shaped lives there:
-// authorization is the collection's own PocketBase rules
-// (app.CanAccessRecord) and quota is core/quota's record hooks, both of which
-// a tenant enforces from the schema alone. The one non-boundary hook (drive's
-// BeforeOverwrite version snapshot) reaches the tenant anyway: its linked
-// feature Go registers it by slug (webdav.RegisterSourceHooks) and core's
-// mount adopts it, so nothing is lost in a tenant (R7).
+// cannot cross a process boundary. Under the single-Register contract this no
+// longer matters: feature Go self-mounts its sources in tenants too, closures
+// riding along directly — these materialized shapes are consumed only by
+// OLDER artifact binaries, whose cores still mount from config.
 
 type WebDAVSource struct {
 	Slug       string         `json:"slug"`

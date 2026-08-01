@@ -2,21 +2,25 @@ package coreserver
 
 import (
 	"fmt"
+	"net/http"
+	"path/filepath"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/jsvm"
+	"github.com/pocketbase/pocketbase/tools/hook"
 
-	"tinycld.org/core/caldav"
-	"tinycld.org/core/carddav"
 	"tinycld.org/core/quota"
-	"tinycld.org/core/webdav"
 )
 
 // TenantOptions configure RegisterTenant. Everything here is materialized or
 // resolved by the multi-org router and handed to the tenant process — a
 // tenant never reads deployment-wide flags or env for these.
 type TenantOptions struct {
+	// Slug is the org's slug (identification and logging only; surfaced to
+	// feature packages via the TenantContext).
+	Slug string
+
 	// HooksDir / MigrationsDir are the org's materialized pb_hooks /
 	// pb_migrations symlink farms (built by the router from the org's
 	// resolved package set).
@@ -47,20 +51,27 @@ type TenantOptions struct {
 
 	// RegisterExtras is the tenant's seam for FEATURE package Go — the
 	// counterpart of Options.RegisterExtras in the single-org composition.
-	// serve-org passes the router's pinned package menu here, gated by the
-	// org's resolved package set (multi-org/docs/SCOPE-tenant-feature-go.md).
+	// The dual-mode binary passes its generated registerPackageExtensions —
+	// the SAME registrar host mode uses; a per-org build links exactly the
+	// org's package set, so the artifact is the gate.
 	//
 	// It runs immediately after registerSharedEarly and BEFORE quota and jsvm,
 	// for the same load-bearing reasons as the host composition: a feature's
 	// record hooks must bind before quota's enforcement hook (drive corrects a
 	// forged size the quota check then reads), and every `$`-binding or loader
 	// binding a feature contributes must exist before jsvm.Register executes
-	// the org's hook files synchronously.
+	// the org's hook files synchronously. Feature DAV mounts (which declare
+	// their TS hook points) self-register here too, keeping that ordering.
 	//
-	// Features register through their RegisterTenant entry (shared set only —
-	// no port listeners, no DAV mounts); the DAV protocol servers keep coming
-	// from the materialized source lists below.
+	// Features register through their single Register entry; the TenantContext
+	// is stamped before this runs, so a package that must differ hosted (mail
+	// listeners) detects it via GetTenantContext.
 	RegisterExtras func(app *pocketbase.PocketBase)
+
+	// MailListeners are the router-managed mail sockets (zero value = none),
+	// surfaced to feature packages via the TenantContext. The router owns
+	// every listening socket; a tenant must never bind a port.
+	MailListeners MailListeners
 
 	// QuotaSources come from each package's manifest `quota` block via the
 	// router's materialized quota.json. QuotaLimits must resolve the org
@@ -70,17 +81,6 @@ type TenantOptions struct {
 	// enforcement, same as the single-org app.
 	QuotaSources []quota.Source
 	QuotaLimits  quota.LimitsFunc
-
-	// DAV sources, materialized by the router from each package's manifest.
-	// Registered here rather than by the caller because ordering is
-	// load-bearing: their TS hook points must be declared BEFORE
-	// jsvm.Register executes the org's hook files, exactly like
-	// Options.RegisterExtras in the single-org composition. A caller mounting
-	// them itself after jsvm would silently lose every `webdavHook` /
-	// `caldavHook` handler the org's TS registers.
-	WebDAVSources  []webdav.Source
-	CalDAVSources  []caldav.Source
-	CardDAVSources []carddav.Source
 }
 
 // RegisterTenant configures a multi-org TENANT process with the same core
@@ -115,30 +115,31 @@ type TenantOptions struct {
 // Call before app.Bootstrap(). Run apis.Serve (with the router-provided
 // listener) after.
 func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
+	// The tenant context must exist before ANY feature Register runs — it is
+	// how a package detects tenancy under the single-Register contract (mail
+	// picks injected listeners over binding ports).
+	setTenantContext(app, TenantContext{
+		Slug:          opts.Slug,
+		Mail:          opts.MailListeners,
+		ControlSocket: opts.ControlSocket,
+	})
+
 	registerSharedEarly(app)
 
-	// Feature package Go, gated by the org's resolved package set. Mirrors
-	// the host composition's RegisterExtras placement: before quota (feature
-	// record hooks must precede the enforcement hook) and before jsvm (their
-	// `$`-bindings and loader bindings must exist when the hook files run).
+	// Feature package Go — the artifact links exactly the org's package set.
+	// Mirrors the host composition's RegisterExtras placement: before quota
+	// (feature record hooks must precede the enforcement hook) and before
+	// jsvm (their `$`-bindings, loader bindings, and DAV TS hook points must
+	// exist when the hook files run). Feature DAV servers mount HERE, from
+	// each package's own Register — the same call in both compositions; the
+	// router-materialized DAV lists are no longer consumed by this core
+	// version (older artifact binaries still read theirs).
 	if opts.RegisterExtras != nil {
 		opts.RegisterExtras(app)
 	}
 
-	// Protocol servers driven by materialized config. Same mounting, auth,
-	// and TS hook seams as the single-org app — webdav.Register /
-	// caldav.Register are exactly what drive's and calendar's Go call there.
-	// Features' own DAV mounts are host-only (their RegisterTenant entries
-	// skip them), so the materialized lists stay the single source of truth
-	// for what a tenant serves.
-	if _, err := webdav.Register(app, opts.WebDAVSources, WebDAVHostBindings()); err != nil {
-		return fmt.Errorf("webdav register: %w", err)
-	}
-	caldav.Register(app, opts.CalDAVSources, CalDAVHostBindings())
-	carddav.Register(app, opts.CardDAVSources)
-
 	// Storage ceilings. Bound by core so every write path in the tenant is
-	// covered even though no feature package is linked here.
+	// covered even though no feature package need be linked here.
 	if err := quota.Register(app, opts.QuotaSources, opts.QuotaLimits); err != nil {
 		return fmt.Errorf("quota register: %w", err)
 	}
@@ -162,6 +163,17 @@ func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
 
 	registerSharedCore(app)
 
+	// The org's own web bundle: the artifact's staged release, materialized at
+	// <orgDir>/pb_public (app.html shell, _expo/static assets, public files).
+	// Served by the TENANT — the router only reverse-proxies — with the same
+	// handler the single-org app uses in dev (public dir + app.html SPA
+	// fallback with public-config injection), minus the host-only website and
+	// cross-release asset-pool machinery, which a per-org build has no
+	// counterpart for: its pb_public IS the complete, self-contained release.
+	if opts.OrgDir != "" {
+		registerTenantStaticServe(app, filepath.Join(opts.OrgDir, "pb_public"))
+	}
+
 	// Artifact-booted tenants reconcile their durable package state at boot
 	// (after RunAllMigrations — apis.Serve orders that before OnServe): the
 	// deploy-result consume and the pkg_registry mirror of the built-in set.
@@ -182,4 +194,23 @@ func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
 		}
 	}
 	return nil
+}
+
+// registerTenantStaticServe mounts the SPA catch-all for a tenant, mirroring
+// the host's registerStaticServe registration shape (Priority 999 so every
+// API route binds first; HasRoute so an explicit catch-all someone registered
+// earlier wins). StaticWithDynamicFallback with no website and no releases dir
+// is exactly the tenant's serving story: static files from the org's
+// materialized pb_public, the /api/ JSON-404 guard, and the app.html fallback
+// with public-config injection + ETag revalidation.
+func registerTenantStaticServe(app core.App, publicDir string) {
+	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
+		Func: func(e *core.ServeEvent) error {
+			if !e.Router.HasRoute(http.MethodGet, "/{path...}") {
+				e.Router.Any("/{path...}", StaticWithDynamicFallback(publicDir, "", ""))
+			}
+			return e.Next()
+		},
+		Priority: 999,
+	})
 }

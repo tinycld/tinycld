@@ -32,13 +32,14 @@ func main() {
 	// multi-org router spawned this binary to serve ONE org on a unix socket.
 	// The flag contract is exactly serve-org's, so a per-org build artifact is
 	// a drop-in replacement for the shared tenant binary — --org-dir is the
-	// discriminator, since no host-mode invocation uses that flag. The
-	// registrar is generator output like registerPackageExtensions: a per-org
-	// build links exactly the org's package set, so registration is
-	// unconditional and the artifact itself is the gate.
+	// discriminator, since no host-mode invocation uses that flag. The SAME
+	// generated registrar serves both modes (single-Register contract): a
+	// per-org build links exactly the org's package set, the artifact is the
+	// gate, and a package that must differ hosted detects it via coreserver's
+	// TenantContext (stamped before the registrar runs).
 	if coreserver.HasFlag("--org-dir") {
 		if err := tenantmain.Run(tenantmain.Options{
-			RegisterExtras: registerTenantPackageExtensions,
+			RegisterExtras: registerPackageExtensions,
 		}); err != nil {
 			log.Fatalf("tenant: %v", err)
 		}
