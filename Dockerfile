@@ -37,7 +37,7 @@
 # postinstall runs the generator then link-members (linking every member under
 # node_modules/@tinycld/<name> plus @tinycld/app-generated → tinycld/lib/generated).
 # The generator materializes tinycld/lib/generated/, tinycld/tinycld.config.ts,
-# tinycld/tinycld.seeds.ts, route re-exports under tinycld/app/a/[orgSlug]/<slug>/,
+# tinycld/tinycld.seeds.ts, route re-exports under tinycld/app/(app)/<slug>/,
 # tinycld/server/{package_extensions.go,go.work,pb_migrations/,pb_hooks/,
 # bundled-packages.json}, etc. The Go app module is tinycld.org/tinycld at
 # tinycld/server/ with `replace tinycld.org/core => ../core/server` and a

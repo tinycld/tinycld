@@ -1,8 +1,9 @@
 name: Build and publish Docker image
 
-# Lives in the tinycld/app repo — the release ANCHOR. A published Release
+# Lives in the tinycld/tinycld repo — the release ANCHOR. A published Release
 # on THIS repo triggers a multi-arch build:
-#   - app (this repo) is checked out at the triggering tag into ws/app,
+#   - the tinycld member (this repo) is checked out at the triggering tag into
+#     ws/tinycld,
 #   - the release's manifest.json + pnpm-lock.yaml assets are downloaded,
 #   - each sibling listed in the manifest is cloned at its pinned SHA,
 #   - bootstrap --assemble-only writes the workspace-root scaffolding (members
@@ -50,13 +51,16 @@ jobs:
             cache_scope: arm64
 
     steps:
-      # The triggering ref of THIS (app) repo is the released tag, so a plain
-      # checkout lands app@<tag> into ws/app — the app member pinned. bootstrap
-      # below sees ws/app already present and skips re-cloning it.
-      - name: Checkout app member (at the triggering tag)
+      # The triggering ref of THIS repo is the released tag, so a plain checkout
+      # lands tinycld@<tag> into ws/tinycld — the merged member pinned. The path
+      # MUST be the member's canonical dir name: bootstrap treats a dir with a
+      # .git as an already-cloned member and skips it; any other path (the old
+      # ws/app) makes bootstrap clone tinycld itself at the DEFAULT BRANCH HEAD,
+      # silently unpinning the shell from the released tag.
+      - name: Checkout tinycld member (at the triggering tag)
         uses: actions/checkout@v5
         with:
-          path: ws/app
+          path: ws/tinycld
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -72,12 +76,13 @@ jobs:
         id: image
         run: echo "name=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/tinycld" >> "$GITHUB_OUTPUT"
 
-      # app carries its own .node-version; read it directly from the pinned
-      # checkout (no dependency on bootstrap having generated ws/.node-version yet).
+      # The tinycld member carries its own .node-version; read it directly from
+      # the pinned checkout (no dependency on bootstrap having generated
+      # ws/.node-version yet).
       - name: Set up Node
         uses: actions/setup-node@v5
         with:
-          node-version-file: ws/app/.node-version
+          node-version-file: ws/tinycld/.node-version
       # Assemble the workspace from the pinned release recipe attached to
       # the app's GitHub Release. release.ts uploads manifest.json (sibling
       # name → repo + tag + sha) and pnpm-lock.yaml as assets when it
@@ -93,7 +98,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-$(git -C app describe --tags --exact-match)}"
+          TAG="${GITHUB_REF_NAME:-$(git -C tinycld describe --tags --exact-match)}"
           echo "Downloading release assets for ${TAG}…"
           mkdir -p .release-assets
           gh release download "${TAG}" -R "${GITHUB_REPOSITORY}" \
@@ -110,7 +115,7 @@ jobs:
             git -C "${name}" fetch --quiet origin "${sha}"
             git -C "${name}" checkout --quiet "${sha}"
           done
-          # bootstrap sees every member already cloned (app + core + each sibling)
+          # bootstrap sees every member already cloned (tinycld + each sibling)
           # and just writes the workspace-root scaffolding (package.json +
           # pnpm-workspace.yaml + .npmrc + tinycld.packages.ts +
           # scripts/link-members.ts). --assemble-only is non-destructive: it skips
@@ -130,13 +135,16 @@ jobs:
           # Hand the manifest to the Docker build so it's baked into the image
           # and served by /api/release (the About panel reads it). The wildcard
           # COPY in the Dockerfile makes it optional, so this is the only wiring.
-          cp "${MANIFEST}" app/.release-manifest
+          # Destination must be tinycld/ — the Dockerfile COPYs
+          # tinycld/.release-manifest*; anywhere else and the bake silently
+          # no-ops (the wildcard COPY tolerates the miss).
+          cp "${MANIFEST}" tinycld/.release-manifest
 
       # Derive OCI labels (standard image.* + custom tinycld.packages) from the
       # pinned manifest so `docker inspect` and registry UIs show exactly which
       # package versions this image bundles. The inventory (key=value lines) is
-      # produced by app/scripts/release-image-inventory.sh — the SAME script the
-      # merge job uses for index annotations, so labels and annotations can't
+      # produced by tinycld/scripts/release-image-inventory.sh — the SAME script
+      # the merge job uses for index annotations, so labels and annotations can't
       # drift. `org.tinycld.packages` is a compact app=tag,member=tag list.
       - name: Compute image labels
         id: labels
@@ -145,7 +153,7 @@ jobs:
           set -euo pipefail
           # build-push-action's `labels:` input takes the same newline-delimited
           # key=value format the script emits, so pass it straight through.
-          app/scripts/release-image-inventory.sh \
+          tinycld/scripts/release-image-inventory.sh \
             .release-assets/manifest.json "${GITHUB_REPOSITORY}" > /tmp/image-inventory.txt
           {
             echo "labels<<EOF"
@@ -160,7 +168,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: ws
-          file: ws/app/Dockerfile
+          file: ws/tinycld/Dockerfile
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.labels.outputs.labels }}
           # Cache scoped per-platform so the two jobs don't trample each
@@ -223,7 +231,7 @@ jobs:
       # annotations set explicitly. This job has no ws/ checkout, so re-download
       # the pinned manifest AND the inventory script from the release tag's tree,
       # then build the same key=value inventory the per-arch labels used (one
-      # source of truth — app/scripts/release-image-inventory.sh). The args are
+      # source of truth — tinycld/scripts/release-image-inventory.sh). The args are
       # written to a FILE the create step reads directly; nothing is round-tripped
       # through a `${{ }}`-interpolated shell string, so a value containing shell
       # metacharacters can't be re-split or injected.
@@ -238,9 +246,9 @@ jobs:
           # Fetch the inventory script from the tagged commit so the merge job
           # uses the exact same logic as the per-arch build (no ws/ checkout here).
           # The path is repo-root-relative here (this gh api call resolves against
-          # THIS app repo's tree, where the script lives at scripts/) — unlike the
-          # per-arch build's `app/scripts/...`, which is relative to the assembled
-          # ws/ where the app member is checked out under app/.
+          # THIS repo's tree, where the script lives at scripts/) — unlike the
+          # per-arch build's `tinycld/scripts/...`, which is relative to the
+          # assembled ws/ where the member is checked out under tinycld/.
           gh api "repos/${GITHUB_REPOSITORY}/contents/scripts/release-image-inventory.sh?ref=${TAG}" \
             -H 'Accept: application/vnd.github.raw' > /tmp/release-image-inventory.sh
           chmod +x /tmp/release-image-inventory.sh
