@@ -1,6 +1,6 @@
 ---
 title: Super admins & the Admin console
-summary: Who can reach the cross-org Admin console and how to grant access
+summary: Who can reach the deployment-wide Admin console and how to grant access
 tags: [admin, super-admin, packages, access]
 order: 15
 ---
@@ -8,13 +8,14 @@ order: 15
 ## What a super admin is
 
 A **super admin** can open the **Admin console** — the deployment-wide area for
-managing packages, organizations, package versions, and build history. These are
-cross-org concerns (they affect the whole deployment, not a single org), so they
-live outside the normal org settings.
+managing installed packages, package versions, build history, and super-admin
+access itself. These concerns affect the whole deployment, so they live outside
+the normal settings. (Organizations themselves are provisioned by the hosting
+service, not from inside the app — the console's Organizations section explains
+where that lives.)
 
-Super-admin access is a separate grant from any org role. Being an **owner** or
-**admin** of an organization does **not** make you a super admin, and a super
-admin isn't automatically a member of every org.
+Super-admin access is a separate grant from your workspace role. Being an
+**owner** or **admin** does **not** make you a super admin.
 
 ## Opening the Admin console
 

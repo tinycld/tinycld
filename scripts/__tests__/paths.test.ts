@@ -19,8 +19,11 @@ describe('generator paths', () => {
     it('GENERATED_DIR is app/lib/generated', () => {
         expect(GENERATED_DIR).toBe(path.join(APP_DIR, 'lib', 'generated'))
     })
-    it('ROUTES_BASE is app/app/a/[orgSlug]', () => {
-        expect(ROUTES_BASE).toBe(path.join(APP_DIR, 'app', 'a', '[orgSlug]'))
+    // Single-org: the route tree collapsed from app/a/[orgSlug] to the
+    // bare app/(app) group. The router owns org multiplexing now, so no
+    // org segment appears in an authenticated path.
+    it('ROUTES_BASE is app/app/(app)', () => {
+        expect(ROUTES_BASE).toBe(path.join(APP_DIR, 'app', '(app)'))
     })
     it('PUBLIC_ROUTES_BASE is app/app/p', () => {
         expect(PUBLIC_ROUTES_BASE).toBe(path.join(APP_DIR, 'app', 'p'))

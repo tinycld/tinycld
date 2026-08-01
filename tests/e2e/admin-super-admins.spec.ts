@@ -8,7 +8,7 @@ import { login, navigateToAdmin, TEST_USER_EMAIL } from './helpers'
 test.describe('Admin · Super Admins', () => {
     test.beforeEach(async ({ page }) => {
         await login(page)
-        await navigateToAdmin(page, 'super-admins', 'Super Admins')
+        await navigateToAdmin(page, 'Super Admins')
     })
 
     test('lists the seeded super admin', async ({ page }) => {

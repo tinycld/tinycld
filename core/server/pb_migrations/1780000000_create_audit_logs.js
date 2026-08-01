@@ -6,21 +6,12 @@ migrate(
             name: 'audit_logs',
             type: 'base',
             system: false,
-            listRule: '@request.auth.id != "" && org.users.id ?= @request.auth.id',
-            viewRule: '@request.auth.id != "" && org.users.id ?= @request.auth.id',
+            listRule: '@request.auth.id != ""',
+            viewRule: '@request.auth.id != ""',
             createRule: null,
             updateRule: null,
             deleteRule: null,
             fields: [
-                {
-                    id: 'al_org',
-                    name: 'org',
-                    type: 'relation',
-                    required: true,
-                    collectionId: 'pbc_orgs_00001',
-                    cascadeDelete: true,
-                    maxSelect: 1,
-                },
                 {
                     id: 'al_actor',
                     name: 'actor',
@@ -99,7 +90,6 @@ migrate(
                 },
             ],
             indexes: [
-                'CREATE INDEX `idx_audit_org_created` ON `audit_logs` (`org`, `created` DESC)',
                 'CREATE INDEX `idx_audit_actor_created` ON `audit_logs` (`actor`, `created` DESC)',
                 'CREATE INDEX `idx_audit_resource` ON `audit_logs` (`resource_type`, `resource_id`)',
             ],

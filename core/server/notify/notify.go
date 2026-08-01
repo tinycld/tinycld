@@ -14,7 +14,6 @@ import (
 // NotifyParams describes a notification to send to a user.
 type NotifyParams struct {
 	UserID  string         `json:"userId"`
-	OrgID   string         `json:"orgId"`
 	Type    string         `json:"type"`
 	Package string         `json:"package"`
 	Title   string         `json:"title"`
@@ -40,7 +39,6 @@ func NotifyUser(app core.App, params NotifyParams) {
 
 	record := core.NewRecord(collection)
 	record.Set("user", params.UserID)
-	record.Set("org", params.OrgID)
 	record.Set("type", params.Type)
 	record.Set("package", params.Package)
 	record.Set("title", params.Title)

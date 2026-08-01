@@ -210,6 +210,10 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 			seq = append(seq, "assemble")
 			return os.MkdirAll(filepath.Join(dir, "tinycld", "server", "pb_migrations"), 0o755)
 		},
+		verifyCompat: func(m RebuildManifest, dir string) error {
+			seq = append(seq, "verify")
+			return nil
+		},
 		pipeline: func(j *installJob, dir string) (buildOutput, error) {
 			seq = append(seq, "pipeline")
 			return buildOutput{}, nil
@@ -228,9 +232,55 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 	if err := rebuildWith(job, m, deps); err != nil {
 		t.Fatal(err)
 	}
-	want := "assemble,pipeline,backup,sync,activate,record,commit,prune,finalize,restart"
+	want := "assemble,verify,pipeline,backup,sync,activate,record,commit,prune,finalize,restart"
 	if got := strings.Join(seq, ","); got != want {
 		t.Fatalf("sequence = %s, want %s", got, want)
+	}
+}
+
+// A peer-version verify failure must abort BEFORE the build pipeline and the DB
+// backup, discarding the build dir — live state untouched, nothing to restore.
+func TestRebuild_VerifyCompatFailure_DiscardsBuildBeforeBackup(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("TINYCLD_STATE_DIR", state)
+	var piped, backed, restored, activated bool
+	var finalized string
+	deps := rebuildDeps{
+		assemble: func(m RebuildManifest, dir string) error {
+			return os.MkdirAll(dir, 0o755)
+		},
+		verifyCompat: func(m RebuildManifest, dir string) error {
+			return fmt.Errorf("mail requires @tinycld/core >=0.5.0 (found: 0.0.4)")
+		},
+		pipeline: func(j *installJob, dir string) (buildOutput, error) {
+			piped = true
+			return buildOutput{}, nil
+		},
+		backupDB:    func() error { backed = true; return nil },
+		restoreDB:   func() error { restored = true; return nil },
+		syncMig:     func(buildDir string) (SyncResult, error) { return SyncResult{}, nil },
+		activate:    func(id string) error { activated = true; return nil },
+		prune:       func(keep int) error { return nil },
+		finalizeLog: func(status, errMsg string) { finalized = status },
+		restart:     func() {},
+	}
+	job := &installJob{ID: "j", Done: make(chan struct{})}
+	m := RebuildManifest{BuildID: "build-vc", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
+	if err := rebuildWith(job, m, deps); err == nil {
+		t.Fatal("expected the verify failure to fail the rebuild")
+	}
+	if piped || backed || activated {
+		t.Fatalf("verify failure must precede pipeline/backup/activate (pipeline=%v backup=%v activate=%v)",
+			piped, backed, activated)
+	}
+	if restored {
+		t.Fatal("nothing to restore — failure precedes the backup")
+	}
+	if finalized != "failed" {
+		t.Fatalf("finalizeLog status = %q, want failed", finalized)
+	}
+	if _, err := os.Stat(filepath.Join(state, "builds", "build-vc")); !os.IsNotExist(err) {
+		t.Fatalf("build dir must be discarded after a verify failure (stat err = %v)", err)
 	}
 }
 

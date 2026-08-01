@@ -464,6 +464,11 @@ function emitGoWiring(features: Feature[]) {
         path.join(SERVER_DIR, 'package_extensions.go'),
         buildPackageExtensionsGo(serverPkgs)
     )
+    // Single-Register contract: one registrar serves both compositions (the
+    // tenant path stamps a TenantContext before calling it). Remove the
+    // pre-contract tenant registrar if a stale generated copy is on disk — it
+    // references RegisterTenant entries that no longer exist.
+    fs.rmSync(path.join(SERVER_DIR, 'package_extensions_tenant.go'), { force: true })
     const coreServerDir = path.join(memberDir('@tinycld/core'), 'server')
     const coreServerRel = path.relative(SERVER_DIR, coreServerDir)
     const goWork = path.join(SERVER_DIR, 'go.work')
@@ -482,13 +487,26 @@ function emitGoWiring(features: Feature[]) {
     // Per-member go.work so each server module resolves tinycld.org/core when
     // built on its own (the app build above is unaffected — it runs from
     // app/server with its own go.work). core itself has nothing to wire.
+    //
+    // The PocketBase fork is vendored in this repo at third_party/pocketbase, so
+    // every member's go.work replaces it and a standalone member build resolves
+    // the sobek fork rather than upstream goja. It ships with the app shell, so
+    // its absence is a broken checkout, not a supported configuration — fail loudly
+    // instead of silently degrading to upstream.
+    const forkDir = path.join(SERVER_DIR, '..', 'third_party', 'pocketbase')
+    if (!fs.existsSync(forkDir)) {
+        throw new Error(
+            `[generate] vendored PocketBase fork missing at ${forkDir} — the app shell cannot build without it`
+        )
+    }
     for (const f of serverFeatures) {
         if (f.manifest.slug === 'core') continue
         const memberServerDir = path.join(f.dir, f.manifest.server!.package!)
         const coreRelFromMember = path.relative(memberServerDir, coreServerDir)
+        const forkRelFromMember = path.relative(memberServerDir, forkDir)
         fs.writeFileSync(
             path.join(memberServerDir, 'go.work'),
-            buildMemberGoWork(coreRelFromMember)
+            buildMemberGoWork(coreRelFromMember, forkRelFromMember)
         )
     }
 }

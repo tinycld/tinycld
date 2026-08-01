@@ -59,7 +59,7 @@ export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardPr
                     <SetupTopBar crumb={crumb} />
                     <ScrollView className="flex-1">
                         <View className="w-full self-center p-8 gap-6" style={{ maxWidth: 1040 }}>
-                            <OrganizationsTab isVisible={activeTab === 'organizations'} pb={pb} />
+                            <OrganizationsTab isVisible={activeTab === 'organizations'} />
                             <PackagesTab isVisible={activeTab === 'packages'} pb={pb} />
                             <BuildHistoryTab isVisible={activeTab === 'builds'} pb={pb} />
                             <SuperAdminsTab isVisible={activeTab === 'super-admins'} pb={pb} />

@@ -33,7 +33,7 @@ export interface CommentDrawerProps<R extends BaseCommentRow> {
     isOpen: boolean
     onClose: () => void
     groups: CommentDrawerGroup<R>[]
-    currentUserOrgId: string
+    currentUserId: string
     focusedThreadId?: string | null
     // Click on a group's header (or any non-action area) jumps to the
     // anchor in the host surface (scroll + select for calc; scroll +
@@ -103,7 +103,7 @@ export function CommentDrawer<R extends BaseCommentRow>(props: CommentDrawerProp
                             <GroupView
                                 key={group.key}
                                 group={group}
-                                currentUserOrgId={props.currentUserOrgId}
+                                currentUserId={props.currentUserId}
                                 focusedThreadId={props.focusedThreadId}
                                 onJump={props.onJump}
                                 isReplyPending={props.isReplyPending}
@@ -125,7 +125,7 @@ export function CommentDrawer<R extends BaseCommentRow>(props: CommentDrawerProp
 
 interface GroupViewProps<R extends BaseCommentRow> {
     group: CommentDrawerGroup<R>
-    currentUserOrgId: string
+    currentUserId: string
     focusedThreadId?: string | null
     onJump?: (group: CommentDrawerGroup<R>) => void
     isReplyPending?: boolean
@@ -154,7 +154,7 @@ function GroupView<R extends BaseCommentRow>(props: GroupViewProps<R>) {
                 <CommentThread
                     key={thread.root.id}
                     thread={thread}
-                    currentUserOrgId={props.currentUserOrgId}
+                    currentUserId={props.currentUserId}
                     isOrphaned={group.isOrphaned}
                     quotedText={group.quotedText}
                     isReplyPending={props.isReplyPending}

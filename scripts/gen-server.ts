@@ -71,13 +71,20 @@ export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
 // standalone build — the assembled app build runs from app/server with its own
 // go.work and is unaffected. It's gitignored in each member repo so it never
 // ships into the assembled workspace.
-export function buildMemberGoWork(coreRelPath: string): string {
+export function buildMemberGoWork(coreRelPath: string, forkRelPath: string): string {
+    // A member that imports the sobek-forked core must resolve the same fork, or a
+    // standalone `go build`/`go test` from <member>/server hits a goja↔sobek
+    // mismatch (core's own go.mod fork replace is ignored in workspace mode). The
+    // app server's go.mod carries this same replace for the assembled build. The
+    // fork is vendored in the app shell, so it is always available.
     return [
         `go ${GO_VERSION}`,
         '',
         'use .',
         '',
         `replace tinycld.org/core => ${coreRelPath}`,
+        '',
+        `replace github.com/pocketbase/pocketbase => ${forkRelPath}`,
         '',
     ].join('\n')
 }

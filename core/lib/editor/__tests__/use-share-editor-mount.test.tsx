@@ -13,7 +13,6 @@ const viewerSession: ShareSession = {
     name: 'Q1 Report',
     mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     orgName: 'Acme Inc',
-    orgSlug: 'acme',
 }
 
 const commentorSession: ShareSession = {
@@ -34,10 +33,9 @@ describe('buildAnonMount', () => {
         expect(mount.identity.kind).toBe('anon')
     })
 
-    it('has no userId or userOrgId on the identity', () => {
+    it('has no userId on the identity', () => {
         const mount = buildAnonMount(viewerSession)
         expect(mount.identity.userId).toBeUndefined()
-        expect(mount.identity.userOrgId).toBeUndefined()
     })
 
     it('sets displayName from the session', () => {
@@ -123,15 +121,13 @@ describe('buildGuestMount', () => {
     const baseInput = {
         session: viewerSession,
         userId: 'user-guest-1',
-        userOrgId: 'uo-guest-1',
         userName: 'Guest Person',
     }
 
-    it('produces a guest-kind identity with userId and userOrgId', () => {
+    it('produces a guest-kind identity with the userId', () => {
         const mount = buildGuestMount({ ...baseInput, role: 'viewer' })
         expect(mount.identity.kind).toBe('guest')
         expect(mount.identity.userId).toBe('user-guest-1')
-        expect(mount.identity.userOrgId).toBe('uo-guest-1')
     })
 
     it('uses the auth user name as displayName (not the anon session name)', () => {

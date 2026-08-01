@@ -62,17 +62,11 @@ const GRANTS = [
     // package console
     { name: 'pkg_registry', ops: ['create', 'update', 'delete'] },
     { name: 'pkg_build', ops: ['list', 'view', 'create', 'update', 'delete'] },
-    // organizations console — list/edit/create orgs and their owner user + link
-    { name: 'orgs', ops: ['list', 'view', 'create', 'update'] },
-    { name: 'user_org', ops: ['list', 'view', 'create'] },
-    // users.createRule is already public (""), so super-admins can already create
-    // owner accounts. They need view/update to see + edit owners, and `manage`
-    // so they can set the managed auth fields (verified/email/password) when
-    // creating a pre-verified org owner or resetting an owner's credentials.
-    // `list` (added later in 1910000011) lets the /admin Organizations tab
-    // resolve each org's owner via a cross-org users list/join; without it owners
-    // render as "No owner assigned". Kept here so a fresh DB grants it directly;
-    // 1910000011's idempotent append is a no-op on those.
+    // users console — super-admins create/edit user accounts and their roles.
+    // createRule is already public (""), so they can already create accounts.
+    // They need list/view/update to see + edit users, and `manage` so they can
+    // set the managed auth fields (verified/email/password) when creating a
+    // pre-verified user or resetting credentials.
     { name: 'users', ops: ['list', 'view', 'update', 'manage'] },
     // mail_domains only exists when the mail package is installed
     { name: 'mail_domains', ops: ['create'], optional: true },

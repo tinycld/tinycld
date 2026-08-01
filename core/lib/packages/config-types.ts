@@ -37,9 +37,12 @@ export interface SidebarContribution {
     Component: ComponentType | LazyExoticComponent<ComponentType>
 }
 export interface SeedContext {
-    user: { id: string; email: string; name: string }
-    org: { id: string }
-    userOrg: { id: string }
+    // Single-org: package seeds own data by the user id directly (the former
+    // org/userOrg junction is gone; the `role` enum lives on the user record).
+    // `username` is what mail derives mailbox addresses from — the server
+    // provisions from username, never the email local-part, so seeds must too
+    // or seeded users get a different address than the server would create.
+    user: { id: string; username: string; email: string; name: string }
 }
 
 // pbtsdb's collection factory, typed over the broadest schema. Each package's

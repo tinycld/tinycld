@@ -1,6 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 import { clearEmailLog, extractFirstLink, waitForEmailTo } from './email-log-helpers'
-import { createInvitedUser, type InvitedUser, ORG_SLUG } from './helpers'
+import { appShell, createInvitedUser, type InvitedUser } from './helpers'
 
 // Drives the full self-service password-reset flow from the login modal:
 // request → email (captured via the mailer LogSender) → confirm screen → sign
@@ -59,15 +59,17 @@ test.describe('password reset', () => {
         await inviteePage.getByPlaceholder('Re-enter password').fill(NEW_PASSWORD)
         await inviteePage.getByTestId('reset-confirm-submit').click()
 
-        // On success the screen redirects to the login route.
-        await inviteePage.waitForURL(/\/$|\/admin|\/a\//, { timeout: 15_000 })
+        // On success the screen does router.replace('/') — the signed-out root,
+        // which renders the login gate. Gate on the form itself: it's what the
+        // user sees, and it doesn't depend on how the router spells the route.
+        await expect(inviteePage.getByTestId('identifier')).toBeVisible({ timeout: 15_000 })
 
         // Confirm the reset password actually authenticates.
         await inviteePage.goto('/')
         await inviteePage.getByTestId('identifier').fill(invited.email)
         await inviteePage.getByPlaceholder('Password').fill(NEW_PASSWORD)
         await inviteePage.getByText('Sign in', { exact: true }).last().click()
-        await inviteePage.waitForURL(new RegExp(`/a/${ORG_SLUG}|/a/|/admin`), { timeout: 15_000 })
+        await appShell(inviteePage).waitFor({ state: 'visible', timeout: 15_000 })
 
         await closeInvitee()
     })

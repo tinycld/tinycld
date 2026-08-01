@@ -39,9 +39,9 @@ export function detectTrigger(value: string, caretIndex: number): MentionTrigger
 // Renders a comment body string with `[[@id]]` tokens replaced by
 // `@<displayName>`. Falls back to `@<id>` when the lookup misses
 // (the user was removed from the org since the comment was posted).
-export function renderMentionsToText(body: string, nameByUserOrgId: Map<string, string>): string {
+export function renderMentionsToText(body: string, nameByUserId: Map<string, string>): string {
     return body.replace(/\[\[@([A-Za-z0-9_-]+)\]\]/g, (_, id: string) => {
-        const name = nameByUserOrgId.get(id)
+        const name = nameByUserId.get(id)
         return name ? `@${name}` : `@${id}`
     })
 }

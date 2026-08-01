@@ -4,19 +4,19 @@ import { useMutation } from '../mutations'
 import { parseMentions } from './mentions'
 
 export interface CommentAuthorIdentity {
-    userOrgId: string
+    userId: string
     displayName: string
     email: string
 }
 
 // Resolve the author columns for a new comment row. author is the
-// user_org id; author_name is snapshotted (name → email → 'Anonymous')
+// user id; author_name is snapshotted (name → email → 'Anonymous')
 // so a later-removed user still renders a recognizable label.
 export function resolveAuthorFields(id: CommentAuthorIdentity): {
     author: string
     author_name: string
 } {
-    return { author: id.userOrgId, author_name: id.displayName || id.email || 'Anonymous' }
+    return { author: id.userId, author_name: id.displayName || id.email || 'Anonymous' }
 }
 
 type AnyTransaction = Transaction<Record<string, unknown>>
@@ -40,7 +40,7 @@ export interface CommentMentionInsert {
     comment_collection: string
     comment_record: string
     drive_item: string
-    mentioned_user_org: string
+    mentioned_user: string
 }
 
 // Optional mentions support. When supplied, the add/reply mutations
@@ -92,7 +92,7 @@ export interface MakeCommentMutationsArgs<
     // Author identity for new comment rows; supplied by the caller (member or guest).
     identity: CommentAuthorIdentity
     // Optional: when present, add/reply also insert one
-    // comment_mentions row per deduped `[[@user_org_id]]` in the body.
+    // comment_mentions row per deduped `[[@user_id]]` in the body.
     mentions?: CommentMentionsConfig
 }
 
@@ -110,7 +110,7 @@ export function useBaseCommentMutations<
     const { author, author_name } = resolveAuthorFields(identity)
 
     // Build the comment_mentions inserts for a freshly-inserted comment
-    // row. One row per deduped `[[@user_org_id]]` token in the body,
+    // row. One row per deduped `[[@user_id]]` token in the body,
     // skipping self-mentions (notifying yourself is noise). When the
     // caller hasn't supplied a mentions config, returns an empty list.
     function mentionInserts(
@@ -122,14 +122,14 @@ export function useBaseCommentMutations<
         const parsed = parseMentions(body)
         const out: AnyTransaction[] = []
         for (const m of parsed) {
-            if (m.userOrgId === identity.userOrgId) continue
+            if (m.userId === identity.userId) continue
             out.push(
                 mentions.insertMention({
                     id: newRecordId(),
                     comment_collection: mentions.commentCollection,
                     comment_record: commentId,
                     drive_item: driveItemId,
-                    mentioned_user_org: m.userOrgId,
+                    mentioned_user: m.userId,
                 })
             )
         }

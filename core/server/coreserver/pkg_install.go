@@ -1,14 +1,11 @@
 package coreserver
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -591,43 +588,6 @@ func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg
 
 // ---------- release staging ----------
 
-// stageRelease moves the freshly-built <appDir>/dist into
-// <appDir>/release-staging/<id>/ with a release-id.txt and index.html renamed
-// to app.html, matching the layout entrypoint.sh's promote_release expects. The
-// entrypoint promotes the staged release (merging assets into releases/_static/
-// and pointing releases/current at it) on the next boot — which the install /
-// uninstall pipelines trigger via requestRestart. Returns the staged dir.
-func stageRelease(appDir string) (string, error) {
-	releaseID := fmt.Sprintf("install-%d", time.Now().UnixMilli())
-	distDir := filepath.Join(appDir, "dist")
-	stagingDir := filepath.Join(appDir, "release-staging")
-	stageDest := filepath.Join(stagingDir, releaseID)
-
-	if err := os.MkdirAll(stagingDir, 0o755); err != nil {
-		return "", err
-	}
-	// Prefer a rename (atomic, same filesystem); fall back to copy across
-	// devices or when the destination can't be renamed into.
-	if err := os.Rename(distDir, stageDest); err != nil {
-		if cpErr := copyDir(distDir, stageDest); cpErr != nil {
-			return "", fmt.Errorf("move dist failed: %v; copy fallback failed: %w", err, cpErr)
-		}
-		os.RemoveAll(distDir)
-	}
-
-	if err := os.WriteFile(filepath.Join(stageDest, "release-id.txt"), []byte(releaseID), 0o644); err != nil {
-		return "", err
-	}
-	stagedIndex := filepath.Join(stageDest, "index.html")
-	stagedApp := filepath.Join(stageDest, "app.html")
-	if _, statErr := os.Stat(stagedIndex); statErr == nil {
-		if err := os.Rename(stagedIndex, stagedApp); err != nil {
-			return "", fmt.Errorf("rename index.html → app.html: %w", err)
-		}
-	}
-	return stageDest, nil
-}
-
 // ---------- pkg_registry helpers ----------
 
 func upsertPkgRegistry(app core.App, m *parsedManifest, npmPkg string, manifestJSON []byte) error {
@@ -702,89 +662,8 @@ func getBundledSlugs(app core.App) map[string]bool {
 
 // ---------- utility helpers ----------
 
-// runCmd runs a command, capturing its combined output to return to the
-// caller (which surfaces it via SSE + the install-log record) AND echoing
-// the command line and its output to the server's stdout so `docker logs`
-// shows the full install trace — including the real npm/pnpm/go/expo errors
-// that would otherwise be buried in the SSE stream / DB record only.
-func runCmd(dir string, name string, args ...string) (string, error) {
-	return runCmdEnv(dir, nil, name, args...)
-}
-
-// runCmdEnv is runCmd with extra environment entries ("KEY=VALUE") appended to
-// the inherited env. Use this to pass SECRETS to a subprocess: the extra env is
-// NOT logged (only the command + args are), so a value like a Sentry auth token
-// never lands in the build log — unlike threading it through args.
-func runCmdEnv(dir string, extraEnv []string, name string, args ...string) (string, error) {
-	log.Printf("[pkg_install] $ (cd %s && %s %s)", dir, name, strings.Join(args, " "))
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
-	}
-	out, err := cmd.CombinedOutput()
-	if s := strings.TrimRight(string(out), "\n"); s != "" {
-		log.Printf("[pkg_install] output of %s:\n%s", name, s)
-	}
-	if err != nil {
-		log.Printf("[pkg_install] %s FAILED: %v", name, err)
-	}
-	return string(out), err
-}
-
-// runCmdStreaming is runCmd that also invokes onLine for each line of combined
-// output AS IT ARRIVES, instead of only after the command exits. Long steps
-// (pnpm install) can forward their progress lines to the UI so the bar doesn't
-// sit frozen for minutes. It still buffers + returns the full output and error
-// so the buffered-runCmd contract is preserved.
-func runCmdStreaming(onLine func(line string), dir, name string, args ...string) (string, error) {
-	log.Printf("[pkg_install] $ (cd %s && %s %s)", dir, name, strings.Join(args, " "))
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-
-	pr, pw := io.Pipe()
-	cmd.Stdout = pw
-	cmd.Stderr = pw
-
-	var buf strings.Builder
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		scanner := bufio.NewScanner(pr)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			line := scanner.Text()
-			buf.WriteString(line)
-			buf.WriteByte('\n')
-			if onLine != nil {
-				onLine(line)
-			}
-		}
-	}()
-
-	err := cmd.Start()
-	if err == nil {
-		err = cmd.Wait()
-	}
-	// Close the writer so the scanner goroutine sees EOF, then wait for it to
-	// finish draining before reading the buffer.
-	_ = pw.Close()
-	<-done
-
-	out := buf.String()
-	if s := strings.TrimRight(out, "\n"); s != "" {
-		log.Printf("[pkg_install] output of %s:\n%s", name, s)
-	}
-	if err != nil {
-		log.Printf("[pkg_install] %s FAILED: %v", name, err)
-	}
-	return out, err
-}
-
-func copyDir(src, dst string) error {
-	_, err := runCmd(".", "cp", "-a", src+"/.", dst+"/")
-	return err
-}
+// runCmd/runCmdEnv/runCmdStreaming/copyDir moved to pkgbuild (the exec seam);
+// coreserver reaches them through the delegates in pkgbuild_glue.go.
 
 func resolveServerDir() string {
 	ex, err := os.Executable()

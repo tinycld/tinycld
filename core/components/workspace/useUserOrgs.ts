@@ -1,24 +1,49 @@
-import { eq } from '@tanstack/db'
-import { useLiveQuery } from '@tanstack/react-db'
-import { useAuth } from '@tinycld/core/lib/auth'
-import { useStore } from '@tinycld/core/lib/pocketbase'
+import { apexUrlForHost, orgUrlForSlug, parseOrgsCookie } from '@tinycld/core/lib/org-cookie'
+import { Platform } from 'react-native'
 
-export function useUserOrgs() {
-    const { user } = useAuth()
-    const [userOrgCollection] = useStore('user_org')
-    const [orgsCollection] = useStore('orgs')
+// The orgs this browser has signed into, from the parent-domain cookie each
+// router-managed tenant upserts at login (see lib/org-cookie.ts for the
+// contract). Web-only: the cookie lives on the browser's parent domain, and a
+// native app talks to exactly one server. On a standalone deployment (no
+// router, no cookie) this is [] and the switcher UI renders nothing.
+export interface UserOrgEntry {
+    id: string
+    name: string
+    slug: string
+    /** Absolute URL of the org's own origin — derived from the slug and this
+     *  page's own parent domain, never read from the (client-writable)
+     *  cookie. */
+    url: string
+}
 
-    const { data: userOrgs } = useLiveQuery(
-        query =>
-            query
-                .from({ user_org: userOrgCollection })
-                .where(({ user_org }) => eq(user_org.user, user.id)),
-        [user.id]
-    )
+export function useUserOrgs(): UserOrgEntry[] {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return []
+    const hostname = window.location.hostname
+    const entries: UserOrgEntry[] = []
+    for (const entry of parseOrgsCookie(document.cookie)) {
+        const url = orgUrlForSlug(entry.slug, hostname)
+        if (!url) continue
+        entries.push({ id: entry.slug, name: entry.name, slug: entry.slug, url })
+    }
+    return entries
+}
 
-    const orgIds = userOrgs?.map(uo => uo.org) ?? []
+/** The apex org-finder URL (the router's discovery page for orgs this browser
+ *  has NOT signed into), derived from this page's own parent domain. Null on
+ *  native, standalone deployments, and bare hosts — anywhere there is no
+ *  router apex to link to. */
+export function useApexUrl(): string | null {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return null
+    return apexUrlForHost(window.location.hostname)
+}
 
-    const { data: orgs } = useLiveQuery(query => query.from({ orgs: orgsCollection }), [])
-
-    return orgs?.filter(o => orgIds.includes(o.id)) ?? []
+/** Whether an org entry points at the origin the app is currently served
+ *  from — the "you are here" highlight in the switcher. */
+export function isCurrentOrg(entry: UserOrgEntry): boolean {
+    if (typeof window === 'undefined') return false
+    try {
+        return new URL(entry.url).origin === window.location.origin
+    } catch {
+        return false
+    }
 }

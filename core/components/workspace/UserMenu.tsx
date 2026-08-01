@@ -2,19 +2,17 @@ import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
-import { getOrgHrefString, navigateToOrg } from '@tinycld/core/lib/org-url'
+import { navigateToOrgUrl } from '@tinycld/core/lib/org-url'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgSlug } from '@tinycld/core/lib/use-org-slug'
 import { Menu, Separator } from '@tinycld/core/ui/menu'
 import { useRouter } from 'expo-router'
-import { LogOut, Settings, User } from 'lucide-react-native'
+import { Globe, LogOut, Settings, User } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
-import { useUserOrgs } from './useUserOrgs'
+import { isCurrentOrg, type UserOrgEntry, useApexUrl, useUserOrgs } from './useUserOrgs'
 
 export function UserMenu() {
     const railActiveText = useThemeColor('rail-active-text')
     const { user, logout } = useAuth()
-    const orgSlug = useOrgSlug()
     const orgHref = useOrgHref()
     const router = useRouter()
     const orgs = useUserOrgs()
@@ -47,20 +45,7 @@ export function UserMenu() {
                         onPress={() => router.push(orgHref('settings/personal'))}
                     />
 
-                    <Separator />
-
-                    <Menu.Label>Organizations</Menu.Label>
-
-                    {orgs.map(org => (
-                        <MenuActionItem
-                            key={org.id}
-                            label={org.name}
-                            leading={<OrgLogo org={org} size={18} />}
-                            isActive={org.slug === orgSlug}
-                            href={getOrgHrefString(org.slug)}
-                            onPress={() => navigateToOrg(org.slug)}
-                        />
-                    ))}
+                    <OrganizationsSection orgs={orgs} />
 
                     <Separator />
 
@@ -68,5 +53,39 @@ export function UserMenu() {
                 </Menu.Content>
             </Menu.Portal>
         </Menu>
+    )
+}
+
+// Cross-org switching: entries come from the parent-domain cookie the tenants
+// write at login (useUserOrgs); each row is a full page load on the target
+// org's own origin. Renders nothing on a standalone deployment (empty cookie).
+// The cookie only knows orgs this browser has signed into, so the section ends
+// with a link to the apex org-finder page — the discovery path for the rest.
+function OrganizationsSection({ orgs }: { orgs: UserOrgEntry[] }) {
+    const apexUrl = useApexUrl()
+    if (orgs.length === 0) return null
+    return (
+        <>
+            <Separator />
+            <Menu.Label>Organizations</Menu.Label>
+            {orgs.map(org => (
+                <MenuActionItem
+                    key={org.id}
+                    label={org.name}
+                    leading={<OrgLogo org={org} size={18} />}
+                    isActive={isCurrentOrg(org)}
+                    href={org.url}
+                    onPress={() => navigateToOrgUrl(org.url)}
+                />
+            ))}
+            {apexUrl !== null && (
+                <MenuActionItem
+                    label="Open another organization…"
+                    icon={Globe}
+                    href={apexUrl}
+                    onPress={() => navigateToOrgUrl(apexUrl)}
+                />
+            )}
+        </>
     )
 }

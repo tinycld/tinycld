@@ -11,10 +11,9 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-// setupDemoStartTestApp builds a TestApp with the minimum schema RegisterDemoStart
-// touches: users.is_demo, plus orgs and user_org collections. The shared
-// fixture path used by account_delete_test.go isn't always present in CI, so
-// we build the schema in-test like demo_test.go does for IsDemoUser.
+// setupDemoStartTestApp builds a TestApp with the minimum schema
+// RegisterDemoStart touches: users.is_demo + users.role. Single-org: there is
+// no orgs/user_org collection to build.
 func setupDemoStartTestApp(t *testing.T) *tests.TestApp {
 	t.Helper()
 	app, err := tests.NewTestApp()
@@ -27,53 +26,33 @@ func setupDemoStartTestApp(t *testing.T) *tests.TestApp {
 	if err != nil {
 		t.Fatalf("find users: %v", err)
 	}
+	changed := false
 	if users.Fields.GetByName("is_demo") == nil {
 		users.Fields.Add(&core.BoolField{Name: "is_demo"})
+		changed = true
+	}
+	if users.Fields.GetByName("role") == nil {
+		users.Fields.Add(&core.SelectField{
+			Name:      "role",
+			Values:    []string{"owner", "admin", "member", "guest"},
+			MaxSelect: 1,
+		})
+		changed = true
+	}
+	if changed {
 		if err := app.Save(users); err != nil {
-			t.Fatalf("save users with is_demo: %v", err)
+			t.Fatalf("save users schema: %v", err)
 		}
 	}
-
-	ensureCollection(t, app, "orgs", []core.Field{
-		&core.TextField{Name: "name", Required: true},
-		&core.TextField{Name: "slug", Required: true},
-		&core.RelationField{Name: "users", CollectionId: users.Id, MaxSelect: 999},
-	})
-
-	orgs, err := app.FindCollectionByNameOrId("orgs")
-	if err != nil {
-		t.Fatalf("find orgs after create: %v", err)
-	}
-
-	ensureCollection(t, app, "user_org", []core.Field{
-		&core.RelationField{Name: "user", Required: true, CollectionId: users.Id, MaxSelect: 1},
-		&core.RelationField{Name: "org", Required: true, CollectionId: orgs.Id, MaxSelect: 1},
-		&core.SelectField{Name: "role", Required: true, Values: []string{"owner", "admin", "member", "guest"}, MaxSelect: 1},
-	})
 
 	registerDemoStartCore(app)
 	return app
 }
 
-func ensureCollection(t *testing.T, app core.App, name string, fields []core.Field) {
-	t.Helper()
-	if _, err := app.FindCollectionByNameOrId(name); err == nil {
-		return
-	}
-	col := core.NewBaseCollection(name)
-	for _, f := range fields {
-		col.Fields.Add(f)
-	}
-	if err := app.Save(col); err != nil {
-		t.Fatalf("create %s collection: %v", name, err)
-	}
-}
-
-// TestDemoStartCreatesUserAndOrg covers the cold-start path: no demo user
-// exists, no demo org exists. After one POST the endpoint must return a
-// PocketBase auth response, the user must exist with is_demo=true, and the
-// org must exist with slug="demo" containing that user as a member.
-func TestDemoStartCreatesUserAndOrg(t *testing.T) {
+// TestDemoStartCreatesUser covers the cold-start path: no demo user exists.
+// After one POST the endpoint must return a PocketBase auth response and the
+// user must exist with is_demo=true and role=owner.
+func TestDemoStartCreatesUser(t *testing.T) {
 	app := setupDemoStartTestApp(t)
 
 	scenario := &tests.ApiScenario{
@@ -92,39 +71,18 @@ func TestDemoStartCreatesUserAndOrg(t *testing.T) {
 			if !user.GetBool("is_demo") {
 				t.Error("is_demo flag not set on created demo user")
 			}
-
-			org, err := app.FindFirstRecordByFilter(
-				"orgs",
-				"slug = {:slug}",
-				dbx.Params{"slug": demoOrgSlug},
-			)
-			if err != nil {
-				t.Fatalf("demo org not created: %v", err)
-			}
-			if !contains(org.GetStringSlice("users"), user.Id) {
-				t.Errorf("demo org missing demo user in users[]: %v", org.GetStringSlice("users"))
-			}
-
-			membership, err := app.FindFirstRecordByFilter(
-				"user_org",
-				"user = {:uid} && org = {:oid}",
-				dbx.Params{"uid": user.Id, "oid": org.Id},
-			)
-			if err != nil {
-				t.Fatalf("user_org membership not created: %v", err)
-			}
-			if membership.GetString("role") != "owner" {
-				t.Errorf("expected role=owner, got %q", membership.GetString("role"))
+			if user.GetString("role") != "owner" {
+				t.Errorf("expected role=owner, got %q", user.GetString("role"))
 			}
 		},
 	}
 	scenario.Test(t)
 }
 
-// TestDemoStartIsIdempotent covers the warm path: a demo user and org already
-// exist. The endpoint must not create duplicates and must still return a
-// valid auth token. Idempotency matters because the marketing CTA can fire
-// repeatedly (browser back, double-click, retry on flaky network).
+// TestDemoStartIsIdempotent covers the warm path: a demo user already exists.
+// The endpoint must not create duplicates and must still return a valid auth
+// token. Idempotency matters because the marketing CTA can fire repeatedly
+// (browser back, double-click, retry on flaky network).
 func TestDemoStartIsIdempotent(t *testing.T) {
 	app := setupDemoStartTestApp(t)
 
@@ -141,20 +99,15 @@ func TestDemoStartIsIdempotent(t *testing.T) {
 	}
 	scenario.Test(t)
 
-	// Idempotency is a property of the ensure* logic against the DB, not of
-	// the HTTP routing. Exercise it by invoking that logic directly twice
-	// more on the same app/DB. (Re-running ApiScenario.Test on a shared app
-	// re-triggers OnServe, which re-registers PocketBase's built-in routes
-	// and panics on the duplicate pattern under PB v0.38.1.)
+	// Idempotency is a property of ensureDemoUser against the DB, not of the
+	// HTTP routing. Exercise it by invoking that logic directly twice more on
+	// the same app/DB.
 	for i := 0; i < 2; i++ {
 		if err := app.RunInTransaction(func(txApp core.App) error {
-			u, err := ensureDemoUser(txApp)
-			if err != nil {
-				return err
-			}
-			return ensureDemoOrgMembership(txApp, u)
+			_, err := ensureDemoUser(txApp)
+			return err
 		}); err != nil {
-			t.Fatalf("repeat ensureDemo (iteration %d): %v", i, err)
+			t.Fatalf("repeat ensureDemoUser (iteration %d): %v", i, err)
 		}
 	}
 
@@ -169,32 +122,6 @@ func TestDemoStartIsIdempotent(t *testing.T) {
 	}
 	if len(users) != 1 {
 		t.Errorf("expected exactly 1 demo user, got %d", len(users))
-	}
-
-	orgs, err := app.FindRecordsByFilter(
-		"orgs",
-		"slug = {:slug}",
-		"-id", 0, 0,
-		dbx.Params{"slug": demoOrgSlug},
-	)
-	if err != nil {
-		t.Fatalf("FindRecordsByFilter orgs: %v", err)
-	}
-	if len(orgs) != 1 {
-		t.Errorf("expected exactly 1 demo org, got %d", len(orgs))
-	}
-
-	memberships, err := app.FindRecordsByFilter(
-		"user_org",
-		"user = {:uid} && org = {:oid}",
-		"-id", 0, 0,
-		dbx.Params{"uid": users[0].Id, "oid": orgs[0].Id},
-	)
-	if err != nil {
-		t.Fatalf("FindRecordsByFilter user_org: %v", err)
-	}
-	if len(memberships) != 1 {
-		t.Errorf("expected exactly 1 membership, got %d", len(memberships))
 	}
 }
 

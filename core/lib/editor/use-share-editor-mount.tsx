@@ -33,7 +33,7 @@ export function buildAnonMount(session: ShareSession): EditorMount {
         mimeType: session.mimeType,
         identity: {
             kind: 'anon',
-            // No userId / userOrgId for anonymous visitors.
+            // No userId for anonymous visitors.
             displayName: session.displayName,
             color: colorForUser(session.anonId),
         },
@@ -44,7 +44,7 @@ export function buildAnonMount(session: ShareSession): EditorMount {
 }
 
 // Capabilities by role for a guest visitor (signed in via OTP, has a
-// drive_shares row + user_org row with role='guest').
+// drive_shares row and a users record with role='guest').
 //   - viewer:    defensive — viewer links don't require sign-in, but if a
 //                guest somehow lands here their caps are all false.
 //   - commentor: canComment only. NO file actions and NO mention support
@@ -81,7 +81,6 @@ function capabilitiesForGuest(role: EditorRole): EditorCapabilities {
 export interface BuildGuestMountInput {
     session: ShareSession
     userId: string
-    userOrgId: string
     userName: string
     role: EditorRole
 }
@@ -94,7 +93,6 @@ export interface BuildGuestMountInput {
 export function buildGuestMount({
     session,
     userId,
-    userOrgId,
     userName,
     role,
 }: BuildGuestMountInput): EditorMount {
@@ -108,7 +106,6 @@ export function buildGuestMount({
         identity: {
             kind: 'guest',
             userId,
-            userOrgId,
             displayName: userName,
             // Stable per-userId color (same algorithm as anons → guests
             // who later return as anons keep the same color and vice
@@ -149,17 +146,10 @@ export function useShareEditorMount(token: string): {
     // biome-ignore lint/correctness/useExhaustiveDependencies: deps are scalar fields of session/visitor; passing `session` itself would defeat the memo
     const mount = useMemo(() => {
         if (!session) return null
-        if (
-            visitor.role === 'guest' &&
-            userId &&
-            userName &&
-            visitor.userOrgId &&
-            visitor.shareRole
-        ) {
+        if (visitor.role === 'guest' && userId && userName && visitor.shareRole) {
             return buildGuestMount({
                 session,
                 userId,
-                userOrgId: visitor.userOrgId,
                 userName,
                 role: visitor.shareRole,
             })
@@ -174,7 +164,6 @@ export function useShareEditorMount(token: string): {
         session?.name,
         session?.mimeType,
         visitor.role,
-        visitor.userOrgId,
         visitor.shareRole,
         userId,
         userName,

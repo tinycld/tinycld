@@ -6,7 +6,7 @@ import { useState } from 'react'
 import { Pressable, Text, TextInput, View } from 'react-native'
 
 export type InviteLinkPanelProps = {
-    userOrgId: string
+    userId: string
     initialUrl?: string
 }
 
@@ -16,22 +16,22 @@ type LinkState =
     | { kind: 'expired' }
     | { kind: 'error'; message: string }
 
-export function InviteLinkPanel({ userOrgId, initialUrl }: InviteLinkPanelProps) {
+export function InviteLinkPanel({ userId, initialUrl }: InviteLinkPanelProps) {
     // A URL from rotate() (or the initialUrl prop) short-circuits the fetch —
     // both hand us a ready link with no round-trip needed.
     const [overrideUrl, setOverrideUrl] = useState<string | undefined>(initialUrl)
 
     const linkQuery = useQuery({
-        queryKey: ['invite-link', userOrgId],
+        queryKey: ['invite-link', userId],
         queryFn: () =>
-            pb.send<{ inviteUrl: string }>(`/api/invite-link/${userOrgId}`, { method: 'GET' }),
+            pb.send<{ inviteUrl: string }>(`/api/invite-link/${userId}`, { method: 'GET' }),
         enabled: !overrideUrl,
         retry: false,
     })
 
     const rotate = useMutation({
         mutationFn: async () => {
-            return pb.send<{ inviteUrl: string }>(`/api/invite-link/${userOrgId}/rotate`, {
+            return pb.send<{ inviteUrl: string }>(`/api/invite-link/${userId}/rotate`, {
                 method: 'POST',
             })
         },
@@ -60,7 +60,7 @@ export function InviteLinkPanel({ userOrgId, initialUrl }: InviteLinkPanelProps)
     return (
         <ReadyView
             url={state.url}
-            userOrgId={userOrgId}
+            userId={userId}
             onRotate={() => rotate.mutate()}
             rotatePending={rotate.isPending}
         />
@@ -101,19 +101,19 @@ function ExpiredView({ onRotate, pending }: { onRotate: () => void; pending: boo
 
 type ReadyViewProps = {
     url: string
-    userOrgId: string
+    userId: string
     onRotate: () => void
     rotatePending: boolean
 }
 
-function ReadyView({ url, userOrgId, onRotate, rotatePending }: ReadyViewProps) {
+function ReadyView({ url, userId, onRotate, rotatePending }: ReadyViewProps) {
     const [copied, setCopied] = useState(false)
     const [altEmail, setAltEmail] = useState('')
     const [showSend, setShowSend] = useState(false)
 
     const send = useMutation({
         mutationFn: async () => {
-            return pb.send<{ delivered: true }>(`/api/invite-link/${userOrgId}/send`, {
+            return pb.send<{ delivered: true }>(`/api/invite-link/${userId}/send`, {
                 method: 'POST',
                 body: JSON.stringify({ email: altEmail }),
                 headers: { 'Content-Type': 'application/json' },

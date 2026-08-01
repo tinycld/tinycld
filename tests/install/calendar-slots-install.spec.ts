@@ -38,7 +38,10 @@ const PKG_SPEC = process.env.PW_CALSLOTS_SPEC ?? 'github:stefnnn/tinycld-calenda
 // assembly.
 
 async function loginAsSuperuser(page: Page, timeoutMs?: number) {
-    await page.goto('/admin', timeoutMs ? { timeout: timeoutMs } : undefined)
+    // /setup, not /admin: the superuser-login console moved there in the
+    // single-org migration. /admin is now behind AuthGate and shows the app's
+    // LoginModal instead of the 'Superuser Login' form asserted below.
+    await page.goto('/setup', timeoutMs ? { timeout: timeoutMs } : undefined)
     await expect(page.getByText('Superuser Login')).toBeVisible(
         timeoutMs ? { timeout: timeoutMs } : undefined
     )
@@ -425,7 +428,7 @@ test.describe('calendar-slots install', () => {
             'PW_CALSLOTS_SETUP_TOKEN not set — the runner scrapes it from `docker logs`'
         )
 
-        await page.goto(`/admin?token=${SETUP_TOKEN}`)
+        await page.goto(`/setup?token=${SETUP_TOKEN}`)
         await expect(page.getByText('Welcome to TinyCld')).toBeVisible()
 
         await page
@@ -441,7 +444,9 @@ test.describe('calendar-slots install', () => {
             .fill('http://localhost:7090')
 
         await page.getByRole('button', { name: 'Create Account & Continue' }).click()
-        await expect(page.getByText('No organizations yet.')).toBeVisible()
+        // Single-org: the dashboard lands on Packages, and the Organizations
+        // tab is a static "managed by the router" explainer, not an empty list.
+        await expect(page.getByText('Packages', { exact: true }).first()).toBeVisible()
     })
 
     test('installing calendar-slots WITHOUT calendar is rejected by the compat gate', async ({

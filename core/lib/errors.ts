@@ -97,6 +97,14 @@ export function extractValidationErrors(error: unknown): Record<string, string> 
             const result = extractFieldErrors(data.data)
             if (result) return result
         }
+
+        // The SDK's ClientResponseError.response IS the parsed PocketBase
+        // error body, so `error.response.data` is already the field-error map
+        // for a direct record create/update — the shape every pbtsdb mutation
+        // rejects with. Without this branch those errors mapped to nothing and
+        // surfaced as a generic toast instead of form field errors.
+        const result = extractFieldErrors(data)
+        if (result) return result
     }
 
     if (isRecord(error.errors)) {

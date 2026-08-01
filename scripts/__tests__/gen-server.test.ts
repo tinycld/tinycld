@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
     buildBundledPackages,
     buildGoWork,
+    buildMemberGoWork,
     buildPackageExtensionsGo,
     replaceSymlink,
     type ServerPkg,
@@ -41,6 +42,29 @@ describe('buildGoWork', () => {
         expect(work).toContain('    .')
         expect(work).toContain('    ../../core/server')
         expect(work).toContain('    ../../contacts/server')
+    })
+})
+
+describe('buildMemberGoWork', () => {
+    it('replaces core so a standalone member build resolves it', () => {
+        const work = buildMemberGoWork(
+            '../../tinycld/core/server',
+            '../../tinycld/third_party/pocketbase'
+        )
+        expect(work).toContain('use .')
+        expect(work).toContain('replace tinycld.org/core => ../../tinycld/core/server')
+    })
+
+    // The fork is vendored in the app shell, so it is never absent — a member that
+    // resolved upstream goja instead would hit a goja<->sobek mismatch at build time.
+    it('always replaces the fork so a member never resolves upstream goja', () => {
+        const work = buildMemberGoWork(
+            '../../tinycld/core/server',
+            '../../tinycld/third_party/pocketbase'
+        )
+        expect(work).toContain(
+            'replace github.com/pocketbase/pocketbase => ../../tinycld/third_party/pocketbase'
+        )
     })
 })
 

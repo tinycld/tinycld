@@ -25,7 +25,7 @@ describe('redirectSystemPath', () => {
 
     it('passes other in-app paths through unchanged', () => {
         expect(redirectSystemPath({ path: '/connect', initial: false })).toBe('/connect')
-        expect(redirectSystemPath({ path: '/a/acme/mail', initial: false })).toBe('/a/acme/mail')
+        expect(redirectSystemPath({ path: '/mail', initial: false })).toBe('/mail')
     })
 
     it('normalizes a universal-link root to /', () => {

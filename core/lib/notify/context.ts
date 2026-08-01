@@ -1,5 +1,9 @@
+/**
+ * Who a notification is for. Single-org: the user id is the whole answer, and
+ * carrying an orgId here is what made bell notifications dead app-wide — the
+ * component that publishes this gated on an org id that no longer exists.
+ */
 export type NotifyContext = {
-    orgId: string
     userId: string
 }
 

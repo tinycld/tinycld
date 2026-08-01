@@ -92,7 +92,7 @@ func TestStatic_AppRouteServesShellNotWebsite(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:               "app route falls back to the SPA shell, not the website",
 		Method:             http.MethodGet,
-		URL:                "/a/acme/mail",
+		URL:                "/mail",
 		ExpectedStatus:     http.StatusOK,
 		ExpectedContent:    []string{"APP SHELL"},
 		NotExpectedContent: []string{"MARKETING HOME"},
@@ -203,7 +203,7 @@ func TestStatic_ShellRevalidates(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:            "shell serves no-cache + ETag",
 		Method:          http.MethodGet,
-		URL:             "/a/acme/mail",
+		URL:             "/mail",
 		ExpectedStatus:  http.StatusOK,
 		ExpectedContent: []string{"APP SHELL"},
 		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
@@ -225,7 +225,7 @@ func TestStatic_ShellConditionalGet(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:           "matching If-None-Match yields 304, empty body",
 		Method:         http.MethodGet,
-		URL:            "/a/acme/mail",
+		URL:            "/mail",
 		Headers:        map[string]string{"If-None-Match": shellETag(shell)},
 		ExpectedStatus: http.StatusNotModified,
 		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
@@ -243,7 +243,7 @@ func TestStatic_ShellStaleETagRefetches(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:            "stale If-None-Match re-sends the shell",
 		Method:          http.MethodGet,
-		URL:             "/a/acme/mail",
+		URL:             "/mail",
 		Headers:         map[string]string{"If-None-Match": shellETag("<html>OLD SHELL</html>")},
 		ExpectedStatus:  http.StatusOK,
 		ExpectedContent: []string{"APP SHELL"},
@@ -295,4 +295,27 @@ func TestStatic_NonHTMLAssetKeepsDefault(t *testing.T) {
 			}
 		},
 	})
+}
+
+func TestIsDavPath(t *testing.T) {
+	for _, p := range []string{
+		"/caldav", "/caldav/u/cal/x/", "/carddav", "/dav", "/dav/x",
+		"/.well-known/caldav", "/.well-known/carddav", "/.well-known/webdav",
+	} {
+		if !isDavPath(p) {
+			t.Errorf("isDavPath(%q) = false, want true", p)
+		}
+	}
+	for _, p := range []string{
+		// "/drive" is deliberately NOT a DAV path: it is the in-app SPA route,
+		// and matching it here would route a hard load of /drive to Basic-Auth
+		// WebDAV instead of the app (see isDavPath's comment). Protocol mounts
+		// live under the reserved "/dav" namespace instead.
+		"/drive",
+		"/", "/api/health", "/settings", "/.well-known/apple-app-site-association",
+	} {
+		if isDavPath(p) {
+			t.Errorf("isDavPath(%q) = true, want false", p)
+		}
+	}
 }

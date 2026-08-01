@@ -87,12 +87,13 @@ available in production.
 - Import collections with `useStore('collection1', 'collection2')` from `pbtsdb` - it uses variadic arguments and returns a tuple array
   - Example: `const [tagsCollection] = useStore('tags')`
   - Example: `const [jobsCollection, addressesCollection] = useStore('jobs', 'addresses')`
-- **Always use `useOrgLiveQuery`** from `@tinycld/core/lib/use-org-live-query` for org-scoped data queries instead of raw `useLiveQuery`. It automatically provides `OrgScope` (`orgId`, `userOrgId`, `orgSlug`) to the query callback, disables queries until org context loads (preventing cross-org data flash), and auto-includes `orgId`/`userOrgId` in the dependency array. Only use raw `useLiveQuery` in bootstrap hooks that `useOrgLiveQuery` itself depends on (`use-org-info`, `use-current-role`, `use-current-user-org`) or for genuinely user-level (non-org) queries like theme preferences.
+- **Always use `useOrgLiveQuery`** from `@tinycld/core/lib/use-org-live-query` for data queries instead of raw `useLiveQuery`. Single-org deployment: the process IS one org, so the only scoping value is the current user's id — `OrgScope` is `{ userId }`. The hook disables the query until the user id is known and auto-includes `userId` in the dependency array. Only use raw `useLiveQuery` in low-level hooks `useOrgLiveQuery` itself depends on (e.g. `use-current-role`).
   ```ts
-  const { data: items } = useOrgLiveQuery((query, { orgId }) =>
-      query.from({ item: itemsCollection }).where(({ item }) => eq(item.org, orgId))
+  const { data: items } = useOrgLiveQuery((query, { userId }) =>
+      query.from({ item: itemsCollection }).where(({ item }) => eq(item.user, userId))
   )
   ```
+- **Combine related data in ONE query** with `.join()` + `.select()` rather than running separate `useLiveQuery` calls and stitching results with JS `Map`s — a join resolves optimistic local writes immediately. `mail/tinycld/mail/hooks/useMailboxes.ts` is the reference example.
 - Use TanStack DB operators (`eq`, `and`, `or`, `gt`, `lt`, etc.) from `@tanstack/db` for type-safe filtering
 - Query syntax: `.from()`, `.where()`, `.orderBy()`, `.join()`, `.select()` - follows TanStack DB patterns
 - **Prefer inline queries** — write `useStore` + `useOrgLiveQuery` directly in the screen component rather than wrapping them in custom hooks. This keeps the data flow visible where it's used. Only extract a shared hook when the exact same query is needed in 3+ screens.
@@ -106,6 +107,7 @@ available in production.
       onError: handleMutationErrorsWithForm({ setError, getValues }),
   })
   ```
+- A mutation that fails without an explicit `onError` surfaces a **default error toast + Sentry capture**, so optimistic updates never revert silently. Provide `onError` only to handle the failure better (a form via `handleMutationErrorsWithForm`, inline UI); pass a no-op only when a failure is genuinely fine to swallow, with a comment saying why.
 - For multi-step mutations, yield each Transaction sequentially, or yield an array for parallel execution
 - Use `performMutations` from `@tinycld/core/lib/mutations` when you need to await Transactions inside an async function
 - Core collections are configured in `tinycld/core/lib/pocketbase.ts` with expand relations; each feature registers its own in `collections.ts` (via the manifest's `collections.register`)
@@ -170,6 +172,30 @@ There is **no** central `log` helper. **Don't import `@tinycld/core/lib/logger` 
 - `pnpm run test:e2e` and `pnpm run test:server` cover the Playwright suite and supporting services.
    - never start or kill servers when running Playwright. It will manage it's own service and test data. If you see network errors or other issues, stop and ask for advice
 - `pnpm run test:e2e <test file>` will run a single test.  This will also start the dev server for testing.
+
+**Waiting in e2e: gate on the rendered screen, never on the URL.** A URL changes
+the moment the router *accepts* a navigation — before the target's lazy chunk has
+loaded, let alone committed. Gating on it is slower (a poll on something already
+true) and wrong in both directions: it can return while the screen is still
+mounting, and when the route shape shifts underneath it, it hangs for the full
+timeout while the app works perfectly. That second mode has bitten this repo
+twice — a leftover `/a/<org>` pattern after the single-org migration, and a
+`LANDED_URL` whose hardcoded package list stopped matching when CI assembled a
+leaner shell. Use these instead, from `tests/e2e/helpers.ts` (re-exported as
+`@tinycld/core/e2e-helpers`):
+
+- `appShell(page)` — the authenticated shell mounted, whichever chrome the
+  viewport renders (`PackageRail` on desktop/tablet, `MobileTabBar` on mobile).
+- `packageScreen(page, slug)` — that package's screen is mounted, via the
+  `pkg-active-<slug>` testID the workspace layout stamps from `activePkgSlug`
+  *after* the route commits. `settings` and `help` are chrome, not packages, and
+  deliberately have no marker — gate those on their heading.
+- Otherwise assert the element the test is about to interact with. Playwright
+  auto-waits for it, so an explicit wait beforehand is usually redundant.
+
+A URL wait is right only when the URL itself is the observable under test — see
+`drive/tests/open-in-app.spec.ts`, where a query param is how the stub opener
+signals it ran.
 - `pnpm run export:web` runs `expo export --platform web` for production web builds.
 - `pnpm run export:ios` and `pnpm run export:android` produce platform-specific exports (used by the docker/EAS build pipelines, not for local launch).
 
@@ -177,7 +203,7 @@ There is **no** central `log` helper. **Don't import `@tinycld/core/lib/logger` 
 - Local data lives in `tinycld/server/pb_data/`; reset via `pnpm run db:reset` (or `db:reset:demo`) and re-seed with `pnpm run db:seed` when fixtures fall out of sync.
 - Keep migrations in `tinycld/server/pb_migrations/` (and per-package `pb-migrations/`, symlinked in by the generator) and describe manual steps in the PR body.
 - Create api routes only as a last resort and after discussion. Prefer to create records using standard useMutation with pbtsdb stores.  If needed we can use golang hooks to observe and modify records as they're created/modified
-- Go server hooks (e.g. CardDAV in the `@tinycld/contacts` sibling's `server/` directory) use SDK methods that bypass PocketBase API rules — they implement equivalent authorization manually. When changing API rules on a collection, check if a Go hook also accesses that collection and update its filters to match.
+- Go server code uses SDK methods that bypass PocketBase API rules. The DAV protocol servers (`core/server/{webdav,caldav,carddav}`) evaluate the collections' own rules via `app.CanAccessRecord`, so those can't drift — but some Go paths mirror rules manually (e.g. `core/server/driveshare` mirrors the `drive_items` rules). When changing API rules on a collection, check whether a Go mirror also encodes that predicate and update it to match.
 
 ## Logging in for local dev
 - After `pnpm run db:reset` (or `pnpm run db:seed`) the script prints a boxed summary of the credentials to use — you don't need to read the seed script.
@@ -186,18 +212,14 @@ There is **no** central `log` helper. **Don't import `@tinycld/core/lib/logger` 
 - Override the login emails with `TEST_USER_LOGIN` / `ADMIN_USER_LOGIN` in `tinycld/.env`.
 - There's no first-run `…/setup?token=…` link locally: `db:reset` creates the superuser up front (so it can seed), so PocketBase isn't on its first run. That token flow is only for an empty self-hosted instance. The `/setup` link `db:reset` prints goes to the superuser login → dashboard instead.
 
-## Users & Organizations
-- Users belong to orgs via the `user_org` junction table (many-to-many)
-- Roles (`admin`, `clerical`, `workforce`) are per-org—a user can have different roles in different orgs
-- Use `useOrgInfo()` from `@tinycld/core/lib/use-org-info` to get `{ orgSlug, orgId, org }` for the current org context
-- `useOrgSlug()` from `@tinycld/core/lib/use-org-slug` returns just the org slug — on web it reads from `OrgSlugContext` (set by `[orgSlug]/_layout.tsx`), on native it reads from AsyncStorage
-- `navigateToOrg(orgSlug)` from `@tinycld/core/lib/org-url` does a same-origin path navigation to `/a/<orgSlug>`
-- Session helpers like `getRoleForOrg(session, orgSlug)` provide role lookups
+## Users & Roles
+- **Single-org deployment: the process IS one org.** There is no `orgs` collection and no `user_org` junction — a user's role lives directly on their `users` auth record. (The multi-org router hosts many deployments, each its own process and DB; none of that is visible from inside the app.)
+- Roles are `owner` / `admin` / `member` / `guest` (`users.role`). Read the current user's role with `useCurrentRole()` from `@tinycld/core/lib/use-current-role` — it returns `{ role, isOwner, isAdmin, isMember, isGuest, canManageOrg, canManageMembers }` (`isAdmin` includes owners).
+- `useOrgInfo()`, `useOrgSlug()`, `useCurrentUserOrg()` and `navigateToOrg()` survive only as shims so old call sites compile — `useOrgInfo()` returns `org: null` (org branding has no source yet) and `useCurrentUserOrg()?.id` is just the current user's id. Don't reach for them in new code: use `useAuth()` for the user and `useCurrentRole()` for the role.
 
 ## Routing & Navigation
-- **Org context comes from the URL path**: `/a/<orgSlug>/<service>` — e.g. `/a/acme/contacts`, `/a/acme/mail`, `/a/acme/settings/profile`
-- All org-scoped routes use the `/a/[orgSlug]/` prefix in file-system routing
-- Use `useOrgHref()` from `@tinycld/core/lib/org-routes` for **type-safe** org-scoped navigation. Pass short paths (without the `/a/[orgSlug]` prefix) — misspellings are caught at compile time:
+- **Routes are bare** — the org never appears in the URL: `/contacts`, `/mail`, `/settings/profile`. Org identity comes from the deployment (subdomain), which the multi-org router resolves before a request reaches this app.
+- Use `useOrgHref()` from `@tinycld/core/lib/org-routes` for navigation. Paths are app-root-relative; the hook is retained (rather than raw strings) so the ~200 call sites keep one shape:
   ```tsx
   const orgHref = useOrgHref()
   router.push(orgHref('contacts/new'))
@@ -205,15 +227,14 @@ There is **no** central `log` helper. **Don't import `@tinycld/core/lib/logger` 
   router.push(orgHref('mail', { folder: 'sent' }))
   <Link href={orgHref('mail/[id]', { id: threadId })} />
   ```
-- **Never** use `as OneRouter.Href` casts for org routes — always use `useOrgHref()`
-- For dynamic package navigation where the slug is a runtime value (e.g. rail/tab bar), use the resolved URL string: `` `/a/${orgSlug}/${pkgSlug}` ``
-- Use `useOrgInfo()` or `useOrgSlug()` to get the current org — `useOrgSlug()` reads from context on web
+- **Never** use `as OneRouter.Href` casts for app routes — always use `useOrgHref()`
+- For dynamic package navigation where the slug is a runtime value (e.g. rail/tab bar), use the resolved URL string: `` `/${pkgSlug}` ``
 
 ## Package System
 - Feature packages live in **sibling git repos** at `~/code/tinycld/{contacts,mail,calendar,drive,calc,text,google-takeout-import}/` (source at `<slug>/tinycld/<slug>/`) and are **pnpm workspace members** (listed in `pnpm-workspace.yaml`) of a workspace root at `~/code/tinycld/`. `@tinycld/core` is **not** a separate sibling repo — it is nested at `tinycld/core/` inside the merged `tinycld` repo (still a workspace member, listed as `tinycld/core`), alongside `@tinycld/package-scripts` at `tinycld/package-scripts/`. The postinstall's `link-members` step creates `node_modules/@tinycld/<name>` symlinks for every member; pnpm itself only links depended-on members, so this covers the rest.
 - `tinycld.packages.ts::getPackages()` (at the workspace root) enumerates the workspace members that carry a `manifest.ts` — that set is the source of truth. To add a feature package, clone it as a sibling at the workspace root, add it to `pnpm-workspace.yaml`'s `packages:` list, and run `pnpm install` at the **workspace root** (`~/code/tinycld/`). There is no `packages:link`/`packages:install` — the workspace install does the linking.
 - `pnpm run packages:generate` (runs as the workspace-root `postinstall`, and before `dev`) wires linked feature packages into the app. It is now a **thin** step — most wiring moved to runtime imports. It:
-  - Re-exports package screens into `tinycld/app/a/[orgSlug]/{slug}/` (org-scoped routes) and public routes into `tinycld/app/<path>` (Expo Router needs files on disk).
+  - Re-exports package screens into `tinycld/app/(app)/{slug}/` (app routes) and public routes into `tinycld/app/p/<path>` (Expo Router needs files on disk).
   - Writes `tinycld.config.ts` (the installed-package source of truth — a typed `definePackageEntry` array) and `tinycld.seeds.ts` (Node-only seed list, kept out of the app bundle).
   - Writes `tinycld/lib/generated/package-help.ts` (frontmatter-parsed help topics) and `tinycld/lib/generated/uniwind-sources.css` (Tailwind `@source` roots).
   - Symlinks migrations/hooks into `tinycld/server/pb_migrations/` and `tinycld/server/pb_hooks/`, and generates the Go server wiring. Core's migrations are symlinked in via a separate explicit pass (core has no `manifest.ts`).
@@ -222,7 +243,7 @@ There is **no** central `log` helper. **Don't import `@tinycld/core/lib/logger` 
 - Manifest fields `routes`, `publicRoutes`, and `nav` are all optional — a package can contribute only a settings panel (see `@tinycld/google-takeout-import`) with none of these.
 - The type system is fully integrated — package `types.ts` exports a `{PascalSlug}Schema` type. `generate-config.ts` composes these into `MergedPackageSchema` (a literal intersection), which `pocketbase.ts` intersects with core's `Schema` so `useStore('packageCollection')` is strongly typed end-to-end. (The literal intersection — not a `typeof tinycldConfig` derivation — avoids a circular type reference through `coreStores`.)
 - Package screens run in the app's bundle context and can import from the host app using `~/` and from core using `@tinycld/core/...`.
-- `tinycld/lib/generated/`, `tinycld/app/a/[orgSlug]/*/`, and `tinycld/app/p/*/` are gitignored; `tinycld/app/a/[orgSlug]/_layout.tsx`, `tinycld/app/a/[orgSlug]/settings/*`, and `tinycld/app/p/_layout.tsx` are hand-written app files (force-add to git).
+- `tinycld/lib/generated/`, `tinycld/app/(app)/*/`, and `tinycld/app/p/*/` are gitignored; the app-owned route dirs `tinycld/app/(app)/settings/`, `tinycld/app/(app)/help/`, `tinycld/app/(app)/admin/`, plus `tinycld/app/(app)/_layout.tsx` and `tinycld/app/p/_layout.tsx`, are hand-written and tracked (`.gitignore` carve-outs).
 - **Install at the workspace root (`~/code/tinycld/`), never inside a sibling** — see the **Assembling & installing a workspace** and **The duplicate-react hazard** sections below for the why and the recovery.
 - Metro bundler resolves workspace members via a `watchFolders` entry for the workspace root in `tinycld/metro.config.cjs`. The 388-line custom resolver is gone — npm's `node_modules/@tinycld/*` symlinks + Metro's default resolver handle member subpaths (`.ts`/`.tsx`/dir-index) with no singleton pins. Vitest still needs `@tinycld/core/*` path aliases because Vite's exports resolution lacks Metro's directory-index fallback.
 - **Tailwind/Uniwind class scanning across linked packages is wired up by the generator.** Tailwind v4's scanner respects `.gitignore`, and the symlinks (and `node_modules` installs) for linked packages live inside gitignored paths. Without help, any utility class used **only** inside a linked package (e.g. `mr-3`, `bg-green-500`) silently produces no CSS rule — the className lands on the DOM element but has no styles. The generator writes one absolute `@source "<package-real-path>";` line per linked package into `tinycld/lib/generated/uniwind-sources.css`, which `global.css` imports. The file regenerates on every `packages:link` / `packages:unlink`, so newly-linked packages (siblings, `node_modules`-installed third-party, or arbitrary checkouts) work automatically. Diagnose missing styles by checking `document.styleSheets` in DevTools for a `.your-class { ... }` rule; if missing, run `pnpm run packages:generate` and inspect `tinycld/lib/generated/uniwind-sources.css`.
@@ -242,6 +263,16 @@ cd tinycld && pnpm run dev       # boots Expo + PocketBase
 ```
 
 Add a feature later with `npx @tinycld/bootstrap@latest --assemble-only --with <slug>` (it skips members already present), then `pnpm install`. Remove one by deleting its sibling dir and running `pnpm install` again. pnpm silently ignores absent member dirs, so a partial assembly installs and runs cleanly — the app boots as a lean shell with whatever feature set happens to be present.
+
+### Pinning members to a branch or tag (and why CI does)
+
+`--with <name>@<ref>` pins that member's clone to a branch or tag; `tinycld` itself accepts the same form (`--with tinycld@multi-org`). Without a ref, every member is cloned at its **default branch**.
+
+That default is the right one for a developer and the wrong one for cross-repo work, which is worth understanding before it costs you an afternoon. **Coordinated changes span repos on the same branch name** — the single-org migration lived on `multi-org` in nine repos at once. A feature repo whose CI assembles `tinycld` from `main` then typechecks the branch's code against a core that predates it: the APIs the branch depends on are simply absent, and the errors look like defects in the PR (`Property 'userId' does not exist on type 'OrgScope'`) rather than a mismatched workspace. It reads as "this PR is broken" when nothing is.
+
+So each feature repo's `ci.yml` resolves sibling refs before assembling: prefer a branch matching the PR's HEAD, fall back to the default branch when none exists. Ordinary single-repo PRs are unaffected — they assemble against released siblings, which is what you want. `text` and `calc` pin `drive` the same way, since they clone it too.
+
+If you are ever debugging a feature repo that is red in CI but green locally, check this first: the assembly is the most common difference between the two.
 
 **Run `pnpm install` only at the workspace root, never inside a member.** The root install does two things in order, and the order matters:
 
@@ -265,7 +296,7 @@ Siblings avoid this by declaring framework deps as `peerDependencies` and carryi
 The generator (`tinycld/scripts/generate.ts`, run by the postinstall and by `pnpm run packages:generate`) walks `getPackages()` and emits the following, all **gitignored in the `tinycld` repo**. Treat every path here as machine-owned — never hand-edit or commit it:
 
 - `tinycld.config.ts` — the typed `definePackageEntry` array plus the `MergedPackageSchema` literal intersection; the runtime source of truth that the helpers in `tinycld/core/lib/packages/` derive stores/registry/components/seeds from. Plus `tinycld.seeds.ts`, the Node-only seed list kept out of the app bundle.
-- `tinycld/app/a/[orgSlug]/<slug>/**` — org-scoped route re-exports — and `tinycld/app/<path>` — public routes.
+- `tinycld/app/(app)/<slug>/**` — app route re-exports — and `tinycld/app/p/<path>` — public routes.
 - `tinycld/lib/generated/*` — including the `package.json` that makes it the `@tinycld/app-generated` package, plus `tinycld-config.ts`, `package-help.ts`, `package-icons.ts`, and `uniwind-sources.css`.
 - `tinycld/server/package_extensions.go`, `tinycld/server/go.work`, and the `tinycld/server/pb_migrations/*` + `tinycld/server/pb_hooks/*` symlinks.
 
@@ -281,12 +312,15 @@ Biome runs in **three tiers**, because Biome only searches *upward* for its conf
 
 The canonical config excludes generated artifacts — `server`, `lib/generated`, route re-exports, `core/types/pb*Schema.ts`, `pb-migrations`, `pb-hooks`, `dist`, `test-results`, and so on. **Keep that exclude list current whenever you add a new kind of generated file**, or Biome will start linting machine-owned output.
 
+**The Biome version in `tinycld/package.json` is pinned exactly (`"2.5.1"`, no `~` or `^`) — leave it that way.** CI installs with `--no-frozen-lockfile`, and it has to: bootstrap assembles a fresh workspace whose member set the lockfile cannot match. A range therefore floats to whatever patch is newest at run time, while a developer keeps whatever the lockfile pinned. Biome patches change formatting, so the two disagree — and the failure is maddening: `tinycld-pkg check` passes locally and fails in CI, on files the PR never touched, with no version stated anywhere in the error. It is not fixable by reformatting either, since the versions disagree in both directions. Upgrading Biome is fine; do it deliberately, in one commit, with the reformat it implies.
+
 ## In-app help
-- Packages contribute help via a `help/` directory of `<id>.md` files. Each file is a markdown document with a YAML frontmatter block (`title`, `summary` required; `tags: [..]` and `order: N` optional). The filename (without `.md`) is the topic ID. Declare it in `manifest.ts` with `help: { directory: 'help' }`. The generator writes `tinycld/lib/generated/package-help.ts`; topics surface in the global hub at `/a/[orgSlug]/help`, the per-package help screen, and the right-slide drawer.
+- Packages contribute help via a `help/` directory of `<id>.md` files. Each file is a markdown document with a YAML frontmatter block (`title`, `summary` required; `tags: [..]` and `order: N` optional). The filename (without `.md`) is the topic ID. Declare it in `manifest.ts` with `help: { directory: 'help' }`. The generator writes `tinycld/lib/generated/package-help.ts`; topics surface in the global hub at `/help`, the per-package help screen, and the right-slide drawer.
 - `@tinycld/core` contributes baseline topics from `tinycld/core/help/`. The generator includes core explicitly the same way it symlinks core's migrations.
 - **Whenever you implement or significantly change a user-facing feature, add or update a help topic for it.** The feature is not "done" until a user can find out how to use it from inside the app.
 - Open the drawer to a specific topic from anywhere with `openHelp('<pkg>:<id>')` from `@tinycld/core/lib/help/open-help`. Render `<HelpIcon topic="<pkg>:<id>" />` from `@tinycld/core/components/help/HelpIcon` next to UI controls. Cross-link between topics inside markdown bodies with `[label](help://<pkg>:<id>)` — the renderer intercepts that scheme and reopens the drawer instead of navigating away.
-- Permalinks: `/a/[orgSlug]/help/[pkg]/[topic]` is a real route — shareable in conversation. The hub has full-text search (substring, weighted: title > tags > summary > body).
+- Permalinks: `/help/[pkg]/[topic]` is a real route — shareable in conversation. The hub has full-text search (substring, weighted: title > tags > summary > body).
+- **Deployment tokens:** write `{{server-host}}` wherever a body needs the deployment's hostname (connection settings, example URLs) — the viewer substitutes the hostname the app actually talks to (`core/lib/help/tokens.ts`). It is a whole-body text replacement, so it works inside code spans and fenced blocks. Never hand-author an example hostname like `mail.example.com` for a value the reader must copy.
 
 ## Forms and other components
 - All form UI components live in `@tinycld/core/ui/form/` (barrel at `tinycld/core/ui/form/index.ts`) and are imported from `@tinycld/core/ui/form`
@@ -341,5 +375,5 @@ The canonical config excludes generated artifacts — `server`, `lib/generated`,
 - PocketBase TS helper docs: https://raw.githubusercontent.com/satohshi/pocketbase-ts/refs/heads/master/README.md
 
 ## Project Structure & Module Organization
-The app shell is the `tinycld/` repo root. Expo routes live under `tinycld/app/`, with organization screens in `tinycld/app/a/[orgSlug]/` and shared layouts in `_layout.tsx`. Most shared UI, hooks, and domain utilities live in `@tinycld/core` (nested at `tinycld/core/`): `tinycld/core/components/`, `tinycld/core/ui/`, `tinycld/core/lib/`. Static assets stay in `tinycld/assets/` and `tinycld/public/`. PocketBase data, migrations, and hooks live under the app server at `tinycld/server/pb_data/`, `tinycld/server/pb_migrations/`, and `tinycld/server/pb_hooks/`. Tests and automation land in `tinycld/tests/`, covering Playwright, Vitest, and Docker helpers.
+The app shell is the `tinycld/` repo root. Expo routes live under `tinycld/app/`, with signed-in screens in `tinycld/app/(app)/` (generated package re-exports plus the hand-written `settings/`, `help/`, and `admin/` dirs), public screens in `tinycld/app/p/`, and shared layouts in `_layout.tsx`. Most shared UI, hooks, and domain utilities live in `@tinycld/core` (nested at `tinycld/core/`): `tinycld/core/components/`, `tinycld/core/ui/`, `tinycld/core/lib/`. Static assets stay in `tinycld/assets/` and `tinycld/public/`. PocketBase data, migrations, and hooks live under the app server at `tinycld/server/pb_data/`, `tinycld/server/pb_migrations/`, and `tinycld/server/pb_hooks/`. Tests and automation land in `tinycld/tests/`, covering Playwright, Vitest, and Docker helpers.
 

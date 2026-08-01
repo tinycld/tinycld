@@ -27,7 +27,51 @@ export interface PackageManifest {
     seed?: { script: string }
     tests?: { directory: string }
     build?: { script: string }
-    server?: { package: string; module: string }
+    // mailListeners: this package serves mail protocols, so the multi-org
+    // ROUTER creates per-org mail sockets for orgs whose set includes it; the
+    // package's single Register discovers them via coreserver's TenantContext
+    // (host mode binds its own ports instead).
+    server?: { package: string; module: string; mailListeners?: boolean }
+    // Protocol capabilities. Core serves these; a package contributes only the
+    // config, so a multi-org tenant (which links no feature Go) still gets the
+    // protocol. The host materializes these blocks into the tenant's runtime
+    // config — see multi-org's controlplane/capabilities.go.
+    carddav?: {
+        collection: string
+        listFilter: string
+        sort?: string
+        ownerField: string
+        uidField: string
+        softDeleteField?: string
+        vcard: {
+            version: string
+            name: { given: string; family: string }
+            simple: Record<string, string>
+            revField?: string
+        }
+    }
+    // Storage-bearing collections. core/quota enforces the ceilings from this
+    // as record hooks, so no write path can skip them. A source with no
+    // ownerField counts toward the org ceiling only.
+    quota?: {
+        collection: string
+        sizeField: string
+        ownerField?: string
+    }[]
+    webdav?: {
+        prefix: string
+        collection: string
+        fields: {
+            name: string
+            parent: string
+            isFolder: string
+            size: string
+            file: string
+            owner: string
+            mimeType?: string
+            updated?: string
+        }
+    }
     help?: { directory: string }
     repository?: { url: string; issueTemplate?: string }
     dependencies?: string[]

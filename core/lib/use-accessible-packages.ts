@@ -1,5 +1,6 @@
 import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
+import { useAuth } from '@tinycld/core/lib/auth'
 import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
@@ -18,7 +19,9 @@ export interface AccessiblePackagesResult {
 
 export function useAccessiblePackagesResult(): AccessiblePackagesResult {
     const packages = usePackages()
-    const { role, userOrgId } = useCurrentRole()
+    const { role } = useCurrentRole()
+    const { user } = useAuth()
+    const userId = user.id
     const [orgPkgAccessCollection] = useStore('org_pkg_access')
     const [pkgRegistryCollection] = useStore('pkg_registry')
     const [orgPkgEnabledCollection] = useStore('org_pkg_enabled')
@@ -41,12 +44,9 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
         []
     )
 
-    // Org-level package toggles
+    // Deployment-level package toggles (single-org: no per-org scoping)
     const { data: orgToggles } = useOrgLiveQuery(
-        (query, { orgId }) =>
-            query
-                .from({ org_pkg_enabled: orgPkgEnabledCollection })
-                .where(({ org_pkg_enabled }) => eq(org_pkg_enabled.org, orgId)),
+        query => query.from({ org_pkg_enabled: orgPkgEnabledCollection }),
         []
     )
 
@@ -55,8 +55,8 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
         query =>
             query
                 .from({ org_pkg_access: orgPkgAccessCollection })
-                .where(({ org_pkg_access }) => eq(org_pkg_access.user_org, userOrgId)),
-        [userOrgId]
+                .where(({ org_pkg_access }) => eq(org_pkg_access.user, userId)),
+        [userId]
     )
 
     // Build set of globally active package slugs from registry

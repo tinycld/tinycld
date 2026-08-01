@@ -4,100 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
-	"strings"
 
-	"github.com/Masterminds/semver/v3"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// Compatibility solver.
-//
-// A version change is applied as a SET: the operator selects several packages
-// and target versions and applies them together. Each package version declares
-// peerVersions — semver ranges it requires of other packages and @tinycld/core.
-// The solver resolves the proposed set against the versions that will be live
-// after the change (proposed targets override, untouched packages keep their
-// current version) and reports every declared range the resolved set violates.
-//
-// peerVersions can differ between versions of the same package. The check
-// endpoint and the apply pipeline's pre-flight gate both resolve peerVersions
-// from the CURRENTLY installed manifests (pkg_registry.manifest_json) — a
-// best-effort early guard. In addition, the apply pipeline re-checks each
-// changing package's OWN peerVersions against the resolved set using the
-// freshly-fetched target manifest (verifyTargetPeerVersions), right after the
-// target files are swapped in — so a target version that tightens its own
-// requirements is still caught before its migrations run.
-
-const corePackageKey = "@tinycld/core"
-
-// compatViolation is one unsatisfied peer requirement.
-type compatViolation struct {
-	Package  string `json:"package"`  // the package whose peerVersions declared the requirement
-	Requires string `json:"requires"` // the peer slug/@tinycld/core that must match
-	Range    string `json:"range"`    // the declared semver range
-	Found    string `json:"found"`    // the version the resolved set provides (or "" if absent)
-}
-
-// solveCompat checks every entry of every package's peerVersions against the
-// resolved version map. resolved maps package slug (and corePackageKey) to the
-// version that will be live. peerVersionsBySlug maps a package slug to its
-// declared peerVersions. A requirement on a package absent from resolved is a
-// violation with Found "". Returns violations sorted for stable output.
-func solveCompat(
-	resolved map[string]string,
-	peerVersionsBySlug map[string]map[string]string,
-) []compatViolation {
-	violations := []compatViolation{}
-
-	slugs := make([]string, 0, len(peerVersionsBySlug))
-	for slug := range peerVersionsBySlug {
-		slugs = append(slugs, slug)
-	}
-	sort.Strings(slugs)
-
-	for _, slug := range slugs {
-		peers := peerVersionsBySlug[slug]
-		peerKeys := make([]string, 0, len(peers))
-		for k := range peers {
-			peerKeys = append(peerKeys, k)
-		}
-		sort.Strings(peerKeys)
-
-		for _, peerKey := range peerKeys {
-			rangeStr := peers[peerKey]
-			constraint, err := semver.NewConstraint(rangeStr)
-			if err != nil {
-				// An unparsable declared range is itself a violation — surface it
-				// rather than silently passing.
-				violations = append(violations, compatViolation{
-					Package:  slug,
-					Requires: peerKey,
-					Range:    rangeStr,
-					Found:    "",
-				})
-				continue
-			}
-			found, present := resolved[peerKey]
-			if !present {
-				violations = append(violations, compatViolation{
-					Package: slug, Requires: peerKey, Range: rangeStr, Found: "",
-				})
-				continue
-			}
-			foundVer, verErr := semver.NewVersion(found)
-			if verErr != nil || !constraint.Check(foundVer) {
-				violations = append(violations, compatViolation{
-					Package: slug, Requires: peerKey, Range: rangeStr, Found: found,
-				})
-			}
-		}
-	}
-	return violations
-}
-
-// ---------- check endpoint ----------
+// DB-backed compatibility gates. The solver itself (and the authoritative
+// post-assemble verify) moved to pkgbuild/compat.go; what stays here are the
+// pre-flight paths that read pkg_registry: the advisory check endpoint, the
+// version-change apply gate, and the fresh-install gate.
 
 // handleVersionsCheck validates a proposed set of version changes. Request body:
 //
@@ -116,9 +31,25 @@ func handleVersionsCheck(app *pocketbase.PocketBase, re *core.RequestEvent) erro
 		return re.BadRequestError("Invalid request body", err)
 	}
 
-	records, err := app.FindRecordsByFilter("pkg_registry", "id != ''", "slug", 0, 0)
+	violations, err := solveRegistryCompat(app, body.Changes)
 	if err != nil {
 		return re.InternalServerError("Failed to load package registry", err)
+	}
+	return re.JSON(http.StatusOK, map[string]any{
+		"ok":         len(violations) == 0,
+		"violations": violations,
+	})
+}
+
+// solveRegistryCompat resolves the registry's current versions with the
+// proposed changes overlaid (keyed by registry slug) and runs the solver
+// against every installed package's declared peerVersions. Shared by the
+// advisory check endpoint and the apply pre-flight gate so the two cannot
+// drift.
+func solveRegistryCompat(app core.App, changes map[string]string) ([]compatViolation, error) {
+	records, err := app.FindRecordsByFilter("pkg_registry", "id != ''", "slug", 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("load package registry for compat check: %w", err)
 	}
 
 	resolved := map[string]string{}
@@ -126,11 +57,10 @@ func handleVersionsCheck(app *pocketbase.PocketBase, re *core.RequestEvent) erro
 
 	for _, rec := range records {
 		slug := rec.GetString("slug")
-		current := rec.GetString("version")
-		if target, changing := body.Changes[slug]; changing {
+		if target, changing := changes[slug]; changing {
 			resolved[slug] = target
 		} else {
-			resolved[slug] = current
+			resolved[slug] = rec.GetString("version")
 		}
 		if peers := peerVersionsFromManifest(rec.GetString("manifest_json")); len(peers) > 0 {
 			peerVersionsBySlug[slug] = peers
@@ -144,48 +74,23 @@ func handleVersionsCheck(app *pocketbase.PocketBase, re *core.RequestEvent) erro
 		resolved[corePackageKey] = coreVer
 	}
 
-	violations := solveCompat(resolved, peerVersionsBySlug)
-	return re.JSON(http.StatusOK, map[string]any{
-		"ok":         len(violations) == 0,
-		"violations": violations,
-	})
+	return solveCompat(resolved, peerVersionsBySlug), nil
 }
 
-// peerVersionsFromManifest extracts the peerVersions map from a stored
-// manifest_json blob. Returns nil if absent or malformed.
-func peerVersionsFromManifest(manifestJSON string) map[string]string {
-	if manifestJSON == "" {
-		return nil
+// checkVersionChangeCompat is the apply pipeline's pre-flight gate: the same
+// solve the Versions UI runs, enforced server-side so posting straight to
+// /versions/apply cannot bypass the UI's advisory check (docs/packages.md
+// promises the server is authoritative — this is that check).
+func checkVersionChangeCompat(app core.App, changes []versionChange) error {
+	proposed := make(map[string]string, len(changes))
+	for _, c := range changes {
+		proposed[c.Slug] = c.TargetVersion
 	}
-	var parsed struct {
-		PeerVersions map[string]string `json:"peerVersions"`
+	violations, err := solveRegistryCompat(app, proposed)
+	if err != nil {
+		return err
 	}
-	if err := json.Unmarshal([]byte(manifestJSON), &parsed); err != nil {
-		return nil
-	}
-	return parsed.PeerVersions
-}
-
-// compatError renders violations into a single human-readable error for pipeline
-// failures (the UI uses the structured list; the pipeline surfaces prose). Returns
-// nil for an empty slice so callers can `return compatError(v)` unconditionally.
-func compatError(violations []compatViolation) error {
-	if len(violations) == 0 {
-		return nil
-	}
-	lines := make([]string, 0, len(violations))
-	for _, v := range violations {
-		found := v.Found
-		if found == "" {
-			found = "not installed"
-		}
-		lines = append(lines, fmt.Sprintf(
-			"%s requires %s %s (found: %s)", v.Package, v.Requires, v.Range, found,
-		))
-	}
-	return fmt.Errorf(
-		"package compatibility check failed:\n  %s", strings.Join(lines, "\n  "),
-	)
+	return compatError(violations)
 }
 
 // checkInstallCompat gates a fresh install on the incoming package's declared

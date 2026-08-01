@@ -1,31 +1,28 @@
 import type { Context, InitialQueryBuilder, QueryBuilder } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
-import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
-import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
+import { useAuth } from '@tinycld/core/lib/auth'
 import { useMemo } from 'react'
 
+// Single-org deployment: the process IS one org, so there is no org to scope by.
+// The only value queries still scope on is the current user's id — used to filter
+// "my own rows" (records whose owner/user/author FK now points straight at the
+// users collection). The query is disabled until the user id is known.
 export interface OrgScope {
-    orgId: string
-    userOrgId: string
-    orgSlug: string
+    userId: string
 }
 
 export function useOrgLiveQuery<TContext extends Context>(
     queryFn: (q: InitialQueryBuilder, org: OrgScope) => QueryBuilder<TContext> | undefined | null,
     deps: unknown[] = []
 ) {
-    const { orgId, orgSlug } = useOrgInfo()
-    const { userOrgId } = useCurrentRole()
-    const scope = useMemo(() => ({ orgId, orgSlug, userOrgId }), [orgId, orgSlug, userOrgId])
+    const { user } = useAuth()
+    const scope = useMemo(() => ({ userId: user?.id ?? '' }), [user?.id])
 
     return useLiveQuery(
         q => {
-            if (!orgId || !userOrgId) return null
+            if (!scope.userId) return null
             return queryFn(q, scope)
         },
-        // orgSlug is part of `scope`, so a query that filters on it (e.g.
-        // eq(org.slug, orgSlug)) must re-run when the org is renamed —
-        // otherwise it keeps matching the stale slug.
-        [orgId, userOrgId, orgSlug, ...deps]
+        [scope.userId, ...deps]
     )
 }

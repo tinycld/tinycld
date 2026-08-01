@@ -1,9 +1,11 @@
 // Package audit provides audit logging for PocketBase record lifecycle events.
-// It writes entries to the `audit_logs` collection with org resolution, field-level
-// diffs, delete snapshots, and sensitive-field redaction.
+// It writes entries to the `audit_logs` collection with field-level diffs,
+// delete snapshots, and sensitive-field redaction.
 //
-// Core collections are registered by the main server. External packages register
-// their own collections via RegisterCollection in their Register() function.
+// Single-org: the process IS one org, so audit rows carry no org field and no
+// org resolution runs. Core registers its own collections here; a feature
+// package registers its collections by calling RegisterCollection from its own
+// server module's Register(app) (see the contacts package for the reference).
 package audit
 
 import (
@@ -15,19 +17,11 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// OrgResolver returns the org ID for a record, or "" if it cannot be determined.
-type OrgResolver func(app core.App, record *core.Record) string
-
 // LabelExtractor returns a human-readable label for a record.
 type LabelExtractor func(record *core.Record) string
 
 // CollectionConfig describes how to audit a single collection.
 type CollectionConfig struct {
-	// ResolveOrg returns the org ID for a record in this collection.
-	// If nil, the default resolver is used (checks "org" field, then common
-	// relation patterns like owner→user_org, calendar→org, etc.).
-	ResolveOrg OrgResolver
-
 	// ExtractLabel returns a display label for the record (e.g. contact name,
 	// file name). If nil, the default extractor tries common fields (name,
 	// title, label, address).
@@ -57,11 +51,6 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 		config = &CollectionConfig{}
 	}
 
-	resolveOrg := config.ResolveOrg
-	if resolveOrg == nil {
-		resolveOrg = DefaultOrgResolver
-	}
-
 	extractLabel := config.ExtractLabel
 	if extractLabel == nil {
 		extractLabel = DefaultLabelExtractor
@@ -71,7 +60,7 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 		if err := e.Next(); err != nil {
 			return err
 		}
-		go logCreate(app, e.Record, e.RequestEvent, collectionName, resolveOrg, extractLabel)
+		go logCreate(app, e.Record, e.RequestEvent, collectionName, extractLabel)
 		return nil
 	})
 
@@ -80,7 +69,7 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 		if err := e.Next(); err != nil {
 			return err
 		}
-		go logUpdate(app, e.Record, original, e.RequestEvent, collectionName, resolveOrg, extractLabel)
+		go logUpdate(app, e.Record, original, e.RequestEvent, collectionName, extractLabel)
 		return nil
 	})
 
@@ -88,11 +77,10 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 		snapshot := BuildSnapshot(e.Record)
 		recordID := e.Record.Id
 		label := extractLabel(e.Record)
-		orgID := resolveOrg(app, e.Record)
 		if err := e.Next(); err != nil {
 			return err
 		}
-		go logDelete(app, recordID, orgID, label, snapshot, e.RequestEvent, collectionName)
+		go logDelete(app, recordID, label, snapshot, e.RequestEvent, collectionName)
 		return nil
 	})
 }
@@ -105,14 +93,8 @@ func RegisterCollections(app *pocketbase.PocketBase, names []string, config *Col
 	}
 }
 
-func logCreate(app core.App, record *core.Record, re *core.RequestEvent, collectionName string, resolveOrg OrgResolver, extractLabel LabelExtractor) {
-	orgID := resolveOrg(app, record)
-	if orgID == "" {
-		log.Printf("[audit] could not resolve org for %s/%s, skipping", collectionName, record.Id)
-		return
-	}
-
-	auditRecord := newAuditRecord(app, orgID, "created", collectionName, record.Id, extractLabel(record))
+func logCreate(app core.App, record *core.Record, re *core.RequestEvent, collectionName string, extractLabel LabelExtractor) {
+	auditRecord := newAuditRecord(app, "created", collectionName, record.Id, extractLabel(record))
 	if auditRecord == nil {
 		return
 	}
@@ -123,14 +105,8 @@ func logCreate(app core.App, record *core.Record, re *core.RequestEvent, collect
 	}
 }
 
-func logUpdate(app core.App, record *core.Record, original *core.Record, re *core.RequestEvent, collectionName string, resolveOrg OrgResolver, extractLabel LabelExtractor) {
-	orgID := resolveOrg(app, record)
-	if orgID == "" {
-		log.Printf("[audit] could not resolve org for %s/%s, skipping", collectionName, record.Id)
-		return
-	}
-
-	auditRecord := newAuditRecord(app, orgID, "updated", collectionName, record.Id, extractLabel(record))
+func logUpdate(app core.App, record *core.Record, original *core.Record, re *core.RequestEvent, collectionName string, extractLabel LabelExtractor) {
+	auditRecord := newAuditRecord(app, "updated", collectionName, record.Id, extractLabel(record))
 	if auditRecord == nil {
 		return
 	}
@@ -148,13 +124,8 @@ func logUpdate(app core.App, record *core.Record, original *core.Record, re *cor
 	}
 }
 
-func logDelete(app core.App, recordID string, orgID string, label string, snapshot map[string]any, re *core.RequestEvent, collectionName string) {
-	if orgID == "" {
-		log.Printf("[audit] could not resolve org for %s/%s, skipping", collectionName, recordID)
-		return
-	}
-
-	auditRecord := newAuditRecord(app, orgID, "deleted", collectionName, recordID, label)
+func logDelete(app core.App, recordID string, label string, snapshot map[string]any, re *core.RequestEvent, collectionName string) {
+	auditRecord := newAuditRecord(app, "deleted", collectionName, recordID, label)
 	if auditRecord == nil {
 		return
 	}
@@ -166,7 +137,7 @@ func logDelete(app core.App, recordID string, orgID string, label string, snapsh
 	}
 }
 
-func newAuditRecord(app core.App, orgID string, action string, resourceType string, resourceID string, label string) *core.Record {
+func newAuditRecord(app core.App, action string, resourceType string, resourceID string, label string) *core.Record {
 	auditCollection, err := app.FindCollectionByNameOrId("audit_logs")
 	if err != nil {
 		log.Printf("[audit] could not find audit_logs collection: %v", err)
@@ -174,7 +145,6 @@ func newAuditRecord(app core.App, orgID string, action string, resourceType stri
 	}
 
 	r := core.NewRecord(auditCollection)
-	r.Set("org", orgID)
 	r.Set("action", action)
 	r.Set("resource_type", resourceType)
 	r.Set("resource_id", resourceID)
@@ -192,46 +162,6 @@ func setRequestInfo(auditRecord *core.Record, re *core.RequestEvent) {
 	}
 	auditRecord.Set("ip_address", re.RealIP())
 	auditRecord.Set("user_agent", re.Request.UserAgent())
-}
-
-// --- Org resolvers ---
-
-// DefaultOrgResolver checks common field patterns to resolve an org ID.
-// It handles: direct "org" field, owner→user_org, user_org→org, and the
-// "orgs" collection itself. For deeper chains (mail, calendar, drive),
-// use ResolveViaRelation or write a custom resolver.
-func DefaultOrgResolver(app core.App, record *core.Record) string {
-	collectionName := record.Collection().Name
-
-	if collectionName == "orgs" {
-		return record.Id
-	}
-
-	if orgID := record.GetString("org"); orgID != "" {
-		return orgID
-	}
-
-	// Via owner → user_org (contacts)
-	if ownerID := record.GetString("owner"); ownerID != "" {
-		return ResolveViaRelation(app, "user_org", ownerID, "org")
-	}
-
-	// Via user_org field (label_assignments, org_pkg_access)
-	if userOrgID := record.GetString("user_org"); userOrgID != "" {
-		return ResolveViaRelation(app, "user_org", userOrgID, "org")
-	}
-
-	return ""
-}
-
-// ResolveViaRelation loads a related record and reads a field from it.
-// Useful for building custom OrgResolver chains.
-func ResolveViaRelation(app core.App, collection string, id string, field string) string {
-	rec, err := app.FindRecordById(collection, id)
-	if err != nil {
-		return ""
-	}
-	return rec.GetString(field)
 }
 
 // --- Label extractors ---

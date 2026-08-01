@@ -1,10 +1,8 @@
-import { LeaveOrgFlow } from '@tinycld/core/components/settings/leave-org/LeaveOrgFlow'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import {
     Drawer,
     DrawerBackdrop,
@@ -30,6 +28,7 @@ import { InviteLinkPanel } from './InviteLinkPanel'
 import { MemberAvatar } from './MemberAvatar'
 import { PendingBadge, RoleBadge, YouBadge } from './MemberBadges'
 import { PackageAccessPanel } from './PackageAccessPanel'
+import { RemoveMemberFlow } from './RemoveMemberFlow'
 import {
     type DrawerMode,
     type MemberRow,
@@ -61,7 +60,7 @@ interface Props {
 export function MembersDrawer({ mode, onClose, members, isCurrentUserOwner }: Props) {
     const isOpen = mode.kind !== 'closed'
     const selectedMember =
-        mode.kind === 'view' ? (members.find(m => m.userOrgId === mode.userOrgId) ?? null) : null
+        mode.kind === 'view' ? (members.find(m => m.userId === mode.userId) ?? null) : null
 
     return (
         <Drawer isOpen={isOpen} onClose={onClose} anchor="right" size="md">
@@ -93,7 +92,7 @@ function ViewMember({
     onClose: () => void
 }) {
     const { user } = useAuth()
-    const [userOrgCollection, usersCollection] = useStore('user_org', 'users')
+    const [usersCollection] = useStore('users')
 
     const mutedColor = useThemeColor('muted-foreground')
     const fgColor = useThemeColor('foreground')
@@ -104,16 +103,21 @@ function ViewMember({
     const ownerCount = members.filter(m => m.role === 'owner').length
     const isLastOwner = member.role === 'owner' && ownerCount <= 1
     const canRemove = !isSelf && !isLastOwner
-    const canChangeRole = !isSelf && (isCurrentUserOwner || member.role !== 'owner')
+    // isLastOwner must actually disable the picker, not just render helper
+    // text — the server backstop (RegisterLastOwnerGuard) rejects it anyway,
+    // but the control should not offer an action that always fails.
+    const canChangeRole = !isSelf && !isLastOwner && (isCurrentUserOwner || member.role !== 'owner')
     const showPackageAccess = member.role === 'member' || member.role === 'guest'
 
     const availableRoles: OrgRole[] = isCurrentUserOwner
         ? ROLE_ORDER
         : ROLE_ORDER.filter(r => r !== 'owner')
 
+    // Role now lives directly on the users record (single-org: every user in the
+    // database is a member; there's no user_org join row to carry a per-org role).
     const updateRole = useMutation({
         mutationFn: mutation(function* ({ role }: { role: OrgRole }) {
-            yield userOrgCollection.update(member.userOrgId, draft => {
+            yield usersCollection.update(member.userId, draft => {
                 draft.role = role
             })
         }),
@@ -122,8 +126,8 @@ function ViewMember({
     // Removing a member previously did a raw user_org delete, which 500'd
     // any time the member owned records that the schema marked
     // required+cascadeDelete:false (calendar_events.created_by, drive_items,
-    // etc.). Route through LeaveOrgFlow so the admin gets a reassign/delete
-    // choice for the member's content before the user_org goes away.
+    // etc.). Route through RemoveMemberFlow so the admin gets a reassign/delete
+    // choice for the member's content before the account goes away.
     const [removeOpen, setRemoveOpen] = useState(false)
 
     // is_demo lives on the users record. Migration 1810000000 relaxes
@@ -200,7 +204,7 @@ function ViewMember({
                                 </Text>
                                 <View className="gap-2">
                                     <Pressable
-                                        testID={`show-invite-link-${member.userOrgId}`}
+                                        testID={`show-invite-link-${member.userId}`}
                                         onPress={() => setShowLink(prev => !prev)}
                                         className="flex-row items-center gap-1.5 self-start rounded-md border border-border"
                                         style={{
@@ -221,7 +225,7 @@ function ViewMember({
                                     </Pressable>
                                     {showLink && (
                                         <View className="rounded-xl p-3 bg-surface-secondary border border-border">
-                                            <InviteLinkPanel userOrgId={member.userOrgId} />
+                                            <InviteLinkPanel userId={member.userId} />
                                         </View>
                                     )}
                                 </View>
@@ -245,7 +249,7 @@ function ViewMember({
                         onToggle={value => setDemo.mutate(value)}
                     />
 
-                    {showPackageAccess && <PackageAccessPanel userOrgId={member.userOrgId} />}
+                    {showPackageAccess && <PackageAccessPanel userId={member.userId} />}
                 </View>
             </DrawerBody>
 
@@ -258,16 +262,15 @@ function ViewMember({
                     />
                 </DrawerFooter>
             )}
-            <LeaveOrgFlow
+            <RemoveMemberFlow
                 isVisible={removeOpen}
                 onClose={() => setRemoveOpen(false)}
                 onSuccess={() => {
                     setRemoveOpen(false)
                     onClose()
                 }}
-                userOrgId={member.userOrgId}
-                mode="admin"
-                targetDisplayName={displayName}
+                userId={member.userId}
+                displayName={displayName}
             />
         </>
     )
@@ -441,7 +444,6 @@ const inviteSchema = z.object({
 type InviteFormValues = z.infer<typeof inviteSchema>
 
 function InviteView({ onDone }: { onDone: () => void }) {
-    const { orgId } = useOrgInfo()
     const fgColor = useThemeColor('foreground')
     const mutedColor = useThemeColor('muted-foreground')
     const primaryColor = useThemeColor('primary')
@@ -462,22 +464,26 @@ function InviteView({ onDone }: { onDone: () => void }) {
         defaultValues: { username: '', email: '', role: 'member' },
     })
 
-    const [result, setResult] = useState<{ userOrgId: string; inviteUrl: string } | null>(null)
+    const [result, setResult] = useState<{ userId: string; inviteUrl: string } | null>(null)
 
     const invite = useMutation({
         mutationFn: async (data: InviteFormValues) => {
-            return pb.send<{ userOrgId: string; inviteUrl: string }>('/api/invite-member', {
+            // Single-org: /api/invite-member returns `userId` (the user_org
+            // junction is gone). Reading a junction-row id here yielded
+            // undefined, so the link panel called
+            // /api/invite-link/undefined/{rotate,send} and got a 404 — the
+            // invite itself succeeded, only its follow-up actions were broken.
+            return pb.send<{ userId: string; inviteUrl: string }>('/api/invite-member', {
                 method: 'POST',
                 body: JSON.stringify({
                     username: data.username.trim().toLowerCase(),
                     email: data.email?.trim() ?? '',
                     role: data.role,
-                    orgId,
                 }),
                 headers: { 'Content-Type': 'application/json' },
             })
         },
-        onSuccess: data => setResult({ userOrgId: data.userOrgId, inviteUrl: data.inviteUrl }),
+        onSuccess: data => setResult({ userId: data.userId, inviteUrl: data.inviteUrl }),
         onError: handleMutationErrorsWithForm({ setError, getValues }),
     })
 
@@ -487,7 +493,7 @@ function InviteView({ onDone }: { onDone: () => void }) {
     if (result) {
         return (
             <InviteLinkSuccessView
-                userOrgId={result.userOrgId}
+                userId={result.userId}
                 inviteUrl={result.inviteUrl}
                 onDone={() => {
                     reset()
@@ -549,7 +555,8 @@ function InviteView({ onDone }: { onDone: () => void }) {
                     <TextInput
                         control={control}
                         name="email"
-                        label="Email (optional)"
+                        label="Recovery Email (optional)"
+                        hint="Where we reach this person — their existing address, not a mailbox we host."
                         placeholder="alice@company.com"
                         autoCapitalize="none"
                         autoComplete="email"
@@ -678,11 +685,11 @@ function InviteView({ onDone }: { onDone: () => void }) {
 }
 
 function InviteLinkSuccessView({
-    userOrgId,
+    userId,
     inviteUrl,
     onDone,
 }: {
-    userOrgId: string
+    userId: string
     inviteUrl: string
     onDone: () => void
 }) {
@@ -725,7 +732,7 @@ function InviteLinkSuccessView({
 
             <DrawerBody>
                 <View testID="invite-link-step" className="gap-4">
-                    <InviteLinkPanel userOrgId={userOrgId} initialUrl={inviteUrl} />
+                    <InviteLinkPanel userId={userId} initialUrl={inviteUrl} />
                 </View>
             </DrawerBody>
 

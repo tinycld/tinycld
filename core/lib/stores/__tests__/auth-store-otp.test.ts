@@ -20,9 +20,9 @@ vi.mock('@tinycld/core/lib/pocketbase', () => ({
     },
     authStoreReady: Promise.resolve(),
     getUserFromAuthStore: vi.fn(() => null),
-    fetchAndSeedUserOrg: vi.fn(() => Promise.resolve()),
+    seedUser: vi.fn(() => Promise.resolve()),
     preloadStores: vi.fn(() => Promise.resolve()),
-    seedUserOrg: vi.fn(() => Promise.resolve()),
+    resetSessionState: vi.fn(() => Promise.resolve()),
     refreshAuth: vi.fn(() => Promise.resolve(false)),
 }))
 
@@ -169,9 +169,8 @@ describe('auth-store OTP methods', () => {
             name: 'Guest User',
             email: 'guest@example.com',
         }
-        const fakeOrgSlug = 'my-org'
 
-        it('saves token to pb.authStore WITHOUT clearing first, returns user with primaryOrgSlug', async () => {
+        it('saves token to pb.authStore WITHOUT clearing first, returns the authenticated user', async () => {
             vi.stubGlobal(
                 'fetch',
                 vi.fn().mockResolvedValue({
@@ -180,18 +179,6 @@ describe('auth-store OTP methods', () => {
                     statusText: 'OK',
                 })
             )
-
-            mockGetOne.mockResolvedValue({
-                ...fakeRecord,
-                expand: {
-                    user_org_via_user: [
-                        {
-                            id: 'uo_1',
-                            expand: { org: { id: 'org_1', slug: fakeOrgSlug } },
-                        },
-                    ],
-                },
-            })
 
             const result = await verifyShareOtp(
                 'share_tok',
@@ -208,7 +195,6 @@ describe('auth-store OTP methods', () => {
             expect(result.user).toMatchObject({
                 id: 'user_123',
                 email: 'guest@example.com',
-                primaryOrgSlug: fakeOrgSlug,
                 isDemo: false,
                 isBetaTester: false,
             })

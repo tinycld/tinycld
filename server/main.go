@@ -9,6 +9,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 
 	"tinycld.org/core/coreserver"
+	"tinycld.org/core/tenantmain"
 )
 
 // defaultHTTPAddr is the loopback address tinycld serves on in dev when no
@@ -26,6 +27,24 @@ const defaultHTTPAddr = "127.0.0.1:7090"
 // generated-import dance.
 func main() {
 	coreserver.LoadEnvFile()
+
+	// Tenant mode (the dual-mode binary of DESIGN-org-package-agency D5): a
+	// multi-org router spawned this binary to serve ONE org on a unix socket.
+	// The flag contract is exactly serve-org's, so a per-org build artifact is
+	// a drop-in replacement for the shared tenant binary — --org-dir is the
+	// discriminator, since no host-mode invocation uses that flag. The SAME
+	// generated registrar serves both modes (single-Register contract): a
+	// per-org build links exactly the org's package set, the artifact is the
+	// gate, and a package that must differ hosted detects it via coreserver's
+	// TenantContext (stamped before the registrar runs).
+	if coreserver.HasFlag("--org-dir") {
+		if err := tenantmain.Run(tenantmain.Options{
+			RegisterExtras: registerPackageExtensions,
+		}); err != nil {
+			log.Fatalf("tenant: %v", err)
+		}
+		return
+	}
 
 	// Default --http to defaultHTTPAddr when running `serve` without an
 	// explicit address and no domain args. PocketBase's autocert needs

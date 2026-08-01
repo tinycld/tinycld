@@ -37,7 +37,7 @@
 # postinstall runs the generator then link-members (linking every member under
 # node_modules/@tinycld/<name> plus @tinycld/app-generated → tinycld/lib/generated).
 # The generator materializes tinycld/lib/generated/, tinycld/tinycld.config.ts,
-# tinycld/tinycld.seeds.ts, route re-exports under tinycld/app/a/[orgSlug]/<slug>/,
+# tinycld/tinycld.seeds.ts, route re-exports under tinycld/app/(app)/<slug>/,
 # tinycld/server/{package_extensions.go,go.work,pb_migrations/,pb_hooks/,
 # bundled-packages.json}, etc. The Go app module is tinycld.org/tinycld at
 # tinycld/server/ with `replace tinycld.org/core => ../core/server` and a
@@ -65,12 +65,22 @@
 # server dependency chain (goheif, dav1d), so we don't drag a C
 # toolchain into the lean web-builder Node stage just to write two TS files.
 #
-# Sources copied: tinycld/core/server only (the binary's full dependency closure).
+# Sources copied: tinycld/core/server plus the vendored PocketBase fork it
+# `replace`s to. core/server/go.mod carries
+# `replace github.com/pocketbase/pocketbase => ../../third_party/pocketbase`
+# (core's jsvm registration needs the fork-only jsvm.Config.OnInit), which from
+# /src/core/server resolves to /src/third_party/pocketbase — so the fork must be
+# staged at that exact path or the build fails with "replacement directory ...
+# does not exist". The go-builder stage below gets this for free by copying the
+# whole tinycld/ member; this stage copies a narrow subset, so it needs the
+# fork explicitly.
+#
 # The go-builder stage below builds the real CGO_ENABLED Linux runtime binary
 # from the full workspace; this stage is throwaway, ~50 lines of Go work.
 FROM golang:1.26-trixie AS types-binary-builder
 WORKDIR /src
 COPY tinycld/core/server/ ./core/server/
+COPY tinycld/third_party/ ./third_party/
 WORKDIR /src/core/server
 RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
@@ -518,6 +528,13 @@ COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/app/ ./app/
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/plugins/ ./plugins/
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/modules/ ./modules/
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/public/ ./public/
+# The vendored PocketBase fork. Required at RUNTIME, not just at image-build
+# time: the in-app installer's rebuild copies the live member forward
+# (copyMemberFromCurrent) and re-runs the workspace postinstall, whose generator
+# hard-fails with "vendored PocketBase fork missing at …/tinycld/third_party/
+# pocketbase" when it is absent (scripts/generate.ts). Every member's go.work
+# also `replace`s the fork, so a rebuilt Go binary needs the source here too.
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/third_party/ ./third_party/
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/assets/ ./assets/
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/tinycld.config.ts /ws/tinycld/tinycld.seeds.ts ./
 # tsconfig.package-base.json is NOT at the merged-member root post-merge — it

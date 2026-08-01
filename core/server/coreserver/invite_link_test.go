@@ -1,162 +1,153 @@
 package coreserver
 
 import (
-    "net/http"
-    "regexp"
-    "strings"
-    "testing"
-    "time"
+	"net/http"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
 
-    "github.com/pocketbase/pocketbase/tests"
+	"github.com/pocketbase/pocketbase/tests"
 )
 
 func TestInviteLink_Get_ReturnsLiveURL(t *testing.T) {
-    app := setupInviteTestApp(t)
+	app := setupInviteTestApp(t)
 
-    owner := mustCreateUser(t, app, "owner@test.local", false)
-    target := mustCreateUser(t, app, "pending@test.local", false)
-    target.SetVerified(false)
-    if err := app.Save(target); err != nil {
-        t.Fatal(err)
-    }
-    org := mustCreateOrg(t, app)
-    // owner needs an admin/owner user_org row
-    newMembership(t, app, owner, org, "owner", "")
-    uo := newMembership(t, app, target, org, "member", owner.Id)
+	owner := mustCreateUser(t, app, "owner@test.local", false)
+	setUserRole(t, app, owner, "owner")
+	target := mustCreateUser(t, app, "pending@test.local", false)
+	target.SetVerified(false)
+	setUserRole(t, app, target, "member")
 
-    if _, err := mintInviteToken(app, target, org, "member"); err != nil {
-        t.Fatal(err)
-    }
+	if _, err := mintInviteToken(app, target, "member"); err != nil {
+		t.Fatal(err)
+	}
 
-    // Register the endpoint on the test app before running the scenario.
-    RegisterInviteLinkEndpoints(app)
+	RegisterInviteLinkEndpoints(app)
 
-    authToken, err := tokenForUser(app, owner)
-    if err != nil {
-        t.Fatal(err)
-    }
+	authToken, err := tokenForUser(app, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-    scenario := &tests.ApiScenario{
-        Name:            "GET invite-link returns live URL",
-        Method:          http.MethodGet,
-        URL:             "/api/invite-link/" + uo.Id,
-        Headers:         map[string]string{"Authorization": authToken},
-        ExpectedStatus:  http.StatusOK,
-        ExpectedContent: []string{`"inviteUrl":`},
-        TestAppFactory: func(_ testing.TB) *tests.TestApp {
-            return app
-        },
-        DisableTestAppCleanup: true,
-        AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
-            tt := t.(*testing.T)
-            body := readJSONBody(tt, res)
-            url, _ := body["inviteUrl"].(string)
-            if !regexp.MustCompile(`/accept-invite/[0-9a-f]{64}$`).MatchString(url) {
-                tt.Errorf("inviteUrl: got %q, want .../accept-invite/<64-hex>", url)
-            }
-        },
-    }
-    scenario.Test(t)
+	scenario := &tests.ApiScenario{
+		Name:            "GET invite-link returns live URL",
+		Method:          http.MethodGet,
+		URL:             "/api/invite-link/" + target.Id,
+		Headers:         map[string]string{"Authorization": authToken},
+		ExpectedStatus:  http.StatusOK,
+		ExpectedContent: []string{`"inviteUrl":`},
+		TestAppFactory: func(_ testing.TB) *tests.TestApp {
+			return app
+		},
+		DisableTestAppCleanup: true,
+		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
+			tt := t.(*testing.T)
+			body := readJSONBody(tt, res)
+			url, _ := body["inviteUrl"].(string)
+			if !regexp.MustCompile(`/accept-invite/[0-9a-f]{64}$`).MatchString(url) {
+				tt.Errorf("inviteUrl: got %q, want .../accept-invite/<64-hex>", url)
+			}
+		},
+	}
+	scenario.Test(t)
 }
 
 func TestInviteLink_Get_404WhenNoLiveToken(t *testing.T) {
-    app := setupInviteTestApp(t)
-    RegisterInviteLinkEndpoints(app)
+	app := setupInviteTestApp(t)
+	RegisterInviteLinkEndpoints(app)
 
-    owner := mustCreateUser(t, app, "owner@test.local", false)
-    target := mustCreateUser(t, app, "pending@test.local", false)
-    org := mustCreateOrg(t, app)
-    newMembership(t, app, owner, org, "owner", "")
-    uo := newMembership(t, app, target, org, "member", owner.Id)
+	owner := mustCreateUser(t, app, "owner@test.local", false)
+	setUserRole(t, app, owner, "owner")
+	target := mustCreateUser(t, app, "pending@test.local", false)
+	setUserRole(t, app, target, "member")
 
-    // No tokens minted.
+	// No tokens minted.
 
-    authToken, err := tokenForUser(app, owner)
-    if err != nil {
-        t.Fatal(err)
-    }
+	authToken, err := tokenForUser(app, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-    scenario := &tests.ApiScenario{
-        Name:                  "GET invite-link 404 when no token",
-        Method:                http.MethodGet,
-        URL:                   "/api/invite-link/" + uo.Id,
-        Headers:               map[string]string{"Authorization": authToken},
-        ExpectedStatus:        http.StatusNotFound,
-        ExpectedContent:       []string{`"error":`},
-        TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
-        DisableTestAppCleanup: true,
-    }
-    scenario.Test(t)
+	scenario := &tests.ApiScenario{
+		Name:                  "GET invite-link 404 when no token",
+		Method:                http.MethodGet,
+		URL:                   "/api/invite-link/" + target.Id,
+		Headers:               map[string]string{"Authorization": authToken},
+		ExpectedStatus:        http.StatusNotFound,
+		ExpectedContent:       []string{`"error":`},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}
+	scenario.Test(t)
 }
 
 func TestInviteLink_Get_404WhenAllTokensExpired(t *testing.T) {
-    app := setupInviteTestApp(t)
-    RegisterInviteLinkEndpoints(app)
+	app := setupInviteTestApp(t)
+	RegisterInviteLinkEndpoints(app)
 
-    owner := mustCreateUser(t, app, "owner@test.local", false)
-    target := mustCreateUser(t, app, "pending@test.local", false)
-    org := mustCreateOrg(t, app)
-    newMembership(t, app, owner, org, "owner", "")
-    uo := newMembership(t, app, target, org, "member", owner.Id)
+	owner := mustCreateUser(t, app, "owner@test.local", false)
+	setUserRole(t, app, owner, "owner")
+	target := mustCreateUser(t, app, "pending@test.local", false)
+	setUserRole(t, app, target, "member")
 
-    if _, err := mintInviteToken(app, target, org, "member"); err != nil {
-        t.Fatal(err)
-    }
-    tokens, _ := app.FindRecordsByFilter("invite_tokens", "user = {:u}", "", 1, 0,
-        map[string]any{"u": target.Id})
-    tokens[0].Set("expires_at", time.Now().Add(-1*time.Hour).UTC().Format(time.RFC3339))
-    if err := app.Save(tokens[0]); err != nil {
-        t.Fatal(err)
-    }
+	if _, err := mintInviteToken(app, target, "member"); err != nil {
+		t.Fatal(err)
+	}
+	tokens, _ := app.FindRecordsByFilter("invite_tokens", "user = {:u}", "", 1, 0,
+		map[string]any{"u": target.Id})
+	tokens[0].Set("expires_at", time.Now().Add(-1*time.Hour).UTC().Format(time.RFC3339))
+	if err := app.Save(tokens[0]); err != nil {
+		t.Fatal(err)
+	}
 
-    authToken, err := tokenForUser(app, owner)
-    if err != nil {
-        t.Fatal(err)
-    }
+	authToken, err := tokenForUser(app, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-    scenario := &tests.ApiScenario{
-        Name:                  "GET invite-link 404 when all tokens expired",
-        Method:                http.MethodGet,
-        URL:                   "/api/invite-link/" + uo.Id,
-        Headers:               map[string]string{"Authorization": authToken},
-        ExpectedStatus:        http.StatusNotFound,
-        ExpectedContent:       []string{`"error":`},
-        TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
-        DisableTestAppCleanup: true,
-    }
-    scenario.Test(t)
+	scenario := &tests.ApiScenario{
+		Name:                  "GET invite-link 404 when all tokens expired",
+		Method:                http.MethodGet,
+		URL:                   "/api/invite-link/" + target.Id,
+		Headers:               map[string]string{"Authorization": authToken},
+		ExpectedStatus:        http.StatusNotFound,
+		ExpectedContent:       []string{`"error":`},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}
+	scenario.Test(t)
 }
 
 func TestInviteLink_Get_403WhenCallerIsMember(t *testing.T) {
-    app := setupInviteTestApp(t)
-    RegisterInviteLinkEndpoints(app)
+	app := setupInviteTestApp(t)
+	RegisterInviteLinkEndpoints(app)
 
-    plainMember := mustCreateUser(t, app, "member@test.local", false)
-    target := mustCreateUser(t, app, "pending@test.local", false)
-    org := mustCreateOrg(t, app)
-    newMembership(t, app, plainMember, org, "member", "") // not admin/owner
-    uo := newMembership(t, app, target, org, "member", plainMember.Id)
+	plainMember := mustCreateUser(t, app, "member@test.local", false)
+	setUserRole(t, app, plainMember, "member") // not admin/owner
+	target := mustCreateUser(t, app, "pending@test.local", false)
+	setUserRole(t, app, target, "member")
 
-    if _, err := mintInviteToken(app, target, org, "member"); err != nil {
-        t.Fatal(err)
-    }
+	if _, err := mintInviteToken(app, target, "member"); err != nil {
+		t.Fatal(err)
+	}
 
-    authToken, err := tokenForUser(app, plainMember)
-    if err != nil {
-        t.Fatal(err)
-    }
+	authToken, err := tokenForUser(app, plainMember)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-    scenario := &tests.ApiScenario{
-        Name:                  "GET invite-link 403 for non-admin",
-        Method:                http.MethodGet,
-        URL:                   "/api/invite-link/" + uo.Id,
-        Headers:               map[string]string{"Authorization": authToken},
-        ExpectedStatus:        http.StatusForbidden,
-        ExpectedContent:       []string{`"message"`},
-        TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
-        DisableTestAppCleanup: true,
-    }
-    scenario.Test(t)
+	scenario := &tests.ApiScenario{
+		Name:                  "GET invite-link 403 for non-admin",
+		Method:                http.MethodGet,
+		URL:                   "/api/invite-link/" + target.Id,
+		Headers:               map[string]string{"Authorization": authToken},
+		ExpectedStatus:        http.StatusForbidden,
+		ExpectedContent:       []string{`"message"`},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}
+	scenario.Test(t)
 }
 
 func TestInviteLink_Send_DeliversToAltEmailNotAccountEmail(t *testing.T) {
@@ -165,11 +156,10 @@ func TestInviteLink_Send_DeliversToAltEmailNotAccountEmail(t *testing.T) {
 	read := captureMailerOutput(t)
 
 	owner := mustCreateUser(t, app, "owner@test.local", false)
+	setUserRole(t, app, owner, "owner")
 	target := mustCreateUser(t, app, "pending@example.com", false) // dead inbox
-	org := mustCreateOrg(t, app)
-	newMembership(t, app, owner, org, "owner", "")
-	uo := newMembership(t, app, target, org, "member", owner.Id)
-	if _, err := mintInviteToken(app, target, org, "member"); err != nil {
+	setUserRole(t, app, target, "member")
+	if _, err := mintInviteToken(app, target, "member"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -181,7 +171,7 @@ func TestInviteLink_Send_DeliversToAltEmailNotAccountEmail(t *testing.T) {
 	scenario := &tests.ApiScenario{
 		Name:                  "POST send delivers to alt email",
 		Method:                http.MethodPost,
-		URL:                   "/api/invite-link/" + uo.Id + "/send",
+		URL:                   "/api/invite-link/" + target.Id + "/send",
 		Body:                  strings.NewReader(`{"email":"alt@known-good.example"}`),
 		Headers:               map[string]string{"Authorization": authToken, "Content-Type": "application/json"},
 		ExpectedStatus:        http.StatusOK,
@@ -215,8 +205,8 @@ func TestInviteLink_Send_DeliversToAltEmailNotAccountEmail(t *testing.T) {
 func TestInviteLink_Send_400OnInvalidEmail(t *testing.T) {
 	// Each case gets its own app: ApiScenario.Test re-triggers OnServe,
 	// which re-registers PocketBase's built-in routes and panics on the
-	// duplicate pattern under PB v0.38.1 if a single app is reused across
-	// scenarios. A fresh app per sub-test keeps route registration to once.
+	// duplicate pattern if a single app is reused across scenarios. A fresh
+	// app per sub-test keeps route registration to once.
 	cases := []string{`{"email":""}`, `{"email":"not-an-email"}`, `{}`}
 	for _, body := range cases {
 		t.Run(body, func(t *testing.T) {
@@ -224,11 +214,10 @@ func TestInviteLink_Send_400OnInvalidEmail(t *testing.T) {
 			RegisterInviteLinkEndpoints(app)
 
 			owner := mustCreateUser(t, app, "owner@test.local", false)
+			setUserRole(t, app, owner, "owner")
 			target := mustCreateUser(t, app, "pending@example.com", false)
-			org := mustCreateOrg(t, app)
-			newMembership(t, app, owner, org, "owner", "")
-			uo := newMembership(t, app, target, org, "member", owner.Id)
-			if _, err := mintInviteToken(app, target, org, "member"); err != nil {
+			setUserRole(t, app, target, "member")
+			if _, err := mintInviteToken(app, target, "member"); err != nil {
 				t.Fatal(err)
 			}
 
@@ -240,7 +229,7 @@ func TestInviteLink_Send_400OnInvalidEmail(t *testing.T) {
 			scenario := &tests.ApiScenario{
 				Name:                  "POST send 400 on invalid email: " + body,
 				Method:                http.MethodPost,
-				URL:                   "/api/invite-link/" + uo.Id + "/send",
+				URL:                   "/api/invite-link/" + target.Id + "/send",
 				Body:                  strings.NewReader(body),
 				Headers:               map[string]string{"Authorization": authToken, "Content-Type": "application/json"},
 				ExpectedStatus:        http.StatusBadRequest,
@@ -258,10 +247,9 @@ func TestInviteLink_Send_409WhenNoLiveToken(t *testing.T) {
 	RegisterInviteLinkEndpoints(app)
 
 	owner := mustCreateUser(t, app, "owner@test.local", false)
+	setUserRole(t, app, owner, "owner")
 	target := mustCreateUser(t, app, "pending@example.com", false)
-	org := mustCreateOrg(t, app)
-	newMembership(t, app, owner, org, "owner", "")
-	uo := newMembership(t, app, target, org, "member", owner.Id)
+	setUserRole(t, app, target, "member")
 	// No tokens minted.
 
 	authToken, err := tokenForUser(app, owner)
@@ -272,7 +260,7 @@ func TestInviteLink_Send_409WhenNoLiveToken(t *testing.T) {
 	scenario := &tests.ApiScenario{
 		Name:                  "POST send 409 when no live token",
 		Method:                http.MethodPost,
-		URL:                   "/api/invite-link/" + uo.Id + "/send",
+		URL:                   "/api/invite-link/" + target.Id + "/send",
 		Body:                  strings.NewReader(`{"email":"alt@known-good.example"}`),
 		Headers:               map[string]string{"Authorization": authToken, "Content-Type": "application/json"},
 		ExpectedStatus:        http.StatusConflict,
@@ -289,11 +277,10 @@ func TestInviteLink_Send_503ForDemoCaller(t *testing.T) {
 	read := captureMailerOutput(t)
 
 	demoOwner := mustCreateUser(t, app, "demoowner@test.local", true) // is_demo=true
+	setUserRole(t, app, demoOwner, "owner")
 	target := mustCreateUser(t, app, "pending@example.com", false)
-	org := mustCreateOrg(t, app)
-	newMembership(t, app, demoOwner, org, "owner", "")
-	uo := newMembership(t, app, target, org, "member", demoOwner.Id)
-	if _, err := mintInviteToken(app, target, org, "member"); err != nil {
+	setUserRole(t, app, target, "member")
+	if _, err := mintInviteToken(app, target, "member"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -305,7 +292,7 @@ func TestInviteLink_Send_503ForDemoCaller(t *testing.T) {
 	scenario := &tests.ApiScenario{
 		Name:                  "POST send 503 for demo caller",
 		Method:                http.MethodPost,
-		URL:                   "/api/invite-link/" + uo.Id + "/send",
+		URL:                   "/api/invite-link/" + target.Id + "/send",
 		Body:                  strings.NewReader(`{"email":"alt@known-good.example"}`),
 		Headers:               map[string]string{"Authorization": authToken, "Content-Type": "application/json"},
 		ExpectedStatus:        http.StatusServiceUnavailable,
@@ -323,55 +310,54 @@ func TestInviteLink_Send_503ForDemoCaller(t *testing.T) {
 }
 
 func TestInviteLink_Rotate_ReturnsNewURLAndInvalidatesOld(t *testing.T) {
-    app := setupInviteTestApp(t)
-    RegisterInviteLinkEndpoints(app)
+	app := setupInviteTestApp(t)
+	RegisterInviteLinkEndpoints(app)
 
-    owner := mustCreateUser(t, app, "owner@test.local", false)
-    target := mustCreateUser(t, app, "pending@test.local", false)
-    org := mustCreateOrg(t, app)
-    newMembership(t, app, owner, org, "owner", "")
-    uo := newMembership(t, app, target, org, "member", owner.Id)
+	owner := mustCreateUser(t, app, "owner@test.local", false)
+	setUserRole(t, app, owner, "owner")
+	target := mustCreateUser(t, app, "pending@test.local", false)
+	setUserRole(t, app, target, "member")
 
-    oldToken, err := mintInviteToken(app, target, org, "member")
-    if err != nil {
-        t.Fatal(err)
-    }
+	oldToken, err := mintInviteToken(app, target, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
 
-    authToken, err := tokenForUser(app, owner)
-    if err != nil {
-        t.Fatal(err)
-    }
+	authToken, err := tokenForUser(app, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-    scenario := &tests.ApiScenario{
-        Name:                  "POST invite-link/rotate returns new URL",
-        Method:                http.MethodPost,
-        URL:                   "/api/invite-link/" + uo.Id + "/rotate",
-        Headers:               map[string]string{"Authorization": authToken},
-        ExpectedStatus:        http.StatusOK,
-        ExpectedContent:       []string{`"inviteUrl":`},
-        TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
-        DisableTestAppCleanup: true,
-        AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
-            tt := t.(*testing.T)
-            body := readJSONBody(tt, res)
-            url, _ := body["inviteUrl"].(string)
-            if strings.Contains(url, oldToken) {
-                tt.Errorf("rotate returned old token; url=%q oldToken=%q", url, oldToken)
-            }
-            if !regexp.MustCompile(`/accept-invite/[0-9a-f]{64}$`).MatchString(url) {
-                tt.Errorf("inviteUrl: got %q, want .../accept-invite/<64-hex>", url)
-            }
+	scenario := &tests.ApiScenario{
+		Name:                  "POST invite-link/rotate returns new URL",
+		Method:                http.MethodPost,
+		URL:                   "/api/invite-link/" + target.Id + "/rotate",
+		Headers:               map[string]string{"Authorization": authToken},
+		ExpectedStatus:        http.StatusOK,
+		ExpectedContent:       []string{`"inviteUrl":`},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
+			tt := t.(*testing.T)
+			body := readJSONBody(tt, res)
+			url, _ := body["inviteUrl"].(string)
+			if strings.Contains(url, oldToken) {
+				tt.Errorf("rotate returned old token; url=%q oldToken=%q", url, oldToken)
+			}
+			if !regexp.MustCompile(`/accept-invite/[0-9a-f]{64}$`).MatchString(url) {
+				tt.Errorf("inviteUrl: got %q, want .../accept-invite/<64-hex>", url)
+			}
 
-            old, err := app.FindFirstRecordByFilter(
-                "invite_tokens", "token = {:t}", map[string]any{"t": oldToken},
-            )
-            if err != nil {
-                tt.Fatal(err)
-            }
-            if old.GetString("used_at") == "" {
-                tt.Errorf("expected old token to have used_at set")
-            }
-        },
-    }
-    scenario.Test(t)
+			old, err := app.FindFirstRecordByFilter(
+				"invite_tokens", "token = {:t}", map[string]any{"t": oldToken},
+			)
+			if err != nil {
+				tt.Fatal(err)
+			}
+			if old.GetString("used_at") == "" {
+				tt.Errorf("expected old token to have used_at set")
+			}
+		},
+	}
+	scenario.Test(t)
 }

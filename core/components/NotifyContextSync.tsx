@@ -1,23 +1,27 @@
 import { useAuth } from '@tinycld/core/lib/auth'
 import { clearNotifyContext, setNotifyContext } from '@tinycld/core/lib/notify/context'
-import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useEffect } from 'react'
 
 /**
- * Syncs the current user + org identifiers into the module-level notify context
- * so non-hook callers (e.g. notify.emit) can reach them. Mounted once inside
- * the org layout.
+ * Syncs the current user id into the module-level notify context so non-hook
+ * callers (e.g. notify.emit) can reach it. Mounted once inside the app layout.
+ *
+ * This used to also require an orgId, which is what made every bell
+ * notification dead app-wide: single-org's useOrgInfo() returns orgId as '',
+ * so the guard always bailed, the context was never set, and each dispatch
+ * no-opped while firing captureException('notify.bell.no_context') — a Sentry
+ * report on a code path that could never work. The org is implicit now; the
+ * user is the only identifier a notification needs.
  */
 export function NotifyContextSync() {
     const auth = useAuth({ throwIfAnon: false })
-    const { orgId } = useOrgInfo()
     const userId = auth.isLoggedIn ? auth.user.id : null
 
     useEffect(() => {
-        if (!userId || !orgId) return
-        setNotifyContext({ orgId, userId })
+        if (!userId) return
+        setNotifyContext({ userId })
         return () => clearNotifyContext()
-    }, [userId, orgId])
+    }, [userId])
 
     return null
 }

@@ -22,7 +22,7 @@ export interface EmitRoutesOpts {
     packageDir: string
     routesDir: string // path RELATIVE to packageDir where screen files live
     importSubpath: string // the package.json exports subpath, e.g. 'screens'
-    routesBase: string // app/app/a/[orgSlug]
+    routesBase: string // app/(app)
 }
 
 // Emit one `export { default } from '<pkg>/<subpath>/<file>'` per screen file,

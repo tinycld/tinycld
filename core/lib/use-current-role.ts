@@ -1,24 +1,20 @@
-import { and, eq } from '@tanstack/db'
+import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { useStore } from '@tinycld/core/lib/pocketbase'
-import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 
+// Single-org deployment: a user's role lives on their `users` auth record, not on
+// a membership junction. Read it directly for the current user.
 export function useCurrentRole() {
     const { user } = useAuth()
-    const { orgId } = useOrgInfo()
-    const [userOrgCollection] = useStore('user_org')
+    const [usersCollection] = useStore('users')
 
-    const { data: userOrgs } = useLiveQuery(
-        query =>
-            query
-                .from({ user_org: userOrgCollection })
-                .where(({ user_org }) => and(eq(user_org.user, user.id), eq(user_org.org, orgId))),
-        [user.id, orgId]
+    const { data: rows } = useLiveQuery(
+        query => query.from({ users: usersCollection }).where(({ users }) => eq(users.id, user.id)),
+        [user.id]
     )
 
-    const userOrg = userOrgs?.[0]
-    const role = userOrg?.role ?? null
+    const role = rows?.[0]?.role ?? null
     return {
         role,
         isOwner: role === 'owner',
@@ -27,6 +23,5 @@ export function useCurrentRole() {
         isGuest: role === 'guest',
         canManageOrg: role === 'owner' || role === 'admin',
         canManageMembers: role === 'owner' || role === 'admin',
-        userOrgId: userOrg?.id ?? '',
     }
 }

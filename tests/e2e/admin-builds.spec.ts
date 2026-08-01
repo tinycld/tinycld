@@ -9,7 +9,7 @@ import { login, navigateToAdmin } from './helpers'
 test.describe('Admin · Build History', () => {
     test.beforeEach(async ({ page }) => {
         await login(page)
-        await navigateToAdmin(page, 'builds', 'Build History')
+        await navigateToAdmin(page, 'Build History')
     })
 
     test('renders the build history surface for a super admin', async ({ page }) => {

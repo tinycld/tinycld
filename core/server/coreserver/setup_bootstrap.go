@@ -52,7 +52,7 @@ func RegisterSetupBootstrap(app *pocketbase.PocketBase) {
 			if publicURL == "" {
 				publicURL = strings.TrimRight(baseURL, "/")
 			}
-			setupURL := fmt.Sprintf("%s/admin?token=%s", publicURL, token)
+			setupURL := fmt.Sprintf("%s/setup?token=%s", publicURL, token)
 			printBoxed("First run setup, visit below URL to configure tinycld:", setupURL)
 			return nil
 		}
@@ -210,6 +210,19 @@ func createSuperAdminOperator(app core.App, email, password string) (*core.Recor
 	// unique handle, derived by the shared helper.
 	operator.Set("name", strings.SplitN(email, "@", 2)[0])
 	operator.Set("username", username)
+	// `role` is required (1940000000_backfill_and_require_users_role).
+	//
+	// owner, not member: the super_admins row carries the operator's authority
+	// for collection rules, but the app gates on this field. Settings > Members
+	// checks useCurrentRole().isAdmin and /api/invite-member rejects a
+	// non-admin caller, while the /admin console offers no role management — so
+	// a `member` operator finishes the wizard unable to invite anyone or to
+	// promote themselves, and the deployment is permanently single-user.
+	//
+	// The person who ran the setup wizard is the deployment's owner, so this is
+	// also the honest value. Standalone-only: RegisterSetupBootstrap is bound
+	// in the host composition, never in a tenant.
+	operator.Set("role", "owner")
 	if err := app.Save(operator); err != nil {
 		return nil, fmt.Errorf("create users record: %w", err)
 	}

@@ -24,7 +24,6 @@ export const bellChannel: NotifyChannel = {
         const tx = notificationsCollection.insert({
             id: newRecordId(),
             user: ctx.userId,
-            org: ctx.orgId,
             type: input.event,
             package: 'core',
             title: input.title,

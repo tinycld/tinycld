@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { login, navigateToPackage, ORG_SLUG, skipWithoutShortcutStub } from './helpers'
+import { login, navigateToPackage, packageScreen, skipWithoutShortcutStub } from './helpers'
 
 // These tests verify app-shell keyboard-shortcut behavior using a
 // stub package scaffolded by app/tests/scripts/scaffold-shortcut-stub.ts.
@@ -13,11 +13,9 @@ import { login, navigateToPackage, ORG_SLUG, skipWithoutShortcutStub } from './h
 //     cd app && pnpm exec tinycld-pkg test:e2e -- --grep "Keyboard shortcuts"
 //
 // CI runs the scaffold step as part of the e2e job.
-
 const STUB_NAV_LABEL = 'Shortcut Stub'
 const STUB_SLUG = 'shortcut-stub'
 const STUB_SHORTCUT = 'k'
-
 test.describe('Keyboard shortcuts', () => {
     // Needs the shortcut-stub package scaffolded; skip on a plain dev workspace
     // where it isn't present (CI's scaffold step makes it mandatory there — see
@@ -66,7 +64,11 @@ test.describe('Keyboard shortcuts', () => {
         // neither is lost.
         await page.keyboard.press('t', { delay: 50 })
         await page.keyboard.press(STUB_SHORTCUT, { delay: 50 })
-        await page.waitForURL(new RegExp(`/a/${ORG_SLUG}/${STUB_SLUG}`), { timeout: 10_000 })
+        // The shortcut's job is to land the user on the package, so assert the
+        // screen mounted rather than that the URL changed — the latter is true
+        // the instant the router accepts the push, even if the chunk never
+        // commits.
+        await packageScreen(page, STUB_SLUG).waitFor({ state: 'visible', timeout: 10_000 })
     })
 
     test('rail renders the manifest-declared icon (cloud-rain), not the fallback', async ({

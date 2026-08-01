@@ -4,10 +4,11 @@ import { createContext, type ReactNode, useContext } from 'react'
 export type EditorRole = 'viewer' | 'commentor' | 'editor'
 
 export interface EditorIdentity {
-    // 'member' = authed org member; 'guest' = lightweight share user; 'anon' = signed share session, no account.
+    // 'member' = authed member; 'guest' = lightweight share user; 'anon' = signed share session, no account.
     kind: 'member' | 'guest' | 'anon'
+    // Single-org: there is one identifier. The old `userOrgId` companion held
+    // the same users id under a junction-era name and was removed.
     userId?: string
-    userOrgId?: string
     displayName: string
     color: string
 }

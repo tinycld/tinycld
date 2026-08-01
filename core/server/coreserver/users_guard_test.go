@@ -8,10 +8,9 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-// setupGuardTestApp builds a TestApp with the orgs / user_org / is_demo
-// schema the guard relies on. Programmatic rather than pb_test_data based
-// (the latter doesn't ship in the repo); see aliases_test.go for the same
-// pattern in the mail package.
+// setupGuardTestApp builds a TestApp with the users.role / is_demo schema the
+// guard relies on. Single-org: there is no orgs / user_org collection — the
+// caller's owner/admin status lives on their users.role field.
 func setupGuardTestApp(t *testing.T) *tests.TestApp {
 	t.Helper()
 	app, err := tests.NewTestApp()
@@ -20,59 +19,29 @@ func setupGuardTestApp(t *testing.T) *tests.TestApp {
 	}
 	t.Cleanup(func() { app.Cleanup() })
 
-	// Add is_demo to the bundled users auth collection. We set the relaxed
-	// updateRule AFTER user_org is created, because the rule references the
-	// back-relation `user_org_via_user` which only exists once user_org has
-	// a `user` relation field pointing at users.
 	users, err := app.FindCollectionByNameOrId("users")
 	if err != nil {
 		t.Fatalf("find users: %v", err)
 	}
 	users.Fields.Add(&core.BoolField{Name: "is_demo"})
+	users.Fields.Add(&core.BoolField{Name: "disabled"})
+	users.Fields.Add(&core.SelectField{
+		Name: "role", MaxSelect: 1,
+		Values: []string{"owner", "admin", "member", "guest"},
+	})
 	// PB's bundled test fixture ships the default users collection with a
 	// 3-char minimum username; our production migration relaxes it to 1.
 	// Mirror that here so derived usernames from short email prefixes
 	// (e.g. "ma@test.local" → "ma") validate the same way they do in prod.
 	relaxUsernameMinLength(users)
-	if err := app.Save(users); err != nil {
-		t.Fatalf("save users: %v", err)
-	}
-
-	orgs := core.NewBaseCollection("orgs")
-	orgs.Fields.Add(&core.TextField{Name: "name", Required: true})
-	orgs.Fields.Add(&core.TextField{Name: "slug", Required: true})
-	if err := app.Save(orgs); err != nil {
-		t.Fatalf("save orgs: %v", err)
-	}
-
-	userOrg := core.NewBaseCollection("user_org")
-	userOrg.Fields.Add(&core.RelationField{
-		Name: "org", Required: true, CollectionId: orgs.Id,
-		CascadeDelete: true, MaxSelect: 1,
-	})
-	userOrg.Fields.Add(&core.RelationField{
-		Name: "user", Required: true, CollectionId: users.Id,
-		CascadeDelete: true, MaxSelect: 1,
-	})
-	userOrg.Fields.Add(&core.SelectField{
-		Name: "role", Required: true, MaxSelect: 1,
-		Values: []string{"owner", "admin", "member", "guest"},
-	})
-	if err := app.Save(userOrg); err != nil {
-		t.Fatalf("save user_org: %v", err)
-	}
-
-	// Now safe to set the rule that references the back-relation.
-	users, err = app.FindCollectionByNameOrId("users")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Single-org relaxed rule: any authed user may attempt an update; the Go
+	// guard narrows it to self-edits and owner/admin edits.
 	users.UpdateRule = stringPtr(
 		`@request.auth.id != "" && (id = @request.auth.id || ` +
-			`user_org_via_user.org.user_org_via_org.user ?= @request.auth.id)`,
+			`@request.auth.role = "owner" || @request.auth.role = "admin")`,
 	)
 	if err := app.Save(users); err != nil {
-		t.Fatalf("save users updateRule: %v", err)
+		t.Fatalf("save users: %v", err)
 	}
 
 	registerUsersFieldGuardCore(app)
@@ -99,6 +68,17 @@ func makeUser(t *testing.T, app core.App, email string) *core.Record {
 	return r
 }
 
+// makeUserWithRole creates a user and assigns them a single-org role.
+func makeUserWithRole(t *testing.T, app core.App, email, role string) *core.Record {
+	t.Helper()
+	r := makeUser(t, app, email)
+	r.Set("role", role)
+	if err := app.Save(r); err != nil {
+		t.Fatalf("set role on %s: %v", email, err)
+	}
+	return r
+}
+
 // uniqueDerivedUsername derives a username from email and adds a numeric
 // suffix if the base is already taken. Mirrors the production backfill so
 // short prefixes like "ma@..." and "mb@..." (both → "user") don't collide.
@@ -114,37 +94,6 @@ func uniqueDerivedUsername(t *testing.T, app core.App, email string) string {
 		}
 		candidate = base + strconv.Itoa(i)
 	}
-}
-
-func makeOrg(t *testing.T, app core.App, name, slug string) *core.Record {
-	t.Helper()
-	col, err := app.FindCollectionByNameOrId("orgs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := core.NewRecord(col)
-	r.Set("name", name)
-	r.Set("slug", slug)
-	if err := app.Save(r); err != nil {
-		t.Fatal(err)
-	}
-	return r
-}
-
-func makeMembership(t *testing.T, app core.App, user, org *core.Record, role string) *core.Record {
-	t.Helper()
-	col, err := app.FindCollectionByNameOrId("user_org")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := core.NewRecord(col)
-	r.Set("user", user.Id)
-	r.Set("org", org.Id)
-	r.Set("role", role)
-	if err := app.Save(r); err != nil {
-		t.Fatal(err)
-	}
-	return r
 }
 
 // updateAsAuthenticated invokes the OnRecordUpdateRequest hook chain the
@@ -251,15 +200,12 @@ func TestUsersGuard_DemoUserCannotSelfEditAnything(t *testing.T) {
 
 func TestUsersGuard_AdminCanStillEditDemoUser(t *testing.T) {
 	app := setupGuardTestApp(t)
-	admin := makeUser(t, app, "demoadmin@test.local")
-	target := makeUser(t, app, "demotarget@test.local")
+	admin := makeUserWithRole(t, app, "demoadmin@test.local", "owner")
+	target := makeUserWithRole(t, app, "demotarget@test.local", "member")
 	target.Set("is_demo", true)
 	if err := app.Save(target); err != nil {
 		t.Fatal(err)
 	}
-	org := makeOrg(t, app, "DemoCo", "democo")
-	makeMembership(t, app, admin, org, "owner")
-	makeMembership(t, app, target, org, "member")
 
 	// The demo lockout only applies to self-edits; an org admin must still
 	// be able to flip is_demo back off (e.g. operator reclaiming an account).
@@ -318,19 +264,16 @@ func TestUsersGuard_SelfCanChangePassword(t *testing.T) {
 	}
 }
 
-func TestUsersGuard_AdminCanFlipIsDemoOnSharedOrg(t *testing.T) {
+func TestUsersGuard_AdminCanFlipIsDemo(t *testing.T) {
 	app := setupGuardTestApp(t)
-	admin := makeUser(t, app, "admin@test.local")
-	target := makeUser(t, app, "target@test.local")
-	org := makeOrg(t, app, "Acme", "acme")
-	makeMembership(t, app, admin, org, "admin")
-	makeMembership(t, app, target, org, "member")
+	admin := makeUserWithRole(t, app, "admin@test.local", "admin")
+	target := makeUserWithRole(t, app, "target@test.local", "member")
 
 	err := updateAsAuthenticated(t, app, admin, target, func(r *core.Record) {
 		r.Set("is_demo", true)
 	})
 	if err != nil {
-		t.Fatalf("admin flipping is_demo on shared-org member should be allowed: %v", err)
+		t.Fatalf("admin flipping is_demo on a member should be allowed: %v", err)
 	}
 
 	fresh, _ := app.FindRecordById("users", target.Id)
@@ -339,13 +282,103 @@ func TestUsersGuard_AdminCanFlipIsDemoOnSharedOrg(t *testing.T) {
 	}
 }
 
+// Suspending an account has to end its sessions, or the suspension is
+// advisory until every issued JWT expires — which is exactly the window an
+// admin disabling a compromised account is racing against. Self-disable
+// (POST /api/account/disable) already rotates the token key; the admin path
+// runs through the users field guard instead, so the rotation has to happen
+// there too.
+//
+// Rotating invalidates every token, so re-enabling forces a fresh sign-in on
+// every device. That trade is already accepted for self-disable.
+func TestUsersGuard_AdminDisableRevokesExistingSessions(t *testing.T) {
+	app := setupGuardTestApp(t)
+	admin := makeUserWithRole(t, app, "admin-disable@test.local", "admin")
+	target := makeUserWithRole(t, app, "suspendme@test.local", "member")
+
+	// The token the suspended user is already holding.
+	token, err := target.NewAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth); err != nil {
+		t.Fatalf("token should be valid before the disable: %v", err)
+	}
+
+	if err := updateAsAuthenticated(t, app, admin, target, func(r *core.Record) {
+		r.Set("disabled", true)
+	}); err != nil {
+		t.Fatalf("admin disabling a member should be allowed: %v", err)
+	}
+
+	fresh, err := app.FindRecordById("users", target.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fresh.GetBool("disabled") {
+		t.Fatal("disabled flag not persisted")
+	}
+	if _, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth); err == nil {
+		t.Fatal("the suspended user's existing token still authenticates")
+	}
+}
+
+// Superusers skip the field allowlist, so the rotation has to sit above that
+// bypass: an operator suspending a compromised account expects the same
+// immediacy an org admin gets.
+func TestUsersGuard_SuperuserDisableRevokesExistingSessions(t *testing.T) {
+	app := setupGuardTestApp(t)
+	target := makeUserWithRole(t, app, "su-suspendme@test.local", "member")
+
+	superuser, err := app.FindFirstRecordByFilter(core.CollectionNameSuperusers, "id != ''")
+	if err != nil {
+		t.Fatalf("find superuser: %v", err)
+	}
+
+	token, err := target.NewAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := updateAsAuthenticated(t, app, superuser, target, func(r *core.Record) {
+		r.Set("disabled", true)
+	}); err != nil {
+		t.Fatalf("superuser disabling a member should be allowed: %v", err)
+	}
+
+	if _, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth); err == nil {
+		t.Fatal("the suspended user's existing token still authenticates")
+	}
+}
+
+// The counterpart: an ordinary admin edit must not sign the user out. Without
+// this control, rotating on every users write would pass the test above while
+// logging people out for a name change.
+func TestUsersGuard_AdminNameEditKeepsSessions(t *testing.T) {
+	app := setupGuardTestApp(t)
+	admin := makeUserWithRole(t, app, "admin-rename@test.local", "admin")
+	target := makeUserWithRole(t, app, "renameme@test.local", "member")
+
+	token, err := target.NewAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := updateAsAuthenticated(t, app, admin, target, func(r *core.Record) {
+		r.Set("name", "Renamed")
+	}); err != nil {
+		t.Fatalf("admin renaming a member should be allowed: %v", err)
+	}
+
+	if _, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth); err != nil {
+		t.Fatalf("a name change signed the user out: %v", err)
+	}
+}
+
 func TestUsersGuard_AdminCannotEditNonAllowlistedField(t *testing.T) {
 	app := setupGuardTestApp(t)
-	admin := makeUser(t, app, "admin2@test.local")
-	target := makeUser(t, app, "target2@test.local")
-	org := makeOrg(t, app, "Acme2", "acme2")
-	makeMembership(t, app, admin, org, "owner")
-	makeMembership(t, app, target, org, "member")
+	admin := makeUserWithRole(t, app, "admin2@test.local", "owner")
+	target := makeUserWithRole(t, app, "target2@test.local", "member")
 
 	err := updateAsAuthenticated(t, app, admin, target, func(r *core.Record) {
 		r.SetVerified(false) // not in adminEditableUserFields
@@ -357,11 +390,8 @@ func TestUsersGuard_AdminCannotEditNonAllowlistedField(t *testing.T) {
 
 func TestUsersGuard_AdminCannotEditPasswordOnAnotherUser(t *testing.T) {
 	app := setupGuardTestApp(t)
-	admin := makeUser(t, app, "admin3@test.local")
-	target := makeUser(t, app, "target3@test.local")
-	org := makeOrg(t, app, "Acme3", "acme3")
-	makeMembership(t, app, admin, org, "admin")
-	makeMembership(t, app, target, org, "member")
+	admin := makeUserWithRole(t, app, "admin3@test.local", "admin")
+	target := makeUserWithRole(t, app, "target3@test.local", "member")
 
 	err := updateAsAuthenticated(t, app, admin, target, func(r *core.Record) {
 		r.SetPassword("HackedPassword!")
@@ -377,30 +407,10 @@ func TestUsersGuard_AdminCannotEditPasswordOnAnotherUser(t *testing.T) {
 	}
 }
 
-func TestUsersGuard_NonMemberAdminCannotEdit(t *testing.T) {
-	app := setupGuardTestApp(t)
-	otherAdmin := makeUser(t, app, "otheradmin@test.local")
-	target := makeUser(t, app, "target4@test.local")
-	orgA := makeOrg(t, app, "OrgA", "org-a")
-	orgB := makeOrg(t, app, "OrgB", "org-b")
-	makeMembership(t, app, otherAdmin, orgA, "admin")
-	makeMembership(t, app, target, orgB, "member")
-
-	err := updateAsAuthenticated(t, app, otherAdmin, target, func(r *core.Record) {
-		r.Set("is_demo", true)
-	})
-	if err == nil {
-		t.Fatal("admin in a different org should not be able to edit a target outside their org")
-	}
-}
-
 func TestUsersGuard_PlainMemberCannotEditAnotherUser(t *testing.T) {
 	app := setupGuardTestApp(t)
-	memberA := makeUser(t, app, "ma@test.local")
-	memberB := makeUser(t, app, "mb@test.local")
-	org := makeOrg(t, app, "Co", "co")
-	makeMembership(t, app, memberA, org, "member")
-	makeMembership(t, app, memberB, org, "member")
+	memberA := makeUserWithRole(t, app, "ma@test.local", "member")
+	memberB := makeUserWithRole(t, app, "mb@test.local", "member")
 
 	err := updateAsAuthenticated(t, app, memberA, memberB, func(r *core.Record) {
 		r.Set("name", "tampered")
@@ -460,7 +470,6 @@ func seedAuditLogs(t *testing.T, app *tests.TestApp) {
 	col.Fields.Add(&core.TextField{Name: "resource_label"})
 	col.Fields.Add(&core.JSONField{Name: "metadata"})
 	col.Fields.Add(&core.TextField{Name: "actor"})
-	col.Fields.Add(&core.TextField{Name: "org"})
 	col.Fields.Add(&core.TextField{Name: "ip_address"})
 	col.Fields.Add(&core.TextField{Name: "user_agent"})
 	if err := app.Save(col); err != nil {
@@ -473,11 +482,8 @@ func TestUsersDemoAuditHook_LogsOnFlip(t *testing.T) {
 	seedAuditLogs(t, app)
 	registerUsersDemoAuditHookCore(app)
 
-	admin := makeUser(t, app, "auditadmin@test.local")
-	target := makeUser(t, app, "auditmember@test.local")
-	org := makeOrg(t, app, "AuditCo", "auditco")
-	makeMembership(t, app, admin, org, "admin")
-	makeMembership(t, app, target, org, "member")
+	admin := makeUserWithRole(t, app, "auditadmin@test.local", "admin")
+	target := makeUserWithRole(t, app, "auditmember@test.local", "member")
 
 	if err := updateAsAuthenticated(t, app, admin, target, func(r *core.Record) {
 		r.Set("is_demo", true)

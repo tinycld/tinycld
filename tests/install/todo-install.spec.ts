@@ -1,14 +1,25 @@
 import { createRequire } from 'node:module'
 import { expect, type Page, test } from '@playwright/test'
 
-// Read the app version via createRequire rather than a static ESM JSON import:
-// under Node's ESM loader (which Playwright drives the spec through) a plain
-// `import … from '../../package.json'` is rejected with "needs an import
-// attribute of type: json", and the import-attribute form isn't reliably
-// preserved through Playwright's transpile. createRequire is the same pattern
-// playwright.config.ts already uses to reach workspace modules from ESM.
-const APP_VERSION = (createRequire(import.meta.url)('../../package.json') as { version: string })
-    .version
+// Read the OTA runtime version from app.json's `expo.version` — NOT from
+// package.json. The server publishes native bundles under the appVersion
+// policy, which exportNativeBundles() sources from app.json (see
+// core/server/coreserver/app_native_export.go: "runtimeVersion is the app
+// version (appVersion policy)", and it hard-errors when expo.version is
+// absent). The two files drift independently (package.json is the npm package
+// version), so reading package.json here made /api/app/update query a runtime
+// version no bundle was ever published under — a permanent HTTP 204 that looks
+// exactly like "no bundles were produced".
+//
+// createRequire rather than a static ESM JSON import: under Node's ESM loader
+// (which Playwright drives the spec through) a plain `import … from
+// '../../app.json'` is rejected with "needs an import attribute of type: json",
+// and the import-attribute form isn't reliably preserved through Playwright's
+// transpile. createRequire is the same pattern playwright.config.ts already
+// uses to reach workspace modules from ESM.
+const APP_VERSION = (
+    createRequire(import.meta.url)('../../app.json') as { expo: { version: string } }
+).expo.version
 
 // Integration test for the per-package VERSION-CHANGE flow in /admin, driven
 // through the real in-app installer + Versions tab against an already-running
@@ -89,7 +100,13 @@ const SUPERUSER_PASSWORD = process.env.ADMIN_USER_PW || 'TodoSmoke1234!'
 
 // Install pinned to a git TAG via the #ref suffix. validatePackageSpec accepts
 // `<git-spec>#<safe-ref>` and `npm pack` clones the repo at that tag.
-const TODO_SPEC_V1 = 'github:tinycld/todo#v1.0.0'
+//
+// PW_TODO_SPEC_V1 overrides the default git spec: the HOSTED runner
+// (run-hosted-install.sh) passes an npm spec (`@tinycld/todo@1.0.0`, resolved
+// against its fixture registry) because hosted installs refuse git specs — a
+// flat {name: version} org lockfile has nowhere to carry git provenance
+// (coreserver/pkg_hosted.go's recorded limitation).
+const TODO_SPEC_V1 = process.env.PW_TODO_SPEC_V1 || 'github:tinycld/todo#v1.0.0'
 
 // Buggy fixture tags (see FIXTURE CONTRACT above). server + migration roll back
 // post-restart; fe fails at expo export (no restart).
@@ -102,18 +119,28 @@ const TODO_SPEC_BUGGY_FE = 'github:tinycld/todo#v0.0.1-pre-buggy-fe'
 const CORE_CUR = process.env.PW_CORE_CUR ?? '0.0.4'
 const CORE_NEXT = process.env.PW_CORE_NEXT ?? '0.0.5'
 
-const TEST_ORG_NAME = 'Todo Org'
-const TEST_ORG_SLUG = 'todo-org'
-const TEST_ORG_OWNER_NAME = 'Todo Owner'
-const TEST_ORG_OWNER_EMAIL = 'owner@todo.example'
-const TEST_ORG_OWNER_PASSWORD = 'OwnerPass1234!'
-const TEST_ORG_MAIL_DOMAIN = 'todo.example'
+// The app user this spec logs in as to drive the todo UI. Single-org: the
+// console has no user-creation form (that was the org-create flow), so the
+// user is minted through the superuser REST API — a fixture, not the subject.
+// "We're inside the authenticated app shell." Single-org collapsed
+// app/a/[orgSlug]/ to app/(app)/, so authenticated URLs are bare. Defined
+// locally rather than imported from tests/e2e/helpers: the install suite has
+// its own playwright config and deliberately shares no fixtures with e2e.
+const LANDED_URL =
+    /\/(?:todo|contacts|settings|admin|help|mail|drive|calendar|calc|text)(?:\/|$|\?)/
+
+const APP_USER_NAME = 'Todo Owner'
+const APP_USER_EMAIL = 'owner@todo.example'
+const APP_USER_PASSWORD = 'OwnerPass1234!'
 
 const TODO_TEXT = 'Buy milk'
 const TAG_TEXT = 'errand'
 
 async function loginAsSuperuser(page: Page, timeoutMs?: number) {
-    await page.goto('/admin', timeoutMs ? { timeout: timeoutMs } : undefined)
+    // /setup, not /admin: the superuser-login console moved there in the
+    // single-org migration. /admin is now behind AuthGate and shows the app's
+    // LoginModal instead of the 'Superuser Login' form asserted below.
+    await page.goto('/setup', timeoutMs ? { timeout: timeoutMs } : undefined)
     await expect(page.getByText('Superuser Login')).toBeVisible(
         timeoutMs ? { timeout: timeoutMs } : undefined
     )
@@ -211,6 +238,33 @@ async function superuserToken(page: Page): Promise<string> {
 // superuser auth, so setting the managed `verified` field is rejected
 // ("validation_values_mismatch") and the org is never created. Refreshing
 // `pb_auth` here makes the create carry a valid superuser token again.
+// Mints the app user this spec logs in as, through the superuser REST API.
+// Idempotent: a 400 means an earlier run in the same container already
+// created it, which is fine.
+async function createAppUser(page: Page) {
+    const auth = await page.request.post('/api/collections/_superusers/auth-with-password', {
+        data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
+    })
+    expect(auth.ok()).toBeTruthy()
+    const { token } = (await auth.json()) as { token: string }
+
+    const res = await page.request.post('/api/collections/users/records', {
+        headers: { Authorization: token },
+        data: {
+            email: APP_USER_EMAIL,
+            password: APP_USER_PASSWORD,
+            passwordConfirm: APP_USER_PASSWORD,
+            name: APP_USER_NAME,
+            username: 'todoowner',
+            verified: true,
+            role: 'owner',
+        },
+    })
+    if (!res.ok() && res.status() !== 400) {
+        throw new Error(`create app user failed: ${res.status()} ${await res.text()}`)
+    }
+}
+
 async function reauthAppPb(page: Page) {
     // Mint a fresh superuser auth (token + record) the same resilient way
     // superuserToken does, but keep the record so we can serialize the store.
@@ -589,12 +643,16 @@ async function postAdminPackageOp(page: Page, path: string, payload: Record<stri
     }
 }
 
-// The app version the native bundles are stamped with as their runtimeVersion
-// (app.config.ts injects package.json's version; the server's appVersionFromManifest
-// reads the same). /api/app/update keys updates by runtimeVersion, so the OTA check
-// must send the same value a real device on this build reports. Derived from the
-// app's package.json (NOT a hardcoded literal) so it never drifts when the version
-// is bumped — a stale literal here made the OTA assertion 204 (runtime mismatch).
+// The app version the native bundles are stamped with as their runtimeVersion.
+// app.config.ts sets `runtimeVersion: config.version` from app.json's
+// expo.version, and the server's appVersionFromManifest reads app.json's
+// expo.version too — the store/OTA version is deliberately DECOUPLED from
+// package.json so a `pnpm version` bump never changes what ships (see the
+// header comment in app.config.ts). /api/app/update keys updates by
+// runtimeVersion, so the OTA check must send the same value a real device on
+// this build reports. Derived from app.json (NOT package.json, and NOT a
+// hardcoded literal): either wrong source makes the OTA assertion a permanent
+// 204 that reads as "no bundles were produced".
 const RUNTIME_VERSION = APP_VERSION
 
 // Polls the public OTA endpoint /api/app/update until it advertises a new bundle
@@ -657,11 +715,22 @@ async function waitForExpoUpdate(
         await page.waitForTimeout(2_000)
     }
     throw new Error(
-        `/api/app/update never advertised a ${platform} update within ${timeoutMs}ms (last=${last}). ` +
-            `A persistent 204 means native bundles weren't produced — the build image is missing the ` +
-            `RN toolchain (node_modules/expo), so 'expo export --platform ${platform}' was skipped.`
+        `/api/app/update never advertised a ${platform} update within ${timeoutMs}ms ` +
+            `(last=${last}, runtimeVersion=${RUNTIME_VERSION}). A persistent 204 means the server has ` +
+            `no bundle for THIS runtime version — either (a) runtimeVersion mismatch: bundles are ` +
+            `published under app.json's expo.version, so querying any other value (e.g. package.json's ` +
+            `version) 204s forever, or (b) native bundles weren't produced — check the install log for ` +
+            `"native OTA bundles produced: N"; N=0 means the build image lacks the RN toolchain ` +
+            `(node_modules/expo) and 'expo export --platform ${platform}' was skipped.`
     )
 }
+
+// PW_SKIP_OTA=1 disables the per-modification OTA assertions. The HOSTED
+// runner sets it: per-org native OTA delivery is an explicitly OPEN design
+// item (DESIGN-org-package-agency §6 "Native OTA per org") — a hosted tenant
+// serves no /api/app/update (RegisterAppUpdateEndpoints is host-only), so the
+// assertion has nothing to hold against yet. Single-tenant runs keep it on.
+const SKIP_OTA = process.env.PW_SKIP_OTA === '1'
 
 // Asserts a NEW expo update is offered for both native platforms after a package
 // modification, and that each platform's bundle id advanced from the previous
@@ -671,6 +740,7 @@ async function assertNewExpoUpdate(
     page: Page,
     prev: { ios?: string; android?: string }
 ): Promise<{ ios: string; android: string }> {
+    if (SKIP_OTA) return { ios: prev.ios ?? '', android: prev.android ?? '' }
     const ios = await waitForExpoUpdate(page, 'ios', 120_000)
     const android = await waitForExpoUpdate(page, 'android', 120_000)
     expect(ios.id, 'ios bundle id should be a build-<ts>-ios id').toMatch(/^build-\d+-ios$/)
@@ -693,20 +763,20 @@ async function assertNewExpoUpdate(
 // shares this context's cookies/storage (partial isolation), which is fine —
 // we only need a clean tab to drive the org-user login.
 async function openTodoAsOwner(page: Page): Promise<Page> {
-    const orgPage = await page.context().newPage()
-    await orgPage.goto('/')
-    await orgPage.getByTestId('identifier').fill(TEST_ORG_OWNER_EMAIL)
-    await orgPage.getByTestId('login-password').fill(TEST_ORG_OWNER_PASSWORD)
-    await orgPage.getByTestId('login-submit').click()
-    await orgPage.waitForURL(/\/a\//, { timeout: 30_000 })
+    const appPage = await page.context().newPage()
+    await appPage.goto('/')
+    await appPage.getByTestId('identifier').fill(APP_USER_EMAIL)
+    await appPage.getByTestId('login-password').fill(APP_USER_PASSWORD)
+    await appPage.getByTestId('login-submit').click()
+    await appPage.waitForURL(LANDED_URL, { timeout: 30_000 })
 
-    const todoNav = orgPage.getByTestId('nav-todo')
+    const todoNav = appPage.getByTestId('nav-todo')
     await expect(todoNav).toBeVisible({ timeout: 30_000 })
     await todoNav.click()
     // On a freshly-installed/changed package the lazy route chunk is compiled by
     // Metro on first navigation (cold), which can take a while on the container.
-    await expect(orgPage).toHaveURL(/\/a\/[^/]+\/todo/, { timeout: 120_000 })
-    return orgPage
+    await expect(appPage).toHaveURL(/\/todo/, { timeout: 120_000 })
+    return appPage
 }
 
 // Sets a package row's target version on the Packages screen and applies it.
@@ -826,7 +896,7 @@ test.describe('todo version change', () => {
             'PW_TODO_SETUP_TOKEN not set — the runner must scrape it from `docker logs`'
         )
 
-        await page.goto(`/admin?token=${SETUP_TOKEN}`)
+        await page.goto(`/setup?token=${SETUP_TOKEN}`)
         await expect(page.getByText('Welcome to TinyCld')).toBeVisible()
 
         await page
@@ -842,7 +912,9 @@ test.describe('todo version change', () => {
             .fill('http://localhost:7090')
 
         await page.getByRole('button', { name: 'Create Account & Continue' }).click()
-        await expect(page.getByText('No organizations yet.')).toBeVisible()
+        // Single-org: the dashboard lands on Packages, and the Organizations
+        // tab is a static "managed by the router" explainer, not an empty list.
+        await expect(page.getByText('Packages', { exact: true }).first()).toBeVisible()
     })
 
     test('install @tinycld/todo pinned to v1.0.0 through the installer UI', async ({ page }) => {
@@ -870,7 +942,13 @@ test.describe('todo version change', () => {
         // go-build/expo-export stages, so requiring ≥50% within 10 min confirms a
         // live stream without coupling to a specific percentage. (A frozen 0% bar
         // here is the signature of the events-endpoint 403 regression.)
-        await waitForProgressAdvance(page, 50, 600_000)
+        //
+        // PW_PROGRESS_MIN_PCT overrides the threshold: the HOSTED pipeline's
+        // stages sit at 10% ("Building artifact") for the whole router-side
+        // build — the org keeps serving while the builder works, and the ctl
+        // build call streams no intermediate progress — so the hosted runner
+        // asserts a live stream at ≥10% instead of a stage-map percentage.
+        await waitForProgressAdvance(page, Number(process.env.PW_PROGRESS_MIN_PCT ?? '50'), 600_000)
 
         // The install runs server-side as a background job and ends by requesting
         // an exit-75 restart. Judge success by the server's own pkg_install_log
@@ -1009,7 +1087,7 @@ test.describe('todo version change', () => {
         await waitForCollection(page, 'tags', false, 20_000) // still v1 schema
     })
 
-    test('v1.0.0 is live, has no tags schema, and an org exists', async ({ page }) => {
+    test('v1.0.0 is live, has no tags schema, and a todo can be added', async ({ page }) => {
         test.setTimeout(300_000)
 
         await loginAsSuperuserWithRetry(page)
@@ -1022,40 +1100,32 @@ test.describe('todo version change', () => {
         await waitForCollection(page, 'tags', false, 30_000)
         await waitForCollection(page, 'todo_tags', false, 30_000)
 
-        // The org create writes through `appPb` (see reauthAppPb), whose persisted
-        // superuser token is left stale by the preceding rollback-fixture restarts.
-        // Refresh it (reloads the page), then re-establish the /admin UI session
-        // before driving the form.
+        // The user create writes through `appPb` (see reauthAppPb), whose
+        // persisted superuser token is left stale by the preceding
+        // rollback-fixture restarts. Refresh it (reloads the page), then
+        // re-establish the /admin UI session.
         await reauthAppPb(page)
         await loginAsSuperuserWithRetry(page)
 
-        // 3. Create an org to log into — the superuser dashboard isn't the app
-        //    shell; the nav rail lives in the org-scoped app.
-        await page.getByText('Organizations', { exact: true }).first().click()
-        await page.getByRole('button', { name: 'New organization' }).click()
-        await page.getByRole('textbox', { name: 'Name', exact: true }).fill(TEST_ORG_NAME)
-        await page.getByRole('textbox', { name: 'Slug', exact: true }).fill(TEST_ORG_SLUG)
-        await page
-            .getByRole('textbox', { name: 'Full name', exact: true })
-            .fill(TEST_ORG_OWNER_NAME)
-        await page.getByRole('textbox', { name: 'Email', exact: true }).fill(TEST_ORG_OWNER_EMAIL)
-        await page
-            .getByRole('textbox', { name: 'Password', exact: true })
-            .fill(TEST_ORG_OWNER_PASSWORD)
-        await page
-            .getByRole('textbox', { name: 'Mail domain', exact: true })
-            .fill(TEST_ORG_MAIL_DOMAIN)
-        await page.getByRole('button', { name: 'Create organization' }).click()
-        await expect(page.getByText(TEST_ORG_NAME, { exact: true })).toBeVisible()
+        // 3. Mint an app user to log in as — the superuser dashboard isn't the
+        //    app shell, and the nav rail lives in the authenticated app.
+        //
+        //    Single-org: this used to create an org + owner through the
+        //    Organizations console. That console is now a static empty state
+        //    (the multi-org router owns provisioning), so the user is created
+        //    through the superuser REST API instead. The user is only a
+        //    fixture — everything this spec actually asserts (registry
+        //    version, schema, the todo UI) still runs through the UI.
+        await createAppUser(page)
 
         // 4. Seed a todo as the org owner so the upgrade has data to tag later.
-        const orgPage = await openTodoAsOwner(page)
+        const appPage = await openTodoAsOwner(page)
         try {
-            await orgPage.getByPlaceholder('Add a todo…').fill(TODO_TEXT)
-            await orgPage.getByLabel('Add todo').click()
-            await expect(orgPage.getByText(TODO_TEXT, { exact: true })).toBeVisible()
+            await appPage.getByPlaceholder('Add a todo…').fill(TODO_TEXT)
+            await appPage.getByLabel('Add todo').click()
+            await expect(appPage.getByText(TODO_TEXT, { exact: true })).toBeVisible()
         } finally {
-            await orgPage.close()
+            await appPage.close()
         }
 
         // 5. The install produced a new web+native release — mobile clients must now
@@ -1092,22 +1162,22 @@ test.describe('todo version change', () => {
         await waitForCollection(page, 'todo_tags', true, 60_000)
 
         // 2. Tag the existing todo through the v2 UI — the new feature in action.
-        const orgPage = await openTodoAsOwner(page)
+        const appPage = await openTodoAsOwner(page)
         try {
             // Open the todo's detail screen, where the TAGS editor lives.
-            await orgPage.getByLabel(`Edit ${TODO_TEXT}`).click()
-            await expect(orgPage.getByText('TAGS', { exact: true })).toBeVisible({
+            await appPage.getByLabel(`Edit ${TODO_TEXT}`).click()
+            await expect(appPage.getByText('TAGS', { exact: true })).toBeVisible({
                 timeout: 30_000,
             })
-            await orgPage.getByPlaceholder('Add a tag…').fill(TAG_TEXT)
-            await orgPage.getByLabel('Add tag').click()
+            await appPage.getByPlaceholder('Add a tag…').fill(TAG_TEXT)
+            await appPage.getByLabel('Add tag').click()
             // The new tag renders as a chip and can be removed (proves the link
             // row persisted, not just optimistic text).
-            await expect(orgPage.getByLabel(`Remove tag ${TAG_TEXT}`)).toBeVisible({
+            await expect(appPage.getByLabel(`Remove tag ${TAG_TEXT}`)).toBeVisible({
                 timeout: 15_000,
             })
         } finally {
-            await orgPage.close()
+            await appPage.close()
         }
 
         // 3. Ground truth: a todo_tags link row exists in the DB.
@@ -1160,20 +1230,20 @@ test.describe('todo version change', () => {
         // 3. UI confirmation: the todo survived (its row is in todo_items, which
         //    v1 keeps) but the reverted v1 binary no longer ships the tag editor,
         //    so the detail screen has no TAGS section.
-        const orgPage = await openTodoAsOwner(page)
+        const appPage = await openTodoAsOwner(page)
         try {
-            await expect(orgPage.getByText(TODO_TEXT, { exact: true })).toBeVisible({
+            await expect(appPage.getByText(TODO_TEXT, { exact: true })).toBeVisible({
                 timeout: 30_000,
             })
-            await orgPage.getByLabel(`Edit ${TODO_TEXT}`).click()
+            await appPage.getByLabel(`Edit ${TODO_TEXT}`).click()
             // The v1 detail screen renders the DESCRIPTION editor; wait for it so
             // we're asserting against a mounted screen, not a still-loading one.
-            await expect(orgPage.getByText('DESCRIPTION', { exact: true })).toBeVisible({
+            await expect(appPage.getByText('DESCRIPTION', { exact: true })).toBeVisible({
                 timeout: 30_000,
             })
-            await expect(orgPage.getByText('TAGS', { exact: true })).toHaveCount(0)
+            await expect(appPage.getByText('TAGS', { exact: true })).toHaveCount(0)
         } finally {
-            await orgPage.close()
+            await appPage.close()
         }
 
         // A downgrade is a modification too: it reverts files + rebuilds the

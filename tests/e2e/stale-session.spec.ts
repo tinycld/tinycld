@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { login, ORG_SLUG } from './helpers'
+import { appShell, login } from './helpers'
 
 // A PocketBase auth token carries a JWT `exp`; when a session outlives it the
 // token string is still sitting in storage but every request now fails. The old
@@ -8,10 +8,9 @@ import { login, ORG_SLUG } from './helpers'
 // records and any create threw for want of org context. This spec forges an
 // expired token into the app's stored auth and asserts the app now recovers to
 // the login gate instead of that broken half-session.
-
 test('an expired token recovers to the login gate, not a broken half-session', async ({ page }) => {
     await login(page)
-    await expect(page).toHaveURL(/\/a\//)
+    await expect(appShell(page)).toBeVisible()
 
     // Read the app's own stored auth, expire its token, write it back — exactly
     // the on-disk state of a session whose token lapsed while the app was closed.
@@ -42,7 +41,7 @@ test('an expired token recovers to the login gate, not a broken half-session', a
     // Reload: boot re-hydrates from the forged storage. The hardened gate sees an
     // invalid token and refreshAuth() clears the dead session, so the app must
     // land on the login gate rather than a signed-in-but-empty workspace.
-    await page.goto(`/a/${ORG_SLUG}`)
+    await page.goto(`/`)
 
     await expect(page.getByTestId('identifier')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText('Sign in', { exact: true }).last()).toBeVisible()

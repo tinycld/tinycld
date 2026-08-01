@@ -21,6 +21,6 @@ Press `t` followed by a single letter to jump between packages (the letter is sh
 
 ## Where to go next
 
-- [Organizations](help://core:organizations) — how data is scoped per org
+- [Organizations](help://core:organizations) — your workspace and member roles
 - [Themes](help://core:themes) — light and dark mode
 - [Installing packages](help://core:installing-packages) — adding new features

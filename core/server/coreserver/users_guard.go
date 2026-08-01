@@ -25,16 +25,45 @@ var selfEditableUserFields = map[string]bool{
 	"password": true,
 }
 
-// adminEditableUserFields lists the fields shared-org admins are allowed
-// to modify on other users via the relaxed users.updateRule.
+// adminEditableUserFields lists the fields owners/admins are allowed to modify
+// on other users via the relaxed users.updateRule.
 //
 // We use an allowlist rather than a denylist so that future additions to the
 // users collection (PB upgrades, new auth hooks) default to "rejected"
-// instead of silently becoming admin-writable.
+// instead of silently becoming admin-writable. `role` is admin-editable so an
+// owner/admin can promote or demote a member; `disabled` so they can suspend
+// and restore an account.
+//
+// `disabled` is deliberately absent from selfEditableUserFields, for the same
+// reason as `is_demo`: a suspended user must not be able to lift their own
+// suspension. Self-disable goes through POST /api/account/disable, which
+// re-verifies identity by email confirmation.
 var adminEditableUserFields = map[string]bool{
-	"name":    true,
-	"avatar":  true,
-	"is_demo": true,
+	"name":     true,
+	"avatar":   true,
+	"is_demo":  true,
+	"role":     true,
+	"disabled": true,
+}
+
+// revokeSessionsOnDisable rotates the auth token key when an admin flips
+// `disabled` on, so every JWT already issued to that account stops working.
+//
+// Without it a suspension is advisory until the last token expires — hours in
+// which a compromised account an admin has just locked keeps its live
+// sessions, which is the case suspension exists for. Self-disable already does
+// this (see the /api/account/disable handler); this is the admin-side copy.
+//
+// The cost is that re-enabling forces a fresh sign-in on every device. That
+// trade is already accepted for self-disable, and it is the right one: a
+// suspension you can wait out is not a suspension.
+//
+// Only the false→true edge rotates. Re-enabling, and any other admin edit,
+// must leave sessions alone — otherwise a name change signs the user out.
+func revokeSessionsOnDisable(record *core.Record, original *core.Record) {
+	if record.GetBool("disabled") && !original.GetBool("disabled") {
+		record.RefreshTokenKey()
+	}
 }
 
 // RegisterUsersDemoAuditHook writes an audit_logs entry every time the
@@ -90,14 +119,13 @@ func registerUsersDemoAuditHookCore(app core.App) {
 // RegisterUsersFieldGuard rejects update requests on the users collection
 // that fall outside two narrow paths:
 //   - Self-edits: the record owner can change anything (PB's normal auth).
-//   - Admin-edits: a caller who is an admin/owner of an org shared with the
-//     target can change ONLY the allowlisted fields above.
+//   - Admin-edits: a caller who is an owner/admin (users.role) can change
+//     ONLY the allowlisted fields above.
 //
-// The relaxed users.updateRule (migration 1810000000) lets any shared-org
-// member attempt an update so client code can use pbtsdb mutations directly;
-// this hook narrows that to "shared-org admin, allowlisted field only".
-// PocketBase's collection rules can't constrain which fields a write touches
-// or join through user_org with a role filter — per-field policy lives here.
+// The relaxed users.updateRule lets any authenticated user attempt an update so
+// client code can use pbtsdb mutations directly; this hook narrows that to
+// "owner/admin, allowlisted field only". PocketBase's collection rules can't
+// constrain which fields a write touches, so per-field policy lives here.
 func RegisterUsersFieldGuard(app *pocketbase.PocketBase) {
 	registerUsersFieldGuardCore(app)
 }
@@ -111,16 +139,20 @@ func registerUsersFieldGuardCore(app core.App) {
 			return e.UnauthorizedError("Authentication required", nil)
 		}
 
+		original := e.Record.Original()
+
 		// Superusers bypass the field allowlist. The guard exists to constrain
 		// regular API clients (self-edits, org-admin edits); superusers already
 		// bypass collection rules and are trusted with full administrative
 		// writes (seed/reset scripts overwrite email/password on the demo
-		// account, operators reset locked-out users, etc.).
+		// account, operators reset locked-out users, etc.). Suspension still
+		// ends sessions on this path: an operator locking a compromised
+		// account has the same expectation an org admin does.
 		if e.Auth.IsSuperuser() {
+			revokeSessionsOnDisable(e.Record, original)
 			return e.Next()
 		}
 
-		original := e.Record.Original()
 		isSelf := e.Auth.Id == e.Record.Id
 
 		// Demo accounts are shared across anonymous visitors via /api/demo/start.
@@ -157,47 +189,20 @@ func registerUsersFieldGuardCore(app core.App) {
 			}
 		}
 
-		// Self-edits don't need the org-admin check below.
+		// Self-edits don't need the admin check below.
 		if isSelf {
 			return e.Next()
 		}
 
-		// Verify the caller is an admin/owner of an org shared with the target.
-		// Two queries beat a single SQL join: PB's record-level filter language
-		// is friendlier than wrangling RawQuery here.
-		callerOrgs, err := e.App.FindRecordsByFilter(
-			"user_org",
-			"user = {:caller} && (role = 'admin' || role = 'owner')",
-			"",
-			0,
-			0,
-			map[string]any{"caller": e.Auth.Id},
-		)
-		if err != nil || len(callerOrgs) == 0 {
+		// Single-org: the caller must hold an owner/admin role on their own
+		// users record to edit another user.
+		if !isOrgAdmin(e.Auth) {
 			return e.ForbiddenError("Org admin role required", nil)
 		}
-		callerOrgIDs := make(map[string]bool, len(callerOrgs))
-		for _, uo := range callerOrgs {
-			callerOrgIDs[uo.GetString("org")] = true
-		}
 
-		targetOrgs, err := e.App.FindRecordsByFilter(
-			"user_org",
-			"user = {:target}",
-			"",
-			0,
-			0,
-			map[string]any{"target": e.Record.Id},
-		)
-		if err != nil {
-			return e.ForbiddenError("Org admin role required", nil)
-		}
-		for _, uo := range targetOrgs {
-			if callerOrgIDs[uo.GetString("org")] {
-				return e.Next()
-			}
-		}
-
-		return e.ForbiddenError("Org admin role required", nil)
+		// After the allowlist walk, not before: rotating the key changes
+		// `tokenKey`, which the walk would then reject as an unpermitted field.
+		revokeSessionsOnDisable(e.Record, original)
+		return e.Next()
 	})
 }

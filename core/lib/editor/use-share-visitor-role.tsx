@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { captureException } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
-import type { UserOrg } from '@tinycld/core/types/pbSchema'
 import { type ShareSession, useShareSession } from '../anon-identity'
 
 // drive_shares is owned by @tinycld/drive — its row shape isn't part of
@@ -15,7 +14,7 @@ import { type ShareSession, useShareSession } from '../anon-identity'
 interface DriveSharesRow {
     id: string
     item: string
-    user_org: string
+    user: string
     role: 'owner' | 'editor' | 'commentor' | 'viewer'
 }
 
@@ -26,11 +25,11 @@ interface DriveSharesRow {
 // - 'loading': either the share session OR the membership lookup is in flight.
 // - 'anon':    no authed PB session (the visitor is browsing anonymously).
 // - 'guest':   authed, AND has a drive_shares row for this item whose
-//              user_org.role === 'guest' in the owner's org. Guests must
-//              stay on the share route — they don't have org access.
-// - 'member':  authed, but NOT a guest of this item — i.e. a real org
-//              member who arrived via the share link. The route should
-//              redirect them to the workspace.
+//              user.role === 'guest'. Guests must stay on the share route —
+//              they don't have workspace access.
+// - 'member':  authed, but NOT a guest of this item — i.e. a real member who
+//              arrived via the share link. The route should redirect them to
+//              the workspace.
 // - 'unknown': authed, but the drive_shares lookup returned nothing AND we
 //              have no other signal. Treated as 'member' by the share
 //              route (a signed-in user with no share row is presumed to
@@ -40,13 +39,21 @@ export type ShareVisitorRole = 'loading' | 'anon' | 'guest' | 'member' | 'unknow
 interface ShareVisitorRoleResult {
     role: ShareVisitorRole
     isLoading: boolean
-    // When role === 'guest', these are populated for buildGuestMount.
-    userOrgId?: string
+    // When role === 'guest', shareRole is populated for buildGuestMount.
     shareRole?: 'viewer' | 'commentor' | 'editor'
 }
 
-interface DriveShareWithUserOrg extends DriveSharesRow {
-    expand?: { user_org?: UserOrg }
+// drive_shares.user is a direct relation to users (drive's migration renamed
+// it from user_org when the junction was removed). Only its role is read here.
+// Minimal local shape so core typechecks standalone (the drive collection isn't
+// in core's pbSchema).
+interface ShareUser {
+    id: string
+    role: 'owner' | 'admin' | 'member' | 'guest'
+}
+
+interface DriveShareWithUser extends DriveSharesRow {
+    expand?: { user?: ShareUser }
 }
 
 // useShareLinkVisitorRole resolves the visitor's relationship to THIS
@@ -59,27 +66,38 @@ export function useShareLinkVisitorRole(token: string): ShareVisitorRoleResult {
     const userId = auth.isLoggedIn ? auth.user.id : null
     const itemId = session?.itemId ?? null
 
-    // Drive_shares row for THIS user and THIS item, expanding user_org so
-    // we can read its role and capture the user_org.id (which the guest
-    // mount needs as identity.userOrgId).
-    const lookupQuery = useQuery<DriveShareWithUserOrg | null>({
+    // Drive_shares row for THIS user and THIS item, expanding the user so
+    // we can read their role.
+    const lookupQuery = useQuery<DriveShareWithUser | null>({
         queryKey: ['share-visitor-role', token, userId, itemId],
         queryFn: async () => {
             if (!userId || !itemId) return null
             try {
-                // Guest share-access lookup — a relational filter (user_org.user)
-                // + expand for a user who has no pbtsdb store; cached via React
-                // Query. This file is exempted from the pbtsdb-no-raw-pb-access
-                // plugin in biome.json.
-                return await pb.collection('drive_shares').getFirstListItem<DriveShareWithUserOrg>(
-                    pb.filter('item = {:itemId} && user_org.user = {:userId}', {
+                // Guest share-access lookup — a direct filter on the share's
+                // user + expand for a user who has no pbtsdb store; cached via
+                // React Query. This file is exempted from the
+                // pbtsdb-no-raw-pb-access plugin in biome.json.
+                //
+                // Single-org: `user` is a direct users relation. The old
+                // `user_org.user` filter walked a relation on a field drive had
+                // renamed, so the query threw, the catch below swallowed it, and
+                // every guest silently fell back to an anon mount.
+                return await pb.collection('drive_shares').getFirstListItem<DriveShareWithUser>(
+                    pb.filter('item = {:itemId} && user = {:userId}', {
                         itemId,
                         userId,
                     }),
-                    { expand: 'user_org' }
+                    { expand: 'user' }
                 )
-            } catch {
-                // 404 / no row found → treat as no membership for this item.
+            } catch (err) {
+                // 404 / no row found is a genuine "no membership". Anything
+                // else — network, auth, schema drift — is exactly the class
+                // this bare catch once hid (the user_org filter bug), so it
+                // must reach Sentry even though the safe fallback is the same.
+                const status = (err as { status?: number } | null)?.status
+                if (status !== 404) {
+                    captureException('editor.shareVisitorRole.membership', err, { itemId })
+                }
                 return null
             }
         },
@@ -99,8 +117,8 @@ export function useShareLinkVisitorRole(token: string): ShareVisitorRoleResult {
     }
 
     const row = lookupQuery.data
-    const userOrg = row?.expand?.user_org
-    if (row && userOrg?.role === 'guest') {
+    const shareUser = row?.expand?.user
+    if (row && shareUser?.role === 'guest') {
         // Guest provisioning (drive endpoints_share_otp.go) only ever writes
         // drive_shares.role = 'commentor' or 'editor'. An 'owner' (or any other
         // unexpected role) on a guest's drive_shares row indicates a
@@ -125,7 +143,6 @@ export function useShareLinkVisitorRole(token: string): ShareVisitorRoleResult {
         return {
             role: 'guest',
             isLoading: false,
-            userOrgId: userOrg.id,
             shareRole,
         }
     }

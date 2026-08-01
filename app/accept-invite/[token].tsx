@@ -9,11 +9,14 @@ import { CheckCircle2, KeyRound } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
+// Mirrors handleGetAcceptInvite's response. Single-org: there is no org name
+// or slug to send — the deployment IS the org, and org branding has no source
+// yet (HANDOFF §6) — so the copy must not interpolate one. An earlier version
+// typed orgName/orgSlug the handler never sent and rendered "Welcome to "
+// with an empty name.
 interface InviteInfo {
     username: string
     email: string
-    orgName: string
-    orgSlug: string
     role: string
 }
 
@@ -138,15 +141,14 @@ function AcceptForm({ token, info }: { token: string; info: InviteInfo }) {
                 const body = (await res.json().catch(() => null)) as { message?: string } | null
                 throw new Error(body?.message ?? 'Failed to accept invitation')
             }
-            const { username, orgSlug } = (await res.json()) as {
+            const { username } = (await res.json()) as {
                 username: string
                 email: string
-                orgSlug: string
             }
 
             await pb.collection('users').authWithPassword(username, data.password)
             setIsSuccess(true)
-            router.replace(`/a/${orgSlug}`)
+            router.replace('/')
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to accept invitation'
             captureException('invite.accept.submit', err)
@@ -170,7 +172,7 @@ function AcceptForm({ token, info }: { token: string; info: InviteInfo }) {
                     )}
                 </View>
                 <Text className="text-xl font-semibold text-foreground text-center">
-                    Welcome to {info.orgName}
+                    You're invited
                 </Text>
                 <Text
                     className="text-center text-[13px] text-muted-foreground"

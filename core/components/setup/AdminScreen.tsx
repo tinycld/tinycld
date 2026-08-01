@@ -13,13 +13,21 @@ import { Pressable, ScrollView, Text, View } from 'react-native'
 // / MobileDrawer (mobile). On mobile it adds a header with a menu button that
 // opens the section drawer, since the rail/sidebar isn't persistently visible
 // there — matching how package screens (e.g. calendar) expose their sidebar.
+// "Build History" → "build-history". Keeps the testID stable and readable
+// without coupling it to the route slug, which the screen doesn't receive.
+const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+
 export function AdminScreen({ title, children }: { title: string; children: ReactNode }) {
     const breakpoint = useBreakpoint()
     const setDrawerOpen = useWorkspaceStore(s => s.setDrawerOpen)
     const fgColor = useThemeColor('foreground')
 
     return (
-        <View className="flex-1 bg-background">
+        // Names the mounted admin section. The title itself only renders inside
+        // MobileHeader (hidden on desktop), so this is the one signal available
+        // at every breakpoint — e2e gates on it rather than on the URL, which
+        // changes before the section's content commits.
+        <View className="flex-1 bg-background" testID={`admin-section-${slugify(title)}`}>
             <MobileHeader
                 isVisible={breakpoint === 'mobile'}
                 title={title}

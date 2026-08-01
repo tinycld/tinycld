@@ -1,0 +1,157 @@
+//go:build !no_default_driver
+
+package core
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"sync"
+
+	"github.com/pocketbase/dbx"
+	sqlite "modernc.org/sqlite"
+)
+
+// sqliteLimitAttached is SQLITE_LIMIT_ATTACHED, the maximum number of databases
+// that may be ATTACHed to a connection. Zero makes ATTACH fail outright.
+//
+// https://www.sqlite.org/c3ref/c_limit_attached.html
+const sqliteLimitAttached = 7
+
+// noAttachMaxConns bounds the connection pool so every connection can be
+// primed up front. SQLITE_LIMIT_ATTACHED is a property of a connection, not of
+// a database, and database/sql opens connections lazily — so the only way to
+// guarantee no unrestricted connection is ever handed out is to cap the pool
+// and prime the whole cap before the pool is used.
+//
+// PocketBase already runs its non-concurrent DB at 1 connection and its
+// concurrent DB at a small multiple; this cap sits above normal tenant load.
+const noAttachMaxConns = 24
+
+// restrictedPools records every pool NoAttachDBConnect has primed, so the pool
+// settings the priming depends on can be re-established if something later
+// reconfigures them (see reapplyNoAttachLimits).
+//
+// Keyed by *sql.DB identity, not by path: two apps in one process may
+// legitimately open the same file with different policies — the router's
+// control plane and a tenant, in the deployment this exists for.
+var restrictedPools sync.Map // *sql.DB -> struct{}
+
+// NoAttachDBConnect opens a database whose connections cannot ATTACH another
+// file. Use it for any app that executes untrusted JS.
+//
+// Withholding the $os/$filesystem/$http bindings from a sandboxed VM does not
+// take away its file access, because $app stays bound and $app exposes raw SQL
+// (db, nonconcurrentDB, concurrentDB, auxDB, runInTransaction). ATTACH DATABASE
+// against an absolute path is then a read and write primitive for anything the
+// process user can reach — in a multi-tenant deployment, every other tenant's
+// data.db and the control plane's.
+//
+// IMPORTANT for callers that also configure the pool: the restriction depends
+// on the pool settings applied here (see restrictAttach). A caller that
+// overwrites MaxOpenConns/MaxIdleConns/ConnMaxIdleTime afterwards silently
+// defeats it — BaseApp.initDataDB did exactly that — so any such caller must
+// route through ReapplyNoAttachLimits.
+//
+// A host may also separate tenants by uid, and should. That is a second line
+// rather than a substitute: it is absent on developer machines, absent when the
+// router runs unprivileged, and it fails outright for any pair of tenants that
+// end up sharing a uid.
+func NoAttachDBConnect(dbPath string) (*dbx.DB, error) {
+	db, err := DefaultDBConnect(dbPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := restrictAttach(db.DB()); err != nil {
+		db.Close()
+		return nil, err
+	}
+	restrictedPools.Store(db.DB(), struct{}{})
+	return db, nil
+}
+
+// ReapplyNoAttachLimits re-establishes the ATTACH restriction on a pool that
+// NoAttachDBConnect opened, and is a no-op for any other pool. Call it after
+// changing a pool's connection limits.
+//
+// This exists because the restriction is only as durable as the pool settings
+// it rests on. SQLITE_LIMIT_ATTACHED is per connection and database/sql opens
+// connections lazily, so "prime every connection up front" holds only while the
+// cap and the pinned idle pool hold. Raising MaxOpenConns admits unprimed
+// connections; a non-zero ConnMaxIdleTime lets primed ones be retired and
+// replaced by unprimed ones. Both reopen a full cross-tenant ATTACH escape
+// without touching this file, which is why the re-priming lives next to the
+// original rather than at the call site.
+func ReapplyNoAttachLimits(sqlDB *sql.DB) error {
+	if _, ok := restrictedPools.Load(sqlDB); !ok {
+		return nil
+	}
+	return restrictAttach(sqlDB)
+}
+
+// restrictAttach caps the pool and sets SQLITE_LIMIT_ATTACHED to 0 on every
+// connection in it.
+//
+// Two pool properties make this sound, and both are load-bearing:
+//
+//   - Connections are held open simultaneously while being primed. Releasing
+//     each before opening the next would let database/sql hand the same
+//     connection back repeatedly, priming one connection N times and leaving
+//     the rest untouched.
+//   - The idle pool is pinned so a primed connection is never discarded.
+//     database/sql closes idle connections on its own schedule and opens fresh,
+//     unprimed ones on demand; with the defaults, priming N connections and
+//     releasing them leaves only some primed, and the pool serves an
+//     unrestricted connection a few acquisitions later. Pinning is what makes
+//     "primed once at open" mean "primed for the life of the pool".
+//
+// The limit itself persists across a connection's return to and reuse from the
+// pool, so no re-priming is needed for as long as these hold.
+func restrictAttach(sqlDB *sql.DB) error {
+	sqlDB.SetMaxOpenConns(noAttachMaxConns)
+	sqlDB.SetMaxIdleConns(noAttachMaxConns)
+	sqlDB.SetConnMaxIdleTime(0)
+	sqlDB.SetConnMaxLifetime(0)
+
+	ctx := context.Background()
+	conns := make([]*sql.Conn, 0, noAttachMaxConns)
+	defer func() {
+		for _, c := range conns {
+			c.Close()
+		}
+	}()
+
+	for i := 0; i < noAttachMaxConns; i++ {
+		c, err := sqlDB.Conn(ctx)
+		if err != nil {
+			return fmt.Errorf("open connection %d to restrict ATTACH: %w", i, err)
+		}
+		conns = append(conns, c)
+		if _, err := sqlite.Limit(c, sqliteLimitAttached, 0); err != nil {
+			return fmt.Errorf("set SQLITE_LIMIT_ATTACHED on connection %d: %w", i, err)
+		}
+	}
+
+	// Prove it took effect rather than trusting the call: a driver change that
+	// silently stopped honouring the limit would otherwise reopen the hole with
+	// every test still green.
+	if err := assertAttachBlocked(ctx, conns[0]); err != nil {
+		return err
+	}
+	return nil
+}
+
+// assertAttachBlocked verifies the restriction on a live connection. It targets
+// a path that does not exist: if ATTACH is refused we get the limit error, and
+// if it is permitted SQLite happily creates the file — which is itself the
+// failure, so either outcome is unambiguous.
+func assertAttachBlocked(ctx context.Context, c *sql.Conn) error {
+	_, err := c.ExecContext(ctx, "ATTACH DATABASE ':memory:' AS tinycld_attach_probe")
+	if err == nil {
+		_, _ = c.ExecContext(ctx, "DETACH DATABASE tinycld_attach_probe")
+		return fmt.Errorf("ATTACH DATABASE is still permitted after setting " +
+			"SQLITE_LIMIT_ATTACHED: untrusted JS could read every other tenant's database")
+	}
+	return nil
+}

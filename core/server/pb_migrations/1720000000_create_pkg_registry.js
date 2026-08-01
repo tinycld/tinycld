@@ -104,21 +104,12 @@ migrate(
             name: 'org_pkg_enabled',
             type: 'base',
             system: false,
-            listRule: 'org.users.id ?= @request.auth.id',
-            viewRule: 'org.users.id ?= @request.auth.id',
+            listRule: '@request.auth.id != ""',
+            viewRule: '@request.auth.id != ""',
             createRule: null,
             updateRule: null,
             deleteRule: null,
             fields: [
-                {
-                    id: 'ope_org',
-                    name: 'org',
-                    type: 'relation',
-                    required: true,
-                    collectionId: 'pbc_orgs_00001',
-                    cascadeDelete: true,
-                    maxSelect: 1,
-                },
                 {
                     id: 'ope_pkg',
                     name: 'pkg',
@@ -147,7 +138,7 @@ migrate(
                 },
             ],
             indexes: [
-                'CREATE UNIQUE INDEX `idx_org_pkg_enabled_pair` ON `org_pkg_enabled` (`org`, `pkg`)',
+                'CREATE UNIQUE INDEX `idx_org_pkg_enabled_pair` ON `org_pkg_enabled` (`pkg`)',
             ],
         })
         app.save(orgPkgEnabled)

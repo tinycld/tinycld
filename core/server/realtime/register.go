@@ -431,4 +431,3 @@ func makeAssignFrame(id [clientIDLen]byte) []byte {
 	frame[clientIDLen] = byte(MsgAssignID)
 	return frame
 }
-

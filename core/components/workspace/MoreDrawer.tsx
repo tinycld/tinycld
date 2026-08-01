@@ -1,10 +1,9 @@
 import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
-import { navigateToOrg } from '@tinycld/core/lib/org-url'
+import { navigateToOrgUrl } from '@tinycld/core/lib/org-url'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgSlug } from '@tinycld/core/lib/use-org-slug'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { BottomDrawer } from '@tinycld/core/ui/bottom-drawer'
 import { useRouter } from 'expo-router'
@@ -14,7 +13,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { MAX_VISIBLE_TABS } from './MobileTabBar'
 import { MoreDrawerAdminItem } from './MoreDrawerAdminItem'
 import { getIcon } from './package-icon-map'
-import { useUserOrgs } from './useUserOrgs'
+import { isCurrentOrg, useUserOrgs } from './useUserOrgs'
 
 export function MoreDrawer() {
     const isMoreOpen = useWorkspaceStore(s => s.isMoreOpen)
@@ -26,7 +25,6 @@ export function MoreDrawer() {
     const borderColor = useThemeColor('border')
     const router = useRouter()
     const orgHref = useOrgHref()
-    const orgSlug = useOrgSlug()
     const { user, logout } = useAuth()
     const orgs = useUserOrgs()
     const sorted = useSortedPackages()
@@ -87,6 +85,10 @@ export function MoreDrawer() {
 
                 <MoreDrawerAdminItem onNavigate={handleNav} />
 
+                {/* Cross-org switcher: entries come from the parent-domain
+                    cookie tenants write at login (useUserOrgs); each row is a
+                    full page load on the target org's own origin. Hidden
+                    unless the browser knows more than one org. */}
                 {orgs.length > 1 ? (
                     <>
                         <View
@@ -103,13 +105,13 @@ export function MoreDrawer() {
                             Organizations
                         </Text>
                         {orgs.map(org => {
-                            const isActive = org.slug === orgSlug
+                            const isActive = isCurrentOrg(org)
                             const color = isActive ? activeColor : textColor
                             return (
                                 <Pressable
                                     key={org.id}
                                     className="flex-row items-center gap-3.5 px-4 py-3.5 rounded-lg"
-                                    onPress={() => handleNav(() => navigateToOrg(org.slug))}
+                                    onPress={() => handleNav(() => navigateToOrgUrl(org.url))}
                                 >
                                     <OrgLogo org={org} size={20} />
                                     <Text className="text-base font-medium" style={{ color }}>
@@ -157,9 +159,7 @@ export function MoreDrawer() {
                                     key={pkg.slug}
                                     testID={`nav-${pkg.slug}`}
                                     className="flex-row items-center gap-3.5 px-4 py-3.5 rounded-lg"
-                                    onPress={() =>
-                                        handleNav(() => router.push(`/a/${orgSlug}/${pkg.slug}`))
-                                    }
+                                    onPress={() => handleNav(() => router.push(`/${pkg.slug}`))}
                                 >
                                     <Icon size={20} color={color} />
                                     <Text className="text-base font-medium" style={{ color }}>

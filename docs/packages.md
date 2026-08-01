@@ -231,7 +231,7 @@ const manifest = {
     version: '0.1.0',
     description: 'Shared contacts for your organization',
 
-    routes: { directory: 'screens' },          // org-scoped routes
+    routes: { directory: 'screens' },          // signed-in app routes
     publicRoutes: { directory: 'public-screens' }, // public top-level routes
 
     nav: {                                     // nav-rail entry
@@ -242,7 +242,8 @@ const manifest = {
     },
 
     migrations: { directory: 'pb-migrations' },
-    hooks: { directory: 'pb-hooks' },          // PocketBase JS hooks
+    hooks: { directory: 'pb-hooks' },          // PocketBase JS hooks (and the
+                                               // caldavHook/webdavHook seams)
 
     collections: { register: 'collections', types: 'types' },
 
@@ -267,8 +268,8 @@ export default manifest
 | Field | Effect when present |
 |---|---|
 | `name` / `slug` / `version` / `description` | Required identifiers. `slug` is the URL segment and collection-name prefix. |
-| `routes.directory` | Each file becomes an org-scoped route under `app/a/[orgSlug]/<slug>/`. |
-| `publicRoutes.directory` | Each file becomes a public top-level route under `app/<path>` (outside the org-scoped `app/a/[orgSlug]/` tree — e.g. drive's share routes). |
+| `routes.directory` | Each file becomes an authenticated route under `app/(app)/<slug>/`. |
+| `publicRoutes.directory` | Each file becomes a public top-level route under `app/<path>` (outside the authenticated `app/(app)/` group — e.g. drive's share routes). |
 | `nav` | Adds a nav-rail entry. `shortcut` registers a `t <letter>` jump and must be unique (validated at generate time). |
 | `migrations.directory` | `*.js` migrations symlinked into `server/pb_migrations/`. |
 | `hooks.directory` | PocketBase JS hooks symlinked into `server/pb_hooks/`. |
@@ -279,7 +280,9 @@ export default manifest
 | `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order? }` is generator-validated. |
 | `help.directory` | `<id>.md` topics surfaced in the in-app help hub. |
 | `seed.script` | Dev sample-data function. |
-| `server` | Go server extension: `package` is the subdir, `module` is its Go module path. |
+| `server` | Go server extension: `package` is the subdir, `module` is its Go module path. The module exports ONE entry point, `Register(app *pocketbase.PocketBase)`, called by the generated registrar in both the single-org app and a multi-org tenant. Optional `mailListeners: true` tells the multi-org ROUTER this package serves mail protocols, so it creates per-org mail sockets; the package's `Register` discovers them via `coreserver.GetTenantContext(app)` (the router owns every listening port — a tenant must never bind one; host mode binds its own ports). |
+| `carddav` / `caldav` / `webdav` | Declarative protocol config, served by the matching core library. Each block **mirrors the `Source` literal the package's own Go registers**, and exists so a multi-org tenant — which links no feature package — can still serve the protocol: the router materializes the block into `<orgDir>/.runtime/<proto>.json` and core reads it there. Keep the two in sync. **Mount protocol handlers under the reserved `/dav` prefix** (e.g. `/dav/drive`): a DAV `prefix` becomes a literal server route, which beats the SPA catch-all, so mounting at a bare package slug makes the in-app route of the same name unreachable on a hard load — WebDAV at `/drive` shadowed the `/drive` screen exactly this way. `/dav` is reserved and must never be a package slug. Authorization is deliberately absent from all three: core evaluates the collections' own PocketBase rules, which travel in the schema (a Go closure cannot cross a process boundary). See [hooks.md](hooks.md). |
+| `quota` | `[{ collection, sizeField, ownerField? }]` — storage-bearing collections `core/quota` enforces ceilings on, as record hooks. A source with no `ownerField` counts toward the org ceiling only. |
 | `build.script` | A build script run before bundling (e.g. an embedded webview bundle). |
 | `dependencies[]` | A **slug-only** list of other packages — **advisory + seed-ordering only.** Used to topologically sort seed execution and as a soft hint; it imposes **no** version constraint and is never a compile-time import. |
 | `peerVersions` | `{ '<slug or @tinycld/core>': '<semver range>' }` (e.g. `{ '@tinycld/core': '>=2.1 <3' }`) — **enforced** semver ranges keyed by slug. See [`dependencies` vs `peerVersions`](#dependencies-vs-peerversions) below. |
@@ -296,6 +299,24 @@ A package can contribute **only** a settings panel (no nav, no routes — like
 combination. The manifest is read by the generator with a regex +
 `new Function` (not a real `import`), so it must be a plain object literal with
 no runtime imports.
+
+### Collection naming and package access enforcement
+
+**Name every collection your package creates `<slug>_*` (or exactly the
+slug).** That is more than a style rule: `core/server/pkgaccess` resolves
+which installed package (pkg_registry) owns a collection by this convention —
+dashes in a slug match underscores in the name — and enforces the per-user
+`org_pkg_access` level on it server-side. A `readonly` or `none` user's
+writes to owned collections are refused on the REST record endpoints, the
+DAV protocol servers, and mail's IMAP/SMTP sessions; reads stay governed by
+the collection's own rules. The client mirrors the same resolution in
+`usePkgAccess` for UI gating.
+
+Because ownership is name-derived, enforcement covers TS-only packages with
+no Go of their own. A collection named outside the convention is treated as
+core/shared data and gets **no** package-access enforcement — deliberate for
+genuinely shared infrastructure (drive's polymorphic `comment_mentions`),
+a silent hole for anything else.
 
 ### Manifest variation across shipped packages
 
@@ -343,7 +364,7 @@ export function registerCollections(
 ) {
     const contacts = newCollection('contacts', {
         omitOnInsert: ['created', 'updated', 'deleted_at'] as const,
-        expand: { owner: coreStores.user_org },
+        expand: { owner: coreStores.users },
         collectionOptions: { autoIndex: 'eager' as const, defaultIndexType: BasicIndex },
     })
     return { contacts }
@@ -364,15 +385,16 @@ through `createCollection<MergedSchema>`). At runtime, `buildPackageStores`
 ### `seed.ts`
 
 A package's seed exports a **default async function** receiving a `SeedContext`
-that always provides `org` and `userOrg`, and optionally `user`:
+carrying the seeded user (single-org: seeds own data by the user id directly):
 
 ```ts
 import type PocketBase from 'pocketbase'
 
 interface SeedContext {
-    user: { id: string; email: string; name: string }
-    org: { id: string }
-    userOrg: { id: string }
+    // `username` is what mail derives mailbox addresses from — derive from it,
+    // never from the email local-part, or seeded users get a different address
+    // than the server would provision.
+    user: { id: string; username: string; email: string; name: string }
 }
 
 export default async function seed(pb: PocketBase, ctx: SeedContext): Promise<void> {
@@ -443,7 +465,7 @@ is gitignored — never commit any of it.**
 
 For each linked package it reads `manifest.ts` and emits **only**:
 
-### A. Route re-exports → `app/a/[orgSlug]/<slug>/**`
+### A. Route re-exports → `app/(app)/<slug>/**`
 
 For each file under `routes.directory`, a one-line re-export shim that plugs a
 sibling screen into Expo Router's filesystem routing — Expo Router needs real
@@ -453,11 +475,10 @@ files on disk, so these can't be derived at runtime:
 export { default } from '@tinycld/contacts/screens/index'
 ```
 
-`publicRoutes` work the same way but land at the public top level — `app/<path>`
-(e.g. drive's share routes) — rather than under the org-scoped
-`app/a/[orgSlug]/` tree. The generated public-route shims are gitignored; any
-hand-written layout/index files in the public tree stay tracked and are
-force-added despite the gitignore.
+`publicRoutes` work the same way but land under the public tree — `app/p/<path>`
+(e.g. drive's share routes) — rather than the signed-in `app/(app)/` tree. The
+generated public-route shims are gitignored; any hand-written layout/index files
+in the public tree stay tracked and are force-added despite the gitignore.
 
 ### B. `tinycld.config.ts` (via `scripts/generate-config.ts`)
 
@@ -525,6 +546,15 @@ files — regenerate by re-running the install/generate. (Likewise the per-packa
 
 See [the Go server section](#the-go-pocketbase-server-side).
 
+The ONE generated registrar serves both modes of the dual-mode binary
+(DESIGN-org-package-agency D5): `server/main.go` dispatches to tenant mode
+when invoked with `--org-dir` (the multi-org router's flag contract, making a
+per-org build artifact a drop-in tenant binary) and passes the same
+`registerPackageExtensions` there. A package that must behave differently
+hosted detects it via `coreserver.GetTenantContext(app)` / `IsTenant(app)` —
+the tenant composition stamps that context before the registrar runs. There
+is no separate tenant registrar or `RegisterTenant` entry point.
+
 What the generator **no longer** emits: `package-collections.ts`,
 `package-registry.ts`, `package-sidebars.ts`, `package-providers.ts`,
 `package-settings.ts`, and `package-seeds.ts`. Those are all derived at runtime
@@ -579,9 +609,9 @@ definePackageEntry<MailSchema>()({
 export const packageSettings = deriveSettings(tinycldConfig)
 // → PackageSettingsGroup[] grouped by package
 
-// app/app/a/[orgSlug]/settings/index.tsx
+// app/(app)/settings/index.tsx
 packageSettings.map(group => group.panels.map(panel => /* render link */))
-// app/app/a/[orgSlug]/settings/[...section].tsx
+// app/(app)/settings/[...section].tsx
 // looks up the matching panel by [pkgSlug, panelSlug] and renders panel.Component
 ```
 
@@ -806,17 +836,18 @@ on every `packages:generate`:
   `tinycld-config.ts`, `package-help.ts`, `package-icons.ts`,
   `uniwind-sources.css`)
 - `tinycld/tinycld.config.ts` and `tinycld/tinycld.seeds.ts`
-- generated org-scoped routes under `tinycld/app/a/[orgSlug]/<slug>/**` and the
-  generated public routes under `tinycld/app/<path>`
+- generated app routes under `tinycld/app/(app)/<slug>/**` and the
+  generated public routes under `tinycld/app/p/<path>`
 - `tinycld/server/pb_migrations/` + `tinycld/server/pb_hooks/` (symlinks),
   `server/package_extensions.go`, `server/go.work`
 - `tinycld/core/types/pbSchema.ts` and `pbZodSchema.ts` (regenerated from the
   on-disk PocketBase migrations every install — the source of truth)
 
 (The `node_modules/@tinycld/*` symlinks are also local-only state, created by
-`link-members.ts` — never `git add` them. The app-owned files
-`app/a/[orgSlug]/_layout.tsx` and `app/a/[orgSlug]/settings/*` are force-added
-to git despite living under a gitignored tree.)
+`link-members.ts` — never `git add` them. The app-owned route dirs
+`app/(app)/settings/`, `app/(app)/help/`, and `app/(app)/admin/`, plus
+`app/(app)/_layout.tsx` and `app/p/_layout.tsx`, are tracked via `.gitignore`
+carve-outs despite living under a gitignored tree.)
 
 ---
 

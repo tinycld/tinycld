@@ -10,13 +10,12 @@ Every API-driven create, update, or delete on the collections below produces an 
 
 | Collection | Label shown | Notes |
 |---|---|---|
-| `orgs` | org name | Org-level settings changes |
-| `user_org` | role | Member added/removed/role changed |
+| `users` | user email | Role/disabled changes and demo-flag flips, written by dedicated hooks (`users_guard.go`) rather than the generic registration so routine profile edits don't spam the log |
 | `labels` | label name | |
 | `label_assignments` | — | Label applied/removed from a record |
-| `settings` | `app:key` | Org settings key-value changes |
+| `settings` | `app:key` | Settings key-value changes |
 | `org_pkg_access` | — | Per-member package access overrides |
-| `org_pkg_enabled` | — | Package enabled/disabled for an org |
+| `org_pkg_enabled` | — | Package enabled/disabled |
 
 ### Contacts
 
@@ -77,7 +76,7 @@ Sensitive fields are never included in diffs or snapshots. If a redacted field c
 
 ## API rules
 
-- **List/View**: any authenticated org member (`org.user_org_via_org.user ?= @request.auth.id`)
+- **List/View**: any authenticated user (`@request.auth.id != ""`)
 - **Create**: server-only (null) — entries are written by Go hooks, not client code
 - **Update**: null — audit logs are append-only
 - **Delete**: null — audit logs cannot be deleted through the API
@@ -96,19 +95,12 @@ In your package's `Register()` function, call `audit.RegisterCollection`:
 import "tinycld.org/core/audit"
 
 func Register(app *pocketbase.PocketBase) {
-    // Direct org field — default resolver handles it
     audit.RegisterCollection(app, "my_collection", &audit.CollectionConfig{
         ExtractLabel: audit.LabelFromField("name"),
     })
 
-    // Custom org resolution via relation chain
-    audit.RegisterCollection(app, "my_child_collection", &audit.CollectionConfig{
-        ResolveOrg: func(a core.App, record *core.Record) string {
-            parentID := record.GetString("parent")
-            return audit.ResolveViaRelation(a, "my_collection", parentID, "org")
-        },
-        ExtractLabel: audit.LabelFromField("title"),
-    })
+    // Pass nil to take the default label extractor.
+    audit.RegisterCollection(app, "my_child_collection", nil)
 }
 ```
 
@@ -117,11 +109,9 @@ func Register(app *pocketbase.PocketBase) {
 - **`audit.RegisterCollection(app, name, config)`** — registers create/update/delete hooks for one collection
 - **`audit.RegisterCollections(app, names, config)`** — registers the same config for multiple collections
 - **`audit.CollectionConfig`** — optional config with:
-  - `ResolveOrg` — `func(app core.App, record *core.Record) string` to find the org ID. If nil, the default resolver checks `org`, `owner→user_org`, and `user_org` fields.
   - `ExtractLabel` — `func(record *core.Record) string` to extract a display label. If nil, tries `name`, `title`, `label`, `address`.
 - **`audit.LabelFromField("name")`** — returns a LabelExtractor for a single field
 - **`audit.LabelFromFields("app", "key")`** — returns a LabelExtractor that joins fields with `:`
-- **`audit.ResolveViaRelation(app, collection, id, field)`** — loads a related record and reads a field (useful for building org resolver chains)
 
 ### Steps
 

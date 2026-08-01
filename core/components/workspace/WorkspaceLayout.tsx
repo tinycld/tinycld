@@ -6,6 +6,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Platform, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { MobileLayout } from './MobileLayout'
+import { useActivePkgDenied } from './PackageAccessDenied'
 import { PackageProviderWrapper } from './PackageProviderWrapper'
 import { PackageRail } from './PackageRail'
 import { PackageSidebar } from './PackageSidebar'
@@ -23,6 +24,7 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
     const breakpoint = useBreakpoint()
     const activePkgSlug = useWorkspaceStore(s => s.activePkgSlug)
     const activePkg = usePackage(activePkgSlug ?? '')
+    const activePkgDenied = useActivePkgDenied()
     const insets = useSafeAreaInsets()
 
     if (breakpoint === 'mobile') return <MobileLayout isReady={isReady} />
@@ -33,11 +35,20 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
     // defaulted open with no UI to toggle it — so it just covered the workspace
     // with a touch-capturing dim layer and blocked all interaction. The docked
     // panel matches the intended "contextual sidebar to the right of the rail".
-    const hasSidebar = activePkg?.sidebar != null
+    // A denied package's sidebar sits OUTSIDE the PackageAccessDenied overlay,
+    // so hide it here for the same state.
+    const hasSidebar = activePkg?.sidebar != null && !activePkgDenied
     const sidebarWidth = breakpoint === 'tablet' ? SIDEBAR_WIDTH_TABLET : SIDEBAR_WIDTH_DESKTOP
 
     return (
         <View
+            // Names the package currently mounted in the shell. Set from the
+            // route only after `app/(app)/_layout` has committed it, so it is a
+            // "this screen is showing" signal — unlike the URL, which changes at
+            // the start of a SPA transition while the target chunk is still
+            // loading. E2E gates on this instead of waitForURL; see
+            // navigateToPackage in tests/e2e/helpers.ts.
+            testID={activePkgSlug ? `pkg-active-${activePkgSlug}` : undefined}
             className="flex-1"
             style={[
                 {

@@ -29,26 +29,22 @@ func setupInviteTestApp(t *testing.T) *tests.TestApp {
 		t.Fatal(err)
 	}
 	users.Fields.Add(&core.BoolField{Name: "is_demo"})
+	users.Fields.Add(&core.SelectField{
+		Name:      "role",
+		Values:    []string{"owner", "admin", "member", "guest"},
+		MaxSelect: 1,
+	})
 	relaxUsernameMinLength(users)
 	if err := app.Save(users); err != nil {
 		t.Fatal(err)
 	}
 
-	orgs := core.NewBaseCollection("orgs")
-	orgs.Fields.Add(&core.TextField{Name: "name", Required: true})
-	orgs.Fields.Add(&core.TextField{Name: "slug", Required: true})
-	if err := app.Save(orgs); err != nil {
-		t.Fatal(err)
-	}
-
-	// invite_tokens collection — minimal shape used by mintInviteToken.
+	// invite_tokens collection — minimal shape used by mintInviteToken. Single
+	// org: no `org` relation.
 	tokens := core.NewBaseCollection("invite_tokens")
 	tokens.Fields.Add(&core.TextField{Name: "token", Required: true})
 	tokens.Fields.Add(&core.RelationField{
 		Name: "user", Required: true, CollectionId: users.Id, MaxSelect: 1,
-	})
-	tokens.Fields.Add(&core.RelationField{
-		Name: "org", Required: true, CollectionId: orgs.Id, MaxSelect: 1,
 	})
 	tokens.Fields.Add(&core.TextField{Name: "role", Required: true})
 	tokens.Fields.Add(&core.TextField{Name: "expires_at"})
@@ -57,25 +53,17 @@ func setupInviteTestApp(t *testing.T) *tests.TestApp {
 		t.Fatal(err)
 	}
 
-	userOrg := core.NewBaseCollection("user_org")
-	userOrg.Fields.Add(&core.RelationField{
-		Name: "org", Required: true, CollectionId: orgs.Id, MaxSelect: 1,
-	})
-	userOrg.Fields.Add(&core.RelationField{
-		Name: "user", Required: true, CollectionId: users.Id, MaxSelect: 1,
-	})
-	userOrg.Fields.Add(&core.SelectField{
-		Name: "role", Required: true, MaxSelect: 1,
-		Values: []string{"owner", "admin", "member", "guest"},
-	})
-	userOrg.Fields.Add(&core.RelationField{
-		Name: "created_by", CollectionId: users.Id, MaxSelect: 1,
-	})
-	if err := app.Save(userOrg); err != nil {
+	return app
+}
+
+// setUserRole sets the single-org role field on a user record and saves it.
+func setUserRole(t *testing.T, app core.App, user *core.Record, role string) *core.Record {
+	t.Helper()
+	user.Set("role", role)
+	if err := app.Save(user); err != nil {
 		t.Fatal(err)
 	}
-
-	return app
+	return user
 }
 
 // captureMailerOutput configures the LogSender to append every send to a
@@ -112,98 +100,21 @@ func captureMailerOutput(t *testing.T) func() []map[string]any {
 	}
 }
 
-func TestInviteLifecycle_NonDemoInviter_UnverifiedTarget_DoesNotEmail(t *testing.T) {
+// sendExistingMemberEmail is the "you've been added" notice sent to an
+// already-verified user. These tests exercise it directly (it's a plain
+// function now, no user_org hook).
+
+func TestExistingMemberEmail_SendsAddedSubject(t *testing.T) {
 	app := setupInviteTestApp(t)
 	read := captureMailerOutput(t)
 
-	inviter := mustCreateUser(t, app, "boss@test.local", false)
-	target := mustCreateUser(t, app, "newbie@test.local", false)
-	target.SetVerified(false)
-	if err := app.Save(target); err != nil {
-		t.Fatal(err)
-	}
-	org := mustCreateOrg(t, app)
-
-	uo := newMembership(t, app, target, org, "member", inviter.Id)
-	handleUserOrgInvite(app, uo)
-
-	sends := read()
-	if len(sends) != 0 {
-		t.Fatalf("expected 0 emails for unverified target via lifecycle hook, got %d: %v", len(sends), sends)
-	}
-}
-
-func TestInviteLifecycle_DemoInviter_UnverifiedTarget_DoesNothing(t *testing.T) {
-	app := setupInviteTestApp(t)
-	read := captureMailerOutput(t)
-
-	inviter := mustCreateUser(t, app, "demoboss@test.local", true)
-	target := mustCreateUser(t, app, "newbie2@test.local", false)
-	target.SetVerified(false)
-	if err := app.Save(target); err != nil {
-		t.Fatal(err)
-	}
-	org := mustCreateOrg(t, app)
-
-	uo := newMembership(t, app, target, org, "member", inviter.Id)
-	handleUserOrgInvite(app, uo)
-
-	sends := read()
-	if len(sends) != 0 {
-		t.Errorf("demo inviter unverified target: expected 0 sends, got %d: %v", len(sends), sends)
-	}
-
-	// The lifecycle hook should not have minted a token either — that's the
-	// endpoint's job now.
-	tokens, err := app.FindRecordsByFilter(
-		"invite_tokens",
-		"user = {:u} && org = {:o}",
-		"", 0, 0,
-		map[string]any{"u": target.Id, "o": org.Id},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(tokens) != 0 {
-		t.Errorf("expected 0 tokens minted by lifecycle hook, got %d", len(tokens))
-	}
-}
-
-func TestInvite_DemoInviter_VerifiedTarget_SkipsEmail(t *testing.T) {
-	app := setupInviteTestApp(t)
-	read := captureMailerOutput(t)
-
-	inviter := mustCreateUser(t, app, "demoboss2@test.local", true)
-	target := mustCreateUser(t, app, "existing@test.local", false)
-	target.SetVerified(true) // already verified -> existing-member email path
-	if err := app.Save(target); err != nil {
-		t.Fatal(err)
-	}
-	org := mustCreateOrg(t, app)
-
-	uo := newMembership(t, app, target, org, "member", inviter.Id)
-	handleUserOrgInvite(app, uo)
-
-	if sends := read(); len(sends) != 0 {
-		t.Errorf("demo inviter -> verified target should send no email, got %d: %v",
-			len(sends), sends)
-	}
-}
-
-func TestInvite_NonDemoInviter_VerifiedTarget_SendsAddedEmail(t *testing.T) {
-	app := setupInviteTestApp(t)
-	read := captureMailerOutput(t)
-
-	inviter := mustCreateUser(t, app, "regularboss@test.local", false)
 	target := mustCreateUser(t, app, "existing2@test.local", false)
 	target.SetVerified(true)
 	if err := app.Save(target); err != nil {
 		t.Fatal(err)
 	}
-	org := mustCreateOrg(t, app)
 
-	uo := newMembership(t, app, target, org, "member", inviter.Id)
-	handleUserOrgInvite(app, uo)
+	sendExistingMemberEmail(app, target, "member")
 
 	sends := read()
 	if len(sends) != 1 {
@@ -213,41 +124,4 @@ func TestInvite_NonDemoInviter_VerifiedTarget_SendsAddedEmail(t *testing.T) {
 	if !strings.Contains(subject, "added") {
 		t.Errorf("expected 'added' subject for verified-existing user, got %q", subject)
 	}
-}
-
-func mustCreateOrg(t *testing.T, app core.App) *core.Record {
-	t.Helper()
-	col, err := app.FindCollectionByNameOrId("orgs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := core.NewRecord(col)
-	r.Set("name", "Acme")
-	r.Set("slug", "acme")
-	if err := app.Save(r); err != nil {
-		t.Fatal(err)
-	}
-	return r
-}
-
-func newMembership(
-	t *testing.T,
-	app core.App,
-	user, org *core.Record,
-	role, createdBy string,
-) *core.Record {
-	t.Helper()
-	col, err := app.FindCollectionByNameOrId("user_org")
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := core.NewRecord(col)
-	r.Set("user", user.Id)
-	r.Set("org", org.Id)
-	r.Set("role", role)
-	r.Set("created_by", createdBy)
-	if err := app.Save(r); err != nil {
-		t.Fatal(err)
-	}
-	return r
 }

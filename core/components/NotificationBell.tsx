@@ -11,10 +11,10 @@ export function NotificationBell({ color }: { color: string }) {
     const setOpen = useWorkspaceStore(s => s.setNotificationsOpen)
 
     const { data: unread } = useOrgLiveQuery(
-        (query, { orgId }) =>
+        query =>
             query
                 .from({ n: notificationsCollection })
-                .where(({ n }) => and(eq(n.org, orgId), eq(n.read, false), eq(n.dismissed, false))),
+                .where(({ n }) => and(eq(n.read, false), eq(n.dismissed, false))),
         []
     )
 

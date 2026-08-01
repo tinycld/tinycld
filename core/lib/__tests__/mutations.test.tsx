@@ -11,9 +11,22 @@
 import type { Transaction } from '@tanstack/react-db'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderHook, waitFor } from '@testing-library/react'
+import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import type { ReactNode } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useMutation } from '../mutations'
+
+vi.mock('@tinycld/core/lib/pocketbase', () => ({
+    notificationsCollection: {
+        insert: vi.fn(() => ({ isPersisted: { promise: Promise.resolve() } })),
+    },
+}))
+vi.mock('@tinycld/core/lib/notifications', () => ({
+    showOsNotification: vi.fn(() => Promise.resolve()),
+}))
+vi.mock('@tinycld/core/lib/sentry', () => ({
+    captureExceptionToSentry: vi.fn(),
+}))
 
 function wrapper() {
     const client = new QueryClient({
@@ -115,5 +128,104 @@ describe('useMutation generator detection', () => {
         await waitFor(() => expect(result.current.isSuccess).toBe(true))
         expect(asyncFn).toHaveBeenCalledTimes(1)
         expect(result.current.data).toBe('async-done')
+    })
+})
+
+// A mutation without an explicit onError used to fail as an optimistic update
+// that silently reverted — the pre-multi-org review found ~36 call sites where
+// a toggle or rename just no-opped with no feedback and nothing in Sentry.
+// The wrapper now installs a default onError (toast + captureException) so a
+// failure is always surfaced somewhere; an explicit onError replaces it.
+describe('useMutation default onError', () => {
+    beforeEach(() => {
+        useToastStore.setState({ toasts: [] })
+        vi.clearAllMocks()
+    })
+
+    it('surfaces a failed mutation as an error toast and captures it', async () => {
+        const { captureExceptionToSentry } = await import('@tinycld/core/lib/sentry')
+
+        const { result } = renderHook(
+            () =>
+                useMutation({
+                    mutationFn: async () => {
+                        throw new Error('rule denied the write')
+                    },
+                }),
+            { wrapper: wrapper() }
+        )
+
+        result.current.mutate()
+        await waitFor(() => expect(result.current.isError).toBe(true))
+
+        const toasts = useToastStore.getState().toasts
+        expect(toasts).toHaveLength(1)
+        expect(toasts[0]).toMatchObject({ title: 'Something went wrong', variant: 'error' })
+        expect(toasts[0].body).toContain('rule denied the write')
+        expect(captureExceptionToSentry).toHaveBeenCalledWith(
+            'mutation.error',
+            expect.any(Error),
+            expect.anything()
+        )
+    })
+
+    it('stays silent on success', async () => {
+        const { result } = renderHook(() => useMutation({ mutationFn: async () => 'ok' }), {
+            wrapper: wrapper(),
+        })
+
+        result.current.mutate()
+        await waitFor(() => expect(result.current.isSuccess).toBe(true))
+        expect(useToastStore.getState().toasts).toHaveLength(0)
+    })
+
+    it('an explicit onError replaces the default entirely', async () => {
+        const { captureExceptionToSentry } = await import('@tinycld/core/lib/sentry')
+        const onError = vi.fn((_error: Error) => {})
+
+        const { result } = renderHook(
+            () =>
+                useMutation({
+                    mutationFn: async () => {
+                        throw new Error('handled elsewhere')
+                    },
+                    onError,
+                }),
+            { wrapper: wrapper() }
+        )
+
+        result.current.mutate()
+        await waitFor(() => expect(result.current.isError).toBe(true))
+
+        expect(onError).toHaveBeenCalledTimes(1)
+        expect(useToastStore.getState().toasts).toHaveLength(0)
+        expect(captureExceptionToSentry).not.toHaveBeenCalled()
+    })
+
+    it('applies the default when a yielded transaction fails to persist', async () => {
+        // The exact silent-revert scenario from the review: the optimistic
+        // write is rejected server-side (e.g. by a collection rule), the
+        // transaction's isPersisted promise rejects, and the local update
+        // rolls back. Without the default onError nothing tells the user.
+        const rejected = {
+            isPersisted: { promise: Promise.reject(new Error('generator failed')) },
+        } as unknown as FakeTransaction
+
+        const { result } = renderHook(
+            () =>
+                useMutation({
+                    mutationFn: function* () {
+                        yield rejected
+                    },
+                }),
+            { wrapper: wrapper() }
+        )
+
+        result.current.mutate()
+        await waitFor(() => expect(result.current.isError).toBe(true))
+
+        const toasts = useToastStore.getState().toasts
+        expect(toasts).toHaveLength(1)
+        expect(toasts[0].body).toContain('generator failed')
     })
 })

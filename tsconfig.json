@@ -1,5 +1,12 @@
 {
-    "extends": "expo/tsconfig.base",
+    // Relative, not the bare "expo/tsconfig.base" specifier. Playwright resolves
+    // `extends` itself (to pick up `paths` for TS specs) with a resolver that
+    // checks exactly ONE hardcoded node_modules — `<this dir>/node_modules/` —
+    // and never walks upward. Under `nodeLinker: hoisted` expo lives in the
+    // WORKSPACE ROOT node_modules, so the bare specifier never resolved there.
+    // Playwright <=1.61 ignored the miss silently; 1.62 turned it into a hard
+    // throw, breaking e2e before a single test ran. tsc handles either form.
+    "extends": "../node_modules/expo/tsconfig.base",
     "compilerOptions": {
         "strict": true,
         "module": "Preserve",
@@ -21,6 +28,11 @@
             "@tinycld/core/*": ["./core/*"]
         }
     },
-    "exclude": ["node_modules", ".expo", "dist"],
+    // server/pb_hooks holds generated symlinks to packages' *.pb.ts server hooks.
+    // They run on the PocketBase jsvm against server/pb_data/types.d.ts (via a
+    // /// <reference> whose relative path is authored for the source location, not
+    // this materialized one), not in the app's TS/React environment — so they are
+    // typechecked in their own package, never here.
+    "exclude": ["node_modules", ".expo", "dist", "server/pb_hooks"],
     "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }

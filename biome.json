@@ -1,5 +1,5 @@
 {
-    "$schema": "https://biomejs.dev/schemas/2.5.0/schema.json",
+    "$schema": "https://biomejs.dev/schemas/2.5.1/schema.json",
     "root": false,
     "vcs": {
         "enabled": true,
@@ -22,11 +22,6 @@
             "!lib/generated",
             "!node_modules",
             "!node_modules/**/*",
-            "!app/a/\\[orgSlug\\]/calendar",
-            "!app/a/\\[orgSlug\\]/contacts",
-            "!app/a/\\[orgSlug\\]/drive",
-            "!app/a/\\[orgSlug\\]/mail",
-            "!app/share/\\[token\\].tsx",
             "!**/routes.d.ts",
             "!.expo",
             "!.one",
@@ -34,6 +29,8 @@
             "!ideas",
             "!**/core/types/pbSchema.ts",
             "!**/core/types/pbZodSchema.ts",
+            "!third_party",
+            "!third_party/**/*",
             "!**/server",
             "!**/server/**/*",
             "!**/pb-migrations",
@@ -192,7 +189,15 @@
             }
         },
         {
-            "includes": ["**/core/components/help/MarkdownRenderer.tsx"],
+            "includes": [
+                "**/core/components/help/MarkdownRenderer.tsx",
+                "**/calc/components/CsvImportDialog.tsx",
+                "**/calc/components/grid/FilterColumnDialog.tsx",
+                "**/calc/components/pivot/FieldList.tsx",
+                "**/calc/components/pivot/PivotGrid.tsx",
+                "**/calc/components/pivot/PivotSidePanel.tsx",
+                "**/text/components/ImportWarningBanner.tsx"
+            ],
             "linter": {
                 "rules": {
                     "suspicious": {

@@ -11,43 +11,9 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/pkgbuild"
 )
-
-// MemberSpec describes one workspace member to assemble into a build.
-// Spec is the fetch spec passed to `npm pack` — an npm name+range
-// (@tinycld/mail@0.3.1), a git URL (git+https://…#tag), or a local
-// git+file:// remote (used by the integration test).
-//
-// FromCurrent marks a member that should be COPIED from the currently-active
-// build rather than re-fetched. Only the member(s) a delta actually changes are
-// fetched fresh; everything else is copied from the live build so an install of
-// one package can't silently re-resolve another member's spec to a drifted
-// remote state (e.g. re-fetching the tinycld base from github HEAD, which may be
-// behind the running base — and would drop migrations the running base ships).
-type MemberSpec struct {
-	Slug        string `json:"slug"`
-	Version     string `json:"version"`
-	Spec        string `json:"spec"`
-	FromCurrent bool   `json:"fromCurrent,omitempty"`
-}
-
-// RebuildManifest is the complete desired package set for one build. It is
-// written verbatim to builds/<id>/manifest.json before the build runs and
-// serves as the build's input AND its rollback record.
-type RebuildManifest struct {
-	BuildID string       `json:"buildId"`
-	Members []MemberSpec `json:"members"`
-}
-
-// MemberBySlug returns the member spec for slug, if present.
-func (m RebuildManifest) MemberBySlug(slug string) (MemberSpec, bool) {
-	for _, ms := range m.Members {
-		if ms.Slug == slug {
-			return ms, true
-		}
-	}
-	return MemberSpec{}, false
-}
 
 // buildsToKeep is how many recent build dirs the prune step retains (beyond
 // the current one). Each is mostly hardlinks into the shared pnpm store, so
@@ -55,20 +21,19 @@ func (m RebuildManifest) MemberBySlug(slug string) (MemberSpec, bool) {
 const buildsToKeep = 5
 
 // Progress milestones for the /admin progress bar, in the order a rebuild hits
-// them. The assemble band (members fetched/copied) runs from progAssembleStart
-// to progAssembleEnd with per-member ticks spread across it; the build pipeline
-// (pnpm/go/expo/native) owns the middle; the DB + activation phases own the tail.
-// Keeping the whole scale here (rather than scattered magic numbers) makes the
+// them. The assemble + build-pipeline bands (5..88) are owned by pkgbuild and
+// aliased here; the DB + activation phases own the host tail above pkgbuild's
+// ceiling. Keeping one scale (rather than scattered magic numbers) makes the
 // bar monotonic across all four rebuild paths.
 const (
-	progAssembleStart = 5
-	progAssembleEnd   = 42
-	progPnpmInstall   = 45
-	progGoBuild       = 60
-	progExpoWeb       = 72
-	progStageRelease  = 76
-	progNativeStart   = 80
-	progNativeEnd     = 88
+	progAssembleStart = pkgbuild.ProgAssembleStart
+	progAssembleEnd   = pkgbuild.ProgAssembleEnd
+	progPnpmInstall   = pkgbuild.ProgPnpmInstall
+	progGoBuild       = pkgbuild.ProgGoBuild
+	progExpoWeb       = pkgbuild.ProgExpoWeb
+	progStageRelease  = pkgbuild.ProgStageRelease
+	progNativeStart   = pkgbuild.ProgNativeStart
+	progNativeEnd     = pkgbuild.ProgNativeEnd
 	progBackupDB      = 90
 	progSyncMig       = 93
 	progActivate      = 96
@@ -84,12 +49,20 @@ const (
 // control flow (ordering, failure handling, rollback) is unit-testable without
 // running a real build.
 type rebuildDeps struct {
-	assemble  func(m RebuildManifest, buildDir string) error
-	pipeline  func(job *installJob, buildDir string) (buildOutput, error)
-	backupDB  func() error
-	restoreDB func() error
-	syncMig   func(buildDir string) (SyncResult, error)
-	activate  func(buildID string) error
+	assemble func(m RebuildManifest, buildDir string) error
+	// verifyCompat re-checks peerVersions from the manifests assemble actually
+	// fetched into the build dir. The pre-flight gates read only the INSTALLED
+	// manifests, so a target version that tightens its own requirements is
+	// invisible to them — this is the authoritative check. Runs after assemble,
+	// before the build pipeline; a failure discards the build dir with live
+	// state untouched. Optional (nil-safe) for orchestrator tests only — the
+	// production wiring in rebuild() always sets it.
+	verifyCompat func(m RebuildManifest, buildDir string) error
+	pipeline     func(job *installJob, buildDir string) (buildOutput, error)
+	backupDB     func() error
+	restoreDB    func() error
+	syncMig      func(buildDir string) (SyncResult, error)
+	activate     func(buildID string) error
 	// recoverDB re-bootstraps the live app's DB pools after the out-of-band DB
 	// access of backupDB + syncMig, so the post-activate registry/build-record
 	// writes see the real tables. Optional (nil-safe).
@@ -134,6 +107,14 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 	emitProgress(job, "Assembling build", progAssembleStart, memberSetSummary(m))
 	if err := timeStep(job, "assemble", func() error { return d.assemble(m, buildDir) }); err != nil {
 		return d.fail(job, "assemble", err)
+	}
+	if d.verifyCompat != nil {
+		emitProgress(job, "Verifying compatibility", progAssembleEnd, "Checking peer versions from fetched manifests")
+		if err := timeStep(job, "verify peer versions", func() error { return d.verifyCompat(m, buildDir) }); err != nil {
+			jobLogf(job, "peer-version verify failed — discarding build dir %s (live state untouched)", buildDir)
+			_ = os.RemoveAll(buildDir)
+			return d.fail(job, "compat", err)
+		}
 	}
 	out, err := d.pipeline(job, buildDir)
 	if err != nil {
@@ -187,7 +168,7 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 			jobLogf(job, "WARNING: recordBuild failed (OTA + rollback-target metadata missing): %v", err)
 		} else {
 			jobLogf(job, "recorded pkg_build %s (release %s, %d native bundle(s))",
-				m.BuildID, out.releaseID, len(out.bundles))
+				m.BuildID, out.ReleaseID, len(out.Bundles))
 		}
 	}
 	emitProgress(job, "Finalizing", progCommit, "Recording build + registry")
@@ -255,13 +236,28 @@ func failJob(job *installJob, step string, err error) error {
 // logRecord is the pkg_install_log row the status endpoint polls; it is
 // finalized (success/failed) before the restart so the UI poller terminates.
 func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, logRecord *core.Record) error {
+	return rebuildWith(job, m, productionRebuildDeps(app, job, m, logRecord))
+}
+
+// productionRebuildDeps builds the real dependency set rebuild() runs with.
+// Split from rebuild() so a test can assert the production wiring (e.g. that
+// verifyCompat is actually bound to verifyTargetPeerVersions) instead of only
+// exercising the orchestrator with stubs.
+func productionRebuildDeps(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, logRecord *core.Record) rebuildDeps {
 	buildDir := filepath.Join(stateBuildsDir(), m.BuildID)
 
 	// backupDatabase returns the restore closure; capture it across steps.
 	var restoreClosure func() error
 
-	deps := rebuildDeps{
+	return rebuildDeps{
 		assemble: func(mm RebuildManifest, bd string) error { return assembleBuild(job, mm, bd) },
+		verifyCompat: func(mm RebuildManifest, bd string) error {
+			if err := verifyTargetPeerVersions(mm, bd); err != nil {
+				return err
+			}
+			logRecipeHashBreadcrumb(job, bd)
+			return nil
+		},
 		pipeline: func(j *installJob, bd string) (buildOutput, error) {
 			return runBuildPipeline(j, bd, m.BuildID)
 		},
@@ -337,7 +333,27 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 			requestRestart("")
 		},
 	}
-	return rebuildWith(job, m, deps)
+}
+
+// logRecipeHashBreadcrumb best-effort computes and logs the build's recipe
+// hash (DESIGN-org-package-agency D4) from what assemble recorded, so
+// operators can correlate single-tenant builds with the multi-org build cache
+// once it exists. Never fatal — World A does not consume the hash. The common
+// unavailability reason today: a FromCurrent member copied from an active
+// build that predates members.lock.json carries no integrity, which
+// RecipeHash refuses by design.
+func logRecipeHashBreadcrumb(job *installJob, buildDir string) {
+	tc, err := pkgbuild.DetectToolchain(nil)
+	if err != nil {
+		jobLogf(job, "recipe hash unavailable: %v", err)
+		return
+	}
+	hash, err := pkgbuild.RecipeHashForBuild(buildDir, tc)
+	if err != nil {
+		jobLogf(job, "recipe hash unavailable: %v", err)
+		return
+	}
+	jobLogf(job, "recipe hash: %s", hash)
 }
 
 // recordRebuildBuild persists the pkg_build row for a freshly-activated build:
@@ -358,8 +374,8 @@ func recordRebuildBuild(app core.App, m RebuildManifest, buildDir string, out bu
 	// /api/app/bundle can serve them (see archiveNativeBundlesToRelease). Done
 	// before recording the row so a failed archive aborts BEFORE we advertise a
 	// bundle URL that would 404.
-	if len(out.bundles) > 0 {
-		if err := archiveNativeBundlesToRelease(m.BuildID, out.stageDir); err != nil {
+	if len(out.Bundles) > 0 {
+		if err := archiveNativeBundlesToRelease(m.BuildID, out.StageDir); err != nil {
 			return err
 		}
 	}
@@ -370,8 +386,8 @@ func recordRebuildBuild(app core.App, m RebuildManifest, buildDir string, out bu
 		"version":         version,
 		"action":          "install",
 		"binary_archived": true,
-		"release_id":      out.releaseID,
-		"bundles":         serializeBundles(out.bundles),
+		"release_id":      out.ReleaseID,
+		"bundles":         serializeBundles(out.Bundles),
 	}
 	_, err := recordBuild(app, fields)
 	return err
@@ -420,27 +436,6 @@ func changedMember(m RebuildManifest, buildDir string) (slug, version string) {
 		return baseRegistrySlug, ms.Version
 	}
 	return baseRegistrySlug, ""
-}
-
-// The base platform is the `tinycld` workspace member, but its pkg_registry row
-// (and the /admin UI delta) uses the historical slug "core". These map between
-// the two namespaces so the desired set always speaks member slugs while the
-// registry keeps its slug.
-const baseRegistrySlug = "core"
-const baseMemberSlug = "tinycld"
-
-func registrySlugToMember(slug string) string {
-	if slug == baseRegistrySlug {
-		return baseMemberSlug
-	}
-	return slug
-}
-
-func memberSlugToRegistry(slug string) string {
-	if slug == baseMemberSlug {
-		return baseRegistrySlug
-	}
-	return slug
 }
 
 // buildCurrentMemberSet reads installed/bundled pkg_registry rows into the
@@ -583,22 +578,6 @@ func changedMemberVersion(buildDir, regSlug, memberSlug string) string {
 		}
 	}
 	return manifestVersionFromBuild(buildDir, memberSlug)
-}
-
-// packageJSONVersion reads the "version" field from a package.json, or "" on any
-// error. A small, dependency-free read (no node subprocess).
-func packageJSONVersion(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var pkg struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return ""
-	}
-	return pkg.Version
 }
 
 // createRegistryRowFromBuild parses the member's manifest out of the build dir

@@ -1,17 +1,12 @@
 package thumbnails
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"image"
-	"image/jpeg"
 	"io"
 	"slices"
 	"strings"
 
-	"github.com/disintegration/imaging"
-	"github.com/jdeng/goheif"
 	"github.com/nathanstitt/doctaculous/pkg/doctaculous"
 )
 
@@ -39,20 +34,25 @@ var thumbFormats = []doctaculous.Format{
 	doctaculous.FormatRTF,
 }
 
-// heifMimeTypes lists MIME types we decode via goheif. iPhone photo library
-// emits image/heic for HEVC-encoded stills; image/heif covers the container.
-// goheif (CGo) stays until doctaculous grows HEIF support; when that lands,
-// this list and the goheif dependency go away.
+// heifMimeTypes lists the HEIF MIME types we render ourselves. iPhone photo
+// library emits image/heic for HEVC-encoded stills; image/heif covers the
+// container. They stay a named list (rather than riding thumbFormats) because
+// the reason to claim them differs from the reason to claim documents:
+// PocketBase's ?thumb= parameter covers PNG/JPEG but cannot decode HEIF, so
+// these are the one image family we thumbnail through doctaculous, exactly
+// like pdf → image.
+//
+// The `-sequence` variants are deliberately absent: doctaculous decodes HEIF
+// STILLS only (image/heic-sequence maps to FormatUnknown there), so claiming
+// them would fail every render. If sequence support ever lands, add them here.
 var heifMimeTypes = []string{
 	"image/heic",
 	"image/heif",
-	"image/heic-sequence",
-	"image/heif-sequence",
 }
 
 // CanGenerate reports whether a thumbnail can be generated for the given MIME type.
 // Images are handled by PocketBase's built-in ?thumb= parameter, except HEIC/HEIF
-// which Go's stdlib can't decode — we render those ourselves.
+// which Go's stdlib can't decode — we render those through doctaculous.
 func CanGenerate(mimeType string) bool {
 	mt := normalizeMime(mimeType)
 	if slices.Contains(heifMimeTypes, mt) {
@@ -63,11 +63,9 @@ func CanGenerate(mimeType string) bool {
 
 // Generate renders the document in r as a JPEG thumbnail written to w, fitted
 // within width x height while preserving aspect ratio. The decoder is chosen
-// from the document's MIME type. Reads at most MaxInputBytes from r.
+// from the document's MIME type — HEIF included, same path as every document
+// format. Reads at most MaxInputBytes from r.
 func Generate(ctx context.Context, w io.Writer, r io.Reader, mimeType string, width, height int) error {
-	if slices.Contains(heifMimeTypes, normalizeMime(mimeType)) {
-		return generateFromHeif(w, r, width, height)
-	}
 	return generateFromDoc(ctx, w, r, mimeType, width, height)
 }
 
@@ -90,46 +88,34 @@ func generateFromDoc(ctx context.Context, w io.Writer, r io.Reader, mimeType str
 		return err
 	}
 
-	doc, err := doctaculous.OpenBytesAs(doctaculous.FormatFromMIME(mimeType), data)
+	format := doctaculous.FormatFromMIME(mimeType)
+	doc, err := doctaculous.OpenBytesAs(format, data)
 	if err != nil {
 		return fmt.Errorf("thumbnails: failed to open document: %w", err)
+	}
+
+	// Under a Max box, DPI is a resolution CEILING (DPI/72× the page's native
+	// size). 300 lets documents render crisply before fitting — the old
+	// render-at-native-resolution-then-Fit behavior. Photographic input (HEIC)
+	// pins the ceiling at 72 = 1:1, so a photo smaller than the box is never
+	// upscaled into blur — the downscale-only behavior the pre-doctaculous
+	// imaging.Fit path had.
+	dpi := 300.0
+	if format == doctaculous.FormatHEIC {
+		dpi = 72
 	}
 
 	err = doc.WriteImage(ctx, w, 0, doctaculous.ImageOptions{
 		Format:  doctaculous.FormatJPEG,
 		Quality: 85,
 		Raster: doctaculous.RasterOptions{
-			// A positive DPI makes the Max box a downscale-only ceiling,
-			// matching the old render-at-native-resolution-then-Fit behavior.
-			DPI:         300,
+			DPI:         dpi,
 			MaxWidthPx:  width,
 			MaxHeightPx: height,
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("thumbnails: failed to render page: %w", err)
-	}
-	return nil
-}
-
-func generateFromHeif(w io.Writer, r io.Reader, width, height int) error {
-	// Buffering also hands goheif an io.ReaderAt, sidestepping its internal
-	// ReadAll of the whole stream.
-	data, err := readCapped(r)
-	if err != nil {
-		return err
-	}
-	img, err := goheif.Decode(bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("thumbnails: failed to decode heif: %w", err)
-	}
-	return writeJpegThumb(w, img, width, height)
-}
-
-func writeJpegThumb(w io.Writer, img image.Image, width, height int) error {
-	thumb := imaging.Fit(img, width, height, imaging.Lanczos)
-	if err := jpeg.Encode(w, thumb, &jpeg.Options{Quality: 85}); err != nil {
-		return fmt.Errorf("thumbnails: failed to encode JPEG: %w", err)
 	}
 	return nil
 }
