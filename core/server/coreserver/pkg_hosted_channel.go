@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -27,7 +29,32 @@ type DeployChannel struct {
 	client *http.Client
 	// build waits for a full artifact build — minutes for a novel set.
 	buildClient *http.Client
+
+	// Per-spec cache for Versions, mirroring the 60s cache pkgbuild keeps for
+	// the single-tenant versions handler. Hosted lost that caching by moving
+	// discovery across the socket — and the router THROTTLES ctl reads
+	// per-org, so the Packages screen re-mounting during a login flow (one
+	// /v1/versions per registry row per mount) burned the org's read budget
+	// and rows silently degraded to "no available versions". Entries die with
+	// the process (every deploy respawns the tenant), so staleness is bounded
+	// by both the TTL and the tenant's own lifetime.
+	verMu    sync.Mutex
+	verCache map[string]cachedCtlVersions
 }
+
+type cachedCtlVersions struct {
+	val     ctlVersions
+	fetched time.Time
+}
+
+// ctlVersionsTTL matches pkgbuild's versionCacheTTL — the same discovery the
+// single-tenant handler serves from its own 60s cache.
+const ctlVersionsTTL = 60 * time.Second
+
+// ErrCtlRateLimited marks a control-socket 429 — the router's per-org
+// throttles (the 30s deploy-proposal floor, the read-endpoint bucket).
+// Transient by construction; callers retry rather than fail.
+var ErrCtlRateLimited = errors.New("control socket rate-limited")
 
 // NewDeployChannel dials socketPath for every request.
 func NewDeployChannel(socketPath string) *DeployChannel {
@@ -93,9 +120,28 @@ func (c *DeployChannel) Resolve(ctx context.Context, spec string) (ctlResolvedSp
 }
 
 func (c *DeployChannel) Versions(ctx context.Context, spec string) (ctlVersions, error) {
+	c.verMu.Lock()
+	if e, ok := c.verCache[spec]; ok && time.Since(e.fetched) < ctlVersionsTTL {
+		c.verMu.Unlock()
+		return e.val, nil
+	}
+	c.verMu.Unlock()
+
 	var out ctlVersions
 	err := c.call(ctx, c.client, http.MethodPost, "/v1/versions", map[string]any{"spec": spec}, &out)
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	// Cache successes only — a throttled/failed discovery must retry, not pin
+	// an empty list for a minute. Specs come from pkg_registry rows (bounded),
+	// so no size cap is needed.
+	c.verMu.Lock()
+	if c.verCache == nil {
+		c.verCache = map[string]cachedCtlVersions{}
+	}
+	c.verCache[spec] = cachedCtlVersions{val: out, fetched: time.Now()}
+	c.verMu.Unlock()
+	return out, nil
 }
 
 func (c *DeployChannel) Build(ctx context.Context, lock map[string]string) (ctlBuildResult, error) {
@@ -144,10 +190,20 @@ func (c *DeployChannel) call(ctx context.Context, client *http.Client, method, p
 		var e struct {
 			Error string `json:"error"`
 		}
-		if json.Unmarshal(payload, &e) == nil && e.Error != "" {
-			return fmt.Errorf("%s", e.Error)
+		wrap := func(msg string) error {
+			// 429 is typed so callers can RETRY instead of failing the whole
+			// operation: the router floors accepted deploy proposals per org
+			// (30s), and a legitimate back-to-back sequence — an admin
+			// downgrading right after an upgrade landed — trips it.
+			if resp.StatusCode == http.StatusTooManyRequests {
+				return fmt.Errorf("%w: %s", ErrCtlRateLimited, msg)
+			}
+			return fmt.Errorf("%s", msg)
 		}
-		return fmt.Errorf("control socket %s: HTTP %d", path, resp.StatusCode)
+		if json.Unmarshal(payload, &e) == nil && e.Error != "" {
+			return wrap(e.Error)
+		}
+		return wrap(fmt.Sprintf("control socket %s: HTTP %d", path, resp.StatusCode))
 	}
 	if out != nil {
 		if err := json.Unmarshal(payload, out); err != nil {

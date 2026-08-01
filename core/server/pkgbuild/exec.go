@@ -54,6 +54,33 @@ func RunCmdEnv(dir string, extraEnv []string, name string, args ...string) (stri
 	return string(out), err
 }
 
+// RunCmdStdout is RunCmd for commands whose STDOUT is machine-parsed (e.g.
+// `npm view … --json`): stdout comes back alone, while stderr still reaches
+// the process log. RunCmd's combined capture poisons parsers — npm prints
+// "npm warn config …" to stderr, and merged in front of the JSON it turned
+// every version listing into a decode error whenever npm had anything to
+// warn about (the hosted e2e's router cwd sat under a workspace .npmrc).
+func RunCmdStdout(dir string, name string, args ...string) (string, error) {
+	log.Printf("%s $ (cd %s && %s %s)", LogPrefix, dir, name, strings.Join(args, " "))
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if s := strings.TrimRight(string(out), "\n"); s != "" {
+		log.Printf("%s output of %s:\n%s", LogPrefix, name, s)
+	}
+	if s := strings.TrimSpace(stderr.String()); s != "" {
+		log.Printf("%s stderr of %s:\n%s", LogPrefix, name, s)
+	}
+	if err != nil {
+		log.Printf("%s %s FAILED: %v", LogPrefix, name, err)
+		// The caller surfaces the error; stderr carries npm's actual reason.
+		return string(out), ErrFromCmd(name, stderr.String(), err)
+	}
+	return string(out), nil
+}
+
 // RunCmdStreaming is RunCmd that also invokes onLine for each line of combined
 // output AS IT ARRIVES, instead of only after the command exits. Long steps
 // (pnpm install) can forward their progress lines to the UI so the bar doesn't

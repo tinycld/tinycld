@@ -3,6 +3,7 @@ package coreserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -304,8 +305,15 @@ type hostedDeps struct {
 	// deploy would restore it over newer data).
 	snapshot func() (restore, discard func() error, err error)
 	syncMig  func(applied, newSet []string) (SyncResult, error)
-	// recoverDB re-opens the live pools after an in-process restore (the
-	// snapshot copy-back happens under the running app). Nil-safe.
+	// quiesceDB closes the live pools BEFORE an in-process restore and
+	// recoverDB re-opens them after. Both nil-safe. Ordering is load-bearing:
+	// the restore copies the snapshot OVER the live data.db, and doing that
+	// under open WAL connections — hooks, realtime, the UI's own polls all
+	// keep writing — corrupts the restored file (observed as a tenant
+	// crash-looping on "database disk image is malformed" after a refused
+	// proposal's restore). Quiesce first; in-flight queries fail fast in the
+	// brief window, which a failure path may do.
+	quiesceDB   func() error
 	recoverDB   func() error
 	finalizeLog func(status, errMsg string)
 }
@@ -324,6 +332,7 @@ func productionHostedDeps(app *pocketbase.PocketBase, ch *DeployChannel, orgDir 
 		syncMig: func(applied, newSet []string) (SyncResult, error) {
 			return syncMigrations(app, applied, newSet)
 		},
+		quiesceDB: func() error { return app.ResetBootstrapState() },
 		recoverDB: func() error { return recoverLiveDBAfterExternalWrite(app) },
 	}
 }
@@ -474,7 +483,7 @@ func runHostedDeploy(job *installJob, d hostedDeps, next map[string]string) {
 	logSyncResult(job, res)
 
 	emitProgress(job, "Proposing deploy", 95, "Asking the router to restart onto the new build")
-	if err := d.deploy(ctx, next, job.ID); err != nil {
+	if err := proposeWithRetry(ctx, d, job, next); err != nil {
 		if len(res.Reverted) > 0 {
 			jobLogf(job, "deploy proposal refused after %d down migration(s) — restoring pre-deploy snapshot", len(res.Reverted))
 			restoreHosted(d, job, restore)
@@ -492,6 +501,34 @@ func runHostedDeploy(job *installJob, d hostedDeps, next map[string]string) {
 	// poll picks it up across the restart discontinuity.
 	jobLogf(job, "deploy accepted — the router will restart this organization onto %s; final status is recorded after the restart", build.RecipeHash)
 	emitProgress(job, "Restarting", 100, "Deploy accepted — restarting onto the new build")
+}
+
+// proposeWithRetry sends the deploy proposal, riding out the router's per-org
+// proposal floor (30s between accepted deploys). A back-to-back sequence — an
+// admin downgrading right after an upgrade committed — legitimately trips the
+// 429; treating it as failure would run the risky in-process snapshot restore
+// for what is only a pacing refusal. Bounded: one floor window plus slack.
+func proposeWithRetry(ctx context.Context, d hostedDeps, job *installJob, next map[string]string) error {
+	const (
+		retryEvery = 10 * time.Second
+		retryFor   = 75 * time.Second
+	)
+	deadline := time.Now().Add(retryFor)
+	for {
+		err := d.deploy(ctx, next, job.ID)
+		if err == nil || !errors.Is(err, ErrCtlRateLimited) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		jobLogf(job, "deploy proposal rate-limited (%v) — retrying in %s", err, retryEvery)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(retryEvery):
+		}
+	}
 }
 
 // ---------- helpers ----------
@@ -515,10 +552,18 @@ func restoreHosted(d hostedDeps, job *installJob, restore func() error) {
 	if restore == nil {
 		return
 	}
-	if err := restore(); err != nil {
-		jobLogf(job, "WARNING: snapshot restore failed: %v", err)
-		return
+	// Close the live pools before touching data.db — see hostedDeps.quiesceDB.
+	if d.quiesceDB != nil {
+		if err := d.quiesceDB(); err != nil {
+			jobLogf(job, "WARNING: could not quiesce DB before restore: %v", err)
+		}
 	}
+	restoreErr := restore()
+	if restoreErr != nil {
+		jobLogf(job, "WARNING: snapshot restore failed: %v", restoreErr)
+	}
+	// Reopen even when the restore failed — a serving tenant with the old data
+	// beats one wedged with closed pools.
 	if d.recoverDB != nil {
 		if err := d.recoverDB(); err != nil {
 			jobLogf(job, "WARNING: DB reconnect after restore failed: %v", err)

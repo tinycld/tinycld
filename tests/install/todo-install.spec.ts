@@ -100,7 +100,13 @@ const SUPERUSER_PASSWORD = process.env.ADMIN_USER_PW || 'TodoSmoke1234!'
 
 // Install pinned to a git TAG via the #ref suffix. validatePackageSpec accepts
 // `<git-spec>#<safe-ref>` and `npm pack` clones the repo at that tag.
-const TODO_SPEC_V1 = 'github:tinycld/todo#v1.0.0'
+//
+// PW_TODO_SPEC_V1 overrides the default git spec: the HOSTED runner
+// (run-hosted-install.sh) passes an npm spec (`@tinycld/todo@1.0.0`, resolved
+// against its fixture registry) because hosted installs refuse git specs — a
+// flat {name: version} org lockfile has nowhere to carry git provenance
+// (coreserver/pkg_hosted.go's recorded limitation).
+const TODO_SPEC_V1 = process.env.PW_TODO_SPEC_V1 || 'github:tinycld/todo#v1.0.0'
 
 // Buggy fixture tags (see FIXTURE CONTRACT above). server + migration roll back
 // post-restart; fe fails at expo export (no restart).
@@ -719,6 +725,13 @@ async function waitForExpoUpdate(
     )
 }
 
+// PW_SKIP_OTA=1 disables the per-modification OTA assertions. The HOSTED
+// runner sets it: per-org native OTA delivery is an explicitly OPEN design
+// item (DESIGN-org-package-agency §6 "Native OTA per org") — a hosted tenant
+// serves no /api/app/update (RegisterAppUpdateEndpoints is host-only), so the
+// assertion has nothing to hold against yet. Single-tenant runs keep it on.
+const SKIP_OTA = process.env.PW_SKIP_OTA === '1'
+
 // Asserts a NEW expo update is offered for both native platforms after a package
 // modification, and that each platform's bundle id advanced from the previous
 // modification's id. `prev` is the per-platform id map from the last call (empty
@@ -727,6 +740,7 @@ async function assertNewExpoUpdate(
     page: Page,
     prev: { ios?: string; android?: string }
 ): Promise<{ ios: string; android: string }> {
+    if (SKIP_OTA) return { ios: prev.ios ?? '', android: prev.android ?? '' }
     const ios = await waitForExpoUpdate(page, 'ios', 120_000)
     const android = await waitForExpoUpdate(page, 'android', 120_000)
     expect(ios.id, 'ios bundle id should be a build-<ts>-ios id').toMatch(/^build-\d+-ios$/)
@@ -928,7 +942,13 @@ test.describe('todo version change', () => {
         // go-build/expo-export stages, so requiring ≥50% within 10 min confirms a
         // live stream without coupling to a specific percentage. (A frozen 0% bar
         // here is the signature of the events-endpoint 403 regression.)
-        await waitForProgressAdvance(page, 50, 600_000)
+        //
+        // PW_PROGRESS_MIN_PCT overrides the threshold: the HOSTED pipeline's
+        // stages sit at 10% ("Building artifact") for the whole router-side
+        // build — the org keeps serving while the builder works, and the ctl
+        // build call streams no intermediate progress — so the hosted runner
+        // asserts a live stream at ≥10% instead of a stage-map percentage.
+        await waitForProgressAdvance(page, Number(process.env.PW_PROGRESS_MIN_PCT ?? '50'), 600_000)
 
         // The install runs server-side as a background job and ends by requesting
         // an exit-75 restart. Judge success by the server's own pkg_install_log

@@ -160,9 +160,25 @@ func StripNpmVersion(spec string) string {
 // ListNpmVersions returns all published versions of an npm package, newest
 // first. Shells out to `npm view <name> versions --json`.
 func ListNpmVersions(name string) ([]string, error) {
-	out, err := RunCmd(".", "npm", "view", name, "versions", "--json")
+	return listNpmVersions(name, "")
+}
+
+// listNpmVersions is ListNpmVersions with an optional registry override
+// (empty = npm's default resolution) — the same seam npmPackWith gives member
+// fetches, so a router fronting a local registry discovers versions from it
+// too.
+func listNpmVersions(name, registry string) ([]string, error) {
+	args := []string{"view", name, "versions", "--json"}
+	if registry != "" {
+		args = append(args, "--registry", registry)
+	}
+	// Stdout-only: npm's warnings go to stderr, and RunCmd's combined capture
+	// would put them in front of the JSON — every listing then failed to
+	// parse whenever npm warned about anything (e.g. a workspace .npmrc near
+	// the server's cwd).
+	out, err := RunCmdStdout(".", "npm", args...)
 	if err != nil {
-		return nil, ErrFromCmd("npm view", out, err)
+		return nil, err
 	}
 	// `npm view ... versions --json` prints a JSON array, or a bare JSON string
 	// when only one version exists.
@@ -243,14 +259,26 @@ func GitRemoteURL(spec string) string {
 
 // VersionsForSpec resolves a spec's available versions through the cache.
 func VersionsForSpec(spec string) (source PkgSource, versions []string, fetchErr string) {
-	if e, ok := cachedVersions(spec); ok {
+	return VersionsForSpecVia(spec, "")
+}
+
+// VersionsForSpecVia is VersionsForSpec against an overridden npm registry
+// (empty = default). The override joins the cache key so a default-registry
+// entry can never satisfy an overridden lookup or vice versa; git specs
+// ignore it.
+func VersionsForSpecVia(spec, registry string) (source PkgSource, versions []string, fetchErr string) {
+	cacheKey := spec
+	if registry != "" {
+		cacheKey = registry + "\x00" + spec
+	}
+	if e, ok := cachedVersions(cacheKey); ok {
 		return e.source, e.versions, e.err
 	}
 	src, key := ClassifySpec(spec)
 	entry := versionCacheEntry{source: src}
 	switch src {
 	case SourceNpm:
-		v, err := ListNpmVersions(key)
+		v, err := listNpmVersions(key, registry)
 		if err != nil {
 			entry.err = err.Error()
 		} else {
@@ -266,7 +294,7 @@ func VersionsForSpec(spec string) (source PkgSource, versions []string, fetchErr
 	default:
 		entry.err = "unrecognized package spec; cannot determine version source"
 	}
-	storeVersions(spec, entry)
+	storeVersions(cacheKey, entry)
 	return entry.source, entry.versions, entry.err
 }
 

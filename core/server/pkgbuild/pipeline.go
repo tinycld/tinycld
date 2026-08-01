@@ -150,8 +150,14 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// the server. By design — see the doc section referenced above.
 	sink.Progress("Building server", ProgGoBuild, "go build")
 	if err := TimeStep(sink, "go build (server binary)", func() error {
-		_, e := p.run()(goDir, "go", "build", "-o", filepath.Join(appDir, p.binaryName()), ".")
-		return e
+		out, e := p.run()(goDir, "go", "build", "-o", filepath.Join(appDir, p.binaryName()), ".")
+		if e != nil {
+			// Same rationale as runPnpmInstall: in the multi-org builder the
+			// error string is all that leaves the job child, so the compile
+			// errors must ride it.
+			return ErrFromCmd("go build", lastLines(out, 30), e)
+		}
+		return nil
 	}); err != nil {
 		return BuildOutput{}, wrapStep("go build", err)
 	}
@@ -270,11 +276,29 @@ func StageRelease(appDir string) (string, error) {
 // their output streams here too.
 func (p Pipeline) runPnpmInstall(sink ProgressSink, buildDir string) error {
 	throttle := newPnpmProgressThrottle()
-	_, err := p.pnpmStream()(
+	out, err := p.pnpmStream()(
 		func(line string) { p.reportPnpmProgress(sink, line, throttle) },
 		buildDir, "pnpm", "install", "--no-frozen-lockfile",
 	)
-	return err
+	if err != nil {
+		// The failing output must ride the error itself: in the multi-org
+		// builder this runs inside a re-exec'd job child whose structured
+		// failure line is all the router keeps — a bare "exit status 1" left
+		// the actual pnpm/generator error unreachable anywhere.
+		return ErrFromCmd("pnpm install", lastLines(out, 30), err)
+	}
+	return nil
+}
+
+// lastLines returns the final n lines of s — the tail is where pnpm and the
+// generator print the actual failure, and whole outputs are far too large to
+// ride an error string.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // pnpmProgressThrottle rate-limits forwarded "Progress:" lines to one per
