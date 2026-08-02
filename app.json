@@ -2,7 +2,7 @@
     "expo": {
         "name": "TinyCld",
         "slug": "tinycld",
-        "version": "2.0.1",
+        "version": "2.0.2",
         "scheme": "tinycld",
         "platforms": ["ios", "android", "web"],
         "userInterfaceStyle": "automatic",
