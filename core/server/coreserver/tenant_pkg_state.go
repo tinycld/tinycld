@@ -226,10 +226,14 @@ func upsertArtifactMemberRow(app core.App, artifactDir string, member pkgbuild.R
 	if err != nil {
 		return err
 	}
-	// npm_package is the version-discovery + reinstall source: the member's
-	// bare npm name, resolved through the router's control socket in hosted
-	// mode (the tenant has no toolchain).
-	if err := upsertPkgRegistry(app, manifest, member.Name, data); err != nil {
+	// npm_package is the version-discovery + reinstall source, resolved through
+	// the router's control socket in hosted mode (the tenant has no toolchain).
+	// It must be the spec the member was FETCHED from, not merely its npm name:
+	// an org installed from git upgrades against its remote's tags, and storing
+	// the bare name here sent every lookup to the npm registry instead — which
+	// 404s for packages that were never published there. SourceSpec falls back
+	// to the name for artifacts built before the recipe carried a spec.
+	if err := upsertPkgRegistry(app, manifest, member.SourceSpec(), data); err != nil {
 		return err
 	}
 	// upsertPkgRegistry preserves a pre-existing "bundled" status (the
@@ -278,7 +282,18 @@ func upsertArtifactBaseRow(app core.App, member pkgbuild.ResolvedMember) error {
 	rec.Set("version", member.Version)
 	rec.Set("has_server", true)
 	rec.Set("status", "bundled")
-	rec.Set("npm_package", pkgbuild.BaseMemberSlug)
+	// The shell's own fetch spec when the artifact records one (a git-installed
+	// base upgrades from its remote's tags), else its npm name — the
+	// pre-existing behaviour for artifacts built before Spec existed. Note the
+	// base's SourceSpec falls back to Name, which is CorePackageKey
+	// (@tinycld/core), so pin the historical BaseMemberSlug explicitly: the
+	// shell publishes as `tinycld`, and that is what a core version change has
+	// always resolved against.
+	if member.Spec != "" {
+		rec.Set("npm_package", member.Spec)
+	} else {
+		rec.Set("npm_package", pkgbuild.BaseMemberSlug)
+	}
 	rec.Set("manifest_json", json.RawMessage(manifestJSON))
 	return app.Save(rec)
 }
