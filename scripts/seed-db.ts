@@ -350,9 +350,10 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
 // `reset-dev-db.ts` creates the admin via `superuser upsert`, which only writes
 // _superusers — so without this the admin can sign into the /admin console (PB
 // superuser path) but has no `users` row, no app-shell login, and no membership.
-// This mirrors what the first-boot wizard now does (handleSetupInit): create a
-// `users` record for the admin email with role=admin, so admin@ is a
-// usable super-admin app user. Idempotent: skips creation when the row exists.
+// This mirrors what the first-boot wizard now does (handleSetupInit →
+// createOwnerOperator): create a `users` record for the admin email with
+// role=owner, so admin@ is a usable app user with the same authority a real
+// operator gets. Idempotent: skips creation when the row exists.
 async function ensureAdminAppUser(pb: PocketBase, config: SeedConfig): Promise<void> {
     let existing: { id: string } | null = null
     try {
@@ -376,23 +377,28 @@ async function ensureAdminAppUser(pb: PocketBase, config: SeedConfig): Promise<v
             emailVisibility: true,
             verified: true,
             // `role` is required (1940000000_backfill_and_require_users_role).
-            // admin, not member: role is now the only privilege axis, so this
-            // field IS the account's authority. `admin` is what makes this a
-            // useful e2e fixture — it reaches the /admin console and Settings >
-            // Members, but NOT package management, which is owner-only. That
-            // contrast is what the admin-vs-owner e2e specs assert.
-            role: 'admin',
+            // owner, matching createOwnerOperator in setup_bootstrap.go: the
+            // person who provisioned the deployment is its owner, and a seeded
+            // dev DB must behave like one a real operator set up through the
+            // first-boot wizard. Seeding `admin` here left the admin login
+            // unable to reach owner-only surfaces (Settings > Packages, Build
+            // History) on an otherwise-fresh deployment. Specs needing an
+            // admin-vs-owner contrast mint their own admin through the invite
+            // flow (admin-role-access.spec.ts) rather than relying on this
+            // fixture.
+            role: 'owner',
         })
     }
 
-    // An existing fixture may predate the role change (it was seeded as
-    // `member` back when authority came from a separate grant). Bring it up to
-    // date so a re-seeded dev DB behaves like a fresh one.
+    // An existing fixture may predate the role change (seeded as `member` when
+    // authority came from a separate grant, or as `admin` before this account
+    // was aligned with the setup wizard's owner operator). Bring it up to date
+    // so a re-seeded dev DB behaves like a fresh one.
     if (existing) {
         const current = await pb.collection('users').getOne(adminUser.id)
-        if (current.role !== 'admin') {
-            log('Setting admin app user role to "admin"')
-            await pb.collection('users').update(adminUser.id, { role: 'admin' })
+        if (current.role !== 'owner') {
+            log('Setting admin app user role to "owner"')
+            await pb.collection('users').update(adminUser.id, { role: 'owner' })
         }
     }
 }
