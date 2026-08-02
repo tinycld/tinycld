@@ -18,11 +18,30 @@ const MembersLockFile = "members.lock.json"
 // ResolvedMember is one workspace member of a completed assemble, as resolved
 // facts.
 type ResolvedMember struct {
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`      // npm package name (@tinycld/mail); the base records @tinycld/core
-	Version     string `json:"version"`   // semver read from the build dir, not the delta's target string
+	Slug    string `json:"slug"`
+	Name    string `json:"name"`    // npm package name (@tinycld/mail); the base records @tinycld/core
+	Version string `json:"version"` // semver read from the build dir, not the delta's target string
+	// Spec is the fetch spec this member was resolved FROM — a registry
+	// "name@version", or a git spec like "github:tinycld/mail#v1.2.0". It is
+	// what version discovery must use: a git-installed member's upgrades come
+	// from its remote's tags, and querying its npm NAME instead sends the
+	// lookup to a registry that may not carry it at all. Empty for members
+	// resolved before this field existed (the artifact predates it) — callers
+	// fall back to Name, which is the pre-existing behaviour.
+	Spec        string `json:"spec,omitempty"`
 	Integrity   string `json:"integrity"` // "sha256:<hex>" of the fetched tarball; "" when unknown (pre-lock current build)
 	FromCurrent bool   `json:"fromCurrent,omitempty"`
+}
+
+// SourceSpec is the spec version discovery and reinstall should use for this
+// member: the recorded fetch spec when the artifact carries one, else the npm
+// name. The fallback keeps artifacts built before Spec existed working — they
+// resolve against the registry exactly as they did before.
+func (m ResolvedMember) SourceSpec() string {
+	if m.Spec != "" {
+		return m.Spec
+	}
+	return m.Name
 }
 
 type membersLock struct {
@@ -98,7 +117,8 @@ func readBuildMembers(m RebuildManifest, buildDir string) ([]buildMember, error)
 				version = ms.Version
 			}
 			out = append(out, buildMember{ResolvedMember: ResolvedMember{
-				Slug: ms.Slug, Name: CorePackageKey, Version: version, FromCurrent: ms.FromCurrent,
+				Slug: ms.Slug, Name: CorePackageKey, Version: version,
+				Spec: ms.Spec, FromCurrent: ms.FromCurrent,
 			}})
 			continue
 		}
@@ -122,7 +142,8 @@ func readBuildMembers(m RebuildManifest, buildDir string) ([]buildMember, error)
 		}
 		out = append(out, buildMember{
 			ResolvedMember: ResolvedMember{
-				Slug: ms.Slug, Name: npmName, Version: version, FromCurrent: ms.FromCurrent,
+				Slug: ms.Slug, Name: npmName, Version: version,
+				Spec: ms.Spec, FromCurrent: ms.FromCurrent,
 			},
 			PeerVersions: manifest.PeerVersions,
 		})

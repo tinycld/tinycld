@@ -309,6 +309,65 @@ func TestReconcileRegistryFromArtifact_CreatesRows(t *testing.T) {
 	}
 }
 
+// npm_package is the spec version discovery resolves against, so a member
+// fetched from git must record its GIT SPEC — not its npm name. Storing the
+// name sent every upgrade check for a git-installed org to the npm registry,
+// which 404s for packages that were never published there; the org's real
+// upgrades are its remote's tags.
+func TestReconcileRegistryFromArtifact_RecordsGitSpecs(t *testing.T) {
+	app := newTenantPkgStateApp(t)
+	members := []pkgbuild.ResolvedMember{
+		{
+			Slug: pkgbuild.BaseMemberSlug, Name: "@tinycld/core", Version: "0.0.4",
+			Spec: "github:tinycld/tinycld#v0.4.0", Integrity: "sha256:aa",
+		},
+		{
+			Slug: "todo", Name: "@tinycld/todo", Version: "1.0.0",
+			Spec: "git+ssh://git@github.com/acme/todo.git#main", Integrity: "sha256:bb",
+		},
+	}
+	dir := writeArtifact(t, members, map[string]string{"todo": todoManifest})
+
+	if err := reconcileRegistryFromArtifact(app, dir, ""); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	coreRow, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'core'", nil)
+	if err != nil {
+		t.Fatalf("core row not created: %v", err)
+	}
+	if got := coreRow.GetString("npm_package"); got != "github:tinycld/tinycld#v0.4.0" {
+		t.Fatalf("core npm_package = %q, want the git spec the base was fetched from", got)
+	}
+
+	todoRow, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'todo'", nil)
+	if err != nil {
+		t.Fatalf("todo row not created: %v", err)
+	}
+	if got := todoRow.GetString("npm_package"); got != "git+ssh://git@github.com/acme/todo.git#main" {
+		t.Fatalf("todo npm_package = %q, want the git spec the member was fetched from", got)
+	}
+}
+
+// An artifact built before ResolvedMember carried Spec records none, and must
+// keep resolving against the npm name exactly as it did before — an existing
+// org must not lose version discovery because the format grew a field.
+func TestReconcileRegistryFromArtifact_FallsBackToNpmNameWithoutSpec(t *testing.T) {
+	app := newTenantPkgStateApp(t)
+	dir := writeArtifact(t, baseAndTodoMembers(), map[string]string{"todo": todoManifest})
+
+	if err := reconcileRegistryFromArtifact(app, dir, ""); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	todoRow, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'todo'", nil)
+	if err != nil {
+		t.Fatalf("todo row not created: %v", err)
+	}
+	if got := todoRow.GetString("npm_package"); got != "@tinycld/todo" {
+		t.Fatalf("todo npm_package = %q, want the npm name when the artifact records no spec", got)
+	}
+}
+
 func TestReconcileRegistryFromArtifact_UpdatesAndNormalizesStatus(t *testing.T) {
 	app := newTenantPkgStateApp(t)
 	// A pre-existing bundled row (e.g. an org whose DB predates hosted
