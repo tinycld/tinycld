@@ -89,34 +89,42 @@ export function setResolvedAddress(address: string | null): void {
     for (const listener of listeners) listener()
 }
 
-// Point the native bundle store at this server as soon as the address resolves,
-// so anything reading "the current bundle" (the boot beacon, Sentry's
-// release/dist) sees THIS server's state rather than the previously active
-// server's — and so the key is already on disk for the next launch, when the
-// native loader runs before the JS bridge and can only read what was persisted.
+// Point the native bundle store at this server, so anything reading "the current
+// bundle" (the boot beacon, Sentry's release/dist) sees THIS server's state, and
+// so the key is on disk for the next launch — the native loader runs before the
+// JS bridge and can only read what was persisted.
 //
-// Deliberately fail-soft and dependency-light: this sits on the hot path that
-// every consumer's first render waits on, and the updater is a native module
-// absent on web and in some test environments. A failure here must not block
-// the app from connecting.
+// DEFERRED to a microtask, and that is load-bearing, not stylistic. This module
+// calls applyEnvAddress() at module-init, so a synchronous body here would run
+// during the static import graph — ahead of app/_layout.tsx's
+// `import '~/lib/polyfill-crypto'`. Requiring anything from that position drags
+// its transitive graph in early too, and @tanstack/db's collection constructor
+// calls crypto.randomUUID() at ITS module init, which Hermes has no global for:
+// the app dies at launch with "ReferenceError: Property 'crypto' doesn't exist"
+// before any handler can report it. Deferring lets the polyfill install first.
+//
+// Also fail-soft: the updater is a native module absent on web and in tests, and
+// nothing here may block the app from connecting.
 function bindBundleStoreToServer(address: string): void {
     if (Platform.OS === 'web') return
-    try {
-        // Required lazily: importing the native module at this module's top
-        // level would pull it into every environment that merely resolves an
-        // address (web bundles, unit tests), where it does not exist.
-        const AppUpdater = require('app-updater').default as {
-            setActiveServer?: (key: string) => void
+    queueMicrotask(() => {
+        try {
+            // Required lazily (see above): a top-level import would pull the
+            // native module into every environment that merely resolves an
+            // address, and would defeat the deferral this function depends on.
+            const AppUpdater = require('app-updater').default as {
+                setActiveServer?: (key: string) => void
+            }
+            const { serverKeyFor } = require('./app-updater/server-key') as {
+                serverKeyFor: (a: string) => string
+            }
+            // Older binaries have no setActiveServer; they keep the single-slot
+            // behaviour, which is correct for a single-server install.
+            AppUpdater?.setActiveServer?.(serverKeyFor(address))
+        } catch {
+            // No native module (web stub, tests) — nothing to bind.
         }
-        const { serverKeyFor } = require('./app-updater/server-key') as {
-            serverKeyFor: (a: string) => string
-        }
-        // Older binaries have no setActiveServer; they keep the single-slot
-        // behaviour, which is correct for a single-server install.
-        AppUpdater?.setActiveServer?.(serverKeyFor(address))
-    } catch {
-        // No native module (web stub, tests) — nothing to bind.
-    }
+    })
 }
 
 export function getResolvedAddress(): string | null {
