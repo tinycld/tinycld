@@ -48,8 +48,8 @@ type cachedCtlVersions struct {
 }
 
 // ctlVersionsTTL matches pkgbuild's versionCacheTTL — the same discovery the
-// single-tenant handler serves from its own 60s cache.
-const ctlVersionsTTL = 60 * time.Second
+// single-tenant handler serves from its own cache. Keep the two in step.
+const ctlVersionsTTL = 5 * time.Minute
 
 // ErrCtlRateLimited marks a control-socket 429 — the router's per-org
 // throttles (the 30s deploy-proposal floor, the read-endpoint bucket).

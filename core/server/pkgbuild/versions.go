@@ -41,7 +41,13 @@ type versionCacheEntry struct {
 	err      string
 }
 
-const versionCacheTTL = 60 * time.Second
+// 5 minutes: discovery shells out to `git ls-remote`/`npm view` once per spec,
+// and the Packages screen asks for every registry row at once. A newly pushed
+// tag showing up to 5 minutes late is a non-event for an operator browsing
+// versions, whereas a short TTL means a screen revisit (or a dev-server reload)
+// re-shells every remote. Kept in sync with ctlVersionsTTL
+// (coreserver/pkg_hosted_channel.go), the hosted path's mirror of this cache.
+const versionCacheTTL = 5 * time.Minute
 
 // versionCacheMax caps how many spec entries the cache holds. The router serves
 // /v1/versions for tenant-supplied specs; without a bound a tenant sending an
