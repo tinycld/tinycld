@@ -17,10 +17,12 @@
 #          buggy-fixture rollbacks (they exercise the single-tenant
 #          entrypoint's health-probe rollback; the hosted revert path is
 #          covered at protocol level by TestHostedDeployE2E), build-history
-#          revert (pkg_build archives are single-tenant machinery), the OTA
-#          assertions (hosted per-org OTA is design §6 open work — PW_SKIP_OTA),
-#          and the core upgrade/downgrade phases (they provision a git base
-#          remote; the hosted base rides the npm lockfile instead).
+#          revert (pkg_build archives are single-tenant machinery), and the
+#          core upgrade/downgrade phases (they provision a git base remote;
+#          the hosted base rides the npm lockfile instead).
+#   COVERS the OTA assertions: a tenant serves /api/app/update from its own
+#          build artifact, so each package change must advertise a NEW
+#          content-addressed bundle id per platform (design §6 closed).
 #
 # Fixture packages come from a LOCAL npm registry (hosted-npm-registry.mjs):
 # the tinycld base packed from the sibling checkout, @tinycld/todo packed from
@@ -269,8 +271,10 @@ echo "== ensuring chromium is installed for playwright"
 
 # Runs a subset of the serial spec by title grep, exactly like
 # run-todo-install.sh's run_phase — but against the org subdomain, with npm
-# specs (hosted refuses git specs), no OTA assertions, and the hosted
-# progress-bar floor (the router-side build streams no mid-build progress).
+# specs (hosted refuses git specs) and the hosted progress-bar floor (the
+# router-side build streams no mid-build progress). OTA assertions now run
+# here too: the tenant serves /api/app/update from its own build artifact,
+# advertising content-addressed recipe-<hash>-<platform> bundle ids.
 run_phase() {
     local grep_expr="$1" label="$2"
     echo "== running ${label}"
@@ -280,7 +284,6 @@ run_phase() {
         ADMIN_USER_LOGIN="${TENANT_ADMIN_EMAIL}" \
         ADMIN_USER_PW="${TENANT_ADMIN_PASSWORD}" \
         PW_TODO_SPEC_V1="@tinycld/todo@1.0.0" \
-        PW_SKIP_OTA=1 \
         PW_PROGRESS_MIN_PCT=10 \
         RUN_TODO_INSTALL_TEST=1 \
         CI=true FORCE_COLOR=0 \

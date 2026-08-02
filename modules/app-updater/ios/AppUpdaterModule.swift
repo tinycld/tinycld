@@ -11,6 +11,16 @@ public class AppUpdaterModule: Module {
         Function("getCurrentBundleId") { Store.shared.currentId() ?? embeddedId() }
         Function("getCurrentBundleHash") { Store.shared.currentBundleHash(embeddedId: embeddedId()) }
 
+        // Point the store at a server (hex digest of its normalized origin).
+        // Everything below then reads and writes that server's own bundle
+        // state. JS calls this as soon as an address resolves, so the value is
+        // already on disk for the next launch — the loader runs before the
+        // bridge and cannot ask JS which server is active.
+        Function("setActiveServer") { (serverKey: String) in
+            Store.shared.setActiveServer(serverKey)
+        }
+        Function("getActiveServer") { Store.shared.activeServerKey() ?? "" }
+
         AsyncFunction("stageBundle") { (localDir: String, id: String, hash: String) in
             try Store.shared.stagePending(dir: localDir, id: id, hash: hash)
         }
@@ -56,14 +66,72 @@ final class Store {
         try? fm.createDirectory(at: base, withIntermediateDirectories: true)
         return base
     }
-    private var currentURL: URL { root.appendingPathComponent("current.json") }
-    private var pendingURL: URL { root.appendingPathComponent("pending.json") }
-    private var previousURL: URL { root.appendingPathComponent("previous.json") }
-    private var bootURL: URL { root.appendingPathComponent("boot.json") }
-    private var revertURL: URL { root.appendingPathComponent("revert.json") }
-    private var revertedURL: URL { root.appendingPathComponent("reverted.json") }
+
+    /// Names which server's bundle to load. Written by JS the moment a server
+    /// address resolves; read here at launch, BEFORE the React bridge exists —
+    /// which is precisely why it must be persisted rather than asked for.
+    private var activeURL: URL { root.appendingPathComponent("active.json") }
+
+    /// Per-server pointer state. Each server the user connects to keeps its own
+    /// bundle and its own crash-tracking, because in a multi-org deployment
+    /// every org runs a DIFFERENT build with a different package set. With one
+    /// shared slot, switching orgs made each foreground see the other org's
+    /// bundle as "not current" and re-download it — a thrash loop, with a full
+    /// JS reload each time.
+    ///
+    /// `serverKey` is a hex digest of the normalized origin, computed JS-side
+    /// (see core/lib/app-updater/server-key.ts). It is validated here as pure
+    /// hex before being used as a path component, so no origin can escape this
+    /// directory or collide with another.
+    private func serverRoot(_ serverKey: String) -> URL {
+        root.appendingPathComponent("servers", isDirectory: true)
+            .appendingPathComponent(serverKey, isDirectory: true)
+    }
+
+    /// The active server's directory, created on demand. Falls back to a
+    /// "legacy" bucket when nothing is active yet so the store is never
+    /// rootless; that bucket is empty on a fresh install, which resolves to the
+    /// embedded bundle — the correct answer.
+    private var scope: URL {
+        let dir = serverRoot(activeServerKey() ?? "legacy")
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Reads the active server key, rejecting anything that is not a plain hex
+    /// digest. A malformed value is treated as absent rather than joined into a
+    /// path.
+    func activeServerKey() -> String? {
+        guard let k = readJSON(activeURL)?["serverKey"] as? String, isValidServerKey(k) else {
+            return nil
+        }
+        return k
+    }
+
+    private func isValidServerKey(_ k: String) -> Bool {
+        !k.isEmpty && k.count <= 64 && k.allSatisfy { $0.isHexDigit }
+    }
+
+    /// Points the store at `serverKey`. Idempotent: re-writing the same key is
+    /// a no-op, so the common case (every foreground re-asserts the address)
+    /// does not churn the file the launch path depends on.
+    func setActiveServer(_ serverKey: String) {
+        guard isValidServerKey(serverKey) else { return }
+        if activeServerKey() == serverKey { return }
+        writeJSON(activeURL, ["serverKey": serverKey])
+    }
+
+    private var currentURL: URL { scope.appendingPathComponent("current.json") }
+    private var pendingURL: URL { scope.appendingPathComponent("pending.json") }
+    private var previousURL: URL { scope.appendingPathComponent("previous.json") }
+    private var bootURL: URL { scope.appendingPathComponent("boot.json") }
+    private var revertURL: URL { scope.appendingPathComponent("revert.json") }
+    private var revertedURL: URL { scope.appendingPathComponent("reverted.json") }
+    private var errorURL: URL { scope.appendingPathComponent("error.json") }
+
+    // The embedded bundle belongs to the BINARY, not to any server, so its
+    // cached hash stays at the root and is shared across every server scope.
     private var embeddedHashURL: URL { root.appendingPathComponent("embedded-hash.json") }
-    private var errorURL: URL { root.appendingPathComponent("error.json") }
 
     // Crash-launch rollback thresholds: a promoted OTA bundle is rolled back after
     // this many launches that never reach the JS "healthy" signal.
@@ -124,21 +192,43 @@ final class Store {
         writeJSON(errorURL, ["detail": detail, "id": currentId() ?? ""])
     }
 
-    /// Returns `[id, hash, error]` of a bundle that was rolled back since the last
-    /// call, then clears it (read-once). The recovered bundle calls this on boot
-    /// and, if non-nil, POSTs report-bad so the server stops advertising the bad
-    /// bundle to the fleet. `error` carries the persisted crash detail (e.g. the
-    /// regex pattern that aborted Hermes) when one was recorded, else "". Returns
-    /// nil when nothing was rolled back.
+    /// Returns `[id, hash, error, serverKey]` of a bundle that was rolled back
+    /// since the last call, then clears it (read-once). The recovered bundle
+    /// calls this on boot and, if non-nil, POSTs report-bad so the server stops
+    /// advertising the bad bundle to the fleet. `error` carries the persisted
+    /// crash detail (e.g. the regex pattern that aborted Hermes) when one was
+    /// recorded, else "". Returns nil when nothing was rolled back.
+    ///
+    /// `serverKey` names the server the bad bundle CAME FROM. Without it the
+    /// report would go to whichever server happens to be active now, which
+    /// after a switch is the wrong one — it would blocklist a bundle id on a
+    /// server that never served it while the actually-bad bundle kept being
+    /// advertised by its own.
     func takeRevertedBundle() -> [String: String]? {
-        guard let r = readJSON(revertedURL) else { return nil }
-        try? fm.removeItem(at: revertedURL)
-        let id = r["id"] as? String ?? ""
-        if id.isEmpty { return nil }
-        // Drain the recorded crash detail (read-once, paired with the revert).
-        let detail = (readJSON(errorURL)?["detail"] as? String) ?? ""
-        try? fm.removeItem(at: errorURL)
-        return ["id": id, "hash": r["hash"] as? String ?? "", "error": detail]
+        // Scan every server's scope, not just the active one: the rollback
+        // happens at native boot, and JS may resolve a different address before
+        // it drains the marker.
+        let serversRoot = root.appendingPathComponent("servers", isDirectory: true)
+        let keys = (try? fm.contentsOfDirectory(atPath: serversRoot.path)) ?? []
+        for key in keys + ["legacy"] {
+            let dir = serverRoot(key)
+            let revertedFile = dir.appendingPathComponent("reverted.json")
+            guard let r = readJSON(revertedFile) else { continue }
+            try? fm.removeItem(at: revertedFile)
+            let id = r["id"] as? String ?? ""
+            if id.isEmpty { continue }
+            // Drain the recorded crash detail (read-once, paired with the revert).
+            let errorFile = dir.appendingPathComponent("error.json")
+            let detail = (readJSON(errorFile)?["detail"] as? String) ?? ""
+            try? fm.removeItem(at: errorFile)
+            return [
+                "id": id,
+                "hash": r["hash"] as? String ?? "",
+                "error": detail,
+                "serverKey": key == "legacy" ? "" : key,
+            ]
+        }
+        return nil
     }
 
     /// Hex SHA-256 of the bundle the app is currently running. For a promoted OTA

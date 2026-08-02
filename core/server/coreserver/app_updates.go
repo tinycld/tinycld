@@ -12,13 +12,19 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// buildIDPattern matches the only build_id shapes the install pipeline mints:
-// `build-<unixMilli>` and the seed `build-base`. serveBuildFile interpolates the
-// build id into the archive path, so it MUST be validated against this before
+// buildIDPattern matches the only build_id shapes either composition mints:
+// the host installer's `build-<unixMilli>` and seed `build-base`, and the
+// multi-org builder's content-addressed `recipe-<hash12>` (buildIDFor takes the
+// first 12 hex chars of the recipe hash). serveBuildFile interpolates the build
+// id into the archive path, so it MUST be validated against this before
 // joining — Go's mux percent-decodes path segments, so an un-validated id like
 // `..%2f..%2f..` would otherwise let a public, pre-auth request escape the
 // builds dir and read arbitrary files. (See buildArchiveFor's contract note.)
-var buildIDPattern = regexp.MustCompile(`^build-(\d+|base)$`)
+//
+// Keep this an exact-match allowlist of known shapes. Loosening it to something
+// permissive (e.g. "no slashes") would re-open exactly the traversal this
+// closes — the regression cases live in app_updates_http_test.go.
+var buildIDPattern = regexp.MustCompile(`^(build-(\d+|base)|recipe-[a-f0-9]{12})$`)
 
 type manifestStatus int
 
@@ -255,10 +261,41 @@ func truncate(s string, max int) string {
 	return s[:max]
 }
 
-// RegisterAppUpdateEndpoints wires the public OTA update endpoints: a JSON
-// manifest check and static serving of bundle + asset files from the build
-// archive. Public (no superuser guard) — the app calls these pre/post-auth.
+// appUpdateSources supplies the two composition-specific pieces of the OTA
+// endpoints; everything else (the manifest decision, the bad-bundle skip, the
+// traversal hardening) is shared, so host and tenant can never drift apart on
+// the parts that matter for correctness or safety.
+type appUpdateSources struct {
+	// bundles returns the build id and bundle metadata to serve from. The host
+	// reads the pkg_build "current" row; a tenant reads its own build artifact's
+	// recipe.json (an org dir has no build archive). ("", nil) means "nothing to
+	// advertise" → 204.
+	bundles func(core.App) (string, []any)
+
+	// nativeRoot returns the directory holding <platform>/<file...> for a given
+	// build id — the host's build archive, or the tenant's pb_public/native.
+	nativeRoot func(buildID string) string
+}
+
+// RegisterAppUpdateEndpoints wires the public OTA update endpoints for the HOST
+// composition: a JSON manifest check and static serving of bundle + asset files
+// from the build archive. Public (no superuser guard) — the app calls these
+// pre/post-auth. The tenant composition registers the same endpoints against
+// its artifact via RegisterTenantAppUpdateEndpoints.
 func RegisterAppUpdateEndpoints(app *pocketbase.PocketBase) {
+	registerAppUpdateEndpoints(app, appUpdateSources{
+		bundles: currentBuildBundles,
+		nativeRoot: func(buildID string) string {
+			return buildArchiveFor(resolveServerDir(), buildID).release
+		},
+	})
+}
+
+// registerAppUpdateEndpoints binds the shared handlers. It takes core.App
+// rather than *pocketbase.PocketBase because that is all the handlers need —
+// which also lets the HTTP tests drive the real registration against a
+// tests.TestApp instead of re-implementing it.
+func registerAppUpdateEndpoints(app core.App, src appUpdateSources) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		g := e.Router.Group("/api/app")
 
@@ -272,7 +309,7 @@ func RegisterAppUpdateEndpoints(app *pocketbase.PocketBase) {
 			// what the server knows. Lets the OTA flow be traced end-to-end from
 			// `docker logs` (and lets the install e2e assert on the decision). Kept at
 			// Info so it's visible without enabling debug-level logging.
-			buildID, bundles := currentBuildBundles(app)
+			buildID, bundles := src.bundles(app)
 			app.Logger().Info("app-update: request",
 				"method", re.Request.Method,
 				"path", re.Request.URL.RequestURI(),
@@ -368,20 +405,20 @@ func RegisterAppUpdateEndpoints(app *pocketbase.PocketBase) {
 		})
 
 		g.GET("/bundle/{buildId}/{platform}/{path...}", func(re *core.RequestEvent) error {
-			return serveBuildFile(re)
+			return serveBuildFile(re, src.nativeRoot)
 		})
 		g.GET("/asset/{buildId}/{platform}/{path...}", func(re *core.RequestEvent) error {
-			return serveBuildFile(re)
+			return serveBuildFile(re, src.nativeRoot)
 		})
 
 		return e.Next()
 	})
 }
 
-// serveBuildFile serves a file from <archive>/release/native/<platform>/<path>.
+// serveBuildFile serves a file from <nativeRoot(buildID)>/native/<platform>/<path>.
 // os.DirFS roots the FS at that dir, so fs.Open confines reads to it — no manual
 // traversal check needed (same approach as PoolAssets).
-func serveBuildFile(re *core.RequestEvent) error {
+func serveBuildFile(re *core.RequestEvent, nativeRoot func(string) string) error {
 	buildID := re.Request.PathValue("buildId")
 	platform := re.Request.PathValue("platform")
 	rest := re.Request.PathValue("path")
@@ -397,8 +434,7 @@ func serveBuildFile(re *core.RequestEvent) error {
 		return re.NotFoundError("", nil)
 	}
 
-	appDir := resolveServerDir()
-	base := filepath.Join(buildArchiveFor(appDir, buildID).release, "native", platform)
+	base := filepath.Join(nativeRoot(buildID), "native", platform)
 	fs := os.DirFS(base)
 	f, err := fs.Open(rest)
 	if err != nil {

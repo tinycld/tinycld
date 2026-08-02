@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import {
     checkForUpdate,
     downloadAndStage,
@@ -5,8 +6,13 @@ import {
     reportBadBundle,
 } from '@tinycld/core/lib/app-updater/client'
 import { sha256HexOfFile } from '@tinycld/core/lib/app-updater/hash'
+import {
+    originForServerKey,
+    rememberServerOrigin,
+    serverKeyFor,
+} from '@tinycld/core/lib/app-updater/server-key'
 import { captureException } from '@tinycld/core/lib/errors'
-import { getResolvedAddress } from '@tinycld/core/lib/server-address'
+import { getResolvedAddress, subscribeResolvedAddress } from '@tinycld/core/lib/server-address'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import AppUpdater from 'app-updater'
 import * as FileSystem from 'expo-file-system/legacy'
@@ -27,31 +33,43 @@ const TOAST_VISIBLE_BEFORE_RELOAD_MS = 1500
 // would otherwise start concurrent downloads into the SAME per-id staging dir
 // (torn writes) and stack reload()s + toasts. While a run is in flight, later
 // calls return the same promise instead of starting another.
-let inFlight: Promise<void> | null = null
+//
+// Keyed by server: two servers' checks are independent work into separate
+// staging dirs, so a check against server A must not suppress one against
+// server B (which a single shared slot would silently do on a switch).
+const inFlight = new Map<string, Promise<void>>()
 
 function checkAndApplyUpdate(): Promise<void> {
-    if (inFlight) return inFlight
-    inFlight = runUpdateCheck().finally(() => {
-        inFlight = null
+    const serverUrl = getResolvedAddress()
+    if (!serverUrl) return Promise.resolve()
+    const key = serverKeyFor(serverUrl)
+    const existing = inFlight.get(key)
+    if (existing) return existing
+    const run = runUpdateCheck(serverUrl, key).finally(() => {
+        inFlight.delete(key)
     })
-    return inFlight
+    inFlight.set(key, run)
+    return run
 }
 
-async function runUpdateCheck(): Promise<void> {
+// runUpdateCheck checks one server for a newer bundle and applies it. The
+// caller resolves the address (non-throwing — see checkAndApplyUpdate) and
+// derives its key, so both are passed in rather than re-read here: re-reading
+// mid-run could straddle a server switch and stage server A's bundle into
+// server B's slot.
+async function runUpdateCheck(serverUrl: string, serverKey: string): Promise<void> {
     if (__DEV__ || Platform.OS === 'web') return
     const platform = Platform.OS === 'ios' ? 'ios' : 'android'
 
     try {
-        // Gate on the resolved address WITHOUT throwing. This check fires from the
-        // launch timer AND from handleAppStateChange (every foreground), either of
-        // which can run before the _layout.tsx server-address gate has resolved —
-        // e.g. on a cold boot, or in a build where EXPO_PUBLIC_ENV didn't seed an
-        // address. Reading String(PB_SERVER_ADDR) there THROWS ("accessed before
-        // resolved"); the catch below then reports it to Sentry on every such
-        // foreground — noise, not a bug. Use the non-throwing getResolvedAddress()
-        // and bail as a clean no-op until connected, exactly like reportRevertedBundle.
-        const serverUrl = getResolvedAddress()
-        if (!serverUrl) return
+        // Bind the native store to this server BEFORE staging anything, so the
+        // staged bundle lands in its own slot and the next launch loads it. This
+        // is the only channel the native loader has: it runs before the JS bridge
+        // exists and can't ask which server is active.
+        AppUpdater.setActiveServer(serverKey)
+        // Remember key→origin so a bundle rolled back at native boot (before any
+        // JS runs) can still be reported to the server it came from.
+        void rememberServerOrigin(AsyncStorage, serverUrl)
 
         // Refuse to fetch/verify/stage a bundle over an untrusted transport. The
         // per-file SHA-256 check is worthless against a MITM on plaintext http://
@@ -82,7 +100,11 @@ async function runUpdateCheck(): Promise<void> {
         // dir IS the running bundle, and the OS can purge the cache dir under
         // storage pressure — which would make the native loader miss the .hbc and
         // trigger a spurious rollback. documentDirectory is not auto-evicted.
-        const tmpDir = `${FileSystem.documentDirectory}app-update/${manifest.id}/`
+        //
+        // Scoped by server as well as bundle id: two servers can legitimately
+        // advertise the same content-addressed id (identical package sets share a
+        // recipe hash), and unscoped they would write into one another's dir.
+        const tmpDir = `${FileSystem.documentDirectory}app-update/${serverKey}/${manifest.id}/`
         await FileSystem.makeDirectoryAsync(tmpDir, { intermediates: true })
 
         await downloadAndStage(manifest, {
@@ -151,12 +173,24 @@ export async function reportRevertedBundle(): Promise<void> {
     // (read-once) leaves the marker intact so the next foreground retries; the old
     // order consumed it then threw, both losing the report AND spamming Sentry with
     // a non-bug.
-    const serverUrl = getResolvedAddress()
-    if (!serverUrl || !isUpdateTransportAllowed(serverUrl)) return
+    const activeUrl = getResolvedAddress()
+    if (!activeUrl || !isUpdateTransportAllowed(activeUrl)) return
 
     const reverted = AppUpdater.takeRevertedBundle()
     if (!reverted) return
     try {
+        // Report to the server the bad bundle CAME FROM, not whichever is active
+        // now — after a server switch those differ, and reporting to the active
+        // one would blocklist an id on a server that never served it while the
+        // actually-bad bundle kept being advertised by its own. Fall back to the
+        // active server when the origin isn't remembered (a bundle staged before
+        // per-server state existed), which is the old behaviour.
+        const originUrl =
+            (await originForServerKey(AsyncStorage, reverted.serverKey ?? '')) ?? activeUrl
+        // Re-gate: the origin may differ from the address checked above, and a
+        // report must never leave over an untrusted transport either.
+        if (!isUpdateTransportAllowed(originUrl)) return
+
         // Prefer the detail the fatal handler persisted (the offending regex
         // pattern + Hermes error) so the report-bad row names WHY the bundle
         // crashed — not just that it did. Older binaries return no `error`; fall
@@ -166,7 +200,7 @@ export async function reportRevertedBundle(): Promise<void> {
                 ? reverted.error
                 : 'client rolled back: bundle failed to reach healthy'
         await reportBadBundle({
-            serverUrl,
+            serverUrl: originUrl,
             platform: Platform.OS === 'ios' ? 'ios' : 'android',
             id: reverted.id,
             hash: reverted.hash,
@@ -175,6 +209,51 @@ export async function reportRevertedBundle(): Promise<void> {
         })
     } catch (error) {
         captureException('use-app-updates.report-bad', error, { id: reverted.id })
+    }
+}
+
+// The bundle id the JS currently running was loaded from. Captured once at
+// module init, BEFORE any server switch can rebind the native store — so it
+// records what is actually executing, not what the store would hand out now.
+const RUNNING_BUNDLE_ID = ((): string => {
+    if (Platform.OS === 'web') return ''
+    try {
+        return AppUpdater.getCurrentBundleId()
+    } catch {
+        return ''
+    }
+})()
+
+// applyServerSwitchIfNeeded reloads into the newly-active server's own bundle
+// when one is already staged for it.
+//
+// Without this, connecting to a different org leaves the app RUNNING THE
+// PREVIOUS ORG'S BUNDLE until the next cold launch — a build with a different
+// package set, so routes and collections the new org doesn't have (or is
+// missing) would be live against it. The native loader picks the right bundle
+// at launch; this is what makes the switch take effect immediately.
+//
+// No-ops when the active server's bundle is the one already running, which is
+// the overwhelmingly common case (every foreground re-asserts the address).
+async function applyServerSwitchIfNeeded(): Promise<void> {
+    if (__DEV__ || Platform.OS === 'web') return
+    try {
+        const staged = AppUpdater.getCurrentBundleId()
+        // Nothing staged for this server, or it is what we are already running.
+        // A server with no bundle of its own resolves to embedded, which is a
+        // valid thing to be running — don't churn a reload for it.
+        if (!staged || !RUNNING_BUNDLE_ID || staged === RUNNING_BUNDLE_ID) return
+
+        useToastStore.getState().addToast({
+            title: 'Switching workspace',
+            body: 'Restarting to load this server’s version…',
+            variant: 'info',
+            duration: TOAST_VISIBLE_BEFORE_RELOAD_MS + 500,
+        })
+        await new Promise(resolve => setTimeout(resolve, TOAST_VISIBLE_BEFORE_RELOAD_MS))
+        await AppUpdater.reload()
+    } catch (error) {
+        captureException('use-app-updates.server-switch', error)
     }
 }
 
@@ -187,6 +266,13 @@ export function useAppUpdates(): void {
         // (keeping the marker) until the server-address gate resolves, so it's also
         // re-attempted on each foreground below until it gets through.
         void reportRevertedBundle()
+
+        // React to a server switch (the connect flow calls setResolvedAddress,
+        // which rebinds the native store): if the newly-active server already has
+        // its own bundle staged, load it now rather than at the next cold launch.
+        const unsubscribe = subscribeResolvedAddress(() => {
+            void applyServerSwitchIfNeeded()
+        })
 
         const launchTimer = setTimeout(checkAndApplyUpdate, LAUNCH_DELAY_MS)
 
@@ -201,6 +287,7 @@ export function useAppUpdates(): void {
         return () => {
             clearTimeout(launchTimer)
             subscription.remove()
+            unsubscribe()
         }
     }, [])
 }

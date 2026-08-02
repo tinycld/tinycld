@@ -40,51 +40,13 @@ func newAppUpdateTestApp(t *testing.T) *tests.TestApp {
 		t.Fatalf("save current build: %v", err)
 	}
 
-	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
-		g := e.Router.Group("/api/app")
-		g.GET("/update", func(re *core.RequestEvent) error {
-			platform := re.Request.URL.Query().Get("platform")
-			runtime := re.Request.URL.Query().Get("runtimeVersion")
-			currentID := re.Request.URL.Query().Get("currentId")
-			currentHash := re.Request.URL.Query().Get("currentHash")
-			if platform == "" || runtime == "" {
-				return re.BadRequestError("platform and runtimeVersion are required", nil)
-			}
-			buildID, bundles := currentBuildBundles(app)
-			if buildID == "" {
-				return re.NoContent(http.StatusNoContent)
-			}
-			m, status := resolveNoBad(bundles, platform, runtime, currentID, currentHash)
-			if status != manifestNew {
-				return re.NoContent(http.StatusNoContent)
-			}
-			fillManifestURLs(&m, buildID, platform)
-			return re.JSON(http.StatusOK, m)
-		})
-		g.POST("/boot", func(re *core.RequestEvent) error {
-			var body struct {
-				ID       string `json:"id"`
-				Platform string `json:"platform"`
-				Hash     string `json:"hash"`
-			}
-			if err := re.BindBody(&body); err != nil {
-				return re.BadRequestError("invalid body", err)
-			}
-			if body.ID == "" {
-				return re.BadRequestError("id is required", nil)
-			}
-			app.Logger().Info("app-boot: rendered",
-				"q.bundleId", body.ID,
-				"q.platform", body.Platform,
-				"q.hash", body.Hash,
-				"remoteAddr", re.Request.RemoteAddr,
-			)
-			return re.JSON(http.StatusOK, map[string]any{"ok": true})
-		})
-		g.GET("/bundle/{buildId}/{platform}/{path...}", func(re *core.RequestEvent) error {
-			return serveBuildFile(re)
-		})
-		return e.Next()
+	// Register the REAL endpoints (not a re-implementation), so these scenarios
+	// exercise production wiring: the manifest decision, the bad-bundle skip,
+	// and serveBuildFile's traversal guards. Only the two composition-specific
+	// seams are substituted — and `bundles` is the genuine host source.
+	registerAppUpdateEndpoints(app, appUpdateSources{
+		bundles:    currentBuildBundles,
+		nativeRoot: func(string) string { return t.TempDir() },
 	})
 	return app
 }
