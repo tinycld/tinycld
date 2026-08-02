@@ -11,7 +11,6 @@ import { Bell, LogOut, Settings, User, X } from 'lucide-react-native'
 import { useCallback } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { MAX_VISIBLE_TABS } from './MobileTabBar'
-import { MoreDrawerAdminItem } from './MoreDrawerAdminItem'
 import { getIcon } from './package-icon-map'
 import { isCurrentOrg, useUserOrgs } from './useUserOrgs'
 
@@ -82,8 +81,6 @@ export function MoreDrawer() {
                         Settings
                     </Text>
                 </Pressable>
-
-                <MoreDrawerAdminItem onNavigate={handleNav} />
 
                 {/* Cross-org switcher: entries come from the parent-domain
                     cookie tenants write at login (useUserOrgs); each row is a

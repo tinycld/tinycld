@@ -17,7 +17,7 @@ export const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
 // so waits on it race a still-loading chunk, and when the route shape shifts
 // underneath them they hang for the full timeout while the app works fine.
 // appShell()/packageScreen() assert what the user can actually see.
-const APP_SECTIONS = 'contacts|settings|admin|help|mail|drive|calendar|calc|text|shortcut-stub'
+const APP_SECTIONS = 'contacts|settings|help|mail|drive|calendar|calc|text|shortcut-stub'
 export const LANDED_URL = new RegExp(`/(?:${APP_SECTIONS})(?:/|$|\\?)`)
 export const TEST_USER_PASSWORD = process.env.TEST_USER_PW || 'TestUser1234!'
 export const TEST_USER_USERNAME = process.env.TEST_USER_USERNAME ?? 'tester'
@@ -330,26 +330,4 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
 
 export async function clickSidebarItem(page: Page, label: string) {
     await page.getByText(label, { exact: true }).click()
-}
-
-// Enter the in-shell Admin console (owner/admin only) and land on a section.
-// Requires a logged-in owner or admin session (the e2e seed stamps the test
-// user `owner`). Clicks the rail entry rather than page.goto so the SPA + its
-// lazy chunks stay warm, then clicks the section in the AdminSidebar.
-//
-// `sectionLabel` is the section's visible title ('Build History',
-// 'Organizations') — the same string AdminScreen renders and derives its
-// testID from. Note 'Packages' is owner-only; an admin never sees it.
-export async function navigateToAdmin(page: Page, sectionLabel: string) {
-    const rail = page.getByTestId('nav-admin')
-    await rail.waitFor({ state: 'visible', timeout: 15_000 })
-    await rail.click()
-    // The console is mounted, not merely routed to (see navigateToPackage).
-    await page.getByTestId('pkg-active-admin').waitFor({ state: 'visible' })
-    // The index redirects to a landing section; click the target in the sidebar.
-    await page.getByText(sectionLabel, { exact: true }).click()
-    // AdminScreen stamps this once the section's own content mounts — the URL
-    // only proves the router accepted the push.
-    const sectionId = sectionLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-')
-    await page.getByTestId(`admin-section-${sectionId}`).waitFor({ state: 'visible' })
 }

@@ -4,12 +4,21 @@ import { packageSettings } from '@tinycld/core/lib/packages/derive-components'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useRouter } from 'expo-router'
-import { ChevronRight, HardDrive, Package, ScrollText, Tag, User, Users } from 'lucide-react-native'
+import {
+    ChevronRight,
+    HardDrive,
+    History,
+    Package,
+    ScrollText,
+    Tag,
+    User,
+    Users,
+} from 'lucide-react-native'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 export default function SettingsIndex() {
     const foregroundColor = useThemeColor('foreground')
-    const { isAdmin } = useCurrentRole()
+    const { isAdmin, isOwner, isReady } = useCurrentRole()
     const orgHref = useOrgHref()
     const router = useRouter()
 
@@ -26,13 +35,13 @@ export default function SettingsIndex() {
                     />
                 </SettingsGroup>
 
-                <AdminSettings isVisible={isAdmin} />
+                <AdminSettings isVisible={isAdmin} isOwner={isReady && isOwner} />
             </View>
         </ScrollView>
     )
 }
 
-function AdminSettings({ isVisible }: { isVisible: boolean }) {
+function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: boolean }) {
     const foregroundColor = useThemeColor('foreground')
     const orgHref = useOrgHref()
     const router = useRouter()
@@ -67,6 +76,7 @@ function AdminSettings({ isVisible }: { isVisible: boolean }) {
                     onPress={() => router.push(orgHref('settings/audit-log'))}
                     icon={<ScrollText size={20} color={foregroundColor} />}
                 />
+                <OwnerLinks isVisible={isOwner} />
             </SettingsGroup>
 
             {packageSettings.map(group => {
@@ -91,6 +101,24 @@ function AdminSettings({ isVisible }: { isVisible: boolean }) {
                 )
             })}
         </>
+    )
+}
+
+// Owner-only entries. Build History reports on deployment rebuilds and offers
+// revert, so it sits with the install manager on the owner side of the line.
+function OwnerLinks({ isVisible }: { isVisible: boolean }) {
+    const foregroundColor = useThemeColor('foreground')
+    const orgHref = useOrgHref()
+    const router = useRouter()
+
+    if (!isVisible) return null
+
+    return (
+        <SettingsLink
+            label="Build History"
+            onPress={() => router.push(orgHref('settings/builds'))}
+            icon={<History size={20} color={foregroundColor} />}
+        />
     )
 }
 

@@ -58,11 +58,11 @@ export function SetupPage({ token }: SetupPageProps) {
     }
 
     // An owner/admin reaches the console with their normal session — send them
-    // to the in-shell admin console (/admin), the single admin surface. The
-    // /setup route is now only the pre-auth bootstrap door (first-run wizard +
-    // raw-superuser recovery) for cases where no app session exists.
+    // to Settings, the single in-app administration surface. The /setup route is
+    // now only the pre-auth bootstrap door (first-run wizard + raw-superuser
+    // recovery) for cases where no app session exists.
     if (isAdmin) {
-        return <Redirect href="/admin" />
+        return <Redirect href="/settings" />
     }
 
     // Fallback for anyone without an owner/admin app session (e.g. a raw PB

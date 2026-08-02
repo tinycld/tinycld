@@ -1,13 +1,13 @@
 ---
 title: Updating & downgrading packages
-summary: Change installed package versions from Admin → Packages, one at a time or in a group
+summary: Change installed package versions from Settings → Packages, one at a time or in a group
 tags: [packages, versions, update, upgrade, downgrade, compatibility]
 order: 56
 ---
 
 ## What this does
 
-**Admin → Packages** lists every installed package. Each row shows the package's
+**Settings → Packages** lists every installed package. Each row shows the package's
 current version and, when a different version is available, a version picker right
 on the row. You can move any package to a different version — **newer (update)**
 or **older (downgrade)** — and apply several changes together. Unlike a build
@@ -49,7 +49,7 @@ for any package.
 
 ## To update one or more packages
 
-1. Open **Admin → Packages**. Rows with a newer version available show an
+1. Open **Settings → Packages**. Rows with a newer version available show an
    **Update** badge.
 2. For each package you want to change, pick a target version from its row's
    picker. Choosing a version different from the current one stages it — the row
@@ -94,7 +94,7 @@ so a staged set can never slip through in a stale state.
 
 [Build history](help://core:build-history) reverts the **whole image** to an
 earlier snapshot, undoing every package change made since — use it for recovery.
-A version change on **Admin → Packages** moves **one package at a time** and
+A version change on **Settings → Packages** moves **one package at a time** and
 leaves the rest untouched — use it for routine updates and targeted downgrades.
 
 ## Installing an exact version

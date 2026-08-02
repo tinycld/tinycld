@@ -1,28 +1,29 @@
 import { expect, test } from '@playwright/test'
-import { createInvitedUser, login, loginAs, navigateToPackage } from './helpers'
+import { clickSidebarItem, createInvitedUser, login, loginAs, navigateToPackage } from './helpers'
 
-// The owner/admin split inside the Admin console.
+// The owner/admin split inside Settings.
 //
-// Role is the only privilege axis (the super_admins junction is gone), and it
-// grants two different things:
-//   - owner OR admin  → the console itself (rail icon, /admin, Organizations,
-//     Build History, Settings)
-//   - owner ALONE     → Packages, because installing or removing a package
-//     rebuilds the artifact the whole deployment runs.
+// Role is the only privilege axis, and it grants two different things:
+//   - owner OR admin  → the Organization group (Storage, Members, Labels,
+//     Packages enable/disable, Audit Log)
+//   - owner ALONE     → the package install manager and Build History, because
+//     installing or removing a package rebuilds the artifact the whole
+//     deployment runs.
 //
 // The seeded TEST_USER is the owner. The admin is minted through the UI —
 // invite flow, then the Members role picker — rather than a raw PB write, so
 // the test drives the same mutations the app does.
 
-test.describe('Admin console · role access', () => {
-    test('owner sees Packages; admin reaches the console without it', async ({ page }) => {
-        // --- Owner: the console, including Packages ---
+test.describe('Settings · role access', () => {
+    test('owner gets the install manager and Build History; admin does not', async ({ page }) => {
+        // --- Owner: Packages shows the toggles AND the install manager ---
         await login(page)
-        const rail = page.getByTestId('nav-admin')
-        await expect(rail).toBeVisible({ timeout: 15_000 })
-        await rail.click()
-        await page.getByTestId('pkg-active-admin').waitFor({ state: 'visible' })
-        await expect(page.getByTestId('admin-section-packages')).toBeVisible({ timeout: 20_000 })
+        await navigateToPackage(page, 'settings')
+        await expect(page.getByText('Build History', { exact: true })).toBeVisible({
+            timeout: 15_000,
+        })
+        await clickSidebarItem(page, 'Packages')
+        await expect(page.getByTestId('settings-install-manager')).toBeVisible({ timeout: 20_000 })
 
         // --- Promote a fresh member to admin through the Members UI ---
         const { user, close } = await createInvitedUser(page, 'adminrole')
@@ -48,26 +49,29 @@ test.describe('Admin console · role access', () => {
                 { timeout: 10_000 }
             )
 
-            // --- Admin: console yes, Packages no ---
+            // --- Admin: the org settings yes, the owner-only tiers no ---
             const adminContext = await page.context().browser()!.newContext()
             const adminPage = await adminContext.newPage()
             try {
                 await loginAs(adminPage, user.username, user.password)
+                await navigateToPackage(adminPage, 'settings')
 
-                const adminRail = adminPage.getByTestId('nav-admin')
-                await expect(adminRail).toBeVisible({ timeout: 15_000 })
-                await adminRail.click()
-                await adminPage.getByTestId('pkg-active-admin').waitFor({ state: 'visible' })
+                // Reaching Packages proves the Organization group mounted for a
+                // non-owner. Its enable/disable toggles are admin-visible...
+                await clickSidebarItem(adminPage, 'Packages')
+                await expect(
+                    adminPage.getByText('Enable or disable packages for this organization.', {
+                        exact: false,
+                    })
+                ).toBeVisible({ timeout: 20_000 })
 
-                // Organizations is the admin's landing section — reaching it
-                // proves the console mounted for a non-owner.
-                await expect(adminPage.getByTestId('admin-section-organizations')).toBeVisible({
-                    timeout: 20_000,
-                })
+                // ...but the install manager below them is owner-only.
+                await expect(adminPage.getByTestId('settings-install-manager')).toHaveCount(0)
 
-                // Packages is owner-only: absent from the sidebar, and a
-                // hand-typed URL redirects back rather than rendering it.
-                await expect(adminPage.getByTestId('admin-section-packages')).toHaveCount(0)
+                // Build History is likewise absent from the settings index, and
+                // a hand-typed URL refuses to render it.
+                await adminPage.goBack()
+                await expect(adminPage.getByText('Build History', { exact: true })).toHaveCount(0)
             } finally {
                 await adminContext.close()
             }
@@ -76,12 +80,18 @@ test.describe('Admin console · role access', () => {
         }
     })
 
-    test('a member gets no Admin rail entry', async ({ page }) => {
+    test('a member sees no Organization settings', async ({ page }) => {
         const { inviteePage, close } = await createInvitedUser(page, 'memberrole')
         try {
             // createInvitedUser leaves the invitee signed in as a plain member.
-            // The rail button self-gates on isAdmin, so it must not render.
-            await expect(inviteePage.getByTestId('nav-admin')).toHaveCount(0)
+            // AdminSettings self-gates on isAdmin, so the whole Organization
+            // group — and every owner-only entry inside it — must not render.
+            await navigateToPackage(inviteePage, 'settings')
+            await expect(inviteePage.getByText('Personal', { exact: true })).toBeVisible({
+                timeout: 15_000,
+            })
+            await expect(inviteePage.getByText('Members', { exact: true })).toHaveCount(0)
+            await expect(inviteePage.getByText('Build History', { exact: true })).toHaveCount(0)
         } finally {
             await close()
         }

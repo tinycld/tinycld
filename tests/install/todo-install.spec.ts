@@ -228,10 +228,10 @@ async function superuserToken(page: Page): Promise<string> {
 // superuser, by minting a fresh token and writing it into localStorage, then
 // reloading so the app rehydrates it on boot (authStoreReady).
 //
-// Why this is needed: the /admin login form authenticates `useSuperUserPB` — a
+// Why this is needed: the /setup login form authenticates `useSuperUserPB` — a
 // SEPARATE PocketBase instance with an IN-MEMORY auth store — not `appPb`. The
-// admin console screens read fine from useSuperUserPB, but OrganizationsTab
-// performs its org-owner create through `appPb` (pbtsdb's collections via `useStore`).
+// setup console screens read fine from useSuperUserPB, but screens that write
+// through `appPb` (pbtsdb's collections via `useStore`) do not.
 // `appPb` only ever got a superuser token from the one-time bootstrap wizard, and
 // the rollback fixtures restart the server several times in between, leaving
 // `appPb`'s persisted token stale/unauthorized. The create then goes out without

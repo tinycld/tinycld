@@ -26,8 +26,8 @@ Every member has one role on their account:
 - **owner** — everything an admin can do, plus the two things reserved to the
   owner: installing, removing and upgrading packages, and granting the owner
   role to someone else.
-- **admin** — manage the organization: settings, members and invites, and the
-  Admin console (apart from Packages), in addition to everyday use.
+- **admin** — manage the organization: settings, members and invites, storage
+  and the audit log, in addition to everyday use.
 - **member** — everyday use of the installed packages: create and edit your own
   content and anything shared with you.
 - **guest** — limited access granted through shared links and invites. Guests
@@ -36,15 +36,20 @@ Every member has one role on their account:
 Owners and admins set roles under **Settings → Members**. Only an owner can
 make someone else an owner.
 
-## The Admin console
+## Administering the organization
 
-Owners and admins get a shield icon in the nav rail. It opens the **Admin
-console**, the deployment-wide area for organizations, build history and
-system settings — concerns that affect the whole deployment rather than one
-person, which is why they live outside the normal settings.
+Everything administrative lives in **Settings**, reached from the gear icon in
+the nav rail. Owners and admins see an **Organization** group there — storage,
+members, labels, packages and the audit log — that members and guests don't.
 
-**Packages** — installing, removing and upgrading them — appears there for
-**owners only**. A package change rebuilds what everyone on the deployment
-runs, so it isn't an ordinary administrative action.
+Two of those are **owner-only**, because they change what everyone on the
+deployment runs rather than how one organization is configured:
 
-If you don't see the shield icon, your role is member or guest.
+- the **Install & Versions** section at the bottom of **Settings → Packages**,
+  for installing, removing and upgrading packages
+- **Settings → Build History**, for reverting to an earlier build
+
+Admins still manage the rest of **Settings → Packages** — turning installed
+packages on and off for this organization.
+
+If you don't see the Organization group at all, your role is member or guest.

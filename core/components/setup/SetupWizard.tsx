@@ -99,7 +99,7 @@ export function SetupWizard({ token }: SetupWizardProps) {
         return (
             <GestureHandlerRootView className="flex-1">
                 <ScrollView>
-                    <SetupDashboard pb={pb} defaultTab="organizations" />
+                    <SetupDashboard pb={pb} defaultTab="packages" />
                 </ScrollView>
             </GestureHandlerRootView>
         )
