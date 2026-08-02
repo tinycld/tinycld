@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -74,5 +75,80 @@ func TestCopyDir_CopiesContentsAndSymlinks(t *testing.T) {
 	target, err := os.Readlink(filepath.Join(dst, "link"))
 	if err != nil || target != "sub/f.txt" {
 		t.Fatalf("symlink not preserved: %v %q", err, target)
+	}
+}
+
+// Permission bits carry: the pipeline copies executable scripts (bin/, hooks)
+// between build trees, and a copy that flattened the mode would produce an
+// artifact whose entrypoints cannot run.
+func TestCopyDir_PreservesMode(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "data.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyDir(src, dst); err != nil {
+		t.Fatalf("CopyDir: %v", err)
+	}
+	for name, want := range map[string]os.FileMode{"run.sh": 0o755, "data.json": 0o600} {
+		info, err := os.Stat(filepath.Join(dst, name))
+		if err != nil {
+			t.Fatalf("stat %s: %v", name, err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("%s mode = %o, want %o", name, got, want)
+		}
+	}
+}
+
+// A dangling symlink must copy as a dangling symlink rather than fail the
+// whole tree: the generator emits pb_hooks/pb_migrations as symlink farms, and
+// a link whose target is not yet materialized is normal mid-assembly.
+func TestCopyDir_DanglingSymlink(t *testing.T) {
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.Symlink("does/not/exist", filepath.Join(src, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyDir(src, dst); err != nil {
+		t.Fatalf("CopyDir with a dangling symlink: %v", err)
+	}
+	target, err := os.Readlink(filepath.Join(dst, "dangling"))
+	if err != nil || target != "does/not/exist" {
+		t.Fatalf("dangling symlink not preserved: %v %q", err, target)
+	}
+}
+
+// The regression this function exists for: CopyDir must not try to reproduce
+// the SOURCE's ownership on the destination. `cp -a` did, which fails with
+// EINVAL inside the builder's user namespace (the pre-fetched member tree is
+// root-owned and root is unmapped there). Asserting the destination is owned
+// by the copying process — not the source uid — pins the behavior without
+// needing a namespace to reproduce it in.
+func TestCopyDir_DoesNotPreserveOwnership(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: every uid is writable, so the assertion proves nothing")
+	}
+	src := t.TempDir()
+	dst := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CopyDir(src, dst); err != nil {
+		t.Fatalf("CopyDir: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(dst, "f"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Skip("no stat_t on this platform")
+	}
+	if int(st.Uid) != os.Geteuid() {
+		t.Errorf("copied file uid = %d, want the copying process's %d", st.Uid, os.Geteuid())
 	}
 }
