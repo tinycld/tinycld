@@ -181,7 +181,7 @@ type Feature = { name: string; dir: string; manifest: PackageManifest }
 
 // --- 3. routes: re-export each package's screens into app/a/[orgSlug]/<slug> -
 // We still don't cleanDir(ROUTES_BASE) before emitting — app-owned files and
-// dirs live here (_layout.tsx, index.tsx, admin/, help/, settings/**) and a
+// dirs live here (_layout.tsx, index.tsx, help/, settings/**) and a
 // full wipe would take them out. Instead, each present package re-creates its
 // own slug dir (emitOrgRoutes/emitFeaturePublicRoutes rm+recreate it), and then
 // AFTER the emit loop pruneOrphanRouteDirs removes any leftover slug dir whose
@@ -195,7 +195,7 @@ type Feature = { name: string; dir: string; manifest: PackageManifest }
 // Direct children of ROUTES_BASE the app owns — NOT package route slugs, never
 // pruned. (Files like _layout.tsx/index.tsx are already safe since prune only
 // touches directories; this guards the app-owned DIRS.)
-const APP_OWNED_ORG_ROUTE_DIRS = new Set(['admin', 'help', 'settings'])
+const APP_OWNED_ORG_ROUTE_DIRS = new Set(['help', 'settings'])
 // app/p/ has no app-owned directories — only app-owned files (_layout.tsx,
 // demo.tsx) plus per-package public-route dirs — so the allowlist is empty.
 const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>()

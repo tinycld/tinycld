@@ -104,13 +104,12 @@ test.describe('first-run install', () => {
     })
 
     // The "superuser can create an organization" test was removed with the
-    // single-org migration: OrganizationsTab is now a static empty state
-    // explaining that tenant provisioning belongs to the multi-org router,
-    // so there is no create form left to drive. The router owns that flow
-    // and tests it in its own suite (internal/controlplane).
+    // single-org migration: tenant provisioning belongs to the multi-org
+    // router, so there is no create form left to drive. The router owns that
+    // flow and tests it in its own suite (internal/controlplane).
 
     // Exercises the full system-settings chain end-to-end: save a value in the
-    // /admin Settings UI → server stores it → the app server injects the
+    // /setup Settings UI → server stores it → the app server injects the
     // non-secret public config into app.html → the next page load exposes it on
     // window.__TINYCLD_PUBLIC_CONFIG__ (which lib/app-config.ts reads for the
     // Sentry DSN). Also drives the VAPID generate button.
@@ -138,7 +137,7 @@ test.describe('first-run install', () => {
         // startup. This is the public-config injection chain, end to end. The
         // global is set by an inline <script> regardless of auth, so we can read
         // it on the (logged-out) shell without signing back in.
-        await page.goto('/admin')
+        await page.goto('/settings')
         const injected = await page.evaluate(
             () =>
                 (window as unknown as { __TINYCLD_PUBLIC_CONFIG__?: { sentryDsn?: string } })

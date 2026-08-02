@@ -1,15 +1,14 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Building2, History, type LucideIcon, Package, Settings } from 'lucide-react-native'
+import { History, type LucideIcon, Package, Settings } from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { DraxProvider } from 'react-native-drax'
 import { BuildHistoryTab } from './BuildHistoryTab'
-import { OrganizationsTab } from './OrganizationsTab'
 import { PackageManager } from './PackageManager'
 import { SettingsTab } from './SettingsTab'
 
-type SetupTab = 'organizations' | 'packages' | 'builds' | 'settings'
+type SetupTab = 'packages' | 'builds' | 'settings'
 
 interface NavEntry {
     tab: SetupTab
@@ -24,7 +23,6 @@ interface NavEntry {
 // Order here is the rail order. `crumb` is the topbar breadcrumb leaf shown after
 // the `admin /` root (the breadcrumb is the only place a route literal appears).
 const NAV: NavEntry[] = [
-    { tab: 'organizations', label: 'Organizations', crumb: 'organizations', Icon: Building2 },
     { tab: 'packages', label: 'Packages', crumb: 'packages', Icon: Package, ownerOnly: true },
     { tab: 'builds', label: 'Build History', crumb: 'build history', Icon: History },
     { tab: 'settings', label: 'Settings', crumb: 'settings', Icon: Settings },
@@ -34,8 +32,7 @@ interface SetupDashboardProps {
     pb: PocketBase
     defaultTab?: SetupTab
     // Defaults to true because the standalone /setup console runs as the PB
-    // superuser, who outranks every org role. The in-shell /admin route passes
-    // the signed-in user's actual role.
+    // superuser, who outranks every org role.
     isOwner?: boolean
 }
 
@@ -61,7 +58,6 @@ export function SetupDashboard({ pb, defaultTab, isOwner = true }: SetupDashboar
                     <SetupTopBar crumb={crumb} />
                     <ScrollView className="flex-1">
                         <View className="w-full self-center p-8 gap-6" style={{ maxWidth: 1040 }}>
-                            <OrganizationsTab isVisible={activeTab === 'organizations'} />
                             <PackagesTab isVisible={isOwner && activeTab === 'packages'} pb={pb} />
                             <BuildHistoryTab isVisible={activeTab === 'builds'} pb={pb} />
                             <SettingsTab isVisible={activeTab === 'settings'} />

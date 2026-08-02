@@ -62,9 +62,8 @@ function OrgLayoutInner() {
 }
 
 // App-owned areas whose rail entries always link to their root — we never
-// record a lastPackageHref for these. (activePkgSlug still tracks admin so its
-// rail entry highlights; that's a separate concern handled below.)
-const NON_RESTORABLE_SLUGS = new Set(['settings', 'help', 'admin'])
+// record a lastPackageHref for these.
+const NON_RESTORABLE_SLUGS = new Set(['settings', 'help'])
 
 function ActivePkgSync() {
     const pathname = usePathname()
@@ -76,8 +75,7 @@ function ActivePkgSync() {
         const match = pathname.match(/^\/([^/?]+)/)
         const slug = match?.[1] ?? null
         // settings/help are chrome, not a "current package" — they leave the
-        // active-package highlight where it was. admin IS tracked as active so
-        // its rail entry highlights (preserving prior behavior).
+        // active-package highlight where it was.
         const nextSlug = slug === 'settings' || slug === 'help' ? null : slug
         if (nextSlug) markNavMilestone(nextSlug, 'route-committed')
 
