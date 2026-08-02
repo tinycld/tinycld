@@ -83,6 +83,12 @@ func main() {
 	// migrations dir, which not every coreserver consumer has.
 	app.RootCmd.AddCommand(coreserver.NewExportTypesCommand(app, coreserver.DefaultTypesDir(), ""))
 
+	// `create-owner` mints the first app account against an existing pb_data.
+	// The multi-org router runs it on this binary when provisioning an org:
+	// a hosted tenant never binds the setup wizard's routes, so without it a
+	// new org serves correctly but has no user who can log in.
+	app.RootCmd.AddCommand(coreserver.NewCreateOwnerCommand(app))
+
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
 	}
