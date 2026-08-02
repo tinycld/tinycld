@@ -204,11 +204,6 @@ const pkg_build = newCollection('pkg_build', {
     ...indexing,
 })
 
-const org_pkg_enabled = newCollection('org_pkg_enabled', {
-    omitOnInsert: ['created', 'updated'],
-    ...indexing,
-})
-
 // System-wide configuration (Sentry, web-push, mail provider creds). Read/written
 // by the /admin Settings console; the server reads it through SystemConfig. See
 // the create_system_settings migration.
@@ -253,7 +248,6 @@ const coreStores = {
     org_pkg_access,
     pkg_registry,
     pkg_build,
-    org_pkg_enabled,
     audit_logs,
     pkg_install_log,
     notifications,
@@ -335,7 +329,6 @@ export async function preloadStores() {
         stores.users.preload(),
         stores.org_pkg_access.preload(),
         stores.pkg_registry.preload(),
-        stores.org_pkg_enabled.preload(),
     ])
 }
 

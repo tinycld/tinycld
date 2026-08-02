@@ -4,8 +4,8 @@
 // A guest is an anonymous share-link visitor provisioned a real users record
 // with role='guest'. The member-scoped collection rules grant access to any
 // authenticated user, so a guest would otherwise leak the member roster +
-// emails (users), the audit trail (audit_logs), settings, labels, and the
-// package toggles (org_pkg_enabled) — and be able to mutate them.
+// emails (users), the audit trail (audit_logs), settings, and labels — and be
+// able to mutate them.
 //
 // Single-org deployment: the role now lives on the users auth record, so the
 // caller's role is `@request.auth.role`. Each rule below requires the caller to
@@ -38,14 +38,6 @@ migrate(
         settings.updateRule = nonGuest
         app.save(settings)
 
-        const orgPkgEnabled = app.findCollectionByNameOrId('org_pkg_enabled')
-        orgPkgEnabled.listRule = nonGuest
-        orgPkgEnabled.viewRule = nonGuest
-        orgPkgEnabled.createRule = nonGuest
-        orgPkgEnabled.updateRule = nonGuest
-        orgPkgEnabled.deleteRule = nonGuest
-        app.save(orgPkgEnabled)
-
         const auditLogs = app.findCollectionByNameOrId('audit_logs')
         auditLogs.listRule = nonGuest
         auditLogs.viewRule = nonGuest
@@ -60,7 +52,7 @@ migrate(
         users.viewRule = authed
         app.save(users)
 
-        for (const name of ['labels', 'settings', 'org_pkg_enabled']) {
+        for (const name of ['labels', 'settings']) {
             const col = app.findCollectionByNameOrId(name)
             col.listRule = authed
             col.viewRule = authed

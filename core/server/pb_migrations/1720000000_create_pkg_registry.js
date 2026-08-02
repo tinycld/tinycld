@@ -1,7 +1,9 @@
 /// <reference path="../pb_data/types.d.ts" />
 migrate(
     app => {
-        // 1. pkg_registry — global package catalog (superuser-managed)
+        // pkg_registry — global package catalog (superuser-managed). Its
+        // `status` field is the single source of truth for whether a package
+        // is active on this deployment.
         const pkgRegistry = new Collection({
             id: 'pbc_pkg_reg_01',
             name: 'pkg_registry',
@@ -97,61 +99,13 @@ migrate(
             ],
         })
         app.save(pkgRegistry)
-
-        // 2. org_pkg_enabled — org-level package toggle
-        const orgPkgEnabled = new Collection({
-            id: 'pbc_org_pkg_en_01',
-            name: 'org_pkg_enabled',
-            type: 'base',
-            system: false,
-            listRule: '@request.auth.id != ""',
-            viewRule: '@request.auth.id != ""',
-            createRule: null,
-            updateRule: null,
-            deleteRule: null,
-            fields: [
-                {
-                    id: 'ope_pkg',
-                    name: 'pkg',
-                    type: 'text',
-                    required: true,
-                    max: 100,
-                },
-                {
-                    id: 'ope_enabled',
-                    name: 'enabled',
-                    type: 'bool',
-                },
-                {
-                    id: 'ope_created',
-                    name: 'created',
-                    type: 'autodate',
-                    onCreate: true,
-                    onUpdate: false,
-                },
-                {
-                    id: 'ope_updated',
-                    name: 'updated',
-                    type: 'autodate',
-                    onCreate: true,
-                    onUpdate: true,
-                },
-            ],
-            indexes: [
-                'CREATE UNIQUE INDEX `idx_org_pkg_enabled_pair` ON `org_pkg_enabled` (`pkg`)',
-            ],
-        })
-        app.save(orgPkgEnabled)
     },
     app => {
-        const names = ['org_pkg_enabled', 'pkg_registry']
-        for (const name of names) {
-            try {
-                const c = app.findCollectionByNameOrId(name)
-                app.delete(c)
-            } catch (e) {
-                // may not exist
-            }
+        try {
+            const c = app.findCollectionByNameOrId('pkg_registry')
+            app.delete(c)
+        } catch (e) {
+            // may not exist
         }
     }
 )
