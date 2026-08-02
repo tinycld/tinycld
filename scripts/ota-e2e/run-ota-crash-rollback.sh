@@ -254,10 +254,20 @@ mint_ios_bundle() {
 # ---------------------------------------------------------------------------
 precheck_bundle() {
     local version embedded code
-    # Read from package.json — the source app.config.ts derives expo.version /
-    # expo.runtimeVersion from (app.json has no version key, so reading expo.version
-    # there yields undefined and the server 204s on a runtimeVersion mismatch).
-    version="$(node -p "require('${APP_DIR}/package.json').version")"
+    # The OTA runtime version is app.json's expo.version — the single source
+    # app.config.ts derives runtimeVersion from, stamped into the binary as
+    # TinyCldRuntimeVersion and matched exactly by /api/app/update.
+    #
+    # NOT package.json's version: app.config.ts deliberately decouples the
+    # store/OTA version from the project version so a `pnpm version` bump never
+    # changes what ships (app.json is 2.0.2 while package.json is 0.4.0).
+    # Reading the wrong one asks for a runtime the server has no bundle for, and
+    # the resulting 204 is reported below as "the install didn't export one" —
+    # blaming the build for what is really a version-source bug.
+    version="$(node -p "require('${APP_DIR}/app.json').expo.version")"
+    if [ -z "${version}" ] || [ "${version}" = "undefined" ]; then
+        die "app.json has no expo.version — that value IS the OTA runtime version"
+    fi
     embedded="embedded-${version}"
     code="$(curl -s -o /dev/null -w '%{http_code}' \
         "${SERVER_URL}/api/app/update?platform=ios&runtimeVersion=${version}&currentId=${embedded}&currentHash=")"
