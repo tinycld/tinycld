@@ -6,9 +6,7 @@ import { expect, type Page, test } from '@playwright/test'
 //      creates the superuser. Skipped if the token isn't exported.
 //   2. dashboard packages tab — logs in as the superuser, asserts every
 //      bundled feature package shows up.
-//   3. super-admin grant — logs in as the superuser, grants an app user
-//      access to the console. Regression test for the grant 500.
-//   4. system settings — saves a value and asserts it reaches the client.
+//   3. system settings — saves a value and asserts it reaches the client.
 //
 // The tests run serially: the later tests depend on the superuser created by
 // test 1 (or by a previous bootstrap if PW_SETUP_TOKEN was consumed earlier).
@@ -35,50 +33,6 @@ const EXPECTED_BUNDLED = [
 
 const SUPERUSER_EMAIL = 'smoke@example.com'
 const SUPERUSER_PASSWORD = 'SmokeTest1234!'
-
-// The user granted super-admin below. Single-org: the setup console has no
-// user-creation UI (that was the org-create form), so the grant test mints
-// its target through the superuser API first. Creating the *fixture* via the
-// API is fine — the grant itself, which is what this spec tests, still runs
-// through the console UI.
-const GRANT_TARGET_NAME = 'Smoke Grantee'
-const GRANT_TARGET_EMAIL = 'grantee@smoke.example'
-const GRANT_TARGET_PASSWORD = 'GranteePass1234!'
-
-// Mints the app user the grant test targets, via the superuser REST API.
-// Idempotent: a 400 from a duplicate email means a previous run already
-// created it, which is fine — the grant only needs the user to exist.
-async function createGrantTarget(page: Page) {
-    const auth = await page.request.post('/api/collections/_superusers/auth-with-password', {
-        data: { identity: SUPERUSER_EMAIL, password: SUPERUSER_PASSWORD },
-    })
-    expect(auth.ok()).toBeTruthy()
-    const { token } = (await auth.json()) as { token: string }
-
-    const res = await page.request.post('/api/collections/users/records', {
-        headers: { Authorization: token },
-        data: {
-            email: GRANT_TARGET_EMAIL,
-            password: GRANT_TARGET_PASSWORD,
-            passwordConfirm: GRANT_TARGET_PASSWORD,
-            name: GRANT_TARGET_NAME,
-            username: 'smokegrantee',
-            verified: true,
-            // users.role is required (1940000000_backfill_and_require_users_role);
-            // omitting it 400s the create and the grant then fails "no user found".
-            role: 'member',
-        },
-    })
-    if (!res.ok()) {
-        const body = await res.text()
-        // Tolerate ONLY the uniqueness 400 (already exists from an earlier run in
-        // the same container). Swallowing every 400 once hid a required-field
-        // validation failure, which surfaced later as an unrelated grant error.
-        if (!(res.status() === 400 && body.includes('validation_not_unique'))) {
-            throw new Error(`create grant target failed: ${res.status()} ${body}`)
-        }
-    }
-}
 
 async function loginAsSuperuser(page: Page) {
     // /setup, not /admin: the pre-auth bootstrap + superuser-login console moved
@@ -154,36 +108,6 @@ test.describe('first-run install', () => {
     // explaining that tenant provisioning belongs to the multi-org router,
     // so there is no create form left to drive. The router owns that flow
     // and tests it in its own suite (internal/controlplane).
-
-    test('superuser can grant another user super admin', async ({ page }) => {
-        await loginAsSuperuser(page)
-
-        // Regression test for the grant 500: a PB-superuser grantor carries a
-        // non-nil auth identity whose id lives in _superusers, NOT users. The
-        // handler stamped that id into super_admins.created_by (a users relation),
-        // which failed relation validation and returned a 500 the dev console
-        // never surfaced (it only reached Sentry/the _logs DB). Granting while
-        // logged in as the superuser — the common /admin path — is exactly this.
-        //
-        // The grant handler resolves an EXISTING user by email
-        // (resolveGrantTarget in coreserver/super_admins.go), so mint one first.
-        await createGrantTarget(page)
-
-        await page.getByText('Super Admins', { exact: true }).first().click()
-
-        // Wait for the section to mount (the grant CTA) before interacting.
-        await expect(page.getByRole('button', { name: 'Grant access' })).toBeVisible()
-
-        await page.getByRole('button', { name: 'Grant access' }).click()
-        await page.getByPlaceholder('person@example.com').fill(GRANT_TARGET_EMAIL)
-        await page.getByRole('button', { name: 'Grant super admin' }).click()
-
-        // On success the form closes, the roster refetches, and the granted user
-        // appears as a row. Before the fix this never happened — the POST 500'd
-        // and the email surfaced as an inline form error instead. Asserting the
-        // grantee's row (not just "not empty") makes the regression signal precise.
-        await expect(page.getByText(GRANT_TARGET_EMAIL, { exact: true })).toBeVisible()
-    })
 
     // Exercises the full system-settings chain end-to-end: save a value in the
     // /admin Settings UI → server stores it → the app server injects the

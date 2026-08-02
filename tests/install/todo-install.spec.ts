@@ -792,8 +792,8 @@ async function applyVersionChange(
     targetLabel: string,
     opts: { downgrade: boolean; expectDrops?: string[] }
 ) {
-    // The Packages list reads pkg_registry through pbtsdb (`appPb`), now gated by
-    // super-admin API rules — so the rows render ONLY when appPb carries a valid
+    // The Packages list reads pkg_registry through pbtsdb (`appPb`), gated by
+    // owner-only write rules — so the rows render ONLY when appPb carries a valid
     // superuser token. The /admin login form authenticates the separate in-memory
     // `useSuperUserPB`, not appPb, and the rollback-fixture restarts leave appPb's
     // persisted token stale, so the list comes back empty ("No packages installed

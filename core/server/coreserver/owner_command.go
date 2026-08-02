@@ -42,8 +42,8 @@ func GenerateOwnerPassword() (string, error) {
 //
 //   - a `_superusers` record — the PocketBase admin behind /_/, which also
 //     keeps PB's installer satisfied and backs the sharelink signing key;
-//   - a `users` record with role=owner plus a `super_admins` grant — the
-//     identity the APP authenticates against and the /admin console runs as.
+//   - a `users` record with role=owner — the identity the APP authenticates
+//     against and the /admin console runs as.
 //
 // Creating only the first is the trap this command exists to prevent: PB's own
 // `superuser upsert` writes `_superusers` alone, so the app login still fails.
@@ -57,8 +57,8 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 		Use:   "create-owner <email>",
 		Short: "Create the org's first operator (superuser + owner account), then exit",
 		Long: "Mints the two identities a hosted org needs to be usable: a PocketBase " +
-			"_superusers record (the /_/ admin) and a `users` record with role=owner plus " +
-			"its super_admins grant (the app login). This is what the /setup wizard creates " +
+			"_superusers record (the /_/ admin) and a `users` record with role=owner " +
+			"(the app login). This is what the /setup wizard creates " +
 			"on a single-tenant deployment; a hosted org has no wizard, so its router runs " +
 			"this instead. Pair with PB's --dir flag pointing at the org's pb_data. " +
 			"Without --password a random one is generated and printed. Re-running for an " +
@@ -80,7 +80,7 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 			}
 
 			// Bootstrap opens the DB and applies SYSTEM migrations; the app's
-			// own collections (`users`, `super_admins`) come from the JS
+			// own collections (`users`) come from the JS
 			// migrations RunAppMigrations applies. In the router's flow the
 			// tenant has already booted and run them, so this is a no-op —
 			// but running against a fresh pb_data must work rather than fail

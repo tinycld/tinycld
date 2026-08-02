@@ -3,7 +3,17 @@ import { Clock } from 'lucide-react-native'
 import { Text, View } from 'react-native'
 import { type OrgRole, ROLE_LABELS, ROLE_SWATCH } from './types'
 
-export function RoleBadge({ role, size = 'md' }: { role: OrgRole; size?: 'sm' | 'md' }) {
+export function RoleBadge({
+    role,
+    size = 'md',
+    testID,
+}: {
+    role: OrgRole
+    size?: 'sm' | 'md'
+    // Set by callers that need to assert on the rendered role. Note the label
+    // is uppercased by CSS only — the DOM text stays 'Admin', not 'ADMIN'.
+    testID?: string
+}) {
     const swatch = ROLE_SWATCH[role]
     const py = size === 'sm' ? 2 : 3
     const px = size === 'sm' ? 7 : 9
@@ -14,6 +24,7 @@ export function RoleBadge({ role, size = 'md' }: { role: OrgRole; size?: 'sm' | 
             style={{ paddingVertical: py, paddingHorizontal: px }}
         >
             <Text
+                testID={testID}
                 className={swatch.text}
                 style={{
                     fontSize,

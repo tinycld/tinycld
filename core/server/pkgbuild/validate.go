@@ -92,7 +92,7 @@ var shellUnsafePattern = regexp.MustCompile(`[\s;&|$<>` + "`" + `(){}\[\]'"\\]`)
 // literal in a clean global scope (scoping/robustness, not isolation). It does not
 // need to be a security boundary: the same package's server/ Go is compiled into
 // and runs AS the server (see runBuildPipelineWith), so member code already runs
-// with full server privileges by design. Installs are gated to super-admins; the
+// with full server privileges by design. Installs are gated to the owner; the
 // trust boundary is install authorization + source selection, not this parse.
 func ParseManifestViaNode(packageDir string) (*ParsedManifest, error) {
 	script := `

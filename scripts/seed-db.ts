@@ -233,20 +233,6 @@ function isNotFoundError(err: unknown): boolean {
     return false
 }
 
-const collectionCache = new Map<string, boolean>()
-async function hasCollection(pb: PocketBase, name: string): Promise<boolean> {
-    const cached = collectionCache.get(name)
-    if (cached !== undefined) return cached
-    try {
-        await pb.collections.getOne(name)
-        collectionCache.set(name, true)
-        return true
-    } catch {
-        collectionCache.set(name, false)
-        return false
-    }
-}
-
 /**
  * Find-or-create the target user (single-org: the `role` enum lives on the user
  * record; the orgs/user_org collections are gone), then run all linked package
@@ -341,19 +327,6 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
         user = await pb.collection('users').update(user.id, { role: 'owner' })
     }
 
-    // Grant the seeded test user super-admin so e2e can drive the /admin console
-    // (organizations, super-admins, builds). The seed runs as a PB superuser, so
-    // it can write the superuser-only super_admins collection. Idempotent.
-    if (await hasCollection(pb, 'super_admins')) {
-        try {
-            await pb.collection('super_admins').getFirstListItem(`user = "${user.id}"`)
-            log('Found existing super_admins grant')
-        } catch {
-            log('Granting super_admins to', config.userEmail)
-            await pb.collection('super_admins').create({ user: user.id })
-        }
-    }
-
     const seedContext = {
         user: {
             id: user.id,
@@ -378,7 +351,7 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
 // _superusers — so without this the admin can sign into the /admin console (PB
 // superuser path) but has no `users` row, no app-shell login, and no membership.
 // This mirrors what the first-boot wizard now does (handleSetupInit): create a
-// `users` record for the admin email + a super_admins grant, so admin@ is a
+// `users` record for the admin email with role=admin, so admin@ is a
 // usable super-admin app user. Idempotent: skips creation when the row exists.
 async function ensureAdminAppUser(pb: PocketBase, config: SeedConfig): Promise<void> {
     let existing: { id: string } | null = null
@@ -403,20 +376,23 @@ async function ensureAdminAppUser(pb: PocketBase, config: SeedConfig): Promise<v
             emailVisibility: true,
             verified: true,
             // `role` is required (1940000000_backfill_and_require_users_role).
-            // The operator's authority is its super_admins grant below, not this
-            // field, so it takes the least-privileged non-guest value — matching
-            // coreserver/setup_bootstrap.go's createSuperAdminOperator.
-            role: 'member',
+            // admin, not member: role is now the only privilege axis, so this
+            // field IS the account's authority. `admin` is what makes this a
+            // useful e2e fixture — it reaches the /admin console and Settings >
+            // Members, but NOT package management, which is owner-only. That
+            // contrast is what the admin-vs-owner e2e specs assert.
+            role: 'admin',
         })
     }
 
-    if (await hasCollection(pb, 'super_admins')) {
-        try {
-            await pb.collection('super_admins').getFirstListItem(`user = "${adminUser.id}"`)
-            log('Found existing super_admins grant for admin')
-        } catch {
-            log('Granting super_admins to admin', config.adminEmail)
-            await pb.collection('super_admins').create({ user: adminUser.id })
+    // An existing fixture may predate the role change (it was seeded as
+    // `member` back when authority came from a separate grant). Bring it up to
+    // date so a re-seeded dev DB behaves like a fresh one.
+    if (existing) {
+        const current = await pb.collection('users').getOne(adminUser.id)
+        if (current.role !== 'admin') {
+            log('Setting admin app user role to "admin"')
+            await pb.collection('users').update(adminUser.id, { role: 'admin' })
         }
     }
 }

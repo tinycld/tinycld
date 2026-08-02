@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tests"
 )
 
 func TestRejectBaseUninstall(t *testing.T) {
@@ -22,57 +21,19 @@ func TestRejectBaseUninstall(t *testing.T) {
 	}
 }
 
-// These guard the admin authorization paths:
-//   - requireAdmin authorizes a PB superuser OR an app user listed in
-//     super_admins, and rejects plain users / anonymous requests.
-//   - requireSuperuserOrToken adds a ?token= query-param path for the SSE
-//     progress stream (EventSource can't send headers). The token's auth-record
-//     lookup must use the token TYPE, not a collection id — an earlier version
-//     passed the superusers collection id, which matched no valid type and 403'd
-//     every install's progress stream. The security inverse (a plain user's
-//     token must NOT authorize the endpoint) is guarded too.
-
-// createSuperAdminsCollection mirrors pb_migrations/1910000005_create_super_admins.js
-// in-memory, since tests.NewTestApp() ships only PB's default fixture collections.
-func createSuperAdminsCollection(t *testing.T, app core.App, usersID string) {
-	t.Helper()
-	c := core.NewBaseCollection("super_admins")
-	c.Id = "pbc_super_admins"
-	c.Fields.Add(&core.RelationField{
-		Name: "user", Required: true, CollectionId: usersID,
-		CascadeDelete: true, MaxSelect: 1,
-	})
-	c.Fields.Add(&core.RelationField{
-		Name: "created_by", CollectionId: usersID, MaxSelect: 1,
-	})
-	// Mirror the migration's autodate fields so handlers that sort by -created
-	// (handleListSuperAdmins) resolve a real column rather than erroring with
-	// invalid sort field "created".
-	c.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
-	c.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
-	// Mirror the migration's unique index on user so duplicate grants are
-	// rejected at the DB layer too, not only by the handler's isSuperAdmin check.
-	c.AddIndex("idx_super_admins_user", true, "user", "")
-	if err := app.Save(c); err != nil {
-		t.Fatalf("save super_admins collection: %v", err)
-	}
-}
-
-// newGuardUser creates a regular app user and returns the record.
-func newGuardUser(t *testing.T, app core.App, email string) *core.Record {
-	t.Helper()
-	users, err := app.FindCollectionByNameOrId("users")
-	if err != nil {
-		t.Fatal(err)
-	}
-	user := core.NewRecord(users)
-	user.SetEmail(email)
-	user.SetPassword("Regular1234!")
-	if err := app.Save(user); err != nil {
-		t.Fatalf("save user: %v", err)
-	}
-	return user
-}
+// These guard the two admin authorization tiers:
+//   - requireAdmin authorizes a PB superuser OR an owner/admin app user. It is
+//     the /admin console's outer gate.
+//   - requireOwner is stricter: PB superuser or role=owner only. Package
+//     install/uninstall/version-apply sit behind it, because they rebuild what
+//     the whole deployment runs. An ADMIN must be rejected here — that split is
+//     the point of the tier, so it's asserted explicitly below.
+//   - requireOwnerOrToken adds a ?token= query-param path for the SSE progress
+//     stream (EventSource can't send headers). The token's auth-record lookup
+//     must use the token TYPE, not a collection id — an earlier version passed
+//     the superusers collection id, which matched no valid type and 403'd every
+//     install's progress stream. The security inverse (a non-owner's token must
+//     NOT authorize the endpoint) is guarded too.
 
 // newSuperuserRecord creates a PB superuser and returns the record, for tests
 // that need to set re.Auth to a superuser identity (whose id lives in the
@@ -90,20 +51,6 @@ func newSuperuserRecord(t *testing.T, app core.App, email string) *core.Record {
 		t.Fatalf("save superuser: %v", err)
 	}
 	return su
-}
-
-// grantSuperAdmin inserts a super_admins row for the given user.
-func grantSuperAdmin(t *testing.T, app core.App, userID string) {
-	t.Helper()
-	c, err := app.FindCollectionByNameOrId("super_admins")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := core.NewRecord(c)
-	rec.Set("user", userID)
-	if err := app.Save(rec); err != nil {
-		t.Fatalf("grant super admin: %v", err)
-	}
 }
 
 func newAuthGuardEvent(app core.App, token string) *core.RequestEvent {
@@ -127,16 +74,7 @@ func newHeaderAuthEvent(app core.App, auth *core.Record) *core.RequestEvent {
 
 func newGuardSuperuserToken(t *testing.T, app core.App) string {
 	t.Helper()
-	su, err := app.FindCollectionByNameOrId(core.CollectionNameSuperusers)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := core.NewRecord(su)
-	rec.SetEmail("ssetoken@test.local")
-	rec.SetPassword("Superuser1234!")
-	if err := app.Save(rec); err != nil {
-		t.Fatalf("save superuser: %v", err)
-	}
+	rec := newSuperuserRecord(t, app, "ssetoken@test.local")
 	tok, err := rec.NewAuthToken()
 	if err != nil {
 		t.Fatalf("new auth token: %v", err)
@@ -144,152 +82,120 @@ func newGuardSuperuserToken(t *testing.T, app core.App) string {
 	return tok
 }
 
-// ---------- requireAdmin (header-auth path) ----------
+// ---------- requireAdmin / requireOwner (header-auth path) ----------
 
-func TestRequireAdmin_SuperAdminUser(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatal(err)
+// The full role matrix across both tiers, in one table so the owner/admin split
+// is visible at a glance rather than spread over separate tests.
+func TestAdminAndOwnerGuards_RoleMatrix(t *testing.T) {
+	app := setupGuardTestApp(t)
+
+	cases := []struct {
+		role      string
+		wantAdmin bool
+		wantOwner bool
+		reason    string
+	}{
+		{"owner", true, true, "the owner runs the console and manages packages"},
+		{"admin", true, false, "an admin reaches the console but must NOT manage packages"},
+		{"member", false, false, "a member has no console access at all"},
+		{"guest", false, false, "a guest has no console access at all"},
 	}
-	defer app.Cleanup()
 
-	users, err := app.FindCollectionByNameOrId("users")
-	if err != nil {
-		t.Fatal(err)
-	}
-	createSuperAdminsCollection(t, app, users.Id)
+	for _, tc := range cases {
+		t.Run(tc.role, func(t *testing.T) {
+			user := makeUserWithRole(t, app, tc.role+"@test.local", tc.role)
 
-	user := newGuardUser(t, app, "admin@test.local")
-	grantSuperAdmin(t, app, user.Id)
+			gotAdmin := requireAdmin(newHeaderAuthEvent(app, user)) == nil
+			if gotAdmin != tc.wantAdmin {
+				t.Errorf("requireAdmin(role=%s) authorized=%v, want %v — %s",
+					tc.role, gotAdmin, tc.wantAdmin, tc.reason)
+			}
 
-	if err := requireAdmin(app, newHeaderAuthEvent(app, user)); err != nil {
-		t.Fatalf("super-admin app user should be authorized, got: %v", err)
-	}
-}
-
-func TestRequireAdmin_RejectsPlainUser(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Cleanup()
-
-	users, err := app.FindCollectionByNameOrId("users")
-	if err != nil {
-		t.Fatal(err)
-	}
-	createSuperAdminsCollection(t, app, users.Id)
-
-	user := newGuardUser(t, app, "plain@test.local")
-	if err := requireAdmin(app, newHeaderAuthEvent(app, user)); err == nil {
-		t.Fatal("a plain user must NOT be authorized for admin endpoints")
+			gotOwner := requireOwner(newHeaderAuthEvent(app, user)) == nil
+			if gotOwner != tc.wantOwner {
+				t.Errorf("requireOwner(role=%s) authorized=%v, want %v — %s",
+					tc.role, gotOwner, tc.wantOwner, tc.reason)
+			}
+		})
 	}
 }
 
-func TestRequireAdmin_RejectsAnonymous(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Cleanup()
+func TestAdminAndOwnerGuards_RejectAnonymous(t *testing.T) {
+	app := setupGuardTestApp(t)
 
-	users, err := app.FindCollectionByNameOrId("users")
-	if err != nil {
-		t.Fatal(err)
+	if err := requireAdmin(newHeaderAuthEvent(app, nil)); err == nil {
+		t.Error("an anonymous request must NOT be authorized for admin endpoints")
 	}
-	createSuperAdminsCollection(t, app, users.Id)
-
-	if err := requireAdmin(app, newHeaderAuthEvent(app, nil)); err == nil {
-		t.Fatal("an anonymous request must NOT be authorized for admin endpoints")
+	if err := requireOwner(newHeaderAuthEvent(app, nil)); err == nil {
+		t.Error("an anonymous request must NOT be authorized for owner endpoints")
 	}
 }
 
-// ---------- requireSuperuserOrToken (SSE token path) ----------
+// A PB superuser bypasses both tiers — it's the recovery identity, and the
+// guards check HasSuperuserAuth before looking at any role.
+func TestAdminAndOwnerGuards_SuperuserBypasses(t *testing.T) {
+	app := setupGuardTestApp(t)
 
-func TestRequireSuperuserOrToken_ValidSuperuserToken(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatal(err)
+	su := newSuperuserRecord(t, app, "su@test.local")
+	if err := requireAdmin(newHeaderAuthEvent(app, su)); err != nil {
+		t.Errorf("a PB superuser should pass requireAdmin, got: %v", err)
 	}
-	defer app.Cleanup()
+	if err := requireOwner(newHeaderAuthEvent(app, su)); err != nil {
+		t.Errorf("a PB superuser should pass requireOwner, got: %v", err)
+	}
+}
 
-	users, err := app.FindCollectionByNameOrId("users")
-	if err != nil {
-		t.Fatal(err)
-	}
-	createSuperAdminsCollection(t, app, users.Id)
+// ---------- requireOwnerOrToken (SSE token path) ----------
+
+func TestRequireOwnerOrToken_ValidSuperuserToken(t *testing.T) {
+	app := setupGuardTestApp(t)
 
 	token := newGuardSuperuserToken(t, app)
-	if err := requireSuperuserOrToken(app, newAuthGuardEvent(app, token)); err != nil {
+	if err := requireOwnerOrToken(app, newAuthGuardEvent(app, token)); err != nil {
 		t.Fatalf("valid superuser token should be authorized, got: %v", err)
 	}
 }
 
-func TestRequireSuperuserOrToken_ValidSuperAdminToken(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Cleanup()
+func TestRequireOwnerOrToken_ValidOwnerToken(t *testing.T) {
+	app := setupGuardTestApp(t)
 
-	users, err := app.FindCollectionByNameOrId("users")
-	if err != nil {
-		t.Fatal(err)
-	}
-	createSuperAdminsCollection(t, app, users.Id)
-
-	user := newGuardUser(t, app, "sse-admin@test.local")
-	grantSuperAdmin(t, app, user.Id)
+	user := makeUserWithRole(t, app, "sse-owner@test.local", "owner")
 	tok, err := user.NewAuthToken()
 	if err != nil {
 		t.Fatalf("new auth token: %v", err)
 	}
 
-	if err := requireSuperuserOrToken(app, newAuthGuardEvent(app, tok)); err != nil {
-		t.Fatalf("super-admin app user's token should be authorized, got: %v", err)
+	if err := requireOwnerOrToken(app, newAuthGuardEvent(app, tok)); err != nil {
+		t.Fatalf("owner's token should be authorized, got: %v", err)
 	}
 }
 
-func TestRequireSuperuserOrToken_RejectsEmptyAndGarbage(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Cleanup()
-
-	users, err := app.FindCollectionByNameOrId("users")
-	if err != nil {
-		t.Fatal(err)
-	}
-	createSuperAdminsCollection(t, app, users.Id)
+func TestRequireOwnerOrToken_RejectsEmptyAndGarbage(t *testing.T) {
+	app := setupGuardTestApp(t)
 
 	for _, tok := range []string{"", "not-a-jwt", "a.b.c"} {
-		if err := requireSuperuserOrToken(app, newAuthGuardEvent(app, tok)); err == nil {
+		if err := requireOwnerOrToken(app, newAuthGuardEvent(app, tok)); err == nil {
 			t.Fatalf("token %q should be rejected", tok)
 		}
 	}
 }
 
-func TestRequireSuperuserOrToken_RejectsRegularUserToken(t *testing.T) {
-	app, err := tests.NewTestApp()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Cleanup()
+// The SSE stream reports an owner-only operation's progress, so a non-owner's
+// token must not open it — including an admin's, who can reach the rest of the
+// console.
+func TestRequireOwnerOrToken_RejectsNonOwnerTokens(t *testing.T) {
+	app := setupGuardTestApp(t)
 
-	users, err := app.FindCollectionByNameOrId("users")
-	if err != nil {
-		t.Fatal(err)
-	}
-	createSuperAdminsCollection(t, app, users.Id)
-
-	user := newGuardUser(t, app, "regular@test.local")
-	tok, err := user.NewAuthToken()
-	if err != nil {
-		t.Fatalf("new auth token: %v", err)
-	}
-
-	if err := requireSuperuserOrToken(app, newAuthGuardEvent(app, tok)); err == nil {
-		t.Fatal("a regular user's token must NOT authorize the superuser endpoint")
+	for _, role := range []string{"admin", "member", "guest"} {
+		t.Run(role, func(t *testing.T) {
+			user := makeUserWithRole(t, app, "sse-"+role+"@test.local", role)
+			tok, err := user.NewAuthToken()
+			if err != nil {
+				t.Fatalf("new auth token: %v", err)
+			}
+			if err := requireOwnerOrToken(app, newAuthGuardEvent(app, tok)); err == nil {
+				t.Fatalf("a %s's token must NOT authorize the owner-only progress stream", role)
+			}
+		})
 	}
 }

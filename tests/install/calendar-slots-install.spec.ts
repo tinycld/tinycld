@@ -366,7 +366,7 @@ async function postAdminPackageOp(page: Page, path: string, payload: Record<stri
 
 // Fetches a pkg_registry record by slug (full record, so it can be recreated
 // verbatim). Returns null if absent. Superuser auth bypasses the collection's
-// super_admin-only write rules. This is test infrastructure — simulating a
+// owner-only write rules. This is test infrastructure — simulating a
 // package's ABSENCE to exercise the compat gate — not an app-data write path.
 async function getRegistryRecord(
     page: Page,

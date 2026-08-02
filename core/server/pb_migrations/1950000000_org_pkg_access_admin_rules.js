@@ -4,7 +4,7 @@
 // org_pkg_access shipped with createRule/updateRule/deleteRule = null, i.e.
 // superuser-only, and list/view scoped to `user = @request.auth.id` (read your
 // own row). Nothing ever relaxed them — 1870000000's guest-RLS sweep skipped
-// this collection and 1910000007's super-admin grants did not list it.
+// this collection.
 //
 // But the UI that manages these rows, PackageAccessPanel, renders inside
 // Settings > Members, which is gated on useCurrentRole().isAdmin. So an org
@@ -21,16 +21,14 @@
 // could never be given access to anything.
 //
 // Fix: admins and owners get full CRUD; a member keeps reading their own row
-// (that read is what use-pkg-access depends on); super-admins are included via
-// the same clause 1910000007 established, so the admin console keeps working.
+// (that read is what use-pkg-access depends on).
 const ADMIN = '@request.auth.role = "owner" || @request.auth.role = "admin"'
-const SA = '@collection.super_admins.user ?= @request.auth.id'
 const SELF = 'user = @request.auth.id'
 
-const MANAGE = `@request.auth.id != "" && ((${ADMIN}) || ${SA})`
+const MANAGE = `@request.auth.id != "" && (${ADMIN})`
 // A member must still read their own row, or their own package access stops
-// resolving; admins and super-admins additionally read everyone's.
-const READ = `@request.auth.id != "" && (${SELF} || (${ADMIN}) || ${SA})`
+// resolving; admins additionally read everyone's.
+const READ = `@request.auth.id != "" && (${SELF} || (${ADMIN}))`
 
 migrate(
     app => {

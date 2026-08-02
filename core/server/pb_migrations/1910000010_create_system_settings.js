@@ -15,13 +15,16 @@
 // VAPID private key, IMAP password). `key` is namespaced by area
 // (`sentry.dsn`, `vapid.private_key`, `mail.postmark_server_token`).
 //
-// Rules: all ops require a PB superuser OR a super-admin app user. A null rule
-// is superuser-only and `@collection.super_admins.user ?= @request.auth.id`
-// adds the super-admins (the same clause the admin console relies on
-// everywhere — see 1910000007_pkg_admin_super_admin_rules). Secret rows are
-// additionally never returned to clients by the server's config injection
-// (see system_config.go / the web HTML injector).
-const SA = '@collection.super_admins.user ?= @request.auth.id'
+// Rules: all ops require a PB superuser OR an owner/admin app user — the same
+// clause the rest of the admin console uses (see
+// 1970000000_admin_console_role_rules). A superuser always bypasses a non-null
+// rule, so this authorizes {PB superusers} ∪ {owners} ∪ {admins}. The
+// `disabled != true` clause keeps a suspended admin's still-live JWT out.
+// Secret rows are additionally never returned to clients by the server's
+// config injection (see system_config.go / the web HTML injector).
+const ADMIN =
+    '@request.auth.id != "" && @request.auth.disabled != true && ' +
+    '(@request.auth.role = "owner" || @request.auth.role = "admin")'
 
 // key → legacy env var. Used ONLY by the one-time seed. Keep `is_secret` in
 // sync with the secrets policy in docs/plans/system-settings.md.
@@ -42,11 +45,11 @@ migrate(
             name: 'system_settings',
             type: 'base',
             system: false,
-            listRule: SA,
-            viewRule: SA,
-            createRule: SA,
-            updateRule: SA,
-            deleteRule: SA,
+            listRule: ADMIN,
+            viewRule: ADMIN,
+            createRule: ADMIN,
+            updateRule: ADMIN,
+            deleteRule: ADMIN,
             fields: [
                 {
                     id: 'ss_key',

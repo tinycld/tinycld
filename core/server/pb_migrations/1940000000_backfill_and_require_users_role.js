@@ -3,9 +3,9 @@
 //
 // 1700000000_create_core_collections added `role` as OPTIONAL, reasoning that
 // "an operator/super-admin may have no role". In practice that produced rows
-// with an empty role — createSuperAdminOperator (coreserver/setup_bootstrap.go)
-// sets email/password/verified/name/username but never `role`, so the bootstrap
-// operator lands roleless. Every consumer then has to defend against a value the
+// with an empty role — the bootstrap operator (coreserver/setup_bootstrap.go)
+// set email/password/verified/name/username but never `role`, so it landed
+// roleless. Every consumer then has to defend against a value the
 // type system says is one of four strings, and one didn't: the Members screen
 // grouped by `groups[m.role]`, which is `undefined` for '' → the whole screen
 // crashed to the error boundary.
@@ -23,8 +23,11 @@
 // today (it's the one value the first family excludes); 'owner'/'admin' would
 // have GRANTED privileged access. Only 'member' is a no-op.
 //
-// The operator's actual authority does not come from this field at all — it
-// comes from its `super_admins` row, which is unaffected.
+// (Historical note: when this shipped, the operator's real authority came from
+// a separate `super_admins` row, so backfilling 'member' cost it nothing. That
+// table is gone — role is now the sole privilege axis — and the bootstrap
+// operator is created as 'owner' outright, so this backfill only ever touches
+// legacy roleless rows.)
 migrate(
     app => {
         // Backfill BEFORE requiring, or saving the collection would reject the

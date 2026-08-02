@@ -19,7 +19,7 @@ import (
 // receive packages only through a row here, so with no writable path they
 // could never be granted anything at all.
 //
-// 1950000000 opens it to owners/admins (and super-admins) while keeping a
+// 1950000000 opens it to owners/admins while keeping a
 // member's read of their own row, which use-pkg-access depends on.
 //
 // As in guest_rls_test.go the rules are NOT restated here — the real

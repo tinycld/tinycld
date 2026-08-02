@@ -82,56 +82,57 @@ func RegisterPackageInstallEndpoints(app *pocketbase.PocketBase) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		g := e.Router.Group("/api/admin/packages")
 
-		// All admin endpoints accept a PB superuser OR a super-admin app user.
-		adminGuard := func(re *core.RequestEvent) error {
-			return requireAdmin(app, re)
+		// Package operations change what the whole deployment runs, so they
+		// accept a PB superuser OR the org owner — not every admin.
+		ownerGuard := func(re *core.RequestEvent) error {
+			return requireOwner(re)
 		}
 
 		g.POST("/install", func(re *core.RequestEvent) error {
 			return handleInstall(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.POST("/uninstall", func(re *core.RequestEvent) error {
 			return handleUninstall(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.POST("/revert", func(re *core.RequestEvent) error {
 			return handleRevert(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.POST("/builds/delete", func(re *core.RequestEvent) error {
 			return handleDeleteBuild(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.GET("/events/{jobId}", func(re *core.RequestEvent) error {
 			return handleEvents(re)
 		}).BindFunc(func(re *core.RequestEvent) error {
-			return requireSuperuserOrToken(app, re)
+			return requireOwnerOrToken(app, re)
 		})
 
 		g.GET("/status/{slug}", func(re *core.RequestEvent) error {
 			return handleStatus(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.GET("/job-status/{jobId}", func(re *core.RequestEvent) error {
 			return handleJobStatus(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.GET("/versions", func(re *core.RequestEvent) error {
 			return handleVersions(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.POST("/versions/check", func(re *core.RequestEvent) error {
 			return handleVersionsCheck(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.POST("/versions/drop-report", func(re *core.RequestEvent) error {
 			return handleDropReport(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.POST("/versions/apply", func(re *core.RequestEvent) error {
 			return handleVersionChange(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		return e.Next()
 	})
@@ -149,44 +150,48 @@ func shouldSuppressRestart(isRestart bool) bool {
 	return currentJob != nil
 }
 
-// isSuperAdmin reports whether the given app-user id is listed in the
-// super_admins junction — i.e. a regular user granted cross-org admin powers.
-// PB superusers are NOT in this table (they're authorized separately via
-// IsSuperuser); the two paths are unioned by the guards below.
-func isSuperAdmin(app core.App, userID string) bool {
-	if userID == "" {
-		return false
-	}
-	_, err := app.FindFirstRecordByFilter(
-		"super_admins",
-		"user = {:user}",
-		map[string]any{"user": userID},
-	)
-	return err == nil
+// isOwner reports whether the given user holds the owner role. Package
+// operations rebuild the deployment's artifact and change what every user of
+// the deployment runs, so they are the owner's alone — admins manage members
+// and settings but never the installed package set.
+func isOwner(user *core.Record) bool {
+	return user != nil && user.GetString("role") == "owner"
 }
 
-// requireAdmin authorizes either a PB superuser OR an app user listed in
-// super_admins. Takes core.App so the super_admins lookup is unit-testable.
-func requireAdmin(app core.App, re *core.RequestEvent) error {
+// requireOwner authorizes a PB superuser OR an app user with role=owner.
+func requireOwner(re *core.RequestEvent) error {
 	if re.HasSuperuserAuth() {
 		return re.Next()
 	}
-	if re.Auth != nil && isSuperAdmin(app, re.Auth.Id) {
+	if isOwner(re.Auth) {
+		return re.Next()
+	}
+	return re.ForbiddenError("Owner access required", nil)
+}
+
+// requireAdmin authorizes a PB superuser OR an owner/admin app user. This is
+// the admin console's outer gate; the package endpoints sit behind the
+// stricter requireOwner.
+func requireAdmin(re *core.RequestEvent) error {
+	if re.HasSuperuserAuth() {
+		return re.Next()
+	}
+	if isOrgAdmin(re.Auth) {
 		return re.Next()
 	}
 	return re.ForbiddenError("Admin access required", nil)
 }
 
-// requireSuperuserOrToken allows SSE connections to authenticate via query param
+// requireOwnerOrToken allows SSE connections to authenticate via query param
 // since browser EventSource does not support custom headers. Takes core.App (not
 // *pocketbase.PocketBase) so it's unit-testable against tests.TestApp — it only
 // needs FindAuthRecordByToken, a core.App method.
-func requireSuperuserOrToken(app core.App, re *core.RequestEvent) error {
-	// Try standard auth first — a PB superuser or a super-admin app user.
+func requireOwnerOrToken(app core.App, re *core.RequestEvent) error {
+	// Try standard auth first — a PB superuser or an owner.
 	if re.HasSuperuserAuth() {
 		return re.Next()
 	}
-	if re.Auth != nil && isSuperAdmin(app, re.Auth.Id) {
+	if isOwner(re.Auth) {
 		return re.Next()
 	}
 
@@ -194,17 +199,17 @@ func requireSuperuserOrToken(app core.App, re *core.RequestEvent) error {
 	// arg is the token TYPE (core.TokenTypeAuth), not a collection id — passing a
 	// collection id makes it match no valid type and reject every token (the 403
 	// the install progress stream hit). Validate as an auth token, then accept it
-	// only if the record is a superuser or a super-admin app user — a plain
-	// user's token must not pass.
+	// only if the record is a superuser or an owner — this streams the progress
+	// of an owner-only operation, so a plain user's token must not pass.
 	token := re.Request.URL.Query().Get("token")
 	if token != "" {
 		record, err := app.FindAuthRecordByToken(token, core.TokenTypeAuth)
-		if err == nil && record != nil && (record.IsSuperuser() || isSuperAdmin(app, record.Id)) {
+		if err == nil && record != nil && (record.IsSuperuser() || isOwner(record)) {
 			return re.Next()
 		}
 	}
 
-	return re.ForbiddenError("Admin access required", nil)
+	return re.ForbiddenError("Owner access required", nil)
 }
 
 // ---------- handlers ----------

@@ -1,6 +1,6 @@
 import { ChangeServerLink } from '@tinycld/core/components/ChangeServerLink'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
-import { useIsSuperAdmin } from '@tinycld/core/lib/use-is-super-admin'
+import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useSuperUserPB } from '@tinycld/core/lib/use-superuser-pb'
 import { Redirect } from 'expo-router'
 import { useEffect, useState } from 'react'
@@ -16,7 +16,7 @@ interface SetupPageProps {
 
 export function SetupPage({ token }: SetupPageProps) {
     const { pb, login, isAuthenticated, error, isLoading } = useSuperUserPB()
-    const isSuperAdmin = useIsSuperAdmin()
+    const { isAdmin } = useCurrentRole()
     const [needsSetup, setNeedsSetup] = useState<boolean | null>(null)
 
     useEffect(() => {
@@ -57,17 +57,17 @@ export function SetupPage({ token }: SetupPageProps) {
         )
     }
 
-    // A super-admin app user reaches the console with their normal session — send
-    // them to the in-shell admin console (/admin), the single admin surface. The
+    // An owner/admin reaches the console with their normal session — send them
+    // to the in-shell admin console (/admin), the single admin surface. The
     // /setup route is now only the pre-auth bootstrap door (first-run wizard +
     // raw-superuser recovery) for cases where no app session exists.
-    if (isSuperAdmin) {
+    if (isAdmin) {
         return <Redirect href="/admin" />
     }
 
-    // Fallback for anyone who isn't a super-admin app user (e.g. a raw PB
-    // superuser doing recovery, or a fresh deploy before the first grant):
-    // authenticate against _superusers directly, then drive the recovery console.
+    // Fallback for anyone without an owner/admin app session (e.g. a raw PB
+    // superuser doing recovery): authenticate against _superusers directly,
+    // then drive the recovery console.
     if (!isAuthenticated) {
         return (
             <View className="flex-1 items-center justify-center gap-4">

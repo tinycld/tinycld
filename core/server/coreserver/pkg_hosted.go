@@ -54,22 +54,24 @@ func RegisterHostedPackageEndpoints(app *pocketbase.PocketBase, ch *DeployChanne
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		g := e.Router.Group("/api/admin/packages")
 
-		adminGuard := func(re *core.RequestEvent) error {
-			return requireAdmin(app, re)
+		// Owner-only, matching the standalone package endpoints — a hosted
+		// deploy changes the org's whole artifact.
+		ownerGuard := func(re *core.RequestEvent) error {
+			return requireOwner(re)
 		}
 
 		g.POST("/install", func(re *core.RequestEvent) error {
 			return handleHostedInstall(app, ch, orgDir, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.POST("/uninstall", func(re *core.RequestEvent) error {
 			return handleHostedUninstall(app, ch, orgDir, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.GET("/events/{jobId}", func(re *core.RequestEvent) error {
 			return handleEvents(re)
 		}).BindFunc(func(re *core.RequestEvent) error {
-			return requireSuperuserOrToken(app, re)
+			return requireOwnerOrToken(app, re)
 		})
 
 		// Both status reads first consume a pending deploy result: a
@@ -79,28 +81,28 @@ func RegisterHostedPackageEndpoints(app *pocketbase.PocketBase, ch *DeployChanne
 		g.GET("/status/{slug}", func(re *core.RequestEvent) error {
 			consumePendingDeployResult(app, orgDir, artifactDir)
 			return handleStatus(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.GET("/job-status/{jobId}", func(re *core.RequestEvent) error {
 			consumePendingDeployResult(app, orgDir, artifactDir)
 			return handleJobStatus(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.GET("/versions", func(re *core.RequestEvent) error {
 			return handleHostedVersions(app, ch, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.POST("/versions/check", func(re *core.RequestEvent) error {
 			return handleVersionsCheck(app, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.POST("/versions/drop-report", func(re *core.RequestEvent) error {
 			return handleHostedDropReport(app, ch, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		g.POST("/versions/apply", func(re *core.RequestEvent) error {
 			return handleHostedVersionChange(app, ch, orgDir, re)
-		}).BindFunc(adminGuard)
+		}).BindFunc(ownerGuard)
 
 		return e.Next()
 	})

@@ -134,7 +134,7 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// This step runs the installed members' own build scripts (and, via the
 	// generator postinstall, evaluates their manifest.ts). Installing a package is
 	// therefore equivalent to running its author's code on the host; single-tenant
-	// gates this to super-admins at the install endpoint, and the multi-org
+	// gates this to the org owner at the install endpoint, and the multi-org
 	// builder confines the whole job. Do not "harden" this by sandboxing the
 	// build alone — member Go gets compiled into the server below and runs as the
 	// server at runtime regardless, so a build sandbox would buy no real isolation.

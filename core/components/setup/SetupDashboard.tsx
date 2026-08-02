@@ -1,12 +1,5 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import {
-    Building2,
-    History,
-    type LucideIcon,
-    Package,
-    Settings,
-    ShieldCheck,
-} from 'lucide-react-native'
+import { Building2, History, type LucideIcon, Package, Settings } from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
@@ -15,34 +8,43 @@ import { BuildHistoryTab } from './BuildHistoryTab'
 import { OrganizationsTab } from './OrganizationsTab'
 import { PackageManager } from './PackageManager'
 import { SettingsTab } from './SettingsTab'
-import { SuperAdminsTab } from './SuperAdminsTab'
 
-type SetupTab = 'organizations' | 'packages' | 'builds' | 'super-admins' | 'settings'
+type SetupTab = 'organizations' | 'packages' | 'builds' | 'settings'
 
 interface NavEntry {
     tab: SetupTab
     label: string
     crumb: string
     Icon: LucideIcon
+    // Owner-only: a package operation rebuilds the deployment's artifact.
+    // requireOwner enforces it server-side; this only hides the entry.
+    ownerOnly?: boolean
 }
 
 // Order here is the rail order. `crumb` is the topbar breadcrumb leaf shown after
 // the `admin /` root (the breadcrumb is the only place a route literal appears).
 const NAV: NavEntry[] = [
     { tab: 'organizations', label: 'Organizations', crumb: 'organizations', Icon: Building2 },
-    { tab: 'packages', label: 'Packages', crumb: 'packages', Icon: Package },
+    { tab: 'packages', label: 'Packages', crumb: 'packages', Icon: Package, ownerOnly: true },
     { tab: 'builds', label: 'Build History', crumb: 'build history', Icon: History },
-    { tab: 'super-admins', label: 'Super Admins', crumb: 'super admins', Icon: ShieldCheck },
     { tab: 'settings', label: 'Settings', crumb: 'settings', Icon: Settings },
 ]
 
 interface SetupDashboardProps {
     pb: PocketBase
     defaultTab?: SetupTab
+    // Defaults to true because the standalone /setup console runs as the PB
+    // superuser, who outranks every org role. The in-shell /admin route passes
+    // the signed-in user's actual role.
+    isOwner?: boolean
 }
 
-export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardProps) {
-    const [activeTab, setActiveTab] = useState<SetupTab>(defaultTab)
+export function SetupDashboard({ pb, defaultTab, isOwner = true }: SetupDashboardProps) {
+    const nav = NAV.filter(entry => isOwner || !entry.ownerOnly)
+    // Packages is the natural landing tab, but an admin can't see it — fall
+    // back to the first tab they do have rather than rendering an empty body.
+    const initialTab = defaultTab ?? (isOwner ? 'packages' : nav[0].tab)
+    const [activeTab, setActiveTab] = useState<SetupTab>(initialTab)
     const crumb = NAV.find(n => n.tab === activeTab)?.crumb ?? activeTab
 
     return (
@@ -53,16 +55,15 @@ export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardPr
         // reached.
         <DraxProvider style={{ flex: 1 }}>
             <View className="flex-1 flex-row">
-                <SetupRail activeTab={activeTab} onSelect={setActiveTab} />
+                <SetupRail nav={nav} activeTab={activeTab} onSelect={setActiveTab} />
 
                 <View className="flex-1">
                     <SetupTopBar crumb={crumb} />
                     <ScrollView className="flex-1">
                         <View className="w-full self-center p-8 gap-6" style={{ maxWidth: 1040 }}>
                             <OrganizationsTab isVisible={activeTab === 'organizations'} />
-                            <PackagesTab isVisible={activeTab === 'packages'} pb={pb} />
+                            <PackagesTab isVisible={isOwner && activeTab === 'packages'} pb={pb} />
                             <BuildHistoryTab isVisible={activeTab === 'builds'} pb={pb} />
-                            <SuperAdminsTab isVisible={activeTab === 'super-admins'} pb={pb} />
                             <SettingsTab isVisible={activeTab === 'settings'} />
                         </View>
                     </ScrollView>
@@ -73,9 +74,11 @@ export function SetupDashboard({ pb, defaultTab = 'packages' }: SetupDashboardPr
 }
 
 function SetupRail({
+    nav,
     activeTab,
     onSelect,
 }: {
+    nav: NavEntry[]
     activeTab: SetupTab
     onSelect: (tab: SetupTab) => void
 }) {
@@ -124,7 +127,7 @@ function SetupRail({
                 Workspace
             </Text>
 
-            {NAV.map(entry => (
+            {nav.map(entry => (
                 <SetupRailItem
                     key={entry.tab}
                     label={entry.label}

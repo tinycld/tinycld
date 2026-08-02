@@ -47,8 +47,8 @@ func (c *SystemConfig) Get(key string) string {
 // (tokens, the VAPID private key, IMAP password) are never included here.
 //
 // NOTE: this gates HTML INJECTION only. It is NOT a confidentiality boundary for
-// the secret values themselves — those still live in the super-admin-readable
-// system_settings collection, so a super admin's client reads them over the wire
+// the secret values themselves — those still live in the admin-readable
+// system_settings collection, so an admin's client reads them over the wire
 // (the admin UI just renders them write-only). The trust boundary is "super
 // admin"; "secret" here means "never embedded in the public page served to every
 // visitor".
