@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -130,9 +131,92 @@ func RunCmdStreaming(onLine func(line string), dir, name string, args ...string)
 	return out, err
 }
 
-// CopyDir copies src's contents into dst, preserving attributes and symlinks
-// (cp -a semantics — pnpm workspace trees rely on both).
+// CopyDir copies src's contents into dst, preserving mode, timestamps and
+// symlinks (pnpm workspace trees rely on all three) but NOT ownership.
+//
+// This replaced a `cp -a`. `-a` implies --preserve=all, which makes cp chown
+// every entry to the source's uid/gid — and that FAILS with EINVAL when the
+// copy runs inside a user namespace that does not map the source owner. The
+// confined builder is exactly that case: the job maps only its own uid, so a
+// root-owned pre-fetched member tree is unmappable, every entry errors, and cp
+// exits nonzero after a copy that otherwise succeeded. Ownership is not
+// something a copy into a job's own workspace should carry anyway — the
+// destination belongs to whoever runs the build.
+//
+// Done in Go rather than by re-flagging cp because the flag spellings diverge:
+// GNU wants --preserve=mode,timestamps,links while BSD/macOS cp rejects it
+// outright (exit 64), and BSD -p attempts ownership regardless. This runs the
+// same everywhere and makes the ownership decision explicit.
 func CopyDir(src, dst string) error {
-	_, err := RunCmd(".", "cp", "-a", src+"/.", dst+"/")
-	return err
+	return copyTree(src, dst)
+}
+
+// copyTree recursively copies src into dst. Symlinks are recreated as symlinks
+// (never followed), so a dangling link — the generator emits plenty — copies
+// as a dangling link instead of failing.
+func copyTree(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		info, err := e.Info()
+		if err != nil {
+			return err
+		}
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(srcPath)
+			if err != nil {
+				return err
+			}
+			if err := os.RemoveAll(dstPath); err != nil {
+				return err
+			}
+			if err := os.Symlink(target, dstPath); err != nil {
+				return err
+			}
+			continue // symlink mode/times belong to the target, not the link
+		case e.IsDir():
+			if err := copyTree(srcPath, dstPath); err != nil {
+				return err
+			}
+		default:
+			if err := copyFileMode(srcPath, dstPath, info); err != nil {
+				return err
+			}
+		}
+		if err := os.Chmod(dstPath, info.Mode().Perm()); err != nil {
+			return err
+		}
+		if err := os.Chtimes(dstPath, info.ModTime(), info.ModTime()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// copyFileMode copies one regular file, creating the destination with the
+// source's permission bits. Distinct from nativeexport.go's copyFile, which
+// fsyncs for OTA durability and does not carry mode.
+func copyFileMode(src, dst string, info os.FileInfo) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
