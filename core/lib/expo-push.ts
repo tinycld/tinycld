@@ -1,3 +1,4 @@
+import PocketBase from 'pocketbase'
 import { Platform } from 'react-native'
 import { pb } from './pocketbase'
 
@@ -54,7 +55,20 @@ export async function registerExpoPushToken(userId: string): Promise<boolean> {
 // caller can run teardown as part of logout without racing pb.authStore.clear():
 // we send it as the Authorization header so the delete is authorized even once
 // the store has been cleared.
-export async function unregisterExpoPushToken(userId: string, authToken?: string): Promise<void> {
+//
+// `origin` is likewise explicit, and for a sharper reason. The shared `pb`
+// points at whichever server is ACTIVE, but a device can hold sessions on
+// several servers at once — so signing out of, or removing, a NON-ACTIVE server
+// would issue this delete against the wrong host: the signed-out server keeps
+// pushing while a server the user is still using is silently deregistered.
+// Given an origin we build a short-lived client against that specific host
+// (use-superuser-pb.ts is the precedent for a second client). Omitted → the
+// active server, which is correct for the ordinary logout path.
+export async function unregisterExpoPushToken(
+    userId: string,
+    authToken?: string,
+    origin?: string
+): Promise<void> {
     if (Platform.OS === 'web') return
 
     const authOptions = authToken ? { headers: { Authorization: authToken } } : {}
@@ -63,15 +77,16 @@ export async function unregisterExpoPushToken(userId: string, authToken?: string
         const tokenData = await Notifications.getExpoPushTokenAsync()
         const token = tokenData.data
 
-        const records = await pb.collection('push_subscriptions').getFullList({
+        const client = origin ? new PocketBase(origin) : pb
+        const records = await client.collection('push_subscriptions').getFullList({
             ...authOptions,
-            filter: pb.filter('user = {:userId} && platform = "expo" && expo_token = {:token}', {
-                userId,
-                token,
-            }),
+            filter: client.filter(
+                'user = {:userId} && platform = "expo" && expo_token = {:token}',
+                { userId, token }
+            ),
         })
         for (const record of records) {
-            await pb.collection('push_subscriptions').delete(record.id, authOptions)
+            await client.collection('push_subscriptions').delete(record.id, authOptions)
         }
     } catch {
         // Best-effort: a failed teardown must never block logout.

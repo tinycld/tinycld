@@ -1,4 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage'
 import { QueryCache, QueryClient } from '@tanstack/react-query'
 import { type MergedPackageSchema, tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import { captureException } from '@tinycld/core/lib/errors'
@@ -7,7 +6,9 @@ import type { Schema, Users } from '@tinycld/core/types/pbSchema'
 import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
 import PocketBase, { AsyncAuthStore } from 'pocketbase'
 import { Platform } from 'react-native'
+import { clearAuthBlob, parseAuthBlob, readAuthBlob, writeAuthBlob } from './auth-storage'
 import { PB_SERVER_ADDR } from './config'
+import { getResolvedAddress, subscribeResolvedAddress } from './server-address'
 import { createReachabilityTracker } from './server-reachability'
 import { useConnectivityStore } from './stores/connectivity-store'
 import type { UserSession } from './types'
@@ -30,41 +31,91 @@ if (Platform.OS !== 'web') {
 
 export { PB_SERVER_ADDR }
 
-// Defer AsyncStorage access to avoid calling the native module during module evaluation,
-// which crashes on React Native before the bridge is ready (AsyncStorage v3+)
-const initialAuthPromise =
-    typeof window !== 'undefined'
-        ? new Promise<string | null>(resolve => {
-              setTimeout(() => resolve(AsyncStorage.getItem('pb_auth')), 0)
-          })
-        : Promise.resolve(null)
+// The auth blob is keyed by server (`pb_auth:<serverKey>`) so several servers
+// can hold sessions at once. That makes reading it depend on the RESOLVED
+// ADDRESS, which is a boot-ordering change, not just a key rename: hydration
+// used to fire on a setTimeout(0) at module eval, which can run before the gate
+// has resolved anything — and at that moment getResolvedAddress() is still null
+// (exactly why PB_SERVER_ADDR throws pre-gate). So we await the address instead
+// of racing it.
+//
+// Awaiting is still deferred off module evaluation, which the original
+// setTimeout(0) existed to guarantee: touching AsyncStorage during module eval
+// crashes on React Native before the bridge is ready (AsyncStorage v3+). The
+// await below provides that deferral — the address is resolved by the gate,
+// which by construction runs after the bridge is up. (The old code expressed
+// this as a `typeof window !== 'undefined'` guard around the storage read; the
+// deferral, not the presence of `window`, is what actually made it safe.)
+//
+// Resolves to null rather than waiting forever when no address ever arrives —
+// which is a real state, not a theoretical one: a fresh install with no cached
+// address sits on /connect until the user picks a server. `authStoreReady` must
+// still settle there, because auth-store's hydrate() awaits it before setting
+// hasHydrated, and a promise that never resolves would strand the app on a
+// spinner with nothing logged. There is no session to hydrate in that state
+// anyway; once the user connects, the JS context is already reloaded (or the
+// gate mounts the tree fresh), so hydration re-runs with an address.
+const ADDRESS_WAIT_MS = 10_000
+
+function whenAddressResolved(): Promise<string | null> {
+    const current = getResolvedAddress()
+    if (current) return Promise.resolve(current)
+    return new Promise<string | null>(resolve => {
+        const settle = (address: string | null) => {
+            clearTimeout(timer)
+            unsubscribe()
+            resolve(address)
+        }
+        const timer = setTimeout(() => settle(null), ADDRESS_WAIT_MS)
+        const unsubscribe = subscribeResolvedAddress(() => {
+            const address = getResolvedAddress()
+            if (address) settle(address)
+        })
+    })
+}
+
+// The address hydration read its blob from. Captured so save/clear write the
+// SAME key the session was loaded from, even if the address changes underneath
+// (a switch reloads the JS context, but a write racing that reload must not
+// land under the new server's key).
+let authAddress: string | null = null
 
 const store = new AsyncAuthStore({
-    save: async serialized => AsyncStorage.setItem('pb_auth', serialized),
-    clear: async () => await AsyncStorage.removeItem('pb_auth'),
+    save: async serialized => {
+        if (!authAddress) return
+        await writeAuthBlob(authAddress, serialized)
+    },
+    clear: async () => {
+        if (!authAddress) return
+        await clearAuthBlob(authAddress)
+    },
 })
 
 // AsyncAuthStore's own `initial` option runs through a private
 // fire-and-forget _loadInitial that swallows errors, races consumers, and
 // gives no readiness signal. Instead we hydrate explicitly: read storage,
 // parse, call store.save(). authStoreReady resolves only after that
-// completes, so anyone awaiting it sees a settled pb.authStore.
-export const authStoreReady = initialAuthPromise.then(storedAuth => {
+// completes, so anyone awaiting it sees a settled pb.authStore — the contract
+// every existing `await authStoreReady` caller depends on is unchanged.
+export const authStoreReady = whenAddressResolved().then(async address => {
+    if (!address) return
+    authAddress = address
+
+    // Migrates a legacy flat `pb_auth` into this server's scoped key on first
+    // run — without which every existing user is signed out on upgrade.
+    const storedAuth = await readAuthBlob(address)
     if (!storedAuth) return
-    try {
-        const parsed = JSON.parse(storedAuth) as {
-            token?: string
-            record?: unknown
-            model?: unknown
-        }
-        if (parsed.token) {
-            store.save(parsed.token, (parsed.record ?? parsed.model) as never)
-        }
-    } catch {
+
+    const parsed = parseAuthBlob(storedAuth)
+    if (!parsed) {
         // Corrupt stored auth — leave the store empty and let the user
         // re-authenticate. Clearing storage avoids replaying the corruption
         // on next boot.
-        AsyncStorage.removeItem('pb_auth')
+        await clearAuthBlob(address)
+        return
+    }
+    if (parsed.token) {
+        store.save(parsed.token, (parsed.record ?? parsed.model) as never)
     }
 })
 

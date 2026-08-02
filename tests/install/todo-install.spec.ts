@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { expect, type Page, test } from '@playwright/test'
+import { authStorageKey } from '../e2e/auth-key-helpers'
 
 // Read the OTA runtime version from app.json's `expo.version` — NOT from
 // package.json. The server publishes native bundles under the appVersion
@@ -233,7 +234,8 @@ async function superuserToken(page: Page): Promise<string> {
 }
 
 // Re-authenticate the APP's persistent PocketBase client (`appPb`, the one
-// `lib/pocketbase.ts` exports with the `pb_auth` AsyncStorage backing) as the
+// `lib/pocketbase.ts` exports with the per-server `pb_auth:<serverKey>`
+// AsyncStorage backing) as the
 // superuser, by minting a fresh token and writing it into localStorage, then
 // reloading so the app rehydrates it on boot (authStoreReady).
 //
@@ -245,8 +247,8 @@ async function superuserToken(page: Page): Promise<string> {
 // the rollback fixtures restart the server several times in between, leaving
 // `appPb`'s persisted token stale/unauthorized. The create then goes out without
 // superuser auth, so setting the managed `verified` field is rejected
-// ("validation_values_mismatch") and the org is never created. Refreshing
-// `pb_auth` here makes the create carry a valid superuser token again.
+// ("validation_values_mismatch") and the org is never created. Refreshing the
+// stored auth blob here makes the create carry a valid superuser token again.
 // Mints the app user this spec logs in as, through the superuser REST API.
 // Idempotent: a 400 means an earlier run in the same container already
 // created it, which is fine.
@@ -303,9 +305,13 @@ async function reauthAppPb(page: Page) {
 
     // Write the token into the app's persistent auth key (the shape
     // authStoreReady parses), then reload so appPb picks it up on boot.
+    // The auth key is scoped per server (`pb_auth:<serverKey>`), so derive it
+    // rather than writing a literal — a stale literal would leave the app
+    // hydrating from a key nothing writes, i.e. silently signed out.
+    const authKey = await authStorageKey(page)
     await page.evaluate(
-        ({ token, record }) => localStorage.setItem('pb_auth', JSON.stringify({ token, record })),
-        auth
+        ({ token, record, key }) => localStorage.setItem(key, JSON.stringify({ token, record })),
+        { ...auth, key: authKey }
     )
     await page.reload()
 }

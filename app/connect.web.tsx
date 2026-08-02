@@ -1,12 +1,8 @@
 import { ConnectIllustration } from '@tinycld/core/components/connect/ConnectIllustration'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
-import {
-    normalizeAddress,
-    probe,
-    setResolvedAddress,
-    writeCached,
-} from '@tinycld/core/lib/server-address'
+import { normalizeAddress, probe, setResolvedAddress } from '@tinycld/core/lib/server-address'
+import { setActiveServer } from '@tinycld/core/lib/servers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { router, useLocalSearchParams } from 'expo-router'
@@ -44,7 +40,11 @@ export default function ConnectWeb() {
 
     async function connectTo(addr: string) {
         await probe(addr)
-        await writeCached(addr)
+        // setActiveServer is the only sanctioned writer of the active pointer,
+        // on every platform — one code path. Web never surfaces the saved list
+        // (it is same-origin and has its own cookie switcher), so the extra list
+        // entry is inert bookkeeping here.
+        await setActiveServer(addr)
         setResolvedAddress(addr)
         const target = backTo?.startsWith('/') ? backTo : '/'
         router.replace(target)

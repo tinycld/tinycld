@@ -7,4 +7,8 @@
 // only non-relative option. The explicit `.ts` extension is required because
 // siblings reach this through core's exports map, so the re-export is resolved
 // by Node's ESM loader (no extension inference); see vitest-config.ts.
+
+// The per-server auth storage key (`pb_auth:<serverKey>`) is derived, not
+// literal, so any sibling spec that reads or stages the auth blob needs this.
+export * from '../tests/e2e/auth-key-helpers.ts'
 export * from '../tests/e2e/helpers.ts'
