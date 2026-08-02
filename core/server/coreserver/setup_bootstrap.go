@@ -194,6 +194,16 @@ func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 // the caller can mint its auth token. The super_admins createRule is null
 // (superuser-only); this runs in the app's Go context, which bypasses record
 // rules, so the insert is authorized without an authenticated superuser.
+//
+// Exported as CreateOwnerAccount for callers outside the setup wizard — a
+// hosted org is provisioned by a router, which has no wizard to run (that
+// route is bound only in the host composition) and would otherwise leave the
+// org with zero users. Both paths must mint the SAME shape of account, so
+// they share this one implementation rather than each assembling the record.
+func CreateOwnerAccount(app core.App, email, password string) (*core.Record, error) {
+	return createSuperAdminOperator(app, email, password)
+}
+
 func createSuperAdminOperator(app core.App, email, password string) (*core.Record, error) {
 	users, err := app.FindCollectionByNameOrId("users")
 	if err != nil {
