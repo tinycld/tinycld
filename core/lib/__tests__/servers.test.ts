@@ -72,6 +72,24 @@ describe('saved server list', () => {
         expect(saved.at(-1)).toBe(`https://s${MAX_SAVED_SERVERS + 2}.example.com`)
     })
 
+    // A user can sit on one server for a long time while adding others, which
+    // makes the ACTIVE entry the oldest. Evicting it would leave the active
+    // pointer aimed at a server missing from its own list — the switcher would
+    // omit the one you're on and offer only ones you're not.
+    it('never evicts the active server, even when it is the oldest', async () => {
+        await setActiveServer('https://s0.example.com')
+        for (let i = 1; i <= MAX_SAVED_SERVERS; i++) {
+            await addServer(`https://s${i}.example.com`)
+        }
+
+        const saved = await origins()
+        expect(saved).toHaveLength(MAX_SAVED_SERVERS)
+        expect(saved).toContain('https://s0.example.com')
+        // The next-oldest evictable entry went instead.
+        expect(saved).not.toContain('https://s1.example.com')
+        expect(await AsyncStorage.getItem('tinycld:server:app')).toBe('https://s0.example.com')
+    })
+
     it('removes a server by any spelling', async () => {
         await addServer('https://a.example.com')
         await addServer('https://b.example.com')

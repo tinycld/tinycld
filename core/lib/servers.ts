@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Platform } from 'react-native'
 import { normalizeOrigin, serverKeyFor } from './app-updater/server-key'
-import { normalizeAddress, writeCached } from './server-address'
+import { normalizeAddress, readCached, writeCached } from './server-address'
 
 // The ordered list of servers the user has connected to on this device. The
 // ACTIVE one is not stored here — it stays in `tinycld:server:app` (see
@@ -99,10 +99,29 @@ export async function addServer(address: string): Promise<string> {
         ...servers,
         { origin, label: labelFor(origin), addedAt: Date.now() } satisfies SavedServer,
     ]
-    // Trim oldest-first. The active server is exempt from eviction elsewhere by
-    // construction: it was just added or just used, so it is never the oldest.
-    await writeServers(next.slice(-MAX_SAVED_SERVERS))
+    await writeServers(await trimToCap(next))
     return origin
+}
+
+// trimToCap drops oldest-first, but never the ACTIVE server. A user can sit on
+// one server for a long time while adding others, which makes the active entry
+// the oldest — and evicting it would leave `tinycld:server:app` pointing at a
+// server absent from its own list: the switcher would omit the server you are
+// actually on, and offer only ones you are not.
+async function trimToCap(servers: SavedServer[]): Promise<SavedServer[]> {
+    if (servers.length <= MAX_SAVED_SERVERS) return servers
+
+    const active = await readCached()
+    const activeKey = active ? keyOf(active) : null
+    // Only reserve a slot when the active server is actually IN this list —
+    // otherwise the reservation would shrink the cap for no one.
+    const activeIsListed = !!activeKey && servers.some(s => keyOf(s.origin) === activeKey)
+    const evictable = servers.filter(s => keyOf(s.origin) !== activeKey)
+    const kept = evictable.slice(-(MAX_SAVED_SERVERS - (activeIsListed ? 1 : 0)))
+
+    // Rebuild in the original order so "oldest" stays meaningful next time.
+    const keptKeys = new Set(kept.map(s => keyOf(s.origin)))
+    return servers.filter(s => keyOf(s.origin) === activeKey || keptKeys.has(keyOf(s.origin)))
 }
 
 export async function removeServer(origin: string): Promise<SavedServer[]> {
