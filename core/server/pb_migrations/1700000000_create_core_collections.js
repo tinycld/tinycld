@@ -6,8 +6,9 @@ migrate(
         // 1. role on users
         // Single-org deployment: the process IS one org, so membership no longer
         // needs a junction. The role a user holds is a plain field on their auth
-        // record; access rules gate on @request.auth.role. Optional because an
-        // operator/super-admin may have no role.
+        // record; access rules gate on @request.auth.role. Optional here only
+        // because this migration predates the backfill; 1940000000 makes it
+        // required once every row has a value.
         const users = app.findCollectionByNameOrId('users')
         users.fields.add(
             new Field({

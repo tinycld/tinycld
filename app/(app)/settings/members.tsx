@@ -359,6 +359,7 @@ function MemberRowItem({
 
     return (
         <Pressable
+            testID={`member-row-${member.username}`}
             onPress={onPress}
             className="flex-row items-center gap-3 border-border"
             style={{

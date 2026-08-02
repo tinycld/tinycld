@@ -183,9 +183,6 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// a tenant that could rebuild or restart itself would escape the router's
 	// supervision.
 	RegisterPackageInstallEndpoints(app)
-	// The admin console lives on the control plane in multi-org; a tenant org
-	// must not manage the deployment-wide super-admin roster.
-	RegisterSuperAdminEndpoints(app)
 	// Admin-console panel endpoint. Tenant push keys will arrive via the org's
 	// system_settings (control-plane provisioned), not a self-serve panel.
 	RegisterVapidAdminEndpoints(app)

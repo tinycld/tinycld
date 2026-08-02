@@ -229,11 +229,16 @@ export async function createInvitedUser(
 // Sign in as a specific (non-fixture) user by identifier + password. Mirrors
 // login() but for accounts minted via createInvitedUser.
 export async function loginAs(page: Page, identifier: string, password: string) {
+    // goto BEFORE clearing: storage is origin-scoped, and a freshly created
+    // context sits on about:blank, where reading localStorage throws
+    // SecurityError. Navigating first gives the page a real origin; the
+    // reload then re-mounts the app against the cleared store.
+    await page.goto('/')
     await page.evaluate(() => {
         window.localStorage.clear()
         window.sessionStorage.clear()
     })
-    await page.goto('/')
+    await page.reload()
     await page.getByTestId('identifier').fill(identifier)
     await page.getByPlaceholder('Password').fill(password)
     await page.getByText('Sign in', { exact: true }).last().click()
@@ -327,20 +332,21 @@ export async function clickSidebarItem(page: Page, label: string) {
     await page.getByText(label, { exact: true }).click()
 }
 
-// Enter the in-shell Admin console (super-admin only) and land on a section.
-// Requires a logged-in super-admin session (the e2e seed grants the test user
-// super_admins). Clicks the rail entry rather than page.goto so the SPA + its
+// Enter the in-shell Admin console (owner/admin only) and land on a section.
+// Requires a logged-in owner or admin session (the e2e seed stamps the test
+// user `owner`). Clicks the rail entry rather than page.goto so the SPA + its
 // lazy chunks stay warm, then clicks the section in the AdminSidebar.
 //
-// `sectionLabel` is the section's visible title ('Build History', 'Super
-// Admins') — the same string AdminScreen renders and derives its testID from.
+// `sectionLabel` is the section's visible title ('Build History',
+// 'Organizations') — the same string AdminScreen renders and derives its
+// testID from. Note 'Packages' is owner-only; an admin never sees it.
 export async function navigateToAdmin(page: Page, sectionLabel: string) {
     const rail = page.getByTestId('nav-admin')
     await rail.waitFor({ state: 'visible', timeout: 15_000 })
     await rail.click()
     // The console is mounted, not merely routed to (see navigateToPackage).
     await page.getByTestId('pkg-active-admin').waitFor({ state: 'visible' })
-    // The index redirects to /admin/packages; click the section in the sidebar.
+    // The index redirects to a landing section; click the target in the sidebar.
     await page.getByText(sectionLabel, { exact: true }).click()
     // AdminScreen stamps this once the section's own content mounts — the URL
     // only proves the router accepted the push.

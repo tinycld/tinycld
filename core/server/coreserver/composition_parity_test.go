@@ -30,11 +30,11 @@ import (
 // tail (each of which carries its reason in server.go).
 var hostOnlyHookDiff = map[string]int{
 	// OnServe: one bind each from RegisterPackageInstallEndpoints,
-	// RegisterSuperAdminEndpoints, RegisterVapidAdminEndpoints,
-	// RegisterAppUpdateEndpoints, RegisterSetupBootstrap, RegisterDemoStart,
-	// RegisterDemoLead, and registerStaticServe. (RegisterDemoReset registers
-	// nothing unless DEMO_RESET_ENABLED is set.)
-	"OnServe": 8,
+	// RegisterVapidAdminEndpoints, RegisterAppUpdateEndpoints,
+	// RegisterSetupBootstrap, RegisterDemoStart, RegisterDemoLead, and
+	// registerStaticServe. (RegisterDemoReset registers nothing unless
+	// DEMO_RESET_ENABLED is set.)
+	"OnServe": 7,
 
 	// registerSchemaHooks regenerates workspace TypeScript on collection
 	// edits; a tenant has no workspace.

@@ -27,7 +27,7 @@ interface SetupWizardProps {
 export function SetupWizard({ token }: SetupWizardProps) {
     // Drive the dashboard with the shared app pb client (the one pbtsdb stores
     // write through), not a throwaway instance. /api/setup/init returns a token
-    // minted from the operator's `users` record + super_admins grant; saving it
+    // minted from the operator's `users` record (role=owner); saving it
     // here authorizes every store write (incl. setting `verified` on a new org
     // owner) as the super-admin app user.
     const pb = appPb

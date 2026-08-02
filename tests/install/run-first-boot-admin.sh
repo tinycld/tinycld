@@ -2,8 +2,8 @@
 # Smoke test for the first-boot /admin console: builds (or reuses) a TinyCld
 # image, boots it on a FRESH blank DB so the first-run setup token is printed,
 # scrapes that token, and runs setup-and-packages.spec.ts against the live
-# container — the bootstrap wizard, the package list, org creation, super-admin
-# grant, and the system-settings panels (Sentry DSN injection + VAPID generate).
+# container — the bootstrap wizard, the package list, and the system-settings
+# panels (Sentry DSN injection + VAPID generate).
 #
 # This is the runner setup-and-packages.spec.ts always needed (run-todo-install.sh
 # only drives the heavy todo-install spec). Always boots a clean DB so the run is

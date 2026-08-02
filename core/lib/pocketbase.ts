@@ -209,12 +209,6 @@ const org_pkg_enabled = newCollection('org_pkg_enabled', {
     ...indexing,
 })
 
-const super_admins = newCollection('super_admins', {
-    omitOnInsert: ['created', 'updated'],
-    expand: { user: users },
-    ...indexing,
-})
-
 // System-wide configuration (Sentry, web-push, mail provider creds). Read/written
 // by the /admin Settings console; the server reads it through SystemConfig. See
 // the create_system_settings migration.
@@ -263,7 +257,6 @@ const coreStores = {
     audit_logs,
     pkg_install_log,
     notifications,
-    super_admins,
     system_settings,
 }
 export type CoreStores = typeof coreStores
@@ -343,7 +336,6 @@ export async function preloadStores() {
         stores.org_pkg_access.preload(),
         stores.pkg_registry.preload(),
         stores.org_pkg_enabled.preload(),
-        stores.super_admins.preload(),
     ])
 }
 

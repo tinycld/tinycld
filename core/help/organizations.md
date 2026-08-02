@@ -23,11 +23,28 @@ address; you stay signed in there independently.
 
 Every member has one role on their account:
 
-- **owner** / **admin** — manage the organization: settings, members and
-  invites, and installed packages, in addition to everyday use.
+- **owner** — everything an admin can do, plus the two things reserved to the
+  owner: installing, removing and upgrading packages, and granting the owner
+  role to someone else.
+- **admin** — manage the organization: settings, members and invites, and the
+  Admin console (apart from Packages), in addition to everyday use.
 - **member** — everyday use of the installed packages: create and edit your own
   content and anything shared with you.
 - **guest** — limited access granted through shared links and invites. Guests
   can view (and comment, where invited) but can't create workspace content.
 
-Owners and admins set roles under **Settings → Members**.
+Owners and admins set roles under **Settings → Members**. Only an owner can
+make someone else an owner.
+
+## The Admin console
+
+Owners and admins get a shield icon in the nav rail. It opens the **Admin
+console**, the deployment-wide area for organizations, build history and
+system settings — concerns that affect the whole deployment rather than one
+person, which is why they live outside the normal settings.
+
+**Packages** — installing, removing and upgrading them — appears there for
+**owners only**. A package change rebuilds what everyone on the deployment
+runs, so it isn't an ordinary administrative action.
+
+If you don't see the shield icon, your role is member or guest.

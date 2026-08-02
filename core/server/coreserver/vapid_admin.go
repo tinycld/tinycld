@@ -23,9 +23,7 @@ func RegisterVapidAdminEndpoints(app *pocketbase.PocketBase) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.POST("/api/admin/vapid/generate", func(re *core.RequestEvent) error {
 			return handleGenerateVapid(app, re)
-		}).BindFunc(func(re *core.RequestEvent) error {
-			return requireAdmin(app, re)
-		})
+		}).BindFunc(requireAdmin)
 		return e.Next()
 	})
 }

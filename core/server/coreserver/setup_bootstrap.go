@@ -123,12 +123,12 @@ func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	//   1. a PocketBase _superusers record — keeps PB's installer satisfied (so
 	//      the setup token isn't re-printed on every reboot), backs the sharelink
 	//      signing key, and remains a recovery login.
-	//   2. a regular `users` record promoted via a `super_admins` row — this is
-	//      the identity the /admin console actually runs as. The console writes
-	//      through the app's pbtsdb stores (the shared app pb client), and those
-	//      writes must carry an auth that satisfies the users `manageRule`
-	//      (@collection.super_admins...) to set managed fields like `verified`
-	//      when creating a pre-verified org owner. A raw _superusers token on a
+	//   2. a regular `users` record with role=owner — this is the identity the
+	//      /admin console actually runs as. The console writes through the
+	//      app's pbtsdb stores (the shared app pb client), and those writes
+	//      must carry an auth that satisfies the users `manageRule` (the
+	//      owner/admin clause) to set managed fields like `verified` when
+	//      creating a pre-verified user. A raw _superusers token on a
 	//      throwaway client never reached those stores, which is why org creation
 	//      failed with a 400 on `verified`. We therefore mint the returned auth
 	//      token from the `users` record and the client saves it onto the shared
@@ -149,7 +149,7 @@ func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		})
 	}
 
-	operator, err := createSuperAdminOperator(app, req.Email, req.Password)
+	operator, err := createOwnerOperator(app, req.Email, req.Password)
 	if err != nil {
 		return re.JSON(http.StatusInternalServerError, map[string]string{
 			"error": fmt.Sprintf("Failed to create admin user: %v", err),
@@ -174,7 +174,7 @@ func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	setupTokenMu.Unlock()
 
 	// Mint the token from the `users` operator (not _superusers) so the console
-	// runs as the super-admin app user and store writes are authorized.
+	// runs as the owner app user and store writes are authorized.
 	authToken, err := operator.NewAuthToken()
 	if err != nil {
 		return re.JSON(http.StatusInternalServerError, map[string]string{
@@ -189,11 +189,10 @@ func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	})
 }
 
-// createSuperAdminOperator creates the first operator as a regular `users`
-// record and promotes it via a `super_admins` row. Returns the users record so
-// the caller can mint its auth token. The super_admins createRule is null
-// (superuser-only); this runs in the app's Go context, which bypasses record
-// rules, so the insert is authorized without an authenticated superuser.
+// createOwnerOperator creates the first operator as a regular `users` record
+// with role=owner. Returns the users record so the caller can mint its auth
+// token. This runs in the app's Go context, which bypasses record rules, so
+// the insert is authorized without an authenticated superuser.
 //
 // Exported as CreateOwnerAccount for callers outside the setup wizard — a
 // hosted org is provisioned by a router, which has no wizard to run (that
@@ -201,10 +200,10 @@ func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 // org with zero users. Both paths must mint the SAME shape of account, so
 // they share this one implementation rather than each assembling the record.
 func CreateOwnerAccount(app core.App, email, password string) (*core.Record, error) {
-	return createSuperAdminOperator(app, email, password)
+	return createOwnerOperator(app, email, password)
 }
 
-func createSuperAdminOperator(app core.App, email, password string) (*core.Record, error) {
+func createOwnerOperator(app core.App, email, password string) (*core.Record, error) {
 	users, err := app.FindCollectionByNameOrId("users")
 	if err != nil {
 		return nil, fmt.Errorf("find users collection: %w", err)
@@ -222,12 +221,11 @@ func createSuperAdminOperator(app core.App, email, password string) (*core.Recor
 	operator.Set("username", username)
 	// `role` is required (1940000000_backfill_and_require_users_role).
 	//
-	// owner, not member: the super_admins row carries the operator's authority
-	// for collection rules, but the app gates on this field. Settings > Members
-	// checks useCurrentRole().isAdmin and /api/invite-member rejects a
-	// non-admin caller, while the /admin console offers no role management — so
-	// a `member` operator finishes the wizard unable to invite anyone or to
-	// promote themselves, and the deployment is permanently single-user.
+	// owner is the whole of the operator's authority: it gates the /admin
+	// console (requireAdmin admits owner/admin) and package management within
+	// it (requireOwner), as well as Settings > Members and /api/invite-member.
+	// Anything less leaves the wizard-runner unable to invite anyone or to
+	// promote themselves, and the deployment permanently single-user.
 	//
 	// The person who ran the setup wizard is the deployment's owner, so this is
 	// also the honest value. Standalone-only: RegisterSetupBootstrap is bound
@@ -235,16 +233,6 @@ func createSuperAdminOperator(app core.App, email, password string) (*core.Recor
 	operator.Set("role", "owner")
 	if err := app.Save(operator); err != nil {
 		return nil, fmt.Errorf("create users record: %w", err)
-	}
-
-	superAdmins, err := app.FindCollectionByNameOrId("super_admins")
-	if err != nil {
-		return nil, fmt.Errorf("find super_admins collection: %w", err)
-	}
-	grant := core.NewRecord(superAdmins)
-	grant.Set("user", operator.Id)
-	if err := app.Save(grant); err != nil {
-		return nil, fmt.Errorf("create super_admins grant: %w", err)
 	}
 	return operator, nil
 }

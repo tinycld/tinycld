@@ -25,8 +25,10 @@ as the rest of the deployment, every time the server starts. Installing one is t
 same kind of decision as choosing what code to run on your own machine: only
 install packages from authors you trust, just as you would with `npm install`.
 
-Only super admins can install or update packages, and that restriction is enforced
-on the server. Packages outside the official `@tinycld/` scope show an extra
+Only the **owner** can install or update packages — not admins — and that
+restriction is enforced on the server, not just hidden in the UI. Installing a
+package rebuilds what everyone on the deployment runs, which is why it sits a
+step above ordinary administration. Packages outside the official `@tinycld/` scope show an extra
 caution notice at install time — but the warning is advisory, so the judgment about
 whether to trust a source is yours.
 

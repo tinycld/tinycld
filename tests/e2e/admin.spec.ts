@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 // Guards the superuser bootstrap/recovery route. The single admin CONSOLE for
-// logged-in super-admins is now the in-shell /admin area; /setup is the pre-auth
+// logged-in owners/admins is the in-shell /admin area; /setup is the pre-auth
 // bootstrap door (first-run wizard + superuser recovery login). This regular-CI
 // smoke test proves the /setup route resolves, mounts the page shell (not a blank
 // screen or 404), and wires its document title. It deliberately does NOT log in —
@@ -9,7 +9,7 @@ import { expect, test } from '@playwright/test'
 // and the full bootstrap/login/dashboard flow is covered by the docker smoke
 // suite (tests/install/setup-and-packages.spec.ts).
 //
-// A logged-in super-admin app user who hits /setup is redirected to /admin; the
+// A logged-in owner/admin app user who hits /setup is redirected to /admin; the
 // anonymous case below falls through to the superuser login form.
 test.describe('Setup / bootstrap route', () => {
     test('/setup resolves to the superuser bootstrap console', async ({ page }) => {

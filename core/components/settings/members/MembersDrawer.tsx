@@ -185,7 +185,7 @@ function ViewMember({
                 className="flex-row items-center gap-2 flex-wrap"
                 style={{ paddingHorizontal: 4, paddingBottom: 10 }}
             >
-                <RoleBadge role={member.role} />
+                <RoleBadge role={member.role} testID={`member-badge-role-${member.username}`} />
                 {member.isPending && <PendingBadge />}
             </View>
 
@@ -332,6 +332,7 @@ function RolePicker({
                     return (
                         <Pressable
                             key={role}
+                            testID={`role-option-${role}`}
                             disabled={optionDisabled || isActive}
                             onPress={() => onChange(role)}
                             className={`flex-row items-center gap-3 rounded-xl p-3 border-[1.5px] ${activeClasses}`}
