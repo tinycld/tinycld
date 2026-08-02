@@ -33,7 +33,7 @@ const RESOURCE_TYPE_OPTIONS = [
     { label: 'Members', value: 'users' },
     { label: 'Labels', value: 'labels' },
     { label: 'Settings', value: 'settings' },
-    { label: 'Packages', value: 'org_pkg_enabled' },
+    { label: 'Packages', value: 'pkg_registry' },
 ] as const
 
 // Each audit action maps to a semantic soft-status class pair so the badge

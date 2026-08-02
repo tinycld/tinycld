@@ -24,8 +24,8 @@ address; you stay signed in there independently.
 Every member has one role on their account:
 
 - **owner** — everything an admin can do, plus the two things reserved to the
-  owner: installing, removing and upgrading packages, and granting the owner
-  role to someone else.
+  owner: managing packages (installing, removing, upgrading, and turning them on
+  and off), and granting the owner role to someone else.
 - **admin** — manage the organization: settings, members and invites, storage
   and the audit log, in addition to everyday use.
 - **member** — everyday use of the installed packages: create and edit your own
@@ -40,16 +40,17 @@ make someone else an owner.
 
 Everything administrative lives in **Settings**, reached from the gear icon in
 the nav rail. Owners and admins see an **Organization** group there — storage,
-members, labels, packages and the audit log — that members and guests don't.
+members, labels and the audit log — that members and guests don't.
 
-Two of those are **owner-only**, because they change what everyone on the
+Two entries are **owner-only**, because they change what everyone on the
 deployment runs rather than how one organization is configured:
 
-- the **Install & Versions** section at the bottom of **Settings → Packages**,
-  for installing, removing and upgrading packages
+- **Settings → Packages**, for installing, removing, upgrading, and turning
+  packages on and off
 - **Settings → Build History**, for reverting to an earlier build
 
-Admins still manage the rest of **Settings → Packages** — turning installed
-packages on and off for this organization.
+Turning a package off is the same switch as removing it from what the
+deployment runs, which is why the whole Packages screen sits on the owner side
+of that line rather than only its install controls.
 
 If you don't see the Organization group at all, your role is member or guest.

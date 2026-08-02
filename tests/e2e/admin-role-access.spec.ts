@@ -5,18 +5,20 @@ import { clickSidebarItem, createInvitedUser, login, loginAs, navigateToPackage 
 //
 // Role is the only privilege axis, and it grants two different things:
 //   - owner OR admin  → the Organization group (Storage, Members, Labels,
-//     Packages enable/disable, Audit Log)
-//   - owner ALONE     → the package install manager and Build History, because
-//     installing or removing a package rebuilds the artifact the whole
-//     deployment runs.
+//     Audit Log)
+//   - owner ALONE     → Packages and Build History, because installing,
+//     removing, or disabling a package rebuilds — or changes what runs in —
+//     the artifact the whole deployment serves. Enablement is a
+//     pkg_registry.status write, the same axis as install, so the entire
+//     Packages screen is owner-only rather than split across two lists.
 //
 // The seeded TEST_USER is the owner. The admin is minted through the UI —
 // invite flow, then the Members role picker — rather than a raw PB write, so
 // the test drives the same mutations the app does.
 
 test.describe('Settings · role access', () => {
-    test('owner gets the install manager and Build History; admin does not', async ({ page }) => {
-        // --- Owner: Packages shows the toggles AND the install manager ---
+    test('owner gets Packages and Build History; admin does not', async ({ page }) => {
+        // --- Owner: Packages opens the install manager ---
         await login(page)
         await navigateToPackage(page, 'settings')
         await expect(page.getByText('Build History', { exact: true })).toBeVisible({
@@ -56,21 +58,15 @@ test.describe('Settings · role access', () => {
                 await loginAs(adminPage, user.username, user.password)
                 await navigateToPackage(adminPage, 'settings')
 
-                // Reaching Packages proves the Organization group mounted for a
-                // non-owner. Its enable/disable toggles are admin-visible...
-                await clickSidebarItem(adminPage, 'Packages')
-                await expect(
-                    adminPage.getByText('Enable or disable packages for this organization.', {
-                        exact: false,
-                    })
-                ).toBeVisible({ timeout: 20_000 })
-
-                // ...but the install manager below them is owner-only.
-                await expect(adminPage.getByTestId('settings-install-manager')).toHaveCount(0)
-
-                // Build History is likewise absent from the settings index, and
-                // a hand-typed URL refuses to render it.
+                // Reaching Labels proves the Organization group mounted for a
+                // non-owner — the admin tier is intact...
+                await clickSidebarItem(adminPage, 'Labels')
+                await expect(adminPage).toHaveURL(/settings\/labels/, { timeout: 20_000 })
                 await adminPage.goBack()
+
+                // ...but Packages and Build History are owner-only, so neither
+                // appears in the settings index.
+                await expect(adminPage.getByText('Packages', { exact: true })).toHaveCount(0)
                 await expect(adminPage.getByText('Build History', { exact: true })).toHaveCount(0)
             } finally {
                 await adminContext.close()

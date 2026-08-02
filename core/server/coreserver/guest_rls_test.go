@@ -45,8 +45,8 @@ type guestRLSEnv struct {
 }
 
 // setupGuestRLSApp applies core's shipped migrations (which create the users
-// fields plus labels / settings / audit_logs / org_pkg_enabled with their
-// rules), then seeds a real member (role 'member') and a guest (role 'guest')
+// fields plus labels / settings / audit_logs with their rules), then seeds a
+// real member (role 'member') and a guest (role 'guest')
 // and returns auth tokens for each.
 func setupGuestRLSApp(t *testing.T) *guestRLSEnv {
 	t.Helper()
@@ -150,7 +150,6 @@ func TestGuestRLS_ShippedRulesCarryGuestClause(t *testing.T) {
 		{"labels", "list"},
 		{"labels", "create"},
 		{"settings", "list"},
-		{"org_pkg_enabled", "list"},
 	} {
 		rlstest.RequireRuleContains(t, env.app, c.collection, c.kind,
 			`@request.auth.role != "guest"`)
@@ -334,30 +333,3 @@ func TestGuestRLS_AuditLogs_AdminCanRead(t *testing.T) {
 	runListScenario(t, env.app, "audit_logs", adminToken, []string{`"totalItems":1`})
 }
 
-// ============================ org_pkg_enabled ============================
-
-func TestGuestRLS_OrgPkgEnabled_GuestDenied(t *testing.T) {
-	env := setupGuestRLSApp(t)
-
-	opeCol, _ := env.app.FindCollectionByNameOrId("org_pkg_enabled")
-	o := core.NewRecord(opeCol)
-	o.Set("pkg", "drive")
-	o.Set("enabled", true)
-	if err := env.app.Save(o); err != nil {
-		t.Fatal(err)
-	}
-
-	runListScenario(t, env.app, "org_pkg_enabled", env.guestToken, []string{`"totalItems":0`})
-}
-
-func TestGuestRLS_OrgPkgEnabled_MemberAllowed(t *testing.T) {
-	env := setupGuestRLSApp(t)
-	opeCol, _ := env.app.FindCollectionByNameOrId("org_pkg_enabled")
-	o := core.NewRecord(opeCol)
-	o.Set("pkg", "drive")
-	o.Set("enabled", true)
-	if err := env.app.Save(o); err != nil {
-		t.Fatal(err)
-	}
-	runListScenario(t, env.app, "org_pkg_enabled", env.memberToken, []string{`"totalItems":1`})
-}

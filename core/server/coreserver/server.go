@@ -275,7 +275,6 @@ func registerSharedCore(app *pocketbase.PocketBase) {
 	RegisterOrgInfoEndpoint(app)
 	RegisterPasswordResetMailer(app)
 	RegisterAuditHooks(app)
-	RegisterOrgPkgEnabledHooks(app)
 	RegisterAccountDelete(app)
 	RegisterAdminOffboard(app)
 	offboard.Register(app)

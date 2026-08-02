@@ -24,7 +24,6 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
     const userId = user.id
     const [orgPkgAccessCollection] = useStore('org_pkg_access')
     const [pkgRegistryCollection] = useStore('pkg_registry')
-    const [orgPkgEnabledCollection] = useStore('org_pkg_enabled')
 
     // Global registry: which packages are active (bundled or installed)
     const { data: registryRecords, isReady: registryReady } = useLiveQuery(
@@ -44,12 +43,6 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
         []
     )
 
-    // Deployment-level package toggles (single-org: no per-org scoping)
-    const { data: orgToggles } = useOrgLiveQuery(
-        query => query.from({ org_pkg_enabled: orgPkgEnabledCollection }),
-        []
-    )
-
     // User-level access overrides
     const { data: overrides, isReady: overridesReady } = useOrgLiveQuery(
         query =>
@@ -63,9 +56,6 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
     const allActiveRecords = [...(registryRecords ?? []), ...(installedRecords ?? [])]
     const activeSlugs = new Set(allActiveRecords.map(r => r.slug))
 
-    // Build map of org-level disabled packages
-    const orgDisabledSlugs = new Set((orgToggles ?? []).filter(t => !t.enabled).map(t => t.pkg))
-
     // Start with packages that are both compiled-in and active in registry.
     // Only fall back to "all compiled-in packages" once the registry queries
     // have actually LOADED and are legitimately empty — NOT while they're still
@@ -74,13 +64,10 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
     // isReady rather than the record count.
     const registryLoaded = registryReady && installedReady
     const hasRegistry = allActiveRecords.length > 0
-    let filtered =
+    const filtered =
         registryLoaded && !hasRegistry
             ? packages
             : packages.filter(pkg => activeSlugs.has(pkg.slug))
-
-    // Remove org-level disabled packages
-    filtered = filtered.filter(pkg => !orgDisabledSlugs.has(pkg.slug))
 
     // Admins/owners see everything active; they have no per-user overrides to
     // wait on, so they're ready as soon as the registry has loaded.

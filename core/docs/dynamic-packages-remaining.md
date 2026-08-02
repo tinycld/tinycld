@@ -16,8 +16,6 @@
 
 5. **Workspace rail/sidebar badges** — Show status indicators (e.g. "installing...", "update available") on packages in the navigation rail.
 
-6. **`org_pkg_enabled` API rules** — Currently create/update/delete rules are `null` (superuser only). Admins need write access so the toggle UI works without superuser auth. Rules should be something like: `createRule: '@request.auth.role = "owner" || @request.auth.role = "admin"'` (the role lives on the users record now), or the mutations should go through a server endpoint.
-
 ---
 
 ## Phase 2 — JS-Only Package Pipeline

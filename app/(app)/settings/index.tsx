@@ -67,11 +67,6 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
                     icon={<Tag size={20} color={foregroundColor} />}
                 />
                 <SettingsLink
-                    label="Packages"
-                    onPress={() => router.push(orgHref('settings/packages'))}
-                    icon={<Package size={20} color={foregroundColor} />}
-                />
-                <SettingsLink
                     label="Audit Log"
                     onPress={() => router.push(orgHref('settings/audit-log'))}
                     icon={<ScrollText size={20} color={foregroundColor} />}
@@ -104,8 +99,10 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
     )
 }
 
-// Owner-only entries. Build History reports on deployment rebuilds and offers
-// revert, so it sits with the install manager on the owner side of the line.
+// Owner-only entries. Packages installs, removes, and re-versions the artifact
+// the whole deployment runs — and enabling/disabling one is the same
+// pkg_registry write — so it sits alongside Build History, which reports on
+// those rebuilds and offers revert, on the owner side of the line.
 function OwnerLinks({ isVisible }: { isVisible: boolean }) {
     const foregroundColor = useThemeColor('foreground')
     const orgHref = useOrgHref()
@@ -114,11 +111,18 @@ function OwnerLinks({ isVisible }: { isVisible: boolean }) {
     if (!isVisible) return null
 
     return (
-        <SettingsLink
-            label="Build History"
-            onPress={() => router.push(orgHref('settings/builds'))}
-            icon={<History size={20} color={foregroundColor} />}
-        />
+        <>
+            <SettingsLink
+                label="Packages"
+                onPress={() => router.push(orgHref('settings/packages'))}
+                icon={<Package size={20} color={foregroundColor} />}
+            />
+            <SettingsLink
+                label="Build History"
+                onPress={() => router.push(orgHref('settings/builds'))}
+                icon={<History size={20} color={foregroundColor} />}
+            />
+        </>
     )
 }
 
