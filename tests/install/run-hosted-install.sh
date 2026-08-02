@@ -200,6 +200,11 @@ SU_TOKEN="$(admin_api POST /api/collections/_superusers/auth-with-password \
 # CreateOrg builds the base-only artifact through the trusted builder (the
 # heavy step: pnpm install + go build + expo export on a cold cache), then
 # boots and readiness-verifies the tenant before returning.
+#
+# owner_email is REQUIRED by the provisioner: a tenant serves no /setup wizard,
+# so an org created without one has no `users` row that can log in. We pass the
+# same identity the tenant-superuser step below upserts, so the org's owner
+# account and its PB superuser are one login rather than two divergent ones.
 echo "== Creating org '${ORG_SLUG}' from lockfile {tinycld: ${BASE_VERSION}} (first build — minutes on a cold cache)"
 CREATE_OUT="${WORK_DIR}/create-org.json"
 CREATE_STATUS="$(curl -s -o "${CREATE_OUT}" -w '%{http_code}' -X POST \
@@ -207,7 +212,7 @@ CREATE_STATUS="$(curl -s -o "${CREATE_OUT}" -w '%{http_code}' -X POST \
     -H "Content-Type: application/json" \
     -H "Authorization: ${SU_TOKEN}" \
     --max-time 3600 \
-    -d "{\"slug\":\"${ORG_SLUG}\",\"display_name\":\"Acme\",\"lockfile\":{\"tinycld\":\"${BASE_VERSION}\"}}" \
+    -d "{\"slug\":\"${ORG_SLUG}\",\"display_name\":\"Acme\",\"lockfile\":{\"tinycld\":\"${BASE_VERSION}\"},\"owner_email\":\"${TENANT_ADMIN_EMAIL}\",\"owner_password\":\"${TENANT_ADMIN_PASSWORD}\"}" \
     "http://127.0.0.1:${PORT}/api/orgs")" || {
     echo "create org failed: curl exit $? (status ${CREATE_STATUS:-none})" >&2
     cat "${CREATE_OUT}" >&2 2>/dev/null || true

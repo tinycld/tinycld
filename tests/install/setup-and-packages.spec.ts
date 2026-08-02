@@ -31,8 +31,18 @@ const EXPECTED_BUNDLED = [
     'Text',
 ]
 
-const SUPERUSER_EMAIL = 'smoke@example.com'
-const SUPERUSER_PASSWORD = 'SmokeTest1234!'
+// The superuser this spec logs in as. Read from the workspace .env
+// (ADMIN_USER_LOGIN / ADMIN_USER_PW — loaded by playwright.config.ts and
+// forwarded into the runner's sandbox), falling back to fixed smoke values when
+// unset (CI / a bare run). Hardcoding these meant the spec could only ever run
+// against a container bootstrapped with those exact values — pointed at any
+// other server the sign-in silently failed and every later assertion timed out
+// on a missing post-login landmark, which reads as a UI bug rather than bad
+// credentials. `||` (not `??`) so an empty-string env var falls back too: the
+// runner forwards ADMIN_USER_LOGIN="" when the .env key is absent, and that
+// empty value must not override the fallback. Mirrors todo-install.spec.ts.
+const SUPERUSER_EMAIL = process.env.ADMIN_USER_LOGIN || 'smoke@example.com'
+const SUPERUSER_PASSWORD = process.env.ADMIN_USER_PW || 'SmokeTest1234!'
 
 async function loginAsSuperuser(page: Page) {
     // /setup, not /admin: the pre-auth bootstrap + superuser-login console moved
@@ -44,8 +54,11 @@ async function loginAsSuperuser(page: Page) {
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
     await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
     await page.getByRole('button', { name: 'Sign in' }).click()
-    // The dashboard renders the nav rail; wait for a rail entry before assertions.
-    await expect(page.getByText('Organizations', { exact: true }).first()).toBeVisible()
+    // The dashboard renders the nav rail; wait for a rail entry before
+    // assertions. Role + hasText, NOT getByRole('tab', { name }) — RN Web
+    // renders the label as a child <Text>, so the role exposes no accessible
+    // name. This used to wait for an 'Organizations' tab that no longer exists.
+    await expect(page.getByRole('tab').filter({ hasText: 'Packages' })).toBeVisible()
 }
 
 test.describe.configure({ mode: 'serial' })
