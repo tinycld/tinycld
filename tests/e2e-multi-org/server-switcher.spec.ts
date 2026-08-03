@@ -167,3 +167,59 @@ test.describe('switcher with two servers', () => {
         await expect(shell).toBeVisible({ timeout: 20_000 })
     })
 })
+
+// The desktop counterpart, at the config's default (wide) viewport so the rail +
+// user menu render instead of the tab bar + drawer.
+//
+// This is the surface most worth covering here and the last to get it: UserMenu's
+// section is gated on BOTH `hasOrgs` (defer to the cookie org switcher where it
+// exists) and `servers.length > 1` (a lone entry is just a label for where you
+// already are). Neither gate does anything until a SECOND server exists, so no
+// single-origin test can reach the state where they matter — the mobile blocks
+// above exercise a different component entirely (ServersDrawerSection).
+test.describe('switcher on desktop — user menu', () => {
+    async function openUserMenu(page: Page) {
+        await expect(page.getByTestId('nav-home')).toBeVisible({ timeout: 20_000 })
+        await page.getByLabel('User menu').click()
+        // Settings is a stable neighbour in the same menu — gate on it so we do
+        // not race the popover's open animation.
+        await expect(page.getByText('Settings', { exact: true })).toBeVisible()
+    }
+
+    test('lists both servers, marking only the current one', async ({ page }) => {
+        await loginAt(page, ACME)
+        await saveServer(page, ACME)
+        await saveServer(page, GLOBEX)
+        await page.reload()
+
+        await openUserMenu(page)
+
+        await expect(page.getByText('Servers', { exact: true })).toBeVisible()
+
+        // Web rows carry an href (Menu.Item renders a real <a role="menuitem">),
+        // which is what makes middle-click / open-in-new-tab work — so target by
+        // it rather than by label text.
+        const acmeRow = page.locator(`a[role="menuitem"][href="${ACME}"]`)
+        const globexRow = page.locator(`a[role="menuitem"][href="${GLOBEX}"]`)
+        await expect(acmeRow).toBeVisible()
+        await expect(globexRow).toBeVisible()
+
+        // The active row gets a Check; the other does not. One check across the
+        // two rows is the assertion — "exactly one marked current".
+        await expect(acmeRow.locator('svg')).toHaveCount(2) // Server icon + Check
+        await expect(globexRow.locator('svg')).toHaveCount(1) // Server icon only
+    })
+
+    test('choosing the other server navigates to its origin', async ({ page }) => {
+        await loginAt(page, ACME)
+        await saveServer(page, ACME)
+        await saveServer(page, GLOBEX)
+        await page.reload()
+
+        await openUserMenu(page)
+        await page.locator(`a[role="menuitem"][href="${GLOBEX}"]`).click()
+
+        await page.waitForURL(/globex\.localhost/, { timeout: 20_000 })
+        expect(new URL(page.url()).host).toBe(`globex.localhost:${PORT}`)
+    })
+})
