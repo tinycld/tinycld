@@ -1,12 +1,10 @@
 import { ConnectIllustration } from '@tinycld/core/components/connect/ConnectIllustration'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
-import {
-    normalizeAddress,
-    probe,
-    setResolvedAddress,
-    writeCached,
-} from '@tinycld/core/lib/server-address'
+import { ReloadUnavailableError } from '@tinycld/core/lib/reload-js-context'
+import { normalizeAddress, probe, setResolvedAddress } from '@tinycld/core/lib/server-address'
+import { setActiveServer } from '@tinycld/core/lib/servers'
+import { switchToServer } from '@tinycld/core/lib/switch-server'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { router, useLocalSearchParams } from 'expo-router'
@@ -29,12 +27,44 @@ const urlSchema = z.object({
     url: z.string().min(1, 'Enter a server address.'),
 })
 
+// The screen serves two jobs — first-run "pick a server" and, from Settings,
+// "add another one alongside the one you're signed into". Same probe, same
+// normalization, different framing.
+function screenCopy(isAddMode: boolean, brandName: string) {
+    if (isAddMode) {
+        return {
+            eyebrow: 'ADD A SERVER',
+            headline: 'Connect another',
+            headlineAccent: 'server.',
+            body: `You'll stay signed in to your current server. ${brandName} keeps each one separate — switch between them any time.`,
+            sheetOpener: 'Enter a server address',
+            sheetTitle: 'Add a server',
+            sheetBody: `Enter the address of the other ${brandName} server. We'll check it and add it to your list.`,
+        }
+    }
+    return {
+        eyebrow: 'WELCOME',
+        headline: 'Pick a place to keep',
+        headlineAccent: 'your stuff.',
+        body: `${brandName} stores everything on a server you choose — no shared cloud, no telemetry, nothing in our hands.`,
+        sheetOpener: 'I host my own server',
+        sheetTitle: 'Connect your server',
+        sheetBody: `Enter the address where your ${brandName} server is running. We'll check it and remember it for next time.`,
+    }
+}
+
 export default function Connect() {
-    const { backTo } = useLocalSearchParams<{ backTo?: string }>()
+    const { backTo, mode } = useLocalSearchParams<{ backTo?: string; mode?: string }>()
+    // `?mode=add` reaches here from Settings → Servers → Add server. The
+    // difference from the first-run flow is that the CURRENT server's session
+    // must survive: we switch to the new server rather than replacing the only
+    // one. Tokens are namespaced per server, so simply not clearing is enough.
+    const isAddMode = mode === 'add'
     const config = getCoreConfigOptional()
     const brandName = config?.brandName ?? 'TinyCld'
     const defaultServer = config?.defaultServer ?? FALLBACK_DEFAULT_SERVER
     const defaultServerLabel = hostLabel(defaultServer) ?? 'tinycld.org'
+    const copy = screenCopy(isAddMode, brandName)
 
     const [sheetOpen, setSheetOpen] = useState(false)
     const [busyDefault, setBusyDefault] = useState(false)
@@ -53,10 +83,36 @@ export default function Connect() {
 
     async function connectTo(addr: string) {
         await probe(addr)
-        await writeCached(addr)
+
+        if (isAddMode) {
+            // Adding a second server: persist it, then restart the JS context so
+            // the new server's bundle and a clean module graph load. Deliberately
+            // does NOT disconnect — the previous server stays signed in.
+            // switchToServer throws rather than half-applying when the context
+            // cannot be restarted, so the catch below surfaces that.
+            await switchToServer(addr)
+            return
+        }
+
+        // First-run / change-server: setActiveServer is the only sanctioned
+        // writer of the active pointer — a raw writeCached would set an active
+        // server with no list entry, so it would never appear in the switcher.
+        await setActiveServer(addr)
         setResolvedAddress(addr)
         const target = backTo?.startsWith('/') ? backTo : '/'
         router.replace(target)
+    }
+
+    // A refused switch is NOT a connection failure — the server was reachable and
+    // has been saved; only the JS-context restart is unavailable (dev builds have
+    // no reload mechanism). Saying "couldn't reach" there would send the user
+    // debugging a network problem that doesn't exist.
+    function describeFailure(err: unknown, label: string): string {
+        if (err instanceof ReloadUnavailableError) {
+            return `Saved ${label}. Restart the app to finish switching to it.`
+        }
+        const reason = err instanceof Error ? err.message : 'Connection failed'
+        return `Couldn't reach ${label}: ${reason}`
     }
 
     async function onUseDefault() {
@@ -65,8 +121,7 @@ export default function Connect() {
         try {
             await connectTo(normalizeAddress(defaultServer))
         } catch (err) {
-            const reason = err instanceof Error ? err.message : 'Connection failed'
-            setSubmitError(`Couldn't reach ${defaultServerLabel}: ${reason}`)
+            setSubmitError(describeFailure(err, defaultServerLabel))
             setBusyDefault(false)
         }
     }
@@ -89,8 +144,7 @@ export default function Connect() {
         try {
             await connectTo(addr)
         } catch (err) {
-            const reason = err instanceof Error ? err.message : 'Connection failed'
-            setSubmitError(`Couldn't reach ${addr}: ${reason}`)
+            setSubmitError(describeFailure(err, addr))
             setBusyCustom(false)
         }
     })
@@ -118,7 +172,7 @@ export default function Connect() {
                         className="text-[11px] font-semibold text-primary"
                         style={{ letterSpacing: 2 }}
                     >
-                        WELCOME
+                        {copy.eyebrow}
                     </Text>
                 </View>
 
@@ -130,12 +184,12 @@ export default function Connect() {
                         fontFamily: 'Georgia',
                     }}
                 >
-                    Pick a place to keep{' '}
+                    {copy.headline}{' '}
                     <Text
                         className="italic font-normal text-primary"
                         style={{ fontFamily: 'Georgia' }}
                     >
-                        your stuff.
+                        {copy.headlineAccent}
                     </Text>
                 </Text>
 
@@ -147,8 +201,7 @@ export default function Connect() {
                         maxWidth: 360,
                     }}
                 >
-                    {brandName} stores everything on a server you choose — no shared cloud, no
-                    telemetry, nothing in our hands.
+                    {copy.body}
                 </Text>
 
                 {submitError && !sheetOpen ? (
@@ -165,6 +218,10 @@ export default function Connect() {
                         label={busyDefault ? 'Connecting…' : `Use ${defaultServerLabel}`}
                         onPress={onUseDefault}
                         disabled={busy}
+                        // In add mode the hosted default is the wrong default: the
+                        // user came here to name a specific other server, and is
+                        // very likely already signed into the hosted one.
+                        isVisible={!isAddMode}
                     />
                     <Pressable
                         onPress={openSheet}
@@ -174,7 +231,7 @@ export default function Connect() {
                         <View className="flex-row items-center gap-3">
                             <Server size={16} color={fg} />
                             <Text className="text-foreground text-sm font-medium">
-                                I host my own server
+                                {copy.sheetOpener}
                             </Text>
                         </View>
                         <ChevronDown size={16} color={muted} />
@@ -215,14 +272,13 @@ export default function Connect() {
                                             fontFamily: 'Georgia',
                                         }}
                                     >
-                                        Connect your server
+                                        {copy.sheetTitle}
                                     </Text>
                                     <Text
                                         className="mt-1.5 text-[13px] text-muted-foreground"
                                         style={{ lineHeight: 19 }}
                                     >
-                                        Enter the address where your {brandName} server is running.
-                                        We'll check it and remember it for next time.
+                                        {copy.sheetBody}
                                     </Text>
                                 </View>
                                 <Pressable
@@ -301,13 +357,16 @@ function PrimaryCta({
     onPress,
     disabled,
     testID,
+    isVisible = true,
 }: {
     label: string
     onPress: () => void
     disabled?: boolean
     testID?: string
+    isVisible?: boolean
 }) {
     const bg = useThemeColor('background')
+    if (!isVisible) return null
     return (
         <Pressable
             testID={testID}

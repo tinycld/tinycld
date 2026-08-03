@@ -34,6 +34,12 @@ var hostOnlyHookDiff = map[string]int{
 	// RegisterSetupBootstrap, RegisterDemoStart, RegisterDemoLead, and
 	// registerStaticServe. (RegisterDemoReset registers nothing unless
 	// DEMO_RESET_ENABLED is set.)
+	//
+	// RegisterAppUpdateEndpoints stays counted here because THIS composition
+	// passes no ArtifactDir. An artifact-backed tenant DOES serve the OTA
+	// endpoints — from its own artifact rather than the host's build archive
+	// (RegisterTenantAppUpdateEndpoints) — which is pinned separately by
+	// TestArtifactTenantBindsOwnAppUpdateEndpoints.
 	"OnServe": 7,
 
 	// registerSchemaHooks regenerates workspace TypeScript on collection
@@ -141,5 +147,52 @@ func TestTenantCompositionMatchesHostMinusRecordedExceptions(t *testing.T) {
 	if len(problems) > 0 {
 		t.Fatalf("host and tenant compositions diverged without a recorded reason:\n  %s",
 			strings.Join(problems, "\n  "))
+	}
+}
+
+// TestArtifactTenantBindsOwnAppUpdateEndpoints pins the ARTIFACT composition —
+// the one that actually runs in production. The parity test above deliberately
+// passes no OrgDir/ArtifactDir, so everything gated on them (the package-state
+// reconcile, the per-org OTA endpoints) is absent there; without this test a
+// regression that dropped those registrations would go unnoticed, and mobile
+// clients on hosted orgs would silently stop receiving updates — the exact bug
+// this work exists to fix.
+func TestArtifactTenantBindsOwnAppUpdateEndpoints(t *testing.T) {
+	quota.ResetSourcesForTesting()
+
+	bare := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
+	if err := RegisterTenant(bare, TenantOptions{
+		HooksDir:      t.TempDir(),
+		MigrationsDir: t.TempDir(),
+		HooksPoolSize: 1,
+	}); err != nil {
+		t.Fatalf("RegisterTenant (bare): %v", err)
+	}
+
+	quota.ResetSourcesForTesting()
+
+	artifact := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
+	if err := RegisterTenant(artifact, TenantOptions{
+		HooksDir:      t.TempDir(),
+		MigrationsDir: t.TempDir(),
+		HooksPoolSize: 1,
+		OrgDir:        t.TempDir(),
+		ArtifactDir:   t.TempDir(),
+	}); err != nil {
+		t.Fatalf("RegisterTenant (artifact): %v", err)
+	}
+
+	bareServe := hookHandlerCounts(t, bare)["OnServe"]
+	artifactServe := hookHandlerCounts(t, artifact)["OnServe"]
+
+	// The artifact composition adds exactly three OnServe binds over the bare
+	// one: the org's static SPA serve (OrgDir), the boot-time package-state
+	// reconcile, and the per-org OTA endpoint group. (The hosted Packages
+	// endpoints need a ControlSocket, which is unset here.)
+	if want := bareServe + 3; artifactServe != want {
+		t.Fatalf("artifact tenant binds %d OnServe handler(s), want %d "+
+			"(bare %d + static serve + reconcile + app-update). "+
+			"If you added or removed an artifact-gated registration, update this count and say why.",
+			artifactServe, want, bareServe)
 	}
 }

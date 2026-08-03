@@ -185,6 +185,11 @@ func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
 			return e.Next()
 		})
 
+		// Per-org native OTA: serve this org's own bundles from its artifact.
+		// The host reads a pkg_build row + build archive, neither of which an
+		// org dir has; see app_updates_tenant.go.
+		RegisterTenantAppUpdateEndpoints(app, orgDir, artifactDir)
+
 		// The hosted Packages UI needs both the built-in set (above) and a
 		// deploy channel; without a control socket the tenant has no way to
 		// propose, so the endpoints are simply absent (as they were for every

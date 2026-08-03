@@ -1,6 +1,7 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { navigateToOrg } from '@tinycld/core/lib/org-url'
-import { DEMO_SERVER, setResolvedAddress, writeCached } from '@tinycld/core/lib/server-address'
+import { DEMO_SERVER, setResolvedAddress } from '@tinycld/core/lib/server-address'
+import { setActiveServer } from '@tinycld/core/lib/servers'
 import { useAuthStore } from '@tinycld/core/lib/stores/auth-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -30,7 +31,10 @@ function useStartDemo() {
         const server = __DEV__ ? null : DEMO_SERVER
         if (server) {
             setResolvedAddress(server)
-            await writeCached(server)
+            // Via setActiveServer, not writeCached: a raw cache write would make
+            // the demo server active WITHOUT a saved-list entry, so it would
+            // never show up in the server switcher the user can reach it from.
+            await setActiveServer(server)
         }
 
         const target = server ?? DEMO_SERVER

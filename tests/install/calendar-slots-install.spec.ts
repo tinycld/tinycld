@@ -48,9 +48,12 @@ async function loginAsSuperuser(page: Page, timeoutMs?: number) {
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
     await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
     await page.getByRole('button', { name: 'Sign in' }).click()
-    // 'Organizations' appears in both the nav rail and (when that tab is open) the
-    // page title, so scope to the first match.
-    await expect(page.getByText('Organizations', { exact: true }).first()).toBeVisible(
+    // Assert a landmark that only exists POST-login: the console's Packages tab.
+    // Role + hasText, NOT getByRole('tab', { name }) — RN Web renders the label
+    // as a child <Text>, so the role exposes no accessible name. Previously
+    // waited for an 'Organizations' tab that no longer exists, which made a
+    // healthy sign-in look like a login failure.
+    await expect(page.getByRole('tab').filter({ hasText: 'Packages' })).toBeVisible(
         timeoutMs ? { timeout: timeoutMs } : undefined
     )
 }

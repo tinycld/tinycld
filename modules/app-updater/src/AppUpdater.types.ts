@@ -13,6 +13,20 @@ export interface AppUpdaterModuleType {
     /** The runtime version (app version) baked into the binary. */
     getRuntimeVersion(): string
     /**
+     * Point the store at a server, so every call below reads and writes THAT
+     * server's bundle state. `serverKey` is a hex SHA-256 of the server's
+     * normalized origin (see serverKeyFor).
+     *
+     * Bundles are per-server because each org in a multi-org deployment runs a
+     * different build with a different package set. Call this as soon as an
+     * address resolves: the native loader runs before the JS bridge exists, so
+     * it can only learn the active server from what was persisted earlier.
+     * Idempotent — re-asserting the same key is a no-op.
+     */
+    setActiveServer(serverKey: string): void
+    /** The active server key, or "" when none has been set yet. */
+    getActiveServer(): string
+    /**
      * Stage a downloaded bundle dir as pending; promoted on next reload. `hash`
      * is the bundle's hex SHA-256 (from the manifest), recorded so
      * getCurrentBundleHash can report it once this bundle is the active one.
@@ -34,13 +48,22 @@ export interface AppUpdaterModuleType {
      */
     markBundleBad(): void
     /**
-     * Read-once: returns the { id, hash, error } of a bundle that was rolled back
-     * since the last call, or null. `error` carries the detail recorded by
-     * recordBundleError (the crashing regex pattern + message), or "" if none. The
+     * Read-once: returns the { id, hash, error, serverKey } of a bundle that was
+     * rolled back since the last call, or null. `error` carries the detail recorded
+     * by recordBundleError (the crashing regex pattern + message), or "" if none. The
      * recovered bundle reports it to the server's report-bad endpoint on boot so the
      * bad bundle stops being advertised fleetwide.
+     *
+     * `serverKey` names the server the bad bundle CAME FROM, which after a server
+     * switch is not the active one — reporting it anywhere else would blocklist an
+     * id on a server that never served it. "" when it predates per-server state.
      */
-    takeRevertedBundle(): { id: string; hash: string; error: string } | null
+    takeRevertedBundle(): {
+        id: string
+        hash: string
+        error: string
+        serverKey: string
+    } | null
     /** Reload the JS runtime, promoting any pending bundle. */
     reload(): Promise<void>
 }

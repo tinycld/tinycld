@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { authStorageKey } from './auth-key-helpers'
 import { appShell, login } from './helpers'
 
 // A PocketBase auth token carries a JWT `exp`; when a session outlives it the
@@ -18,9 +19,10 @@ test('an expired token recovers to the login gate, not a broken half-session', a
     // past `exp` (isValid reads only the unsigned payload, so this trips expiry),
     // and the mangled signature guarantees the server rejects authRefresh() with
     // 401 — the authoritative-rejection path that clears the session.
-    const rewritten = await page.evaluate(() => {
-        const raw = window.localStorage.getItem('pb_auth')
-        if (!raw) return { ok: false as const, reason: 'no pb_auth in storage' }
+    const authKey = await authStorageKey(page)
+    const rewritten = await page.evaluate(key => {
+        const raw = window.localStorage.getItem(key)
+        if (!raw) return { ok: false as const, reason: `no ${key} in storage` }
         const parsed = JSON.parse(raw) as { token: string; record?: unknown; model?: unknown }
         const [header, payload, signature] = parsed.token.split('.')
         const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))) as {
@@ -33,9 +35,9 @@ test('an expired token recovers to the login gate, not a broken half-session', a
             .replace(/\//g, '_')
             .replace(/=+$/, '')
         parsed.token = `${header}.${nextPayload}.${signature}`
-        window.localStorage.setItem('pb_auth', JSON.stringify(parsed))
+        window.localStorage.setItem(key, JSON.stringify(parsed))
         return { ok: true as const }
-    })
+    }, authKey)
     expect(rewritten.ok, rewritten.ok ? '' : rewritten.reason).toBe(true)
 
     // Reload: boot re-hydrates from the forged storage. The hardened gate sees an
@@ -48,8 +50,8 @@ test('an expired token recovers to the login gate, not a broken half-session', a
 
     // And the storage-level session was actually cleared (not just visually
     // gated) — a lingering token would resurrect the broken state on the next nav.
-    const cleared = await page.evaluate(() => {
-        const raw = window.localStorage.getItem('pb_auth')
+    const cleared = await page.evaluate(key => {
+        const raw = window.localStorage.getItem(key)
         if (!raw) return true
         try {
             const { token } = JSON.parse(raw) as { token?: string }
@@ -57,6 +59,6 @@ test('an expired token recovers to the login gate, not a broken half-session', a
         } catch {
             return true
         }
-    })
+    }, authKey)
     expect(cleared).toBe(true)
 })

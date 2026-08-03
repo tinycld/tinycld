@@ -544,6 +544,13 @@ COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/tinycld.config.ts /ws
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/package.json /ws/tinycld/tsconfig.json ./
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/metro.config.cjs /ws/tinycld/babel.config.cjs ./
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/app.json /ws/tinycld/global.css /ws/tinycld/uniwind-types.d.ts /ws/tinycld/expo-env.d.ts ./
+# index.js is the BUNDLE ENTRY (package.json "main"), not an app file: it installs
+# the crypto/DOM polyfills ahead of `expo-router/entry`, which is the only position
+# that beats the router's eager require.context walk over app/. The in-app rebuild
+# runs `expo export` from this tree, and without it that export dies with
+# "Cannot resolve entry file: The `main` field ... points to an unresolvable path",
+# which surfaces to the operator as a failed package install.
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/index.js ./
 
 # Point the runtime migrations dir at the generator/installer's migrations dir.
 # jsvm reads /workspace/tinycld/pb_migrations; the generator (and the in-app

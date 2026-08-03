@@ -9,9 +9,15 @@ changes, no Maestro/Detox.
 
 ## What it does
 
-1. Reads the embedded bundle id from `app.json` (`embedded-<version>`).
+1. Reads the embedded bundle id from `app.json`'s `expo.version`
+   (`embedded-<version>`). That key — **not** `package.json`'s `version`, which is
+   a deliberately different number — is the OTA runtime version the binary
+   reports and the server matches on.
 2. Prechecks `GET /api/app/update` — the server must already offer a newer iOS
-   bundle (`build-<ts>-ios`). Fails loudly if not (status 204).
+   bundle. Fails loudly if not (status 204). Two id shapes count as a server
+   bundle: `build-<ts>-ios` from the single-tenant installer, and
+   `recipe-<hash12>-ios` from the multi-org builder (content-addressed, so two
+   orgs with the same package set share one bundle).
 3. Builds + boots a Release sim via `scripts/ios-simulator.sh --prod`. The app
    resolves its server from its own cached value (established by the manual
    connect pre-step), not from the harness.

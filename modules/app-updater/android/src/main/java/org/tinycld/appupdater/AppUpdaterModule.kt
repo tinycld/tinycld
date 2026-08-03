@@ -24,6 +24,16 @@ class AppUpdaterModule : Module() {
             store.currentBundleHash(store.embeddedId())
         }
 
+        // Point the store at a server (hex digest of its normalized origin).
+        // Everything below then reads and writes that server's own bundle
+        // state. JS calls this as soon as an address resolves, so the value is
+        // already on disk for the next launch — the loader runs before the
+        // bridge and cannot ask JS which server is active. Mirrors iOS.
+        Function("setActiveServer") { serverKey: String ->
+            Store(context).setActiveServer(serverKey)
+        }
+        Function("getActiveServer") { Store(context).activeServerKey() ?: "" }
+
         AsyncFunction("stageBundle") { localDir: String, id: String, hash: String ->
             Store(context).stagePending(localDir, id, hash)
         }
@@ -42,8 +52,10 @@ class AppUpdaterModule : Module() {
         // in-session instead of waiting for the crash-launch counter. Mirrors iOS.
         Function("markBundleBad") { Store(context).markBad() }
 
-        // Read-once: { id, hash } of a bundle rolled back since the last call (or
-        // null). JS reports it to the server's report-bad endpoint on boot.
+        // Read-once: { id, hash, error, serverKey } of a bundle rolled back since
+        // the last call (or null). JS reports it to the report-bad endpoint of the
+        // server it came FROM (serverKey), which after a switch is not the active
+        // one. Mirrors iOS.
         Function("takeRevertedBundle") { Store(context).takeRevertedBundle() }
 
         AsyncFunction("reload") { Store(context).requestReload() }
@@ -54,24 +66,66 @@ class AppUpdaterModule : Module() {
  * File-backed pointer store mirroring the iOS `Store`. Maintains JSON pointer
  * files in an app-private dir and drives staging / promote / crash-rollback.
  *
- *   current.json        { id, dir, hash }  — active OTA bundle (absent = embedded)
- *   pending.json        { id, dir, hash }  — staged, promoted on next launch
- *   previous.json       { id, dir, hash }  — prior current, rollback target
- *   boot.json           { id, launchCount } — crash tracker
- *   embedded-hash.json  { id, hash }        — cached embedded-bundle hash
+ * Pointer state is PER SERVER, because in a multi-org deployment every org runs
+ * a different build with a different package set. With one shared slot,
+ * switching orgs made each foreground see the other org's bundle as "not
+ * current" and re-download it — a thrash loop, with a full JS reload each time.
+ *
+ *   active.json                    { serverKey }        — which server to load
+ *   servers/<serverKey>/
+ *       current.json   { id, dir, hash }  — active OTA bundle (absent = embedded)
+ *       pending.json   { id, dir, hash }  — staged, promoted on next launch
+ *       previous.json  { id, dir, hash }  — prior current, rollback target
+ *       boot.json      { id, launchCount } — crash tracker
+ *   embedded-hash.json             { id, hash }         — cached embedded hash
+ *                                                         (belongs to the BINARY,
+ *                                                          so it stays at the root)
  */
 class Store(private val context: Context) {
     private val root: File =
         File(context.filesDir, "app-updater").apply { if (!exists()) mkdirs() }
 
-    private val currentFile = File(root, "current.json")
-    private val pendingFile = File(root, "pending.json")
-    private val previousFile = File(root, "previous.json")
-    private val bootFile = File(root, "boot.json")
-    private val revertFile = File(root, "revert.json")
-    private val revertedFile = File(root, "reverted.json")
+    private val activeFile = File(root, "active.json")
+
+    /**
+     * The active server's directory. `serverKey` is a hex digest of the
+     * normalized origin, computed JS-side and validated here as pure hex before
+     * being used as a path component, so no origin can escape this directory or
+     * collide with another. Falls back to a "legacy" bucket when nothing is
+     * active yet; that bucket is empty on a fresh install, which resolves to the
+     * embedded bundle — the correct answer.
+     */
+    private val scope: File =
+        serverDir(readJSON(activeFile)?.optString("serverKey")?.takeIf { isValidServerKey(it) } ?: "legacy")
+            .apply { if (!exists()) mkdirs() }
+
+    private fun serverDir(key: String) = File(File(root, "servers"), key)
+
+    private val currentFile = File(scope, "current.json")
+    private val pendingFile = File(scope, "pending.json")
+    private val previousFile = File(scope, "previous.json")
+    private val bootFile = File(scope, "boot.json")
+    private val revertFile = File(scope, "revert.json")
+    private val revertedFile = File(scope, "reverted.json")
+    private val errorFile = File(scope, "error.json")
+
+    // The embedded bundle belongs to the BINARY, not to any server, so its
+    // cached hash is shared across every server scope.
     private val embeddedHashFile = File(root, "embedded-hash.json")
-    private val errorFile = File(root, "error.json")
+
+    fun activeServerKey(): String? =
+        readJSON(activeFile)?.optString("serverKey")?.takeIf { isValidServerKey(it) }
+
+    /**
+     * Points the store at `serverKey`. Idempotent: re-writing the same key is a
+     * no-op, so the common case (every foreground re-asserts the address) does
+     * not churn the file the launch path depends on.
+     */
+    fun setActiveServer(serverKey: String) {
+        if (!isValidServerKey(serverKey)) return
+        if (activeServerKey() == serverKey) return
+        writeJSON(activeFile, JSONObject().put("serverKey", serverKey))
+    }
 
     // Crash-launch rollback thresholds (mirrors iOS). A freshly-promoted bundle is
     // on TRIAL until its first markHealthy: it rolls back after the 2nd un-healthy
@@ -132,19 +186,39 @@ class Store(private val context: Context) {
     }
 
     /**
-     * Returns a map { id, hash } of a bundle rolled back since the last call, then
-     * clears it (read-once). The recovered bundle calls this on boot and, if
-     * non-null, POSTs report-bad so the server stops advertising the bad bundle to
-     * the fleet. Returns null when nothing was rolled back. Mirrors iOS.
+     * Returns a map { id, hash, error, serverKey } of a bundle rolled back since
+     * the last call, then clears it (read-once). The recovered bundle calls this
+     * on boot and, if non-null, POSTs report-bad so the server stops advertising
+     * the bad bundle to the fleet. Returns null when nothing was rolled back.
+     * `serverKey` is "" for state predating per-server scoping. Mirrors iOS.
      */
     fun takeRevertedBundle(): Map<String, String>? {
-        val r = readJSON(revertedFile) ?: return null
-        revertedFile.delete()
-        val id = r.optString("id").ifEmpty { return null }
-        // Drain the recorded crash detail (read-once, paired with the revert).
-        val detail = readJSON(errorFile)?.optString("detail") ?: ""
-        errorFile.delete()
-        return mapOf("id" to id, "hash" to r.optString("hash"), "error" to detail)
+        // Scan every server's scope, not just the active one: the rollback
+        // happens at native boot, and JS may resolve a different address before
+        // it drains the marker. `serverKey` names the server the bad bundle CAME
+        // FROM — without it the report would go to whichever server is active
+        // now, blocklisting an id on a server that never served it while the
+        // actually-bad bundle kept being advertised by its own.
+        val keys = (File(root, "servers").list()?.toList() ?: emptyList()) + "legacy"
+        for (key in keys) {
+            val dir = serverDir(key)
+            val reverted = File(dir, "reverted.json")
+            val r = readJSON(reverted) ?: continue
+            reverted.delete()
+            val id = r.optString("id")
+            if (id.isEmpty()) continue
+            // Drain the recorded crash detail (read-once, paired with the revert).
+            val err = File(dir, "error.json")
+            val detail = readJSON(err)?.optString("detail") ?: ""
+            err.delete()
+            return mapOf(
+                "id" to id,
+                "hash" to r.optString("hash"),
+                "error" to detail,
+                "serverKey" to if (key == "legacy") "" else key,
+            )
+        }
+        return null
     }
 
     /**
@@ -347,6 +421,15 @@ class Store(private val context: Context) {
         if (id == 0) return null
         return context.getString(id).ifEmpty { null }
     }
+
+    /**
+     * A server key must be a plain hex digest (SHA-256 of the normalized
+     * origin). Validating rather than sanitizing makes path escape impossible
+     * by construction — the same rule the artifact store applies to recipe
+     * hashes. A malformed value is treated as absent, never joined into a path.
+     */
+    private fun isValidServerKey(k: String): Boolean =
+        k.isNotEmpty() && k.length <= 64 && k.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
 
     private fun readJSON(file: File): JSONObject? {
         if (!file.exists()) return null

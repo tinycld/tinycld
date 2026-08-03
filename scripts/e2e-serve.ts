@@ -35,6 +35,7 @@ import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
 import { exportWeb } from './export-web'
+import { promoteRelease } from './promote-release'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const PB_BINARY = path.join(ROOT, 'server', 'app')
@@ -153,48 +154,13 @@ function buildBundle(releaseId: string): void {
     exportWeb(releaseId)
 }
 
-// Phase 3a — promote dist/ into the releases layout the Go server reads.
-// A TypeScript port of entrypoint.sh's promote_release():
-//   <releasesDir>/_static/_expo/static/  ← dist/_expo/static/   (PoolAssets)
-//   <releasesDir>/_static/assets/         ← dist/assets/          (PoolAssets)
-//   <releasesDir>/<id>/app.html           ← dist/index.html       (SPA shell)
-//   <releasesDir>/<id>/release-id.txt     ← <id>                  (VersionHandler)
-//   <releasesDir>/current → <id>          (symlink)
-// We wipe the releases dir each run — tests need exactly one release, not the
-// cross-release asset pool prod accumulates across deploys.
+// Phase 3a — promote dist/ into the releases layout the Go server reads. The
+// layout itself lives in scripts/promote-release.ts so BOTH e2e launchers use
+// one definition of it — see that file for why a second copy is dangerous
+// rather than merely redundant.
 function promote(distDir: string, releasesDir: string, releaseId: string): void {
-    log(`phase 3/3: promoting dist/ → ${path.relative(ROOT, releasesDir)} (current → ${releaseId})`)
-
-    const indexHtml = path.join(distDir, 'index.html')
-    if (!fs.existsSync(indexHtml)) {
-        throw new Error(
-            `e2e-serve: ${indexHtml} missing — expo export did not produce a web bundle`
-        )
-    }
-
-    fs.rmSync(releasesDir, { recursive: true, force: true })
-    const pool = path.join(releasesDir, '_static')
-    fs.mkdirSync(path.join(pool, '_expo', 'static'), { recursive: true })
-    fs.mkdirSync(path.join(pool, 'assets'), { recursive: true })
-
-    // Merge each asset subtree into the pool if the export produced it.
-    const expoStatic = path.join(distDir, '_expo', 'static')
-    if (fs.existsSync(expoStatic)) {
-        fs.cpSync(expoStatic, path.join(pool, '_expo', 'static'), { recursive: true })
-    }
-    const assets = path.join(distDir, 'assets')
-    if (fs.existsSync(assets)) {
-        fs.cpSync(assets, path.join(pool, 'assets'), { recursive: true })
-    }
-
-    const releaseDir = path.join(releasesDir, releaseId)
-    fs.mkdirSync(releaseDir, { recursive: true })
-    fs.copyFileSync(indexHtml, path.join(releaseDir, 'app.html'))
-    fs.writeFileSync(path.join(releaseDir, 'release-id.txt'), releaseId)
-
-    // current → <id>. A relative target keeps the symlink valid regardless of
-    // where the releases dir is mounted.
-    fs.symlinkSync(releaseId, path.join(releasesDir, 'current'))
+    log('phase 3/3: promoting dist/ → releases')
+    promoteRelease(distDir, releasesDir, releaseId, log)
 }
 
 // Phase 3b — launch the serving PB on the user-facing port. The flag set

@@ -1,6 +1,7 @@
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { packageSettings } from '@tinycld/core/lib/packages/derive-components'
+import { isSavedServersSupported } from '@tinycld/core/lib/servers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useRouter } from 'expo-router'
@@ -10,6 +11,7 @@ import {
     History,
     Package,
     ScrollText,
+    Server,
     Tag,
     User,
     Users,
@@ -35,9 +37,32 @@ export default function SettingsIndex() {
                     />
                 </SettingsGroup>
 
+                <DeviceSettings />
+
                 <AdminSettings isVisible={isAdmin} isOwner={isReady && isOwner} />
             </View>
         </ScrollView>
+    )
+}
+
+// Saved servers are device/connection scope — not a personal preference and not
+// org administration, so neither existing group fits. Native-only: web is
+// same-origin by design and has nothing to switch between.
+function DeviceSettings() {
+    const foregroundColor = useThemeColor('foreground')
+    const orgHref = useOrgHref()
+    const router = useRouter()
+
+    if (!isSavedServersSupported()) return null
+
+    return (
+        <SettingsGroup label="This device">
+            <SettingsLink
+                label="Servers"
+                onPress={() => router.push(orgHref('settings/servers'))}
+                icon={<Server size={20} color={foregroundColor} />}
+            />
+        </SettingsGroup>
     )
 }
 

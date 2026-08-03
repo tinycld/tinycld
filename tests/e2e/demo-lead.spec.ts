@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { authKeyInitScript } from './auth-key-helpers'
 import { appShell } from './helpers'
 
 // The webServer started by playwright.config.ts serves the SPA and /api/*
@@ -10,11 +11,15 @@ const PB_TEST_URL = 'http://127.0.0.1:7200'
 // AsyncAuthStore (configured in packages/@tinycld/core/lib/pocketbase.ts) persists the
 // PocketBase auth state via @react-native-async-storage/async-storage. On web, AsyncStorage
 // v3's default export is the legacy localStorage-backed implementation, so the auth state
-// lands in window.localStorage under the key below.
+// lands in window.localStorage.
+//
+// The key is scoped per server (`pb_auth:<serverKey>`) so a device can hold
+// sessions on several servers at once. It is a hash of the origin, so it must be
+// DERIVED — and derived inside the page, because this stages auth before any
+// navigation and so has no page to query first.
 //
 // Single-org: the old `tinycld_primary_org` key is gone — there is no org slug to
 // land on, and nothing reads it anymore.
-const AUTH_STORAGE_KEY = 'pb_auth'
 
 // Drop the singleton demo identity into localStorage before any app code runs, then
 // navigate into the app shell. addInitScript fires before every navigation in the page's
@@ -25,14 +30,15 @@ async function enterDemo(page: Page) {
     expect(res.ok()).toBe(true)
     const auth = (await res.json()) as { token: string; record: unknown }
 
-    await page.addInitScript(
-        ([authKey, authValue]) => {
-            // AsyncAuthStore.save serializes as JSON.stringify({ token, record }) — the
-            // /api/demo/start response shape is exactly that, so we pass it straight through.
-            window.localStorage.setItem(authKey, authValue)
-        },
-        [AUTH_STORAGE_KEY, JSON.stringify(auth)]
-    )
+    await page.addInitScript(authKeyInitScript())
+    await page.addInitScript(authValue => {
+        // AsyncAuthStore.save serializes as JSON.stringify({ token, record }) — the
+        // /api/demo/start response shape is exactly that, so we pass it straight through.
+        window.localStorage.setItem(
+            (window as unknown as { __PB_AUTH_KEY__: string }).__PB_AUTH_KEY__,
+            authValue
+        )
+    }, JSON.stringify(auth))
 
     await page.goto('/')
 }

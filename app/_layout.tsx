@@ -1,21 +1,10 @@
-// diagnose-regexp must run FIRST — it wraps the global RegExp constructor to
-// record the exact pattern compiled before a fatal. A regex Hermes can't handle
-// aborts the process (RCTFatal/SIGABRT) before any handler sees which pattern,
-// and the native crash report only shows `regExpConstructor` with no source.
-// This shim is the primary diagnostic for the OTA-update crash; its captures are
-// read by the global fatal handler + the report-bad upload. No-op on web/non-Hermes.
-import '~/lib/diagnose-regexp'
-// polyfill-dom-shim must run before anything that pulls in prosemirror-view
-// (tentap → @tiptap/core → @tiptap/pm/view). Something in our Expo SDK 55
-// stack now installs a partial `document` on Hermes that breaks
-// prosemirror-view's top-level browser sniff. The shim fills the missing
-// `documentElement.style` slot. See lib/polyfill-dom-shim.ts for the why.
-import '~/lib/polyfill-dom-shim'
-// polyfill-crypto MUST run before configure-core: @tanstack/db's collection
-// constructor calls crypto.randomUUID() at module init, and Hermes has no
-// global crypto.
-import '~/lib/polyfill-crypto'
-// configure-core MUST be the first import after the polyfill — it calls
+// diagnose-regexp and the two polyfills are NOT imported here — they live in the
+// bundle entry (index.js, referenced by package.json "main"). expo-router's entry
+// eagerly requires the whole app/ route tree via `_ctx` BEFORE this module's body
+// runs, so a polyfill imported here installs thousands of modules too late to
+// help anything the route tree pulls in. See index.js for the measurements.
+//
+// configure-core MUST be the first import here — it calls
 // configureCore(appConfig) at module-init time so every other module in the
 // static-import graph sees the registered config on its first read.
 import '~/lib/configure-core'

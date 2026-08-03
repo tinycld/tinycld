@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { authStorageKey } from './auth-key-helpers'
 import { clearEmailLog, waitForEmailTo } from './email-log-helpers'
 import { appShell, isPackageLinked, login, TEST_USER_EMAIL, TEST_USER_PASSWORD } from './helpers'
 
@@ -17,12 +18,14 @@ async function openMembersSettings(page: Page) {
     await page.getByText('Invite', { exact: true }).waitFor({ state: 'visible' })
 }
 // Reads the logged-in PocketBase auth token from the web auth store (the
-// AsyncStorage→localStorage 'pb_auth' entry, JSON.stringify({ token, record })).
+// AsyncStorage→localStorage entry, JSON.stringify({ token, record })). The key
+// is scoped per server — see auth-key-helpers.
 async function authTokenFromStore(page: Page): Promise<string> {
-    const raw = await page.evaluate(() => window.localStorage.getItem('pb_auth'))
-    if (!raw) throw new Error('no pb_auth in localStorage — user not logged in?')
+    const key = await authStorageKey(page)
+    const raw = await page.evaluate(k => window.localStorage.getItem(k), key)
+    if (!raw) throw new Error(`no ${key} in localStorage — user not logged in?`)
     const token = (JSON.parse(raw) as { token?: string }).token
-    if (!token) throw new Error('pb_auth has no token')
+    if (!token) throw new Error(`${key} has no token`)
     return token
 }
 // Asserts the freshly-accepted invitee got a personal mailbox under a verified

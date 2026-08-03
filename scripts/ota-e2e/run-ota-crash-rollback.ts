@@ -31,13 +31,26 @@ function fail(msg: string): never {
     process.exit(1)
 }
 
-// Read the app version from package.json — the SAME source app.config.ts uses for
-// expo.version / expo.runtimeVersion (app.json has no version key). Reading
-// expo.version from app.json yields undefined and the precheck 204s on a
-// runtimeVersion mismatch. Mirrors tests/install/todo-install.spec.ts.
+// Read the OTA runtime version from app.json's expo.version — the SINGLE source
+// of truth app.config.ts derives runtimeVersion from, which the native binary
+// carries as TinyCldRuntimeVersion and /api/app/update matches on exactly.
+//
+// It is NOT package.json's version: app.config.ts deliberately decouples the
+// store/OTA version from the project version so a `pnpm version` bump never
+// changes what ships (app.json is 2.0.1 while package.json is 0.4.0). Reading
+// the wrong one makes the precheck 204 forever on a runtimeVersion mismatch,
+// which reads as "no bundle was built". Mirrors tests/install/todo-install.spec.ts.
 function readAppVersion(): string {
-    const raw = readFileSync(path.join(APP_DIR, 'package.json'), 'utf8')
-    return (JSON.parse(raw) as { version: string }).version
+    const raw = readFileSync(path.join(APP_DIR, 'app.json'), 'utf8')
+    const version = (JSON.parse(raw) as { expo?: { version?: string } }).expo?.version
+    if (!version) {
+        fail(
+            'app.json has no expo.version — that value IS the OTA runtime version ' +
+                '(app.config.ts derives runtimeVersion from it), so without it every ' +
+                'update check would 204 on a runtime mismatch.'
+        )
+    }
+    return version
 }
 
 // After a HEALTHY install, verify the install actually created the package's

@@ -45,6 +45,15 @@ type ArtifactRecipe struct {
 	Overrides      map[string]string         `json:"overrides"`
 	ReleaseID      string                    `json:"releaseId"`
 	RuntimeVersion string                    `json:"runtimeVersion"`
+
+	// Bundles indexes the native OTA bundles staged under the artifact's
+	// pb_public/native/<platform>/. It is what a tenant's /api/app/update
+	// serves from — the hosted analog of the single-tenant pkg_build row's
+	// `bundles` field, which an org dir has no equivalent of. Empty on an
+	// artifact built before this field existed, and on a build whose
+	// toolchain skipped native export; both mean "no native bundle" (204),
+	// never "serve something unverified".
+	Bundles []pkgbuild.BundleMeta `json:"bundles,omitempty"`
 }
 
 // ArtifactRecipePath is where an artifact's recipe lives.

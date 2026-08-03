@@ -17,10 +17,12 @@
 #          buggy-fixture rollbacks (they exercise the single-tenant
 #          entrypoint's health-probe rollback; the hosted revert path is
 #          covered at protocol level by TestHostedDeployE2E), build-history
-#          revert (pkg_build archives are single-tenant machinery), the OTA
-#          assertions (hosted per-org OTA is design §6 open work — PW_SKIP_OTA),
-#          and the core upgrade/downgrade phases (they provision a git base
-#          remote; the hosted base rides the npm lockfile instead).
+#          revert (pkg_build archives are single-tenant machinery), and the
+#          core upgrade/downgrade phases (they provision a git base remote;
+#          the hosted base rides the npm lockfile instead).
+#   COVERS the OTA assertions: a tenant serves /api/app/update from its own
+#          build artifact, so each package change must advertise a NEW
+#          content-addressed bundle id per platform (design §6 closed).
 #
 # Fixture packages come from a LOCAL npm registry (hosted-npm-registry.mjs):
 # the tinycld base packed from the sibling checkout, @tinycld/todo packed from
@@ -198,6 +200,11 @@ SU_TOKEN="$(admin_api POST /api/collections/_superusers/auth-with-password \
 # CreateOrg builds the base-only artifact through the trusted builder (the
 # heavy step: pnpm install + go build + expo export on a cold cache), then
 # boots and readiness-verifies the tenant before returning.
+#
+# owner_email is REQUIRED by the provisioner: a tenant serves no /setup wizard,
+# so an org created without one has no `users` row that can log in. We pass the
+# same identity the tenant-superuser step below upserts, so the org's owner
+# account and its PB superuser are one login rather than two divergent ones.
 echo "== Creating org '${ORG_SLUG}' from lockfile {tinycld: ${BASE_VERSION}} (first build — minutes on a cold cache)"
 CREATE_OUT="${WORK_DIR}/create-org.json"
 CREATE_STATUS="$(curl -s -o "${CREATE_OUT}" -w '%{http_code}' -X POST \
@@ -205,7 +212,7 @@ CREATE_STATUS="$(curl -s -o "${CREATE_OUT}" -w '%{http_code}' -X POST \
     -H "Content-Type: application/json" \
     -H "Authorization: ${SU_TOKEN}" \
     --max-time 3600 \
-    -d "{\"slug\":\"${ORG_SLUG}\",\"display_name\":\"Acme\",\"lockfile\":{\"tinycld\":\"${BASE_VERSION}\"}}" \
+    -d "{\"slug\":\"${ORG_SLUG}\",\"display_name\":\"Acme\",\"lockfile\":{\"tinycld\":\"${BASE_VERSION}\"},\"owner_email\":\"${TENANT_ADMIN_EMAIL}\",\"owner_password\":\"${TENANT_ADMIN_PASSWORD}\"}" \
     "http://127.0.0.1:${PORT}/api/orgs")" || {
     echo "create org failed: curl exit $? (status ${CREATE_STATUS:-none})" >&2
     cat "${CREATE_OUT}" >&2 2>/dev/null || true
@@ -269,8 +276,10 @@ echo "== ensuring chromium is installed for playwright"
 
 # Runs a subset of the serial spec by title grep, exactly like
 # run-todo-install.sh's run_phase — but against the org subdomain, with npm
-# specs (hosted refuses git specs), no OTA assertions, and the hosted
-# progress-bar floor (the router-side build streams no mid-build progress).
+# specs (hosted refuses git specs) and the hosted progress-bar floor (the
+# router-side build streams no mid-build progress). OTA assertions now run
+# here too: the tenant serves /api/app/update from its own build artifact,
+# advertising content-addressed recipe-<hash>-<platform> bundle ids.
 run_phase() {
     local grep_expr="$1" label="$2"
     echo "== running ${label}"
@@ -280,7 +289,6 @@ run_phase() {
         ADMIN_USER_LOGIN="${TENANT_ADMIN_EMAIL}" \
         ADMIN_USER_PW="${TENANT_ADMIN_PASSWORD}" \
         PW_TODO_SPEC_V1="@tinycld/todo@1.0.0" \
-        PW_SKIP_OTA=1 \
         PW_PROGRESS_MIN_PCT=10 \
         RUN_TODO_INSTALL_TEST=1 \
         CI=true FORCE_COLOR=0 \

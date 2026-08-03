@@ -10,6 +10,7 @@ import {
     resetSessionState,
     seedUser,
 } from '@tinycld/core/lib/pocketbase'
+import { getResolvedAddress } from '@tinycld/core/lib/server-address'
 import { create } from '@tinycld/core/lib/store'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import type { UserSession } from '@tinycld/core/lib/types'
@@ -32,11 +33,19 @@ type LoginResult = {
 // running session re-registers their own token (otherwise the guard would
 // suppress it). Best-effort: platform push helpers already swallow their own
 // errors, and any failure here must never block logout.
-async function teardownPushOnLogout(userId: string, authToken: string): Promise<void> {
+// `origin` is captured by the caller and passed explicitly for the same reason
+// the token is: a device can hold sessions on several servers at once, so the
+// delete must be aimed at the server being signed out of rather than at
+// whichever one the shared `pb` currently points at.
+async function teardownPushOnLogout(
+    userId: string,
+    authToken: string,
+    origin: string | null
+): Promise<void> {
     if (Platform.OS === 'web') {
         if (isPushSupported()) await unsubscribeFromPush(userId, authToken)
     } else {
-        await unregisterExpoPushToken(userId, authToken)
+        await unregisterExpoPushToken(userId, authToken, origin ?? undefined)
     }
     resetExpoPushRegistration()
 }
@@ -151,12 +160,16 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         // runs synchronously, before teardown's async PB requests dispatch).
         const userId = get().user?.id
         const authToken = pb.authStore.token
+        // Captured alongside the token, and for the same reason: teardown's
+        // requests dispatch after this synchronous block, by which point the
+        // active server may have moved.
+        const origin = getResolvedAddress()
         pb.realtime.unsubscribe()
         // Fire-and-forget push teardown: unsubscribe the device and delete the
         // server push_subscriptions row, then reset the module-lifetime
         // registration guard so a second user on this same session re-registers.
         if (userId) {
-            teardownPushOnLogout(userId, authToken).catch(err =>
+            teardownPushOnLogout(userId, authToken, origin).catch(err =>
                 captureException('auth-store.logout.teardownPush', err)
             )
         }

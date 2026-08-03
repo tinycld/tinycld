@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { expect, type Page, test } from '@playwright/test'
+import { authStorageKey } from '../e2e/auth-key-helpers'
 
 // Read the OTA runtime version from app.json's `expo.version` — NOT from
 // package.json. The server publishes native bundles under the appVersion
@@ -147,9 +148,18 @@ async function loginAsSuperuser(page: Page, timeoutMs?: number) {
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
     await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
     await page.getByRole('button', { name: 'Sign in' }).click()
-    // 'Organizations' appears in both the nav rail and (when that tab is open)
-    // the page title, so scope to the first match.
-    await expect(page.getByText('Organizations', { exact: true }).first()).toBeVisible(
+    // Assert a landmark that only exists POST-login: the console's Packages tab
+    // (SetupDashboard's first nav entry). Role + hasText, NOT
+    // getByRole('tab', { name }) — RN Web renders the label as a child <Text>
+    // rather than an accessibilityLabel, so the role exposes no accessible name
+    // and a name-matched query finds nothing. Filtering also keeps this from
+    // matching the word "Packages" in the page's own body copy.
+    //
+    // This used to wait for 'Organizations', a tab that no longer exists — the
+    // console is Packages / Build History / Settings. Because the stale assert
+    // ran after a SUCCESSFUL sign-in, every failure read as "login broke" when
+    // login was fine.
+    await expect(page.getByRole('tab').filter({ hasText: 'Packages' })).toBeVisible(
         timeoutMs ? { timeout: timeoutMs } : undefined
     )
 }
@@ -224,7 +234,8 @@ async function superuserToken(page: Page): Promise<string> {
 }
 
 // Re-authenticate the APP's persistent PocketBase client (`appPb`, the one
-// `lib/pocketbase.ts` exports with the `pb_auth` AsyncStorage backing) as the
+// `lib/pocketbase.ts` exports with the per-server `pb_auth:<serverKey>`
+// AsyncStorage backing) as the
 // superuser, by minting a fresh token and writing it into localStorage, then
 // reloading so the app rehydrates it on boot (authStoreReady).
 //
@@ -236,8 +247,8 @@ async function superuserToken(page: Page): Promise<string> {
 // the rollback fixtures restart the server several times in between, leaving
 // `appPb`'s persisted token stale/unauthorized. The create then goes out without
 // superuser auth, so setting the managed `verified` field is rejected
-// ("validation_values_mismatch") and the org is never created. Refreshing
-// `pb_auth` here makes the create carry a valid superuser token again.
+// ("validation_values_mismatch") and the org is never created. Refreshing the
+// stored auth blob here makes the create carry a valid superuser token again.
 // Mints the app user this spec logs in as, through the superuser REST API.
 // Idempotent: a 400 means an earlier run in the same container already
 // created it, which is fine.
@@ -294,9 +305,13 @@ async function reauthAppPb(page: Page) {
 
     // Write the token into the app's persistent auth key (the shape
     // authStoreReady parses), then reload so appPb picks it up on boot.
+    // The auth key is scoped per server (`pb_auth:<serverKey>`), so derive it
+    // rather than writing a literal — a stale literal would leave the app
+    // hydrating from a key nothing writes, i.e. silently signed out.
+    const authKey = await authStorageKey(page)
     await page.evaluate(
-        ({ token, record }) => localStorage.setItem('pb_auth', JSON.stringify({ token, record })),
-        auth
+        ({ token, record, key }) => localStorage.setItem(key, JSON.stringify({ token, record })),
+        { ...auth, key: authKey }
     )
     await page.reload()
 }
@@ -725,12 +740,20 @@ async function waitForExpoUpdate(
     )
 }
 
-// PW_SKIP_OTA=1 disables the per-modification OTA assertions. The HOSTED
-// runner sets it: per-org native OTA delivery is an explicitly OPEN design
-// item (DESIGN-org-package-agency §6 "Native OTA per org") — a hosted tenant
-// serves no /api/app/update (RegisterAppUpdateEndpoints is host-only), so the
-// assertion has nothing to hold against yet. Single-tenant runs keep it on.
+// PW_SKIP_OTA=1 disables the per-modification OTA assertions. Both runners now
+// leave it unset: a hosted tenant serves /api/app/update from its own build
+// artifact (RegisterTenantAppUpdateEndpoints), closing design §6's "Native OTA
+// per org". Kept as an escape hatch for a build image with no RN toolchain,
+// where no native bundles exist to advertise in either composition.
 const SKIP_OTA = process.env.PW_SKIP_OTA === '1'
+
+// A bundle id is `<buildId>-<platform>`. The single-tenant installer mints a
+// timestamped build id; the multi-org builder mints a content-addressed one
+// (recipe-<hash12>), so a hosted org's bundles are shared by every org that
+// resolves to the same package set. Accept either shape.
+function bundleIdPattern(platform: 'ios' | 'android'): RegExp {
+    return new RegExp(`^(build-\\d+|recipe-[a-f0-9]{12})-${platform}$`)
+}
 
 // Asserts a NEW expo update is offered for both native platforms after a package
 // modification, and that each platform's bundle id advanced from the previous
@@ -743,9 +766,11 @@ async function assertNewExpoUpdate(
     if (SKIP_OTA) return { ios: prev.ios ?? '', android: prev.android ?? '' }
     const ios = await waitForExpoUpdate(page, 'ios', 120_000)
     const android = await waitForExpoUpdate(page, 'android', 120_000)
-    expect(ios.id, 'ios bundle id should be a build-<ts>-ios id').toMatch(/^build-\d+-ios$/)
-    expect(android.id, 'android bundle id should be a build-<ts>-android id').toMatch(
-        /^build-\d+-android$/
+    expect(ios.id, 'ios bundle id should be a build-<ts>- or recipe-<hash>- id').toMatch(
+        bundleIdPattern('ios')
+    )
+    expect(android.id, 'android bundle id should be a build-<ts>- or recipe-<hash>- id').toMatch(
+        bundleIdPattern('android')
     )
     if (prev.ios) {
         expect(ios.id, 'a modification must produce a NEW ios bundle id').not.toBe(prev.ios)

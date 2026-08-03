@@ -9,9 +9,10 @@ import { BottomDrawer } from '@tinycld/core/ui/bottom-drawer'
 import { useRouter } from 'expo-router'
 import { Bell, LogOut, Settings, User, X } from 'lucide-react-native'
 import { useCallback } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { MAX_VISIBLE_TABS } from './MobileTabBar'
 import { getIcon } from './package-icon-map'
+import { ServersDrawerSection } from './ServersDrawerSection'
 import { isCurrentOrg, useUserOrgs } from './useUserOrgs'
 
 export function MoreDrawer() {
@@ -58,7 +59,18 @@ export function MoreDrawer() {
                 </Pressable>
             </View>
 
-            <View className="px-2 pb-4">
+            {/* Scrollable because BottomDrawer caps its height at 85% of the
+                screen and has no internal scroller — content past the cap is
+                silently CLIPPED, and it clips from the bottom, where Sign out and
+                the overflow packages live. With up to 10 saved servers the content
+                exceeds the cap on a typical phone, which would cost the user their
+                Sign out row. Fixed here rather than in BottomDrawer: its other
+                callers have their own content strategies. */}
+            <ScrollView
+                contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: 16 }}
+                showsVerticalScrollIndicator={false}
+                bounces={false}
+            >
                 <Pressable
                     className="flex-row items-center gap-3.5 px-4 py-3.5 rounded-lg"
                     onPress={() => {
@@ -120,6 +132,10 @@ export function MoreDrawer() {
                     </>
                 ) : null}
 
+                {/* The native counterpart to the org switcher above: on a device
+                    useUserOrgs() is always empty, so this fills the same slot. */}
+                <ServersDrawerSection onNavigate={handleNav} />
+
                 <View
                     className="my-2 mx-3"
                     style={{
@@ -167,7 +183,7 @@ export function MoreDrawer() {
                         })}
                     </>
                 ) : null}
-            </View>
+            </ScrollView>
         </BottomDrawer>
     )
 }
