@@ -1,16 +1,27 @@
 import { expect, type Page, test } from '@playwright/test'
-// The seeded fixture user, shared with the single-origin suite — both orgs are
-// seeded by the same reset-dev-db.ts, so the same credentials work on each.
-import { TEST_USER_EMAIL, TEST_USER_PASSWORD } from '../e2e/helpers'
+import {
+    TEST_USER_EMAIL as SEEDED_EMAIL,
+    TEST_USER_PASSWORD as SEEDED_PASSWORD,
+} from '../e2e/helpers'
+
+// Two stacks can serve these specs, and they establish their user differently:
+//
+//  - the local launcher (scripts/e2e-multi-org.ts) seeds both orgs with
+//    reset-dev-db.ts, so the ordinary fixture user exists;
+//  - multi-org's TestHostedBrowserE2E provisions real orgs and creates a
+//    superuser in each tenant's own DB, passing those credentials in.
+//
+// Env wins when present, so the same specs cover both without branching.
+const LOGIN_EMAIL = process.env.E2E_MULTI_ORG_EMAIL || SEEDED_EMAIL
+const LOGIN_PASSWORD = process.env.E2E_MULTI_ORG_PASSWORD || SEEDED_PASSWORD
 
 // The saved-server switcher across TWO orgs — the case no single-origin stack
 // can produce.
 //
 // On the hosted router each org is its own subdomain, its own process and its
-// own database, which is exactly what this harness reproduces (see
-// scripts/e2e-multi-org.ts). Two orgs here are therefore the same object the
-// feature calls "two servers": serverKeyFor normalizes to scheme+host+port, so
-// two subdomains get distinct keys just as two self-hosted boxes would.
+// own database. Two orgs are therefore the same object the feature calls "two
+// servers": serverKeyFor normalizes to scheme+host+port, so two subdomains get
+// distinct keys just as two self-hosted boxes would.
 //
 // What this pins that the single-origin spec cannot: a second server actually
 // appearing in the list, the active one being identified correctly among
@@ -42,8 +53,8 @@ async function loginAt(page: Page, origin: string) {
     ])
     if (landed === 'shell') return
 
-    await identifier.fill(TEST_USER_EMAIL)
-    await page.getByPlaceholder('Password').fill(TEST_USER_PASSWORD)
+    await identifier.fill(LOGIN_EMAIL)
+    await page.getByPlaceholder('Password').fill(LOGIN_PASSWORD)
     await page.getByText('Sign in', { exact: true }).last().click()
     await expect(shell).toBeVisible({ timeout: 20_000 })
 }
