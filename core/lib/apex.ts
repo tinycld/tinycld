@@ -18,7 +18,6 @@
 // side enforces (core/server/orgcookie), and the same reason: a slug becomes the
 // leftmost label of a URL we navigate to, so anything else is a planted entry.
 
-import { getCoreConfigOptional } from './core-config'
 import { orgUrlForSlug } from './org-cookie'
 
 // Thrown when an address answers, but as a multi-org apex rather than a server.
@@ -79,25 +78,29 @@ export function isOrgUnderApex(origin: string, apexHostname: string): boolean {
     return label.length > 0 && !label.includes('.')
 }
 
-/** Whether an already-resolved address is the known multi-org apex.
+/** Whether a cached address turns out to be a multi-org apex rather than a
+ *  server, for the recovery path: a device that connected before this was
+ *  caught at admission still has the apex saved as its server.
  *
- *  Synchronous and network-free on purpose: it runs on the render path of the
- *  root route, which must decide what to show without waiting on a fetch. That
- *  limits it to the one apex the build knows about — the configured
- *  defaultServer — which is exactly the case that matters, because
- *  defaultServer IS the apex ('https://tinycld.org') and the "Use tinycld.org"
- *  button is how a device got stuck here. An unknown apex is still caught at
- *  admission time by probeServer().
- *
- *  Compares hostnames rather than raw strings so a trailing slash or a scheme
- *  difference in the cached value does not read as a different host. */
-export function isKnownApexAddress(address: string | null): boolean {
+ *  ASKS THE SERVER rather than comparing hostnames. An earlier version matched
+ *  the address against the configured defaultServer, which is wrong in the
+ *  common case: defaultServer is the hosted address ('https://tinycld.org', or
+ *  localhost in dev), and a perfectly ordinary SINGLE-TENANT server lives at
+ *  exactly that hostname. Every such user was told "localhost hosts many
+ *  organizations" and sent to the org picker instead of the login form. A host
+ *  cannot be classified by its name — only by what it answers. */
+export async function isApexAddress(address: string | null): Promise<boolean> {
     if (!address) return false
-    const configured = getCoreConfigOptional()?.defaultServer
-    if (!configured) return false
-    const host = hostnameOf(address)
-    const apexHost = hostnameOf(configured)
-    return !!host && !!apexHost && host === apexHost
+    try {
+        const res = await fetch(`${address}/api/org-info`, { cache: 'no-store' })
+        const body = await res.text()
+        return looksLikeApexResponse(res.headers?.get?.('content-type') ?? '', body)
+    } catch {
+        // Unreachable is not "apex". Falling through to the normal signed-out
+        // path lets the usual connectivity handling deal with it, rather than
+        // stranding an offline user on a picker they cannot act on.
+        return false
+    }
 }
 
 /** The slug of an org origin under an apex, for labelling a picker row. */

@@ -1,12 +1,49 @@
 import {
+    isApexAddress,
     isOrgUnderApex,
     looksLikeApexResponse,
     orgUrlUnderApex,
     slugUnderApex,
 } from '@tinycld/core/lib/apex'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 describe('apex', () => {
+    afterEach(() => {
+        vi.unstubAllGlobals()
+    })
+
+    describe('isApexAddress', () => {
+        function mockFetch(contentType: string, body: string) {
+            vi.stubGlobal(
+                'fetch',
+                vi.fn().mockResolvedValue({
+                    headers: { get: () => contentType },
+                    text: async () => body,
+                })
+            )
+        }
+
+        // The regression: this used to compare the address against the
+        // configured defaultServer, which IS an ordinary single-tenant server's
+        // address in the common case. Every such user got "localhost hosts many
+        // organizations" and the org picker instead of a login form.
+        it('reports a single-tenant server as NOT an apex', async () => {
+            mockFetch('application/json', JSON.stringify({ name: 'My Server' }))
+            await expect(isApexAddress('http://localhost:7100')).resolves.toBe(false)
+        })
+
+        it('reports the router apex as an apex', async () => {
+            mockFetch('text/html; charset=utf-8', '<!doctype html><html lang="en">')
+            await expect(isApexAddress('https://tinycld.org')).resolves.toBe(true)
+        })
+
+        it('is false for no address, and for an unreachable one', async () => {
+            await expect(isApexAddress(null)).resolves.toBe(false)
+            vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')))
+            await expect(isApexAddress('https://down.example')).resolves.toBe(false)
+        })
+    })
+
     describe('looksLikeApexResponse', () => {
         it('detects the router org-finder page by content type', () => {
             expect(looksLikeApexResponse('text/html; charset=utf-8', '<!doctype html>')).toBe(true)
