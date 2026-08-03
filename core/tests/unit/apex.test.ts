@@ -32,8 +32,17 @@ describe('apex', () => {
             await expect(isApexAddress('http://localhost:7100')).resolves.toBe(false)
         })
 
-        it('reports the router apex as an apex', async () => {
+        // A router deployed before the /api/* fix: 200 + the finder page.
+        it('reports a legacy apex (HTML 200) as an apex', async () => {
             mockFetch('text/html; charset=utf-8', '<!doctype html><html lang="en">')
+            await expect(isApexAddress('https://tinycld.org')).resolves.toBe(true)
+        })
+
+        it('reports a current apex (JSON 404 + marker) as an apex', async () => {
+            mockFetch(
+                'application/json',
+                JSON.stringify({ code: 404, data: { kind: 'multi_org_apex' } })
+            )
             await expect(isApexAddress('https://tinycld.org')).resolves.toBe(true)
         })
 
@@ -56,6 +65,23 @@ describe('apex', () => {
 
         it('leaves real org-info JSON alone', () => {
             expect(looksLikeApexResponse('application/json', '{"name":"Acme"}')).toBe(false)
+        })
+
+        // A current router answers /api/* with a JSON 404 carrying this marker,
+        // which separates "apex" from "wrong URL" / "host down" — a bare 404
+        // cannot.
+        it('detects the router apex marker on a JSON error', () => {
+            const body = JSON.stringify({
+                code: 404,
+                message: 'this host serves organizations, not an API',
+                data: { kind: 'multi_org_apex' },
+            })
+            expect(looksLikeApexResponse('application/json', body)).toBe(true)
+        })
+
+        it('does not treat an ordinary JSON 404 as an apex', () => {
+            const body = JSON.stringify({ code: 404, message: 'Not found', data: {} })
+            expect(looksLikeApexResponse('application/json', body)).toBe(false)
         })
 
         // An org could legitimately be named "<html>"; the body must not be

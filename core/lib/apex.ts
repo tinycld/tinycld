@@ -37,11 +37,32 @@ export class ApexServerError extends Error {
     }
 }
 
-/** True when a body looks like the router's org-finder page rather than a
- *  server's JSON. Checks the content type first (what the router actually
- *  sets) and falls back to sniffing a doctype, so a misconfigured proxy that
- *  serves HTML as text/plain is still caught. */
+// The router's machine-readable "this host is an apex" marker, sent as
+// data.kind on an /api/* response. Must match ApexMarker in the multi-org repo
+// (internal/webpage) — the two are coupled by this string.
+const APEX_MARKER = 'multi_org_apex'
+
+/** True when a response says the host is a multi-org apex rather than a server.
+ *
+ *  Two signals, because both eras of router have to work:
+ *
+ *  1. The explicit marker. A current router answers /api/* with a 404 carrying
+ *     `data.kind: "multi_org_apex"`, which distinguishes an apex from a host
+ *     that is merely wrong or down — a bare 404 cannot.
+ *  2. An HTML body. Routers deployed before that fix answered the org-finder
+ *     page with 200 for EVERY path, so the shape of the body is the only
+ *     evidence available. Content type first (what the router sets), falling
+ *     back to sniffing a doctype so a proxy serving HTML as text/plain is still
+ *     caught. */
 export function looksLikeApexResponse(contentType: string, body: string): boolean {
+    if (contentType.toLowerCase().includes('application/json')) {
+        try {
+            const parsed = JSON.parse(body) as { data?: { kind?: unknown } }
+            return parsed?.data?.kind === APEX_MARKER
+        } catch {
+            return false
+        }
+    }
     if (contentType.toLowerCase().includes('text/html')) return true
     return /^\s*<(?:!doctype|html)\b/i.test(body)
 }
