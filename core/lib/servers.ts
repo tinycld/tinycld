@@ -144,11 +144,26 @@ export async function setActiveServer(address: string): Promise<string> {
     return origin
 }
 
-// isSavedServersSupported gates every new surface. Web resolves same-origin via
-// window.location (resolveEnvAddress short-circuits before any cache read) and
-// already has its own cookie-based org switcher, so a saved-server list there
-// would be dead UI over an address that cannot change.
+// isSavedServersSupported gates every surface that shows saved servers.
+//
+// True everywhere. It stays a named predicate rather than being deleted because
+// what "supported" MEANS still differs by platform, and callers need somewhere to
+// read that: on native a switch restarts the JS context in place and every server
+// keeps its session, whereas web can only navigate away — localStorage is
+// origin-partitioned, so a browser cannot hold a session on another origin.
+//
+// The web surfaces therefore say "opens in this tab", never the native promise
+// that switching leaves the others signed in. See canSwitchInPlace().
 export function isSavedServersSupported(): boolean {
+    return true
+}
+
+// canSwitchInPlace distinguishes the two switch mechanics. Native repoints the
+// running app at another origin and restarts the JS context, keeping every
+// server's session. Web must do a full navigation to the target origin, and
+// arrives there as whatever that origin already considers you — possibly signed
+// out. Surfaces use this to label rows honestly rather than to hide them.
+export function canSwitchInPlace(): boolean {
     return Platform.OS !== 'web'
 }
 

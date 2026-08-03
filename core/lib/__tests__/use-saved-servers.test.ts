@@ -18,46 +18,69 @@ beforeEach(async () => {
     vi.resetModules()
 })
 
-// The react-native stub reports Platform.OS === 'web', so the DEFAULT state in
-// this environment is the unsupported one — which makes it the easy case to pin.
-describe('useSavedServers on an unsupported platform', () => {
-    it('returns an inert state rather than making callers remember the gate', async () => {
+// The react-native stub reports Platform.OS === 'web', so this environment IS the
+// web case — which makes web the easy platform to pin here and native the one that
+// needs a mock.
+describe('useSavedServers on web', () => {
+    // Web never calls setActiveServer (its address is window.location.origin), so
+    // the stored list is empty. Without withActive the switcher would blank out on
+    // the one origin it can always describe.
+    it('always lists the current origin, even with nothing stored', async () => {
+        const { setResolvedAddress } = await import('../server-address')
+        setResolvedAddress(SERVER_A)
+
         const { useSavedServers } = await import('../use-saved-servers')
         const { result } = renderHook(() => useSavedServers())
 
-        expect(result.current.servers).toEqual([])
-        expect(result.current.activeOrigin).toBeNull()
-        expect(result.current.canReload).toBe(false)
+        await waitFor(() => expect(result.current.servers).toHaveLength(1))
+        expect(result.current.servers[0].origin).toBe(SERVER_A)
     })
 
-    // Forgetting the gate on web would push /connect?mode=add to connect.web.tsx,
-    // which has no add mode — so the inert callbacks must be genuinely inert.
-    it('hands back no-op callbacks', async () => {
+    it('does not duplicate the current origin when it is already stored', async () => {
+        const { setActiveServer } = await import('../servers')
+        await setActiveServer(SERVER_A)
+
+        const { setResolvedAddress } = await import('../server-address')
+        setResolvedAddress(SERVER_A)
+
         const { useSavedServers } = await import('../use-saved-servers')
         const { result } = renderHook(() => useSavedServers())
 
-        expect(() => {
-            result.current.add()
-            result.current.switchTo(SERVER_A)
-            result.current.remove(SERVER_A)
-        }).not.toThrow()
+        await waitFor(() => expect(result.current.servers).toHaveLength(1))
     })
 
-    it('does not read storage', async () => {
-        const spy = vi.spyOn(AsyncStorage, 'getItem')
-        const { useSavedServers } = await import('../use-saved-servers')
-        renderHook(() => useSavedServers())
+    // A browser cannot hold a session on another origin — localStorage is
+    // origin-partitioned — so the only real move is to navigate there. Going
+    // through switchToServer instead would set the active pointer and then throw
+    // ReloadUnavailableError, i.e. a switch that never completes.
+    it('switching navigates to the target origin rather than switching in place', async () => {
+        const assign = vi.fn()
+        vi.stubGlobal('location', { ...window.location, assign })
+        // navigateToOrgUrl traces through debug-trace, which reads the RN global
+        // __DEV__. Nothing defines it under vitest, and this is the first unit
+        // test to reach that path.
+        vi.stubGlobal('__DEV__', false)
 
-        await waitFor(() => expect(spy).not.toHaveBeenCalled())
-        spy.mockRestore()
+        const { setResolvedAddress } = await import('../server-address')
+        setResolvedAddress(SERVER_A)
+
+        const { useSavedServers } = await import('../use-saved-servers')
+        const { result } = renderHook(() => useSavedServers())
+
+        result.current.switchTo(SERVER_B)
+        await waitFor(() => expect(assign).toHaveBeenCalledWith(SERVER_B))
+
+        vi.unstubAllGlobals()
     })
 })
 
-describe('useSavedServers when supported', () => {
+// canSwitchInPlace is what actually forks the behaviour now that the list itself
+// renders everywhere, so the native cases mock THAT rather than the support gate.
+describe('useSavedServers on native', () => {
     beforeEach(() => {
         vi.doMock('../servers', async () => {
             const actual = await vi.importActual<typeof import('../servers')>('../servers')
-            return { ...actual, isSavedServersSupported: () => true }
+            return { ...actual, canSwitchInPlace: () => true }
         })
     })
 

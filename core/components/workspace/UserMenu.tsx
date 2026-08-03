@@ -3,7 +3,7 @@ import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { navigateToOrgUrl } from '@tinycld/core/lib/org-url'
-import { isSameServer } from '@tinycld/core/lib/servers'
+import { canSwitchInPlace, isSameServer } from '@tinycld/core/lib/servers'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useSavedServers } from '@tinycld/core/lib/use-saved-servers'
@@ -50,7 +50,7 @@ export function UserMenu() {
 
                     <OrganizationsSection orgs={orgs} />
 
-                    <ServersSection />
+                    <ServersSection hasOrgs={orgs.length > 0} />
 
                     <Separator />
 
@@ -61,28 +61,44 @@ export function UserMenu() {
     )
 }
 
-// The native counterpart to OrganizationsSection below. This surface matters more
-// than it looks: useBreakpoint() buckets on WIDTH ALONE, with no Platform check, so
-// a native tablet at >=768dp renders PackageRail + this menu and NEVER mounts
-// MoreDrawer. Without this section an iPad — the device where a work server and a
-// home server are most plausible — would have no switcher outside Settings.
+// The saved-server switcher, and the counterpart to OrganizationsSection below.
+//
+// This surface matters more than it looks: useBreakpoint() buckets on WIDTH ALONE,
+// with no Platform check, so a native tablet at >=768dp renders PackageRail + this
+// menu and NEVER mounts MoreDrawer. Without this section an iPad — the device where
+// a work server and a home server are most plausible — would have no switcher
+// outside Settings.
+//
+// `hasOrgs` keeps the two switchers from competing. On a router deployment the
+// cookie gives orgs their real display names and an apex discovery link, which is
+// strictly better than a hostname list, so Organizations wins the slot there. Where
+// that cookie does not exist — a standalone deployment, or a browser that has only
+// signed into one org — this fills the same slot instead. Never both: the same org
+// would otherwise appear twice under two different names.
 //
 // Remove and Add are absent: Menu.Content closes on press, so there is nowhere to
 // confirm a destructive action or show progress. Settings owns management; this is
 // purely a switcher.
-function ServersSection() {
+function ServersSection({ hasOrgs }: { hasOrgs: boolean }) {
     const { servers, activeOrigin, busyOrigin, canReload, switchTo } = useSavedServers()
 
-    // The hook self-gates by platform, so an empty list is the only check needed.
-    if (servers.length === 0) return null
+    if (hasOrgs) return null
+    // Nothing to switch between: on web the list always contains at least the
+    // current origin, so a lone entry would just be a label for where you already
+    // are — the org switcher's own `> 1` reasoning.
+    if (servers.length < 2) return null
 
     // A menu item closes the popover on press, so unlike the drawer there is no
     // inline surface left to report a refused switch on — and switchToServer only
     // returns on FAILURE. Announce the outcome as a toast instead: ToastRenderer
-    // sits in Providers at zIndex 10000, above the menu portal. In dev every
-    // switch is refused, so say so up front rather than after the tap.
+    // sits in Providers at zIndex 10000, above the menu portal. In a dev build
+    // every switch is refused, so say so up front rather than after the tap.
+    //
+    // Only meaningful where a switch happens in place. On web `switchTo` navigates
+    // to the target origin, so there is no reload to be unavailable and the toast
+    // would be both wrong and instantly discarded by the page load.
     function onSwitch(origin: string) {
-        if (!canReload) {
+        if (canSwitchInPlace() && !canReload) {
             useToastStore.getState().addToast({
                 title: 'Restart to finish switching',
                 body: 'This build cannot restart itself. Your choice is saved — reopen the app to land on it.',
@@ -104,6 +120,10 @@ function ServersSection() {
                     icon={Server}
                     isActive={isSameServer(server.origin, activeOrigin ?? '')}
                     disabled={!!busyOrigin}
+                    // A real href on web, matching the org switcher: the row IS a
+                    // navigation there, so middle-click and open-in-new-tab should
+                    // work. Native has no URL bar to hand it to.
+                    href={canSwitchInPlace() ? undefined : server.origin}
                     onPress={() => onSwitch(server.origin)}
                 />
             ))}

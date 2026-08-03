@@ -1,10 +1,17 @@
 import { router } from 'expo-router'
 import { useCallback, useEffect, useState } from 'react'
 import { captureException } from './errors'
+import { navigateToOrgUrl } from './org-url'
 import { isReloadAvailable, ReloadUnavailableError } from './reload-js-context'
 import { forgetServer } from './remove-server'
 import { getResolvedAddress } from './server-address'
-import { isSavedServersSupported, readServers, type SavedServer } from './servers'
+import {
+    canSwitchInPlace,
+    isSameServer,
+    isSavedServersSupported,
+    readServers,
+    type SavedServer,
+} from './servers'
 import { switchToServer } from './switch-server'
 
 interface SavedServersState {
@@ -37,6 +44,14 @@ function seedServers(activeOrigin: string | null): SavedServer[] {
     return [{ origin: activeOrigin, label: labelForOrigin(activeOrigin), addedAt: 0 }]
 }
 
+// withActive guarantees the active server appears in the list exactly once,
+// prepending it when the stored list does not already know about it.
+function withActive(saved: SavedServer[], activeOrigin: string | null): SavedServer[] {
+    if (!activeOrigin) return saved
+    if (saved.some(s => isSameServer(s.origin, activeOrigin))) return saved
+    return [...seedServers(activeOrigin), ...saved]
+}
+
 function labelForOrigin(origin: string): string {
     try {
         return new URL(origin).host
@@ -52,10 +67,6 @@ function labelForOrigin(origin: string): string {
 // the only other way it changes is a switch, which restarts the JS context and
 // re-runs this from scratch.
 //
-// Self-gating by platform, following the useUserOrgs precedent: off native this
-// returns an inert state rather than making every consumer remember the check.
-// Forgetting it on web would cost a pointless AsyncStorage read AND surface an
-// `add` that pushes /connect?mode=add to connect.web.tsx, which has no add mode.
 export function useSavedServers(): SavedServersState {
     const supported = isSavedServersSupported()
     const activeOrigin = getResolvedAddress()
@@ -69,12 +80,19 @@ export function useSavedServers(): SavedServersState {
         if (!supported) return
         let cancelled = false
         readServers().then(saved => {
-            if (!cancelled) setServers(saved)
+            if (cancelled) return
+            // Never let the stored list drop the server we are ON. Web reaches
+            // this with an empty list — nothing there ever calls setActiveServer,
+            // since the address is window.location.origin — and replacing the
+            // seed with [] would blank the switcher on the one origin it can
+            // always describe. Native normally finds itself already present
+            // (setActiveServer writes both halves), so this is a no-op there.
+            setServers(withActive(saved, activeOrigin))
         })
         return () => {
             cancelled = true
         }
-    }, [supported])
+    }, [supported, activeOrigin])
 
     const add = useCallback(() => {
         // ?mode=add tells the connect screen to switch rather than replace, so
@@ -85,6 +103,17 @@ export function useSavedServers(): SavedServersState {
     const switchTo = useCallback(async (origin: string) => {
         setError(null)
         setBusyOrigin(origin)
+
+        // Web cannot switch in place: localStorage is origin-partitioned, so the
+        // session for another origin does not exist in this document and no
+        // amount of repointing `pb` would produce one. The only real move is to
+        // navigate there and let that origin decide who you are. This mirrors
+        // what the cookie org switcher already does (navigateToOrgUrl).
+        if (!canSwitchInPlace()) {
+            navigateToOrgUrl(origin)
+            return
+        }
+
         try {
             // On success this never returns — the JS context restarts.
             await switchToServer(origin)

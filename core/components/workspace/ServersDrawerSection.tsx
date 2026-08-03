@@ -1,4 +1,4 @@
-import { isSameServer, type SavedServer } from '@tinycld/core/lib/servers'
+import { canSwitchInPlace, isSameServer, type SavedServer } from '@tinycld/core/lib/servers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useSavedServers } from '@tinycld/core/lib/use-saved-servers'
 import { Check, Plus, Server } from 'lucide-react-native'
@@ -8,8 +8,10 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 //
 // This fills the slot the "Organizations" section leaves empty on native:
 // useUserOrgs() hard-returns [] off web, so that block never renders on a device.
-// The two are mutually exclusive by platform, which makes them read as one
-// "switch context" region wherever you are.
+//
+// A switch means different things per platform and the notices below say which:
+// native repoints the running app and keeps every server's session, while web can
+// only navigate to the target origin.
 //
 // Deliberately does NOT reuse ServerRow from settings/ServersSection: that one is
 // styled for a settings card (foreground / muted-foreground / bg-surface-secondary)
@@ -43,13 +45,15 @@ export function ServersDrawerSection({
                 style={{ height: StyleSheet.hairlineWidth, backgroundColor: borderColor }}
             />
             <Text
+                testID="drawer-servers-label"
                 className="text-xs font-semibold uppercase opacity-50 px-4 pt-1 pb-2"
                 style={{ color: textColor }}
             >
                 Servers
             </Text>
 
-            <RestartNotice isVisible={!canReload} color={textColor} />
+            <RestartNotice isVisible={canSwitchInPlace() && !canReload} color={textColor} />
+            <NavigatesAwayNotice isVisible={!canSwitchInPlace()} color={textColor} />
 
             {servers.map(server => (
                 <ServerRow
@@ -67,6 +71,7 @@ export function ServersDrawerSection({
             <ErrorNotice message={error} />
 
             <Pressable
+                testID="drawer-add-server"
                 className="flex-row items-center gap-3.5 px-4 py-3.5 rounded-lg"
                 // Routed through onNavigate because add() pushes a route but does
                 // NOT close the drawer, and the drawer renders inside the layout's
@@ -93,6 +98,20 @@ function RestartNotice({ isVisible, color }: { isVisible: boolean; color: string
     return (
         <Text className="text-[11px] px-4 pb-2 opacity-60" style={{ color }}>
             Switching requires a restart in this build.
+        </Text>
+    )
+}
+
+// On web a row is a navigation, not an in-place switch — a browser cannot hold a
+// session on another origin (localStorage is origin-partitioned), so you arrive as
+// whoever that origin already considers you. Say so, rather than letting the
+// native promise that the other servers stay signed in carry over to a surface
+// that cannot keep it.
+function NavigatesAwayNotice({ isVisible, color }: { isVisible: boolean; color: string }) {
+    if (!isVisible) return null
+    return (
+        <Text className="text-[11px] px-4 pb-2 opacity-60" style={{ color }}>
+            Opens that server in this tab. You may need to sign in there.
         </Text>
     )
 }
@@ -127,6 +146,7 @@ function ServerRow({
 
     return (
         <Pressable
+            testID={`drawer-server-${server.label}`}
             className="flex-row items-center gap-3.5 px-4 py-3.5 rounded-lg"
             // Unlike every other row in this drawer, a switch does NOT close it.
             // switchToServer only returns on FAILURE (success restarts the JS
