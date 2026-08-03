@@ -1,0 +1,45 @@
+import path from 'node:path'
+import { defineConfig, devices } from '@playwright/test'
+
+// Playwright config for the MULTI-ORG stack: two tenant backends behind the real
+// front router, reachable as acme.localhost / globex.localhost.
+//
+// Separate from the main config because it is a different topology (two DBs, two
+// listeners, a router in front) and is opt-in: it needs `go` on PATH plus a
+// bundle the ordinary e2e run has already exported. Run it with
+//
+//   pnpm run e2e:multi-org
+//
+// The specs live in tests/e2e-multi-org/ so the default run cannot pick them up
+// — they would fail against the single-origin webServer, which serves no
+// subdomains.
+const PORT = Number(process.env.E2E_MULTI_ORG_PORT ?? 7300)
+
+export default defineConfig({
+    reporter: 'list',
+    retries: 0,
+    testDir: path.join(import.meta.dirname, 'tests', 'e2e-multi-org'),
+    testMatch: '**/*.spec.ts',
+    // One worker: the two orgs share a router and their sessions are per-origin
+    // browser state, so parallel workers would fight over the same two DBs.
+    workers: 1,
+    use: {
+        // acme is "home"; specs navigate to globex explicitly by absolute URL.
+        baseURL: `http://acme.localhost:${PORT}`,
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+    },
+    projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+    webServer: {
+        command: 'npx tsx scripts/e2e-multi-org.ts',
+        // Gate on an org subdomain rather than the bare port: the router answers
+        // the apex with its org-finder page well before the tenants are up, so a
+        // port-only check would green-light a stack that cannot serve the app.
+        url: `http://acme.localhost:${PORT}/api/health`,
+        reuseExistingServer: !process.env.CI,
+        // Two DB seeds plus a `go run` compile on a cold cache.
+        timeout: 300_000,
+        stdout: 'pipe',
+        stderr: 'pipe',
+    },
+})
