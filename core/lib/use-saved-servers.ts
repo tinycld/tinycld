@@ -1,10 +1,10 @@
 import { router } from 'expo-router'
 import { useCallback, useEffect, useState } from 'react'
 import { captureException } from './errors'
-import { ReloadUnavailableError } from './reload-js-context'
+import { isReloadAvailable, ReloadUnavailableError } from './reload-js-context'
 import { forgetServer } from './remove-server'
 import { getResolvedAddress } from './server-address'
-import { readServers, type SavedServer } from './servers'
+import { isSavedServersSupported, readServers, type SavedServer } from './servers'
 import { switchToServer } from './switch-server'
 
 interface SavedServersState {
@@ -15,24 +15,58 @@ interface SavedServersState {
     // context, so a second concurrent action would be acting on a doomed graph.
     busyOrigin: string | null
     error: string | null
+    // False when this build cannot restart the JS context (dev, web, a binary
+    // without reload support), so a surface can warn BEFORE the user taps rather
+    // than only afterwards. A switch is still worth attempting: it persists the
+    // active pointer, so a manual restart completes it.
+    canReload: boolean
     add: () => void
     switchTo: (origin: string) => void
     remove: (origin: string) => void
 }
 
+// seedServers gives the first render the one server we can know synchronously.
+//
+// `activeOrigin` is a sync module read while the list arrives from AsyncStorage a
+// frame or two later, so a length-gated surface would pop in on every open. The
+// seed is not a lie: trimToCap deliberately reserves the active server's slot, so
+// it is always in the stored list — this just under-counts until the read lands,
+// and the section grows rather than appearing from nothing.
+function seedServers(activeOrigin: string | null): SavedServer[] {
+    if (!activeOrigin) return []
+    return [{ origin: activeOrigin, label: labelForOrigin(activeOrigin), addedAt: 0 }]
+}
+
+function labelForOrigin(origin: string): string {
+    try {
+        return new URL(origin).host
+    } catch {
+        return origin
+    }
+}
+
 // useSavedServers owns the saved-server list and the add/switch/remove actions,
-// keeping the Settings section's JSX to layout only.
+// keeping consumers' JSX to layout only.
 //
 // The list is read once on mount and after a removal rather than subscribed to:
 // the only other way it changes is a switch, which restarts the JS context and
 // re-runs this from scratch.
+//
+// Self-gating by platform, following the useUserOrgs precedent: off native this
+// returns an inert state rather than making every consumer remember the check.
+// Forgetting it on web would cost a pointless AsyncStorage read AND surface an
+// `add` that pushes /connect?mode=add to connect.web.tsx, which has no add mode.
 export function useSavedServers(): SavedServersState {
-    const [servers, setServers] = useState<SavedServer[]>([])
+    const supported = isSavedServersSupported()
+    const activeOrigin = getResolvedAddress()
+    const [servers, setServers] = useState<SavedServer[]>(() =>
+        supported ? seedServers(activeOrigin) : []
+    )
     const [busyOrigin, setBusyOrigin] = useState<string | null>(null)
     const [error, setError] = useState<string | null>(null)
-    const activeOrigin = getResolvedAddress()
 
     useEffect(() => {
+        if (!supported) return
         let cancelled = false
         readServers().then(saved => {
             if (!cancelled) setServers(saved)
@@ -40,7 +74,7 @@ export function useSavedServers(): SavedServersState {
         return () => {
             cancelled = true
         }
-    }, [])
+    }, [supported])
 
     const add = useCallback(() => {
         // ?mode=add tells the connect screen to switch rather than replace, so
@@ -92,5 +126,32 @@ export function useSavedServers(): SavedServersState {
         }
     }, [])
 
-    return { servers, activeOrigin, busyOrigin, error, add, switchTo, remove }
+    // Every hook above runs unconditionally (rules of hooks); only the RESULT is
+    // gated. The effect self-skips, so an unsupported platform does no storage
+    // work and gets callbacks that cannot navigate anywhere it shouldn't.
+    if (!supported) return INERT
+
+    return {
+        servers,
+        activeOrigin,
+        busyOrigin,
+        error,
+        canReload: isReloadAvailable(),
+        add,
+        switchTo,
+        remove,
+    }
+}
+
+const noop = () => {}
+
+const INERT: SavedServersState = {
+    servers: [],
+    activeOrigin: null,
+    busyOrigin: null,
+    error: null,
+    canReload: false,
+    add: noop,
+    switchTo: noop,
+    remove: noop,
 }

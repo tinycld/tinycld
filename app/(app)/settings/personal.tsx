@@ -4,7 +4,6 @@ import { AboutSection } from '@tinycld/core/components/settings/AboutSection'
 import { DisableAccountSection } from '@tinycld/core/components/settings/account/DisableAccountSection'
 import { DeleteAccountSection } from '@tinycld/core/components/settings/DeleteAccountSection'
 import { DisconnectServerSection } from '@tinycld/core/components/settings/DisconnectServerSection'
-import { ServersSection } from '@tinycld/core/components/settings/ServersSection'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import { changeMyPassword } from '@tinycld/core/lib/account-password'
 import { useAuth } from '@tinycld/core/lib/auth'
@@ -81,7 +80,6 @@ export default function PersonalSettings() {
                     <AppearanceSection />
                     <NotificationsSection />
                     <NavigationSection />
-                    <ServersSection />
                     <DisconnectServerSection />
                     <AboutSection />
                     <DisableAccountSection />

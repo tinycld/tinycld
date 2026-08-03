@@ -1,4 +1,4 @@
-import { isSameServer, isSavedServersSupported, type SavedServer } from '@tinycld/core/lib/servers'
+import { isSameServer, type SavedServer } from '@tinycld/core/lib/servers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useSavedServers } from '@tinycld/core/lib/use-saved-servers'
 import { Check, Plus, Server, Trash2 } from 'lucide-react-native'
@@ -12,11 +12,13 @@ export function ServersSection() {
     const { servers, activeOrigin, busyOrigin, error, add, switchTo, remove } = useSavedServers()
     const fg = useThemeColor('foreground')
 
-    if (!isSavedServersSupported()) return null
+    // The hook self-gates by platform, so an empty list is the only check needed.
+    if (servers.length === 0) return null
 
+    // No heading of its own: this is the entire body of the Servers settings
+    // screen, which supplies the title.
     return (
         <View className="gap-3">
-            <Text className="text-xl font-bold text-foreground">Servers</Text>
             <View className="rounded-xl border border-border bg-surface-secondary p-4 gap-2">
                 <Text className="text-[13px] text-muted-foreground">
                     Switch between the servers you've signed into. Each keeps its own account and
