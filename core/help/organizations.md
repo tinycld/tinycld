@@ -15,9 +15,13 @@ belongs to it.
 If you belong to more than one organization — say a personal one and a work
 one — each has its own address and its own sign-in. Once you've signed into an
 organization in this browser, it appears in the **Organizations** section of
-the user menu (and the More drawer on mobile), so you can jump between them
-without retyping addresses. Switching opens the other organization at its own
-address; you stay signed in there independently.
+the user menu, so you can jump between them without retyping addresses.
+Switching opens the other organization at its own address; you stay signed in
+there independently.
+
+In the phone and tablet app it works a little differently: you add each server
+by address rather than having them discovered for you. See
+[Servers on your device](help://core:servers).
 
 ## Roles
 
