@@ -10,9 +10,10 @@ import { useRouter } from 'expo-router'
 import { Bell, Calendar, Check, File, Mail, Shield, X } from 'lucide-react-native'
 import { useEffect, useMemo, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { railWidth } from './workspace/PackageRail'
 
 const DRAWER_WIDTH = 340
-const RAIL_WIDTH = 64
 
 const PACKAGE_ICONS: Record<string, typeof Bell> = {
     calendar: Calendar,
@@ -39,6 +40,7 @@ function DesktopNotificationPanel() {
     const close = useWorkspaceStore(s => s.setNotificationsOpen)
     const overlayColor = useThemeColor('overlay-backdrop')
     const [isMounted, setIsMounted] = useState(isOpen)
+    const insets = useSafeAreaInsets()
 
     useEffect(() => {
         if (isOpen) {
@@ -55,7 +57,11 @@ function DesktopNotificationPanel() {
         <View
             className="absolute top-0 right-0 bottom-0"
             style={{
-                left: RAIL_WIDTH,
+                // Tracks the rail's real width rather than assuming 64: the rail
+                // grows with the left safe-area inset in landscape, and a fixed
+                // offset would leave a strip of workspace showing through
+                // between the rail and this panel.
+                left: railWidth(insets.left),
                 zIndex: 200,
             }}
             pointerEvents={isOpen ? 'auto' : 'none'}

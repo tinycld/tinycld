@@ -1,3 +1,4 @@
+import { PreAuthScreen } from '@tinycld/core/components/connect/PreAuthScreen'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { hostnameOf, isOrgUnderApex, orgUrlUnderApex, slugUnderApex } from '@tinycld/core/lib/apex'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
@@ -10,8 +11,7 @@ import { TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { router, useLocalSearchParams } from 'expo-router'
 import { Building2, ChevronRight, Server } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { Pressable, Text, View } from 'react-native'
 
 // The native counterpart to the router's apex org-finder page (multi-org,
 // internal/webpage). Reaching the apex means the user is at an address that
@@ -124,102 +124,94 @@ export default function PickOrg() {
     })
 
     return (
-        <SafeAreaView className="flex-1 bg-background" edges={['top', 'bottom']}>
+        <PreAuthScreen>
             <DocumentTitle title="Choose an organization" includeOrg={false} />
-            <ScrollView
-                contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28, paddingBottom: 32 }}
-                showsVerticalScrollIndicator={false}
+            <View className="flex-row items-center gap-2 mb-2">
+                <View className="w-[18px] h-px bg-primary" />
+                <Text
+                    className="text-[11px] font-semibold text-primary"
+                    style={{ letterSpacing: 2 }}
+                >
+                    CHOOSE AN ORGANIZATION
+                </Text>
+            </View>
+
+            <Text
+                className="text-foreground text-[32px] font-semibold"
+                style={{ lineHeight: 36, letterSpacing: -0.8, fontFamily: 'Georgia' }}
             >
-                <View className="flex-row items-center gap-2 mt-8 mb-2">
-                    <View className="w-[18px] h-px bg-primary" />
-                    <Text
-                        className="text-[11px] font-semibold text-primary"
-                        style={{ letterSpacing: 2 }}
-                    >
-                        CHOOSE AN ORGANIZATION
-                    </Text>
-                </View>
-
-                <Text
-                    className="text-foreground text-[32px] font-semibold"
-                    style={{ lineHeight: 36, letterSpacing: -0.8, fontFamily: 'Georgia' }}
-                >
-                    Find your{' '}
-                    <Text
-                        className="italic font-normal text-primary"
-                        style={{ fontFamily: 'Georgia' }}
-                    >
-                        organization.
-                    </Text>
+                Find your{' '}
+                <Text className="italic font-normal text-primary" style={{ fontFamily: 'Georgia' }}>
+                    organization.
                 </Text>
+            </Text>
 
-                <Text
-                    className="text-foreground text-[15px] mt-3.5"
-                    style={{ lineHeight: 22, opacity: 0.78, maxWidth: 360 }}
-                >
-                    {apexHostname ?? brandName} hosts many organizations, each with its own address.
-                    Pick one you've used on this device, or enter your organization's name.
-                </Text>
+            <Text
+                className="text-foreground text-[15px] mt-3.5"
+                style={{ lineHeight: 22, opacity: 0.78, maxWidth: 360 }}
+            >
+                {apexHostname ?? brandName} hosts many organizations, each with its own address.
+                Pick one you've used on this device, or enter your organization's name.
+            </Text>
 
-                <KnownOrgsSection
-                    orgs={knownOrgs}
-                    apexHostname={apexHostname}
-                    disabled={busy}
-                    onPick={onPickKnown}
+            <KnownOrgsSection
+                orgs={knownOrgs}
+                apexHostname={apexHostname}
+                disabled={busy}
+                onPick={onPickKnown}
+            />
+
+            <View className="mt-7">
+                <TextInput
+                    control={control}
+                    name="slug"
+                    label="Your organization's name"
+                    placeholder="your-org"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="off"
+                    hint={apexHostname ? `We'll open your-org.${apexHostname}` : undefined}
                 />
+            </View>
 
-                <View className="mt-7">
-                    <TextInput
-                        control={control}
-                        name="slug"
-                        label="Your organization's name"
-                        placeholder="your-org"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        autoComplete="off"
-                        hint={apexHostname ? `We'll open your-org.${apexHostname}` : undefined}
-                    />
+            {submitError ? (
+                <View className="mt-3 rounded-lg p-3 bg-danger-soft">
+                    <Text className="text-xs text-danger">{submitError}</Text>
                 </View>
+            ) : null}
 
-                {submitError ? (
-                    <View className="mt-3 rounded-lg p-3 bg-danger-soft">
-                        <Text className="text-xs text-danger">{submitError}</Text>
-                    </View>
-                ) : null}
-
-                <Pressable
-                    onPress={onSubmitSlug}
-                    disabled={busy}
-                    className={`mt-4 bg-foreground rounded-2xl py-4 px-5 items-center justify-center relative overflow-hidden ${busy ? 'opacity-[0.55]' : 'opacity-100'}`}
-                >
-                    <View className="absolute top-0 bottom-0 left-0 w-1 bg-primary" />
-                    <Text className="text-[15px] font-semibold text-background">
-                        {busy ? 'Connecting…' : 'Continue'}
-                    </Text>
-                </Pressable>
-
-                <Text className="text-muted-foreground text-[13px] mt-5" style={{ lineHeight: 19 }}>
-                    Not sure of the address? It's in your invitation email, or ask your
-                    organization's administrator.
+            <Pressable
+                onPress={onSubmitSlug}
+                disabled={busy}
+                className={`mt-4 bg-foreground rounded-2xl py-4 px-5 items-center justify-center relative overflow-hidden ${busy ? 'opacity-[0.55]' : 'opacity-100'}`}
+            >
+                <View className="absolute top-0 bottom-0 left-0 w-1 bg-primary" />
+                <Text className="text-[15px] font-semibold text-background">
+                    {busy ? 'Connecting…' : 'Continue'}
                 </Text>
+            </Pressable>
 
-                <View className="flex-1" />
+            <Text className="text-muted-foreground text-[13px] mt-5" style={{ lineHeight: 19 }}>
+                Not sure of the address? It's in your invitation email, or ask your organization's
+                administrator.
+            </Text>
 
-                {/* A self-hoster who tapped the hosted default must not be stranded
+            <View className="flex-1" />
+
+            {/* A self-hoster who tapped the hosted default must not be stranded
                     here — /connect is the surface that takes an arbitrary address. */}
-                <Pressable
-                    onPress={() => router.replace('/connect')}
-                    disabled={busy}
-                    className={`mt-8 rounded-xl border border-border bg-surface flex-row items-center gap-3 px-4 py-3.5 ${busy ? 'opacity-50' : 'opacity-100'}`}
-                >
-                    <Server size={16} color={fg} />
-                    <Text className="text-foreground text-sm font-medium flex-1">
-                        Use a different server
-                    </Text>
-                    <ChevronRight size={16} color={muted} />
-                </Pressable>
-            </ScrollView>
-        </SafeAreaView>
+            <Pressable
+                onPress={() => router.replace('/connect')}
+                disabled={busy}
+                className={`mt-8 rounded-xl border border-border bg-surface flex-row items-center gap-3 px-4 py-3.5 ${busy ? 'opacity-50' : 'opacity-100'}`}
+            >
+                <Server size={16} color={fg} />
+                <Text className="text-foreground text-sm font-medium flex-1">
+                    Use a different server
+                </Text>
+                <ChevronRight size={16} color={muted} />
+            </Pressable>
+        </PreAuthScreen>
     )
 }
 

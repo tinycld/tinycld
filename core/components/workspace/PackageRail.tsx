@@ -12,7 +12,46 @@ import { Pressable, View } from 'react-native'
 import { getIcon } from './package-icon-map'
 import { UserMenu } from './UserMenu'
 
-export function PackageRail() {
+// The rail's visible icon column. Its 44pt touch targets are centred in it, so
+// there is ~10pt of slack on each side before an icon reaches the rail's edge.
+const RAIL_WIDTH = 64
+
+// How far the icon column may be pushed inward by a left safe-area inset.
+//
+// The inset is NOT symmetric between the two landscape rotations: iOS reports
+// the sensor housing (~59pt) on whichever side it physically sits, and the home
+// indicator (~21pt) on the other. Absorbing it wholesale made the rail 123pt in
+// one rotation and 85pt in the other — the same screen, wildly different chrome.
+//
+// The cap keeps that shift small. The icons stay clear of the notch anyway: the
+// housing does not intrude into the display's usable area beside it, and the
+// column's own ~10pt of slack plus this shift covers the rounded corner. The
+// background is unaffected either way — it always reaches the physical edge, so
+// there is never a light gutter.
+const MAX_RAIL_INSET_SHIFT = 12
+
+// The rail's ACTUAL on-screen width, which grows with the left safe-area inset.
+// Exported because anything positioned against the rail's right edge — the
+// notification drawer — has to agree with it; a hardcoded 64 there leaves a gap
+// once the rail widens in landscape.
+export function railWidth(insetLeft: number): number {
+    return RAIL_WIDTH + Math.min(insetLeft, MAX_RAIL_INSET_SHIFT)
+}
+
+// insetLeft is the device's left safe-area inset (the notch side in one
+// landscape rotation, the home indicator in the other, 0 in portrait). The rail
+// absorbs it rather than letting the parent pad the whole layout: that way the
+// rail's own dark background fills the gutter edge to edge. Padding it upstream
+// instead left a strip of app background beside the rail — the light band this
+// fixes.
+export function PackageRail({
+    insetLeft = 0,
+    insetBottom = 0,
+}: {
+    insetLeft?: number
+    insetBottom?: number
+}) {
+    const insetShift = Math.min(insetLeft, MAX_RAIL_INSET_SHIFT)
     const railBg = useThemeColor('rail-background')
     const railText = useThemeColor('rail-text')
     const railActive = useThemeColor('rail-active-text')
@@ -24,8 +63,21 @@ export function PackageRail() {
 
     return (
         <View
-            className="w-16 justify-between items-center py-3"
-            style={{ backgroundColor: railBg }}
+            // Width grows only by the CAPPED shift, not the full inset: the rail
+            // is chrome, and turning a 59pt notch inset into 59pt of extra dark
+            // bar (with the workspace pushed in behind it) costs real screen
+            // width for nothing. The background still reaches the physical edge
+            // regardless — the parent applies no horizontal padding, so this box
+            // starts at x=0 and its own background covers the gutter it sits in.
+            // pt-3 rather than py-3: the bottom pad adds the home-indicator
+            // inset on top of the same base 12, keeping the last icon tappable.
+            className="justify-between items-center pt-3"
+            style={{
+                backgroundColor: railBg,
+                width: railWidth(insetLeft),
+                paddingLeft: insetShift,
+                paddingBottom: 12 + insetBottom,
+            }}
         >
             <View className="items-center gap-1">
                 <Link href={orgHref('')} asChild>

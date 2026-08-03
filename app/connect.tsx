@@ -1,4 +1,5 @@
 import { ConnectIllustration } from '@tinycld/core/components/connect/ConnectIllustration'
+import { PreAuthScreen } from '@tinycld/core/components/connect/PreAuthScreen'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { ApexServerError } from '@tinycld/core/lib/apex'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
@@ -11,15 +12,7 @@ import { TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { router, useLocalSearchParams } from 'expo-router'
 import { ChevronDown, Globe, Server, X } from 'lucide-react-native'
 import { useState } from 'react'
-import {
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    ScrollView,
-    Text,
-    View,
-} from 'react-native'
+import { KeyboardAvoidingView, Modal, Platform, Pressable, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
 const FALLBACK_DEFAULT_SERVER = 'https://tinycld.org'
@@ -190,13 +183,10 @@ export default function Connect() {
     const busy = busyDefault || busyCustom
 
     return (
-        <SafeAreaView className="flex-1 bg-background" edges={['top', 'bottom']}>
-            <DocumentTitle title="Connect" includeOrg={false} />
-            <ScrollView
-                contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 28, paddingBottom: 32 }}
-                showsVerticalScrollIndicator={false}
-            >
-                <View className="flex-row items-center gap-3 mt-4">
+        <>
+            <PreAuthScreen>
+                <DocumentTitle title="Connect" includeOrg={false} />
+                <View className="flex-row items-center gap-3">
                     <BrandMark name={brandName} />
                 </View>
 
@@ -274,7 +264,7 @@ export default function Connect() {
                         <ChevronDown size={16} color={muted} />
                     </Pressable>
                 </View>
-            </ScrollView>
+            </PreAuthScreen>
 
             <Modal
                 visible={sheetOpen}
@@ -352,7 +342,7 @@ export default function Connect() {
                     </View>
                 </KeyboardAvoidingView>
             </Modal>
-        </SafeAreaView>
+        </>
     )
 }
 

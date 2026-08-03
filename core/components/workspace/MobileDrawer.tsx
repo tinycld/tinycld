@@ -147,6 +147,11 @@ export function MobileDrawer({ isVisible }: MobileDrawerProps) {
                                 backgroundColor: sidebarBg,
                                 paddingTop: insets.top,
                                 paddingBottom: insets.bottom,
+                                // Pinned to the left edge, so in one landscape
+                                // rotation the sensor housing sits over this
+                                // panel's contents. Pad the panel, not the
+                                // parent: its background still covers the gutter.
+                                paddingLeft: insets.left,
                             },
                             panelStyle,
                         ]}

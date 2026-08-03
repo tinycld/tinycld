@@ -1,9 +1,9 @@
 import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useSafeAreaPadding } from '@tinycld/core/lib/use-safe-area'
 import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { ChevronLeft, ChevronRight, Download, X } from 'lucide-react-native'
 import { Platform, Pressable, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { GenericPreview } from './previews/GenericPreview'
 import { getPreviewEntry } from './registry'
 import type { FilePreviewSource, PreviewAction } from './types'
@@ -90,7 +90,7 @@ function PreviewModalContent({
     actions,
 }: PreviewModalContentProps) {
     const mutedColor = useThemeColor('muted-foreground')
-    const insets = useSafeAreaInsets()
+    const toolbarPadding = useSafeAreaPadding({ horizontal: 16, top: 12 })
 
     const entry = getPreviewEntry(source.mimeType)
     const PreviewComponent = entry?.preview ?? GenericPreview
@@ -99,7 +99,17 @@ function PreviewModalContent({
         <>
             <View
                 className="flex-row items-center px-4 py-3 gap-3 border-b border-border"
-                style={{ paddingTop: Math.max(insets.top, 12) }}
+                style={{
+                    // A full-screen native modal: it bypasses every ancestor's
+                    // padding, so it must clear the sensor housing itself. px-4
+                    // (16pt) is nowhere near a landscape notch inset, which
+                    // clipped the filename on one side and the close X on the
+                    // other — leaving no way out of the viewer. Bottom padding
+                    // is left to py-3: this is a top toolbar, not a full screen.
+                    paddingLeft: toolbarPadding.paddingLeft,
+                    paddingRight: toolbarPadding.paddingRight,
+                    paddingTop: toolbarPadding.paddingTop,
+                }}
             >
                 <Text
                     numberOfLines={1}

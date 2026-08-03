@@ -148,7 +148,17 @@ export function FirstRunModal({
         >
             <View
                 className={cardClass}
-                style={[cardStyle, isMobile ? { paddingTop: insets.top } : null]}
+                style={[
+                    cardStyle,
+                    // Landscape puts the sensor housing on one SIDE, so the
+                    // top/bottom insets alone leave the full-bleed mobile card's
+                    // content clipped by the notch. The centred card needs it too:
+                    // it is centred inside p-6, which is narrower than a ~59pt
+                    // inset. Applied on the card so the backdrop still covers the
+                    // whole screen.
+                    { paddingLeft: insets.left, paddingRight: insets.right },
+                    isMobile ? { paddingTop: insets.top } : null,
+                ]}
             >
                 {/* Accent edge along the top — same role as the SVG draw-on
                     in the marketing CTA: a small cue that this surface is
