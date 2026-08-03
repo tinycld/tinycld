@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Platform } from 'react-native'
+import { ApexServerError, looksLikeApexResponse } from './apex'
 import { getCoreConfigOptional, registerConfigListener } from './core-config'
 
 const STORAGE_KEY_PREFIX = 'tinycld:server:'
@@ -67,6 +68,11 @@ export function normalizeAddress(input: string): string {
     return addr
 }
 
+// probe is a LIVENESS check: "is the server I already connected to answering?"
+// It is polled on a timer by OfflineOverlay and the native connectivity
+// detector, so it stays the cheapest possible request and deliberately does not
+// inspect the body. Use probeServer() to ADMIT a new address — liveness is the
+// wrong question there, because a multi-org apex is perfectly alive.
 export async function probe(address: string, timeoutMs = 5000): Promise<void> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -77,6 +83,49 @@ export async function probe(address: string, timeoutMs = 5000): Promise<void> {
         }
     } finally {
         clearTimeout(timer)
+    }
+}
+
+// probeServer ADMITS an address: it answers "is there a TinyCld org here I can
+// sign into?", which reachability alone cannot.
+//
+// It asks /api/org-info (unauthenticated, registered unconditionally in
+// coreserver.Setup, returns {name}) and requires a JSON object back. A
+// multi-org apex answers 200 with the org-finder HTML for every path including
+// this one, so a status-only check admits it and the app then renders a sign-in
+// panel against a host with no PocketBase. Throws ApexServerError for that case
+// so the caller can offer the org picker instead of a network error.
+export async function probeServer(address: string, timeoutMs = 5000): Promise<void> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    let res: Response
+    let body: string
+    try {
+        res = await fetch(`${address}/api/org-info`, { signal: controller.signal })
+        // Read the body before judging: the apex's HTML arrives with a 200, so
+        // status alone cannot tell the two apart.
+        body = await res.text()
+    } finally {
+        clearTimeout(timer)
+    }
+
+    if (looksLikeApexResponse(res.headers?.get?.('content-type') ?? '', body)) {
+        throw new ApexServerError(address)
+    }
+    if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`)
+    }
+
+    let parsed: unknown
+    try {
+        parsed = JSON.parse(body)
+    } catch {
+        throw new Error('That address did not answer like a TinyCld server.')
+    }
+    // `name` may legitimately be '' (a deployment that never set an app name),
+    // so check for the FIELD, not a truthy value.
+    if (typeof parsed !== 'object' || parsed === null || !('name' in parsed)) {
+        throw new Error('That address did not answer like a TinyCld server.')
     }
 }
 

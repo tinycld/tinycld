@@ -1,8 +1,9 @@
 import { ConnectIllustration } from '@tinycld/core/components/connect/ConnectIllustration'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
+import { ApexServerError } from '@tinycld/core/lib/apex'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
-import { ReloadUnavailableError } from '@tinycld/core/lib/reload-js-context'
-import { normalizeAddress, probe, setResolvedAddress } from '@tinycld/core/lib/server-address'
+import { isReloadAvailable, ReloadUnavailableError } from '@tinycld/core/lib/reload-js-context'
+import { normalizeAddress, probeServer, setResolvedAddress } from '@tinycld/core/lib/server-address'
 import { setActiveServer } from '@tinycld/core/lib/servers'
 import { switchToServer } from '@tinycld/core/lib/switch-server'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -26,6 +27,14 @@ const FALLBACK_DEFAULT_SERVER = 'https://tinycld.org'
 const urlSchema = z.object({
     url: z.string().min(1, 'Enter a server address.'),
 })
+
+// Not every unhappy outcome is a failure. A refused JS-context restart leaves
+// the server saved and active, so it reads as 'info' — only a genuinely failed
+// connection is 'error'.
+interface Notice {
+    tone: 'error' | 'info'
+    text: string
+}
 
 // The screen serves two jobs — first-run "pick a server" and, from Settings,
 // "add another one alongside the one you're signed into". Same probe, same
@@ -69,7 +78,14 @@ export default function Connect() {
     const [sheetOpen, setSheetOpen] = useState(false)
     const [busyDefault, setBusyDefault] = useState(false)
     const [busyCustom, setBusyCustom] = useState(false)
-    const [submitError, setSubmitError] = useState<string | null>(null)
+    const [notice, setNotice] = useState<Notice | null>(null)
+
+    // Adding a server switches to it, and a switch needs a JS-context restart
+    // this build may not have (dev bundler, or a binary without reload support).
+    // Say so BEFORE the tap — the same thing ServersDrawerSection and UserMenu
+    // already do — rather than letting the user discover it from what looks
+    // like an error afterwards. Only add-mode switches; first-run does not.
+    const warnsAboutRestart = isAddMode && !isReloadAvailable()
 
     const fg = useThemeColor('foreground')
     const muted = useThemeColor('muted-foreground')
@@ -82,7 +98,22 @@ export default function Connect() {
     })
 
     async function connectTo(addr: string) {
-        await probe(addr)
+        // probeServer, not probe: a multi-org apex is alive and answers 200, so a
+        // liveness check admits it and the app then renders a sign-in panel
+        // against a host with no PocketBase. ApexServerError means "this address
+        // hosts orgs" — the recovery is to ask which one, not to report an error.
+        try {
+            await probeServer(addr)
+        } catch (err) {
+            if (err instanceof ApexServerError) {
+                router.replace({
+                    pathname: '/pick-org',
+                    params: { apex: err.apexOrigin },
+                })
+                return
+            }
+            throw err
+        }
 
         if (isAddMode) {
             // Adding a second server: persist it, then restart the JS context so
@@ -107,44 +138,51 @@ export default function Connect() {
     // has been saved; only the JS-context restart is unavailable (dev builds have
     // no reload mechanism). Saying "couldn't reach" there would send the user
     // debugging a network problem that doesn't exist.
-    function describeFailure(err: unknown, label: string): string {
+    //
+    // The tone travels WITH the message rather than being inferred where it is
+    // rendered: this outcome is a success with a follow-up step, and showing it
+    // in the danger style told the user something had broken when nothing had.
+    function describeFailure(err: unknown, label: string): Notice {
         if (err instanceof ReloadUnavailableError) {
-            return `Saved ${label}. Restart the app to finish switching to it.`
+            return {
+                tone: 'info',
+                text: `Saved ${label}. Restart the app to finish switching to it.`,
+            }
         }
         const reason = err instanceof Error ? err.message : 'Connection failed'
-        return `Couldn't reach ${label}: ${reason}`
+        return { tone: 'error', text: `Couldn't reach ${label}: ${reason}` }
     }
 
     async function onUseDefault() {
-        setSubmitError(null)
+        setNotice(null)
         setBusyDefault(true)
         try {
             await connectTo(normalizeAddress(defaultServer))
         } catch (err) {
-            setSubmitError(describeFailure(err, defaultServerLabel))
+            setNotice(describeFailure(err, defaultServerLabel))
             setBusyDefault(false)
         }
     }
 
     function openSheet() {
-        setSubmitError(null)
+        setNotice(null)
         setSheetOpen(true)
     }
 
     function closeSheet() {
         setSheetOpen(false)
-        setSubmitError(null)
+        setNotice(null)
         reset({ url: '' })
     }
 
     const onSubmitCustom = handleSubmit(async ({ url }) => {
-        setSubmitError(null)
+        setNotice(null)
         setBusyCustom(true)
         const addr = normalizeAddress(url)
         try {
             await connectTo(addr)
         } catch (err) {
-            setSubmitError(describeFailure(err, addr))
+            setNotice(describeFailure(err, addr))
             setBusyCustom(false)
         }
     })
@@ -204,11 +242,10 @@ export default function Connect() {
                     {copy.body}
                 </Text>
 
-                {submitError && !sheetOpen ? (
-                    <View className="mt-5 rounded-lg p-3 bg-danger-soft">
-                        <Text className="text-xs text-danger">{submitError}</Text>
-                    </View>
-                ) : null}
+                <View className="mt-5">
+                    <RestartNotice isVisible={warnsAboutRestart && !sheetOpen && !notice} />
+                    <NoticeBanner notice={notice} isVisible={!sheetOpen} />
+                </View>
 
                 <View className="flex-1" />
 
@@ -302,11 +339,9 @@ export default function Connect() {
                                 autoFocus
                             />
 
-                            {submitError ? (
-                                <View className="rounded-lg p-3 bg-danger-soft mb-3">
-                                    <Text className="text-xs text-danger">{submitError}</Text>
-                                </View>
-                            ) : null}
+                            <RestartNotice isVisible={warnsAboutRestart && !notice} />
+
+                            <NoticeBanner notice={notice} className="mb-3" />
 
                             <PrimaryCta
                                 label={busyCustom ? 'Connecting…' : 'Connect'}
@@ -318,6 +353,43 @@ export default function Connect() {
                 </KeyboardAvoidingView>
             </Modal>
         </SafeAreaView>
+    )
+}
+
+// One place decides how a notice looks, so a success-with-a-caveat can never
+// pick up the danger styling again by being rendered at a site that assumes
+// every message is an error.
+function NoticeBanner({
+    notice,
+    isVisible = true,
+    className = '',
+}: {
+    notice: Notice | null
+    isVisible?: boolean
+    className?: string
+}) {
+    if (!notice || !isVisible) return null
+    const isError = notice.tone === 'error'
+    return (
+        <View
+            className={`rounded-lg p-3 ${isError ? 'bg-danger-soft' : 'bg-surface-secondary'} ${className}`}
+        >
+            <Text className={`text-xs ${isError ? 'text-danger' : 'text-foreground'}`}>
+                {notice.text}
+            </Text>
+        </View>
+    )
+}
+
+// Told BEFORE the tap, not after: this build cannot restart its own JS context,
+// so a switch needs a manual relaunch to finish. Mirrors the notice
+// ServersDrawerSection shows for the same condition.
+function RestartNotice({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return (
+        <Text className="text-[11px] text-muted-foreground mb-3">
+            Switching requires a restart in this build.
+        </Text>
     )
 }
 

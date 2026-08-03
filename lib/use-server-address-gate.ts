@@ -92,10 +92,13 @@ export function useServerAddressGate(pathname: string): GateState {
         if (state.status !== 'unresolved') return
         // Routes that resolve the server address themselves must be exempt from the
         // →/connect redirect, or they get bounced before they can set it. /connect
-        // is the picker; /p/demo pins the public demo server (see app/p/demo.tsx),
-        // so a universal-link demo open on a fresh install (no cached address) must
+        // is the server picker; /pick-org is the org picker a multi-org apex sends
+        // users to (it resolves an org's address the same way /connect resolves a
+        // server's, so bouncing it would strand the user in a loop between the
+        // two); /p/demo pins the public demo server (see app/p/demo.tsx), so a
+        // universal-link demo open on a fresh install (no cached address) must
         // reach it instead of being sent to /connect.
-        if (pathname === '/connect' || pathname === '/p/demo') return
+        if (pathname === '/connect' || pathname === '/pick-org' || pathname === '/p/demo') return
         const backTo = encodeURIComponent(pathname || '/')
         router.replace(`/connect?backTo=${backTo}`)
     }, [state.status, pathname])
