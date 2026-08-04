@@ -8,7 +8,7 @@ import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { type Href, Link } from 'expo-router'
 import { Building2, HelpCircle, type LucideIcon, Settings } from 'lucide-react-native'
-import { Pressable, View } from 'react-native'
+import { Pressable, ScrollView, View } from 'react-native'
 import { getIcon } from './package-icon-map'
 import { UserMenu } from './UserMenu'
 
@@ -64,7 +64,15 @@ export function PackageRail({
     const { org } = useOrgInfo()
 
     return (
-        <View
+        <ScrollView
+            // A ScrollView so short viewports (landscape phones) can still reach
+            // every item — a plain View clipped whatever overflowed. `grow` on
+            // the content container makes it fill the viewport when everything
+            // fits, so justify-between keeps the utilities pinned to the bottom
+            // exactly as before; only genuine overflow scrolls. Popovers are
+            // unaffected: UserMenu portals its menu and the bell toggles the
+            // NotificationDrawer rendered outside the rail.
+            style={{ backgroundColor: railBg, width: railWidth(insetLeft), flexGrow: 0 }}
             // Width and paddingLeft both take the full inset, so the icon column
             // sits entirely clear of the sensor housing with its 64pt intact.
             // The background still reaches the physical edge — the parent applies
@@ -72,13 +80,13 @@ export function PackageRail({
             // background covers the gutter it sits in.
             // pt-3 rather than py-3: the bottom pad adds the home-indicator
             // inset on top of the same base 12, keeping the last icon tappable.
-            className="justify-between items-center pt-3"
-            style={{
-                backgroundColor: railBg,
-                width: railWidth(insetLeft),
+            contentContainerClassName="grow justify-between items-center pt-3"
+            contentContainerStyle={{
                 paddingLeft: insetLeft,
                 paddingBottom: 12 + insetBottom,
             }}
+            showsVerticalScrollIndicator={false}
+            alwaysBounceVertical={false}
         >
             <View className="items-center gap-1">
                 <Link href={orgHref('')} asChild>
@@ -140,7 +148,7 @@ export function PackageRail({
 
                 <UserMenu />
             </View>
-        </View>
+        </ScrollView>
     )
 }
 
