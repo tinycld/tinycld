@@ -134,6 +134,107 @@ describe('server-address', () => {
         })
     })
 
+    describe('probeServer', () => {
+        // The apex's real response, captured from the router: it serves the
+        // org-finder page with HTTP 200 for EVERY path, /api/* included.
+        const APEX_HTML = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">'
+
+        function mockResponse(init: {
+            ok?: boolean
+            status?: number
+            contentType?: string
+            body: string
+        }) {
+            return {
+                ok: init.ok ?? true,
+                status: init.status ?? 200,
+                headers: { get: () => init.contentType ?? 'application/json' },
+                text: async () => init.body,
+            }
+        }
+
+        it('resolves against a real server answering /api/org-info', async () => {
+            const fetchMock = vi
+                .fn()
+                .mockResolvedValue(mockResponse({ body: JSON.stringify({ name: 'Acme' }) }))
+            vi.stubGlobal('fetch', fetchMock)
+            const { probeServer } = await importFresh()
+            await expect(probeServer('https://acme.tinycld.org')).resolves.toBeUndefined()
+            expect(fetchMock).toHaveBeenCalledWith(
+                'https://acme.tinycld.org/api/org-info',
+                expect.objectContaining({ signal: expect.anything() })
+            )
+        })
+
+        it('accepts a server whose app name is empty', async () => {
+            vi.stubGlobal(
+                'fetch',
+                vi.fn().mockResolvedValue(mockResponse({ body: JSON.stringify({ name: '' }) }))
+            )
+            const { probeServer } = await importFresh()
+            await expect(probeServer('https://pb.example.com')).resolves.toBeUndefined()
+        })
+
+        // The regression this whole change exists for: a status-only check
+        // admitted the apex, and the app then rendered a sign-in panel against
+        // a host with no PocketBase behind it.
+        it('rejects the multi-org apex despite its HTTP 200', async () => {
+            vi.stubGlobal(
+                'fetch',
+                vi
+                    .fn()
+                    .mockResolvedValue(
+                        mockResponse({ contentType: 'text/html; charset=utf-8', body: APEX_HTML })
+                    )
+            )
+            const { probeServer } = await importFresh()
+            const { ApexServerError } = await import('@tinycld/core/lib/apex')
+            await expect(probeServer('https://tinycld.org')).rejects.toBeInstanceOf(ApexServerError)
+        })
+
+        it('detects an apex that serves HTML without an html content type', async () => {
+            vi.stubGlobal(
+                'fetch',
+                vi
+                    .fn()
+                    .mockResolvedValue(mockResponse({ contentType: 'text/plain', body: APEX_HTML }))
+            )
+            const { probeServer } = await importFresh()
+            const { ApexServerError } = await import('@tinycld/core/lib/apex')
+            await expect(probeServer('https://tinycld.org')).rejects.toBeInstanceOf(ApexServerError)
+        })
+
+        it('rejects JSON that is not org-info shaped', async () => {
+            vi.stubGlobal(
+                'fetch',
+                vi.fn().mockResolvedValue(mockResponse({ body: JSON.stringify({ status: 'ok' }) }))
+            )
+            const { probeServer } = await importFresh()
+            await expect(probeServer('https://not-tinycld.example')).rejects.toThrow(
+                'did not answer like a TinyCld server'
+            )
+        })
+
+        it('rejects a non-2xx JSON response', async () => {
+            vi.stubGlobal(
+                'fetch',
+                vi
+                    .fn()
+                    .mockResolvedValue(
+                        mockResponse({ ok: false, status: 502, body: '{"message":"bad gateway"}' })
+                    )
+            )
+            const { probeServer } = await importFresh()
+            await expect(probeServer('https://pb.example.com')).rejects.toThrow('HTTP 502')
+        })
+
+        it('rejects on network error', async () => {
+            vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Failed to fetch')))
+            const { probeServer } = await importFresh()
+            await expect(probeServer('https://pb.example.com')).rejects.toThrow('Failed to fetch')
+        })
+    })
+
     describe('setResolvedAddress / getResolvedAddress', () => {
         it('roundtrips', async () => {
             vi.stubGlobal('window', { location: { origin: 'https://example.com' } })

@@ -44,7 +44,13 @@ export default function Layout() {
     if (state.status === 'resolving') return <BlankScreen />
     if (state.status === 'failed') return <GateFailedScreen error={state.error} />
     if (state.status === 'unresolved') {
-        return pathname === '/connect' ? <ConnectSlot /> : <BlankScreen />
+        // The two routes whose whole job is to RESOLVE an address must render
+        // rather than blank-screen: /connect sets a server's, /pick-org sets an
+        // org's. Must stay in step with the gate's redirect exemptions
+        // (use-server-address-gate.ts) — a route exempt there but blanked here
+        // shows nothing at all.
+        const resolvesAddress = pathname === '/connect' || pathname === '/pick-org'
+        return resolvesAddress ? <ConnectSlot /> : <BlankScreen />
     }
 
     const { Providers } = state

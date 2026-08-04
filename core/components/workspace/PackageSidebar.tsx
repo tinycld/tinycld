@@ -8,9 +8,13 @@ import { SkeletonSidebar } from './SkeletonLayout'
 
 interface PackageSidebarProps {
     width: number
+    /** Home-indicator inset. Applied to the inner fixed-width content rather
+     *  than the animating outer box, so the open/close width transition is
+     *  untouched while the sidebar's own background still runs to the edge. */
+    insetBottom?: number
 }
 
-export function PackageSidebar({ width }: PackageSidebarProps) {
+export function PackageSidebar({ width, insetBottom = 0 }: PackageSidebarProps) {
     const activePkgSlug = useWorkspaceStore(s => s.activePkgSlug)
     const isSidebarOpen = useWorkspaceStore(s => s.isSidebarOpen)
     const pkg = usePackage(activePkgSlug ?? '')
@@ -34,7 +38,7 @@ export function PackageSidebar({ width }: PackageSidebarProps) {
                     : undefined,
             ]}
         >
-            <View style={{ width, flex: 1, minHeight: 0 }}>
+            <View style={{ width, flex: 1, minHeight: 0, paddingBottom: insetBottom }}>
                 {SidebarComponent ? (
                     // LazySidebarBoundary owns the Suspense + recovery: it
                     // retries the lazy import if it rejects, and remounts if the

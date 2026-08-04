@@ -178,12 +178,26 @@ test.describe('switcher with two servers', () => {
 // single-origin test can reach the state where they matter — the mobile blocks
 // above exercise a different component entirely (ServersDrawerSection).
 test.describe('switcher on desktop — user menu', () => {
+    // Menu rows and section labels must be matched WITHIN the menu, not
+    // page-wide. The workspace behind the open popover has its own "Settings"
+    // and "Servers" text — a feature-less assembly lands on the settings screen,
+    // where "Servers" is a nav row — so a bare getByText matches two elements
+    // and fails on strict mode. Menu items carry role="menuitem"; section labels
+    // are the only uppercase muted text in the popover.
+    function menuItem(page: Page, label: string) {
+        return page.locator('[role="menuitem"]', { hasText: label })
+    }
+
+    function menuLabel(page: Page, label: string) {
+        return page.locator('.uppercase.text-muted-foreground', { hasText: label })
+    }
+
     async function openUserMenu(page: Page) {
         await expect(page.getByTestId('nav-home')).toBeVisible({ timeout: 20_000 })
         await page.getByLabel('User menu').click()
         // Settings is a stable neighbour in the same menu — gate on it so we do
         // not race the popover's open animation.
-        await expect(page.getByText('Settings', { exact: true })).toBeVisible()
+        await expect(menuItem(page, 'Settings')).toBeVisible()
     }
 
     test('lists both servers, marking only the current one', async ({ page }) => {
@@ -194,7 +208,7 @@ test.describe('switcher on desktop — user menu', () => {
 
         await openUserMenu(page)
 
-        await expect(page.getByText('Servers', { exact: true })).toBeVisible()
+        await expect(menuLabel(page, 'Servers')).toBeVisible()
 
         // Web rows carry an href (Menu.Item renders a real <a role="menuitem">),
         // which is what makes middle-click / open-in-new-tab work — so target by

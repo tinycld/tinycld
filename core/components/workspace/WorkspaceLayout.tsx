@@ -54,26 +54,37 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
                 {
                     backgroundColor: bgColor,
                     paddingTop: insets.top,
-                    paddingLeft: insets.left,
-                    paddingRight: insets.right,
                 },
                 Platform.OS === 'web' ? ({ height: '100vh' } as object) : undefined,
             ]}
         >
             <DemoBanner />
             <View className="flex-1 flex-row" style={{ minHeight: 0 }}>
-                {isReady && <PackageRail />}
+                {/* Horizontal insets are consumed by the edge panels themselves,
+                    NOT by this container. In landscape iOS reports a large inset
+                    on the notch side (~59pt) and the home-indicator side (~21pt);
+                    padding them here painted both gutters in the app background,
+                    leaving a wide light band down the side of the screen. The iOS
+                    convention is the opposite: backgrounds run edge to edge and
+                    only CONTENT is inset. So the rail bleeds its own dark colour
+                    into the left gutter, and the content pane extends under the
+                    right one while padding its contents clear of it. */}
+                {isReady && <PackageRail insetLeft={insets.left} insetBottom={insets.bottom} />}
 
                 {isReady && <NotificationDrawer />}
 
                 <PackageProviderWrapper>
-                    {isReady && hasSidebar && <PackageSidebar width={sidebarWidth} />}
+                    {isReady && hasSidebar && (
+                        <PackageSidebar width={sidebarWidth} insetBottom={insets.bottom} />
+                    )}
 
                     <View
                         className="flex-1"
                         style={{
                             backgroundColor: bgColor,
                             minHeight: 0,
+                            paddingRight: insets.right,
+                            paddingBottom: insets.bottom,
                         }}
                     >
                         <PackageTabs />

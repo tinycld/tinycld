@@ -1,7 +1,7 @@
 import { ConnectIllustration } from '@tinycld/core/components/connect/ConnectIllustration'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
-import { normalizeAddress, probe, setResolvedAddress } from '@tinycld/core/lib/server-address'
+import { normalizeAddress, probeServer, setResolvedAddress } from '@tinycld/core/lib/server-address'
 import { setActiveServer } from '@tinycld/core/lib/servers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
@@ -39,7 +39,12 @@ export default function ConnectWeb() {
     })
 
     async function connectTo(addr: string) {
-        await probe(addr)
+        // probeServer, not probe: an address that merely answers is not
+        // necessarily a server. A multi-org apex returns 200 for every path, so
+        // liveness alone would admit it. Web has no picker route — the router
+        // serves its own org-finder page at the apex — so the apex case surfaces
+        // here as an ordinary (accurate) error rather than a redirect.
+        await probeServer(addr)
         // setActiveServer is the only sanctioned writer of the active pointer,
         // on every platform — one code path. Web never surfaces the saved list
         // (it is same-origin and has its own cookie switcher), so the extra list

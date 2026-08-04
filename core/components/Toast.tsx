@@ -3,9 +3,12 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { AlertTriangle, CheckCircle, Info, X, XCircle } from 'lucide-react-native'
 import { useEffect, useRef } from 'react'
 import { Animated, Platform, Pressable, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 export function ToastRenderer() {
     const toasts = useToastStore(s => s.toasts)
+    // Before the early return — hooks cannot be called conditionally.
+    const insets = useSafeAreaInsets()
 
     if (toasts.length === 0) return null
 
@@ -14,8 +17,13 @@ export function ToastRenderer() {
             style={{
                 position: 'absolute',
                 top: Platform.OS === 'web' ? 16 : 60,
-                right: Platform.OS === 'web' ? 16 : 8,
-                left: Platform.OS === 'web' ? undefined : 8,
+                // Toasts sit at the app root, above every layout that insets its
+                // own content, so they must clear the sensor housing themselves —
+                // 8pt is well inside a landscape inset. Same max()-not-add rule
+                // as useSafeAreaPadding (these are `left`/`right` offsets rather
+                // than padding, so they cannot use the hook directly).
+                right: Platform.OS === 'web' ? 16 : Math.max(8, insets.right),
+                left: Platform.OS === 'web' ? undefined : Math.max(8, insets.left),
                 width: Platform.OS === 'web' ? 360 : undefined,
                 zIndex: 10000,
                 gap: 8,

@@ -41,7 +41,25 @@ export const MobileLayout = memo(function MobileLayout({ isReady = true }: { isR
                 ]}
             >
                 <DemoBanner />
-                <View className="flex-1 overflow-hidden">
+                {/* Horizontal insets go HERE, not on the root: the tab bar and
+                    the slide-in drawer below are edge-anchored chrome that must
+                    keep bleeding to the screen edge (they inset their own
+                    contents). Padding the root would pull them inward and leave
+                    a band of app background beside them. Landscape puts the
+                    sensor housing on one side, so without this every package
+                    screen inside PackageTabs runs under the notch.
+
+                    The sheets stay INSIDE this box: BottomDrawer rests at the
+                    bottom edge of its PARENT, which is what puts it exactly on
+                    the tab bar without a manual offset — moving it out would
+                    slide it under the bar, the bug that component was written to
+                    avoid. So the padding insets the sheet itself by a few points
+                    rather than only its content; that is the accepted trade for
+                    keeping the vertical contract. */}
+                <View
+                    className="flex-1 overflow-hidden"
+                    style={{ paddingLeft: insets.left, paddingRight: insets.right }}
+                >
                     <PackageTabs />
                     {isReady && <MoreDrawer />}
                     {isReady && <NotificationDrawer mobile />}

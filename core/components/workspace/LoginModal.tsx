@@ -14,12 +14,14 @@ import {
     TextInput,
     View,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 type Mode = 'login' | 'reset'
 
 export function LoginModal() {
     const backdropColor = useThemeColor('overlay-backdrop')
     const [mode, setMode] = useState<Mode>('login')
+    const insets = useSafeAreaInsets()
 
     return (
         <KeyboardAvoidingView
@@ -28,6 +30,14 @@ export function LoginModal() {
             style={{
                 zIndex: 200,
                 backgroundColor: backdropColor,
+                // The backdrop deliberately still covers the full screen — only
+                // the card is inset. In landscape the sensor housing sits on one
+                // side (~59pt), so a centred card can otherwise have its edge
+                // clipped by the notch on a narrow window.
+                paddingLeft: insets.left,
+                paddingRight: insets.right,
+                paddingTop: insets.top,
+                paddingBottom: insets.bottom,
             }}
         >
             <View

@@ -33,6 +33,12 @@ export function MobileTabBar() {
             style={{
                 backgroundColor: railBg,
                 paddingBottom: insets.bottom,
+                // The tabs spread across the full width, so in landscape the
+                // outermost icons sit exactly where the sensor housing is.
+                // Padding the bar insets the icons while its own background
+                // still reaches both edges.
+                paddingLeft: insets.left,
+                paddingRight: insets.right,
             }}
         >
             {visiblePkgs.map(pkg => {
