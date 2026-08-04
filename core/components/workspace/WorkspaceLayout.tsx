@@ -3,8 +3,8 @@ import { NotificationDrawer } from '@tinycld/core/components/NotificationDrawer'
 import { usePackage } from '@tinycld/core/lib/packages/use-packages'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { Platform, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { MobileLayout } from './MobileLayout'
 import { useActivePkgDenied } from './PackageAccessDenied'
 import { PackageProviderWrapper } from './PackageProviderWrapper'
@@ -25,7 +25,7 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
     const activePkgSlug = useWorkspaceStore(s => s.activePkgSlug)
     const activePkg = usePackage(activePkgSlug ?? '')
     const activePkgDenied = useActivePkgDenied()
-    const insets = useSafeAreaInsets()
+    const insets = useDeviceInsets()
 
     if (breakpoint === 'mobile') return <MobileLayout isReady={isReady} />
 
@@ -61,14 +61,16 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
             <DemoBanner />
             <View className="flex-1 flex-row" style={{ minHeight: 0 }}>
                 {/* Horizontal insets are consumed by the edge panels themselves,
-                    NOT by this container. In landscape iOS reports a large inset
-                    on the notch side (~59pt) and the home-indicator side (~21pt);
-                    padding them here painted both gutters in the app background,
-                    leaving a wide light band down the side of the screen. The iOS
-                    convention is the opposite: backgrounds run edge to edge and
-                    only CONTENT is inset. So the rail bleeds its own dark colour
-                    into the left gutter, and the content pane extends under the
-                    right one while padding its contents clear of it. */}
+                    NOT by this container: padding them here painted the gutters
+                    in the app background, leaving a wide light band down the
+                    side of the screen. The iOS convention is the opposite:
+                    backgrounds run edge to edge and only CONTENT is inset.
+                    useDeviceInsets has already side-corrected the pair — only
+                    the sensor-housing side is nonzero in landscape — so exactly
+                    one of these is ever set: the rail absorbs insets.left when
+                    the housing is on the left (bleeding its dark colour into the
+                    gutter), or the content pane pads insets.right when it is on
+                    the right. The opposite side stays full-bleed. */}
                 {isReady && <PackageRail insetLeft={insets.left} insetBottom={insets.bottom} />}
 
                 {isReady && <NotificationDrawer />}

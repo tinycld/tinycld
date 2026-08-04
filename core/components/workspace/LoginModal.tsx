@@ -4,6 +4,7 @@ import { requestPasswordReset } from '@tinycld/core/lib/account-password'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { navigateToOrg } from '@tinycld/core/lib/org-url'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { useState } from 'react'
 import {
     ActivityIndicator,
@@ -14,14 +15,13 @@ import {
     TextInput,
     View,
 } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 type Mode = 'login' | 'reset'
 
 export function LoginModal() {
     const backdropColor = useThemeColor('overlay-backdrop')
     const [mode, setMode] = useState<Mode>('login')
-    const insets = useSafeAreaInsets()
+    const insets = useDeviceInsets()
 
     return (
         <KeyboardAvoidingView

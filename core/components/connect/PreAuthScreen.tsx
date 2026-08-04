@@ -6,10 +6,11 @@ import { ScrollView, View } from 'react-native'
 //
 // It exists for the safe area. Both screens previously used
 // `<SafeAreaView edges={['top', 'bottom']}>`, which handles the notch in
-// PORTRAIT and does nothing in landscape — where iOS moves the sensor housing
-// to one side and reports it as insets.left or insets.right, with the home
-// indicator opposite. Their content ran under the notch, and which side broke
-// depended on which way the device was turned.
+// PORTRAIT and does nothing in landscape — where the sensor housing sits on
+// one side. Their content ran under the notch, and which side broke depended
+// on which way the device was turned. useSafeAreaPadding (via useDeviceInsets)
+// pads only the side the housing is actually on; the other side falls back to
+// the design gutter.
 //
 // The rule this encodes is the same one WorkspaceLayout follows: the BACKGROUND
 // spans the screen edge to edge, and only CONTENT is inset. So the background

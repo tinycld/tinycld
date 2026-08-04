@@ -86,6 +86,7 @@
         "@tanstack/query-db-collection": "^1.0.36",
         "@tanstack/react-db": "^0.1.79",
         "@tanstack/react-query": "^5.96.0",
+        "@tinycld/core": "*",
         "@tiptap/core": "^3.22.3",
         "@tiptap/extension-blockquote": "^3.22.3",
         "@tiptap/extension-bullet-list": "^3.22.3",
@@ -127,6 +128,7 @@
         "expo-notifications": "~55.0.22",
         "expo-print": "^55.0.14",
         "expo-router": "~55.0.14",
+        "expo-screen-orientation": "~55.0.18",
         "expo-sharing": "~55.0.18",
         "fflate": "^0.8.2",
         "heroui-native": "^1.0.1",
@@ -181,8 +183,7 @@
         "y-protocols": "^1.0.7",
         "yjs": "^13.6.30",
         "zod": "^4.3.6",
-        "zustand": "^5.0.12",
-        "@tinycld/core": "*"
+        "zustand": "^5.0.12"
     },
     "devDependencies": {
         "@biomejs/biome": "2.5.1",
@@ -190,6 +191,7 @@
         "@react-native-community/cli": "^20.1.2",
         "@testing-library/dom": "^10.4.1",
         "@testing-library/react": "^16.3.2",
+        "@tinycld/package-scripts": "*",
         "@types/node": "^25.6.0",
         "@types/react": "^19.2.2",
         "babel-plugin-module-resolver": "^5.0.3",
@@ -202,7 +204,6 @@
         "local-ssl-proxy": "^2.0.5",
         "tailwindcss": "^4.2.2",
         "tsx": "^4.21.0",
-        "vitest": "^3.0.0",
-        "@tinycld/package-scripts": "*"
+        "vitest": "^3.0.0"
     }
 }

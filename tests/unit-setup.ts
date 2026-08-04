@@ -18,3 +18,18 @@ vi.mock('@tinycld/app-generated/tinycld-config', () => ({
 vi.mock('@tinycld/app-generated/package-help', () => ({
     packageHelp: [],
 }))
+
+// Native module; only dynamically imported behind a Platform.OS === 'ios'
+// guard (core/lib/stores/orientation-store), so tests never load the real
+// thing — this shim keeps any future eager import parseable under vitest.
+vi.mock('expo-screen-orientation', () => ({
+    Orientation: {
+        UNKNOWN: 0,
+        PORTRAIT_UP: 1,
+        PORTRAIT_DOWN: 2,
+        LANDSCAPE_LEFT: 3,
+        LANDSCAPE_RIGHT: 4,
+    },
+    getOrientationAsync: async () => 0,
+    addOrientationChangeListener: () => ({ remove: () => {} }),
+}))

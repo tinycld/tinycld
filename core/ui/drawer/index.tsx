@@ -3,6 +3,7 @@ import { createModal as createDrawer } from '@gluestack-ui/core/modal/creator'
 import { ExitAnimationContext } from '@gluestack-ui/core/overlay/creator'
 import type { VariantProps } from '@gluestack-ui/utils/nativewind-utils'
 import { tva, useStyleContext, withStyleContext } from '@gluestack-ui/utils/nativewind-utils'
+import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import React from 'react'
 import { Platform, Pressable, ScrollView, View } from 'react-native'
 import Animated, {
@@ -18,7 +19,6 @@ import Animated, {
     SlideOutRight,
     SlideOutUp,
 } from 'react-native-reanimated'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useCloseOnNavigate } from './use-close-on-navigate'
 
 const SCOPE = 'MODAL'
@@ -283,13 +283,15 @@ const DrawerContent = React.forwardRef<
     IDrawerContentProps
 >(function DrawerContent({ className, style, ...props }, ref) {
     const { size: parentSize, anchor: parentAnchor } = useStyleContext(SCOPE)
-    const insets = useSafeAreaInsets()
+    const insets = useDeviceInsets()
 
     // 24px base padding (was `p-6`) plus the device safe-area inset on the edges
     // the drawer reaches, so its header/body clears the status bar / notch /
     // home indicator. Side drawers span full height (top + bottom); a top drawer
-    // reaches the top edge, a bottom drawer the bottom. On web / non-notch
-    // devices every inset is 0, leaving the original 24px.
+    // reaches the top edge, a bottom drawer the bottom. The insets are
+    // side-corrected, so a drawer anchored on the housing-free landscape edge
+    // gets 0 here. On web / non-notch devices every inset is 0, leaving the
+    // original 24px.
     const BASE = 24
     const paddingStyle = {
         paddingTop: BASE + (parentAnchor !== 'bottom' ? insets.top : 0),

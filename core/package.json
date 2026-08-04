@@ -78,6 +78,7 @@
         "expo-image": "~55.0.11",
         "expo-image-picker": "~55.0.20",
         "expo-router": "~55.0.14",
+        "expo-screen-orientation": "~55.0.18",
         "lib0": "^0.2.117",
         "lucide-react-native": "^1.7.0",
         "pbtsdb": ">=0.6.3",

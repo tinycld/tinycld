@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import type { LucideIcon } from 'lucide-react-native'
 import { Pressable } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 interface FABProps {
     icon: LucideIcon
@@ -31,7 +31,7 @@ export function FAB({
     iconSize = 22,
 }: FABProps) {
     const primaryFg = useThemeColor('primary-foreground')
-    const insets = useSafeAreaInsets()
+    const insets = useDeviceInsets()
 
     if (!isVisible) return null
 
