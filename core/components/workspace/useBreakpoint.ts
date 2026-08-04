@@ -19,3 +19,7 @@ export function useBreakpoint(): Breakpoint {
 export function useWindowWidth(): number {
     return useWindowSizeStore(s => s.width)
 }
+
+export function useWindowHeight(): number {
+    return useWindowSizeStore(s => s.height)
+}
