@@ -78,12 +78,15 @@ export function PackageRail({
             // The background still reaches the physical edge — the parent applies
             // no horizontal padding, so this box starts at x=0 and its own
             // background covers the gutter it sits in.
-            // pt-3 rather than py-3: the bottom pad adds the home-indicator
-            // inset on top of the same base 12, keeping the last icon tappable.
+            // pt-3 rather than py-3: the bottom pad takes the LARGER of the
+            // base 12 and the home-indicator inset, keeping the last icon
+            // tappable. A minimum, not an addend — summing them double-counts
+            // and pushes the last icon needlessly far off the edge. See
+            // useSafeAreaPadding, which expresses this same rule.
             contentContainerClassName="grow justify-between items-center pt-3"
             contentContainerStyle={{
                 paddingLeft: insetLeft,
-                paddingBottom: 12 + insetBottom,
+                paddingBottom: Math.max(12, insetBottom),
             }}
             showsVerticalScrollIndicator={false}
             alwaysBounceVertical={false}

@@ -76,9 +76,10 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
                 {isReady && <NotificationDrawer />}
 
                 <PackageProviderWrapper>
-                    {isReady && hasSidebar && (
-                        <PackageSidebar width={sidebarWidth} insetBottom={insets.bottom} />
-                    )}
+                    {/* PackageSidebar takes no bottom inset — its SidebarNav
+                        ScrollView reserves the home-indicator gutter on its own
+                        content so the list can scroll the full height. */}
+                    {isReady && hasSidebar && <PackageSidebar width={sidebarWidth} />}
 
                     <View
                         className="flex-1"

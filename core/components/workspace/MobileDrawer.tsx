@@ -146,7 +146,11 @@ export function MobileDrawer({ isVisible }: MobileDrawerProps) {
                                 zIndex: 201,
                                 backgroundColor: sidebarBg,
                                 paddingTop: insets.top,
-                                paddingBottom: insets.bottom,
+                                // No paddingBottom: the sidebar this panel
+                                // hosts reserves the home-indicator inset on
+                                // its own ScrollView content (SidebarNav).
+                                // Padding here too would stack both insets and
+                                // re-create the dead strip at the bottom.
                                 // Pinned to the left edge, so in the landscape
                                 // rotation that puts the sensor housing on the
                                 // left it sits over this panel's contents. Pad
