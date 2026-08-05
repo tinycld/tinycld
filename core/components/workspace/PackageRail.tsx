@@ -2,12 +2,20 @@ import { NotificationBell } from '@tinycld/core/components/NotificationBell'
 import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { ImportIndicator } from '@tinycld/core/components/workspace/ImportIndicator'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
+import { usePackage } from '@tinycld/core/lib/packages/use-packages'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { type Href, Link } from 'expo-router'
-import { Building2, HelpCircle, type LucideIcon, Settings } from 'lucide-react-native'
+import {
+    Building2,
+    HelpCircle,
+    type LucideIcon,
+    PanelLeftClose,
+    PanelLeftOpen,
+    Settings,
+} from 'lucide-react-native'
 import { Pressable, ScrollView, View } from 'react-native'
 import { getIcon } from './package-icon-map'
 import { UserMenu } from './UserMenu'
@@ -126,6 +134,7 @@ export function PackageRail({
             </View>
 
             <View className="items-center gap-2">
+                <SidebarToggle color={railText} activePkgSlug={activePkgSlug} />
                 <ImportIndicator />
                 <NotificationBell color={railText} />
 
@@ -152,6 +161,32 @@ export function PackageRail({
                 <UserMenu />
             </View>
         </ScrollView>
+    )
+}
+
+/**
+ * Collapses/reopens the docked package sidebar. Rendered only when the active
+ * package contributes a sidebar — without it there is no panel to toggle, and
+ * historically the store's isSidebarOpen had no UI writer at all, so a
+ * persisted `false` left the sidebar stuck closed with no way back.
+ */
+function SidebarToggle({ color, activePkgSlug }: { color: string; activePkgSlug: string | null }) {
+    const isSidebarOpen = useWorkspaceStore(s => s.isSidebarOpen)
+    const toggleSidebar = useWorkspaceStore(s => s.toggleSidebar)
+    const activePkg = usePackage(activePkgSlug ?? '')
+    if (activePkg?.sidebar == null) return null
+
+    const Icon = isSidebarOpen ? PanelLeftClose : PanelLeftOpen
+    return (
+        <Pressable
+            testID="nav-sidebar-toggle"
+            onPress={toggleSidebar}
+            className="w-11 h-11 rounded-xl justify-center items-center"
+            accessibilityRole="button"
+            accessibilityLabel={isSidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+        >
+            <Icon size={20} color={color} />
+        </Pressable>
     )
 }
 
