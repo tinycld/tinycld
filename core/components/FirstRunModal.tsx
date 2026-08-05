@@ -1,10 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import type { LucideIcon } from 'lucide-react-native'
 import { type ReactNode, useEffect, useState } from 'react'
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 /**
  * Headline + body shell for one-shot first-run education modals.
@@ -78,7 +78,7 @@ export function FirstRunModal({
     const accentFg = useThemeColor(`${accentToken}-foreground` as 'primary-foreground')
 
     const isMobile = useBreakpoint() === 'mobile'
-    const insets = useSafeAreaInsets()
+    const insets = useDeviceInsets()
 
     useEffect(() => {
         if (!enabled) return

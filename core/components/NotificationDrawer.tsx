@@ -4,13 +4,13 @@ import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
+import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import type { Notifications } from '@tinycld/core/types/pbSchema'
 import { BottomDrawer } from '@tinycld/core/ui/bottom-drawer'
 import { useRouter } from 'expo-router'
 import { Bell, Calendar, Check, File, Mail, Shield, X } from 'lucide-react-native'
 import { useEffect, useMemo, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { railWidth } from './workspace/PackageRail'
 
 const DRAWER_WIDTH = 340
@@ -40,7 +40,9 @@ function DesktopNotificationPanel() {
     const close = useWorkspaceStore(s => s.setNotificationsOpen)
     const overlayColor = useThemeColor('overlay-backdrop')
     const [isMounted, setIsMounted] = useState(isOpen)
-    const insets = useSafeAreaInsets()
+    // Same side-corrected insets the rail itself receives — a raw left inset
+    // here would disagree with railWidth by ~59pt in one landscape rotation.
+    const insets = useDeviceInsets()
 
     useEffect(() => {
         if (isOpen) {

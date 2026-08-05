@@ -2,9 +2,9 @@ import { DemoBanner } from '@tinycld/core/components/DemoBanner'
 import { NotificationDrawer } from '@tinycld/core/components/NotificationDrawer'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { memo } from 'react'
 import { Platform, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { MobileDrawer } from './MobileDrawer'
 import { MobileTabBar } from './MobileTabBar'
 import { MoreDrawer } from './MoreDrawer'
@@ -18,7 +18,7 @@ import { PackageTabs } from './PackageTabs'
 // per tab switch. memo() lets that parent re-render stop here.
 export const MobileLayout = memo(function MobileLayout({ isReady = true }: { isReady?: boolean }) {
     const isDrawerOpen = useWorkspaceStore(s => s.isDrawerOpen)
-    const insets = useSafeAreaInsets()
+    const insets = useDeviceInsets()
     const bgColor = useThemeColor('background')
     // Subscribed rather than read once: the testID must re-render when the
     // active package changes, or it would keep naming whichever package mounted
@@ -45,8 +45,9 @@ export const MobileLayout = memo(function MobileLayout({ isReady = true }: { isR
                     the slide-in drawer below are edge-anchored chrome that must
                     keep bleeding to the screen edge (they inset their own
                     contents). Padding the root would pull them inward and leave
-                    a band of app background beside them. Landscape puts the
-                    sensor housing on one side, so without this every package
+                    a band of app background beside them. useDeviceInsets zeroes
+                    the housing-free side, so in landscape exactly one of these
+                    is nonzero — the notch side — and without it every package
                     screen inside PackageTabs runs under the notch.
 
                     The sheets stay INSIDE this box: BottomDrawer rests at the

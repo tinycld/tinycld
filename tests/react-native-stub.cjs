@@ -15,24 +15,29 @@ module.exports = {
         setBackgroundColor: () => {},
     },
     StyleSheet: { create: (s) => s, flatten: (s) => s, compose: (a, b) => [a, b] },
-    View: 'View',
-    Text: 'Text',
-    Pressable: 'Pressable',
-    ScrollView: 'ScrollView',
-    TextInput: 'TextInput',
-    Image: 'Image',
-    Modal: 'Modal',
-    TouchableOpacity: 'TouchableOpacity',
-    TouchableHighlight: 'TouchableHighlight',
-    TouchableWithoutFeedback: 'TouchableWithoutFeedback',
-    ActivityIndicator: 'ActivityIndicator',
-    FlatList: 'FlatList',
-    SectionList: 'SectionList',
-    SafeAreaView: 'SafeAreaView',
-    KeyboardAvoidingView: 'KeyboardAvoidingView',
+    // Components are string tags so props pass straight through to attributes
+    // (text-input-autofill.test.tsx asserts on them). The names are dashed
+    // lowercase because React DOM treats those as custom elements and stays
+    // quiet; an uppercase tag like 'Text' triggers the "is using incorrect
+    // casing" / "unrecognized in this browser" dev warnings in every render.
+    View: 'rn-view',
+    Text: 'rn-text',
+    Pressable: 'rn-pressable',
+    ScrollView: 'rn-scrollview',
+    TextInput: 'rn-textinput',
+    Image: 'rn-image',
+    Modal: 'rn-modal',
+    TouchableOpacity: 'rn-touchableopacity',
+    TouchableHighlight: 'rn-touchablehighlight',
+    TouchableWithoutFeedback: 'rn-touchablewithoutfeedback',
+    ActivityIndicator: 'rn-activityindicator',
+    FlatList: 'rn-flatlist',
+    SectionList: 'rn-sectionlist',
+    SafeAreaView: 'rn-safeareaview',
+    KeyboardAvoidingView: 'rn-keyboardavoidingview',
     Animated: {
-        View: 'View',
-        Text: 'Text',
+        View: 'rn-view',
+        Text: 'rn-text',
         Value: class {
             constructor(v) { this._value = v }
             setValue(v) { this._value = v }

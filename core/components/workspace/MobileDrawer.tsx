@@ -2,6 +2,7 @@ import { packageSidebars } from '@tinycld/core/lib/packages/derive-components'
 import { usePackage } from '@tinycld/core/lib/packages/use-packages'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { Suspense, useCallback, useEffect, useState } from 'react'
 import { Pressable, View } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
@@ -11,7 +12,6 @@ import Animated, {
     useSharedValue,
     withSpring,
 } from 'react-native-reanimated'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 const PANEL_WIDTH = 280
 const EDGE_WIDTH = 20
@@ -30,7 +30,7 @@ interface MobileDrawerProps {
 export function MobileDrawer({ isVisible }: MobileDrawerProps) {
     const overlayBg = useThemeColor('overlay-backdrop')
     const sidebarBg = useThemeColor('sidebar-background')
-    const insets = useSafeAreaInsets()
+    const insets = useDeviceInsets()
     const activePkgSlug = useWorkspaceStore(s => s.activePkgSlug)
     const setDrawerOpen = useWorkspaceStore(s => s.setDrawerOpen)
     const pkg = usePackage(activePkgSlug ?? '')
@@ -146,11 +146,18 @@ export function MobileDrawer({ isVisible }: MobileDrawerProps) {
                                 zIndex: 201,
                                 backgroundColor: sidebarBg,
                                 paddingTop: insets.top,
-                                paddingBottom: insets.bottom,
-                                // Pinned to the left edge, so in one landscape
-                                // rotation the sensor housing sits over this
-                                // panel's contents. Pad the panel, not the
-                                // parent: its background still covers the gutter.
+                                // No paddingBottom: the sidebar this panel
+                                // hosts reserves the home-indicator inset on
+                                // its own ScrollView content (SidebarNav).
+                                // Padding here too would stack both insets and
+                                // re-create the dead strip at the bottom.
+                                // Pinned to the left edge, so in the landscape
+                                // rotation that puts the sensor housing on the
+                                // left it sits over this panel's contents. Pad
+                                // the panel, not the parent: its background
+                                // still covers the gutter. Side-corrected, so
+                                // with the housing on the right this is 0 and
+                                // the panel stays full-bleed.
                                 paddingLeft: insets.left,
                             },
                             panelStyle,

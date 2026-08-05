@@ -24,13 +24,13 @@ afterEach(cleanup)
 describe('TextInput autofill hints', () => {
     it('forwards autoComplete to the underlying input', () => {
         const { container } = render(<Harness autoComplete="new-password" />)
-        const input = container.querySelector('textinput')
+        const input = container.querySelector('rn-textinput')
         expect(input?.getAttribute('autoComplete')).toBe('new-password')
     })
 
     it('forwards textContentType to the underlying input', () => {
         const { container } = render(<Harness textContentType="newPassword" />)
-        const input = container.querySelector('textinput')
+        const input = container.querySelector('rn-textinput')
         expect(input?.getAttribute('textContentType')).toBe('newPassword')
     })
 })

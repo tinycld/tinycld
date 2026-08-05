@@ -8,7 +8,7 @@ import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { type Href, Link } from 'expo-router'
 import { Building2, HelpCircle, type LucideIcon, Settings } from 'lucide-react-native'
-import { Pressable, View } from 'react-native'
+import { Pressable, ScrollView, View } from 'react-native'
 import { getIcon } from './package-icon-map'
 import { UserMenu } from './UserMenu'
 
@@ -16,34 +16,37 @@ import { UserMenu } from './UserMenu'
 // there is ~10pt of slack on each side before an icon reaches the rail's edge.
 const RAIL_WIDTH = 64
 
-// How far the icon column may be pushed inward by a left safe-area inset.
+// The rail's ACTUAL on-screen width: the icon column plus however much the
+// left safe-area inset pushes it inward.
 //
-// The inset is NOT symmetric between the two landscape rotations: iOS reports
-// the sensor housing (~59pt) on whichever side it physically sits, and the home
-// indicator (~21pt) on the other. Absorbing it wholesale made the rail 123pt in
-// one rotation and 85pt in the other — the same screen, wildly different chrome.
+// insetLeft arrives side-corrected (WorkspaceLayout passes useDeviceInsets):
+// ~59pt only in the landscape rotation that puts the sensor housing on the
+// left, 0 in the other rotation and in portrait. So the rail is 123pt with the
+// housing beside it and exactly RAIL_WIDTH everywhere else — the extra chrome
+// exists only when hardware forces it.
 //
-// The cap keeps that shift small. The icons stay clear of the notch anyway: the
-// housing does not intrude into the display's usable area beside it, and the
-// column's own ~10pt of slack plus this shift covers the rounded corner. The
-// background is unaffected either way — it always reaches the physical edge, so
-// there is never a light gutter.
-const MAX_RAIL_INSET_SHIFT = 12
-
-// The rail's ACTUAL on-screen width, which grows with the left safe-area inset.
+// An earlier version capped the shift at 12pt to keep the width uniform, on the
+// theory that the housing "does not intrude into the display's usable area
+// beside it". It does: 12pt against a ~59pt housing left the top icons ~47pt
+// underneath it, unreadable and untappable. The cap cannot apply to the shift
+// alone either — the 44pt (w-11) icons need RAIL_WIDTH of space AFTER the
+// padding, so width and shift move together.
+//
+// The background is unaffected either way — it always reaches the physical edge,
+// so there is never a light gutter.
+//
 // Exported because anything positioned against the rail's right edge — the
 // notification drawer — has to agree with it; a hardcoded 64 there leaves a gap
 // once the rail widens in landscape.
 export function railWidth(insetLeft: number): number {
-    return RAIL_WIDTH + Math.min(insetLeft, MAX_RAIL_INSET_SHIFT)
+    return RAIL_WIDTH + insetLeft
 }
 
-// insetLeft is the device's left safe-area inset (the notch side in one
-// landscape rotation, the home indicator in the other, 0 in portrait). The rail
-// absorbs it rather than letting the parent pad the whole layout: that way the
-// rail's own dark background fills the gutter edge to edge. Padding it upstream
-// instead left a strip of app background beside the rail — the light band this
-// fixes.
+// insetLeft is the side-corrected left safe-area inset (nonzero only when the
+// sensor housing is physically on the left). The rail absorbs it rather than
+// letting the parent pad the whole layout: that way the rail's own dark
+// background fills the gutter edge to edge. Padding it upstream instead left a
+// strip of app background beside the rail — the light band this fixes.
 export function PackageRail({
     insetLeft = 0,
     insetBottom = 0,
@@ -51,7 +54,6 @@ export function PackageRail({
     insetLeft?: number
     insetBottom?: number
 }) {
-    const insetShift = Math.min(insetLeft, MAX_RAIL_INSET_SHIFT)
     const railBg = useThemeColor('rail-background')
     const railText = useThemeColor('rail-text')
     const railActive = useThemeColor('rail-active-text')
@@ -62,22 +64,32 @@ export function PackageRail({
     const { org } = useOrgInfo()
 
     return (
-        <View
-            // Width grows only by the CAPPED shift, not the full inset: the rail
-            // is chrome, and turning a 59pt notch inset into 59pt of extra dark
-            // bar (with the workspace pushed in behind it) costs real screen
-            // width for nothing. The background still reaches the physical edge
-            // regardless — the parent applies no horizontal padding, so this box
-            // starts at x=0 and its own background covers the gutter it sits in.
-            // pt-3 rather than py-3: the bottom pad adds the home-indicator
-            // inset on top of the same base 12, keeping the last icon tappable.
-            className="justify-between items-center pt-3"
-            style={{
-                backgroundColor: railBg,
-                width: railWidth(insetLeft),
-                paddingLeft: insetShift,
-                paddingBottom: 12 + insetBottom,
+        <ScrollView
+            // A ScrollView so short viewports (landscape phones) can still reach
+            // every item — a plain View clipped whatever overflowed. `grow` on
+            // the content container makes it fill the viewport when everything
+            // fits, so justify-between keeps the utilities pinned to the bottom
+            // exactly as before; only genuine overflow scrolls. Popovers are
+            // unaffected: UserMenu portals its menu and the bell toggles the
+            // NotificationDrawer rendered outside the rail.
+            style={{ backgroundColor: railBg, width: railWidth(insetLeft), flexGrow: 0 }}
+            // Width and paddingLeft both take the full inset, so the icon column
+            // sits entirely clear of the sensor housing with its 64pt intact.
+            // The background still reaches the physical edge — the parent applies
+            // no horizontal padding, so this box starts at x=0 and its own
+            // background covers the gutter it sits in.
+            // pt-3 rather than py-3: the bottom pad takes the LARGER of the
+            // base 12 and the home-indicator inset, keeping the last icon
+            // tappable. A minimum, not an addend — summing them double-counts
+            // and pushes the last icon needlessly far off the edge. See
+            // useSafeAreaPadding, which expresses this same rule.
+            contentContainerClassName="grow justify-between items-center pt-3"
+            contentContainerStyle={{
+                paddingLeft: insetLeft,
+                paddingBottom: Math.max(12, insetBottom),
             }}
+            showsVerticalScrollIndicator={false}
+            alwaysBounceVertical={false}
         >
             <View className="items-center gap-1">
                 <Link href={orgHref('')} asChild>
@@ -139,7 +151,7 @@ export function PackageRail({
 
                 <UserMenu />
             </View>
-        </View>
+        </ScrollView>
     )
 }
 

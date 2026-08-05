@@ -1,14 +1,14 @@
 import { type Toast as ToastType, useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { AlertTriangle, CheckCircle, Info, X, XCircle } from 'lucide-react-native'
 import { useEffect, useRef } from 'react'
 import { Animated, Platform, Pressable, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 export function ToastRenderer() {
     const toasts = useToastStore(s => s.toasts)
     // Before the early return — hooks cannot be called conditionally.
-    const insets = useSafeAreaInsets()
+    const insets = useDeviceInsets()
 
     if (toasts.length === 0) return null
 

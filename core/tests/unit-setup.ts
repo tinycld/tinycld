@@ -18,6 +18,21 @@ vi.mock('react-native', () => ({
     },
 }))
 
+// Native module; only dynamically imported behind a Platform.OS === 'ios'
+// guard (orientation-store), so tests never load the real thing — this shim
+// exists so any future eager import still parses under vitest.
+vi.mock('expo-screen-orientation', () => ({
+    Orientation: {
+        UNKNOWN: 0,
+        PORTRAIT_UP: 1,
+        PORTRAIT_DOWN: 2,
+        LANDSCAPE_LEFT: 3,
+        LANDSCAPE_RIGHT: 4,
+    },
+    getOrientationAsync: async () => 0,
+    addOrientationChangeListener: () => ({ remove: () => {} }),
+}))
+
 vi.mock('expo-router', () => ({
     router: { replace: vi.fn(), push: vi.fn(), back: vi.fn() },
     Slot: () => null,

@@ -1,11 +1,11 @@
 import { markNavMilestone, markNavPress } from '@tinycld/core/lib/nav-perf'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { useRouter } from 'expo-router'
 import { Ellipsis } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { getIcon } from './package-icon-map'
 
 export const MAX_VISIBLE_TABS = 4
@@ -22,7 +22,7 @@ export function MobileTabBar() {
     const isMoreOpen = useWorkspaceStore(s => s.isMoreOpen)
     const setMoreOpen = useWorkspaceStore(s => s.setMoreOpen)
     const router = useRouter()
-    const insets = useSafeAreaInsets()
+    const insets = useDeviceInsets()
 
     const visiblePkgs =
         sorted.length > MAX_VISIBLE_TABS ? sorted.slice(0, MAX_VISIBLE_TABS) : sorted
@@ -34,9 +34,10 @@ export function MobileTabBar() {
                 backgroundColor: railBg,
                 paddingBottom: insets.bottom,
                 // The tabs spread across the full width, so in landscape the
-                // outermost icons sit exactly where the sensor housing is.
+                // outermost icon sits exactly where the sensor housing is.
                 // Padding the bar insets the icons while its own background
-                // still reaches both edges.
+                // still reaches both edges. The insets are side-corrected, so
+                // only the housing side is padded — the other end stays flush.
                 paddingLeft: insets.left,
                 paddingRight: insets.right,
             }}
