@@ -90,10 +90,20 @@ func grantIssuedToClient(grant, client *core.Record) bool {
 
 // authenticateClient resolves and (for confidential clients) authenticates the
 // caller. A public client needs no secret; PKCE is what binds the exchange.
+//
+// An unresolvable client_id — unknown, or disabled via the kill switch — still
+// pays for a secret verification before answering. Otherwise this endpoint
+// distinguishes "no such client" from "wrong secret" by how fast it says no,
+// which is a client_id enumeration oracle: an attacker learns which
+// integrations are registered (and, with the kill switch, which were switched
+// off) without ever holding a valid secret. See compareAgainstDummyHash for
+// why this is a weaker mitigation than davauth's and what actually carries the
+// weight here.
 func authenticateClient(app core.App, re *core.RequestEvent) (*core.Record, error) {
 	clientID := re.Request.FormValue("client_id")
 	client, err := FindClientByClientID(app, clientID)
 	if err != nil {
+		compareAgainstDummyHash(re.Request.FormValue("client_secret"))
 		return nil, err
 	}
 	if client.GetString("type") == "confidential" {
