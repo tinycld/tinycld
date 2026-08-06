@@ -33,6 +33,7 @@ func newSchemaApp(t testing.TB) *tests.TestApp {
 	})
 	clients.Fields.Add(&core.TextField{Name: "client_secret_hash"})
 	clients.Fields.Add(&core.BoolField{Name: "is_first_party"})
+	clients.Fields.Add(&core.BoolField{Name: "disabled"})
 	clients.AddIndex("idx_oauth_clients_client_id", true, "client_id", "")
 	if err := app.Save(clients); err != nil {
 		t.Fatalf("save oauth_clients: %v", err)

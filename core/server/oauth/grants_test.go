@@ -54,7 +54,7 @@ func seedUserAndClient(t *testing.T, app *tests.TestApp) (userID, clientRecID st
 	c.Set("name", "TinyCld CLI")
 	c.Set("type", "public")
 	c.Set("is_first_party", true)
-	// Mirrors the real seed migration (1980000001_seed_cli_oauth_client.js):
+	// Mirrors the real seed migration (1985000001_seed_cli_oauth_client.js):
 	// the CLI is registered for the full catalog. Tests that need a narrower
 	// client ceiling (ValidateClientScopes) seed their own via
 	// seedClientWithRedirectURIs / a bespoke record, same as they already do
@@ -179,6 +179,44 @@ func TestVerifyGrantRejectsDisabledUser(t *testing.T) {
 	// access token once the account is disabled.
 	if _, err := VerifyGrant(app, jti); !errors.Is(err, ErrInvalidGrant) {
 		t.Fatalf("VerifyGrant on disabled user = %v, want ErrInvalidGrant", err)
+	}
+}
+
+// TestVerifyGrantRejectsDisabledClient is the back half of the client kill
+// switch: FindClientByClientID stops a disabled client from getting NEW
+// authorization, but a token issued BEFORE it was disabled never passes
+// through that function again. Without this check a compromised client_id
+// keeps every access token it already holds until natural expiry, which
+// defeats the point of having a kill switch at all.
+func TestVerifyGrantRejectsDisabledClient(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, clientID := seedUserAndClient(t, app)
+
+	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	if err != nil {
+		t.Fatalf("NewGrant: %v", err)
+	}
+	jti := grant.GetString("jti")
+
+	// Sanity: valid while the client is enabled. Without this the test could
+	// pass because the grant was never valid in the first place.
+	if _, err := VerifyGrant(app, jti); err != nil {
+		t.Fatalf("VerifyGrant before disable: %v", err)
+	}
+
+	client, err := app.FindRecordById(clientsCollection, clientID)
+	if err != nil {
+		t.Fatalf("find client: %v", err)
+	}
+	client.Set("disabled", true)
+	if err := app.Save(client); err != nil {
+		t.Fatalf("save disabled client: %v", err)
+	}
+
+	// ErrInvalidGrant specifically, not merely "some error": the caller must
+	// not be able to distinguish a switched-off client from a revoked grant.
+	if _, err := VerifyGrant(app, jti); !errors.Is(err, ErrInvalidGrant) {
+		t.Fatalf("VerifyGrant on disabled client = %v, want ErrInvalidGrant", err)
 	}
 }
 

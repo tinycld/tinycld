@@ -102,6 +102,35 @@ func TestFindClientByClientID(t *testing.T) {
 	}
 }
 
+// TestFindClientByClientIDRejectsDisabled is the front half of the client kill
+// switch. Every path that mints or exchanges credentials — handleAuthorize,
+// handleDeviceAuthorization, handleToken — resolves its client through this
+// one function, so refusing here is what stops a decommissioned or
+// compromised client from obtaining any new authorization.
+func TestFindClientByClientIDRejectsDisabled(t *testing.T) {
+	app := newSchemaApp(t)
+	_, clientID := seedUserAndClient(t, app)
+
+	// Sanity: resolves while enabled, so a failure below means the disable
+	// took effect rather than the seed being broken.
+	if _, err := FindClientByClientID(app, "tinycld-cli"); err != nil {
+		t.Fatalf("FindClientByClientID before disable: %v", err)
+	}
+
+	client, err := app.FindRecordById(clientsCollection, clientID)
+	if err != nil {
+		t.Fatalf("find client: %v", err)
+	}
+	client.Set("disabled", true)
+	if err := app.Save(client); err != nil {
+		t.Fatalf("save disabled client: %v", err)
+	}
+
+	if _, err := FindClientByClientID(app, "tinycld-cli"); err == nil {
+		t.Fatal("a disabled client_id must not resolve")
+	}
+}
+
 func TestDeviceAuthorizationIssuesCodes(t *testing.T) {
 	app := newSchemaApp(t)
 	seedUserAndClient(t, app)

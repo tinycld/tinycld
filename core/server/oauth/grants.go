@@ -175,6 +175,31 @@ func VerifyGrant(app core.App, jti string) (*core.Record, error) {
 		return nil, ErrInvalidGrant
 	}
 
+	// The back half of the client kill switch. FindClientByClientID stops a
+	// disabled client from obtaining NEW authorization, but that check only
+	// runs on the mint/exchange path — an access token issued before the
+	// client was disabled never passes through it again, and would otherwise
+	// keep authenticating for its full lifetime. Disabling a client is the
+	// response to one being compromised or decommissioned, so it has to reach
+	// the credentials already in the field, not just future ones.
+	//
+	// Same shape as the disabled-USER check above and reported identically as
+	// ErrInvalidGrant: a caller must not be able to tell "your client was
+	// switched off" from "your grant was revoked". An active grant always has
+	// a client (the relation is required, unlike user), but a missing one is
+	// treated as fatal rather than assumed fine, matching the user branch.
+	clientID := rec.GetString("client")
+	if clientID == "" {
+		return nil, ErrInvalidGrant
+	}
+	client, err := app.FindRecordById(clientsCollection, clientID)
+	if err != nil {
+		return nil, ErrInvalidGrant
+	}
+	if client.GetBool("disabled") {
+		return nil, ErrInvalidGrant
+	}
+
 	return rec, nil
 }
 
