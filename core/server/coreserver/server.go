@@ -190,6 +190,10 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// OTA bundles are served from the host's build archive; an org dir has no
 	// build archive. Hosted-app OTA delivery is a separate open question.
 	RegisterAppUpdateEndpoints(app)
+	// CLI binaries are served from the host's own activated build dir
+	// (cli-dist/ next to the server binary); a tenant serves its artifact's
+	// copy via RegisterTenantCliDownloadEndpoints.
+	RegisterCliDownloadEndpoints(app)
 	// First-run installer + TINYCLD_PUBLIC_URL sync. A tenant needs neither:
 	// the router provisions orgs (migrations apply inside the tenant's own
 	// first spawn), serve-org nils the installer, and tenant AppURL comes from

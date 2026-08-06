@@ -97,6 +97,10 @@ var exemptPaths = []string{
 	"/api/org-info",
 	"/api/version",
 	"/api/release",
+	// Public credential-less binary downloads, same bucket as /api/version
+	// and /api/release (and a future `tinycld update` needs them reachable
+	// with a bearer attached).
+	"/api/cli/",
 	"/oauth/device",
 	"/oauth/token",
 	"/oauth/revoke",

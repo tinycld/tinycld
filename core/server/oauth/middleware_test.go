@@ -46,7 +46,14 @@ func TestScopeForRouteDefaultDenies(t *testing.T) {
 func TestScopeForRouteAllowsUnauthenticatedPublicRoutes(t *testing.T) {
 	// These carry no user data and must stay reachable so a CLI can probe a
 	// host and complete a login before it holds any grant.
-	for _, p := range []string{"/api/health", "/api/org-info", "/oauth/token", "/oauth/device"} {
+	for _, p := range []string{
+		"/api/health",
+		"/api/org-info",
+		"/oauth/token",
+		"/oauth/device",
+		"/api/cli/downloads",
+		"/api/cli/download/darwin-arm64",
+	} {
 		if got := ScopeForRoute("GET", p); got != scopeExempt {
 			t.Errorf("ScopeForRoute(GET %s) = %q, want exempt", p, got)
 		}
