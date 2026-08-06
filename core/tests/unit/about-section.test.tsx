@@ -2,6 +2,7 @@
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { CliDownload } from '../../lib/use-cli-downloads'
 import type { ReleaseManifest } from '../../lib/use-release-manifest'
 
 // Mock the data hook so the render never needs a QueryClientProvider or a
@@ -17,6 +18,16 @@ vi.mock('@tinycld/core/lib/use-release-manifest', () => ({
 // Keep the version/server rows from reaching real config/server state.
 vi.mock('@tinycld/core/lib/core-config', () => ({ getCoreConfigOptional: () => null }))
 vi.mock('@tinycld/core/lib/server-address', () => ({ getResolvedAddress: () => null }))
+
+// Mock the CLI downloads data hook for the same reason as useReleaseManifest;
+// the label/order/url helpers stay real (they have their own unit tests).
+const useCliDownloads = vi.fn<() => { downloads: CliDownload[]; detectedOS: string | null }>(
+    () => ({ downloads: [], detectedOS: null })
+)
+vi.mock('@tinycld/core/lib/use-cli-downloads', async importOriginal => ({
+    ...(await importOriginal<typeof import('@tinycld/core/lib/use-cli-downloads')>()),
+    useCliDownloads: () => useCliDownloads(),
+}))
 
 // expo-constants pulls in expo-modules-core, whose load-time side effects
 // (global __DEV__, native TurboModules) crash under Node. Stub it to the one
@@ -38,6 +49,8 @@ afterEach(() => {
     cleanup()
     useReleaseManifest.mockReset()
     useReleaseManifest.mockReturnValue({ data: undefined })
+    useCliDownloads.mockReset()
+    useCliDownloads.mockReturnValue({ downloads: [], detectedOS: null })
     nativeBuildVersion.current = '48'
 })
 
@@ -99,5 +112,43 @@ describe('AboutSection — included packages', () => {
         useReleaseManifest.mockReturnValue({ data: undefined })
         const { queryByText } = render(<AboutSection />)
         expect(queryByText('Included packages')).toBeNull()
+    })
+})
+
+const DOWNLOADS: CliDownload[] = [
+    {
+        platform: 'darwin-arm64',
+        os: 'darwin',
+        arch: 'arm64',
+        filename: 'tinycld',
+        size: 100,
+        url: '/api/cli/download/darwin-arm64',
+    },
+    {
+        platform: 'windows-amd64',
+        os: 'windows',
+        arch: 'amd64',
+        filename: 'tinycld.exe',
+        size: 100,
+        url: '/api/cli/download/windows-amd64',
+    },
+]
+
+describe('AboutSection — command line tools', () => {
+    it('hides the section when no binaries are built (dev, fresh image)', () => {
+        const { queryByText } = render(<AboutSection />)
+        expect(queryByText('Command line tools')).toBeNull()
+    })
+
+    it('lists a labeled row per binary, marking the detected platform', () => {
+        useCliDownloads.mockReturnValue({ downloads: DOWNLOADS, detectedOS: 'darwin' })
+        const { getByText, getAllByText } = render(<AboutSection />)
+
+        expect(getByText('Command line tools')).toBeTruthy()
+        expect(getByText('macOS (Apple Silicon) · this computer')).toBeTruthy()
+        expect(getByText('Windows (x64)')).toBeTruthy()
+        expect(getAllByText('Download')).toHaveLength(2)
+        // the unsigned-binary escape hatch must be visible next to the downloads
+        expect(getByText(/xattr -d com.apple.quarantine/)).toBeTruthy()
     })
 })

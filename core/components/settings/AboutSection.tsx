@@ -1,5 +1,12 @@
+import { HelpIcon } from '@tinycld/core/components/help/HelpIcon'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
+import {
+    type CliDownload,
+    downloadLabel,
+    downloadUrl,
+    useCliDownloads,
+} from '@tinycld/core/lib/use-cli-downloads'
 import {
     type ReleaseManifest,
     type ReleaseMember,
@@ -61,6 +68,51 @@ export function AboutSection() {
                 </Pressable>
             </View>
             <IncludedPackages manifest={manifest} />
+            <CommandLineTools />
+        </View>
+    )
+}
+
+// Offers the per-org CLI binaries the build pipeline cross-compiled, the
+// viewer's own OS first. Returns null when none are built (dev server, fresh
+// image before the first rebuild) — the CLI build is best-effort, so an empty
+// list is a normal state, not an error.
+function CommandLineTools() {
+    const { downloads, detectedOS } = useCliDownloads()
+    const host = (getResolvedAddress() ?? 'your-server').replace(/^https?:\/\//, '')
+    if (downloads.length === 0) return null
+
+    const note =
+        'After downloading, run `chmod +x tinycld`. Binaries are unsigned in this version: ' +
+        'on macOS run `xattr -d com.apple.quarantine ./tinycld`; on Windows choose ' +
+        `More info → Run anyway. Then \`tinycld auth login ${host}\` to get started.`
+
+    return (
+        <View className="gap-2">
+            <View className="flex-row items-center gap-1.5">
+                <Text className="text-base font-semibold text-foreground">Command line tools</Text>
+                <HelpIcon topic="core:command-line" />
+            </View>
+            <View className="rounded-xl border border-border bg-surface-secondary p-4 gap-2">
+                {downloads.map(d => (
+                    <DownloadRow key={d.platform} download={d} isDetected={d.os === detectedOS} />
+                ))}
+                <Text className="text-xs text-muted-foreground">{note}</Text>
+            </View>
+        </View>
+    )
+}
+
+function DownloadRow({ download, isDetected }: { download: CliDownload; isDetected: boolean }) {
+    const label = isDetected
+        ? `${downloadLabel(download)} · this computer`
+        : downloadLabel(download)
+    return (
+        <View className="flex-row justify-between items-center">
+            <Text className="text-sm text-muted-foreground">{label}</Text>
+            <Pressable onPress={() => Linking.openURL(downloadUrl(download))}>
+                <Text className="text-sm text-primary">Download</Text>
+            </Pressable>
         </View>
     )
 }
