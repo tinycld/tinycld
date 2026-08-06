@@ -49,6 +49,21 @@ func (s contextTokenStore) Save(tok client.TokenSet) error {
 	return keychain.SetJSON(s.store, s.account, tok)
 }
 
+// resolveClientContext is the client.NewLazy hook: resolve the active
+// context to (origin, token store) on the first request a package command
+// makes.
+func (d *deps) resolveClientContext() (string, client.TokenStore, error) {
+	cfg, err := d.loadConfig()
+	if err != nil {
+		return "", nil, err
+	}
+	name, ctx, err := cfg.Resolve(d.ctxFlag)
+	if err != nil {
+		return "", nil, err
+	}
+	return ctx.Origin, contextTokenStore{store: d.store(), account: name}, nil
+}
+
 // apiClient resolves the active context and builds an authenticated client
 // for it.
 func (d *deps) apiClient() (*client.Client, string, error) {

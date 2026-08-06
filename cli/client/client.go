@@ -52,6 +52,11 @@ type Client struct {
 	http     *http.Client
 	ClientID string
 
+	// resolve fills origin+store on first use (see NewLazy).
+	resolve     func() (origin string, store TokenStore, err error)
+	resolveOnce sync.Once
+	resolveErr  error
+
 	// mu serializes refreshes so concurrent requests can't both rotate the
 	// refresh token (the server invalidates the old one on every rotation).
 	mu sync.Mutex
@@ -64,11 +69,40 @@ func New(origin string, store TokenStore, hc *http.Client) *Client {
 	return &Client{origin: origin, store: store, http: hc, ClientID: DefaultClientID}
 }
 
+// NewLazy defers context resolution to the first request. Package commands
+// receive their *Client at Cobra wiring time — before flags are parsed and
+// before any context has to exist — so commands that never touch the network
+// (--help, completion) must not force one to resolve.
+func NewLazy(resolve func() (string, TokenStore, error), hc *http.Client) *Client {
+	if hc == nil {
+		hc = &http.Client{Timeout: 30 * time.Second}
+	}
+	return &Client{resolve: resolve, http: hc, ClientID: DefaultClientID}
+}
+
+func (c *Client) ensure() error {
+	if c.resolve == nil {
+		return nil
+	}
+	c.resolveOnce.Do(func() {
+		origin, store, err := c.resolve()
+		if err != nil {
+			c.resolveErr = err
+			return
+		}
+		c.origin, c.store = origin, store
+	})
+	return c.resolveErr
+}
+
 func (c *Client) Origin() string { return c.origin }
 
 // Token returns the stored TokenSet, refreshing first when it is expired or
 // about to expire.
 func (c *Client) Token() (TokenSet, error) {
+	if err := c.ensure(); err != nil {
+		return TokenSet{}, err
+	}
 	tok, err := c.store.Load()
 	if err != nil {
 		return TokenSet{}, err
@@ -118,6 +152,9 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 
 // GetJSON GETs path (origin-relative) and decodes the response into out.
 func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
+	if err := c.ensure(); err != nil {
+		return err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.origin+path, nil)
 	if err != nil {
 		return err
@@ -127,6 +164,9 @@ func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
 
 // PostJSON POSTs body (JSON-encoded) to path and decodes the response.
 func (c *Client) PostJSON(ctx context.Context, path string, body, out any) error {
+	if err := c.ensure(); err != nil {
+		return err
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err

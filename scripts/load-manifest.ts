@@ -111,6 +111,16 @@ export interface PackageManifest {
             defaults?: Record<string, string>
         }
     }
+    // CLI commands this package contributes to the `tinycld` binary.
+    // package/module mirror `server` and drive gen-cli.ts; `commands` is
+    // display metadata (Cobra owns --help); `scopes` feeds the OAuth scope
+    // registry. See the PackageManifest doc in core/lib/packages/types.ts.
+    cli?: {
+        package: string
+        module: string
+        commands?: { name: string; summary: string }[]
+        scopes?: string[]
+    }
     help?: { directory: string }
     repository?: { url: string; issueTemplate?: string }
     dependencies?: string[]

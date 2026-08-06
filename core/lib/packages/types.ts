@@ -206,6 +206,27 @@ export interface PackageManifest {
         ownerField?: string
     }[]
 
+    /**
+     * Command-line commands this package contributes to the `tinycld` binary.
+     * `package`/`module` mirror `server` and drive Go code generation
+     * (scripts/gen-cli.ts): the dir must contain a Go module exposing
+     * `Register(root *cobra.Command, c *client.Client)`.
+     *
+     * `commands` is display metadata only (settings page, docs) — Cobra is the
+     * source of truth for `--help`. `scopes` declares the OAuth scopes this
+     * package defines (e.g. `'mail:read'`) for the scope registry and consent
+     * screen. Neither is ever interpolated into generated Go.
+     */
+    cli?: {
+        package: string
+        module: string
+        commands?: {
+            name: string
+            summary: string
+        }[]
+        scopes?: string[]
+    }
+
     help?: {
         directory: string
     }

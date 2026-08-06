@@ -4,6 +4,12 @@ import * as path from 'node:path'
 import { getPackages } from '../../tinycld.packages'
 import { manifestToConfigPkg, validateSidebarContributions } from './describe-packages'
 import { type BuildPkg, runPackageBuilds } from './gen-build'
+import {
+    buildCliExtensionsSource,
+    buildCliGoWork,
+    buildMemberCliGoWork,
+    type CliPkg,
+} from './gen-cli'
 import { buildConfigSource, buildSeedsSource, type ConfigPkg } from './gen-config'
 import { buildHelpSource, type HelpGroupInput, parseFrontmatter } from './gen-help'
 import { buildPackageIconsSource } from './gen-icons'
@@ -21,6 +27,7 @@ import { buildUniwindSources, type UniwindSource } from './gen-uniwind'
 import { loadManifest, type PackageManifest } from './load-manifest'
 import {
     APP_DIR,
+    CLI_DIR,
     GENERATED_DIR,
     HOOKS_DIR,
     MIGRATIONS_DIR,
@@ -514,6 +521,44 @@ function emitGoWiring(features: Feature[]) {
     }
 }
 
+// cli/cli_extensions.go + cli/go.work — the CLI-side mirror of emitGoWiring.
+// Both files are always written (gitignored, regenerated every install): with
+// zero cli-declaring packages the extensions file is a valid no-op and the
+// go.work covers only the CLI module itself, so `go build` in cli/ works on
+// any assembly.
+function emitCliWiring(features: Feature[]) {
+    const cliFeatures = features.filter(hasCliPackage)
+    const cliPkgs: CliPkg[] = cliFeatures.map(f => ({
+        slug: f.manifest.slug,
+        module: f.manifest.cli!.module!,
+        cliRelPath: path.relative(CLI_DIR, path.join(f.dir, f.manifest.cli!.package!)),
+    }))
+    fs.writeFileSync(path.join(CLI_DIR, 'cli_extensions.go'), buildCliExtensionsSource(cliPkgs))
+    fs.writeFileSync(path.join(CLI_DIR, 'go.work'), buildCliGoWork(cliPkgs))
+
+    // Per-member go.work so each cli module resolves tinycld.org/cli when
+    // built standalone (gitignored in the member repo, like server/go.work).
+    for (const f of cliFeatures) {
+        const memberCliDir = path.join(f.dir, f.manifest.cli!.package!)
+        fs.writeFileSync(
+            path.join(memberCliDir, 'go.work'),
+            buildMemberCliGoWork(path.relative(memberCliDir, CLI_DIR))
+        )
+    }
+}
+
+function hasCliPackage(f: Feature): boolean {
+    if (!f.manifest.cli?.package) return false
+    if (!fs.existsSync(path.join(f.dir, f.manifest.cli.package))) return false
+    if (!f.manifest.cli.module) {
+        console.warn(
+            `[generate] ${f.manifest.slug}: cli.package declared but cli.module is missing — CLI wiring skipped`
+        )
+        return false
+    }
+    return true
+}
+
 function hasServerPackage(f: Feature): boolean {
     if (!f.manifest.server?.package) return false
     if (!fs.existsSync(path.join(f.dir, f.manifest.server.package))) return false
@@ -619,6 +664,7 @@ async function main() {
 
     symlinkServerArtifacts(features)
     emitGoWiring(features)
+    emitCliWiring(features)
     // Seed a synthetic `core` manifest so @tinycld/core gets a pkg_registry row.
     // core has no manifest.ts and isn't a feature, but the compatibility solver
     // needs core's version resolvable so other packages' `@tinycld/core` peer
