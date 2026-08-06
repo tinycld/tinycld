@@ -10,6 +10,26 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
+// addDisabledField adds the `disabled` bool field to users. The bundled test
+// data's users collection does not carry it — it is added by this app's own
+// migration (1930000000_add_users_disabled.js), which newSchemaApp does not
+// replay — so any test that needs to disable a user must add it first, same
+// as driveshare_test.go's setupApp does.
+func addDisabledField(t *testing.T, app *tests.TestApp) {
+	t.Helper()
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatalf("find users: %v", err)
+	}
+	if users.Fields.GetByName("disabled") != nil {
+		return
+	}
+	users.Fields.Add(&core.BoolField{Name: "disabled"})
+	if err := app.Save(users); err != nil {
+		t.Fatalf("add users.disabled: %v", err)
+	}
+}
+
 // seedUserAndClient creates one user and one public client, returning their ids.
 func seedUserAndClient(t *testing.T, app *tests.TestApp) (userID, clientRecID string) {
 	t.Helper()
@@ -85,6 +105,74 @@ func TestVerifyGrantRejectsRevoked(t *testing.T) {
 	// must take effect on the very next request.
 	if _, err := VerifyGrant(app, jti); !errors.Is(err, ErrGrantRevoked) {
 		t.Fatalf("VerifyGrant after revoke = %v, want ErrGrantRevoked", err)
+	}
+}
+
+func TestRevokeGrantClearsAllCredentialMaterial(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, clientID := seedUserAndClient(t, app)
+
+	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "pending")
+	if err != nil {
+		t.Fatalf("NewGrant: %v", err)
+	}
+	// Populate every field a live grant could be carrying mid-flight — e.g. a
+	// user denying a pending device request must not leave its device_code or
+	// user_code usable afterward.
+	grant.Set("refresh_token_hash", "rt-hash")
+	grant.Set("auth_code_hash", "ac-hash")
+	grant.Set("device_code", "dc-secret")
+	grant.Set("user_code", "WDJB-MJHT")
+	if err := app.Save(grant); err != nil {
+		t.Fatalf("save grant with credential material: %v", err)
+	}
+
+	if err := RevokeGrant(app, grant.Id); err != nil {
+		t.Fatalf("RevokeGrant: %v", err)
+	}
+
+	revoked, err := app.FindRecordById(grantsCollection, grant.Id)
+	if err != nil {
+		t.Fatalf("reload revoked grant: %v", err)
+	}
+	for _, field := range []string{"refresh_token_hash", "auth_code_hash", "device_code", "user_code"} {
+		if got := revoked.GetString(field); got != "" {
+			t.Errorf("revoked grant field %q = %q, want empty", field, got)
+		}
+	}
+}
+
+func TestVerifyGrantRejectsDisabledUser(t *testing.T) {
+	app := newSchemaApp(t)
+	addDisabledField(t, app)
+	userID, clientID := seedUserAndClient(t, app)
+
+	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	if err != nil {
+		t.Fatalf("NewGrant: %v", err)
+	}
+	jti := grant.GetString("jti")
+
+	// Sanity: valid while the user is enabled.
+	if _, err := VerifyGrant(app, jti); err != nil {
+		t.Fatalf("VerifyGrant before disable: %v", err)
+	}
+
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	user.Set("disabled", true)
+	if err := app.Save(user); err != nil {
+		t.Fatalf("save disabled user: %v", err)
+	}
+
+	// PocketBase's per-request auth middleware never re-runs the
+	// disabled-user hook — that only guards token issuance — so this check
+	// inside VerifyGrant is the only thing that cuts off an already-issued
+	// access token once the account is disabled.
+	if _, err := VerifyGrant(app, jti); !errors.Is(err, ErrInvalidGrant) {
+		t.Fatalf("VerifyGrant on disabled user = %v, want ErrInvalidGrant", err)
 	}
 }
 
