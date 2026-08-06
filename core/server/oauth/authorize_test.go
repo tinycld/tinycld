@@ -203,6 +203,384 @@ func TestRevokeUnknownTokenStillReturns200(t *testing.T) {
 	}
 }
 
+// seedClientWithRedirectURIs registers a fresh public client with the given
+// redirect_uris, for handleAuthorize tests that need RedirectURIAllowed to
+// have something real to check against — seedUserAndClient's client carries
+// no redirect_uris at all, which would make every redirect_uri "unregistered"
+// for a trivial, uninteresting reason rather than the one under test.
+func seedClientWithRedirectURIs(t *testing.T, app *tests.TestApp, clientID string, uris []string) (clientRecID string) {
+	t.Helper()
+	clients, err := app.FindCollectionByNameOrId(clientsCollection)
+	if err != nil {
+		t.Fatalf("find clients: %v", err)
+	}
+	c := core.NewRecord(clients)
+	c.Set("client_id", clientID)
+	c.Set("name", "Zapier-like Integration")
+	c.Set("type", "public")
+	c.Set("is_first_party", false)
+	c.Set("redirect_uris", uris)
+	if err := app.Save(c); err != nil {
+		t.Fatalf("save client with redirect_uris: %v", err)
+	}
+	return c.Id
+}
+
+// authorizeRequest builds the *core.RequestEvent handleAuthorize expects,
+// mirroring the shape every other handler test in this file already uses. It
+// returns the recorder too, so a caller that needs to inspect a re.JSON
+// success body (rec.Code is real on that path) does not have to type-assert
+// re.Response back to *httptest.ResponseRecorder itself.
+func authorizeRequest(app core.App, auth *core.Record, form url.Values) (*core.RequestEvent, *httptest.ResponseRecorder) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	re := &core.RequestEvent{App: app}
+	re.Request = req
+	re.Response = rec
+	re.Auth = auth
+	return re, rec
+}
+
+func validAuthorizeForm(clientID, redirectURI, verifier string) url.Values {
+	form := url.Values{}
+	form.Set("client_id", clientID)
+	form.Set("redirect_uri", redirectURI)
+	form.Set("code_challenge", challengeFor(verifier))
+	form.Set("code_challenge_method", MethodS256)
+	form.Set("scope", ScopeMailRead)
+	form.Set("state", "xyz")
+	return form
+}
+
+// TestAuthorizeRejectsUnregisteredRedirectURI is the open-redirect /
+// authorization-code-interception mutation target: RedirectURIAllowed must be
+// exact-match, and a prefix/substring variant of a registered URI must be
+// refused exactly like a wholly different one.
+func TestAuthorizeRejectsUnregisteredRedirectURI(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, _ := seedUserAndClient(t, app)
+	user, _ := app.FindRecordById("users", userID)
+	const registered = "https://app.example.com/cb"
+	clientID := "zapier-1"
+	seedClientWithRedirectURIs(t, app, clientID, []string{registered})
+
+	verifier, _ := randomToken(32)
+	for _, presented := range []string{
+		"https://evil.example.com/cb",
+		registered + ".evil.com",
+		registered + "/../x",
+		registered + "/extra",
+	} {
+		form := validAuthorizeForm(clientID, presented, verifier)
+		re, _ := authorizeRequest(app, user, form)
+		err := handleAuthorize(app, re)
+		if status := apiStatus(err); status != http.StatusBadRequest {
+			t.Errorf("redirect_uri %q: status = %d, err = %v, want 400", presented, status, err)
+		}
+	}
+}
+
+// TestAuthorizeRequiresCodeChallenge is the PKCE-downgrade mutation target:
+// an absent code_challenge must be refused outright, never treated as "no
+// PKCE requested".
+func TestAuthorizeRequiresCodeChallenge(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, _ := seedUserAndClient(t, app)
+	user, _ := app.FindRecordById("users", userID)
+	const redirectURI = "https://app.example.com/cb"
+	clientID := "zapier-2"
+	seedClientWithRedirectURIs(t, app, clientID, []string{redirectURI})
+
+	form := url.Values{}
+	form.Set("client_id", clientID)
+	form.Set("redirect_uri", redirectURI)
+	// code_challenge intentionally omitted.
+	re, _ := authorizeRequest(app, user, form)
+	err := handleAuthorize(app, re)
+	if status := apiStatus(err); status != http.StatusBadRequest {
+		t.Fatalf("missing code_challenge: status = %d, err = %v, want 400", status, err)
+	}
+}
+
+// TestAuthorizeRejectsNonS256Method covers both a "plain" challenge method
+// and an absent one — OAuth 2.1 removed `plain`, so accepting it (or
+// defaulting to it) would silently downgrade PKCE for every client that
+// omits the parameter.
+func TestAuthorizeRejectsNonS256Method(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, _ := seedUserAndClient(t, app)
+	user, _ := app.FindRecordById("users", userID)
+	const redirectURI = "https://app.example.com/cb"
+	clientID := "zapier-3"
+	seedClientWithRedirectURIs(t, app, clientID, []string{redirectURI})
+	verifier, _ := randomToken(32)
+
+	cases := []struct {
+		name   string
+		method string
+	}{
+		{"plain", "plain"},
+		{"absent", ""},
+	}
+	for _, c := range cases {
+		form := url.Values{}
+		form.Set("client_id", clientID)
+		form.Set("redirect_uri", redirectURI)
+		form.Set("code_challenge", challengeFor(verifier))
+		if c.method != "" {
+			form.Set("code_challenge_method", c.method)
+		}
+		re, _ := authorizeRequest(app, user, form)
+		err := handleAuthorize(app, re)
+		if status := apiStatus(err); status != http.StatusBadRequest {
+			t.Errorf("method %q: status = %d, err = %v, want 400", c.name, status, err)
+		}
+	}
+}
+
+// TestAuthorizeRequiresAuthentication: nobody may mint an authorization code
+// without an authenticated session, however well-formed the rest of the
+// request.
+func TestAuthorizeRequiresAuthentication(t *testing.T) {
+	app := newSchemaApp(t)
+	const redirectURI = "https://app.example.com/cb"
+	clientID := "zapier-4"
+	seedClientWithRedirectURIs(t, app, clientID, []string{redirectURI})
+	verifier, _ := randomToken(32)
+
+	form := validAuthorizeForm(clientID, redirectURI, verifier)
+	re, _ := authorizeRequest(app, nil, form)
+	err := handleAuthorize(app, re)
+	if status := apiStatus(err); status != http.StatusUnauthorized {
+		t.Fatalf("anonymous authorize: status = %d, err = %v, want 401", status, err)
+	}
+}
+
+// TestAuthorizeRejectsUnknownScope must not silently drop an unrecognized
+// scope — the caller would then believe it holds access it was never granted.
+func TestAuthorizeRejectsUnknownScope(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, _ := seedUserAndClient(t, app)
+	user, _ := app.FindRecordById("users", userID)
+	const redirectURI = "https://app.example.com/cb"
+	clientID := "zapier-5"
+	seedClientWithRedirectURIs(t, app, clientID, []string{redirectURI})
+	verifier, _ := randomToken(32)
+
+	form := validAuthorizeForm(clientID, redirectURI, verifier)
+	form.Set("scope", "not-a-real-scope")
+	re, _ := authorizeRequest(app, user, form)
+	err := handleAuthorize(app, re)
+	if status := apiStatus(err); status != http.StatusBadRequest {
+		t.Fatalf("unknown scope: status = %d, err = %v, want 400", status, err)
+	}
+}
+
+// TestAuthorizeHappyPathBindsPKCEAndRedirectAcrossToTokenExchange is the one
+// test that proves the binding is load-bearing rather than merely stored: it
+// drives handleAuthorize for a real code, then feeds that code into the
+// actual token endpoint (postToken/handleToken, Task 6) with the correct
+// verifier (must succeed) and a wrong one (must fail). A version of
+// handleAuthorize that stored code_challenge/redirect_uri but never had them
+// checked downstream would still pass a test that only inspected the grant
+// row — this closes that gap.
+func TestAuthorizeHappyPathBindsPKCEAndRedirectAcrossToTokenExchange(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, _ := seedUserAndClient(t, app)
+	user, _ := app.FindRecordById("users", userID)
+	const redirectURI = "https://app.example.com/cb"
+	const clientID = "tinycld-cli" // matches seedUserAndClient's client_id
+	verifier, err := randomToken(32)
+	if err != nil {
+		t.Fatalf("randomToken: %v", err)
+	}
+
+	// seedUserAndClient's client has no redirect_uris registered yet — add
+	// one directly so RedirectURIAllowed has a real match to make.
+	client, err := app.FindRecordById(clientsCollection, mustFindClientRecID(t, app, clientID))
+	if err != nil {
+		t.Fatalf("find client: %v", err)
+	}
+	client.Set("redirect_uris", []string{redirectURI})
+	if err := app.Save(client); err != nil {
+		t.Fatalf("save client redirect_uris: %v", err)
+	}
+
+	form := validAuthorizeForm(clientID, redirectURI, verifier)
+	re, authRec := authorizeRequest(app, user, form)
+	if err := handleAuthorize(app, re); err != nil {
+		t.Fatalf("handleAuthorize: %v", err)
+	}
+	// handleAuthorize's only return path on success is re.JSON, which writes
+	// rec.Code itself — a real signal here, unlike the rejection paths above.
+	if authRec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", authRec.Code, authRec.Body.String())
+	}
+	var issuedCode struct {
+		Code        string `json:"code"`
+		RedirectURI string `json:"redirect_uri"`
+	}
+	if err := json.Unmarshal(authRec.Body.Bytes(), &issuedCode); err != nil {
+		t.Fatalf("decode authorize response: %v", err)
+	}
+	if issuedCode.Code == "" {
+		t.Fatal("handleAuthorize must return a code")
+	}
+
+	grant, err := app.FindFirstRecordByFilter(
+		grantsCollection, "auth_code_hash = {:h}",
+		map[string]any{"h": hashSecret(issuedCode.Code)},
+	)
+	if err != nil || grant == nil {
+		t.Fatalf("grant for issued code not found: %v", err)
+	}
+	if grant.GetString("redirect_uri") != redirectURI {
+		t.Fatalf("grant redirect_uri = %q, want %q", grant.GetString("redirect_uri"), redirectURI)
+	}
+	if grant.GetString("code_challenge") != challengeFor(verifier) {
+		t.Fatal("grant code_challenge does not match the S256 hash of the verifier")
+	}
+
+	// Correct verifier: the exchange must succeed end to end.
+	okForm := url.Values{}
+	okForm.Set("grant_type", "authorization_code")
+	okForm.Set("code", issuedCode.Code)
+	okForm.Set("code_verifier", verifier)
+	okForm.Set("redirect_uri", redirectURI)
+	okForm.Set("client_id", clientID)
+	rec, resp := postToken(t, app, okForm)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("token exchange with correct verifier: status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	if resp.AccessToken == "" {
+		t.Fatal("token exchange with correct verifier must return an access token")
+	}
+}
+
+// TestAuthorizeHappyPathWrongVerifierFailsExchange is the negative half of
+// the above: a code issued against one challenge must be refused by the
+// token endpoint when redeemed with a DIFFERENT verifier, proving the two
+// handlers are not just storing PKCE data but actually checking it against
+// each other.
+func TestAuthorizeHappyPathWrongVerifierFailsExchange(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, _ := seedUserAndClient(t, app)
+	user, _ := app.FindRecordById("users", userID)
+	const redirectURI = "https://app.example.com/cb"
+	const clientID = "tinycld-cli"
+	verifier, err := randomToken(32)
+	if err != nil {
+		t.Fatalf("randomToken: %v", err)
+	}
+
+	client, err := app.FindRecordById(clientsCollection, mustFindClientRecID(t, app, clientID))
+	if err != nil {
+		t.Fatalf("find client: %v", err)
+	}
+	client.Set("redirect_uris", []string{redirectURI})
+	if err := app.Save(client); err != nil {
+		t.Fatalf("save client redirect_uris: %v", err)
+	}
+
+	form := validAuthorizeForm(clientID, redirectURI, verifier)
+	re, authRec := authorizeRequest(app, user, form)
+	if err := handleAuthorize(app, re); err != nil {
+		t.Fatalf("handleAuthorize: %v", err)
+	}
+	var issuedCode struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(authRec.Body.Bytes(), &issuedCode); err != nil {
+		t.Fatalf("decode authorize response: %v", err)
+	}
+
+	wrongVerifier, _ := randomToken(32)
+	badForm := url.Values{}
+	badForm.Set("grant_type", "authorization_code")
+	badForm.Set("code", issuedCode.Code)
+	badForm.Set("code_verifier", wrongVerifier)
+	badForm.Set("redirect_uri", redirectURI)
+	badForm.Set("client_id", clientID)
+	// handleAuthCodeGrant's rejection path is tokenError -> re.JSON, which
+	// writes rec.Code itself (see token_test.go's postToken doc comment), so
+	// rec.Code is a real signal here.
+	rec, errResp := postTokenExpectingError(t, app, badForm)
+	if rec.Code == http.StatusOK {
+		t.Fatal("a wrong verifier must not redeem a code issued against a different challenge")
+	}
+	if errResp.Error != "invalid_grant" {
+		t.Fatalf("error = %q, want invalid_grant", errResp.Error)
+	}
+}
+
+// mustFindClientRecID resolves seedUserAndClient's client record id from its
+// client_id, since that helper only returns the record id at creation time
+// and these tests need to mutate the record afterward.
+func mustFindClientRecID(t *testing.T, app core.App, clientID string) string {
+	t.Helper()
+	rec, err := FindClientByClientID(app, clientID)
+	if err != nil {
+		t.Fatalf("find client %q: %v", clientID, err)
+	}
+	return rec.Id
+}
+
+func TestAuthorizeInfoReturnsClientNameAndScopes(t *testing.T) {
+	app := newSchemaApp(t)
+	userCode, userID := pendingUserCodeGrant(t, app)
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?user_code="+userCode, nil)
+	re := &core.RequestEvent{App: app}
+	re.Request = req
+	re.Response = rec
+	re.Auth = user
+
+	if err := handleAuthorizeInfo(app, re); err != nil {
+		t.Fatalf("handleAuthorizeInfo: %v", err)
+	}
+	// handleAuthorizeInfo's only return path is re.JSON, which writes rec.Code.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+	var info AuthorizeInfoResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &info); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if info.ClientName != "TinyCld CLI" {
+		t.Errorf("client_name = %q, want %q", info.ClientName, "TinyCld CLI")
+	}
+	if len(info.Scopes) != 1 || info.Scopes[0] != ScopeMailRead {
+		t.Errorf("scopes = %v, want [%s]", info.Scopes, ScopeMailRead)
+	}
+}
+
+func TestAuthorizeInfoRejectsAnonymousCaller(t *testing.T) {
+	app := newSchemaApp(t)
+	userCode, _ := pendingUserCodeGrant(t, app)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/oauth/authorize?user_code="+userCode, nil)
+	re := &core.RequestEvent{App: app}
+	re.Request = req
+	re.Response = rec
+	re.Auth = nil
+
+	// handleAuthorizeInfo's rejection path returns re.UnauthorizedError, a
+	// *router.ApiError never routed through re.Response in this harness — the
+	// real signal is apiStatus(err), not rec.Code.
+	err := handleAuthorizeInfo(app, re)
+	if status := apiStatus(err); status != http.StatusUnauthorized {
+		t.Fatalf("anonymous caller: status = %d, err = %v, want 401", status, err)
+	}
+}
+
 func TestMetadataAdvertisesSupportedGrants(t *testing.T) {
 	app := newSchemaApp(t)
 
