@@ -1,10 +1,13 @@
 package oauth
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/router"
 )
 
 func TestScopeForRouteMapsKnownRoutes(t *testing.T) {
@@ -135,5 +138,189 @@ func TestAccessTokenTTLIsShorterThanRefresh(t *testing.T) {
 	}
 	if AccessTokenTTL > 24*time.Hour {
 		t.Fatalf("AccessTokenTTL (%v) is too long for a bearer token", AccessTokenTTL)
+	}
+}
+
+// TestMiddlewarePriorityRunsBeforePocketBase is the assertion that catches a
+// priority flip. PocketBase's loadAuthToken short-circuits on e.Auth != nil
+// (apis/middlewares.go), so if our priority number were not strictly less
+// than PocketBase's, PB's middleware would run first, populate e.Auth from
+// the raw signature alone, and our grant/scope check below would never run —
+// silently disabling revocation for every OAuth access token.
+func TestMiddlewarePriorityRunsBeforePocketBase(t *testing.T) {
+	if middlewarePriority >= apis.DefaultLoadAuthTokenMiddlewarePriority {
+		t.Fatalf("middlewarePriority %d must be < PocketBase's loadAuthToken priority %d, "+
+			"or PB sets e.Auth first and the grant check is bypassed",
+			middlewarePriority, apis.DefaultLoadAuthTokenMiddlewarePriority)
+	}
+}
+
+// newRequestEvent builds a bare *core.RequestEvent the way vapid_admin_test.go
+// does, so enforceGrant can be called directly without standing up a router.
+func newRequestEvent(app core.App, method, path, bearer string) *core.RequestEvent {
+	req := httptest.NewRequest(method, path, nil)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	re := &core.RequestEvent{App: app}
+	re.Request = req
+	re.Response = httptest.NewRecorder()
+	return re
+}
+
+// apiStatus extracts the HTTP status enforceGrant refused with, or 0 if err
+// is not the *router.ApiError enforceGrant is documented to return.
+func apiStatus(err error) int {
+	apiErr, ok := err.(*router.ApiError)
+	if !ok {
+		return 0
+	}
+	return apiErr.Status
+}
+
+func TestEnforceGrantLeavesPlainTokenAlone(t *testing.T) {
+	// A web-session token carries no tcg claim. enforceGrant must not touch
+	// e.Auth for it at all — that is PocketBase's own loadAuthToken's job,
+	// which runs after us and resolves the signature normally.
+	app := newSchemaApp(t)
+	userID, _ := seedUserAndClient(t, app)
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	plain, err := user.NewAuthToken()
+	if err != nil {
+		t.Fatalf("NewAuthToken: %v", err)
+	}
+
+	re := newRequestEvent(app, "GET", "/api/mail/search", plain)
+	if err := enforceGrant(re); err != nil {
+		t.Fatalf("enforceGrant on a plain token returned an error: %v", err)
+	}
+	if re.Auth != nil {
+		t.Fatal("enforceGrant must not set e.Auth for a non-OAuth token")
+	}
+}
+
+func TestEnforceGrantAllowsInScopeRequest(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, clientID := seedUserAndClient(t, app)
+	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	if err != nil {
+		t.Fatalf("NewGrant: %v", err)
+	}
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	token, err := MintAccessToken(app, user, grant, AccessTokenTTL)
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+
+	re := newRequestEvent(app, "GET", "/api/mail/search", token)
+	if err := enforceGrant(re); err != nil {
+		t.Fatalf("enforceGrant on an in-scope request returned an error: %v", err)
+	}
+	if re.Auth == nil || re.Auth.Id != userID {
+		t.Fatalf("enforceGrant must set e.Auth to the grant's user; got %v", re.Auth)
+	}
+}
+
+func TestEnforceGrantRejectsOutOfScopeRequest(t *testing.T) {
+	// This is the assertion that must fail if the scope check is ever
+	// removed or short-circuited: a grant scoped to mail:read only must not
+	// authorize a drive:write route.
+	app := newSchemaApp(t)
+	userID, clientID := seedUserAndClient(t, app)
+	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	if err != nil {
+		t.Fatalf("NewGrant: %v", err)
+	}
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	token, err := MintAccessToken(app, user, grant, AccessTokenTTL)
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+
+	re := newRequestEvent(app, "POST", "/api/drive/upload-version", token)
+	err = enforceGrant(re)
+	if err == nil {
+		t.Fatal("enforceGrant must refuse a request outside the grant's scopes")
+	}
+	if got := apiStatus(err); got != 403 {
+		t.Fatalf("enforceGrant out-of-scope status = %d, want 403 (%v)", got, err)
+	}
+	if re.Auth != nil {
+		t.Fatal("enforceGrant must not set e.Auth when it refuses the request")
+	}
+}
+
+func TestEnforceGrantRejectsRevokedGrant(t *testing.T) {
+	// The single most important property of the whole design: revoking a
+	// grant must take effect on the very next request, even though the JWT
+	// signature on the already-issued access token is still perfectly valid.
+	app := newSchemaApp(t)
+	userID, clientID := seedUserAndClient(t, app)
+	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	if err != nil {
+		t.Fatalf("NewGrant: %v", err)
+	}
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	token, err := MintAccessToken(app, user, grant, AccessTokenTTL)
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+	if err := RevokeGrant(app, grant.Id); err != nil {
+		t.Fatalf("RevokeGrant: %v", err)
+	}
+
+	re := newRequestEvent(app, "GET", "/api/mail/search", token)
+	err = enforceGrant(re)
+	if err == nil {
+		t.Fatal("enforceGrant must refuse a revoked grant's access token")
+	}
+	if got := apiStatus(err); got != 401 {
+		t.Fatalf("enforceGrant revoked-grant status = %d, want 401 (%v)", got, err)
+	}
+	if re.Auth != nil {
+		t.Fatal("enforceGrant must not set e.Auth for a revoked grant")
+	}
+}
+
+func TestEnforceGrantDefaultDeniesUncoveredRoute(t *testing.T) {
+	// A route the scope table does not know about must be refused for OAuth
+	// callers even though the grant and token are otherwise perfectly valid.
+	app := newSchemaApp(t)
+	userID, clientID := seedUserAndClient(t, app)
+	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	if err != nil {
+		t.Fatalf("NewGrant: %v", err)
+	}
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	token, err := MintAccessToken(app, user, grant, AccessTokenTTL)
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+
+	re := newRequestEvent(app, "POST", "/api/admin/packages/install", token)
+	err = enforceGrant(re)
+	if err == nil {
+		t.Fatal("enforceGrant must refuse a route not covered by the scope table")
+	}
+	if got := apiStatus(err); got != 403 {
+		t.Fatalf("enforceGrant uncovered-route status = %d, want 403 (%v)", got, err)
+	}
+	if re.Auth != nil {
+		t.Fatal("enforceGrant must not set e.Auth when it default-denies")
 	}
 }

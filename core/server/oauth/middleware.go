@@ -175,6 +175,52 @@ func MintAccessToken(
 	return signed, nil
 }
 
+// enforceGrant is the body of the grant-enforcement middleware, split out so
+// it can be exercised directly in tests without standing up a router — the
+// handler this package registers just calls it under the same Id/Priority.
+func enforceGrant(re *core.RequestEvent) error {
+	token := bearerToken(re.Request)
+	if token == "" || !IsOAuthToken(token) {
+		// Not an OAuth request — leave it entirely alone.
+		return re.Next()
+	}
+
+	record, err := re.App.FindAuthRecordByToken(token, core.TokenTypeAuth)
+	if err != nil || record == nil {
+		return re.UnauthorizedError("Invalid access token", nil)
+	}
+
+	grant, err := VerifyGrant(re.App, grantIDFromToken(token))
+	if err != nil {
+		return re.UnauthorizedError("Access token is no longer valid", nil)
+	}
+	if grant.GetString("user") != record.Id {
+		// The grant belongs to a different user than the token
+		// claims. Should be impossible; refuse loudly.
+		return re.UnauthorizedError("Access token is no longer valid", nil)
+	}
+
+	required := ScopeForRoute(re.Request.Method, re.Request.URL.Path)
+	if required == "" {
+		return re.ForbiddenError(
+			"This endpoint is not available to API tokens", nil)
+	}
+	if required != scopeExempt {
+		if !HasScope(ParseScopes(grant.GetString("scopes")), required) {
+			return re.ForbiddenError(
+				fmt.Sprintf("Requires the %q scope", required), nil)
+		}
+	}
+
+	if err := TouchGrant(re.App, grant); err != nil {
+		// Non-fatal: last_used_at is cosmetic.
+		re.App.Logger().Warn("oauth: touch grant", "error", err)
+	}
+
+	re.Auth = record
+	return re.Next()
+}
+
 // bindGrantEnforcement installs the middleware that turns a valid signature
 // into an authorized request. It runs ahead of PocketBase's loadAuthToken so
 // that, for OAuth tokens, we populate e.Auth ourselves after checking the
@@ -184,48 +230,7 @@ func bindGrantEnforcement(app core.App) {
 		e.Router.Bind(&hook.Handler[*core.RequestEvent]{
 			Id:       "tinycldOAuthGrant",
 			Priority: middlewarePriority,
-			Func: func(re *core.RequestEvent) error {
-				token := bearerToken(re.Request)
-				if token == "" || !IsOAuthToken(token) {
-					// Not an OAuth request — leave it entirely alone.
-					return re.Next()
-				}
-
-				record, err := re.App.FindAuthRecordByToken(token, core.TokenTypeAuth)
-				if err != nil || record == nil {
-					return re.UnauthorizedError("Invalid access token", nil)
-				}
-
-				grant, err := VerifyGrant(re.App, grantIDFromToken(token))
-				if err != nil {
-					return re.UnauthorizedError("Access token is no longer valid", nil)
-				}
-				if grant.GetString("user") != record.Id {
-					// The grant belongs to a different user than the token
-					// claims. Should be impossible; refuse loudly.
-					return re.UnauthorizedError("Access token is no longer valid", nil)
-				}
-
-				required := ScopeForRoute(re.Request.Method, re.Request.URL.Path)
-				if required == "" {
-					return re.ForbiddenError(
-						"This endpoint is not available to API tokens", nil)
-				}
-				if required != scopeExempt {
-					if !HasScope(ParseScopes(grant.GetString("scopes")), required) {
-						return re.ForbiddenError(
-							fmt.Sprintf("Requires the %q scope", required), nil)
-					}
-				}
-
-				if err := TouchGrant(re.App, grant); err != nil {
-					// Non-fatal: last_used_at is cosmetic.
-					re.App.Logger().Warn("oauth: touch grant", "error", err)
-				}
-
-				re.Auth = record
-				return re.Next()
-			},
+			Func:     enforceGrant,
 		})
 		return e.Next()
 	})
