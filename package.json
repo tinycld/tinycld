@@ -159,7 +159,7 @@
         "react-hook-form": "^7.72.0",
         "react-native": "0.83.6",
         "react-native-blob-util": "^0.24.7",
-        "react-native-drax": "^1.1.0",
+        "react-native-drax": "github:nathanstitt/react-native-drax#989bfb605df558b7b64d3d64f392efc6f7678e15",
         "react-native-external-keyboard": "^0.8.4",
         "react-native-gesture-handler": "~3.0.1",
         "react-native-get-random-values": "~1.11.0",
