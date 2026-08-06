@@ -17,6 +17,9 @@ const MethodS256 = "S256"
 // Empty inputs always fail — a stripped PKCE parameter must never read as a
 // successful verification.
 func VerifyPKCE(challenge, verifier string) bool {
+	// Redundant with the hash comparison below, which cannot match an empty
+	// challenge — kept as cheap, explicit defense-in-depth in case the
+	// comparison is ever changed.
 	if challenge == "" || verifier == "" {
 		return false
 	}

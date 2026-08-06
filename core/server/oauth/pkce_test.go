@@ -28,8 +28,10 @@ func TestVerifyPKCERejectsWrongVerifier(t *testing.T) {
 }
 
 func TestVerifyPKCERejectsEmptyInput(t *testing.T) {
-	// An empty challenge or verifier must never authorize. Without this an
-	// attacker who strips the PKCE params gets a free pass.
+	// Empty inputs must never validate. Note this holds because the hash
+	// comparison below cannot match an empty challenge — SHA256("") encodes to
+	// a 43-char digest — not because of the explicit guard in VerifyPKCE. The
+	// guard is defense-in-depth; this test would pass without it.
 	if VerifyPKCE("", "") {
 		t.Fatal("empty challenge+verifier must not validate")
 	}
