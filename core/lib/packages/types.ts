@@ -97,6 +97,17 @@ export interface PackageManifest {
         module: string
     }
 
+    /**
+     * Go payload package (dir relative to the member root, e.g. 'server/api')
+     * holding the exported HTTP request/response structs for this package's
+     * API. The generator emits lib/generated/<slug>-api.ts from it, so the
+     * web client (and the CLI) consume the Go structs as the single source
+     * of truth for payload shapes.
+     */
+    payloads?: {
+        package: string
+    }
+
     help?: {
         directory: string
     }

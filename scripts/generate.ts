@@ -7,6 +7,7 @@ import { type BuildPkg, runPackageBuilds } from './gen-build'
 import { buildConfigSource, buildSeedsSource, type ConfigPkg } from './gen-config'
 import { buildHelpSource, type HelpGroupInput, parseFrontmatter } from './gen-help'
 import { buildPackageIconsSource } from './gen-icons'
+import { orphanPayloadFiles, planPayloadEmits, runPayloadEmits } from './gen-payload-types'
 import { emitPublicRoutes, emitRoutes, pruneOrphanRouteDirs } from './gen-routes'
 import {
     buildBundledPackages,
@@ -591,6 +592,15 @@ async function main() {
 
     emitFeatureRoutes(features)
     emitHelp(features)
+
+    // --- payload API types (<slug>-api.ts from each manifest payloads block) --
+    for (const orphan of orphanPayloadFiles(
+        GENERATED_DIR,
+        new Set(features.map(f => f.manifest.slug))
+    )) {
+        fs.rmSync(orphan, { force: true })
+    }
+    runPayloadEmits(planPayloadEmits(features, GENERATED_DIR))
 
     fs.writeFileSync(
         path.join(GENERATED_DIR, 'package-icons.ts'),
