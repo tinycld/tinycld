@@ -4,9 +4,19 @@ import { useMutation } from '@tinycld/core/lib/mutations'
 import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
-import type { OauthGrants } from '@tinycld/core/types/pbSchema'
+import { ConfirmDialog } from '@tinycld/core/ui/ConfirmDialog'
 import { Trash2 } from 'lucide-react-native'
+import { useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
+
+// The projection GrantRow actually renders — see the .select() comment below
+// for why this is narrower than the full OauthGrants row.
+interface ConnectedAppGrant {
+    id: string
+    device_label: string
+    last_used_at: string
+    status: string
+}
 
 // formatLastUsed turns an ISO timestamp into the coarse relative string the
 // list shows. Coarse on purpose: the exact minute is noise, and "never used"
@@ -43,12 +53,36 @@ function useRevokeGrant() {
 export function ConnectedAppsSection() {
     const [grantsCollection] = useStore('oauth_grants')
     const revoke = useRevokeGrant()
+    // The grant awaiting confirmation, not yet revoked. Revoke is one mis-tap
+    // away from killing a live CLI or integration session with no undo, so
+    // the trash icon opens a confirmation instead of revoking immediately.
+    const [pendingRevoke, setPendingRevoke] = useState<ConnectedAppGrant | null>(null)
 
+    // .select() narrows what the client store (and the realtime subscription
+    // feeding it) actually holds. oauth_grants rows carry credential material
+    // (refresh_token_hash, device_code, auth_code_hash) that PocketBase's
+    // row-scoped list/view rule does not redact — only field selection does —
+    // and this screen has no business holding any of it in memory just to
+    // render a label and a timestamp.
     const { data: grants } = useOrgLiveQuery((query, { userId }) =>
-        query.from({ grant: grantsCollection }).where(({ grant }) => eq(grant.user, userId))
+        query
+            .from({ grant: grantsCollection })
+            .where(({ grant }) => eq(grant.user, userId))
+            .select(({ grant }) => ({
+                id: grant.id,
+                device_label: grant.device_label,
+                last_used_at: grant.last_used_at,
+                status: grant.status,
+            }))
     )
 
     const active = (grants ?? []).filter(grant => grant.status === 'active')
+
+    const confirmRevoke = () => {
+        if (!pendingRevoke) return
+        revoke.mutate(pendingRevoke.id)
+        setPendingRevoke(null)
+    }
 
     if (active.length === 0) return null
 
@@ -66,11 +100,21 @@ export function ConnectedAppsSection() {
                             key={grant.id}
                             grant={grant}
                             isRevoking={revoke.isPending && revoke.variables === grant.id}
-                            onRevoke={() => revoke.mutate(grant.id)}
+                            onRevoke={() => setPendingRevoke(grant)}
                         />
                     ))}
                 </View>
             </View>
+            <ConfirmDialog
+                isOpen={pendingRevoke !== null}
+                onClose={() => setPendingRevoke(null)}
+                onConfirm={confirmRevoke}
+                title="Revoke access?"
+                message={`"${pendingRevoke?.device_label || 'This device'}" will immediately lose access to your account. This can't be undone.`}
+                confirmLabel="Revoke"
+                isDestructive
+                isSubmitting={revoke.isPending}
+            />
         </View>
     )
 }
@@ -80,7 +124,7 @@ function GrantRow({
     isRevoking,
     onRevoke,
 }: {
-    grant: OauthGrants
+    grant: ConnectedAppGrant
     isRevoking: boolean
     onRevoke: () => void
 }) {
