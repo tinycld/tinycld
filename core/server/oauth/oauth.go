@@ -33,15 +33,15 @@ const (
 // Scopes. Named <package>:<capability> so the set grows naturally as packages
 // are installed. `profile` is the baseline identity scope every grant gets.
 const (
-	ScopeProfile        = "profile"
-	ScopeMailRead       = "mail:read"
-	ScopeMailSend       = "mail:send"
-	ScopeDriveRead      = "drive:read"
-	ScopeDriveWrite     = "drive:write"
-	ScopeContactsRead   = "contacts:read"
-	ScopeContactsWrite  = "contacts:write"
-	ScopeCalendarRead   = "calendar:read"
-	ScopeCalendarWrite  = "calendar:write"
+	ScopeProfile       = "profile"
+	ScopeMailRead      = "mail:read"
+	ScopeMailSend      = "mail:send"
+	ScopeDriveRead     = "drive:read"
+	ScopeDriveWrite    = "drive:write"
+	ScopeContactsRead  = "contacts:read"
+	ScopeContactsWrite = "contacts:write"
+	ScopeCalendarRead  = "calendar:read"
+	ScopeCalendarWrite = "calendar:write"
 )
 
 // AllScopes is the full catalog, used to validate a requested scope string and
