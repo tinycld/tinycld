@@ -56,14 +56,16 @@ func newSchemaApp(t testing.TB) *tests.TestApp {
 	})
 	grants.Fields.Add(&core.TextField{Name: "jti"})
 	grants.Fields.Add(&core.TextField{Name: "scopes"})
-	// Hidden: true on the three credential-material fields — mirrors the
+	// Hidden: true on all four credential-material fields — mirrors the
 	// migration's hidden fields so this test schema's API-export behavior
-	// (Record.PublicExport) matches production. user_code stays visible: the
-	// consent screen looks a pending grant up by it, and it's short-lived,
-	// single-use, human-typed.
+	// (Record.PublicExport) matches production. user_code is a live,
+	// guessable (~40-bit) credential while a device grant is pending; nothing
+	// client-side reads it off a record (the consent screen only ever sends
+	// the value the user typed/URL-supplied), so there is no reason to
+	// serialize it.
 	grants.Fields.Add(&core.TextField{Name: "refresh_token_hash", Hidden: true})
 	grants.Fields.Add(&core.TextField{Name: "device_code", Hidden: true})
-	grants.Fields.Add(&core.TextField{Name: "user_code"})
+	grants.Fields.Add(&core.TextField{Name: "user_code", Hidden: true})
 	grants.Fields.Add(&core.TextField{Name: "code_challenge"})
 	grants.Fields.Add(&core.TextField{Name: "auth_code_hash", Hidden: true})
 	grants.Fields.Add(&core.TextField{Name: "redirect_uri"})
@@ -121,14 +123,26 @@ func TestGrantJTIIsUnique(t *testing.T) {
 }
 
 // TestGrantCredentialFieldsAreHiddenFromPublicExport is the actual proof that
-// marking refresh_token_hash/device_code/auth_code_hash `hidden: true` closes
-// the exposure: PublicExport is what every JSON API response (list, view, and
-// realtime message) is built from, gated on !field.GetHidden(). A query-time
-// .select() on the TS client narrows what the CLIENT reads out of its local
-// store, but does nothing about what crosses the wire in the first place —
-// getList/getFullList/realtime all fetch every visible field regardless of
-// what the caller's query later projects. This test would fail if Hidden were
-// ever removed from the migration (or from this test schema's mirror of it).
+// marking refresh_token_hash/device_code/auth_code_hash/user_code
+// `hidden: true` closes the exposure: PublicExport is what every JSON API
+// response (list, view, and realtime message) is built from, gated on
+// !field.GetHidden(). A query-time .select() on the TS client narrows what
+// the CLIENT reads out of its local store, but does nothing about what
+// crosses the wire in the first place — getList/getFullList/realtime all
+// fetch every visible field regardless of what the caller's query later
+// projects. This test would fail if Hidden were ever removed from the
+// migration (or from this test schema's mirror of it).
+//
+// user_code is hidden alongside the other three: it is a live, guessable
+// (~40-bit) credential while a device grant is pending, and nothing
+// client-side reads it off a record — the consent screen (app/p/oauth/
+// authorize.tsx) only ever SENDS a value the user typed or that arrived in
+// the URL, never reads one back from a query. The server looks pending
+// grants up by it via FindGrantByUserCode, a DB filter that does not go
+// through PublicExport. The one place a user_code IS returned to a client is
+// DeviceResponse.UserCode in device.go — a hand-built JSON struct the CLI
+// polling /oauth/device reads to show the user, unrelated to and unaffected
+// by this collection field's Hidden flag.
 func TestGrantCredentialFieldsAreHiddenFromPublicExport(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
@@ -143,25 +157,25 @@ func TestGrantCredentialFieldsAreHiddenFromPublicExport(t *testing.T) {
 	grant.Set("refresh_token_hash", "leak-would-show-this-rt-hash")
 	grant.Set("device_code", "leak-would-show-this-device-code")
 	grant.Set("auth_code_hash", "leak-would-show-this-auth-code-hash")
-	grant.Set("user_code", "WDJB-MJHT")
+	grant.Set("user_code", "leak-would-show-this-user-code")
+	grant.Set("device_label", "Nathan's laptop")
 	if err := app.Save(grant); err != nil {
 		t.Fatalf("save grant with credential material: %v", err)
 	}
 
 	export := grant.PublicExport()
 
-	for _, field := range []string{"refresh_token_hash", "device_code", "auth_code_hash"} {
+	for _, field := range []string{"refresh_token_hash", "device_code", "auth_code_hash", "user_code"} {
 		if _, present := export[field]; present {
 			t.Errorf("PublicExport must not include %q — this is exactly what an API response and a realtime message send to every subscribed client", field)
 		}
 	}
 
-	// user_code is deliberately NOT hidden: the browser consent screen looks a
-	// pending grant up by it (handleAuthorizeInfo/handleApproveDevice), and
-	// it's short-lived, single-use, human-typed — hiding it would break that
-	// flow. Confirm it's still exported, so this test can't pass by accident
-	// (e.g. from a broken PublicExport that hides everything).
-	if got, present := export["user_code"]; !present || got != "WDJB-MJHT" {
-		t.Errorf("user_code must remain visible in PublicExport (got %v, present=%v)", got, present)
+	// device_label is a genuinely visible field (the Connected apps screen
+	// reads it directly). Confirming it IS exported guards against this test
+	// passing by accident — e.g. a broken PublicExport that hides everything
+	// would make every assertion above pass for the wrong reason.
+	if got, present := export["device_label"]; !present || got != "Nathan's laptop" {
+		t.Errorf("device_label must remain visible in PublicExport (got %v, present=%v)", got, present)
 	}
 }

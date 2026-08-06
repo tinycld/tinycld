@@ -121,10 +121,17 @@ migrate(
                 },
                 // Device Grant (RFC 8628) working state, cleared on approval.
                 { id: 'og_device_code', name: 'device_code', type: 'text', max: 200, hidden: true },
-                // Visible: the browser consent screen looks a pending grant up
-                // by this value (handleAuthorizeInfo/handleApproveDevice), and
-                // it is short-lived, single-use, and typed by a human.
-                { id: 'og_user_code', name: 'user_code', type: 'text', max: 20 },
+                // Also hidden: it's a live, guessable (~40-bit) credential
+                // while a device grant is pending. No client-side code reads
+                // it off a record — the consent screen only ever SENDS the
+                // value the user typed or that arrived in the URL, and the
+                // server looks pending grants up by it via
+                // FindGrantByUserCode (a DB filter, not PublicExport). The
+                // one place it IS returned to a client is DeviceResponse.
+                // UserCode in device.go, a hand-built JSON struct the CLI
+                // reads to show the user — unrelated to and unaffected by
+                // this collection field's Hidden flag.
+                { id: 'og_user_code', name: 'user_code', type: 'text', max: 20, hidden: true },
                 // Authorization Code + PKCE working state, cleared on exchange.
                 { id: 'og_code_challenge', name: 'code_challenge', type: 'text', max: 200 },
                 {
