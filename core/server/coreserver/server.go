@@ -15,6 +15,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 
 	"tinycld.org/core/notify"
+	"tinycld.org/core/oauth"
 	"tinycld.org/core/offboard"
 	"tinycld.org/core/pkgaccess"
 	"tinycld.org/core/quota"
@@ -283,6 +284,12 @@ func registerSharedCore(app *pocketbase.PocketBase) {
 	RegisterUsersDemoAuditHook(app)
 	RegisterDisabledUserGuard(app)
 	pkgaccess.Register(app)
+
+	// OAuth 2.1 authorization server: the device grant the tinycld CLI logs in
+	// with, and authorization-code + PKCE for third-party integrations. Shared
+	// (not host-only) because a multi-org tenant must be able to authorize a
+	// CLI or an integration exactly like a self-hosted deployment.
+	oauth.Register(app)
 
 	// Keep the /carddav (and /caldav, /dav) CORS bypass here even though core no
 	// longer serves a protocol handler itself: a package's own Go server (e.g.

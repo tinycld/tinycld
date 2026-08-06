@@ -67,6 +67,8 @@ const knownIcons = {
     // drive icons (if any are value-checked)
     FolderOpen: Icon,
     Folder: Icon,
+    // oauth: ConnectedAppsSection's revoke button
+    Trash2: Icon,
     File: Icon,
 }
 

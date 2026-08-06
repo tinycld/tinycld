@@ -67,6 +67,16 @@ export default defineConfig({
                 find: /^lucide-react-native$/,
                 replacement: path.join(APP_DIR, 'tests', 'lucide-react-native-stub.cjs'),
             },
+            // react-native-svg's fabric bindings import react-native via deep
+            // subpaths (react-native/Libraries/Utilities/codegenNativeComponent)
+            // that carry real Flow source and bypass the bare `react-native`
+            // alias above. Pulled in transitively by @gluestack-ui/core's icon
+            // creator (core/ui/button, core/ui/icon) — same failure mode as the
+            // lucide-react-native stub, so stub the whole package the same way.
+            {
+                find: /^react-native-svg$/,
+                replacement: path.join(APP_DIR, 'tests', 'react-native-svg-stub.cjs'),
+            },
             // uniwind's react-native condition resolves to TypeScript source files
             // that import react-native internals (Dimensions, Platform, etc.) which
             // Vite's node environment cannot parse. Stub out the minimal hook surface

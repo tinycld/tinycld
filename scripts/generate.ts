@@ -196,9 +196,11 @@ type Feature = { name: string; dir: string; manifest: PackageManifest }
 // pruned. (Files like _layout.tsx/index.tsx are already safe since prune only
 // touches directories; this guards the app-owned DIRS.)
 const APP_OWNED_ORG_ROUTE_DIRS = new Set(['help', 'settings'])
-// app/p/ has no app-owned directories — only app-owned files (_layout.tsx,
-// demo.tsx) plus per-package public-route dirs — so the allowlist is empty.
-const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>()
+// app/p/oauth/ is app-shell/core functionality (the device-consent screen for
+// the OAuth authorization server), not a per-package public-route dir — it has
+// no manifest and must survive a generate run even when no package happens to
+// declare publicRoutes.
+const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>(['oauth'])
 
 function emitFeatureRoutes(features: Feature[]) {
     fs.mkdirSync(ROUTES_BASE, { recursive: true })

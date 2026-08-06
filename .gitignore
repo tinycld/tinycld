@@ -74,6 +74,9 @@ server/pb_test_releases/
 # manifest. Fully generator-owned; the hand-written _layout.tsx sits one level
 # up at app/p/_layout.tsx and stays tracked.
 /app/p/*/
+# oauth is app-shell/core functionality (the device-consent screen), not a
+# generated package subtree — keep it tracked like settings/help/admin above.
+!/app/p/oauth/
 /lib/generated/
 /tinycld.config.ts
 /tinycld.seeds.ts
