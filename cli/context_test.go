@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"tinycld.org/cli/internal/config"
 	"tinycld.org/cli/internal/keychain"
@@ -33,6 +34,7 @@ func testDeps(t *testing.T) (*deps, *keychain.MemStore) {
 		httpClient: &http.Client{},
 		isTTY:      false,
 		openStore:  func(string, io.Writer) keychain.Store { return store },
+		sleep:      func(time.Duration) {},
 	}
 	return d, store
 }

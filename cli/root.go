@@ -25,6 +25,9 @@ type deps struct {
 	isTTY      bool
 
 	openStore func(configDir string, warn io.Writer) keychain.Store
+	// sleep is nil in production (real time.Sleep); tests inject a no-op so
+	// device-flow polling doesn't stall the suite.
+	sleep func(time.Duration)
 
 	// resolved in the root PersistentPreRunE
 	out     output.Options
@@ -99,6 +102,7 @@ func newRootCmd(d *deps) *cobra.Command {
 	root.AddCommand(
 		newVersionCmd(d),
 		newContextCmd(d),
+		newAuthCmd(d),
 	)
 	return root
 }
