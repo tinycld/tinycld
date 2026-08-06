@@ -545,6 +545,10 @@ function spawnExpo(expoPort: number, onReady: () => void): ChildProcess {
 //   /.well-known/caldav   service discovery (302s)
 //   /.well-known/carddav
 //   /.well-known/webdav
+//   /oauth                token/device/revoke/userinfo endpoints (the CLI
+//                         logs in against the proxy origin; the consent
+//                         SCREEN is the SPA route /p/oauth/authorize)
+//   /.well-known/oauth-authorization-server   RFC 8414 metadata
 //
 // /dav is RESERVED for protocol mounts and must never be a package slug.
 // WebDAV used to mount at bare /drive, which collided with the in-app /drive
@@ -560,6 +564,8 @@ const PB_PREFIXES = [
     '/.well-known/caldav',
     '/.well-known/carddav',
     '/.well-known/webdav',
+    '/oauth',
+    '/.well-known/oauth-authorization-server',
 ]
 
 // Metro serves lazily-imported package chunks (React.lazy / dynamic import)
