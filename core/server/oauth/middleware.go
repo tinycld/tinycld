@@ -72,12 +72,26 @@ var endpointScopes = map[string]string{
 
 // exemptPaths need no scope: public probes, and the OAuth endpoints a client
 // must reach before it holds any grant.
+//
+// This list must stay narrow. It used to be the blanket prefix "/oauth/",
+// which made every route under it — including the consent endpoints
+// (/oauth/authorize*, /oauth/grants/{id}/revoke) — scopeExempt for an OAuth
+// bearer token. That let a stolen profile-only access token approve or deny
+// ANY device login and mint itself a fully-scoped grant, because
+// enforceGrant never even reached the scope check for those paths. Only the
+// genuinely credential-less endpoints belong here: a device/CLI has no
+// token yet when it calls them. Everything else under /oauth/ must fall
+// through to default-deny ("") for an OAuth caller, and is separately
+// required to be a real session (see rejectOAuthToken in authorize.go and
+// grants_endpoint.go) — never merely "some scope reachable this route".
 var exemptPaths = []string{
 	"/api/health",
 	"/api/org-info",
 	"/api/version",
 	"/api/release",
-	"/oauth/",
+	"/oauth/device",
+	"/oauth/token",
+	"/oauth/revoke",
 	"/.well-known/",
 }
 
@@ -244,4 +258,25 @@ func bearerToken(r *http.Request) string {
 		return v[7:]
 	}
 	return v
+}
+
+// rejectOAuthToken refuses a request authenticated with an OAuth access
+// token, for the consent and grant-management endpoints that must only be
+// reachable from a genuine interactive session.
+//
+// Narrowing exemptPaths (above) makes ScopeForRoute default-deny an OAuth
+// bearer on these routes, but that alone is not the fix: default-deny is
+// enforced by enforceGrant, and enforceGrant only runs its scope check when
+// re.Auth is not already set by something else. It is this handler-level
+// check — independent of the scope table — that guarantees a bearer token
+// can never reach approve/deny/authorize/revoke-by-id, even if a future
+// endpoint or scope-table edit accidentally reopens the route. A genuine
+// browser session token carries no grant claim, so IsOAuthToken is false and
+// this is a no-op for it.
+func rejectOAuthToken(re *core.RequestEvent) error {
+	if IsOAuthToken(bearerToken(re.Request)) {
+		return re.ForbiddenError(
+			"This endpoint requires a signed-in session, not an OAuth access token", nil)
+	}
+	return nil
 }

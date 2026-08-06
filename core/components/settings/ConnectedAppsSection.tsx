@@ -64,7 +64,11 @@ export function ConnectedAppsSection() {
     // row-scoped list/view rule does not redact — only field selection does —
     // and this screen has no business holding any of it in memory just to
     // render a label and a timestamp.
-    const { data: grants } = useOrgLiveQuery((query, { userId }) =>
+    const {
+        data: grants,
+        isError,
+        isLoading,
+    } = useOrgLiveQuery((query, { userId }) =>
         query
             .from({ grant: grantsCollection })
             .where(({ grant }) => eq(grant.user, userId))
@@ -84,7 +88,21 @@ export function ConnectedAppsSection() {
         setPendingRevoke(null)
     }
 
-    if (active.length === 0) return null
+    // A FAILED query must not collapse into the same "nothing here" render as
+    // a genuinely empty, successful one — that hides a real problem (e.g. a
+    // sync error) behind what looks like "no connected apps."
+    if (isError) {
+        return (
+            <View className="gap-3">
+                <Text className="text-xl font-bold text-foreground">Connected apps</Text>
+                <Text className="text-destructive">
+                    Couldn't load your connected apps. Try reloading the page.
+                </Text>
+            </View>
+        )
+    }
+
+    if (isLoading || active.length === 0) return null
 
     return (
         <View className="gap-3">

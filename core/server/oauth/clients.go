@@ -47,6 +47,43 @@ func ValidateScopes(requested []string) error {
 	return nil
 }
 
+// ValidateClientScopes enforces the client's own registration as a ceiling,
+// on top of ValidateScopes' catalog check. AllScopes says what the SERVER
+// knows how to grant at all; oauth_clients.scopes says what THIS client was
+// registered to ask for. Both must hold, or a client registered for
+// `profile` only could request `mail:send drive:write` and receive it, since
+// nothing else in the request path ever reads the client's own scopes column
+// — it is set at registration time and otherwise silently unenforced.
+//
+// An unset/empty scopes field denies every scope rather than allowing every
+// scope. "Allow all" would make the column decorative for exactly the
+// clients most likely to leave it blank — quick manual registrations — which
+// is backwards: the ceiling matters most for a client nobody has reviewed
+// yet. The seeded first-party CLI client lists its full scope set
+// explicitly (1980000001_seed_cli_oauth_client.js), so deny-by-default costs
+// it nothing.
+//
+// ScopeProfile is always allowed regardless of registration: it is the
+// baseline identity scope every grant gets (see its doc comment in
+// oauth.go), and both callers default an empty request to exactly this
+// scope — that default must never itself be able to fail the ceiling it is
+// falling back to satisfy.
+func ValidateClientScopes(client *core.Record, requested []string) error {
+	if err := ValidateScopes(requested); err != nil {
+		return err
+	}
+	allowed := ParseScopes(client.GetString("scopes"))
+	for _, s := range requested {
+		if s == ScopeProfile {
+			continue
+		}
+		if !HasScope(allowed, s) {
+			return fmt.Errorf("oauth: scope %q is not registered for this client", s)
+		}
+	}
+	return nil
+}
+
 // RedirectURIAllowed reports whether uri exactly matches one of the client's
 // registered redirect URIs. Exact match only — prefix matching is a well-known
 // open-redirect vector.

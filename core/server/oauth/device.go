@@ -40,7 +40,7 @@ func handleDeviceAuthorization(app core.App, re *core.RequestEvent) error {
 	}
 
 	scopes := ParseScopes(re.Request.FormValue("scope"))
-	if err := ValidateScopes(scopes); err != nil {
+	if err := ValidateClientScopes(client, scopes); err != nil {
 		return re.BadRequestError(err.Error(), err)
 	}
 	if len(scopes) == 0 {

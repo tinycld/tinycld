@@ -54,6 +54,12 @@ func seedUserAndClient(t *testing.T, app *tests.TestApp) (userID, clientRecID st
 	c.Set("name", "TinyCld CLI")
 	c.Set("type", "public")
 	c.Set("is_first_party", true)
+	// Mirrors the real seed migration (1980000001_seed_cli_oauth_client.js):
+	// the CLI is registered for the full catalog. Tests that need a narrower
+	// client ceiling (ValidateClientScopes) seed their own via
+	// seedClientWithRedirectURIs / a bespoke record, same as they already do
+	// for redirect_uris.
+	c.Set("scopes", strings.Join(AllScopes, " "))
 	if err := app.Save(c); err != nil {
 		t.Fatalf("save client: %v", err)
 	}

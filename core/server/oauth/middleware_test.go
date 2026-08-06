@@ -53,6 +53,33 @@ func TestScopeForRouteAllowsUnauthenticatedPublicRoutes(t *testing.T) {
 	}
 }
 
+// TestScopeForRouteDeniesConsentEndpoints is the regression test for the
+// privilege-escalation finding: exemptPaths used to list the blanket prefix
+// "/oauth/", which made ScopeForRoute return scopeExempt for the consent and
+// grant-management routes too. That let ANY OAuth access token — however
+// narrowly scoped — reach handleApproveDevice/handleDenyDevice/handleAuthorize
+// and mint or kill grants with no browser and no human consent. These routes
+// must now default-deny ("") for an OAuth bearer, same as any other
+// unclassified route.
+func TestScopeForRouteDeniesConsentEndpoints(t *testing.T) {
+	cases := []struct {
+		method, path string
+	}{
+		{"GET", "/oauth/authorize/info"},
+		{"POST", "/oauth/authorize/approve"},
+		{"POST", "/oauth/authorize/deny"},
+		{"POST", "/oauth/authorize"},
+		{"POST", "/oauth/grants/abc123/revoke"},
+	}
+	for _, c := range cases {
+		if got := ScopeForRoute(c.method, c.path); got != "" {
+			t.Errorf("ScopeForRoute(%s %s) = %q, want \"\" (default deny) — "+
+				"an OAuth bearer token must never reach a consent/management endpoint",
+				c.method, c.path, got)
+		}
+	}
+}
+
 func TestMintAccessTokenCarriesGrantClaim(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)

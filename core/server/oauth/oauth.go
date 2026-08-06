@@ -54,23 +54,11 @@ var AllScopes = []string{
 	ScopeCalendarRead, ScopeCalendarWrite,
 }
 
-// Claims is the verified payload carried by an OAuth access token, over and
-// above the standard PocketBase auth claims. GrantID is the jti: the row this
-// token is bound to, re-read on every request so revocation is immediate.
-type Claims struct {
-	GrantID  string
-	ClientID string
-	Scopes   []string
-}
-
 var (
 	// ErrInvalidGrant covers a missing, malformed, or expired grant. Maps to 401.
 	ErrInvalidGrant = errors.New("oauth: invalid grant")
 	// ErrGrantRevoked is a grant explicitly revoked by the user. Maps to 401.
 	ErrGrantRevoked = errors.New("oauth: grant revoked")
-	// ErrInsufficientScope is a valid grant lacking the scope for this route.
-	// Maps to 403 (RFC 6750 §3.1).
-	ErrInsufficientScope = errors.New("oauth: insufficient scope")
 )
 
 // ParseScopes splits a space-delimited scope string, dropping empties so

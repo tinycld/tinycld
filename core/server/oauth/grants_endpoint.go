@@ -22,6 +22,9 @@ func handleRevokeGrantByID(app core.App, re *core.RequestEvent) error {
 	if re.Auth == nil {
 		return re.UnauthorizedError("Sign in to manage connected apps", nil)
 	}
+	if err := rejectOAuthToken(re); err != nil {
+		return err
+	}
 
 	grantID := re.Request.PathValue("id")
 	grant, err := app.FindRecordById(grantsCollection, grantID)

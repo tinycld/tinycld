@@ -22,6 +22,9 @@ func handleAuthorizeInfo(app core.App, re *core.RequestEvent) error {
 	if re.Auth == nil {
 		return re.UnauthorizedError("Sign in to approve this request", nil)
 	}
+	if err := rejectOAuthToken(re); err != nil {
+		return err
+	}
 	userCode := strings.ToUpper(strings.TrimSpace(re.Request.URL.Query().Get("user_code")))
 	grant, err := FindGrantByUserCode(app, userCode)
 	if err != nil {
@@ -50,6 +53,9 @@ func handleAuthorizeInfo(app core.App, re *core.RequestEvent) error {
 func handleApproveDevice(app core.App, re *core.RequestEvent) error {
 	if re.Auth == nil {
 		return re.UnauthorizedError("Sign in to approve this request", nil)
+	}
+	if err := rejectOAuthToken(re); err != nil {
+		return err
 	}
 	if err := re.Request.ParseForm(); err != nil {
 		return re.BadRequestError("Malformed form body", err)
@@ -84,9 +90,25 @@ func handleApproveDevice(app core.App, re *core.RequestEvent) error {
 }
 
 // handleDenyDevice lets a user reject a device request outright.
+//
+// Authorization: identical to handleApproveDevice, deliberately. A pending
+// grant has no `user` yet — approval is the step that assigns one — so there
+// is no owner field to compare the caller against, for either verb. RFC 8628
+// defines knowledge of the user_code as the entire binding mechanism: the
+// code is shown on the device the legitimate user is sitting at, and typing
+// it into an authenticated browser tab is what proves "this is my device
+// login." That is exactly as true for rejecting a login as for accepting
+// one, and every production device-flow implementation (GitHub, Google,
+// Auth0) relies on the same signal for both — the RFC's own countermeasure
+// against a wrong/hijacked approval is UX confirmation, not a session tie.
+// So "signed in + correct, still-pending user_code" is the complete rule
+// here, not a partial one pending some other ownership check.
 func handleDenyDevice(app core.App, re *core.RequestEvent) error {
 	if re.Auth == nil {
 		return re.UnauthorizedError("Sign in to manage this request", nil)
+	}
+	if err := rejectOAuthToken(re); err != nil {
+		return err
 	}
 	if err := re.Request.ParseForm(); err != nil {
 		return re.BadRequestError("Malformed form body", err)
@@ -95,6 +117,14 @@ func handleDenyDevice(app core.App, re *core.RequestEvent) error {
 	grant, err := FindGrantByUserCode(app, userCode)
 	if err != nil {
 		return re.NotFoundError("That code is not valid", err)
+	}
+	// Mirrors handleApproveDevice's own status check. Without it, a caller
+	// who still has the user_code (device_code/user_code are only cleared on
+	// TOKEN EXCHANGE, not on approval — see issueTokens) could "deny" a grant
+	// the user already approved, silently revoking an active connection the
+	// user just authorized on the same screen.
+	if grant.GetString("status") != "pending" {
+		return re.BadRequestError("That code has already been used", nil)
 	}
 	// Route through RevokeGrant rather than hand-setting status: a denied
 	// pending grant still carries a live device_code/user_code, and those
@@ -112,6 +142,9 @@ func handleDenyDevice(app core.App, re *core.RequestEvent) error {
 func handleAuthorize(app core.App, re *core.RequestEvent) error {
 	if re.Auth == nil {
 		return re.UnauthorizedError("Sign in to approve this request", nil)
+	}
+	if err := rejectOAuthToken(re); err != nil {
+		return err
 	}
 	if err := re.Request.ParseForm(); err != nil {
 		return re.BadRequestError("Malformed form body", err)
@@ -132,7 +165,7 @@ func handleAuthorize(app core.App, re *core.RequestEvent) error {
 		return re.BadRequestError("code_challenge with method S256 is required", nil)
 	}
 	scopes := ParseScopes(q.Get("scope"))
-	if err := ValidateScopes(scopes); err != nil {
+	if err := ValidateClientScopes(client, scopes); err != nil {
 		return re.BadRequestError(err.Error(), err)
 	}
 	if len(scopes) == 0 {

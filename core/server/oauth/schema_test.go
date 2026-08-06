@@ -78,6 +78,10 @@ func newSchemaApp(t testing.TB) *tests.TestApp {
 	grants.Fields.Add(&core.TextField{Name: "device_label"})
 	grants.AddIndex("idx_oauth_grants_jti", true, "jti", "")
 	grants.AddIndex("idx_oauth_grants_user", false, "user", "")
+	// Partial UNIQUE, mirroring the migration: unique only while user_code is
+	// live, since RevokeGrant/issueTokens clear it to '' and many rows
+	// legitimately share that cleared value.
+	grants.AddIndex("idx_oauth_grants_user_code", true, "user_code", "user_code != ''")
 	grants.AddIndex("idx_oauth_grants_device_code", false, "device_code", "")
 	grants.AddIndex("idx_oauth_grants_refresh_hash", false, "refresh_token_hash", "")
 	if err := app.Save(grants); err != nil {
@@ -100,6 +104,54 @@ func TestOAuthCollectionsExist(t *testing.T) {
 		// users_guard.go exists. Minting and revoking go through Go handlers.
 		if col.CreateRule != nil || col.UpdateRule != nil || col.DeleteRule != nil {
 			t.Errorf("%s: create/update/delete rules must be nil (superuser-only)", name)
+		}
+	}
+}
+
+// TestGrantUserCodeIsUniqueWhileLive is Finding 4's regression test: two
+// PENDING grants must never be able to share a live user_code, or
+// FindGrantByUserCode's lookup becomes ambiguous — a user could end up
+// approving a different device than the one on their screen.
+func TestGrantUserCodeIsUniqueWhileLive(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, clientID := seedUserAndClient(t, app)
+
+	first, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "pending")
+	if err != nil {
+		t.Fatalf("NewGrant (first): %v", err)
+	}
+	first.Set("user_code", "DUPE-CODE")
+	if err := app.Save(first); err != nil {
+		t.Fatalf("save first grant with user_code: %v", err)
+	}
+
+	second, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "pending")
+	if err != nil {
+		t.Fatalf("NewGrant (second): %v", err)
+	}
+	second.Set("user_code", "DUPE-CODE")
+	if err := app.Save(second); err == nil {
+		t.Fatal("a second pending grant must not be able to reuse a live user_code")
+	}
+}
+
+// TestGrantUserCodeClearedValuesDoNotCollide proves the partial-index scope
+// is correct in the other direction: many grants legitimately reach
+// user_code = ” (RevokeGrant on deny/revocation, issueTokens on exchange),
+// and the UNIQUE constraint must not block that — only a LIVE, non-empty
+// user_code needs to be unique.
+func TestGrantUserCodeClearedValuesDoNotCollide(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, clientID := seedUserAndClient(t, app)
+
+	for i := 0; i < 3; i++ {
+		g, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "revoked")
+		if err != nil {
+			t.Fatalf("NewGrant %d: %v", i, err)
+		}
+		g.Set("user_code", "") // the cleared state every revoked/exchanged grant reaches
+		if err := app.Save(g); err != nil {
+			t.Fatalf("save grant %d with cleared user_code: %v", i, err)
 		}
 	}
 }

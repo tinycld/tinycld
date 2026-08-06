@@ -24,6 +24,67 @@ func TestValidateScopesRejectsUnknown(t *testing.T) {
 	}
 }
 
+// TestValidateClientScopesEnforcesClientCeiling is the mutation target for
+// Finding 3: oauth_clients.scopes must be an actual ceiling, not a written-
+// but-never-read column. A client registered for `profile` only must not be
+// able to obtain mail:send/drive:write merely because those scopes exist in
+// the global AllScopes catalog.
+func TestValidateClientScopesEnforcesClientCeiling(t *testing.T) {
+	app := newSchemaApp(t)
+	clients, err := app.FindCollectionByNameOrId(clientsCollection)
+	if err != nil {
+		t.Fatalf("find clients: %v", err)
+	}
+	c := core.NewRecord(clients)
+	c.Set("client_id", "narrow-client")
+	c.Set("name", "Narrow Client")
+	c.Set("type", "public")
+	c.Set("scopes", ScopeProfile+" "+ScopeMailRead)
+	if err := app.Save(c); err != nil {
+		t.Fatalf("save narrow client: %v", err)
+	}
+
+	if err := ValidateClientScopes(c, []string{ScopeMailRead}); err != nil {
+		t.Fatalf("a registered scope must be allowed: %v", err)
+	}
+	if err := ValidateClientScopes(c, []string{ScopeMailSend, ScopeDriveWrite}); err == nil {
+		t.Fatal("a client must not be able to obtain a scope outside its own registration, " +
+			"even though both scopes are in the global catalog")
+	}
+}
+
+// TestValidateClientScopesEmptyRegistrationDenies is the explicit test of
+// the empty/unset decision documented on ValidateClientScopes: no
+// registered scopes means no NON-baseline scopes are grantable, not "every
+// scope in the catalog."
+func TestValidateClientScopesEmptyRegistrationDenies(t *testing.T) {
+	app := newSchemaApp(t)
+	clients, err := app.FindCollectionByNameOrId(clientsCollection)
+	if err != nil {
+		t.Fatalf("find clients: %v", err)
+	}
+	c := core.NewRecord(clients)
+	c.Set("client_id", "unregistered-scopes-client")
+	c.Set("name", "No Scopes Registered")
+	c.Set("type", "public")
+	// scopes intentionally left unset.
+	if err := app.Save(c); err != nil {
+		t.Fatalf("save client: %v", err)
+	}
+
+	if err := ValidateClientScopes(c, []string{ScopeMailRead}); err == nil {
+		t.Fatal("an empty client.scopes must deny every non-baseline scope, not allow every scope")
+	}
+	// The profile default (what both handlers fall back to for an empty
+	// request) must still work even with nothing registered.
+	if err := ValidateClientScopes(c, []string{ScopeProfile}); err != nil {
+		t.Fatalf("ScopeProfile must always be allowed regardless of client registration: %v", err)
+	}
+	if err := ValidateClientScopes(c, nil); err != nil {
+		t.Fatalf("an empty request must still validate (the profile default is applied by the caller): %v", err)
+	}
+}
+
 func TestFindClientByClientID(t *testing.T) {
 	app := newSchemaApp(t)
 	seedUserAndClient(t, app)
@@ -107,6 +168,40 @@ func TestDeviceAuthorizationRejectsUnknownClient(t *testing.T) {
 	err := serveDeviceForTest(app, rec, req)
 	if status := apiStatus(err); status == 0 || status == http.StatusOK {
 		t.Fatalf("an unregistered client must not receive device codes; err=%v", err)
+	}
+}
+
+// TestDeviceAuthorizationRejectsScopeOutsideClientCeiling is the endpoint-
+// level half of Finding 3's fix: a client registered for `profile` only must
+// not be able to obtain mail:read through the actual device flow, even
+// though mail:read is a perfectly valid scope in the global catalog.
+func TestDeviceAuthorizationRejectsScopeOutsideClientCeiling(t *testing.T) {
+	app := newSchemaApp(t)
+	clients, err := app.FindCollectionByNameOrId(clientsCollection)
+	if err != nil {
+		t.Fatalf("find clients: %v", err)
+	}
+	c := core.NewRecord(clients)
+	c.Set("client_id", "narrow-device-client")
+	c.Set("name", "Narrow Device Client")
+	c.Set("type", "public")
+	c.Set("scopes", ScopeProfile)
+	if err := app.Save(c); err != nil {
+		t.Fatalf("save narrow client: %v", err)
+	}
+
+	form := url.Values{}
+	form.Set("client_id", "narrow-device-client")
+	form.Set("scope", "mail:read")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/oauth/device",
+		strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	err = serveDeviceForTest(app, rec, req)
+	if status := apiStatus(err); status == 0 || status == http.StatusOK {
+		t.Fatalf("a scope outside the client's own registration must be refused; err=%v", err)
 	}
 }
 

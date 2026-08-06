@@ -46,6 +46,17 @@ func hashSecret(s string) string {
 }
 
 // newUserCode returns a human-transcribable code shaped XXXX-XXXX.
+//
+// No collision retry against the (now partial-UNIQUE, see the migration's
+// idx_oauth_grants_user_code comment) index: the alphabet gives 32^8 ≈ 2^40
+// combinations, so even thousands of simultaneously pending device logins
+// leave a collision probability far below other failure modes this endpoint
+// already doesn't retry for (e.g. a transient DB write error). A collision
+// surfaces as handleDeviceAuthorization's ordinary app.Save error path — a
+// 500 the CLI already treats as "request device authorization again," which
+// mints a fresh code — so a bespoke retry loop here would add complexity to
+// handle a case indistinguishable, from the caller's perspective, from any
+// other save failure.
 func newUserCode() (string, error) {
 	out := make([]byte, 0, 9)
 	for i := 0; i < 8; i++ {

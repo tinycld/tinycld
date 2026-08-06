@@ -158,7 +158,21 @@ migrate(
             indexes: [
                 'CREATE UNIQUE INDEX idx_oauth_grants_jti ON oauth_grants (jti)',
                 'CREATE INDEX idx_oauth_grants_user ON oauth_grants (user)',
-                'CREATE INDEX idx_oauth_grants_user_code ON oauth_grants (user_code)',
+                // Partial UNIQUE: two pending grants sharing a live user_code
+                // would make FindGrantByUserCode's lookup ambiguous — SQLite
+                // resolves "first match" for a non-unique index, so a user
+                // could end up approving a DIFFERENT device than the one on
+                // their screen. Scoped to non-empty values (WHERE user_code
+                // != '') because RevokeGrant and issueTokens both clear
+                // user_code to '' once a grant is denied/exchanged, and many
+                // rows legitimately reach that cleared state — a plain UNIQUE
+                // index would make the second such write fail outright. This
+                // mirrors why device_code/refresh_token_hash below stay
+                // non-unique: same cleared-to-'' shape, but those two are
+                // still looked up constantly after clearing (polling,
+                // refreshing), where a false collision would reject a live
+                // request rather than just an already-finished grant.
+                'CREATE UNIQUE INDEX idx_oauth_grants_user_code ON oauth_grants (user_code) WHERE user_code != \'\'',
                 // Non-unique: both columns are cleared to '' on token exchange,
                 // so many rows legitimately share the empty value. Both are
                 // polled/looked-up hot paths — device_code every ~5s per

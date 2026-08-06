@@ -40,6 +40,51 @@ func TestRevokeGrantByIDRequiresAuthentication(t *testing.T) {
 	}
 }
 
+// TestRevokeGrantByIDRejectsOAuthToken: this is a session-only management
+// endpoint. Before Finding 1's fix, exemptPaths' "/oauth/" prefix made this
+// route scopeExempt, so a stolen OAuth access token could revoke the very
+// grant it depends on (or, more importantly, any other grant belonging to
+// its user) without ever having gone through the browser.
+func TestRevokeGrantByIDRejectsOAuthToken(t *testing.T) {
+	app := newSchemaApp(t)
+	userID, clientID := seedUserAndClient(t, app)
+	target, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	if err != nil {
+		t.Fatalf("NewGrant: %v", err)
+	}
+	// A second, distinct grant is the bearer credential presented on the
+	// request — mirrors the real attack shape (one grant's token attacking
+	// another grant), rather than a token revoking its own grant.
+	bearerGrant, err := NewGrant(app, userID, clientID, []string{ScopeProfile}, "active")
+	if err != nil {
+		t.Fatalf("NewGrant (bearer): %v", err)
+	}
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	token, err := MintAccessToken(app, user, bearerGrant, AccessTokenTTL)
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+
+	re := newRevokeRequestEvent(app, target.Id, user)
+	re.Request.Header.Set("Authorization", "Bearer "+token)
+
+	err = handleRevokeGrantByID(app, re)
+	if status := apiStatus(err); status != http.StatusForbidden {
+		t.Fatalf("an OAuth access token must not revoke a grant via the session endpoint (status = %d, err = %v)", status, err)
+	}
+
+	reloaded, findErr := app.FindRecordById(grantsCollection, target.Id)
+	if findErr != nil {
+		t.Fatalf("reload grant: %v", findErr)
+	}
+	if reloaded.GetString("status") != "active" {
+		t.Fatalf("a rejected revoke attempt must not change grant status; got %q", reloaded.GetString("status"))
+	}
+}
+
 func TestRevokeGrantByIDNotFound(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, _ := seedUserAndClient(t, app)
