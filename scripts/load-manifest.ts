@@ -76,6 +76,40 @@ export interface PackageManifest {
             mimeType?: string
             updated?: string
         }
+        // Binds the feature's per-user soft-delete state; when set, a DAV
+        // DELETE stamps it instead of destroying the record.
+        trash?: {
+            collection: string
+            itemField: string
+            userField: string
+            trashedAtField: string
+        }
+    }
+    caldav?: {
+        prefix?: string
+        calendarCollection: string
+        eventCollection: string
+        calendar: { name: string; description?: string }
+        event: {
+            calendar: string
+            uid: string
+            owner: string
+            title: string
+            description?: string
+            location?: string
+            start: string
+            end: string
+            allDay?: string
+            recurrence?: string
+            guests?: string
+            reminder?: string
+            busyStatus?: string
+            visibility?: string
+            updated?: string
+            created?: string
+            // Values for required select fields a minimal client payload omits.
+            defaults?: Record<string, string>
+        }
     }
     help?: { directory: string }
     repository?: { url: string; issueTemplate?: string }
