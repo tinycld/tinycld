@@ -53,6 +53,21 @@ migrate(
                 // PKCE is what protects it.
                 { id: 'oc_secret_hash', name: 'client_secret_hash', type: 'text', max: 200 },
                 { id: 'oc_first_party', name: 'is_first_party', type: 'bool' },
+                // The kill switch. A client_id is a long-lived identity: once
+                // registered it can keep authenticating forever, and the only
+                // other way to stop one is deleting the row, which cascades
+                // away every grant (and with them the audit trail of what that
+                // client ever did). Flipping this instead cuts the client off
+                // while leaving its history intact.
+                //
+                // Sense is DISABLED rather than "enabled" so the zero value is
+                // "working": PocketBase bools default to false, so a client
+                // registered without ever setting this field is live, and a
+                // field that silently failed to write cannot leave a client
+                // wrongly dead. Checked both when a client asks for new access
+                // (FindClientByClientID) and on every request made with access
+                // it already holds (VerifyGrant) — see those two comments.
+                { id: 'oc_disabled', name: 'disabled', type: 'bool' },
             ],
             indexes: [
                 'CREATE UNIQUE INDEX idx_oauth_clients_client_id ON oauth_clients (client_id)',
