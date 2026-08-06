@@ -43,12 +43,24 @@ func TestEveryRegisteredRouteIsClassified(t *testing.T) {
 		"/oauth/authorize", "/oauth/authorize/info",
 		"/oauth/authorize/approve", "/oauth/authorize/deny",
 		"/oauth/grants/abc123/revoke",
+		// Client administration. Default-deny matters MORE here than on the
+		// consent surfaces: these routes are the kill switch itself, so a
+		// bearer token reaching them could disable whatever would detect it,
+		// or re-enable itself after an admin switched it off.
+		"/oauth/clients", "/oauth/clients/abc123/disabled",
 	}
 	for _, p := range sessionOnly {
 		if got := ScopeForRoute("POST", p); got != "" {
 			t.Errorf("POST %s resolved to %q, want default-deny: an OAuth bearer must "+
 				"not reach a consent or management surface", p, got)
 		}
+	}
+
+	// GET is classified independently of POST — the list endpoint is a GET,
+	// and a read-side exemption would leak the client registry to any bearer.
+	if got := ScopeForRoute("GET", "/oauth/clients"); got != "" {
+		t.Errorf("GET /oauth/clients resolved to %q, want default-deny: the client "+
+			"registry must not be readable with an OAuth access token", got)
 	}
 }
 
@@ -60,6 +72,7 @@ func TestConsentSurfacesAreNotExempt(t *testing.T) {
 		"/oauth/authorize", "/oauth/authorize/info",
 		"/oauth/authorize/approve", "/oauth/authorize/deny",
 		"/oauth/grants/abc123/revoke",
+		"/oauth/clients", "/oauth/clients/abc123/disabled",
 	} {
 		if ScopeForRoute("POST", p) == scopeExempt {
 			t.Errorf("%s must not be scope-exempt — an OAuth bearer would bypass the "+

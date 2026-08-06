@@ -56,6 +56,16 @@ func Register(app *pocketbase.PocketBase) {
 		e.Router.POST("/oauth/grants/{id}/revoke",
 			func(re *core.RequestEvent) error { return handleRevokeGrantByID(app, re) })
 
+		// Client administration. Session-authenticated AND admin-gated, and
+		// deliberately left in default-deny for an OAuth bearer (see
+		// route_classification_test.go): these routes ARE the kill switch, so
+		// a stolen access token must never reach them — it could otherwise
+		// disable the clients that would detect it, or switch itself back on.
+		e.Router.GET("/oauth/clients",
+			func(re *core.RequestEvent) error { return handleListClients(app, re) })
+		e.Router.POST("/oauth/clients/{id}/disabled",
+			func(re *core.RequestEvent) error { return handleSetClientDisabled(app, re) })
+
 		return e.Next()
 	})
 }

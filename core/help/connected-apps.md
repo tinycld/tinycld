@@ -33,6 +33,10 @@ connected again from scratch.
 Revoking one entry does not affect anything else. Your browser session, your
 phone, and every other connected device keep working.
 
+If you are an admin and want to cut off an entire integration for everyone at
+once, rather than one device at a time, see
+[Managing OAuth clients](help://core:oauth-clients).
+
 ## What an app can do
 
 When you connect something, the approval screen lists exactly what it is asking
