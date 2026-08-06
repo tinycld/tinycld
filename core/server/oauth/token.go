@@ -67,6 +67,27 @@ func tokenError(re *core.RequestEvent, status int, code, desc string) error {
 	return re.JSON(status, TokenErrorResponse{Error: code, ErrorDescription: desc})
 }
 
+// grantExpired reports whether grant's expires_at has passed. Shared by all
+// three grant handlers because the check itself is identical everywhere —
+// unlike status handling (see below), there is no per-path meaning to expiry.
+// Deliberately NOT routed through VerifyGrant: that helper also enforces
+// status == "active" and a non-disabled user, which is wrong here — the
+// device path must accept a "pending" grant (RFC 8628 §3.5) and each path
+// needs its own distinct error code (authorization_pending vs expired_token
+// vs invalid_grant) rather than VerifyGrant's single collapsed ErrInvalidGrant.
+func grantExpired(grant *core.Record) bool {
+	exp := grant.GetDateTime("expires_at")
+	return !exp.IsZero() && exp.Time().Before(time.Now())
+}
+
+// grantIssuedToClient reports whether grant was issued to client. Every
+// exchange path must check this: a code/device_code/refresh_token proves
+// possession of a secret, not which client it belongs to, so skipping this
+// lets any OTHER registered client redeem a grant that isn't its own.
+func grantIssuedToClient(grant, client *core.Record) bool {
+	return grant.GetString("client") == client.Id
+}
+
 // authenticateClient resolves and (for confidential clients) authenticates the
 // caller. A public client needs no secret; PKCE is what binds the exchange.
 func authenticateClient(app core.App, re *core.RequestEvent) (*core.Record, error) {
@@ -125,7 +146,8 @@ func issueTokens(
 
 // handleDeviceTokenGrant is the CLI's poll (RFC 8628 §3.4).
 func handleDeviceTokenGrant(app core.App, re *core.RequestEvent) error {
-	if _, err := authenticateClient(app, re); err != nil {
+	client, err := authenticateClient(app, re)
+	if err != nil {
 		noteTokenFailure(app, re.Request, grantTypeDevice)
 		return tokenError(re, http.StatusUnauthorized, "invalid_client", "Unknown client")
 	}
@@ -143,9 +165,17 @@ func handleDeviceTokenGrant(app core.App, re *core.RequestEvent) error {
 		noteTokenFailure(app, re.Request, grantTypeDevice)
 		return tokenError(re, http.StatusBadRequest, "invalid_grant", "Unknown device code")
 	}
-	if exp := grant.GetDateTime("expires_at"); !exp.IsZero() && exp.Time().Before(time.Now()) {
+	if grantExpired(grant) {
 		noteTokenFailure(app, re.Request, grantTypeDevice)
 		return tokenError(re, http.StatusBadRequest, "expired_token", "Device code expired")
+	}
+	// The device_code is bound to the client that started this flow. Without
+	// this, any registered client that learns another client's device_code
+	// (it is polled over the wire, so this is not idle paranoia) can redeem
+	// a grant that was never issued to it.
+	if !grantIssuedToClient(grant, client) {
+		noteTokenFailure(app, re.Request, grantTypeDevice)
+		return tokenError(re, http.StatusBadRequest, "invalid_grant", "Device code was issued to another client")
 	}
 	switch grant.GetString("status") {
 	case "pending":
@@ -195,11 +225,11 @@ func handleAuthCodeGrant(app core.App, re *core.RequestEvent) error {
 		noteTokenFailure(app, re.Request, grantTypeAuthCode)
 		return tokenError(re, http.StatusBadRequest, "invalid_grant", "Unknown authorization code")
 	}
-	if exp := grant.GetDateTime("expires_at"); !exp.IsZero() && exp.Time().Before(time.Now()) {
+	if grantExpired(grant) {
 		noteTokenFailure(app, re.Request, grantTypeAuthCode)
 		return tokenError(re, http.StatusBadRequest, "invalid_grant", "Authorization code expired")
 	}
-	if grant.GetString("client") != client.Id {
+	if !grantIssuedToClient(grant, client) {
 		noteTokenFailure(app, re.Request, grantTypeAuthCode)
 		return tokenError(re, http.StatusBadRequest, "invalid_grant", "Code was issued to another client")
 	}
@@ -228,7 +258,8 @@ func handleAuthCodeGrant(app core.App, re *core.RequestEvent) error {
 // handleRefreshGrant exchanges a refresh token for a new pair, rotating the
 // refresh token so a leaked one has a bounded useful life.
 func handleRefreshGrant(app core.App, re *core.RequestEvent) error {
-	if _, err := authenticateClient(app, re); err != nil {
+	client, err := authenticateClient(app, re)
+	if err != nil {
 		noteTokenFailure(app, re.Request, grantTypeRefresh)
 		return tokenError(re, http.StatusUnauthorized, "invalid_client", "Unknown client")
 	}
@@ -249,6 +280,21 @@ func handleRefreshGrant(app core.App, re *core.RequestEvent) error {
 	if grant.GetString("status") == "revoked" {
 		noteTokenFailure(app, re.Request, grantTypeRefresh)
 		return tokenError(re, http.StatusBadRequest, "invalid_grant", "Grant was revoked")
+	}
+	// issueTokens repurposes expires_at as the REFRESH deadline (RefreshTokenTTL)
+	// once a grant goes active — without this check that deadline is decorative
+	// and a refresh token stays usable forever.
+	if grantExpired(grant) {
+		noteTokenFailure(app, re.Request, grantTypeRefresh)
+		return tokenError(re, http.StatusBadRequest, "invalid_grant", "Refresh token expired")
+	}
+	// A refresh token is bound to the client it was issued to. Without this,
+	// any registered client that obtains another client's refresh token
+	// (leaked, logged, intercepted) can present it under its OWN client_id
+	// and mint access tokens for a grant and user that are not its own.
+	if !grantIssuedToClient(grant, client) {
+		noteTokenFailure(app, re.Request, grantTypeRefresh)
+		return tokenError(re, http.StatusBadRequest, "invalid_grant", "Refresh token was issued to another client")
 	}
 
 	user, err := app.FindRecordById("users", grant.GetString("user"))

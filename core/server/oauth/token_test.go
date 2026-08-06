@@ -476,3 +476,126 @@ func installTestTokenThrottle() func() {
 	}
 	return func() { defaultTokenThrottle = original }
 }
+
+// seedSecondClient adds a second registered public client, "tinycld-cli-2",
+// distinct from the one seedUserAndClient creates ("tinycld-cli"). Deliberately
+// a local helper rather than a change to the shared seedUserAndClient — most
+// tests in this package only need one client, and widening that helper's
+// signature would touch every existing caller.
+func seedSecondClient(t *testing.T, app *tests.TestApp) (clientRecID string) {
+	t.Helper()
+	clients, err := app.FindCollectionByNameOrId(clientsCollection)
+	if err != nil {
+		t.Fatalf("find clients: %v", err)
+	}
+	c := core.NewRecord(clients)
+	c.Set("client_id", "tinycld-cli-2")
+	c.Set("name", "A Different Client")
+	c.Set("type", "public")
+	c.Set("is_first_party", false)
+	if err := app.Save(c); err != nil {
+		t.Fatalf("save second client: %v", err)
+	}
+	return c.Id
+}
+
+// TestTokenRefreshRejectsWrongClient is CRITICAL gap #1: a refresh token
+// issued to client A must not be redeemable by client B presenting its own
+// client_id. Without the grant.GetString("client") != client.Id check in
+// handleRefreshGrant, "a valid client" was sufficient — "the client this
+// grant belongs to" was never verified. Any client holding a leaked, logged,
+// or intercepted refresh token belonging to a DIFFERENT client could mint
+// access tokens for that other client's user.
+func TestTokenRefreshRejectsWrongClient(t *testing.T) {
+	app := newSchemaApp(t)
+	seedSecondClient(t, app)
+	deviceCode, _ := approvedDeviceGrant(t, app) // issued to "tinycld-cli"
+
+	form := url.Values{}
+	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+	form.Set("device_code", deviceCode)
+	form.Set("client_id", "tinycld-cli")
+	_, issued := postToken(t, app, form)
+	if issued.RefreshToken == "" {
+		t.Fatal("setup: device exchange did not return a refresh token")
+	}
+
+	// Client A's refresh token, presented under client B's identity.
+	refreshForm := url.Values{}
+	refreshForm.Set("grant_type", "refresh_token")
+	refreshForm.Set("refresh_token", issued.RefreshToken)
+	refreshForm.Set("client_id", "tinycld-cli-2")
+
+	rec, errResp := postTokenExpectingError(t, app, refreshForm)
+	if rec.Code == http.StatusOK {
+		t.Fatal("a refresh token must not be redeemable by a client it was not issued to")
+	}
+	if errResp.Error != "invalid_grant" {
+		t.Fatalf("error = %q, want invalid_grant", errResp.Error)
+	}
+}
+
+// TestTokenRefreshRejectsExpiredGrant is CRITICAL gap #2: handleRefreshGrant
+// checked only status == "revoked", never expires_at — even though
+// issueTokens deliberately repurposes expires_at as the REFRESH deadline
+// (RefreshTokenTTL) the moment a grant goes active. Without an expiry check
+// here, that deadline is decorative: a still-"active" grant whose refresh
+// window closed months ago stays refreshable forever.
+func TestTokenRefreshRejectsExpiredGrant(t *testing.T) {
+	app := newSchemaApp(t)
+	deviceCode, _ := approvedDeviceGrant(t, app)
+
+	form := url.Values{}
+	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+	form.Set("device_code", deviceCode)
+	form.Set("client_id", "tinycld-cli")
+	_, issued := postToken(t, app, form)
+
+	grant, err := FindGrantByJTI(app, grantIDFromToken(issued.AccessToken))
+	if err != nil {
+		t.Fatalf("FindGrantByJTI: %v", err)
+	}
+	// issueTokens just set expires_at to now+RefreshTokenTTL; force it into
+	// the past to simulate an old refresh token past its deadline.
+	grant.Set("expires_at", time.Now().Add(-time.Hour))
+	if err := app.Save(grant); err != nil {
+		t.Fatalf("save expired grant: %v", err)
+	}
+
+	refreshForm := url.Values{}
+	refreshForm.Set("grant_type", "refresh_token")
+	refreshForm.Set("refresh_token", issued.RefreshToken)
+	refreshForm.Set("client_id", "tinycld-cli")
+
+	rec, errResp := postTokenExpectingError(t, app, refreshForm)
+	if rec.Code == http.StatusOK {
+		t.Fatal("a refresh token past its grant's expires_at must not be redeemable")
+	}
+	if errResp.Error != "invalid_grant" {
+		t.Fatalf("error = %q, want invalid_grant", errResp.Error)
+	}
+}
+
+// TestTokenDeviceGrantRejectsWrongClient is IMPORTANT gap #3, the device-flow
+// counterpart of the refresh-token client-binding gap: a device_code issued
+// to client A must not be redeemable by client B. Lower severity than the
+// refresh case (device_code is high-entropy and single-use, so the exposure
+// window is narrower) but the same missing check.
+func TestTokenDeviceGrantRejectsWrongClient(t *testing.T) {
+	app := newSchemaApp(t)
+	seedSecondClient(t, app)
+	deviceCode, _ := approvedDeviceGrant(t, app) // issued to "tinycld-cli"
+
+	form := url.Values{}
+	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+	form.Set("device_code", deviceCode)
+	form.Set("client_id", "tinycld-cli-2") // a DIFFERENT, but still registered, client
+
+	rec, errResp := postTokenExpectingError(t, app, form)
+	if rec.Code == http.StatusOK {
+		t.Fatal("a device_code must not be redeemable by a client it was not issued to")
+	}
+	if errResp.Error != "invalid_grant" {
+		t.Fatalf("error = %q, want invalid_grant", errResp.Error)
+	}
+}
