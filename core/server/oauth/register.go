@@ -50,6 +50,12 @@ func Register(app *pocketbase.PocketBase) {
 		e.Router.GET("/oauth/userinfo",
 			func(re *core.RequestEvent) error { return handleUserinfo(app, re) })
 
+		// Connected apps management. Session-authenticated, unlike
+		// /oauth/revoke: the browser has no token to present, only the
+		// grant's row id, so ownership is enforced against re.Auth instead.
+		e.Router.POST("/oauth/grants/{id}/revoke",
+			func(re *core.RequestEvent) error { return handleRevokeGrantByID(app, re) })
+
 		return e.Next()
 	})
 }
