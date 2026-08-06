@@ -131,6 +131,12 @@ migrate(
                 'CREATE UNIQUE INDEX idx_oauth_grants_jti ON oauth_grants (jti)',
                 'CREATE INDEX idx_oauth_grants_user ON oauth_grants (user)',
                 'CREATE INDEX idx_oauth_grants_user_code ON oauth_grants (user_code)',
+                // Non-unique: both columns are cleared to '' on token exchange,
+                // so many rows legitimately share the empty value. Both are
+                // polled/looked-up hot paths — device_code every ~5s per
+                // pending RFC 8628 login, refresh_token_hash on every refresh.
+                'CREATE INDEX idx_oauth_grants_device_code ON oauth_grants (device_code)',
+                'CREATE INDEX idx_oauth_grants_refresh_hash ON oauth_grants (refresh_token_hash)',
             ],
         })
         app.save(grants)

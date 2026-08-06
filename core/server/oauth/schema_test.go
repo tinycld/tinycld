@@ -9,8 +9,11 @@ import (
 )
 
 // newSchemaApp builds the oauth collections the way the migration does, so the
-// package's own tests do not depend on the migration runner. TestMigration-
-// ShapeMatchesHelper below is what keeps the two in step.
+// package's own tests do not depend on the migration runner. There is no test
+// that automatically keeps this in sync with the migration file — the two are
+// mirrored by hand, so update both together when the schema changes. The
+// migration itself is validated for real by the generator run against a live
+// PocketBase DB.
 func newSchemaApp(t testing.TB) *tests.TestApp {
 	t.Helper()
 	app, err := tests.NewTestApp()
@@ -68,6 +71,8 @@ func newSchemaApp(t testing.TB) *tests.TestApp {
 	grants.Fields.Add(&core.TextField{Name: "device_label"})
 	grants.AddIndex("idx_oauth_grants_jti", true, "jti", "")
 	grants.AddIndex("idx_oauth_grants_user", false, "user", "")
+	grants.AddIndex("idx_oauth_grants_device_code", false, "device_code", "")
+	grants.AddIndex("idx_oauth_grants_refresh_hash", false, "refresh_token_hash", "")
 	if err := app.Save(grants); err != nil {
 		t.Fatalf("save oauth_grants: %v", err)
 	}
