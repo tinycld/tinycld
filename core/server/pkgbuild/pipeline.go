@@ -31,6 +31,9 @@ const pnpmProgressInterval = 10 * time.Second
 type Pipeline struct {
 	// Run executes buffered commands (go build). Default RunCmd.
 	Run CmdRunner
+	// RunEnv executes buffered commands with scoped extra env (the CLI
+	// cross-compiles' GOOS/GOARCH/CGO_ENABLED). Default RunCmdEnv.
+	RunEnv CmdEnvRunner
 	// PnpmStream executes the pnpm install with line streaming. Default
 	// RunCmdStreaming.
 	PnpmStream StreamingRunner
@@ -71,6 +74,13 @@ func (p Pipeline) run() CmdRunner {
 		return p.Run
 	}
 	return RunCmd
+}
+
+func (p Pipeline) runEnv() CmdEnvRunner {
+	if p.RunEnv != nil {
+		return p.RunEnv
+	}
+	return RunCmdEnv
 }
 
 func (p Pipeline) pnpmStream() StreamingRunner {
@@ -161,6 +171,14 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	}); err != nil {
 		return BuildOutput{}, wrapStep("go build", err)
 	}
+	// Cross-compile the per-org CLI binaries. Shares the ProgGoBuild slot (the
+	// progress bands are contiguous; a new constant would renumber them) and
+	// never fails the build — see buildCLIBinaries.
+	sink.Progress("Building CLI binaries", ProgGoBuild, "go build (cli)")
+	_ = TimeStep(sink, "cli cross-compile (best-effort)", func() error {
+		p.buildCLIBinaries(sink, appDir)
+		return nil
+	})
 	// The web bundle owns [ProgGoBuild, ProgExpoWeb): runExportWithProgress climbs
 	// the bar through it from Metro's per-module progress so a cold (multi-minute)
 	// bundle visibly advances instead of parking at one value.
