@@ -106,13 +106,34 @@ migrate(
                 // lookup key on every authenticated request.
                 { id: 'og_jti', name: 'jti', type: 'text', max: 100 },
                 { id: 'og_scopes', name: 'scopes', type: 'text', max: 500 },
-                { id: 'og_refresh_hash', name: 'refresh_token_hash', type: 'text', max: 200 },
+                // hidden: true excludes these from every API response (list,
+                // view, and realtime) via Record.PublicExport — the only way
+                // to keep credential material out of a client's hands, since
+                // the list/view rules above are row-scoped, not field-scoped.
+                // Still fully readable/writable server-side (FindRecordById,
+                // FindFirstRecordByFilter, .Set/.Save all bypass PublicExport).
+                {
+                    id: 'og_refresh_hash',
+                    name: 'refresh_token_hash',
+                    type: 'text',
+                    max: 200,
+                    hidden: true,
+                },
                 // Device Grant (RFC 8628) working state, cleared on approval.
-                { id: 'og_device_code', name: 'device_code', type: 'text', max: 200 },
+                { id: 'og_device_code', name: 'device_code', type: 'text', max: 200, hidden: true },
+                // Visible: the browser consent screen looks a pending grant up
+                // by this value (handleAuthorizeInfo/handleApproveDevice), and
+                // it is short-lived, single-use, and typed by a human.
                 { id: 'og_user_code', name: 'user_code', type: 'text', max: 20 },
                 // Authorization Code + PKCE working state, cleared on exchange.
                 { id: 'og_code_challenge', name: 'code_challenge', type: 'text', max: 200 },
-                { id: 'og_auth_code_hash', name: 'auth_code_hash', type: 'text', max: 200 },
+                {
+                    id: 'og_auth_code_hash',
+                    name: 'auth_code_hash',
+                    type: 'text',
+                    max: 200,
+                    hidden: true,
+                },
                 { id: 'og_redirect_uri', name: 'redirect_uri', type: 'text', max: 2000 },
                 {
                     id: 'og_status',
