@@ -68,6 +68,14 @@ var endpointScopes = map[string]string{
 	"POST /api/drive/upload-version": ScopeDriveWrite,
 	"POST /api/drive/share":          ScopeDriveWrite,
 	"GET /api/contacts/search":       ScopeContactsRead,
+
+	// Advertised in the discovery document as userinfo_endpoint, so an
+	// integration following the well-known metadata calls it with an ordinary
+	// access token. It needs an explicit entry: it lives under /oauth/ but is
+	// deliberately NOT in exemptPaths (only the credential-less endpoints are),
+	// so without this it would fall into default-deny and 403 the very call the
+	// server tells clients to make.
+	"GET /oauth/userinfo": ScopeProfile,
 }
 
 // exemptPaths need no scope: public probes, and the OAuth endpoints a client
