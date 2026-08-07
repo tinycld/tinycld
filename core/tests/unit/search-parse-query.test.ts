@@ -89,6 +89,14 @@ describe('parseQuery — negation', () => {
             exclude: [],
         })
     })
+
+    it('strips all leading hyphens from exclusion terms', () => {
+        expect(parseQuery('--draft', SLUGS)).toEqual({
+            chips: [],
+            include: [],
+            exclude: ['draft'],
+        })
+    })
 })
 
 describe('parseQuery — operator stripping', () => {
@@ -103,6 +111,14 @@ describe('parseQuery — operator stripping', () => {
         ['(grouped)', ['grouped']],
     ])('strips operators from %s', (input, expected) => {
         expect(parseQuery(input, SLUGS).include).toEqual(expected)
+    })
+
+    it('preserves operator words embedded in hyphenated literals', () => {
+        expect(parseQuery('plan-NOT-final.docx', SLUGS)).toEqual({
+            chips: [],
+            include: ['plan-NOT-final.docx'],
+            exclude: [],
+        })
     })
 })
 
