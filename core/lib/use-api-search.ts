@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { pb } from '@tinycld/core/lib/pocketbase'
-import { useEffect, useState } from 'react'
+import { useDebouncedValue } from '@tinycld/core/lib/use-debounced-value'
 
 interface UseApiSearchOptions<TResult> {
     endpoint: string
@@ -20,17 +20,6 @@ interface UseApiSearchReturn<TResult> {
 
 function toErrorMessage(err: unknown): string {
     return err instanceof Error ? err.message : 'Search failed'
-}
-
-// Debounce a value: only surface the latest after `delayMs` of quiet. Genuine
-// timer side-effect (not a server-data sync), so it stays in an effect.
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-    const [debounced, setDebounced] = useState(value)
-    useEffect(() => {
-        const timer = setTimeout(() => setDebounced(value), delayMs)
-        return () => clearTimeout(timer)
-    }, [value, delayMs])
-    return debounced
 }
 
 export function useApiSearch<TResult>(
