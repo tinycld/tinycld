@@ -61,7 +61,7 @@ jobs:
       # across independent assemblies, so they are a stable key in the absence
       # of a lockfile.
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ws/.pnpm-store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('ws/package.json', 'ws/pnpm-workspace.yaml') }}
@@ -100,7 +100,7 @@ jobs:
             ws/tinycld/core/server/go.sum
             ws/tinycld/cli/go.sum
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ws/.pnpm-store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('ws/package.json', 'ws/pnpm-workspace.yaml') }}
@@ -165,7 +165,7 @@ jobs:
             ws/tinycld/core/server/go.sum
             ws/tinycld/cli/go.sum
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ws/.pnpm-store
           key: pnpm-store-${{ runner.os }}-${{ hashFiles('ws/package.json', 'ws/pnpm-workspace.yaml') }}
