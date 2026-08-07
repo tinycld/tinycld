@@ -40,10 +40,26 @@ describe('scoreRow — tiers', () => {
         )
     })
 
+    it('normalizes punctuation by replacement, not deletion', () => {
+        // With separate terms ['budget', '2026'], a replacement normalizer joins them
+        // with spaces ('budget 2026') which matches 'budget-2026'. Deletion would create
+        // 'budget2026' and then fail to split back to separate terms, scoring lower.
+        expect(scoreRow(['budget', '2026'], row({ title: 'budget-2026' }))).toBe(
+            scoreRow(['budget-2026'], row({ title: 'budget-2026' }))
+        )
+    })
+
     it('requires every term to match for the all-terms tier', () => {
         const both = scoreRow(['q3', 'budget'], row({ title: 'Q3 budget plan' }))
         const one = scoreRow(['q3', 'budget'], row({ title: 'Q3 plan' }))
         expect(both).toBeGreaterThan(one)
+    })
+
+    it('handles degenerate inputs (empty or punctuation-only queries)', () => {
+        const empty = scoreRow([], row({ title: 'x' }))
+        const punctuationOnly = scoreRow(['---'], row({ title: 'x' }))
+        // Both should land on the lowest tier (no visible match).
+        expect(empty).toBe(punctuationOnly)
     })
 })
 
