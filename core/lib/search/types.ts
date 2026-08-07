@@ -45,6 +45,15 @@ export interface ParsedQuery {
     include: string[]
     /** Terms that must NOT match. */
     exclude: string[]
+    /**
+     * The exact free-text remainder to display in the input box: a substring
+     * of the raw input starting right after the last recognized chip token.
+     * The renderer must use this rather than re-deriving it (e.g. by slicing
+     * on `chipsToText(chips).length`) — that computed-length approach assumes
+     * chips are a leading prefix, which breaks the moment a chip is created
+     * after free text already typed.
+     */
+    remainder: string
 }
 
 /** A package the palette can search, derived from the manifest registry. */
