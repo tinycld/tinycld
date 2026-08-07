@@ -31,16 +31,17 @@ import (
 var hostOnlyHookDiff = map[string]int{
 	// OnServe: one bind each from RegisterPackageInstallEndpoints,
 	// RegisterVapidAdminEndpoints, RegisterAppUpdateEndpoints,
-	// RegisterSetupBootstrap, RegisterDemoStart, RegisterDemoLead, and
-	// registerStaticServe. (RegisterDemoReset registers nothing unless
-	// DEMO_RESET_ENABLED is set.)
+	// RegisterCliDownloadEndpoints, RegisterSetupBootstrap, RegisterDemoStart,
+	// RegisterDemoLead, and registerStaticServe. (RegisterDemoReset registers
+	// nothing unless DEMO_RESET_ENABLED is set.)
 	//
-	// RegisterAppUpdateEndpoints stays counted here because THIS composition
-	// passes no ArtifactDir. An artifact-backed tenant DOES serve the OTA
-	// endpoints — from its own artifact rather than the host's build archive
-	// (RegisterTenantAppUpdateEndpoints) — which is pinned separately by
+	// RegisterAppUpdateEndpoints and RegisterCliDownloadEndpoints stay counted
+	// here because THIS composition passes no ArtifactDir. An artifact-backed
+	// tenant DOES serve both — from its own artifact rather than the host's
+	// build dirs (RegisterTenantAppUpdateEndpoints /
+	// RegisterTenantCliDownloadEndpoints) — pinned separately by
 	// TestArtifactTenantBindsOwnAppUpdateEndpoints.
-	"OnServe": 7,
+	"OnServe": 8,
 
 	// registerSchemaHooks regenerates workspace TypeScript on collection
 	// edits; a tenant has no workspace.
@@ -185,13 +186,14 @@ func TestArtifactTenantBindsOwnAppUpdateEndpoints(t *testing.T) {
 	bareServe := hookHandlerCounts(t, bare)["OnServe"]
 	artifactServe := hookHandlerCounts(t, artifact)["OnServe"]
 
-	// The artifact composition adds exactly three OnServe binds over the bare
+	// The artifact composition adds exactly four OnServe binds over the bare
 	// one: the org's static SPA serve (OrgDir), the boot-time package-state
-	// reconcile, and the per-org OTA endpoint group. (The hosted Packages
-	// endpoints need a ControlSocket, which is unset here.)
-	if want := bareServe + 3; artifactServe != want {
+	// reconcile, the per-org OTA endpoint group, and the per-org CLI download
+	// group. (The hosted Packages endpoints need a ControlSocket, which is
+	// unset here.)
+	if want := bareServe + 4; artifactServe != want {
 		t.Fatalf("artifact tenant binds %d OnServe handler(s), want %d "+
-			"(bare %d + static serve + reconcile + app-update). "+
+			"(bare %d + static serve + reconcile + app-update + cli-downloads). "+
 			"If you added or removed an artifact-gated registration, update this count and say why.",
 			artifactServe, want, bareServe)
 	}

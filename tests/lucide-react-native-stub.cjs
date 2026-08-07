@@ -43,6 +43,7 @@ const knownIcons = {
     Check: Icon,
     ChevronDown: Icon,
     ChevronUp: Icon,
+    HelpCircle: Icon,
     CloudOff: Icon,
     ExternalLink: Icon,
     FilePlus2: Icon,

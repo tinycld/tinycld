@@ -19,6 +19,11 @@ type CmdRunner func(dir, name string, args ...string) (string, error)
 // ProgressSink line-by-line as it arrives (pnpm install, expo export).
 type StreamingRunner func(onLine func(line string), dir, name string, args ...string) (string, error)
 
+// CmdEnvRunner is CmdRunner with extra environment entries — the seam for
+// steps that must scope env to one command (GOOS/GOARCH/CGO_ENABLED
+// cross-compiles). Signature matches RunCmdEnv.
+type CmdEnvRunner func(dir string, extraEnv []string, name string, args ...string) (string, error)
+
 // LogPrefix tags every command echo in the process log. The default keeps the
 // single-tenant server's historical "[pkg_install]" prefix so operator `docker
 // logs` greps keep working; the multi-org builder sets its own at startup

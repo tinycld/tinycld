@@ -190,6 +190,10 @@ func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
 		// org dir has; see app_updates_tenant.go.
 		RegisterTenantAppUpdateEndpoints(app, orgDir, artifactDir)
 
+		// Per-org CLI downloads: the builder stages cli-dist into the
+		// artifact, so each org serves exactly its own package set's binaries.
+		RegisterTenantCliDownloadEndpoints(app, artifactDir)
+
 		// The hosted Packages UI needs both the built-in set (above) and a
 		// deploy channel; without a control socket the tenant has no way to
 		// propose, so the endpoints are simply absent (as they were for every

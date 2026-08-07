@@ -92,6 +92,9 @@ server/pb_test_releases/
 /server/app
 /server/core
 /server/pb_data/
+/cli/cli_extensions.go
+/cli/go.work
+/cli/go.work.sum
 /installed-packages.json
 /.package-links.json
 

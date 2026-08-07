@@ -92,9 +92,16 @@ export interface PackageManifest {
         directory: string
     }
 
+    /**
+     * `mailListeners`: this package serves mail protocols, so the multi-org
+     * ROUTER creates per-org mail sockets for orgs whose set includes it; the
+     * package's single Register discovers them via coreserver's TenantContext
+     * (host mode binds its own ports instead).
+     */
     server?: {
         package: string
         module: string
+        mailListeners?: boolean
     }
 
     /**
@@ -106,6 +113,118 @@ export interface PackageManifest {
      */
     payloads?: {
         package: string
+    }
+
+    /**
+     * Protocol capabilities. Core serves these; a package contributes only the
+     * config, so a multi-org tenant (which links no feature Go) still gets the
+     * protocol. The host materializes these blocks into the tenant's runtime
+     * config — see multi-org's controlplane/capabilities.go, which mirrors
+     * every shape here.
+     */
+    carddav?: {
+        collection: string
+        listFilter: string
+        sort?: string
+        ownerField: string
+        uidField: string
+        softDeleteField?: string
+        vcard: {
+            version: string
+            name: { given: string; family: string }
+            simple: Record<string, string>
+            revField?: string
+        }
+    }
+
+    caldav?: {
+        prefix?: string
+        calendarCollection: string
+        eventCollection: string
+        calendar: {
+            name: string
+            description?: string
+        }
+        event: {
+            calendar: string
+            uid: string
+            owner: string
+            title: string
+            description?: string
+            location?: string
+            start: string
+            end: string
+            allDay?: string
+            recurrence?: string
+            guests?: string
+            reminder?: string
+            busyStatus?: string
+            visibility?: string
+            updated?: string
+            created?: string
+            /**
+             * Values for required select fields a minimal client payload
+             * omits (e.g. a bare VEVENT carries neither TRANSP nor CLASS).
+             */
+            defaults?: Record<string, string>
+        }
+    }
+
+    webdav?: {
+        prefix: string
+        collection: string
+        fields: {
+            name: string
+            parent: string
+            isFolder: string
+            size: string
+            file: string
+            owner: string
+            mimeType?: string
+            updated?: string
+        }
+        /**
+         * Binds the feature's per-user soft-delete state; when set, a DAV
+         * DELETE stamps it instead of destroying the record.
+         */
+        trash?: {
+            collection: string
+            itemField: string
+            userField: string
+            trashedAtField: string
+        }
+    }
+
+    /**
+     * Storage-bearing collections. core/quota enforces the ceilings from this
+     * as record hooks, so no write path can skip them. A source with no
+     * ownerField counts toward the org ceiling only.
+     */
+    quota?: {
+        collection: string
+        sizeField: string
+        ownerField?: string
+    }[]
+
+    /**
+     * Command-line commands this package contributes to the `tinycld` binary.
+     * `package`/`module` mirror `server` and drive Go code generation
+     * (scripts/gen-cli.ts): the dir must contain a Go module exposing
+     * `Register(root *cobra.Command, c *client.Client)`.
+     *
+     * `commands` is display metadata only (settings page, docs) — Cobra is the
+     * source of truth for `--help`. `scopes` declares the OAuth scopes this
+     * package defines (e.g. `'mail:read'`) for the scope registry and consent
+     * screen. Neither is ever interpolated into generated Go.
+     */
+    cli?: {
+        package: string
+        module: string
+        commands?: {
+            name: string
+            summary: string
+        }[]
+        scopes?: string[]
     }
 
     help?: {
