@@ -29,9 +29,12 @@ jobs:
         with:
           path: ws/tinycld
       # tinycld carries its own .node-version; read it from the checkout (no
-      # dependency on bootstrap having generated ws/.node-version yet). No
-      # package-manager cache: no committed lockfile (pnpm resolves fresh;
-      # corepack enable selects the pnpm pinned in the workspace package.json).
+      # dependency on bootstrap having generated ws/.node-version yet).
+      #
+      # setup-node's built-in `cache: pnpm` can't be used: it keys on a lockfile
+      # hash, and the workspace root here is bootstrap-GENERATED — no lockfile
+      # exists until the install produces one. The pnpm store is cached below
+      # by an explicit key instead.
       - uses: actions/setup-node@v5
         with:
           node-version-file: ws/tinycld/.node-version
@@ -39,12 +42,33 @@ jobs:
         working-directory: ws
         run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
       # Go toolchain after assembly: .go-version is bootstrap-generated into ws/.
+      #
+      # cache-dependency-path matters more than it looks: the install below runs
+      # a postinstall that generates the PB schema, which shells out to Go and
+      # pulls ~48 modules. That download — not package fetching — is the bulk of
+      # the install step's runtime, so keying setup-go's module cache on the
+      # checked-out go.sum files is what actually makes this job faster.
       - uses: actions/setup-go@v6
         with:
           go-version-file: ws/.go-version
+          cache-dependency-path: |
+            ws/tinycld/server/go.sum
+            ws/tinycld/core/server/go.sum
+            ws/tinycld/cli/go.sum
+      # Cache pnpm's content-addressable store. Keyed on the GENERATED root's
+      # package.json + pnpm-workspace.yaml (which carries the overrides block):
+      # together those fully determine resolution, and both are byte-identical
+      # across independent assemblies, so they are a stable key in the absence
+      # of a lockfile.
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ws/.pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('ws/package.json', 'ws/pnpm-workspace.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
       - name: Install (workspace root)
         working-directory: ws
-        run: corepack enable && pnpm install --no-frozen-lockfile
+        run: corepack enable && pnpm install --no-frozen-lockfile --store-dir=.pnpm-store
       - name: Check (lint + typecheck + unit)
         working-directory: ws/tinycld
         run: pnpm exec tinycld-pkg check
@@ -71,9 +95,19 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: ws/.go-version
+          cache-dependency-path: |
+            ws/tinycld/server/go.sum
+            ws/tinycld/core/server/go.sum
+            ws/tinycld/cli/go.sum
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ws/.pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('ws/package.json', 'ws/pnpm-workspace.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
       - name: Install (workspace root)
         working-directory: ws
-        run: corepack enable && pnpm install --no-frozen-lockfile
+        run: corepack enable && pnpm install --no-frozen-lockfile --store-dir=.pnpm-store
       # Warm go.work.sum: in workspace mode `go mod download` writes the
       # transitive `/go.mod` hashes (reached through go.work's `use ../core/server`)
       # into go.work.sum so the build below verifies cleanly.
@@ -126,9 +160,19 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: ws/.go-version
+          cache-dependency-path: |
+            ws/tinycld/server/go.sum
+            ws/tinycld/core/server/go.sum
+            ws/tinycld/cli/go.sum
+      - name: Cache pnpm store
+        uses: actions/cache@v6
+        with:
+          path: ws/.pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('ws/package.json', 'ws/pnpm-workspace.yaml') }}
+          restore-keys: pnpm-store-${{ runner.os }}-
       - name: Install (workspace root)
         working-directory: ws
-        run: corepack enable && pnpm install --no-frozen-lockfile
+        run: corepack enable && pnpm install --no-frozen-lockfile --store-dir=.pnpm-store
       # Warm go.work.sum before E2E so the webServer (which builds PB via
       # pnpm run e2e:serve → reset-dev-db) doesn't fail verifying a transitive
       # dep reached through go.work's `use ../core/server`.

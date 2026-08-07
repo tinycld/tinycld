@@ -9,7 +9,7 @@
  * at real packages (mail, contacts) couples app's CI to those packages'
  * presence — when a feature's branch breaks, app's CI goes red over a
  * bug that doesn't live in app. The stub registers a minimal package
- * with `nav.shortcut: 'o'` and a single placeholder screen, giving the
+ * with its own `nav.shortcut` and a single placeholder screen, giving the
  * shortcut tests exactly what they need to verify app's OWN contract:
  * "shortcut chord navigates to the package whose manifest registered it."
  *
@@ -42,7 +42,12 @@ import { fileURLToPath } from 'node:url'
 // keyboard-shortcuts spec asserts on. Changing any of these requires
 // updating both this script AND tests/e2e/keyboard-shortcuts.spec.ts.
 export const STUB_SLUG = 'shortcut-stub'
-export const STUB_NAV_SHORTCUT = 'k'
+// Must not collide with any real package's nav.shortcut, or `t <letter>`
+// becomes ambiguous and the chord test fails on whichever registration the
+// matcher happens to reach first. This previously read 'k', which cards later
+// claimed. Real letters in use: c d k m o s t — 'z' is deliberately far from
+// anything a feature would want.
+export const STUB_NAV_SHORTCUT = 'z'
 export const STUB_NAV_LABEL = 'Shortcut Stub'
 // Pin a known-good bootstrap so CI is reproducible — `@latest` lets an
 // unrelated bootstrap release silently turn this e2e fixture red. Bump
@@ -144,6 +149,23 @@ function patchPackageJson(stubDir: string): void {
         './screens/*': `./tinycld/${STUB_SLUG}/screens/*.tsx`,
     }
     writeFileSync(path, `${JSON.stringify(pkg, null, 4)}\n`)
+}
+
+/**
+ * Repoint the template's vitest config at the app shell's real location.
+ *
+ * The pinned bootstrap still emits `import appConfig from '../app/vitest.config'`
+ * from when the shell lived in app/; it is now tinycld/. Left alone, the stub
+ * cannot resolve its config and `tinycld-pkg check --all` fails on it — on a
+ * stale template, with nothing to do with whatever is being tested. Drop this
+ * once BOOTSTRAP_VERSION moves past the rename.
+ */
+function patchVitestConfig(stubDir: string): void {
+    const path = join(stubDir, 'vitest.config.ts')
+    if (!existsSync(path)) return
+    const contents = readFileSync(path, 'utf8')
+    const patched = contents.replace("'../app/vitest.config'", "'../tinycld/vitest.config'")
+    if (patched !== contents) writeFileSync(path, patched)
 }
 
 function writeScreens(stubDir: string): void {
@@ -268,6 +290,7 @@ function main(): void {
     const stubDir = join(wsRoot, STUB_SLUG)
     patchManifest(stubDir)
     patchPackageJson(stubDir)
+    patchVitestConfig(stubDir)
     writeScreens(stubDir)
 
     ensureMember(wsRoot)

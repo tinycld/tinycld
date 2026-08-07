@@ -198,3 +198,53 @@ func TestFTSNotesAreSearchableAfterStrip(t *testing.T) {
 
 	assertMatches(t, db, "kayaking", "carol")
 }
+
+func TestSanitizeQueryWithExclusions(t *testing.T) {
+	cases := []struct {
+		name             string
+		include, exclude string
+		want             string
+	}{
+		{"no exclusions", "budget", "", `"budget"*`},
+		{"one exclusion", "budget", "draft", `"budget"* NOT "draft"*`},
+		{"two exclusions", "budget", "draft old", `"budget"* NOT "draft"* NOT "old"*`},
+		{"exclude only yields nothing", "", "draft", ""},
+		{"blank both", "", "", ""},
+		// Defense in depth: the client is the only thing that should ever parse
+		// operator syntax. These prove the server never lets an exclude term act
+		// as an FTS5 operator — it is always folded into a quoted literal.
+		{"exclude term spelled NOT is a literal, not an operator", "budget", "NOT draft", `"budget"* NOT "NOT"* NOT "draft"*`},
+		{"sql/fts injection attempt is quoted apart, not executed", "budget", `" OR 1=1 --`, `"budget"* NOT "OR"* NOT "1=1"*`},
+		{"embedded quotes are stripped as special chars", "budget", `say "hi"`, `"budget"* NOT "say"* NOT "hi"*`},
+	}
+	for _, tc := range cases {
+		if got := SanitizeQueryWithExclusions(tc.include, tc.exclude); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// An exclusion must actually remove the row, not merely fail to boost it.
+func TestExclusionRemovesMatchingRow(t *testing.T) {
+	db := newContactsShapedFTS(t, liveFTSTokenizer,
+		seedRow{id: "1", first: "Ada", notes: "budget planning"},
+		seedRow{id: "2", first: "Grace", notes: "budget draft"},
+	)
+	q := SanitizeQueryWithExclusions("budget", "draft")
+	rows, err := db.Query(`SELECT record_id FROM fts_contacts WHERE fts_contacts MATCH ?`, q)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) != 1 || ids[0] != "1" {
+		t.Errorf("got %v, want [1]", ids)
+	}
+}

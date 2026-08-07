@@ -423,7 +423,11 @@ run_phase 'delete landed' 'verify delete'
 
 CORE_CUR=$(docker exec "${CONTAINER}" node -e "console.log(require('/workspace/current/core/package.json').version)")
 echo "[runner] current base version: ${CORE_CUR}"
-CORE_NEXT="0.0.5"   # synthetic upgrade target; must be > CORE_CUR (0.0.4)
+# Synthetic upgrade target: bump CORE_CUR's patch number rather than a
+# hardcoded literal, so this stays > CORE_CUR automatically as core's real
+# version advances (a stale literal here silently becomes a DOWNGRADE target
+# the moment core's actual version catches up to it).
+CORE_NEXT=$(node -e "const v='${CORE_CUR}'.split('.'); v[2]=String(Number(v[2])+1); console.log(v.join('.'))")
 
 provision_base_remote() {
     echo "[runner] provisioning local base remote with v${CORE_CUR} + v${CORE_NEXT}"

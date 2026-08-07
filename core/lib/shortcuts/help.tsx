@@ -3,6 +3,7 @@ import { Kbd } from '@tinycld/core/ui/Kbd'
 import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { useMemo } from 'react'
 import { ScrollView, Text, View } from 'react-native'
+import { isScopeActive } from './matcher'
 import { useShortcutRegistry } from './registry'
 import type { Shortcut } from './types'
 
@@ -30,6 +31,13 @@ function groupShortcuts(map: Map<string, Shortcut>): Record<string, Shortcut[]> 
         // The "Help" group documents how to open/close this very overlay, so
         // showing it inside the overlay is redundant.
         if (s.group === 'Help') continue
+        // Only what can actually fire right now. The registry holds every
+        // MOUNTED screen's shortcuts, which is more than the live set two ways:
+        // an inner scope shadows the screen underneath (a board's keys cannot
+        // fire while a card is open), and `freezeOnBlur` keeps a departed
+        // package's screens registered. Listing those advertises keys that do
+        // nothing, and duplicates every entry the two screens have in common.
+        if (!isScopeActive(s)) continue
         const key = s.group ?? 'General'
         if (!groups[key]) groups[key] = []
         groups[key].push(s)

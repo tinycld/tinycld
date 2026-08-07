@@ -1,5 +1,7 @@
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
+import { useSearchPaletteStore } from '@tinycld/core/lib/search/search-palette-store'
+import { useActivePackageSlug } from '@tinycld/core/lib/search/use-active-package-slug'
 import { type Shortcut, useRegisterShortcuts } from '@tinycld/core/lib/shortcuts'
 import { useShortcutHelp, useShortcutHelpStore } from '@tinycld/core/lib/shortcuts/help'
 import { useRouter } from 'expo-router'
@@ -14,6 +16,7 @@ export function CoreShortcuts() {
     const helpStore = useShortcutHelp()
     const router = useRouter()
     const orgHref = useOrgHref()
+    const activeSlug = useActivePackageSlug()
 
     const shortcuts = useMemo<Shortcut[]>(() => {
         const list: Shortcut[] = [
@@ -39,6 +42,16 @@ export function CoreShortcuts() {
                 when: () => useShortcutHelpStore.getState().isOpen,
                 run: () => helpStore.close(),
             },
+            {
+                id: 'core.search.open',
+                keys: '/',
+                scope: 'global',
+                group: 'General',
+                description: 'Search across packages',
+                // allowInInputs omitted deliberately: `/` must stay suppressed
+                // while the user is typing in the app.
+                run: () => useSearchPaletteStore.getState().open(activeSlug),
+            },
         ]
 
         for (const pkg of packageRegistry) {
@@ -54,7 +67,7 @@ export function CoreShortcuts() {
             })
         }
         return list
-    }, [helpStore, router, orgHref])
+    }, [helpStore, router, orgHref, activeSlug])
 
     useRegisterShortcuts(shortcuts)
 
