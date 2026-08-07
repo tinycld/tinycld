@@ -17,41 +17,38 @@ import (
 // in-between tokens.
 var fts5SpecialChars = regexp.MustCompile(`[":*^{}()\[\]~\-@.]`)
 
+// quoteTerms strips FTS5 operator characters and returns each remaining word
+// as a quoted prefix term. Shared by the include and exclude paths so their
+// escaping cannot drift apart — this is the trust boundary: everything past
+// this function is validated FTS5 syntax, so both callers must go through it.
+func quoteTerms(input string) []string {
+	cleaned := fts5SpecialChars.ReplaceAllString(input, " ")
+	terms := strings.Fields(cleaned)
+	quoted := make([]string, len(terms))
+	for i, term := range terms {
+		term = strings.ReplaceAll(term, `"`, `""`)
+		quoted[i] = `"` + term + `"*`
+	}
+	return quoted
+}
+
 // SanitizeQuery escapes special FTS5 characters and turns the input into
 // AND-ed prefix terms for safe search-as-you-type MATCH queries. Returns "" when
 // the input has no usable terms.
+//
+// Prefix matches (term*) let search-as-you-type find partial words like
+// "joh" -> "john", "johnson". FTS5's bare phrase syntax ("joh") is an exact
+// token match and would only fire when the user types a whole indexed word.
 func SanitizeQuery(input string) string {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return ""
-	}
-
-	cleaned := fts5SpecialChars.ReplaceAllString(input, " ")
-	terms := strings.Fields(cleaned)
-	if len(terms) == 0 {
-		return ""
-	}
-
-	// Use prefix matches (term*) so search-as-you-type finds partial words
-	// like "joh" -> "john", "johnson". FTS5's bare phrase syntax ("joh")
-	// is an exact token match and would only fire when the user types a
-	// whole indexed word. Each term is also quoted to keep any residual
-	// punctuation from being interpreted as FTS5 operators.
-	prefixed := make([]string, len(terms))
-	for i, term := range terms {
-		term = strings.ReplaceAll(term, `"`, `""`)
-		prefixed[i] = `"` + term + `"*`
-	}
-
-	return strings.Join(prefixed, " ")
+	return strings.Join(quoteTerms(input), " ")
 }
 
 // SanitizeQueryWithExclusions builds an FTS5 MATCH expression requiring every
 // include term and rejecting every exclude term.
 //
 // Both sides arrive as already-split plain terms from the client's parseQuery —
-// no operator syntax ever reaches this function, so the quoting below stays the
-// only trust boundary. An exclude-only query returns "" rather than a bare NOT,
+// no operator syntax ever reaches this function, so quoteTerms stays the only
+// trust boundary. An exclude-only query returns "" rather than a bare NOT,
 // which FTS5 rejects: there is no result set to subtract from.
 func SanitizeQueryWithExclusions(include, exclude string) string {
 	base := SanitizeQuery(include)
@@ -59,10 +56,8 @@ func SanitizeQueryWithExclusions(include, exclude string) string {
 		return ""
 	}
 
-	cleaned := fts5SpecialChars.ReplaceAllString(exclude, " ")
-	for _, term := range strings.Fields(cleaned) {
-		term = strings.ReplaceAll(term, `"`, `""`)
-		base += ` NOT "` + term + `"*`
+	for _, term := range quoteTerms(exclude) {
+		base += " NOT " + term
 	}
 	return base
 }

@@ -210,6 +210,12 @@ func TestSanitizeQueryWithExclusions(t *testing.T) {
 		{"two exclusions", "budget", "draft old", `"budget"* NOT "draft"* NOT "old"*`},
 		{"exclude only yields nothing", "", "draft", ""},
 		{"blank both", "", "", ""},
+		// Defense in depth: the client is the only thing that should ever parse
+		// operator syntax. These prove the server never lets an exclude term act
+		// as an FTS5 operator — it is always folded into a quoted literal.
+		{"exclude term spelled NOT is a literal, not an operator", "budget", "NOT draft", `"budget"* NOT "NOT"* NOT "draft"*`},
+		{"sql/fts injection attempt is quoted apart, not executed", "budget", `" OR 1=1 --`, `"budget"* NOT "OR"* NOT "1=1"*`},
+		{"embedded quotes are stripped as special chars", "budget", `say "hi"`, `"budget"* NOT "say"* NOT "hi"*`},
 	}
 	for _, tc := range cases {
 		if got := SanitizeQueryWithExclusions(tc.include, tc.exclude); got != tc.want {
