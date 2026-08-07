@@ -45,6 +45,7 @@ func registerSearchRoute(app *pocketbase.PocketBase, e *core.ServeEvent, cfg Con
 			Limit:          clampInt(q.Get("limit"), 25, 1, 100),
 			Offset:         clampInt(q.Get("offset"), 0, 0, 1<<30),
 			IncludeDeleted: q.Get("deleted") == "true",
+			Exclude:        q.Get("not"),
 		}
 
 		empty := searchResponse{Items: []map[string]any{}, Total: 0}
