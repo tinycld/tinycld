@@ -92,9 +92,12 @@ jobs:
       # no-op form, so this covers the shell's own commands (auth, context,
       # output, keychain, device flow) — member cli modules are tested on
       # their own repos' CI.
-      - name: Go mod download (cli)
-        working-directory: ws/tinycld/cli
-        run: go mod download
+      #
+      # Deliberately no `go mod download`: with no arguments it resolves the
+      # ENTIRE module graph, which once a member cli joins the workspace
+      # includes that member's inherited tinycld.org/core requirement — only
+      # the server's own go.work resolves that. build/test are unaffected
+      # because pruning loads only what is actually imported.
       - name: Go build & test (cli)
         working-directory: ws/tinycld/cli
         run: go build ./... && go test ./...
