@@ -212,18 +212,15 @@ export interface PackageManifest {
      * (scripts/gen-cli.ts): the dir must contain a Go module exposing
      * `Register(root *cobra.Command, c *client.Client)`.
      *
-     * `commands` is display metadata only (settings page, docs) — Cobra is the
-     * source of truth for `--help`. `scopes` declares the OAuth scopes this
-     * package defines (e.g. `'mail:read'`) for the scope registry and consent
-     * screen. Neither is ever interpolated into generated Go.
+     * `scopes` declares the OAuth scopes this package defines (e.g.
+     * `'mail:read'`) for the scope registry and consent screen; it is never
+     * interpolated into generated Go. There is deliberately no command list
+     * here: Cobra owns the command tree and `--help`, and a hand-maintained
+     * copy in the manifest only drifts.
      */
     cli?: {
         package: string
         module: string
-        commands?: {
-            name: string
-            summary: string
-        }[]
         scopes?: string[]
     }
 
