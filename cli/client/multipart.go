@@ -149,5 +149,22 @@ func postMultipart(ctx context.Context, c *Client, path string, build func(*mult
 	req.GetBody = func() (io.ReadCloser, error) {
 		return makeBody(), nil
 	}
-	return c.doJSON(req, out)
+	// DoStream, not Do: the upload body may be arbitrarily large and the
+	// client's whole-exchange timeout would sever it mid-transfer.
+	resp, err := c.DoStream(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return apiError(resp.StatusCode, data)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(data, out)
 }

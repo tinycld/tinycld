@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDownloadToFile(t *testing.T) {
@@ -93,6 +94,36 @@ func TestDownloadPublicSendsNoBearer(t *testing.T) {
 	}
 	got, _ := os.ReadFile(dest)
 	if string(got) != "zip-bytes" {
+		t.Fatalf("content = %q", got)
+	}
+}
+
+func TestStreamingOutlivesClientTimeout(t *testing.T) {
+	// http.Client.Timeout covers the ENTIRE exchange including the body read,
+	// so a transfer longer than the configured API timeout would abort
+	// mid-stream if downloads went through Do. This server trickles a body
+	// for ~6× the client's timeout; DownloadToFile must still complete.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/files/drive_items/r1/big.bin", func(w http.ResponseWriter, r *http.Request) {
+		f := w.(http.Flusher)
+		for range 6 {
+			w.Write([]byte("chunk"))
+			f.Flush()
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	hc := &http.Client{Timeout: 50 * time.Millisecond}
+	c := New(srv.URL, validStore("access-1"), hc)
+
+	dest := filepath.Join(t.TempDir(), "big.bin")
+	if err := DownloadToFile(context.Background(), c, "/api/files/drive_items/r1/big.bin", dest, nil); err != nil {
+		t.Fatalf("streaming download died to the API timeout: %v", err)
+	}
+	got, _ := os.ReadFile(dest)
+	if string(got) != strings.Repeat("chunk", 6) {
 		t.Fatalf("content = %q", got)
 	}
 }

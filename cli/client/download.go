@@ -23,8 +23,13 @@ func DownloadToFile(ctx context.Context, c *Client, path, dest string, progress 
 
 // DownloadPublic fetches an absolute URL WITHOUT credentials — for
 // single-use-token URLs (folder zip, export) that are credential-less by
-// design and must not have a bearer attached.
+// design and must not have a bearer attached. A nil hc gets a fresh client
+// with no whole-exchange timeout (the body may be arbitrarily large); pass
+// one explicitly to control transport or deadline.
 func DownloadPublic(ctx context.Context, hc *http.Client, url, dest string, progress ProgressFunc) error {
+	if hc == nil {
+		hc = &http.Client{}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err

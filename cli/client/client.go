@@ -121,12 +121,34 @@ func (c *Client) Token() (TokenSet, error) {
 // request exactly once — only when the body is rewindable (GetBody set or no
 // body at all).
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
+	return c.doWith(c.http, req)
+}
+
+// DoStream is Do without the client's total-request timeout. http.Client's
+// Timeout covers reading the whole response body, so an arbitrarily large
+// file transfer through Do would abort mid-stream; transfers bound their
+// lifetime with the request context instead.
+func (c *Client) DoStream(req *http.Request) (*http.Response, error) {
+	return c.doWith(c.streamHTTP(), req)
+}
+
+// streamHTTP mirrors the configured client minus its deadline. The transport
+// (and its connection pool) is shared; only the whole-exchange timeout drops.
+func (c *Client) streamHTTP() *http.Client {
+	return &http.Client{
+		Transport:     c.http.Transport,
+		CheckRedirect: c.http.CheckRedirect,
+		Jar:           c.http.Jar,
+	}
+}
+
+func (c *Client) doWith(hc *http.Client, req *http.Request) (*http.Response, error) {
 	tok, err := c.Token()
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-	resp, err := c.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +173,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		retry.Body = body
 	}
 	retry.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-	return c.http.Do(retry)
+	return hc.Do(retry)
 }
 
 // GetJSON GETs path (origin-relative) and decodes the response into out.
@@ -210,7 +232,9 @@ func (c *Client) Delete(ctx context.Context, path string) error {
 
 // Get performs an authenticated GET and hands back the response body for
 // streaming (file content, downloads). The caller must close it. A non-2xx
-// status is drained into the same error shape doJSON produces.
+// status is drained into the same error shape doJSON produces. Uses DoStream:
+// the body may be arbitrarily large, so the whole-exchange timeout must not
+// apply — bound long transfers via ctx.
 func (c *Client) Get(ctx context.Context, path string) (io.ReadCloser, *http.Response, error) {
 	if err := c.ensure(); err != nil {
 		return nil, nil, err
@@ -219,7 +243,7 @@ func (c *Client) Get(ctx context.Context, path string) (io.ReadCloser, *http.Res
 	if err != nil {
 		return nil, nil, err
 	}
-	resp, err := c.Do(req)
+	resp, err := c.DoStream(req)
 	if err != nil {
 		return nil, nil, err
 	}
