@@ -193,7 +193,7 @@ export default function StubLayout() {
 export default function StubIndex() {
     return (
         <View className="flex-1 p-4 bg-background">
-            <Text className="text-foreground" data-test-id="shortcut-stub-landing">
+            <Text className="text-foreground" testID="shortcut-stub-landing">
                 Shortcut stub landing
             </Text>
         </View>
