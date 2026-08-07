@@ -56,10 +56,14 @@ describe('scoreRow — tiers', () => {
     })
 
     it('handles degenerate inputs (empty or punctuation-only queries)', () => {
+        // Both should land on the lowest tier (no visible match).
+        const noVisibleMatch = scoreRow(['zzzz'], row({ title: 'unrelated' }))
         const empty = scoreRow([], row({ title: 'x' }))
         const punctuationOnly = scoreRow(['---'], row({ title: 'x' }))
-        // Both should land on the lowest tier (no visible match).
-        expect(empty).toBe(punctuationOnly)
+        expect(empty).toBe(noVisibleMatch)
+        expect(punctuationOnly).toBe(noVisibleMatch)
+        // Additionally, verify they are strictly below any real match.
+        expect(empty).toBeLessThan(scoreRow(['budget'], row({ title: 'budget' })))
     })
 })
 
