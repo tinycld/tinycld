@@ -23,6 +23,8 @@ type SearchOpts struct {
 	Limit          int
 	Offset         int
 	IncludeDeleted bool
+	// Exclude holds space-separated terms that must NOT match.
+	Exclude string
 }
 
 // Search runs a scoped FTS5 MATCH for one config, returning hits (ordered by
@@ -41,7 +43,7 @@ type SearchOpts struct {
 // against tests.TestApp — that is what makes the disabled-user and nil-Scope
 // checks below unit-testable at all, matching drive's equivalent function.
 func Search(app core.App, cfg Config, userID string, opts SearchOpts) ([]SearchResult, int, error) {
-	match := SanitizeQuery(opts.Query)
+	match := SanitizeQueryWithExclusions(opts.Query, opts.Exclude)
 	if match == "" {
 		return nil, 0, nil
 	}

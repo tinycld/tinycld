@@ -46,6 +46,27 @@ func SanitizeQuery(input string) string {
 	return strings.Join(prefixed, " ")
 }
 
+// SanitizeQueryWithExclusions builds an FTS5 MATCH expression requiring every
+// include term and rejecting every exclude term.
+//
+// Both sides arrive as already-split plain terms from the client's parseQuery —
+// no operator syntax ever reaches this function, so the quoting below stays the
+// only trust boundary. An exclude-only query returns "" rather than a bare NOT,
+// which FTS5 rejects: there is no result set to subtract from.
+func SanitizeQueryWithExclusions(include, exclude string) string {
+	base := SanitizeQuery(include)
+	if base == "" {
+		return ""
+	}
+
+	cleaned := fts5SpecialChars.ReplaceAllString(exclude, " ")
+	for _, term := range strings.Fields(cleaned) {
+		term = strings.ReplaceAll(term, `"`, `""`)
+		base += ` NOT "` + term + `"*`
+	}
+	return base
+}
+
 // htmlTagRegex strips HTML tags for plain-text indexing of editor fields.
 var htmlTagRegex = regexp.MustCompile(`<[^>]*>`)
 
