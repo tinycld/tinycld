@@ -154,7 +154,12 @@ export function SearchPalette() {
             ))}
             <PaletteOverlay>
                 <PaletteCard>
-                    <SearchField inputRef={inputRef} value={text} onChange={setText} />
+                    <SearchField
+                        inputRef={inputRef}
+                        chips={parsed.chips}
+                        remainder={remainder}
+                        onChangeRemainder={next => setText(chipsToText(parsed.chips) + next)}
+                    />
                     <ResultList
                         sections={sections}
                         selectedRowId={selectedRow?.id ?? null}
@@ -281,24 +286,47 @@ function PaletteCard({ children }: { children: ReactNode }) {
 
 interface SearchFieldProps {
     inputRef: RefObject<TextInput | null>
-    value: string
-    onChange: (v: string) => void
+    chips: string[]
+    remainder: string
+    onChangeRemainder: (v: string) => void
 }
 
-function SearchField({ inputRef, value, onChange }: SearchFieldProps) {
+// Scope chips render as their own row of pills — separate from the text
+// input — so a test (and a user) can see and target "cards" as a discrete
+// unit rather than parsing it back out of a raw "cards: " string prefix.
+// The input itself only ever holds the free-text remainder; typing composes
+// chips + remainder back into the store's single `text` field, which stays
+// the source of truth parseQuery re-derives chips from on every render.
+function SearchField({ inputRef, chips, remainder, onChangeRemainder }: SearchFieldProps) {
     const placeholderColor = useThemeColor('muted-foreground')
     return (
-        <View className="px-4 pt-4 pb-2">
+        <View className="px-4 pt-4 pb-2 flex-row items-center flex-wrap gap-1.5">
+            {chips.map(slug => (
+                <SearchChip key={slug} slug={slug} />
+            ))}
             <TextInput
                 ref={inputRef}
-                value={value}
-                onChangeText={onChange}
-                placeholder="Search everywhere…"
+                value={remainder}
+                onChangeText={onChangeRemainder}
+                placeholder={chips.length === 0 ? 'Search everywhere…' : 'Search…'}
                 placeholderTextColor={placeholderColor}
-                className="text-base text-foreground"
+                className="text-base text-foreground flex-1 min-w-[80px]"
                 style={{ outlineWidth: 0 } as object}
                 accessibilityLabel="Search across packages"
             />
+        </View>
+    )
+}
+
+function SearchChip({ slug }: { slug: string }) {
+    const pkg = searchPackages.find(p => p.slug === slug)
+    const chipDomProps = { 'data-testid': `search-chip-${slug}` } as Record<string, unknown>
+    return (
+        <View
+            {...chipDomProps}
+            className="rounded-md bg-surface-secondary px-2 py-1 flex-row items-center"
+        >
+            <Text className="text-xs font-medium text-foreground">{pkg?.label ?? slug}</Text>
         </View>
     )
 }
@@ -357,8 +385,9 @@ function SectionBlock({ section, selectedRowId, onPick, onHover }: SectionBlockP
 function SectionHeading({ title, icon }: { title: string; icon?: string }) {
     const Icon = getIcon(icon ?? '')
     const iconColor = useThemeColor('muted-foreground')
+    const headingDomProps = { 'data-testid': 'search-section-heading' } as Record<string, unknown>
     return (
-        <View className="flex-row items-center gap-2 px-4 pt-3 pb-1">
+        <View {...headingDomProps} className="flex-row items-center gap-2 px-4 pt-3 pb-1">
             <Icon size={14} color={iconColor} />
             <Text className="text-xs font-medium text-muted-foreground uppercase">{title}</Text>
         </View>
