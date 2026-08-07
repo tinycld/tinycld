@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/pocketbase/dbx"
-	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // SearchResult is one search hit: the record id plus the configured Output
@@ -36,7 +36,11 @@ type SearchOpts struct {
 // cfg.Scope determines how access is resolved — a direct owner field
 // (OwnerScope) or a membership table (MemberScope) — so this function stays
 // agnostic to which.
-func Search(app *pocketbase.PocketBase, cfg Config, userID string, opts SearchOpts) ([]SearchResult, int, error) {
+//
+// Takes core.App (not the concrete *pocketbase.PocketBase) so it can run
+// against tests.TestApp — that is what makes the disabled-user and nil-Scope
+// checks below unit-testable at all, matching drive's equivalent function.
+func Search(app core.App, cfg Config, userID string, opts SearchOpts) ([]SearchResult, int, error) {
 	match := SanitizeQuery(opts.Query)
 	if match == "" {
 		return nil, 0, nil
@@ -51,6 +55,15 @@ func Search(app *pocketbase.PocketBase, cfg Config, userID string, opts SearchOp
 	// reading titles and content until its token expires — the same hole drive
 	// had to patch separately.
 	if isDisabled(app, userID) {
+		return nil, 0, nil
+	}
+
+	// A Config that omits Scope has a nil interface value. Failing closed here
+	// (rather than dereferencing it, or worse, silently skipping the clause)
+	// matters because an unscoped FTS query would hand every row in the table
+	// to any authenticated caller — "no scope declared" must mean "no
+	// results", never "all results".
+	if cfg.Scope == nil {
 		return nil, 0, nil
 	}
 
@@ -137,8 +150,8 @@ func excludeClause(cfg Config) string {
 
 // isDisabled reports whether the user record is missing or flagged disabled.
 // A missing record is treated as disabled: a token for a deleted user must not
-// keep reading.
-func isDisabled(app *pocketbase.PocketBase, userID string) bool {
+// keep reading. Takes core.App for the same testability reason as Search.
+func isDisabled(app core.App, userID string) bool {
 	user, err := app.FindRecordById("users", userID)
 	if err != nil || user == nil {
 		return true
