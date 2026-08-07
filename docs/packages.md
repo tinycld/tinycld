@@ -282,6 +282,7 @@ export default manifest
 | `seed.script` | Dev sample-data function. |
 | `server` | Go server extension: `package` is the subdir, `module` is its Go module path. The module exports ONE entry point, `Register(app *pocketbase.PocketBase)`, called by the generated registrar in both the single-org app and a multi-org tenant. Optional `mailListeners: true` tells the multi-org ROUTER this package serves mail protocols, so it creates per-org mail sockets; the package's `Register` discovers them via `coreserver.GetTenantContext(app)` (the router owns every listening port — a tenant must never bind one; host mode binds its own ports). |
 | `carddav` / `caldav` / `webdav` | Declarative protocol config, served by the matching core library. Each block **mirrors the `Source` literal the package's own Go registers**, and exists so a multi-org tenant — which links no feature package — can still serve the protocol: the router materializes the block into `<orgDir>/.runtime/<proto>.json` and core reads it there. Keep the two in sync. **Mount protocol handlers under the reserved `/dav` prefix** (e.g. `/dav/drive`): a DAV `prefix` becomes a literal server route, which beats the SPA catch-all, so mounting at a bare package slug makes the in-app route of the same name unreachable on a hard load — WebDAV at `/drive` shadowed the `/drive` screen exactly this way. `/dav` is reserved and must never be a package slug. Authorization is deliberately absent from all three: core evaluates the collections' own PocketBase rules, which travel in the schema (a Go closure cannot cross a process boundary). See [hooks.md](hooks.md). |
+| `payloads` | `{ package }` — dir (relative to the member root, e.g. `'server/api'`) of a **self-contained** Go package holding one exported struct per HTTP request/response. The generator parses it with go/ast (never imports it) and emits `lib/generated/<slug>-api.ts`, importable as `@tinycld/app-generated/<slug>-api` — the Go structs are the single source of truth for API payload shapes, consumed by both the web client and the CLI. Constraints (hard generation errors otherwise): no imports beyond `time`, structs + basic-literal consts only, every exported field json-tagged, no embedded fields, no `any`. |
 | `quota` | `[{ collection, sizeField, ownerField? }]` — storage-bearing collections `core/quota` enforces ceilings on, as record hooks. A source with no `ownerField` counts toward the org ceiling only. |
 | `build.script` | A build script run before bundling (e.g. an embedded webview bundle). |
 | `dependencies[]` | A **slug-only** list of other packages — **advisory + seed-ordering only.** Used to topologically sort seed execution and as a soft hint; it imposes **no** version constraint and is never a compile-time import. |
@@ -515,6 +516,9 @@ The generated runtime artifacts that must exist on disk live under
   explicitly). Help topics are parsed markdown content, so they're pre-extracted
   to a generated file rather than derived at runtime.
 - **`package-icons.ts`** — the nav/lucide icon map for installed packages.
+- **`<slug>-api.ts`** — one per package declaring `payloads`: TypeScript
+  interfaces/consts emitted from the package's Go payload structs (see the
+  `payloads` field reference). Orphans from removed members are pruned.
 - **`uniwind-sources.css`** — Tailwind v4 `@source` roots (see below).
 
 ### E. CSS source roots → `lib/generated/uniwind-sources.css`

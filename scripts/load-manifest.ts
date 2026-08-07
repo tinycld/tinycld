@@ -32,6 +32,11 @@ export interface PackageManifest {
     // package's single Register discovers them via coreserver's TenantContext
     // (host mode binds its own ports instead).
     server?: { package: string; module: string; mailListeners?: boolean }
+    // Go payload package (dir relative to the member root, e.g. 'server/api')
+    // holding the exported HTTP request/response structs. The generator emits
+    // lib/generated/<slug>-api.ts from it (see scripts/gen-payload-types.ts);
+    // TS imports the types as @tinycld/app-generated/<slug>-api.
+    payloads?: { package: string }
     // Protocol capabilities. Core serves these; a package contributes only the
     // config, so a multi-org tenant (which links no feature Go) still gets the
     // protocol. The host materializes these blocks into the tenant's runtime

@@ -62,16 +62,50 @@ function findWorkspaceRoot(start: string): string {
 }
 
 // The app shell = the workspace member whose package.json name is "tinycld"
-// (formerly "app").
-function findAppDir(workspaceRoot: string): string {
+// (formerly "app"). A workspace can hold SEVERAL checkouts of the app repo at
+// once (git worktrees like tinycld-cli-wt beside the main tinycld/ dir), so a
+// bare name scan is ambiguous. Resolution order:
+//   1. TINYCLD_APP_DIR — the explicit override every generator script honors.
+//   2. An app-shell ancestor of cwd — running from inside a checkout targets
+//      THAT checkout.
+//   3. The checkout the workspace is actually wired to, identified by where
+//      the root node_modules/@tinycld/core symlink points (link-members
+//      creates it from the active app dir).
+//   4. First name match, for workspaces with a single checkout and no install.
+function findAppDir(workspaceRoot: string, cwd: string): string {
+    if (process.env.TINYCLD_APP_DIR) return path.resolve(process.env.TINYCLD_APP_DIR)
+
+    let dir = realpathExisting(cwd)
+    while (dir !== workspaceRoot && path.dirname(dir) !== dir) {
+        if (path.dirname(dir) === workspaceRoot && isAppShellName(readName(dir))) return dir
+        dir = path.dirname(dir)
+    }
+
+    const candidates: string[] = []
     for (const entry of fs.readdirSync(workspaceRoot)) {
-        const dir = path.join(workspaceRoot, entry)
+        const candidate = path.join(workspaceRoot, entry)
         try {
-            if (fs.statSync(dir).isDirectory() && isAppShellName(readName(dir))) return dir
+            if (fs.statSync(candidate).isDirectory() && isAppShellName(readName(candidate))) {
+                candidates.push(candidate)
+            }
         } catch {
             // skip
         }
     }
+    if (candidates.length > 1) {
+        try {
+            const linkedCore = fs.realpathSync(
+                path.join(workspaceRoot, 'node_modules', '@tinycld', 'core')
+            )
+            const wired = candidates.find(c =>
+                linkedCore.startsWith(`${fs.realpathSync(c)}${path.sep}`)
+            )
+            if (wired) return wired
+        } catch {
+            // no symlink yet (pre-install) — fall through
+        }
+    }
+    if (candidates.length > 0) return candidates[0]
     throw new Error(`No app shell (member named "tinycld") under ${workspaceRoot}`)
 }
 
@@ -98,7 +132,7 @@ function findCurrentPackage(start: string, appDir: string): CurrentPackage | nul
 
 export function discover(cwd: string = process.cwd()): Discovery {
     const workspaceRoot = findWorkspaceRoot(cwd)
-    const appDir = findAppDir(workspaceRoot)
+    const appDir = findAppDir(workspaceRoot, cwd)
     const currentPackage = findCurrentPackage(cwd, appDir)
     return { workspaceRoot, appDir: fs.realpathSync(appDir), currentPackage }
 }
