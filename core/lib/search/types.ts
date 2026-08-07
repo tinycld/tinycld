@@ -1,0 +1,57 @@
+/** One rendered row in the palette. Every adapter maps its hits to this. */
+export interface SearchRow {
+    /** The package slug this row came from. Set by the palette, not the adapter. */
+    slug: string
+    /** Record id, unique within the package. */
+    id: string
+    /** The name a user would recognize — file name, subject, card title. */
+    title: string
+    /** Identifying detail, e.g. 'Grace Hopper · Inbox · 1d'. */
+    subtitle?: string
+    /** Right-aligned trailing detail, e.g. a board name. */
+    meta?: string
+}
+
+/**
+ * What an adapter module exports. Two halves because rendering is pure but
+ * selection needs router and store handles.
+ */
+export interface SearchAdapterModule {
+    /**
+     * Pure: one raw hit from this package's endpoint → one row, or null to
+     * skip the hit (e.g. its parent record has not synced yet).
+     *
+     * Takes `unknown` because the palette holds a heterogeneous map of
+     * adapters and cannot thread per-package types through it. Each adapter
+     * casts to its own response type on its first line.
+     */
+    toRow: (hit: unknown) => Omit<SearchRow, 'slug'> | null
+    /**
+     * Returns this package's selection handler.
+     *
+     * MUST be side-effect free: the palette calls every in-scope package's
+     * hook at the top level (hooks cannot be called conditionally at selection
+     * time), so this runs even for packages with no visible results. Wire up
+     * router/store handles here — never fetch, subscribe or mutate.
+     */
+    useSearchActions: () => { onSelect: (row: SearchRow) => void }
+}
+
+/** The result of parsing the palette input. */
+export interface ParsedQuery {
+    /** Package slugs to search. Empty = every package declaring `search`. */
+    chips: string[]
+    /** Terms that must match. */
+    include: string[]
+    /** Terms that must NOT match. */
+    exclude: string[]
+}
+
+/** A package the palette can search, derived from the manifest registry. */
+export interface SearchPackage {
+    slug: string
+    label: string
+    icon: string
+    order: number
+    endpoint: string
+}
