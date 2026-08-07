@@ -119,6 +119,32 @@ const STUBS: StubSpec[] = [
 const BOOTSTRAP_VERSION = '@tinycld/bootstrap@2.4.0'
 const SUBPROCESS_TIMEOUT_MS = 5 * 60_000
 
+interface GoVersions {
+    go: string
+    pocketbase: string
+}
+
+/**
+ * Read the Go and PocketBase versions the ecosystem actually uses out of core's
+ * go.mod rather than hardcoding them.
+ *
+ * A Go workspace resolves ONE version per module across every `use`d member, so
+ * a stub pinning its own PocketBase changes what the whole server builds
+ * against. Hardcoded versions here would drift silently the next time core
+ * upgrades, and the failure would surface as a confusing build error in an
+ * unrelated package rather than as "the fixture is stale".
+ */
+function goVersions(wsRoot: string): GoVersions {
+    const modPath = join(wsRoot, 'tinycld', 'core', 'server', 'go.mod')
+    const mod = readFileSync(modPath, 'utf8')
+    const go = mod.match(/^go\s+(\S+)/m)?.[1]
+    const pocketbase = mod.match(/github\.com\/pocketbase\/pocketbase\s+(v\S+)/)?.[1]
+    if (!go || !pocketbase) {
+        throw new Error(`could not read go/pocketbase versions from ${modPath}`)
+    }
+    return { go, pocketbase }
+}
+
 function workspaceRoot(): string {
     // tinycld/tests/scripts/<this> → tinycld/ → workspace root
     return resolve(fileURLToPath(import.meta.url), '..', '..', '..', '..')
@@ -300,18 +326,26 @@ export function useSearchActions() {
  * scoring, grouping), and a real FTS index would add a migration and seed data
  * whose behaviour the spec would then be asserting instead.
  */
-function writeGoServer(stubDir: string, stub: StubSpec): void {
+function writeGoServer(stubDir: string, stub: StubSpec, versions: GoVersions): void {
     const dir = join(stubDir, 'server')
     mkdirSync(dir, { recursive: true })
 
+    // Versions must match what the other members pin (see cards/server/go.mod):
+    // the generated go.work `use`s every member, and a Go workspace resolves one
+    // version per module across all of them, so a stub pinning a different
+    // PocketBase silently changes what the whole server builds against — or
+    // fails the build outright once the proxy is consulted for a version the
+    // vendored fork doesn't provide. `go mod tidy` cannot maintain this (it
+    // resolves before go.work's replace, so `tinycld.org/core v0.0.0` hits the
+    // proxy), which is why it is written out literally here.
     writeFileSync(
         join(dir, 'go.mod'),
         `module tinycld.org/packages/${stub.slug}
 
-go 1.24
+go ${versions.go}
 
 require (
-	github.com/pocketbase/pocketbase v0.30.0
+	github.com/pocketbase/pocketbase ${versions.pocketbase}
 	tinycld.org/core v0.0.0
 )
 `
@@ -477,6 +511,8 @@ function main(): void {
     const wsRoot = workspaceRoot()
     console.log(`[scaffold-search-stubs] workspace root: ${wsRoot}`)
 
+    const versions = goVersions(wsRoot)
+
     for (const stub of STUBS) {
         ensureBootstrapped(wsRoot, stub)
         const stubDir = join(wsRoot, stub.slug)
@@ -485,7 +521,7 @@ function main(): void {
         patchVitestConfig(stubDir)
         writeScreens(stubDir, stub)
         writeSearchAdapter(stubDir, stub)
-        writeGoServer(stubDir, stub)
+        writeGoServer(stubDir, stub, versions)
     }
 
     // Install once for both stubs rather than per-stub: the first-time scaffold
