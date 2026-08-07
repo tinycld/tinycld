@@ -58,6 +58,34 @@ export function manifestToConfigPkg(packageName: string, manifest: PackageManife
 }
 
 /**
+ * Cross-package validation for `nav.shortcut`. Two packages claiming the same
+ * letter make `t <letter>` ambiguous: CoreShortcuts registers both under
+ * different ids, and the matcher fires whichever it reaches first, so one
+ * package simply becomes unreachable by keyboard.
+ *
+ * docs/keyboard-shortcuts.md has always claimed generation "fails fast if two
+ * manifests claim the same letter". It did not, and the e2e shortcut stub and
+ * cards silently collided on 'k' until this was added.
+ */
+export function validateNavShortcuts(pkgs: ConfigPkg[]): void {
+    const claimedBy = new Map<string, string>()
+    for (const p of pkgs) {
+        // ConfigPkg.manifest carries extra fields under an index signature, so
+        // nav arrives as `unknown` and has to be narrowed here.
+        const nav = p.manifest.nav as { shortcut?: string } | undefined
+        const letter = nav?.shortcut
+        if (!letter) continue
+        const existing = claimedBy.get(letter)
+        if (existing) {
+            throw new Error(
+                `[generate] nav.shortcut '${letter}' is claimed by both '${existing}' and '${p.slug}'. Each package needs its own letter — 't ${letter}' cannot resolve to two packages.`
+            )
+        }
+        claimedBy.set(letter, p.slug)
+    }
+}
+
+/**
  * Cross-package validation for sidebar contributions. Run once with the full set
  * of present packages. Targets that aren't in this workspace are tolerated
  * (normal for a partial checkout — the contribution just won't appear). A
