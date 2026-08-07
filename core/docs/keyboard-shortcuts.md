@@ -58,6 +58,28 @@ Sequences like `t m` are two presses in quick succession (up to 1 second between
 | `Enter` | Open focused contact |
 | `c` | New contact |
 
+### Cards board
+
+| Keys | Action |
+|---|---|
+| `j` / `↓` | Focus next card |
+| `k` / `↑` | Focus previous card |
+| `←` / `→` | Focus the adjacent column's card at the same row |
+| `Enter` / `o` | Open focused card |
+| `Escape` | Clear the focus ring |
+| `Shift + ←` / `Shift + →` | Move focused card to the adjacent column |
+| `Shift + ↑` / `Shift + ↓` | Move focused card within its column |
+| `x` | Archive focused card |
+
+Moving and archiving need edit rights on the board; a viewer sees only the navigation keys.
+
+### Cards detail
+
+| Keys | Action |
+|---|---|
+| `j` / `k` | Next / previous card, in board order |
+| `Escape` | Close the card |
+
 ### Calendar schedule view
 
 | Keys | Action |
@@ -76,7 +98,7 @@ Shortcuts live under `lib/shortcuts/`. The system is intentionally small and avo
 - `lib/shortcuts/matcher.ts` — the sequence state machine. A 1-second inter-key timeout matches the tinykeys default. Both providers feed raw atoms into the same matcher so web and native share behaviour.
 - `lib/shortcuts/provider.web.tsx` — wires single atoms to `window` via [tinykeys](https://github.com/jamiebuilds/tinykeys). Tinykeys handles `$mod` (⌘ on macOS, Ctrl elsewhere) and key normalization.
 - `lib/shortcuts/provider.native.tsx` — wraps the app in `KeyboardExtendedView` from [`react-native-external-keyboard`](https://github.com/dorian-marchal/react-native-external-keyboard) and translates native `KeyPress` events to the same atom format.
-- `lib/shortcuts/help.tsx` + `ui/Kbd.tsx` — the `?` overlay and key badge component.
+- `lib/shortcuts/help.tsx` + `ui/Kbd.tsx` — the `?` overlay and key badge component. The overlay lists only shortcuts whose scope is currently active (`isScopeActive`), not everything registered: a screen shadowed by an inner scope, or one left mounted by `freezeOnBlur`, still has its shortcuts in the registry but none of them can fire.
 
 The matcher dispatches a shortcut only when:
 
@@ -121,7 +143,7 @@ Fields:
 - **`id`** — stable string, namespaced by package (`mail.list.next`). Re-registering with the same id overwrites the previous entry.
 - **`keys`** — tinykeys syntax: `"j"`, `"Shift+F"`, `"$mod+Enter"`, `"t i"`.
 - **`scope`** — `global` (always active) or one of `list`, `thread`, `compose`, `modal` (active only when at the top of the scope stack).
-- **`description`** / **`group`** — displayed in the `?` help overlay.
+- **`description`** / **`group`** — displayed in the `?` help overlay, which renders one row per shortcut sorted by description. Two shortcuts that do the same thing under different keys therefore need distinct wording, or they read as the action listed twice; suffix the alias `(alt)` (`'Open card'` / `'Open card (alt)'`).
 - **`allowInInputs`** — defaults to `false`. Set `true` for shortcuts that should fire while an input is focused (`⌘+Enter` to send, `Escape` to close).
 - **`when`** — optional guard, e.g. `when: () => !selection.isEmpty`.
 
@@ -139,7 +161,9 @@ const manifest = {
 }
 ```
 
-`scripts/generate-packages.ts` fails fast if two manifests claim the same letter. At runtime, `components/CoreShortcuts.tsx` iterates `packageRegistry` and registers `t <letter>` jumps for every package that declares one.
+`validateNavShortcuts` (`scripts/describe-packages.ts`, run from `scripts/generate.ts`) fails generation if two manifests claim the same letter — otherwise both register and `t <letter>` fires whichever the matcher reaches first, leaving one package unreachable. At runtime, `components/CoreShortcuts.tsx` iterates `packageRegistry` and registers `t <letter>` jumps for every package that declares one.
+
+Letters in use: `c` calendar, `d` drive, `k` cards, `m` mail, `o` contacts, `s` calc, `t` text.
 
 ## Testing
 

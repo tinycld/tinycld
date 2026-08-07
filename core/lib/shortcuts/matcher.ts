@@ -1,5 +1,5 @@
 import { getShortcuts } from './registry'
-import { topScope } from './scopes'
+import { topScope, topScopeId } from './scopes'
 import type { Shortcut } from './types'
 
 const SEQUENCE_TIMEOUT_MS = 1000
@@ -28,9 +28,25 @@ export interface MatcherContext {
     inInput: boolean
 }
 
+/**
+ * Is this shortcut's scope the one currently holding the keyboard? Exported so
+ * the help overlay lists exactly what can fire, rather than restating this and
+ * drifting from it.
+ */
+export function isScopeActive(shortcut: Shortcut): boolean {
+    if (shortcut.scope === 'global') return true
+    if (shortcut.scope !== topScope()) return false
+    // A screen frozen by `freezeOnBlur` stays mounted and keeps its shortcuts
+    // registered, so the live screen is not the only owner of its scope's keys
+    // — mail's list and a cards board both register 'list' j/k/x. Only the
+    // instance holding the keyboard may fire. Shortcuts registered before this
+    // stamp existed (scopeId undefined) keep the old scope-only behavior.
+    if (shortcut.scopeId != null && shortcut.scopeId !== topScopeId()) return false
+    return true
+}
+
 function matches(shortcut: Shortcut, ctx: MatcherContext): boolean {
-    const top = topScope()
-    if (shortcut.scope !== 'global' && shortcut.scope !== top) return false
+    if (!isScopeActive(shortcut)) return false
     if (ctx.inInput && !shortcut.allowInInputs) return false
     if (shortcut.when && !shortcut.when()) return false
     return true
