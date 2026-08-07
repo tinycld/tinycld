@@ -44,7 +44,8 @@ export function buildSections(
     if (all.length === 0) return []
 
     // One chip means one package, whose backend already ranked its own rows —
-    // re-sorting would discard that judgement for no gain.
+    // re-sorting would discard that judgement for no gain. (rowsBySlug is populated
+    // only for scoped packages by the caller, so `all` contains only the chip's rows.)
     if (chips.length === 1) {
         return [{ showBadges: false, rows: all }]
     }
