@@ -22,7 +22,8 @@ export const useSearchPaletteStore = create<SearchPaletteState>()(set => ({
     isOpen: false,
     text: '',
     selectedRowId: null,
-    open: seedSlug => set({ isOpen: true, text: seedSlug ? `${seedSlug}: ` : '', selectedRowId: null }),
+    open: seedSlug =>
+        set({ isOpen: true, text: seedSlug ? `${seedSlug}: ` : '', selectedRowId: null }),
     close: () => set({ isOpen: false, text: '', selectedRowId: null }),
     // A new query invalidates the old selection — the row may no longer exist.
     setText: value => set({ text: value, selectedRowId: null }),
