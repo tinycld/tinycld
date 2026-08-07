@@ -60,6 +60,10 @@ type Client struct {
 	// mu serializes refreshes so concurrent requests can't both rotate the
 	// refresh token (the server invalidates the old one on every rotation).
 	mu sync.Mutex
+
+	// userMu guards userID, the memoized /oauth/userinfo subject.
+	userMu sync.Mutex
+	userID string
 }
 
 func New(origin string, store TokenStore, hc *http.Client) *Client {
@@ -164,6 +168,15 @@ func (c *Client) GetJSON(ctx context.Context, path string, out any) error {
 
 // PostJSON POSTs body (JSON-encoded) to path and decodes the response.
 func (c *Client) PostJSON(ctx context.Context, path string, body, out any) error {
+	return c.sendJSON(ctx, http.MethodPost, path, body, out)
+}
+
+// PatchJSON PATCHes body (JSON-encoded) to path and decodes the response.
+func (c *Client) PatchJSON(ctx context.Context, path string, body, out any) error {
+	return c.sendJSON(ctx, http.MethodPatch, path, body, out)
+}
+
+func (c *Client) sendJSON(ctx context.Context, method, path string, body, out any) error {
 	if err := c.ensure(); err != nil {
 		return err
 	}
@@ -171,7 +184,7 @@ func (c *Client) PostJSON(ctx context.Context, path string, body, out any) error
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.origin+path, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, method, c.origin+path, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -180,6 +193,64 @@ func (c *Client) PostJSON(ctx context.Context, path string, body, out any) error
 		return io.NopCloser(bytes.NewReader(data)), nil
 	}
 	return c.doJSON(req, out)
+}
+
+// Delete sends an authenticated DELETE and discards the (typically empty)
+// response body.
+func (c *Client) Delete(ctx context.Context, path string) error {
+	if err := c.ensure(); err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.origin+path, nil)
+	if err != nil {
+		return err
+	}
+	return c.doJSON(req, nil)
+}
+
+// Get performs an authenticated GET and hands back the response body for
+// streaming (file content, downloads). The caller must close it. A non-2xx
+// status is drained into the same error shape doJSON produces.
+func (c *Client) Get(ctx context.Context, path string) (io.ReadCloser, *http.Response, error) {
+	if err := c.ensure(); err != nil {
+		return nil, nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.origin+path, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		return nil, nil, apiError(resp.StatusCode, data)
+	}
+	return resp.Body, resp, nil
+}
+
+// UserID returns the authenticated user's record id (the userinfo `sub`
+// claim), memoized for the process lifetime. Commands need it to filter
+// per-user rows and to fill relation fields like created_by.
+func (c *Client) UserID(ctx context.Context) (string, error) {
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
+	if c.userID != "" {
+		return c.userID, nil
+	}
+	var info struct {
+		Sub string `json:"sub"`
+	}
+	if err := c.GetJSON(ctx, "/oauth/userinfo", &info); err != nil {
+		return "", fmt.Errorf("resolving current user: %w", err)
+	}
+	if info.Sub == "" {
+		return "", errors.New("userinfo response carried no subject")
+	}
+	c.userID = info.Sub
+	return c.userID, nil
 }
 
 func (c *Client) doJSON(req *http.Request, out any) error {
