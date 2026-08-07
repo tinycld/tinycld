@@ -16,7 +16,7 @@
 package fts
 
 // Config describes one feature collection's FTS index. One Config drives both
-// the index-sync hooks (Table + Columns) and the search route (Route + Owner +
+// the index-sync hooks (Table + Columns) and the search route (Scope +
 // Output). It is the single interface both the manifest reader and the direct
 // wiring use.
 type Config struct {
@@ -38,8 +38,17 @@ type Config struct {
 	// before indexing (editor fields).
 	Columns []Column
 
-	// Owner scopes search to the records owned by the requesting user.
-	Owner OwnerScope
+	// Scope constrains results to rows the caller may see.
+	Scope Scope
+
+	// ExcludeField, when set, drops rows whose BOOL field is true (e.g.
+	// cards' `archived`).
+	//
+	// Deliberately distinct from SoftDeleteField: that one splits on
+	// `field = ''` vs `!= ''`, which is correct for a TEXT timestamp but
+	// misbehaves against a bool column under SQLite's loose typing. Two
+	// mechanisms, two column types — do not conflate them.
+	ExcludeField string
 
 	// Output lists the collection columns the search route returns per hit,
 	// in addition to the record id. These are read straight from the joined
@@ -72,12 +81,52 @@ type Column struct {
 	Strip bool
 }
 
-// OwnerScope declares how a record's owner resolves to the requesting user, so
-// search results stay scoped to the caller's own records. Single-org: the owner
-// field holds a users id directly (the former user_org junction is gone), so
-// search is scoped to owner == the authenticated user's id.
+// Scope constrains search results to rows the requesting user may see. It is an
+// interface because ownership is not uniform: some collections hold the owner's
+// id directly, others grant access through a membership table.
+type Scope interface {
+	// clause returns a SQL fragment ANDed into the WHERE. Identifiers come
+	// from config (trusted); the user id is always a bound parameter.
+	clause() string
+	params(userID string) map[string]any
+}
+
+// OwnerScope resolves ownership through a single relation field holding the
+// user's id directly (single-org: the former user_org junction is gone).
 type OwnerScope struct {
-	// Field is the collection field holding the owner reference
-	// (e.g. "owner", a relation to users).
+	// Field is the collection field holding the owner reference.
 	Field string
+}
+
+func (s OwnerScope) clause() string {
+	return "c." + s.Field + " IN ({:scopeUser})"
+}
+
+func (s OwnerScope) params(userID string) map[string]any {
+	return map[string]any{"scopeUser": userID}
+}
+
+// MemberScope resolves access through a membership table: the record is visible
+// when the user holds a row granting them its parent. Emitted as a live
+// subquery rather than a cached grant, so removing a member takes effect on the
+// next search.
+type MemberScope struct {
+	// Table is the membership collection (e.g. "cards_project_members").
+	Table string
+	// MemberField is the column in Table pointing at the parent record.
+	MemberField string
+	// UserField is the column in Table pointing at the user.
+	UserField string
+	// RecordField is the column on the SEARCHED collection pointing at the
+	// same parent.
+	RecordField string
+}
+
+func (s MemberScope) clause() string {
+	return "c." + s.RecordField + " IN (SELECT " + s.MemberField +
+		" FROM " + s.Table + " WHERE " + s.UserField + " = {:scopeUser})"
+}
+
+func (s MemberScope) params(userID string) map[string]any {
+	return map[string]any{"scopeUser": userID}
 }
