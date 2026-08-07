@@ -1,8 +1,19 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { discover, isAppShellName } from '../src/discovery'
+
+// Every test here builds a sandbox workspace, and TINYCLD_APP_DIR beats any
+// fixture (it is discover's first precedence rule). The variable is exported
+// for real when tooling runs from a worktree checkout, so it must not leak in.
+const inheritedAppDir = process.env.TINYCLD_APP_DIR
+beforeEach(() => {
+    delete process.env.TINYCLD_APP_DIR
+})
+afterAll(() => {
+    if (inheritedAppDir !== undefined) process.env.TINYCLD_APP_DIR = inheritedAppDir
+})
 
 // Build a fake workspace: <ws>/{app,contacts,core} with app named "app".
 function makeWs(): string {
