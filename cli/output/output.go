@@ -8,10 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 type Format string
@@ -84,3 +87,28 @@ func (o Options) Info(w io.Writer, format string, a ...any) {
 }
 
 func (o Options) color() bool { return !o.NoColor && o.TTY }
+
+// FromCommand rebuilds Options and the --yes answer from the root's
+// inherited persistent flags. Member command packages receive only
+// (root, *client.Client) at wiring time, so the flag set — not the root's
+// private deps struct — is their contract with the shell.
+func FromCommand(cmd *cobra.Command) (Options, bool, error) {
+	formatFlag, _ := cmd.Flags().GetString("output")
+	format, err := ParseFormat(formatFlag)
+	if err != nil {
+		return Options{}, false, err
+	}
+	if jsonFlag, _ := cmd.Flags().GetBool("json"); jsonFlag {
+		format = JSON
+	}
+	quiet, _ := cmd.Flags().GetBool("quiet")
+	noColor, _ := cmd.Flags().GetBool("no-color")
+	yes, _ := cmd.Flags().GetBool("yes")
+	tty := term.IsTerminal(int(os.Stdout.Fd()))
+	return Options{
+		Format:  format,
+		Quiet:   quiet,
+		NoColor: noColor || !tty,
+		TTY:     tty,
+	}, yes, nil
+}
