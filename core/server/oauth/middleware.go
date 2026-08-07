@@ -119,6 +119,16 @@ var endpointScopes = map[string]scopeRule{
 	"POST /api/drive/versions/restore":  {ScopeDriveWrite},
 	"POST /api/drive/versions/snapshot": {ScopeDriveWrite},
 	"GET /api/contacts/search":          {ScopeContactsRead},
+	"GET /api/cards/search":             {ScopeCardsRead},
+
+	// The federated search narrows itself: it drops the sources a caller's
+	// grant does not cover and returns the rest. So ANY read scope admits the
+	// request — demanding one specific scope would 403 a contacts-only token
+	// outright instead of handing it the contacts results it may see.
+	"GET /api/search": {
+		ScopeMailRead, ScopeDriveRead, ScopeContactsRead,
+		ScopeCalendarRead, ScopeCardsRead,
+	},
 
 	// Advertised in the discovery document as userinfo_endpoint, so an
 	// integration following the well-known metadata calls it with an ordinary

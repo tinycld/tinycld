@@ -109,3 +109,44 @@ func TestCredentiallessEndpointsStayExempt(t *testing.T) {
 		}
 	}
 }
+
+// The federated search endpoint self-filters: it drops sources the caller's
+// grant does not cover and returns the rest. So it must admit ANY read scope —
+// classifying it under one package's scope would 403 a token that legitimately
+// holds a different one, instead of handing it the subset it may see.
+func TestFederatedSearchAdmitsAnyReadScope(t *testing.T) {
+	rule := ScopeForRoute("GET", "/api/search")
+	if len(rule) == 0 {
+		t.Fatal("GET /api/search falls into default-deny — no token could search at all")
+	}
+	for _, scope := range []string{
+		ScopeMailRead, ScopeDriveRead, ScopeContactsRead, ScopeCalendarRead, ScopeCardsRead,
+	} {
+		if !rule.satisfiedBy([]string{scope}) {
+			t.Errorf("a token holding only %q cannot reach /api/search", scope)
+		}
+	}
+	// A write-only or profile-only grant has nothing to read, so it must not
+	// reach the endpoint at all.
+	for _, scope := range []string{ScopeProfile, ScopeMailSend, ScopeDriveWrite} {
+		if rule.satisfiedBy([]string{scope}) {
+			t.Errorf("%q alone must not admit a search", scope)
+		}
+	}
+}
+
+// Cards' search route shipped before any cards scope existed, so it was
+// default-denied for every token — the route ran but no integration could call
+// it. This pins the classification now that cards:read exists.
+func TestCardsSearchIsClassified(t *testing.T) {
+	rule := ScopeForRoute("GET", "/api/cards/search")
+	if len(rule) == 0 {
+		t.Fatal("GET /api/cards/search is default-denied")
+	}
+	if !rule.satisfiedBy([]string{ScopeCardsRead}) {
+		t.Error("cards:read must admit the cards search route")
+	}
+	if rule.satisfiedBy([]string{ScopeMailRead}) {
+		t.Error("an unrelated package's scope must not admit cards search")
+	}
+}

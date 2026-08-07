@@ -42,6 +42,8 @@ const (
 	ScopeContactsWrite = "contacts:write"
 	ScopeCalendarRead  = "calendar:read"
 	ScopeCalendarWrite = "calendar:write"
+	ScopeCardsRead     = "cards:read"
+	ScopeCardsWrite    = "cards:write"
 )
 
 // AllScopes is the full catalog, used to validate a requested scope string and
@@ -52,6 +54,7 @@ var AllScopes = []string{
 	ScopeDriveRead, ScopeDriveWrite,
 	ScopeContactsRead, ScopeContactsWrite,
 	ScopeCalendarRead, ScopeCalendarWrite,
+	ScopeCardsRead, ScopeCardsWrite,
 }
 
 var (
