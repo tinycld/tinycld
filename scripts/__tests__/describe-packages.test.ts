@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
     manifestToConfigPkg,
     schemaTypeName,
+    validateNavShortcuts,
     validateSidebarContributions,
 } from '../describe-packages'
 
@@ -156,5 +157,34 @@ describe('validateSidebarContributions', () => {
         } finally {
             warn.mockRestore()
         }
+    })
+})
+
+describe('validateNavShortcuts', () => {
+    const withShortcut = (slug: string, shortcut?: string) =>
+        manifestToConfigPkg(`@tinycld/${slug}`, {
+            name: slug,
+            slug,
+            version: '0.1.0',
+            description: 'd',
+            nav: { label: slug, icon: 'box', order: 1, ...(shortcut ? { shortcut } : {}) },
+        })
+
+    it('accepts distinct letters', () => {
+        expect(() =>
+            validateNavShortcuts([withShortcut('mail', 'm'), withShortcut('cards', 'k')])
+        ).not.toThrow()
+    })
+
+    it('rejects two packages claiming the same letter', () => {
+        expect(() =>
+            validateNavShortcuts([withShortcut('cards', 'k'), withShortcut('kanban', 'k')])
+        ).toThrow(/'k' is claimed by both 'cards' and 'kanban'/)
+    })
+
+    it('ignores packages that declare no shortcut', () => {
+        expect(() =>
+            validateNavShortcuts([withShortcut('a'), withShortcut('b'), withShortcut('c', 'c')])
+        ).not.toThrow()
     })
 })
