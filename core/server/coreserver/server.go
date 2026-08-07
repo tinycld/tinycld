@@ -20,6 +20,7 @@ import (
 	"tinycld.org/core/pkgaccess"
 	"tinycld.org/core/quota"
 	"tinycld.org/core/realtime"
+	"tinycld.org/core/search"
 	"tinycld.org/core/sharelink"
 )
 
@@ -294,6 +295,13 @@ func registerSharedCore(app *pocketbase.PocketBase) {
 	// (not host-only) because a multi-org tenant must be able to authorize a
 	// CLI or an integration exactly like a self-hosted deployment.
 	oauth.Register(app)
+
+	// Federated search over every installed package. Shared for the same reason
+	// as OAuth above: a tenant's packages are searchable exactly as a
+	// self-hosted deployment's are. Sources register themselves from their own
+	// package Register, so with no packages linked this serves an empty result
+	// rather than failing.
+	search.Register(app)
 
 	// Keep the /carddav (and /caldav, /dav) CORS bypass here even though core no
 	// longer serves a protocol handler itself: a package's own Go server (e.g.

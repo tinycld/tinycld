@@ -29,6 +29,25 @@ const (
 // token while letting us find the grant row.
 const grantClaim = "tcg"
 
+// grantedScopesKey is the request-store key holding the verified grant's
+// scopes. Set only by enforceGrant, so its presence also distinguishes an
+// OAuth-authenticated request from a session one.
+const grantedScopesKey = "tinycldOAuthScopes"
+
+// GrantedScopes returns the scopes of the OAuth grant that authenticated this
+// request, or nil when the caller is a signed-in session rather than a token.
+//
+// nil and empty mean different things to a caller narrowing its behavior: nil is
+// "no scope ceiling applies", an empty non-nil slice would be "a token granting
+// nothing". Only a token ever carries a ceiling, so a session must read as nil.
+func GrantedScopes(re *core.RequestEvent) []string {
+	scopes, ok := re.Get(grantedScopesKey).([]string)
+	if !ok {
+		return nil
+	}
+	return scopes
+}
+
 // scopeExempt marks routes reachable without any scope check — public probes
 // and the OAuth endpoints themselves, which must work before a grant exists.
 const scopeExempt = "-"
@@ -356,6 +375,13 @@ func enforceGrant(re *core.RequestEvent) error {
 		// Non-fatal: last_used_at is cosmetic.
 		re.App.Logger().Warn("oauth: touch grant", "error", err)
 	}
+
+	// Publish the grant's scopes for handlers that must narrow their OWN
+	// behavior rather than pass or fail wholesale. The route-level check above
+	// answers "may this token call this endpoint"; an endpoint that federates
+	// over several packages also needs "which of them may it see", so that a
+	// mail-only token searching everything gets mail results instead of a 403.
+	re.Set(grantedScopesKey, ParseScopes(grant.GetString("scopes")))
 
 	re.Auth = record
 	return re.Next()

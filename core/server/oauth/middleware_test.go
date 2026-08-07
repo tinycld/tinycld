@@ -505,3 +505,56 @@ func TestScopeRuleDescribe(t *testing.T) {
 		t.Errorf("any-of describe = %s", got)
 	}
 }
+
+func TestGrantedScopesPublishesTheGrantsScopes(t *testing.T) {
+	// An endpoint that federates over several packages narrows its OWN
+	// behavior by scope rather than passing or failing wholesale, so the
+	// verified grant's scopes have to reach the handler.
+	app := newSchemaApp(t)
+	userID, clientID := seedUserAndClient(t, app)
+	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead, ScopeProfile}, "active")
+	if err != nil {
+		t.Fatalf("NewGrant: %v", err)
+	}
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	token, err := MintAccessToken(app, user, grant, AccessTokenTTL)
+	if err != nil {
+		t.Fatalf("MintAccessToken: %v", err)
+	}
+
+	re := newRequestEvent(app, "GET", "/api/mail/search", token)
+	if err := enforceGrant(re); err != nil {
+		t.Fatalf("enforceGrant: %v", err)
+	}
+	got := GrantedScopes(re)
+	if len(got) != 2 || !HasScope(got, ScopeMailRead) || !HasScope(got, ScopeProfile) {
+		t.Fatalf("GrantedScopes = %v, want the grant's two scopes", got)
+	}
+}
+
+func TestGrantedScopesIsNilForASession(t *testing.T) {
+	// nil and empty mean different things downstream: nil is "no scope ceiling
+	// applies" (a signed-in session), while an empty non-nil slice would be a
+	// token that granted nothing. A session must never read as the latter.
+	app := newSchemaApp(t)
+	userID, _ := seedUserAndClient(t, app)
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	plain, err := user.NewAuthToken()
+	if err != nil {
+		t.Fatalf("NewAuthToken: %v", err)
+	}
+
+	re := newRequestEvent(app, "GET", "/api/mail/search", plain)
+	if err := enforceGrant(re); err != nil {
+		t.Fatalf("enforceGrant: %v", err)
+	}
+	if got := GrantedScopes(re); got != nil {
+		t.Fatalf("GrantedScopes = %v, want nil for a session token", got)
+	}
+}
