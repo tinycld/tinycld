@@ -33,14 +33,14 @@ describe('buildSections', () => {
 
     it('returns one unbadged section when exactly one chip is set', () => {
         const sections = buildSections(
-            { mail: [row('mail', 'm1', 'budget'), row('mail', 'm2', 'Q3')] },
+            { mail: [row('mail', 'm1', 'Q3'), row('mail', 'm2', 'budget')] },
             PACKAGES,
             ['mail'],
             ['budget']
         )
         expect(sections).toHaveLength(1)
         expect(sections[0].showBadges).toBe(false)
-        // A single package keeps its own backend rank order.
+        // A single package keeps its own backend rank order (m1 first despite being a worse match).
         expect(sections[0].rows.map(r => r.id)).toEqual(['m1', 'm2'])
     })
 
