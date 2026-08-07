@@ -4,6 +4,7 @@ import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { HelpDrawer } from '@tinycld/core/components/help/HelpDrawer'
 import { HelpSearchPalette } from '@tinycld/core/components/help/HelpSearchPalette'
 import { NotifyContextSync } from '@tinycld/core/components/NotifyContextSync'
+import { SearchPalette } from '@tinycld/core/components/search-palette/SearchPalette'
 import { AuthGate } from '@tinycld/core/components/workspace/AuthGate'
 import { ImportNotifier } from '@tinycld/core/components/workspace/ImportNotifier'
 import { SkeletonLayout } from '@tinycld/core/components/workspace/SkeletonLayout'
@@ -57,6 +58,7 @@ function OrgLayoutInner() {
             <DemoFollowUpModal />
             <HelpDrawer />
             <HelpSearchPalette />
+            <SearchPalette />
         </>
     )
 }

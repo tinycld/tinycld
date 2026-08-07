@@ -17,6 +17,12 @@ export interface ConfigSidebarContribution {
     order: number
 }
 
+export interface ConfigSearch {
+    endpoint: string
+    adapter: string // package-exports subpath e.g. 'search-adapter'
+    label?: string
+}
+
 export interface ConfigPkg {
     packageName: string
     slug: string
@@ -29,6 +35,7 @@ export interface ConfigPkg {
     systemSettings: ConfigSystemSettingsPanel[]
     slots: string[]
     sidebarContributions: ConfigSidebarContribution[]
+    search?: ConfigSearch
     manifest: { name: string; slug: string; version: string; description: string } & Record<
         string,
         unknown
@@ -60,6 +67,7 @@ function validateConfigPkg(p: ConfigPkg): void {
     for (const c of p.sidebarContributions) {
         assertSafeImportField('sidebarContributions[].component', c.component)
     }
+    if (p.search) assertSafeImportField('search.adapter', p.search.adapter)
 }
 
 export function buildConfigSource(pkgs: ConfigPkg[]): string {
@@ -134,6 +142,15 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
                 )
             }
             lines.push('        ],')
+        }
+        if (p.search) {
+            lines.push('        search: {')
+            lines.push(`            endpoint: ${jsonLiteral(p.search.endpoint)},`)
+            if (p.search.label) lines.push(`            label: ${jsonLiteral(p.search.label)},`)
+            // A bare thunk, NOT lazy(): the adapter module exports two
+            // non-component values, which React.lazy cannot wrap.
+            lines.push(`            load: () => import('${p.packageName}/${p.search.adapter}'),`)
+            lines.push('        },')
         }
         lines.push('    }),')
     }

@@ -1,10 +1,24 @@
 import { asyncStorage, create, persist } from '@tinycld/core/lib/store'
 
+/**
+ * How long the drawer edge-swipe stays suppressed after a package drag ends.
+ * On a physical phone a fingertip pressed into the left edge of the glass can
+ * micro-lift as it reverses direction: iOS ends the touch and starts a new one
+ * a few ms later, and that new touch is born inside the edge strip — to the
+ * drawer it looks exactly like a deliberate edge swipe, so a card dragged to
+ * the left edge and back would fling the drawer open. The grace window
+ * swallows that re-touch; a real edge swipe moments later still works.
+ */
+const EDGE_SWIPE_RESUME_GRACE_MS = 400
+
+let edgeSwipeResumeTimer: ReturnType<typeof setTimeout> | null = null
+
 interface WorkspaceStoreState {
     isSidebarOpen: boolean
     isDrawerOpen: boolean
     isMoreOpen: boolean
     isNotificationsOpen: boolean
+    isEdgeSwipeSuspended: boolean
     activePkgSlug: string | null
     // Per-package "last visited href" map. Packages may persist the
     // last deep-link the user opened (e.g. a calc file path) so the
@@ -15,6 +29,13 @@ interface WorkspaceStoreState {
     setSidebarOpen: (open: boolean) => void
     toggleDrawer: () => void
     setDrawerOpen: (open: boolean) => void
+    /**
+     * Packages with their own drag interactions (board cards, grid tiles)
+     * call this with `true` at drag start and `false` at drag end so the
+     * mobile drawer's edge-swipe can't hijack a touch near the left edge
+     * mid-drag. Resuming is deferred by EDGE_SWIPE_RESUME_GRACE_MS.
+     */
+    setEdgeSwipeSuspended: (suspended: boolean) => void
     setMoreOpen: (open: boolean) => void
     setNotificationsOpen: (open: boolean) => void
     setActivePkgSlug: (slug: string | null) => void
@@ -29,6 +50,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()(
             isDrawerOpen: false,
             isMoreOpen: false,
             isNotificationsOpen: false,
+            isEdgeSwipeSuspended: false,
             activePkgSlug: null,
             lastPackageHref: {},
 
@@ -36,6 +58,20 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()(
             setSidebarOpen: open => set({ isSidebarOpen: open }),
             toggleDrawer: () => set(s => ({ isDrawerOpen: !s.isDrawerOpen })),
             setDrawerOpen: open => set({ isDrawerOpen: open }),
+            setEdgeSwipeSuspended: suspended => {
+                if (edgeSwipeResumeTimer) {
+                    clearTimeout(edgeSwipeResumeTimer)
+                    edgeSwipeResumeTimer = null
+                }
+                if (suspended) {
+                    set({ isEdgeSwipeSuspended: true })
+                    return
+                }
+                edgeSwipeResumeTimer = setTimeout(() => {
+                    edgeSwipeResumeTimer = null
+                    set({ isEdgeSwipeSuspended: false })
+                }, EDGE_SWIPE_RESUME_GRACE_MS)
+            },
             setMoreOpen: open => set({ isMoreOpen: open }),
             setNotificationsOpen: open => set({ isNotificationsOpen: open }),
             setActivePkgSlug: slug => set({ activePkgSlug: slug }),

@@ -97,8 +97,32 @@ export interface PackageManifest {
         module: string
     }
 
+    /**
+     * Go payload package (dir relative to the member root, e.g. 'server/api')
+     * holding the exported HTTP request/response structs for this package's
+     * API. The generator emits lib/generated/<slug>-api.ts from it, so the
+     * web client (and the CLI) consume the Go structs as the single source
+     * of truth for payload shapes.
+     */
+    payloads?: {
+        package: string
+    }
+
     help?: {
         directory: string
+    }
+
+    /**
+     * How this package participates in the global `/` search palette.
+     * `endpoint` is its search route; `adapter` is a package-exports subpath
+     * to a module exporting `toRow` and `useSearchActions`. Omit to stay out
+     * of the palette.
+     */
+    search?: {
+        endpoint: string
+        adapter: string
+        /** Chip and group label. Defaults to `nav.label`. */
+        label?: string
     }
 
     repository?: {

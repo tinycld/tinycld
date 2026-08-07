@@ -1,4 +1,4 @@
-import { createMatcher } from '@tinycld/core/lib/shortcuts/matcher'
+import { createMatcher, isScopeActive } from '@tinycld/core/lib/shortcuts/matcher'
 import { useShortcutRegistry } from '@tinycld/core/lib/shortcuts/registry'
 import { popScope, pushScope, resetScopes } from '@tinycld/core/lib/shortcuts/scopes'
 import type { Shortcut } from '@tinycld/core/lib/shortcuts/types'
@@ -110,6 +110,76 @@ describe('matcher', () => {
         popScope(modalId)
         expect(m.feedAtom('j', { inInput: false })).toBe(true)
         expect(run).toHaveBeenCalledTimes(1)
+        popScope(listId)
+    })
+
+    // A screen frozen by `freezeOnBlur` keeps its shortcuts registered, so two
+    // packages can hold the same key at the same scope. Only the one owned by
+    // the scope instance on top may fire.
+    it('fires the live screen’s shortcut when a frozen screen shares its key', () => {
+        const frozen = vi.fn()
+        const live = vi.fn()
+        const frozenId = pushScope('list')
+        register({
+            id: 'frozen.j',
+            keys: 'j',
+            scope: 'list',
+            description: 'frozen next',
+            scopeId: frozenId,
+            run: frozen,
+        })
+        const liveId = pushScope('list')
+        register({
+            id: 'live.j',
+            keys: 'j',
+            scope: 'list',
+            description: 'live next',
+            scopeId: liveId,
+            run: live,
+        })
+        const m = createMatcher()
+
+        expect(m.feedAtom('j', { inInput: false })).toBe(true)
+        expect(live).toHaveBeenCalledTimes(1)
+        expect(frozen).not.toHaveBeenCalled()
+
+        // Returning to the other screen hands its own shortcut back.
+        popScope(liveId)
+        expect(m.feedAtom('j', { inInput: false })).toBe(true)
+        expect(frozen).toHaveBeenCalledTimes(1)
+        expect(live).toHaveBeenCalledTimes(1)
+        popScope(frozenId)
+    })
+
+    // The help overlay lists exactly what isScopeActive admits, so a board's
+    // keys must disappear from it while a card (a 'modal' scope) is open —
+    // otherwise it advertises keys that cannot fire, and duplicates every
+    // entry the two screens share.
+    it('reports only the scope holding the keyboard as active', () => {
+        const boardKey: Shortcut = {
+            id: 'board.x',
+            keys: 'x',
+            scope: 'list',
+            description: 'archive',
+            run: () => {},
+        }
+        const jumpKey: Shortcut = {
+            id: 'core.jump',
+            keys: 't m',
+            scope: 'global',
+            description: 'jump',
+            run: () => {},
+        }
+        const listId = pushScope('list')
+        expect(isScopeActive(boardKey)).toBe(true)
+
+        const modalId = pushScope('modal')
+        expect(isScopeActive(boardKey)).toBe(false)
+        // A global shortcut stays reachable from inside a modal.
+        expect(isScopeActive(jumpKey)).toBe(true)
+
+        popScope(modalId)
+        expect(isScopeActive(boardKey)).toBe(true)
         popScope(listId)
     })
 

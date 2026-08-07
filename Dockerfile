@@ -84,7 +84,8 @@ COPY tinycld/third_party/ ./third_party/
 WORKDIR /src/core/server
 RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
-    CGO_ENABLED=0 go build -o /out/export-types ./cmd/export-types/
+    CGO_ENABLED=0 go build -o /out/export-types ./cmd/export-types/ && \
+    CGO_ENABLED=0 go build -o /out/export-payload-types ./cmd/export-payload-types/
 
 # Node stage: install the workspace (runs the generator), build the web app.
 FROM node:22-bookworm-slim AS web-builder
@@ -97,6 +98,12 @@ WORKDIR /ws
 # Go install in this Node-only stage.
 COPY --from=types-binary-builder /out/export-types /usr/local/bin/export-types
 ENV TINYCLD_EXPORT_TYPES_BIN=/usr/local/bin/export-types
+
+# Same deal for payload API types: scripts/gen-payload-types.ts reads
+# TINYCLD_EXPORT_PAYLOADS_BIN and parses each member's manifest-declared
+# payload package (go/ast, no imports) into lib/generated/<slug>-api.ts.
+COPY --from=types-binary-builder /out/export-payload-types /usr/local/bin/export-payload-types
+ENV TINYCLD_EXPORT_PAYLOADS_BIN=/usr/local/bin/export-payload-types
 
 # Root manifests + shared test stubs + the workspace-root scripts (link-members).
 # Copied first so the subsequent member COPYs are the only thing that changes

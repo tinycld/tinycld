@@ -332,4 +332,3 @@ func TestGuestRLS_AuditLogs_AdminCanRead(t *testing.T) {
 	}
 	runListScenario(t, env.app, "audit_logs", adminToken, []string{`"totalItems":1`})
 }
-

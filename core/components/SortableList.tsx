@@ -1,3 +1,4 @@
+import { hapticImpactLight } from '@tinycld/core/lib/haptics'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { GripVertical } from 'lucide-react-native'
 import type { ReactNode } from 'react'
@@ -42,6 +43,7 @@ export function SortableList<T>({
         keyExtractor,
         onReorder: event => onReorder(event.data),
         longPressDelay: 1,
+        onDragStart: () => hapticImpactLight(),
     })
 
     return (

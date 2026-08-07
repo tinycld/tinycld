@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/pocketbase/dbx"
-	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // SearchResult is one search hit: the record id plus the configured Output
@@ -23,20 +23,27 @@ type SearchOpts struct {
 	Limit          int
 	Offset         int
 	IncludeDeleted bool
+	// Exclude holds space-separated terms that must NOT match.
+	Exclude string
 }
 
-// Search runs an owner-scoped FTS5 MATCH for one config, returning hits
-// (ordered by FTS rank) and the total count. It returns no rows — never an
-// error to the caller path — for an empty/too-short query or an
-// unauthenticated caller; a genuine DB failure is returned so the route can log
+// Search runs a scoped FTS5 MATCH for one config, returning hits (ordered by
+// FTS rank) and the total count. It returns no rows — never an error to the
+// caller path — for an empty/too-short query, an unauthenticated caller, or a
+// disabled/missing user; a genuine DB failure is returned so the route can log
 // it. Column identifiers come from config (trusted); only the MATCH value and
-// owner id are bound parameters.
+// the Scope's bound params (always including the user id) are bound
+// parameters.
 //
-// Single-org: a record's owner field holds the requesting user's id directly
-// (the former user_org junction is gone), so search is scoped to owner ==
-// userID — no membership lookup.
-func Search(app *pocketbase.PocketBase, cfg Config, userID string, opts SearchOpts) ([]SearchResult, int, error) {
-	match := SanitizeQuery(opts.Query)
+// cfg.Scope determines how access is resolved — a direct owner field
+// (OwnerScope) or a membership table (MemberScope) — so this function stays
+// agnostic to which.
+//
+// Takes core.App (not the concrete *pocketbase.PocketBase) so it can run
+// against tests.TestApp — that is what makes the disabled-user and nil-Scope
+// checks below unit-testable at all, matching drive's equivalent function.
+func Search(app core.App, cfg Config, userID string, opts SearchOpts) ([]SearchResult, int, error) {
+	match := SanitizeQueryWithExclusions(opts.Query, opts.Exclude)
 	if match == "" {
 		return nil, 0, nil
 	}
@@ -45,8 +52,27 @@ func Search(app *pocketbase.PocketBase, cfg Config, userID string, opts SearchOp
 		return nil, 0, nil
 	}
 
-	params := map[string]any{"match": match, "owner": userID}
-	inClause := "({:owner})"
+	// Search is raw SQL behind requireAuth, so PocketBase's collection rules
+	// never run on this path. Without this check a disabled account keeps
+	// reading titles and content until its token expires — the same hole drive
+	// had to patch separately.
+	if isDisabled(app, userID) {
+		return nil, 0, nil
+	}
+
+	// A Config that omits Scope has a nil interface value. Failing closed here
+	// (rather than dereferencing it, or worse, silently skipping the clause)
+	// matters because an unscoped FTS query would hand every row in the table
+	// to any authenticated caller — "no scope declared" must mean "no
+	// results", never "all results".
+	if cfg.Scope == nil {
+		return nil, 0, nil
+	}
+
+	params := map[string]any{"match": match}
+	for k, v := range cfg.Scope.params(userID) {
+		params[k] = v
+	}
 
 	// Soft-delete split is a fixed SQL fragment (no user input).
 	deletedClause := ""
@@ -71,8 +97,9 @@ func Search(app *pocketbase.PocketBase, cfg Config, userID string, opts SearchOp
 	base := " FROM " + cfg.Table +
 		" JOIN " + cfg.Collection + " c ON c.id = " + cfg.Table + ".record_id" +
 		" WHERE " + cfg.Table + " MATCH {:match}" +
-		" AND c." + cfg.Owner.Field + " IN " + inClause +
-		deletedClause
+		" AND " + cfg.Scope.clause() +
+		deletedClause +
+		excludeClause(cfg)
 
 	searchSQL := "SELECT " + strings.Join(selectCols, ", ") + base +
 		" ORDER BY " + cfg.Table + ".rank LIMIT {:limit} OFFSET {:offset}"
@@ -113,6 +140,25 @@ func Search(app *pocketbase.PocketBase, cfg Config, userID string, opts SearchOp
 	}
 
 	return results, count.Total, nil
+}
+
+// excludeClause drops rows whose bool ExcludeField is true.
+func excludeClause(cfg Config) string {
+	if cfg.ExcludeField == "" {
+		return ""
+	}
+	return " AND c." + cfg.ExcludeField + " != true"
+}
+
+// isDisabled reports whether the user record is missing or flagged disabled.
+// A missing record is treated as disabled: a token for a deleted user must not
+// keep reading. Takes core.App for the same testability reason as Search.
+func isDisabled(app core.App, userID string) bool {
+	user, err := app.FindRecordById("users", userID)
+	if err != nil || user == nil {
+		return true
+	}
+	return user.GetBool("disabled")
 }
 
 // coerce converts a raw string cell to the JSON type an output column declares,

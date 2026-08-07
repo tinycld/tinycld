@@ -60,3 +60,48 @@ describe('discover', () => {
         expect(d.currentPackage?.kind).toBe('app')
     })
 })
+
+// A workspace can hold several checkouts of the app repo (git worktrees like
+// tinycld-cli-wt beside tinycld/). The scan must not just take the first name
+// match — that silently targets the wrong checkout.
+describe('discover with multiple app-shell checkouts', () => {
+    let ws: string
+    beforeEach(() => {
+        ws = makeWs()
+        // A second checkout of the app repo, plus the node_modules symlink
+        // link-members would create for the checkout the workspace is wired to.
+        fs.mkdirSync(path.join(ws, 'app-wt', 'core'), { recursive: true })
+        fs.writeFileSync(path.join(ws, 'app-wt', 'package.json'), JSON.stringify({ name: 'app' }))
+        fs.writeFileSync(
+            path.join(ws, 'app-wt', 'core', 'package.json'),
+            JSON.stringify({ name: '@tinycld/core' })
+        )
+        fs.mkdirSync(path.join(ws, 'node_modules', '@tinycld'), { recursive: true })
+        fs.symlinkSync(
+            path.join(ws, 'app-wt', 'core'),
+            path.join(ws, 'node_modules', '@tinycld', 'core')
+        )
+    })
+    afterEach(() => fs.rmSync(ws, { recursive: true, force: true }))
+
+    it('resolves the checkout the core symlink points into, not the first name match', () => {
+        const d = discover(path.join(ws, 'contacts'))
+        expect(path.basename(d.appDir)).toBe('app-wt')
+    })
+
+    it('resolves the checkout cwd is inside, and scopes to it', () => {
+        const d = discover(path.join(ws, 'app-wt'))
+        expect(path.basename(d.appDir)).toBe('app-wt')
+        expect(d.currentPackage?.kind).toBe('app')
+    })
+
+    it('honors TINYCLD_APP_DIR above everything', () => {
+        process.env.TINYCLD_APP_DIR = path.join(ws, 'app')
+        try {
+            const d = discover(path.join(ws, 'contacts'))
+            expect(path.basename(d.appDir)).toBe('app')
+        } finally {
+            delete process.env.TINYCLD_APP_DIR
+        }
+    })
+})

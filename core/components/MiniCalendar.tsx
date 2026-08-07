@@ -101,7 +101,13 @@ export function MiniCalendar({ selectedDate, onDateSelect }: MiniCalendarProps) 
                         isToday={cell.isToday}
                         isSelected={isSameDay(cell.date, selectedDate)}
                         onPress={onDateSelect}
-                        colors={{ fgColor, mutedColor, primaryColor, primaryFgColor, activeIndicatorColor }}
+                        colors={{
+                            fgColor,
+                            mutedColor,
+                            primaryColor,
+                            primaryFgColor,
+                            activeIndicatorColor,
+                        }}
                     />
                 ))}
             </View>

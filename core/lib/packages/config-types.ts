@@ -77,6 +77,11 @@ export interface PackageEntry<S extends SchemaDeclaration, R> {
     settings?: PackageSettingsPanel[]
     systemSettings?: PackageSystemSettingsPanel[]
     sidebarContributions?: SidebarContribution[]
+    search?: {
+        endpoint: string
+        label?: string
+        load: () => Promise<unknown>
+    }
     seed?: (pb: PocketBase, ctx: SeedContext) => Promise<void>
 }
 
@@ -99,6 +104,7 @@ export function definePackageEntry<S extends SchemaDeclaration>() {
         settings?: PackageEntry<S, R>['settings']
         systemSettings?: PackageEntry<S, R>['systemSettings']
         sidebarContributions?: PackageEntry<S, R>['sidebarContributions']
+        search?: PackageEntry<S, R>['search']
         seed?: PackageEntry<S, R>['seed']
     }): PackageEntry<S, R> => entry as unknown as PackageEntry<S, R>
 }
