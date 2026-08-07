@@ -1,10 +1,15 @@
 package keychain
 
 import (
+	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/zalando/go-keyring"
 )
 
 func TestFileStoreRoundTrip(t *testing.T) {
@@ -106,5 +111,116 @@ func TestJSONHelpers(t *testing.T) {
 	}
 	if err := GetJSON(s, "missing", &out); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// stubKeyring swaps the keyring seams for the test and restores them after.
+func stubKeyring(
+	t *testing.T,
+	get func(service, account string) (string, error),
+	set func(service, account, value string) error,
+	del func(service, account string) error,
+) {
+	t.Helper()
+	origGet, origSet, origDel := keyringGet, keyringSet, keyringDelete
+	keyringGet, keyringSet, keyringDelete = get, set, del
+	t.Cleanup(func() { keyringGet, keyringSet, keyringDelete = origGet, origSet, origDel })
+}
+
+func TestSystemStoreFallsBackWhenKeychainRefusesWrites(t *testing.T) {
+	// The OS keychain can answer the read probe yet refuse writes (sandboxed
+	// process, locked login session — macOS `security` exits 154). By the
+	// time Set runs after a device login the server has already activated
+	// the grant, so dropping the token would strand a live credential.
+	kcMem := map[string]string{}
+	stubKeyring(t,
+		func(_, account string) (string, error) {
+			v, ok := kcMem[account]
+			if !ok {
+				return "", keyring.ErrNotFound
+			}
+			return v, nil
+		},
+		func(_, _, _ string) error { return errors.New("exit status 154") },
+		func(_, account string) error {
+			delete(kcMem, account)
+			return nil
+		},
+	)
+
+	dir := t.TempDir()
+	var warn bytes.Buffer
+	s := Open(dir, &warn)
+
+	// The probe read succeeded, so Open picked the system store — the write
+	// failure must degrade to the file store, not surface as an error.
+	if err := s.Set("ctx1", `{"t":"v1"}`); err != nil {
+		t.Fatalf("Set must fall back to the file store, got %v", err)
+	}
+	if !strings.Contains(warn.String(), "keychain write failed") {
+		t.Fatalf("expected a one-time warning, got %q", warn.String())
+	}
+	v, err := s.Get("ctx1")
+	if err != nil || v != `{"t":"v1"}` {
+		t.Fatalf("Get after degraded Set = %q, %v", v, err)
+	}
+
+	// Second write must not warn again.
+	warn.Reset()
+	if err := s.Set("ctx1", `{"t":"v2"}`); err != nil {
+		t.Fatal(err)
+	}
+	if warn.String() != "" {
+		t.Fatalf("warning must be one-time, got %q", warn.String())
+	}
+
+	// Delete clears the file copy too.
+	if err := s.Delete("ctx1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get("ctx1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("after Delete, err = %v", err)
+	}
+}
+
+func TestSystemStoreKeychainWriteClearsStaleFileCopy(t *testing.T) {
+	// A session where the keychain works again must not leave an older file
+	// credential around for Get to resurrect after the keychain entry is
+	// later removed.
+	kcMem := map[string]string{}
+	stubKeyring(t,
+		func(_, account string) (string, error) {
+			v, ok := kcMem[account]
+			if !ok {
+				return "", keyring.ErrNotFound
+			}
+			return v, nil
+		},
+		func(_, account, value string) error {
+			kcMem[account] = value
+			return nil
+		},
+		func(_, account string) error {
+			delete(kcMem, account)
+			return nil
+		},
+	)
+
+	dir := t.TempDir()
+	var warn bytes.Buffer
+	s := Open(dir, &warn)
+
+	// Simulate a stale file credential from an earlier degraded session.
+	stale := fileStore{dir: filepath.Join(dir, "credentials")}
+	if err := stale.Set("ctx1", `{"t":"old"}`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Set("ctx1", `{"t":"new"}`); err != nil {
+		t.Fatal(err)
+	}
+	delete(kcMem, "ctx1")
+	if _, err := s.Get("ctx1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("stale file copy resurrected: err = %v", err)
 	}
 }

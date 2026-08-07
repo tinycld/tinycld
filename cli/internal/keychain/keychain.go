@@ -20,6 +20,14 @@ const service = "tinycld"
 
 var ErrNotFound = errors.New("keychain: credential not found")
 
+// Seams over the keyring library so tests can simulate a keychain that
+// answers reads but refuses writes — go-keyring's mock cannot split the two.
+var (
+	keyringGet    = keyring.Get
+	keyringSet    = keyring.Set
+	keyringDelete = keyring.Delete
+)
+
 type Store interface {
 	Get(account string) (string, error)
 	Set(account, value string) error
@@ -30,36 +38,71 @@ type Store interface {
 // Open returns the OS keychain when one responds, else a file store with a
 // one-time warning on warn. The probe read distinguishes "backend works but
 // has no such item" (fine) from "no backend at all" (fall back).
+//
+// The keychain store still degrades per-write: a keychain can pass the read
+// probe yet refuse writes (sandboxed processes, locked login sessions), and
+// by the time Set runs after a device login the server has already activated
+// the grant — failing would strand a live credential the user just approved.
 func Open(configDir string, warn io.Writer) Store {
-	_, err := keyring.Get(service, "tinycld-probe")
+	file := fileStore{dir: filepath.Join(configDir, "credentials")}
+	_, err := keyringGet(service, "tinycld-probe")
 	if err == nil || errors.Is(err, keyring.ErrNotFound) {
-		return systemStore{}
+		return &systemStore{file: file, warn: warn}
 	}
-	dir := filepath.Join(configDir, "credentials")
-	fmt.Fprintf(warn, "warning: OS keychain unavailable (%v); storing credentials in %s (mode 0600)\n", err, dir)
-	return fileStore{dir: dir}
+	fmt.Fprintf(warn, "warning: OS keychain unavailable (%v); storing credentials in %s (mode 0600)\n", err, file.dir)
+	return file
 }
 
-type systemStore struct{}
+// systemStore prefers the OS keychain and falls back to the file store when
+// the keychain refuses a write. Reads consult both places, so a credential
+// keeps working regardless of where an earlier Set landed.
+type systemStore struct {
+	file   fileStore
+	warn   io.Writer
+	warned bool
+}
 
-func (systemStore) Get(account string) (string, error) {
-	v, err := keyring.Get(service, account)
+func (s *systemStore) Get(account string) (string, error) {
+	v, err := keyringGet(service, account)
+	if err == nil {
+		return v, nil
+	}
+	if fv, ferr := s.file.Get(account); ferr == nil {
+		return fv, nil
+	}
 	if errors.Is(err, keyring.ErrNotFound) {
 		return "", ErrNotFound
 	}
-	return v, err
+	return "", err
 }
 
-func (systemStore) Set(account, value string) error {
-	return keyring.Set(service, account, value)
-}
-
-func (systemStore) Delete(account string) error {
-	err := keyring.Delete(service, account)
-	if errors.Is(err, keyring.ErrNotFound) {
+func (s *systemStore) Set(account, value string) error {
+	err := keyringSet(service, account, value)
+	if err == nil {
+		// A keychain write supersedes any stale file copy from a degraded
+		// earlier session; drop it so Get cannot resurrect old credentials.
+		s.file.Delete(account)
 		return nil
 	}
-	return err
+	if !s.warned {
+		s.warned = true
+		fmt.Fprintf(s.warn,
+			"warning: OS keychain write failed (%v); storing credentials in %s (mode 0600)\n",
+			err, s.file.dir)
+	}
+	return s.file.Set(account, value)
+}
+
+func (s *systemStore) Delete(account string) error {
+	kerr := keyringDelete(service, account)
+	if errors.Is(kerr, keyring.ErrNotFound) {
+		kerr = nil
+	}
+	ferr := s.file.Delete(account)
+	if kerr != nil {
+		return kerr
+	}
+	return ferr
 }
 
 type fileStore struct{ dir string }
