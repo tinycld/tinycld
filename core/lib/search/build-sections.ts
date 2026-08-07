@@ -1,4 +1,3 @@
-import { compareRows } from './score'
 import type { SearchPackage, SearchRow } from './types'
 
 export interface SearchSection {
@@ -12,23 +11,26 @@ export interface SearchSection {
 }
 
 /**
- * Arrange per-package results for rendering.
+ * Arrange already-ranked results for rendering.
  *
- * Unscoped search is FLAT and score-ordered: it is the "I don't know where it
- * is" case, so the best answer has to be able to reach the top. Grouping would
- * pin a perfect match below every row of an earlier package. With 2+ explicit
- * chips the user has already narrowed the field, and scan-by-package is the
- * more useful affordance.
+ * Unscoped search is FLAT and stays in the server's order: it is the "I don't
+ * know where it is" case, so the best answer has to be able to reach the top.
+ * Grouping would pin a perfect match below every row of an earlier package.
+ * With 2+ explicit chips the user has already narrowed the field, and
+ * scan-by-package is the more useful affordance.
+ *
+ * This function deliberately does NOT rank. Ordering is decided server-side,
+ * where the aggregator can compare rows from every package against one scale;
+ * re-sorting here would either duplicate that logic or silently disagree with
+ * it. `orderedRows` carries the server's sequence, and the grouped branch reads
+ * package order from the registry only to lay sections out.
  */
 export function buildSections(
     rowsBySlug: Record<string, SearchRow[]>,
     packages: SearchPackage[],
     chips: string[],
-    includeTerms: string[]
+    orderedRows: SearchRow[]
 ): SearchSection[] {
-    const orderBySlug: Record<string, number> = {}
-    for (const pkg of packages) orderBySlug[pkg.slug] = pkg.order
-
     if (chips.length >= 2) {
         const sections: SearchSection[] = []
         for (const pkg of [...packages].sort((a, b) => a.order - b.order)) {
@@ -40,16 +42,13 @@ export function buildSections(
         return sections
     }
 
-    const all = Object.values(rowsBySlug).flat()
-    if (all.length === 0) return []
+    if (orderedRows.length === 0) return []
 
-    // One chip means one package, whose backend already ranked its own rows —
-    // re-sorting would discard that judgement for no gain. (rowsBySlug is populated
-    // only for scoped packages by the caller, so `all` contains only the chip's rows.)
+    // One chip means one package, so a badge on every row would just repeat the
+    // chip above the list.
     if (chips.length === 1) {
-        return [{ showBadges: false, rows: all }]
+        return [{ showBadges: false, rows: orderedRows }]
     }
 
-    const sorted = [...all].sort((a, b) => compareRows(a, b, includeTerms, orderBySlug))
-    return [{ showBadges: true, rows: sorted }]
+    return [{ showBadges: true, rows: orderedRows }]
 }

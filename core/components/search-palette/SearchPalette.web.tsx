@@ -45,7 +45,7 @@ export function SearchPalette() {
     const close = useSearchPaletteStore(s => s.close)
 
     const parsed = useMemo(() => parseQuery(text, INSTALLED_SLUGS), [text])
-    const { sections } = useSearchResults(parsed)
+    const { sections, partial } = useSearchResults(parsed)
 
     const flatRows = useMemo(() => sections.flatMap(s => s.rows), [sections])
     const selectedRow = flatRows.find(r => r.id === selectedRowId) ?? flatRows[0]
@@ -175,7 +175,7 @@ export function SearchPalette() {
                         onPick={selectRow}
                         onHover={id => setSelectedRowId(id)}
                     />
-                    <FooterHints chips={parsed.chips} remainder={remainder} />
+                    <FooterHints chips={parsed.chips} remainder={remainder} partial={partial} />
                 </PaletteCard>
             </PaletteOverlay>
         </>,
@@ -462,11 +462,26 @@ function EmptyState() {
 interface FooterHintsProps {
     chips: string[]
     remainder: string
+    partial: string[]
 }
 
 // The footer is where the `:` and ⌫ grammar is discoverable, so it reacts to
 // what the user has typed rather than showing three static hints.
-function FooterHints({ chips, remainder }: FooterHintsProps) {
+function FooterHints({ chips, remainder, partial }: FooterHintsProps) {
+    // A package the server could not reach takes priority over any grammar
+    // hint: results are missing, and silence would read as "nothing there"
+    // rather than "we could not look".
+    if (partial.length > 0) {
+        const labels = partial.map(slug => searchPackages.find(p => p.slug === slug)?.label ?? slug)
+        return (
+            <View className="px-4 py-2 border-t border-border">
+                <Text className="text-xs text-muted-foreground">
+                    {`Could not search ${labels.join(', ')} — results may be incomplete`}
+                </Text>
+            </View>
+        )
+    }
+
     // The last word matches a package but has no colon yet — offer the gesture.
     const lastWord = remainder.trim().split(/\s+/).pop() ?? ''
     const pending = searchPackages.find(

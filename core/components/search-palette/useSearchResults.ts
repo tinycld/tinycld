@@ -1,86 +1,81 @@
-import { useQueries } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { buildSections, type SearchSection } from '@tinycld/core/lib/search/build-sections'
-import { loadSearchAdapter, searchPackages } from '@tinycld/core/lib/search/registry'
-import type { ParsedQuery, SearchAdapterModule, SearchRow } from '@tinycld/core/lib/search/types'
+import { searchPackages } from '@tinycld/core/lib/search/registry'
+import type { ParsedQuery, SearchRow } from '@tinycld/core/lib/search/types'
 import { useDebouncedValue } from '@tinycld/core/lib/use-debounced-value'
 
 const MIN_QUERY_LENGTH = 2
 const DEBOUNCE_MS = 300
 
+/** The aggregator's response shape — mirrors core/server/search's Response. */
+interface SearchResponse {
+    rows: SearchRow[]
+    counts: Record<string, number>
+    partial?: string[]
+    truncated?: string[]
+}
+
 /**
- * Fan out one search per in-scope package and merge the results.
+ * Search every in-scope package through core's federated endpoint.
  *
- * useQueries rather than a loop of single-query hooks: the in-scope list
- * changes as the user adds and removes chips, and a hook called per iteration
- * of a `for` loop breaks the Rules of Hooks. React Query also gives each
- * package independent caching and abort-on-supersede for free, so a slow
- * package cannot hold up the rest.
+ * One request, not one per package. The server fans out to each package's
+ * registered source in-process, normalizes the rows, and ranks them — so the
+ * mapping from a package's own shape to a display row lives in one place that
+ * both this palette and the CLI read, rather than in a per-package TypeScript
+ * adapter the CLI cannot import.
+ *
+ * What we give up by batching: rows no longer arrive per package, so a slow
+ * package delays the whole answer rather than just its own section. The server
+ * bounds each source with its own timeout and reports the ones it dropped, which
+ * is what keeps that from becoming an invisible hang.
  */
 export function useSearchResults(parsed: ParsedQuery): {
     sections: SearchSection[]
     isSearching: boolean
+    /** Packages that failed or timed out server-side; rows are missing for these. */
+    partial: string[]
 } {
-    const scoped =
-        parsed.chips.length > 0
-            ? searchPackages.filter(p => parsed.chips.includes(p.slug))
-            : searchPackages
-
     const query = useDebouncedValue(parsed.include.join(' '), DEBOUNCE_MS)
     const not = useDebouncedValue(parsed.exclude.join(' '), DEBOUNCE_MS)
+    // Chips are already validated against installed slugs by parseQuery, so
+    // they can be forwarded as-is; the server drops any it does not know.
+    const chips = parsed.chips
     const enabled = query.length >= MIN_QUERY_LENGTH
 
-    // Adapter modules are dynamic imports. Running them through Query rather
-    // than an effect keeps the resolution cached and out of component state;
-    // loadSearchAdapter already memoizes, so this is belt-and-braces.
-    const adapterQueries = useQueries({
-        queries: scoped.map(pkg => ({
-            queryKey: ['search-adapter', pkg.slug],
-            queryFn: () => loadSearchAdapter(pkg.slug),
-            staleTime: Number.POSITIVE_INFINITY,
-        })),
+    const { data, isFetching } = useQuery({
+        queryKey: ['federated-search', query, not, chips],
+        queryFn: ({ signal }) =>
+            pb.send('/api/search', {
+                method: 'GET',
+                query: {
+                    q: query,
+                    ...(not ? { not } : {}),
+                    // Repeated `pkg` params: the server reads them as a list.
+                    ...(chips.length > 0 ? { pkg: chips } : {}),
+                },
+                signal,
+            }) as Promise<SearchResponse>,
+        enabled,
+        // A search is point-in-time: don't retry a failure (the user is still
+        // typing) and don't refetch on window focus.
+        retry: false,
+        refetchOnWindowFocus: false,
     })
 
-    const searchQueries = useQueries({
-        queries: scoped.map(pkg => ({
-            queryKey: ['package-search', pkg.slug, query, not],
-            queryFn: ({ signal }: { signal: AbortSignal }) =>
-                pb.send(pkg.endpoint, {
-                    method: 'GET',
-                    query: not ? { q: query, not } : { q: query },
-                    signal,
-                }),
-            enabled,
-            // A search is point-in-time: don't retry a failure (the user is
-            // still typing) and don't refetch on window focus.
-            retry: false,
-            refetchOnWindowFocus: false,
-        })),
-    })
-
+    // Group by package for rendering. The server already ordered the rows, so
+    // buildSections only arranges them — it must not re-sort, or it would
+    // discard the cross-package ranking it cannot reproduce (the scorer lives
+    // server-side now).
     const rowsBySlug: Record<string, SearchRow[]> = {}
-    let isSearching = false
-
-    scoped.forEach((pkg, i) => {
-        if (searchQueries[i]?.isFetching) isSearching = true
-
-        const adapter = adapterQueries[i]?.data as SearchAdapterModule | null | undefined
-        const data = searchQueries[i]?.data as { items?: unknown[] } | undefined
-        if (!adapter || !data?.items) return
-
-        // A package whose request failed simply contributes no rows — one
-        // backend erroring must not empty the whole palette.
-        rowsBySlug[pkg.slug] = data.items
-            .map(hit => adapter.toRow(hit))
-            .filter((r): r is Omit<SearchRow, 'slug'> => r !== null)
-            .map(r => ({ ...r, slug: pkg.slug }))
-    })
+    for (const row of data?.rows ?? []) {
+        rowsBySlug[row.slug] = rowsBySlug[row.slug] ?? []
+        rowsBySlug[row.slug].push(row)
+    }
 
     return {
-        // Ordering lives entirely here and is unaffected by fetch order:
-        // compareRows tie-breaks on nav.order precisely so a late-arriving
-        // package cannot change the ranking of what already landed.
-        sections: buildSections(rowsBySlug, searchPackages, parsed.chips, parsed.include),
-        isSearching,
+        sections: buildSections(rowsBySlug, searchPackages, parsed.chips, data?.rows ?? []),
+        isSearching: isFetching,
+        partial: data?.partial ?? [],
     }
 }
