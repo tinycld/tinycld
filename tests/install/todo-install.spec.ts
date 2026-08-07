@@ -116,9 +116,12 @@ const TODO_SPEC_BUGGY_MIGRATION = 'github:tinycld/todo#v0.0.1-pre-buggy-migratio
 const TODO_SPEC_BUGGY_FE = 'github:tinycld/todo#v0.0.1-pre-buggy-fe'
 
 // Core (base) upgrade target + the baked current version, supplied by the
-// runner (run-todo-install.sh provisions a local base remote with these tags).
-const CORE_CUR = process.env.PW_CORE_CUR ?? '0.0.4'
-const CORE_NEXT = process.env.PW_CORE_NEXT ?? '0.0.5'
+// runner (run-todo-install.sh provisions a local base remote with these
+// tags). The runner always sets both env vars — these fallbacks only matter
+// for a standalone run of this spec without the runner, so they just need to
+// be A valid current/next pair, not the actual live core version.
+const CORE_CUR = process.env.PW_CORE_CUR ?? '0.0.6'
+const CORE_NEXT = process.env.PW_CORE_NEXT ?? '0.0.7'
 
 // The app user this spec logs in as to drive the todo UI. Single-org: the
 // console has no user-creation form (that was the org-create flow), so the
