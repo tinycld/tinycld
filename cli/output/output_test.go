@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 type widget struct {
@@ -93,5 +95,41 @@ func TestInfoRespectsQuiet(t *testing.T) {
 	Options{Quiet: true}.Info(&buf, "hello %s", "world")
 	if buf.String() != "" {
 		t.Fatalf("quiet info = %q", buf.String())
+	}
+}
+
+func TestFromCommandReadsPersistentFlags(t *testing.T) {
+	root := &cobra.Command{Use: "root", SilenceUsage: true, SilenceErrors: true}
+	pf := root.PersistentFlags()
+	pf.String("output", string(Table), "")
+	pf.Bool("json", false, "")
+	pf.Bool("quiet", false, "")
+	pf.Bool("no-color", false, "")
+	pf.Bool("yes", false, "")
+	var got Options
+	var gotYes bool
+	sub := &cobra.Command{Use: "sub", RunE: func(cmd *cobra.Command, _ []string) error {
+		var err error
+		got, gotYes, err = FromCommand(cmd)
+		return err
+	}}
+	root.AddCommand(sub)
+
+	root.SetArgs([]string{"sub", "--json", "--quiet", "--yes"})
+	if err := root.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got.Format != JSON || !got.Quiet || !gotYes {
+		t.Fatalf("got = %+v yes=%v", got, gotYes)
+	}
+	// Tests never run on a TTY, so color must be off and TTY false — the
+	// non-TTY degradation the spec requires.
+	if got.TTY || !got.NoColor {
+		t.Fatalf("non-TTY run must disable color: %+v", got)
+	}
+
+	root.SetArgs([]string{"sub", "--output", "nonsense"})
+	if err := root.Execute(); err == nil {
+		t.Fatal("invalid --output must error")
 	}
 }
