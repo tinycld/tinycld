@@ -58,3 +58,11 @@ sign that terminal out remotely.
 
 Every command accepts `--json` for scripting, and prompts are skipped with
 `--yes` so commands run cleanly in CI.
+
+## Package commands
+
+Each installed package contributes its own command group. See
+[Drive from the command line](help://drive:command-line) for working with
+files (`tinycld drive ls`, `put`, `get`, …) and
+[Mail from the command line](help://mail:command-line) for searching,
+reading, and sending mail (`tinycld mail search`, `read`, `send`, …).
