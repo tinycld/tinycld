@@ -15,7 +15,14 @@ import { login, navigateToPackage, packageScreen, skipWithoutShortcutStub } from
 // CI runs the scaffold step as part of the e2e job.
 const STUB_NAV_LABEL = 'Shortcut Stub'
 const STUB_SLUG = 'shortcut-stub'
-const STUB_SHORTCUT = 'k'
+// Must match STUB_NAV_SHORTCUT in tests/scripts/scaffold-shortcut-stub.ts.
+// (Not imported from there: that module runs main() on load and would
+// re-scaffold the stub every time this spec is collected.)
+//
+// It must also be a letter no real package claims, or `t <letter>` is
+// ambiguous. This read 'k' until cards shipped with nav.shortcut 'k' and made
+// the chord unresolvable — real letters in use today: c d k m o s t.
+const STUB_SHORTCUT = 'z'
 test.describe('Keyboard shortcuts', () => {
     // Needs the shortcut-stub package scaffolded; skip on a plain dev workspace
     // where it isn't present (CI's scaffold step makes it mandatory there — see
