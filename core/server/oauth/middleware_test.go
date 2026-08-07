@@ -33,7 +33,7 @@ func TestScopeForRouteMapsKnownRoutes(t *testing.T) {
 		{"HEAD", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", ScopeDriveRead},
 	}
 	for _, c := range cases {
-		if got := ScopeForRoute(c.method, c.path); got != c.want {
+		if got := ScopeForRoute(c.method, c.path); !onlyScope(got, c.want) {
 			t.Errorf("ScopeForRoute(%s %s) = %q, want %q", c.method, c.path, got, c.want)
 		}
 	}
@@ -42,10 +42,10 @@ func TestScopeForRouteMapsKnownRoutes(t *testing.T) {
 func TestScopeForRouteDefaultDenies(t *testing.T) {
 	// Default deny: a route no rule covers must return "" so the middleware
 	// refuses it for OAuth callers rather than silently allowing it.
-	if got := ScopeForRoute("POST", "/api/admin/packages/install"); got != "" {
+	if got := ScopeForRoute("POST", "/api/admin/packages/install"); len(got) != 0 {
 		t.Fatalf("ScopeForRoute on an uncovered admin route = %q, want \"\"", got)
 	}
-	if got := ScopeForRoute("GET", "/api/collections/pkg_registry/records"); got != "" {
+	if got := ScopeForRoute("GET", "/api/collections/pkg_registry/records"); len(got) != 0 {
 		t.Fatalf("ScopeForRoute on an uncovered collection = %q, want \"\"", got)
 	}
 }
@@ -53,7 +53,7 @@ func TestScopeForRouteDefaultDenies(t *testing.T) {
 func TestScopeForRouteFilePaths(t *testing.T) {
 	// Writes to the read-only view/membership collections must stay denied.
 	for _, c := range []string{"mail_folder_counts", "mail_mailbox_members"} {
-		if got := ScopeForRoute("POST", "/api/collections/"+c+"/records"); got != "" {
+		if got := ScopeForRoute("POST", "/api/collections/"+c+"/records"); len(got) != 0 {
 			t.Errorf("POST on %s = %q, want default-deny (read-only collection)", c, got)
 		}
 	}
@@ -69,7 +69,7 @@ func TestScopeForRouteFilePaths(t *testing.T) {
 		{"GET", "/api/files//rec123/name.pdf", "empty collection segment"},
 	}
 	for _, d := range denied {
-		if got := ScopeForRoute(d.method, d.path); got != "" {
+		if got := ScopeForRoute(d.method, d.path); len(got) != 0 {
 			t.Errorf("ScopeForRoute(%s %s) = %q, want default-deny: %s",
 				d.method, d.path, got, d.why)
 		}
@@ -111,7 +111,7 @@ func TestScopeForRouteAllowsUnauthenticatedPublicRoutes(t *testing.T) {
 		"/api/cli/downloads",
 		"/api/cli/download/darwin-arm64",
 	} {
-		if got := ScopeForRoute("GET", p); got != scopeExempt {
+		if got := ScopeForRoute("GET", p); !got.isExempt() {
 			t.Errorf("ScopeForRoute(GET %s) = %q, want exempt", p, got)
 		}
 	}
@@ -136,7 +136,7 @@ func TestScopeForRouteDeniesConsentEndpoints(t *testing.T) {
 		{"POST", "/oauth/grants/abc123/revoke"},
 	}
 	for _, c := range cases {
-		if got := ScopeForRoute(c.method, c.path); got != "" {
+		if got := ScopeForRoute(c.method, c.path); len(got) != 0 {
 			t.Errorf("ScopeForRoute(%s %s) = %q, want \"\" (default deny) — "+
 				"an OAuth bearer token must never reach a consent/management endpoint",
 				c.method, c.path, got)
@@ -413,5 +413,95 @@ func TestEnforceGrantDefaultDeniesUncoveredRoute(t *testing.T) {
 	}
 	if re.Auth != nil {
 		t.Fatal("enforceGrant must not set e.Auth when it default-denies")
+	}
+}
+
+// onlyScope reports whether the rule is exactly the one expected scope. Most
+// routes are governed by a single scope; the any-of cases assert membership
+// explicitly instead.
+func onlyScope(got scopeRule, want string) bool {
+	return len(got) == 1 && got[0] == want
+}
+
+func TestScopeForRouteAnyOfSharedCollections(t *testing.T) {
+	// labels and label_assignments are core collections used by BOTH mail and
+	// contacts. Requiring both scopes would make labelling mail impossible for
+	// a mail-only grant, so either package's scope satisfies the route.
+	for _, c := range []string{"labels", "label_assignments"} {
+		read := ScopeForRoute("GET", "/api/collections/"+c+"/records")
+		if !read.satisfiedBy([]string{ScopeMailRead}) {
+			t.Errorf("%s read must be reachable with mail:read alone", c)
+		}
+		if !read.satisfiedBy([]string{ScopeContactsRead}) {
+			t.Errorf("%s read must be reachable with contacts:read alone", c)
+		}
+		if read.satisfiedBy([]string{ScopeDriveRead}) {
+			t.Errorf("%s read must NOT be reachable with an unrelated scope", c)
+		}
+
+		write := ScopeForRoute("POST", "/api/collections/"+c+"/records")
+		if !write.satisfiedBy([]string{ScopeMailSend}) {
+			t.Errorf("%s write must be reachable with mail:send alone", c)
+		}
+		if !write.satisfiedBy([]string{ScopeContactsWrite}) {
+			t.Errorf("%s write must be reachable with contacts:write alone", c)
+		}
+		if write.satisfiedBy([]string{ScopeMailRead, ScopeContactsRead}) {
+			t.Errorf("%s write must NOT be satisfied by read-only scopes", c)
+		}
+	}
+}
+
+func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
+	reachable := []struct {
+		method, path, scope string
+	}{
+		{"GET", "/api/collections/mail_mailbox_aliases/records", ScopeMailRead},
+		{"GET", "/api/collections/drive_item_versions/records", ScopeDriveRead},
+		{"POST", "/api/collections/drive_item_versions/records", ScopeDriveWrite},
+		{"POST", "/api/drive/share-link", ScopeDriveWrite},
+		{"GET", "/api/drive/share-links", ScopeDriveRead},
+		{"POST", "/api/drive/versions/restore", ScopeDriveWrite},
+		{"POST", "/api/drive/versions/snapshot", ScopeDriveWrite},
+	}
+	for _, r := range reachable {
+		if got := ScopeForRoute(r.method, r.path); !onlyScope(got, r.scope) {
+			t.Errorf("ScopeForRoute(%s %s) = %v, want %q", r.method, r.path, got, r.scope)
+		}
+	}
+
+	// Aliases are administered in the app; the CLI only reads them.
+	if got := ScopeForRoute("PATCH", "/api/collections/mail_mailbox_aliases/records/abc"); len(got) != 0 {
+		t.Errorf("alias writes must stay denied, got %v", got)
+	}
+}
+
+func TestScopeForRoutePrefixRules(t *testing.T) {
+	// The exact-match table cannot express a path carrying a record id, so
+	// DELETE /api/drive/share-link/{id} is matched by prefix. The prefix must
+	// require a non-empty remainder and must not leak to other verbs or to
+	// the sibling collection route.
+	if got := ScopeForRoute("DELETE", "/api/drive/share-link/abc123"); !onlyScope(got, ScopeDriveWrite) {
+		t.Errorf("share-link delete = %v, want drive:write", got)
+	}
+	denied := []struct{ method, path, why string }{
+		{"GET", "/api/drive/share-link/abc123", "public metadata route, not the revoke"},
+		{"DELETE", "/api/drive/share-link/", "bare prefix is not a real route"},
+		{"DELETE", "/api/drive/share-links", "plural list route must not match the prefix"},
+		{"DELETE", "/api/drive/other/abc123", "unrelated path"},
+	}
+	for _, d := range denied {
+		if got := ScopeForRoute(d.method, d.path); len(got) != 0 {
+			t.Errorf("ScopeForRoute(%s %s) = %v, want deny: %s", d.method, d.path, got, d.why)
+		}
+	}
+}
+
+func TestScopeRuleDescribe(t *testing.T) {
+	if got := (scopeRule{ScopeMailRead}).describe(); got != `"mail:read"` {
+		t.Errorf("single-scope describe = %s", got)
+	}
+	if got := (scopeRule{ScopeMailRead, ScopeContactsRead}).describe(); got != `one of "mail:read", "contacts:read"` {
+		t.Errorf("any-of describe = %s", got)
 	}
 }

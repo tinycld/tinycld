@@ -39,40 +39,67 @@ const scopeExempt = "-"
 // already set and no-ops (see apis/middlewares.go:190).
 var middlewarePriority = apis.DefaultLoadAuthTokenMiddlewarePriority - 10
 
+// scopeRule is the set of scopes that satisfy a route. A caller passes when it
+// holds ANY of them (see satisfiedBy): a collection shared between packages
+// — `labels` is used by both mail and contacts — must be reachable by either
+// package's grant rather than demanding both. An empty rule denies.
+type scopeRule []string
+
+// collectionAccess pairs the read and write rules for one collection. An empty
+// write rule makes the collection read-only for OAuth callers.
+type collectionAccess struct {
+	read  scopeRule
+	write scopeRule
+}
+
 // collectionScopes maps a PocketBase collection to the scopes governing it.
 // Anything absent is denied for OAuth callers by default.
-var collectionScopes = map[string][2]string{
-	// collection: {read scope, write scope}
-	"mail_messages":      {ScopeMailRead, ScopeMailSend},
-	"mail_threads":       {ScopeMailRead, ScopeMailSend},
-	"mail_thread_state":  {ScopeMailRead, ScopeMailSend},
-	"mail_mailboxes":     {ScopeMailRead, ScopeMailSend},
-	"drive_items":        {ScopeDriveRead, ScopeDriveWrite},
-	"drive_shares":       {ScopeDriveRead, ScopeDriveWrite},
-	"drive_item_state":   {ScopeDriveRead, ScopeDriveWrite},
-	"contacts":           {ScopeContactsRead, ScopeContactsWrite},
-	"calendar_events":    {ScopeCalendarRead, ScopeCalendarWrite},
-	"calendar_calendars": {ScopeCalendarRead, ScopeCalendarWrite},
-	"users":              {ScopeProfile, ""},
+var collectionScopes = map[string]collectionAccess{
+	"mail_messages":      {read: scopeRule{ScopeMailRead}, write: scopeRule{ScopeMailSend}},
+	"mail_threads":       {read: scopeRule{ScopeMailRead}, write: scopeRule{ScopeMailSend}},
+	"mail_thread_state":  {read: scopeRule{ScopeMailRead}, write: scopeRule{ScopeMailSend}},
+	"mail_mailboxes":     {read: scopeRule{ScopeMailRead}, write: scopeRule{ScopeMailSend}},
+	"drive_items":        {read: scopeRule{ScopeDriveRead}, write: scopeRule{ScopeDriveWrite}},
+	"drive_shares":       {read: scopeRule{ScopeDriveRead}, write: scopeRule{ScopeDriveWrite}},
+	"drive_item_state":   {read: scopeRule{ScopeDriveRead}, write: scopeRule{ScopeDriveWrite}},
+	"contacts":           {read: scopeRule{ScopeContactsRead}, write: scopeRule{ScopeContactsWrite}},
+	"calendar_events":    {read: scopeRule{ScopeCalendarRead}, write: scopeRule{ScopeCalendarWrite}},
+	"calendar_calendars": {read: scopeRule{ScopeCalendarRead}, write: scopeRule{ScopeCalendarWrite}},
+	"users":              {read: scopeRule{ScopeProfile}},
 
-	// Read-only surfaces the CLI needs: per-folder unread counts (a view) and
-	// the caller's mailbox memberships. The empty write scope denies writes.
-	"mail_folder_counts":   {ScopeMailRead, ""},
-	"mail_mailbox_members": {ScopeMailRead, ""},
+	// Read-only surfaces the CLI needs: per-folder unread counts (a view), the
+	// caller's mailbox memberships, and the mailbox aliases a send can pick a
+	// From identity from. Aliases are administered in the app, so no write.
+	"mail_folder_counts":   {read: scopeRule{ScopeMailRead}},
+	"mail_mailbox_members": {read: scopeRule{ScopeMailRead}},
+	"mail_mailbox_aliases": {read: scopeRule{ScopeMailRead}},
+
+	// Labels are CORE collections shared across packages (mail threads and
+	// contacts both get labelled through label_assignments), so either
+	// package's scope grants access — requiring both would make labelling
+	// mail impossible for a mail-only grant.
+	"labels":            {read: scopeRule{ScopeMailRead, ScopeContactsRead}, write: scopeRule{ScopeMailSend, ScopeContactsWrite}},
+	"label_assignments": {read: scopeRule{ScopeMailRead, ScopeContactsRead}, write: scopeRule{ScopeMailSend, ScopeContactsWrite}},
+
+	"drive_item_versions": {read: scopeRule{ScopeDriveRead}, write: scopeRule{ScopeDriveWrite}},
 }
 
 // endpointScopes maps a bespoke Go endpoint to its required scope.
-var endpointScopes = map[string]string{
-	"GET /api/mail/search":           ScopeMailRead,
-	"POST /api/mail/send":            ScopeMailSend,
-	"POST /api/mail/draft":           ScopeMailSend,
-	"GET /api/drive/search":          ScopeDriveRead,
-	"POST /api/drive/download-token": ScopeDriveRead,
-	"POST /api/drive/export-token":   ScopeDriveRead,
-	"GET /api/drive/storage-usage":   ScopeDriveRead,
-	"POST /api/drive/upload-version": ScopeDriveWrite,
-	"POST /api/drive/share":          ScopeDriveWrite,
-	"GET /api/contacts/search":       ScopeContactsRead,
+var endpointScopes = map[string]scopeRule{
+	"GET /api/mail/search":              {ScopeMailRead},
+	"POST /api/mail/send":               {ScopeMailSend},
+	"POST /api/mail/draft":              {ScopeMailSend},
+	"GET /api/drive/search":             {ScopeDriveRead},
+	"POST /api/drive/download-token":    {ScopeDriveRead},
+	"POST /api/drive/export-token":      {ScopeDriveRead},
+	"GET /api/drive/storage-usage":      {ScopeDriveRead},
+	"POST /api/drive/upload-version":    {ScopeDriveWrite},
+	"POST /api/drive/share":             {ScopeDriveWrite},
+	"POST /api/drive/share-link":        {ScopeDriveWrite},
+	"GET /api/drive/share-links":        {ScopeDriveRead},
+	"POST /api/drive/versions/restore":  {ScopeDriveWrite},
+	"POST /api/drive/versions/snapshot": {ScopeDriveWrite},
+	"GET /api/contacts/search":          {ScopeContactsRead},
 
 	// Advertised in the discovery document as userinfo_endpoint, so an
 	// integration following the well-known metadata calls it with an ordinary
@@ -80,7 +107,18 @@ var endpointScopes = map[string]string{
 	// deliberately NOT in exemptPaths (only the credential-less endpoints are),
 	// so without this it would fall into default-deny and 403 the very call the
 	// server tells clients to make.
-	"GET /oauth/userinfo": ScopeProfile,
+	"GET /oauth/userinfo": {ScopeProfile},
+}
+
+// endpointPrefixScopes classifies routes whose path carries a record id, which
+// the exact-match table above cannot express. Kept deliberately short: a
+// prefix is broader than it looks, so each entry must end at a path segment
+// boundary and name a route family, never a bare namespace.
+var endpointPrefixScopes = []struct {
+	method, prefix string
+	scopes         scopeRule
+}{
+	{"DELETE", "/api/drive/share-link/", scopeRule{ScopeDriveWrite}},
 }
 
 // exemptPaths need no scope: public probes, and the OAuth endpoints a client
@@ -117,29 +155,37 @@ var writeMethods = map[string]bool{
 	"POST": true, "PUT": true, "PATCH": true, "DELETE": true,
 }
 
-// ScopeForRoute returns the scope required for a request, scopeExempt for
-// public routes, or "" meaning deny.
+// ScopeForRoute returns the scopes that satisfy a request — the caller needs
+// ANY one of them — or scopeExempt for public routes. An empty result means
+// deny.
 //
 // Default deny is deliberate: a route nobody has classified must not be
 // reachable with a third-party token just because someone added it.
-func ScopeForRoute(method, path string) string {
+func ScopeForRoute(method, path string) scopeRule {
 	for _, p := range exemptPaths {
 		if strings.HasPrefix(path, p) {
-			return scopeExempt
+			return scopeRule{scopeExempt}
 		}
 	}
 	if s, ok := endpointScopes[method+" "+path]; ok {
 		return s
 	}
+	for _, r := range endpointPrefixScopes {
+		// The remainder must be non-empty: the prefix ends in "/" and names a
+		// route family, so the bare prefix itself is a different route.
+		if method == r.method && strings.HasPrefix(path, r.prefix) && len(path) > len(r.prefix) {
+			return r.scopes
+		}
+	}
 	if name, ok := collectionFromPath(path); ok {
-		pair, known := collectionScopes[name]
+		access, known := collectionScopes[name]
 		if !known {
-			return ""
+			return nil
 		}
 		if writeMethods[method] {
-			return pair[1] // "" for read-only collections => deny writes
+			return access.write // empty for read-only collections => deny writes
 		}
-		return pair[0]
+		return access.read
 	}
 	if name, ok := fileCollectionFromPath(path); ok {
 		// A stored file (mail body, attachment, drive content) is governed by
@@ -153,15 +199,43 @@ func ScopeForRoute(method, path string) string {
 		// requests are never scope-checked, so a file token minted by a bearer
 		// would be a credential that bypasses the scope table.
 		if method != http.MethodGet && method != http.MethodHead {
-			return ""
+			return nil
 		}
-		pair, known := collectionScopes[name]
+		access, known := collectionScopes[name]
 		if !known {
-			return ""
+			return nil
 		}
-		return pair[0]
+		return access.read
 	}
-	return ""
+	return nil
+}
+
+// isExempt reports whether a rule marks the route as needing no scope.
+func (r scopeRule) isExempt() bool {
+	return len(r) == 1 && r[0] == scopeExempt
+}
+
+// describe renders the rule for an error message: a single scope reads as
+// itself, several as an any-of list.
+func (r scopeRule) describe() string {
+	if len(r) == 1 {
+		return fmt.Sprintf("%q", r[0])
+	}
+	quoted := make([]string, len(r))
+	for i, s := range r {
+		quoted[i] = fmt.Sprintf("%q", s)
+	}
+	return "one of " + strings.Join(quoted, ", ")
+}
+
+// satisfiedBy reports whether the granted scopes cover this rule.
+func (r scopeRule) satisfiedBy(granted []string) bool {
+	for _, want := range r {
+		if HasScope(granted, want) {
+			return true
+		}
+	}
+	return false
 }
 
 // fileCollectionFromPath extracts "drive_items" from
@@ -267,14 +341,14 @@ func enforceGrant(re *core.RequestEvent) error {
 	}
 
 	required := ScopeForRoute(re.Request.Method, re.Request.URL.Path)
-	if required == "" {
+	if len(required) == 0 {
 		return re.ForbiddenError(
 			"This endpoint is not available to API tokens", nil)
 	}
-	if required != scopeExempt {
-		if !HasScope(ParseScopes(grant.GetString("scopes")), required) {
+	if !required.isExempt() {
+		if !required.satisfiedBy(ParseScopes(grant.GetString("scopes"))) {
 			return re.ForbiddenError(
-				fmt.Sprintf("Requires the %q scope", required), nil)
+				fmt.Sprintf("Requires the %s scope", required.describe()), nil)
 		}
 	}
 
