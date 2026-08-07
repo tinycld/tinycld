@@ -78,6 +78,7 @@ export interface PackageManifest {
         }
     }
     help?: { directory: string }
+    search?: { endpoint: string; adapter: string; label?: string }
     repository?: { url: string; issueTemplate?: string }
     dependencies?: string[]
     // Semver ranges this version requires of other packages / @tinycld/core,

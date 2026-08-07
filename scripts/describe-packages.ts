@@ -43,6 +43,7 @@ export function manifestToConfigPkg(packageName: string, manifest: PackageManife
             component: c.component,
             order: c.order ?? 0,
         })),
+        ...(manifest.search ? { search: manifest.search } : {}),
         manifest: {
             name: manifest.name,
             slug: manifest.slug,
