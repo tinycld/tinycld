@@ -2,6 +2,7 @@ import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { SortableDragHandle, SortableList } from '@tinycld/core/components/SortableList'
 import { AboutSection } from '@tinycld/core/components/settings/AboutSection'
 import { DisableAccountSection } from '@tinycld/core/components/settings/account/DisableAccountSection'
+import { ConnectedAppsSection } from '@tinycld/core/components/settings/ConnectedAppsSection'
 import { DeleteAccountSection } from '@tinycld/core/components/settings/DeleteAccountSection'
 import { DisconnectServerSection } from '@tinycld/core/components/settings/DisconnectServerSection'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
@@ -81,6 +82,7 @@ export default function PersonalSettings() {
                     <NotificationsSection />
                     <NavigationSection />
                     <DisconnectServerSection />
+                    <ConnectedAppsSection />
                     <AboutSection />
                     <DisableAccountSection />
                     <DeleteAccountSection />

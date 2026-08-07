@@ -1,3 +1,4 @@
+import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -10,8 +11,16 @@ import {
 } from '../paths'
 
 describe('generator paths', () => {
-    it('APP_DIR is the tinycld member dir', () => {
-        expect(path.basename(APP_DIR)).toBe('tinycld')
+    // Not asserted by name: APP_DIR is wherever the shell is checked out, and
+    // paths.ts honors TINYCLD_APP_DIR precisely so it need not be `tinycld/` —
+    // EAS clones the shell into `build/`, and a git worktree gives it whatever
+    // name the developer chose. Pinning the basename contradicted that contract
+    // and failed in every relocated checkout. What actually matters is that
+    // APP_DIR points at a real app shell, which its own marker files prove.
+    it('APP_DIR is an app shell dir', () => {
+        expect(path.isAbsolute(APP_DIR)).toBe(true)
+        expect(fs.existsSync(path.join(APP_DIR, 'app.json'))).toBe(true)
+        expect(fs.existsSync(path.join(APP_DIR, 'scripts', 'paths.ts'))).toBe(true)
     })
     it('WS_ROOT is the parent of APP_DIR', () => {
         expect(WS_ROOT).toBe(path.resolve(APP_DIR, '..'))

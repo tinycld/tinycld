@@ -9,6 +9,7 @@ import {
     ChevronRight,
     HardDrive,
     History,
+    KeyRound,
     Package,
     ScrollText,
     Server,
@@ -90,6 +91,11 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
                     label="Labels"
                     onPress={() => router.push(orgHref('settings/labels'))}
                     icon={<Tag size={20} color={foregroundColor} />}
+                />
+                <SettingsLink
+                    label="OAuth Clients"
+                    onPress={() => router.push(orgHref('settings/oauth-clients'))}
+                    icon={<KeyRound size={20} color={foregroundColor} />}
                 />
                 <SettingsLink
                     label="Audit Log"

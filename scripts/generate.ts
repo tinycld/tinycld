@@ -7,6 +7,7 @@ import { type BuildPkg, runPackageBuilds } from './gen-build'
 import { buildConfigSource, buildSeedsSource, type ConfigPkg } from './gen-config'
 import { buildHelpSource, type HelpGroupInput, parseFrontmatter } from './gen-help'
 import { buildPackageIconsSource } from './gen-icons'
+import { orphanPayloadFiles, planPayloadEmits, runPayloadEmits } from './gen-payload-types'
 import { emitPublicRoutes, emitRoutes, pruneOrphanRouteDirs } from './gen-routes'
 import {
     buildBundledPackages,
@@ -196,9 +197,11 @@ type Feature = { name: string; dir: string; manifest: PackageManifest }
 // pruned. (Files like _layout.tsx/index.tsx are already safe since prune only
 // touches directories; this guards the app-owned DIRS.)
 const APP_OWNED_ORG_ROUTE_DIRS = new Set(['help', 'settings'])
-// app/p/ has no app-owned directories — only app-owned files (_layout.tsx,
-// demo.tsx) plus per-package public-route dirs — so the allowlist is empty.
-const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>()
+// app/p/oauth/ is app-shell/core functionality (the device-consent screen for
+// the OAuth authorization server), not a per-package public-route dir — it has
+// no manifest and must survive a generate run even when no package happens to
+// declare publicRoutes.
+const APP_OWNED_PUBLIC_ROUTE_DIRS = new Set<string>(['oauth'])
 
 function emitFeatureRoutes(features: Feature[]) {
     fs.mkdirSync(ROUTES_BASE, { recursive: true })
@@ -589,6 +592,15 @@ async function main() {
 
     emitFeatureRoutes(features)
     emitHelp(features)
+
+    // --- payload API types (<slug>-api.ts from each manifest payloads block) --
+    for (const orphan of orphanPayloadFiles(
+        GENERATED_DIR,
+        new Set(features.map(f => f.manifest.slug))
+    )) {
+        fs.rmSync(orphan, { force: true })
+    }
+    runPayloadEmits(planPayloadEmits(features, GENERATED_DIR))
 
     fs.writeFileSync(
         path.join(GENERATED_DIR, 'package-icons.ts'),
