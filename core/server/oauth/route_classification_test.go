@@ -24,6 +24,14 @@ func TestEveryRegisteredRouteIsClassified(t *testing.T) {
 		{"POST", "/oauth/token", "the grant itself is the credential"},
 		{"POST", "/oauth/revoke", "RFC 7009: presenting the token is the authority"},
 		{"GET", "/oauth/userinfo", "advertised in discovery; needs the profile scope"},
+		// The CLI's read paths: `mail read` fetches the body_html file the
+		// record points at, `drive get` fetches drive content, `mail status`
+		// reads the folder-counts view, and send/list resolve the caller's
+		// mailbox memberships.
+		{"GET", "/api/files/mail_messages/rec123/body_ab12cd34ef.html", "mail bodies are file fields"},
+		{"GET", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", "drive content is a file field"},
+		{"GET", "/api/collections/mail_folder_counts/records", "unread counts view"},
+		{"GET", "/api/collections/mail_mailbox_members/records", "mailbox membership resolution"},
 	}
 	for _, r := range reachable {
 		if ScopeForRoute(r.method, r.path) == "" {

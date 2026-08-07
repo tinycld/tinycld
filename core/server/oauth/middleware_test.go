@@ -24,6 +24,13 @@ func TestScopeForRouteMapsKnownRoutes(t *testing.T) {
 		{"POST", "/api/collections/drive_items/records", ScopeDriveWrite},
 		{"GET", "/api/collections/contacts/records", ScopeContactsRead},
 		{"PATCH", "/api/collections/calendar_events/records/abc", ScopeCalendarWrite},
+		{"GET", "/api/collections/mail_folder_counts/records", ScopeMailRead},
+		{"GET", "/api/collections/mail_mailbox_members/records", ScopeMailRead},
+		// Stored files carry the owning collection's read scope: mail bodies
+		// and attachments, drive content.
+		{"GET", "/api/files/mail_messages/rec123/body_ab12cd34ef.html", ScopeMailRead},
+		{"GET", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", ScopeDriveRead},
+		{"HEAD", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", ScopeDriveRead},
 	}
 	for _, c := range cases {
 		if got := ScopeForRoute(c.method, c.path); got != c.want {
@@ -40,6 +47,56 @@ func TestScopeForRouteDefaultDenies(t *testing.T) {
 	}
 	if got := ScopeForRoute("GET", "/api/collections/pkg_registry/records"); got != "" {
 		t.Fatalf("ScopeForRoute on an uncovered collection = %q, want \"\"", got)
+	}
+}
+
+func TestScopeForRouteFilePaths(t *testing.T) {
+	// Writes to the read-only view/membership collections must stay denied.
+	for _, c := range []string{"mail_folder_counts", "mail_mailbox_members"} {
+		if got := ScopeForRoute("POST", "/api/collections/"+c+"/records"); got != "" {
+			t.Errorf("POST on %s = %q, want default-deny (read-only collection)", c, got)
+		}
+	}
+
+	denied := []struct{ method, path, why string }{
+		{"POST", "/api/files/token", "a file token minted by a bearer would bypass the scope table"},
+		{"GET", "/api/files/oauth_clients/rec123/logo_ab12cd34ef.png", "unclassified collection"},
+		{"GET", "/api/files/pkg_registry/rec123/bundle_ab12cd34ef.zip", "unclassified collection"},
+		{"POST", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", "no write goes through /api/files/"},
+		{"DELETE", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", "no write goes through /api/files/"},
+		{"GET", "/api/files/drive_items/rec123", "missing filename segment"},
+		{"GET", "/api/files/drive_items", "missing record and filename segments"},
+		{"GET", "/api/files//rec123/name.pdf", "empty collection segment"},
+	}
+	for _, d := range denied {
+		if got := ScopeForRoute(d.method, d.path); got != "" {
+			t.Errorf("ScopeForRoute(%s %s) = %q, want default-deny: %s",
+				d.method, d.path, got, d.why)
+		}
+	}
+}
+
+func TestFileCollectionFromPath(t *testing.T) {
+	cases := []struct {
+		path string
+		want string
+		ok   bool
+	}{
+		{"/api/files/drive_items/rec123/name_ab12cd34ef.pdf", "drive_items", true},
+		{"/api/files/mail_messages/rec123/body_ab12cd34ef.html", "mail_messages", true},
+		{"/api/files/token", "", false},
+		{"/api/files/drive_items/rec123", "", false},
+		{"/api/files/drive_items/rec123/", "", false},
+		{"/api/files//rec123/name.pdf", "", false},
+		{"/api/files/drive_items//name.pdf", "", false},
+		{"/api/collections/drive_items/records", "", false},
+	}
+	for _, c := range cases {
+		got, ok := fileCollectionFromPath(c.path)
+		if got != c.want || ok != c.ok {
+			t.Errorf("fileCollectionFromPath(%q) = (%q, %v), want (%q, %v)",
+				c.path, got, ok, c.want, c.ok)
+		}
 	}
 }
 

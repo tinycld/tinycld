@@ -54,6 +54,11 @@ var collectionScopes = map[string][2]string{
 	"calendar_events":    {ScopeCalendarRead, ScopeCalendarWrite},
 	"calendar_calendars": {ScopeCalendarRead, ScopeCalendarWrite},
 	"users":              {ScopeProfile, ""},
+
+	// Read-only surfaces the CLI needs: per-folder unread counts (a view) and
+	// the caller's mailbox memberships. The empty write scope denies writes.
+	"mail_folder_counts":   {ScopeMailRead, ""},
+	"mail_mailbox_members": {ScopeMailRead, ""},
 }
 
 // endpointScopes maps a bespoke Go endpoint to its required scope.
@@ -136,7 +141,42 @@ func ScopeForRoute(method, path string) string {
 		}
 		return pair[0]
 	}
+	if name, ok := fileCollectionFromPath(path); ok {
+		// A stored file (mail body, attachment, drive content) is governed by
+		// its collection's READ scope. No field is `protected` today, so these
+		// URLs answer a bare unauthenticated GET — but the CLI attaches its
+		// bearer to every request, and without this classification the file
+		// fetch would 403 for OAuth callers only. Writes never go through
+		// /api/files/, so any write verb is denied outright.
+		//
+		// POST /api/files/token deliberately stays default-denied: file-token
+		// requests are never scope-checked, so a file token minted by a bearer
+		// would be a credential that bypasses the scope table.
+		if method != http.MethodGet && method != http.MethodHead {
+			return ""
+		}
+		pair, known := collectionScopes[name]
+		if !known {
+			return ""
+		}
+		return pair[0]
+	}
 	return ""
+}
+
+// fileCollectionFromPath extracts "drive_items" from
+// /api/files/drive_items/{recordId}/{filename}. All three segments must be
+// present and non-empty — "/api/files/token" (2 segments) is not a file path.
+func fileCollectionFromPath(path string) (string, bool) {
+	const prefix = "/api/files/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(path, prefix), "/", 3)
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", false
+	}
+	return parts[0], true
 }
 
 // collectionFromPath extracts "mail_messages" from
