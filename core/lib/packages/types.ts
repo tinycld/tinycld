@@ -228,6 +228,19 @@ export interface PackageManifest {
         directory: string
     }
 
+    /**
+     * How this package participates in the global `/` search palette.
+     * `endpoint` is its search route; `adapter` is a package-exports subpath
+     * to a module exporting `toRow` and `useSearchActions`. Omit to stay out
+     * of the palette.
+     */
+    search?: {
+        endpoint: string
+        adapter: string
+        /** Chip and group label. Defaults to `nav.label`. */
+        label?: string
+    }
+
     repository?: {
         url: string
         issueTemplate?: string
