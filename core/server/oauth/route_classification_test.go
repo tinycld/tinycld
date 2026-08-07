@@ -32,9 +32,21 @@ func TestEveryRegisteredRouteIsClassified(t *testing.T) {
 		{"GET", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", "drive content is a file field"},
 		{"GET", "/api/collections/mail_folder_counts/records", "unread counts view"},
 		{"GET", "/api/collections/mail_mailbox_members/records", "mailbox membership resolution"},
+		// The CLI's extended surface: From-identity resolution, label
+		// add/remove, version history, and share links.
+		{"GET", "/api/collections/mail_mailbox_aliases/records", "send --from identities"},
+		{"GET", "/api/collections/labels/records", "mail label list"},
+		{"POST", "/api/collections/label_assignments/records", "mail label add"},
+		{"DELETE", "/api/collections/label_assignments/records/abc123", "mail label remove"},
+		{"GET", "/api/collections/drive_item_versions/records", "drive versions list"},
+		{"POST", "/api/drive/share-link", "drive link create"},
+		{"GET", "/api/drive/share-links", "drive link list"},
+		{"DELETE", "/api/drive/share-link/abc123", "drive link revoke"},
+		{"POST", "/api/drive/versions/restore", "drive versions --restore"},
+		{"POST", "/api/drive/versions/snapshot", "drive versions --snapshot"},
 	}
 	for _, r := range reachable {
-		if ScopeForRoute(r.method, r.path) == "" {
+		if len(ScopeForRoute(r.method, r.path)) == 0 {
 			t.Errorf("%s %s falls into DEFAULT-DENY by omission (%s). Add it to "+
 				"endpointScopes with the scope it needs, or to exemptPaths if it is "+
 				"genuinely credential-less. Silent default-deny 403s only OAuth "+
@@ -58,7 +70,7 @@ func TestEveryRegisteredRouteIsClassified(t *testing.T) {
 		"/oauth/clients", "/oauth/clients/abc123/disabled",
 	}
 	for _, p := range sessionOnly {
-		if got := ScopeForRoute("POST", p); got != "" {
+		if got := ScopeForRoute("POST", p); len(got) != 0 {
 			t.Errorf("POST %s resolved to %q, want default-deny: an OAuth bearer must "+
 				"not reach a consent or management surface", p, got)
 		}
@@ -66,7 +78,7 @@ func TestEveryRegisteredRouteIsClassified(t *testing.T) {
 
 	// GET is classified independently of POST — the list endpoint is a GET,
 	// and a read-side exemption would leak the client registry to any bearer.
-	if got := ScopeForRoute("GET", "/oauth/clients"); got != "" {
+	if got := ScopeForRoute("GET", "/oauth/clients"); len(got) != 0 {
 		t.Errorf("GET /oauth/clients resolved to %q, want default-deny: the client "+
 			"registry must not be readable with an OAuth access token", got)
 	}
@@ -82,7 +94,7 @@ func TestConsentSurfacesAreNotExempt(t *testing.T) {
 		"/oauth/grants/abc123/revoke",
 		"/oauth/clients", "/oauth/clients/abc123/disabled",
 	} {
-		if ScopeForRoute("POST", p) == scopeExempt {
+		if ScopeForRoute("POST", p).isExempt() {
 			t.Errorf("%s must not be scope-exempt — an OAuth bearer would bypass the "+
 				"scope ceiling and could approve a grant for itself", p)
 		}
@@ -92,7 +104,7 @@ func TestConsentSurfacesAreNotExempt(t *testing.T) {
 // The credential-less endpoints must STAY exempt or the device flow cannot start.
 func TestCredentiallessEndpointsStayExempt(t *testing.T) {
 	for _, p := range []string{"/oauth/device", "/oauth/token", "/oauth/revoke"} {
-		if ScopeForRoute("POST", p) != scopeExempt {
+		if !ScopeForRoute("POST", p).isExempt() {
 			t.Errorf("%s must stay exempt — the caller has no credential yet", p)
 		}
 	}
