@@ -230,6 +230,37 @@ test.describe('Search palette', () => {
         expect(page.url()).toBe(url)
     })
 
+    // Regression guard for the C1 bug: parseQuery used to recognize `pkg:`
+    // ANYWHERE in the raw text, but the renderer stripped the chip prefix by
+    // COMPUTED LENGTH (assuming chips were always a leading prefix). Typing a
+    // chip-forming token AFTER free text made that slice cut into the free
+    // text instead of the chip prefix, silently destroying it on the very
+    // next keystroke. Seeded-chip case: the palette opens with "cards"
+    // already a chip (see navigateToPackage below), then the user types free
+    // text, then a SECOND `pkg:`-shaped token ("mail:") that must NOT be
+    // promoted to a chip (only the leading run counts) and must NOT eat
+    // either neighboring word. Asserts on the actual input DOM value — not
+    // just a result matching, which could pass by coincidence.
+    test('typing free text then a second pkg:-looking token loses no word', async ({ page }) => {
+        await login(page)
+        await navigateToPackage(page, 'cards')
+        await openPalette(page)
+        await expect(page.getByTestId('search-chip-cards')).toBeVisible()
+
+        const input = page.getByLabel('Search across packages')
+        await page.keyboard.type('Onboarding mail: checklist')
+
+        // "mail:" typed after free text must stay literal text, not a
+        // second chip — only the leading run (the seeded "cards" chip) can
+        // ever become a chip. Checked against the real DOM value, not just
+        // the parsed result: this is exactly what the C1 bug corrupted —
+        // the box used to strip a computed-length prefix that disagreed with
+        // where the chip token actually sat, cutting into "Onboarding".
+        await expect(page.getByTestId('search-chip-mail')).toHaveCount(0)
+        await expect(page.getByTestId('search-chip-cards')).toBeVisible()
+        await expect(input).toHaveValue('Onboarding mail: checklist')
+    })
+
     // '/' inside an RN TextInput never reaches the global shortcut listener
     // at all: react-native-web's TextInput.handleKeyDown unconditionally
     // calls stopPropagation() on every keydown, and the shortcuts provider

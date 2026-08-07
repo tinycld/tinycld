@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import type { SearchSection } from '@tinycld/core/lib/search/build-sections'
-import { chipsToText, textAfterChips } from '@tinycld/core/lib/search/chip-text'
+import { chipsToText, runHandlerFor } from '@tinycld/core/lib/search/chip-text'
 import { parseQuery } from '@tinycld/core/lib/search/parse-query'
 import { loadSearchAdapter, searchPackages } from '@tinycld/core/lib/search/registry'
 import { useSearchPaletteStore } from '@tinycld/core/lib/search/search-palette-store'
@@ -57,8 +57,9 @@ export function SearchPalette() {
 
     const selectRow = useCallback(
         (row: SearchRow) => {
-            handlersRef.current[row.slug]?.(row)
-            close()
+            // Only close when a handler actually ran — see runHandlerFor's
+            // doc comment for why a row can outlive its own adapter.
+            if (runHandlerFor(row, handlersRef.current)) close()
         },
         [close]
     )
@@ -132,8 +133,7 @@ export function SearchPalette() {
             // Backspace on empty text pops the trailing chip, so widening the
             // search to everywhere is one keystroke from the seeded state.
             if (key === 'Backspace') {
-                const remainder = textAfterChips(text, parsed.chips)
-                if (remainder.length === 0 && parsed.chips.length > 0) {
+                if (parsed.remainder.length === 0 && parsed.chips.length > 0) {
                     event.preventDefault()
                     setText(chipsToText(parsed.chips.slice(0, -1)))
                 }
@@ -141,11 +141,20 @@ export function SearchPalette() {
         }
         document.addEventListener('keydown', onKeyDown, true)
         return () => document.removeEventListener('keydown', onKeyDown, true)
-    }, [isOpen, close, text, parsed.chips, moveSelection, selectedRow, selectRow, setText])
+    }, [
+        isOpen,
+        close,
+        parsed.chips,
+        parsed.remainder,
+        moveSelection,
+        selectedRow,
+        selectRow,
+        setText,
+    ])
 
     if (!isOpen || typeof document === 'undefined') return null
 
-    const remainder = textAfterChips(text, parsed.chips)
+    const remainder = parsed.remainder
 
     return createPortal(
         <>
@@ -296,7 +305,8 @@ interface SearchFieldProps {
 // unit rather than parsing it back out of a raw "cards: " string prefix.
 // The input itself only ever holds the free-text remainder; typing composes
 // chips + remainder back into the store's single `text` field, which stays
-// the source of truth parseQuery re-derives chips from on every render.
+// the source of truth parseQuery re-derives BOTH chips and remainder from on
+// every render — the renderer never re-slices the remainder itself.
 function SearchField({ inputRef, chips, remainder, onChangeRemainder }: SearchFieldProps) {
     const placeholderColor = useThemeColor('muted-foreground')
     return (
