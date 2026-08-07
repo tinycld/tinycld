@@ -33,6 +33,7 @@ export function MobileDrawer({ isVisible }: MobileDrawerProps) {
     const insets = useDeviceInsets()
     const activePkgSlug = useWorkspaceStore(s => s.activePkgSlug)
     const setDrawerOpen = useWorkspaceStore(s => s.setDrawerOpen)
+    const isEdgeSwipeSuspended = useWorkspaceStore(s => s.isEdgeSwipeSuspended)
     const pkg = usePackage(activePkgSlug ?? '')
     const translateX = useSharedValue(-PANEL_WIDTH)
 
@@ -55,7 +56,13 @@ export function MobileDrawer({ isVisible }: MobileDrawerProps) {
         }
     }, [isVisible, translateX, activePkgSlug, openedForSlug])
 
+    // Disabled while a package drag is live (plus a short grace after it
+    // ends): on a physical phone, a fingertip dragged into the left edge of
+    // the glass can micro-lift as it reverses, and the replacement touch is
+    // born inside this strip — indistinguishable from a deliberate edge
+    // swipe. See setEdgeSwipeSuspended in workspace-store.
     const edgeGesture = Gesture.Pan()
+        .enabled(!isEdgeSwipeSuspended)
         .activeOffsetX(10)
         .onUpdate(e => {
             translateX.value = Math.max(-PANEL_WIDTH, Math.min(0, -PANEL_WIDTH + e.translationX))
