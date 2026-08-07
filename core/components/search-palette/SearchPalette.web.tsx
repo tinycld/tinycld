@@ -178,26 +178,48 @@ function useAdapterModule(slug: string): SearchAdapterModule | null {
     return (data as SearchAdapterModule | null) ?? null
 }
 
-/**
- * Registers one package's selection handler. A component per package rather
- * than a loop of hook calls inside the palette: `useSearchActions` is a hook,
- * and calling it in a loop would break the Rules of Hooks the moment the
- * package list changed. Renders nothing.
- */
-function PackageActions({
-    slug,
-    onReady,
-}: {
+interface PackageActionsProps {
     slug: string
     onReady: (slug: string, handler: (row: SearchRow) => void) => void
-}) {
+}
+
+/**
+ * Loads one package's adapter module. A component per package rather than a
+ * loop of hook calls inside the palette: the adapter's `useSearchActions` is
+ * a hook, and calling it in a loop would break the Rules of Hooks the moment
+ * the package list changed.
+ *
+ * This component itself renders nothing until the adapter has resolved, and
+ * deliberately does NOT call `adapter?.useSearchActions()` here — that would
+ * call a hook conditionally (skipped while the dynamic import is pending,
+ * called once it lands), which is exactly the "rendered more hooks than
+ * during the previous render" crash the Rules of Hooks forbid. Instead the
+ * hook call is pushed into `ResolvedPackageActions`, a component that only
+ * ever mounts once `adapter` is non-null — so for that component's entire
+ * lifetime the hook call is unconditional.
+ */
+export function PackageActions({ slug, onReady }: PackageActionsProps) {
     const adapter = useAdapterModule(slug)
-    const actions = adapter?.useSearchActions()
+    if (!adapter) return null
+    return <ResolvedPackageActions slug={slug} adapter={adapter} onReady={onReady} />
+}
+
+/**
+ * Registers one resolved adapter's selection handler. Split out from
+ * `PackageActions` so `adapter` is non-null for this component's entire
+ * lifetime, making the `useSearchActions()` call unconditional.
+ */
+function ResolvedPackageActions({
+    slug,
+    adapter,
+    onReady,
+}: PackageActionsProps & { adapter: SearchAdapterModule }) {
+    const { onSelect } = adapter.useSearchActions()
     // Registering during render would mutate a parent ref mid-render; a ref
     // write in an effect is the standard imperative-handle pattern.
     useEffect(() => {
-        if (actions) onReady(slug, actions.onSelect)
-    }, [slug, actions, onReady])
+        onReady(slug, onSelect)
+    }, [slug, onSelect, onReady])
     return null
 }
 
