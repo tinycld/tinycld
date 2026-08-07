@@ -29,9 +29,15 @@ jobs:
         with:
           path: ws/tinycld
       # tinycld carries its own .node-version; read it from the checkout (no
-      # dependency on bootstrap having generated ws/.node-version yet). No
-      # package-manager cache: no committed lockfile (pnpm resolves fresh;
-      # corepack enable selects the pnpm pinned in the workspace package.json).
+      # dependency on bootstrap having generated ws/.node-version yet).
+      #
+      # No package-manager cache, deliberately. setup-node's `cache: pnpm` keys
+      # on a lockfile hash, and the workspace root here is bootstrap-GENERATED —
+      # no lockfile exists until the install produces one. Caching pnpm's store
+      # by another key was measured and rejected: the store is ~1.2GB across
+      # ~96k files, and packing/restoring it costs more than the ~24s of package
+      # fetching it would save. The install's real cost is its postinstall (Go
+      # module downloads), which the setup-go cache below covers instead.
       - uses: actions/setup-node@v5
         with:
           node-version-file: ws/tinycld/.node-version
@@ -39,9 +45,19 @@ jobs:
         working-directory: ws
         run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
       # Go toolchain after assembly: .go-version is bootstrap-generated into ws/.
+      #
+      # cache-dependency-path matters more than it looks: the install below runs
+      # a postinstall that generates the PB schema, which shells out to Go and
+      # pulls ~48 modules. That download — not package fetching — is the bulk of
+      # the install step's runtime, so keying setup-go's module cache on the
+      # checked-out go.sum files is what actually makes this job faster.
       - uses: actions/setup-go@v6
         with:
           go-version-file: ws/.go-version
+          cache-dependency-path: |
+            ws/tinycld/server/go.sum
+            ws/tinycld/core/server/go.sum
+            ws/tinycld/cli/go.sum
       - name: Install (workspace root)
         working-directory: ws
         run: corepack enable && pnpm install --no-frozen-lockfile
@@ -71,6 +87,10 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: ws/.go-version
+          cache-dependency-path: |
+            ws/tinycld/server/go.sum
+            ws/tinycld/core/server/go.sum
+            ws/tinycld/cli/go.sum
       - name: Install (workspace root)
         working-directory: ws
         run: corepack enable && pnpm install --no-frozen-lockfile
@@ -126,6 +146,10 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: ws/.go-version
+          cache-dependency-path: |
+            ws/tinycld/server/go.sum
+            ws/tinycld/core/server/go.sum
+            ws/tinycld/cli/go.sum
       - name: Install (workspace root)
         working-directory: ws
         run: corepack enable && pnpm install --no-frozen-lockfile
