@@ -1,7 +1,7 @@
 import { Text, View } from 'react-native'
 import { substituteHelpTokens } from '../../lib/help/tokens'
 import type { HelpTopic } from '../../lib/help/types'
-import { MarkdownRenderer } from './MarkdownRenderer'
+import { MarkdownRenderer, openHelpLink } from './MarkdownRenderer'
 
 interface Props {
     topic: HelpTopic
@@ -17,7 +17,10 @@ export function HelpTopicView({ topic, showTitle = true }: Props) {
                     <Text className="text-sm text-muted-foreground mt-1">{topic.summary}</Text>
                 </View>
             )}
-            <MarkdownRenderer body={substituteHelpTokens(topic.body)} />
+            {/* The help-specific behaviors are now opt-in; a help topic opts
+                into all of them. `openHelpLink` is module-level, so the
+                renderer cache keys to a single stable slot. */}
+            <MarkdownRenderer body={substituteHelpTokens(topic.body)} onLinkPress={openHelpLink} />
         </View>
     )
 }
