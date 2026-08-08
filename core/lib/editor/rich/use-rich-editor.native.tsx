@@ -1,111 +1,39 @@
-import {
-    BlockquoteBridge,
-    BoldBridge,
-    BulletListBridge,
-    CodeBridge,
-    CoreBridge,
-    DropCursorBridge,
-    HardBreakBridge,
-    HeadingBridge,
-    HistoryBridge,
-    ItalicBridge,
-    LinkBridge,
-    OrderedListBridge,
-    PlaceholderBridge,
-    RichText,
-    StrikeBridge,
-    TaskListBridge,
-    UnderlineBridge,
-    useBridgeState,
-    useEditorBridge,
-} from '@10play/tentap-editor'
-import { useMemo, useRef } from 'react'
-import { View } from 'react-native'
+import { CoreBridge, TenTapStartKit } from '@10play/tentap-editor'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useThemeColor } from '../../use-app-theme'
-import type { EditorCommands, EditorHandle, EditorResult, EditorToolbarState } from '../types'
-import { htmlToMarkdown, markdownToHTML } from './html-markdown'
+import type { EditorHandle, EditorResult } from '../types'
+import { useWebViewEditor } from '../use-webview-editor'
+import { MarkdownWebViewHost } from './markdown-webview-host'
 import type { UseRichEditorOptions } from './options'
+import { editorHtml } from './webview/build/editorHtml'
+import {
+    APP_ESCAPE,
+    APP_SUBMIT_SHORTCUT,
+    type RichEditorInitPayload,
+} from './webview/source/protocol'
 
 /**
- * Native build of the shared editor: Tiptap running inside a WebView through
- * TenTap's bridges.
+ * Native build of the shared editor: Tiptap inside a WebView page we own.
  *
- * Markdown is converted on the React Native side rather than in the WebView.
- * TenTap's bridge protocol exchanges HTML, and adding a markdown round-trip
- * inside the WebView would mean shipping a second bundle with its own copy of
- * the schema — the exact duplication that makes text's two extension lists
- * drift. Converting here keeps one schema and one serializer.
+ * Markdown is the editor's native format here, exactly as on web. The page is
+ * supplied through TenTap's `customSource`, so it runs
+ * `buildRichEditorExtensions()` — `@tiptap/markdown` included — and parses and
+ * serializes markdown in place.
  *
- * Collaboration is not yet wired on native: it needs Yjs updates relayed across
- * the bridge, which is a separate piece of work. Passing `collab` here logs in
- * development and renders a plain editor rather than silently pretending to
- * sync.
+ * That replaces the previous arrangement, where markdown pivoted through HTML
+ * on every read and write because TenTap's own bridge protocol exchanges HTML
+ * strings. The conversion module that existed solely to cross that bridge is
+ * gone, along with the parsing work it did on the React Native thread.
+ *
+ * TenTap remains the WebView host: `RichText`, the bridge lifecycle, and
+ * `avoidIosKeyboard` — keyboard avoidance and the focus/scroll handling are the
+ * genuinely fiddly part and are worth keeping.
+ *
+ * Collaboration is still web-only. The channel this hook speaks is ready for it
+ * (the protocol reserves a 'yjs' namespace for base64-encoded binary updates),
+ * but nothing relays updates yet, so passing `collab` warns in development
+ * rather than pretending to sync.
  */
-function buildEditorCSS(colors: { bg: string; fg: string; placeholder: string; primary: string }) {
-    return `
-        * {
-            background-color: ${colors.bg};
-            color: ${colors.fg};
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        }
-        .ProseMirror {
-            padding: 0;
-            min-height: 100%;
-            font-size: 14px;
-            line-height: 1.5;
-        }
-        .ProseMirror:focus {
-            outline: none;
-        }
-        .is-editor-empty:first-child::before {
-            color: ${colors.placeholder};
-            content: attr(data-placeholder);
-            float: left;
-            height: 0;
-            pointer-events: none;
-        }
-        blockquote {
-            border-left: 3px solid ${colors.placeholder};
-            padding-left: 1rem;
-            margin-left: 0;
-        }
-        a {
-            color: ${colors.primary};
-            text-decoration: underline;
-        }
-        ul, ol {
-            padding-left: 1.5rem;
-        }
-        code {
-            font-family: ui-monospace, Menlo, monospace;
-        }
-        table {
-            border-collapse: collapse;
-        }
-        td, th {
-            border: 1px solid ${colors.placeholder};
-            padding: 4px 8px;
-        }
-    `
-}
-
-const baseBridgeExtensions = [
-    BoldBridge,
-    ItalicBridge,
-    UnderlineBridge,
-    StrikeBridge,
-    CodeBridge,
-    HeadingBridge,
-    BulletListBridge,
-    OrderedListBridge,
-    TaskListBridge,
-    BlockquoteBridge,
-    LinkBridge,
-    HistoryBridge,
-    HardBreakBridge,
-    DropCursorBridge,
-]
-
 export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult {
     const {
         initialContent,
@@ -113,6 +41,9 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         placeholder = '',
         autofocus,
         editable = true,
+        characterLimit,
+        onSubmitShortcut,
+        onEscape,
         theme,
         collab,
     } = options
@@ -128,113 +59,106 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         )
     }
 
-    const bridgeExtensions = useMemo(() => {
-        const css = buildEditorCSS({
-            bg: theme?.backgroundColor ?? bgColor,
-            fg: fgColor,
-            placeholder: placeholderColor,
-            primary: primaryColor,
-        })
-        return [
-            CoreBridge.configureCSS(css),
-            ...baseBridgeExtensions,
-            PlaceholderBridge.configureExtension({ placeholder }),
-        ]
-    }, [theme?.backgroundColor, bgColor, fgColor, placeholderColor, primaryColor, placeholder])
+    // Callers pass these inline, so their identity changes every render.
+    // Reading them through refs keeps the WebView from remounting.
+    const submitRef = useRef(onSubmitShortcut)
+    submitRef.current = onSubmitShortcut
+    const escapeRef = useRef(onEscape)
+    escapeRef.current = onEscape
 
-    const editorTheme = useMemo(
-        () => ({ webview: { backgroundColor: theme?.backgroundColor ?? bgColor } }),
-        [theme?.backgroundColor, bgColor]
+    // The init payload is posted once, after the page reports ready. It is
+    // deliberately built from primitives so a parent re-render doesn't produce
+    // a fresh object and re-trigger the handshake effect.
+    const initPayload: RichEditorInitPayload = useMemo(
+        () => ({
+            contentFormat,
+            initialContent: initialContent ?? '',
+            placeholder,
+            editable,
+            characterLimit,
+            autofocus: autofocus ?? false,
+            colors: {
+                bg: theme?.backgroundColor ?? bgColor,
+                fg: fgColor,
+                placeholder: placeholderColor,
+                primary: primaryColor,
+            },
+        }),
+        [
+            contentFormat,
+            initialContent,
+            placeholder,
+            editable,
+            characterLimit,
+            autofocus,
+            theme?.backgroundColor,
+            bgColor,
+            fgColor,
+            placeholderColor,
+            primaryColor,
+        ]
     )
 
-    const liveBridge = useEditorBridge({
-        initialContent:
-            contentFormat === 'markdown' && initialContent
-                ? markdownToHTML(initialContent)
-                : initialContent,
+    // Constructed before the WebView exists, so it holds a poster indirection
+    // rather than the poster itself — `postMessage` only becomes available
+    // once useWebViewEditor returns.
+    const posterRef = useRef<((message: never) => boolean) | null>(null)
+    const markdownHostRef = useRef<MarkdownWebViewHost | null>(null)
+    if (markdownHostRef.current === null) {
+        markdownHostRef.current = new MarkdownWebViewHost({
+            postMessage: message => posterRef.current?.(message as never) ?? false,
+        })
+        // Seed the fallback so a getMarkdown that times out before the first
+        // round-trip returns the document the user opened, not an empty string.
+        if (contentFormat === 'markdown' && initialContent) {
+            markdownHostRef.current.seed(initialContent)
+        }
+    }
+    const markdownHost = markdownHostRef.current
+
+    useEffect(() => () => markdownHost.destroy(), [markdownHost])
+
+    // TenTap's stock bridges still drive the toolbar commands and the
+    // getHTML/getText/setContent/focus surface that mail relies on. Their
+    // Tiptap counterparts live in our page, which registers the same schema.
+    const bridgeExtensions = useMemo(() => [...TenTapStartKit, CoreBridge.configureCSS('')], [])
+
+    const onMessage = useCallback(
+        (message: { namespace?: string; type?: string }) => {
+            if (markdownHost.handleMessage(message as never)) return
+            if (message.namespace !== 'app') return
+            if (message.type === APP_SUBMIT_SHORTCUT) submitRef.current?.()
+            else if (message.type === APP_ESCAPE) escapeRef.current?.()
+        },
+        [markdownHost]
+    )
+
+    const result = useWebViewEditor({
+        editorHtml,
         bridgeExtensions,
-        theme: editorTheme,
-        autofocus: autofocus ?? false,
-        avoidIosKeyboard: true,
+        initPayload,
         editable,
+        theme: { webview: { backgroundColor: theme?.backgroundColor ?? bgColor } },
+        avoidIosKeyboard: true,
+        // The description editor sits inside the card detail's scroll view;
+        // an inner scroll surface would fight it.
+        scrollEnabled: false,
+        onMessage,
     })
 
-    // useEditorBridge returns a fresh wrapper every render even though its
-    // underlying refs are stable. Passing that fresh object to <RichText>
-    // remounts the WebView on every re-render, which steals focus on every
-    // keystroke. Pin the first wrapper; the refs still route correctly.
-    const bridgeRef = useRef(liveBridge)
-    const bridge = bridgeRef.current
+    posterRef.current = result.postMessage ?? null
 
-    const bridgeState = useBridgeState(bridge)
-
+    // Layer the markdown channel onto the shared handle. Everything else —
+    // getHTML, setContent, focus, clear — is TenTap's, unchanged, which is what
+    // keeps mail's HTML path working.
     const editor: EditorHandle = useMemo(
         () => ({
-            getHTML: () => bridge.getHTML(),
-            getText: () => bridge.getText(),
-            // The WebView speaks HTML, so markdown is produced here. The
-            // conversion applies the same repair pass as the web variant.
-            getMarkdown: async () => htmlToMarkdown(await bridge.getHTML()),
-            setContent: (html: string) => bridge.setContent(html),
-            setMarkdown: (markdown: string) => bridge.setContent(markdownToHTML(markdown)),
-            focus: (position?: 'start' | 'end') => bridge.focus(position ?? 'end'),
-            clear: () => bridge.setContent(''),
-            // TenTap exposes no selection query. Callers must tolerate null —
-            // the contract marks getSelection as best-effort for this reason.
-            getSelection: () => Promise.resolve(null),
+            ...result.editor,
+            getMarkdown: () => markdownHost.get(),
+            setMarkdown: (markdown: string) => markdownHost.set(markdown),
         }),
-        [bridge]
+        [result.editor, markdownHost]
     )
 
-    const commands: EditorCommands = useMemo(
-        () => ({
-            toggleBold: () => bridge.toggleBold(),
-            toggleItalic: () => bridge.toggleItalic(),
-            toggleUnderline: () => bridge.toggleUnderline(),
-            toggleBulletList: () => bridge.toggleBulletList(),
-            toggleOrderedList: () => bridge.toggleOrderedList(),
-            toggleBlockquote: () => bridge.toggleBlockquote(),
-            toggleHeading: (level: number) => bridge.toggleHeading(level as 1 | 2 | 3 | 4 | 5 | 6),
-            toggleCode: () => bridge.toggleCode?.(),
-            setLink: (url: string) => bridge.setLink(url),
-            removeLink: () => bridge.setLink(''),
-            undo: () => bridge.undo(),
-            redo: () => bridge.redo(),
-        }),
-        [bridge]
-    )
-
-    const toolbarState: EditorToolbarState = {
-        isBoldActive: bridgeState.isBoldActive,
-        isItalicActive: bridgeState.isItalicActive,
-        isUnderlineActive: bridgeState.isUnderlineActive,
-        isBulletListActive: bridgeState.isBulletListActive,
-        isOrderedListActive: bridgeState.isOrderedListActive,
-        isBlockquoteActive: bridgeState.isBlockquoteActive,
-        isLinkActive: bridgeState.isLinkActive,
-        isCodeActive: bridgeState.isCodeActive,
-        currentLink: bridgeState.activeLink ?? null,
-        isEmpty: bridgeState.empty,
-    }
-
-    const EditorComponent = useMemo(
-        () =>
-            function RichEditorContent() {
-                return (
-                    <View className="flex-1">
-                        <RichText editor={bridge} scrollEnabled={false} />
-                    </View>
-                )
-            },
-        [bridge]
-    )
-
-    return {
-        editor,
-        EditorComponent,
-        commands,
-        toolbarState,
-        webViewRef: bridge.webviewRef ?? null,
-        isReady: bridgeState.isReady ?? true,
-    }
+    return { ...result, editor }
 }

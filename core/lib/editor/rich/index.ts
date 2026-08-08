@@ -10,7 +10,6 @@
 
 export type { RichEditorCollabOptions } from './extensions'
 export { buildRichEditorExtensions } from './extensions'
-export { htmlToMarkdown, markdownToHTML } from './html-markdown'
 export { findDamagedTableRows, repairMarkdown } from './markdown-repair'
 export type { EditorContentFormat, UseRichEditorOptions } from './options'
 export { setContentWhenReady } from './set-content-when-ready'
