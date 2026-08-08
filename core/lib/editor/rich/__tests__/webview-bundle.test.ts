@@ -55,5 +55,18 @@ describe('rich editor WebView bundle', () => {
         // editor away: markdown being native to this page is the whole point.
         expect(result.htmlSize).toBeGreaterThan(100_000)
         expect(html).toContain('ProseMirror')
+
+        // The collaboration stack has to be in the page, not just imported by
+        // it. If Collaboration were tree-shaken away the editor would still
+        // mount, still accept typing, and silently sync with nobody — a
+        // failure invisible to every other test here, and on a device
+        // indistinguishable from a network problem.
+        //
+        // `y-sync` is y-prosemirror's plugin key and `beforeAllTransactions` a
+        // yjs internal: both survive minification because they are string
+        // literals / exported names, whereas the extension's own identifiers
+        // do not.
+        expect(html).toContain('y-sync')
+        expect(html).toContain('beforeAllTransactions')
     }, 120_000)
 })

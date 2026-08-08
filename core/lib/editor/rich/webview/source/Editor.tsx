@@ -1,6 +1,8 @@
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { useEffect, useState } from 'react'
+import { Awareness } from 'y-protocols/awareness'
+import * as Y from 'yjs'
 import type { EditorMessage } from '../../../message-bus/types'
 import { makeMessage } from '../../../message-bus/types'
 import { buildRichEditorExtensions } from '../../extensions'
@@ -8,12 +10,17 @@ import { repairMarkdown } from '../../markdown-repair'
 import {
     APP_ESCAPE,
     APP_SUBMIT_SHORTCUT,
+    decodeUpdate,
     EDITOR_READY,
+    encodeUpdate,
     MARKDOWN_GET,
     MARKDOWN_RESULT,
     MARKDOWN_SET,
     type MarkdownSetPayload,
+    type RichEditorInitCollab,
     type RichEditorInitPayload,
+    YJS_UPDATE,
+    type YjsUpdatePayload,
 } from './protocol'
 import { deriveWebViewState } from './state'
 import { buildEditorCSS } from './styles'
@@ -91,6 +98,8 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
         return () => style.remove()
     }, [init.colors])
 
+    const collab = useCollabDoc(init.collab)
+
     const editor = useEditor({
         editable: init.editable,
         autofocus: init.autofocus ? 'end' : false,
@@ -98,19 +107,24 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
             placeholder: init.placeholder,
             characterLimit: init.characterLimit,
             onSubmitShortcut: () => postToNative(makeMessage('app', APP_SUBMIT_SHORTCUT, null)),
-            // Collaboration is not enabled yet. Routing through the same
-            // builder call from the start is what keeps turning it on additive
-            // — the option already exists on the builder.
-            collab: undefined,
+            collab: collab
+                ? {
+                      document: collab.doc,
+                      field: collab.field,
+                      awareness: collab.awareness,
+                      user: collab.user,
+                  }
+                : undefined,
         }),
         // Tiptap 3 defaults this false; the toolbar reads active marks off
         // every transaction, so it has to re-render on them.
         shouldRerenderOnTransaction: true,
     })
 
-    useInitialContent(editor, init)
+    useYjsRelay(collab)
+    useInitialContent(editor, init, collab != null)
     useStateBroadcast(editor)
-    useHostMessages(editor)
+    useHostMessages(editor, collab != null)
     useEscapeKey()
 
     return <EditorContent editor={editor} />
@@ -122,10 +136,20 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
  * Markdown goes in as markdown — `setContent` routes through the markdown
  * extension's parser. Mail passes 'html' and takes the same path Tiptap would
  * take for an HTML string.
+ *
+ * Skipped entirely under collaboration: there the document arrives as Yjs
+ * state, already applied to the doc before this editor was built. Setting
+ * content on top of it appends a second copy of the text — and does so on
+ * every client that joins. The web hook skips it for the same reason.
  */
-function useInitialContent(editor: TiptapEditor | null, init: RichEditorInitPayload) {
+function useInitialContent(
+    editor: TiptapEditor | null,
+    init: RichEditorInitPayload,
+    isCollab: boolean
+) {
     useEffect(() => {
         if (!editor) return
+        if (isCollab) return
         if (!init.initialContent) return
         editor.commands.setContent(init.initialContent, {
             emitUpdate: false,
@@ -134,7 +158,99 @@ function useInitialContent(editor: TiptapEditor | null, init: RichEditorInitPayl
             // syntax.
             ...(init.contentFormat === 'markdown' ? { contentType: 'markdown' as const } : {}),
         })
-    }, [editor, init.initialContent, init.contentFormat])
+    }, [editor, init.initialContent, init.contentFormat, isCollab])
+}
+
+interface CollabBinding {
+    doc: Y.Doc
+    awareness: Awareness | undefined
+    field: string
+    user: { id: string; name: string; color: string } | undefined
+}
+
+/** Tags doc transactions whose updates came from the host, so the relay below
+ *  doesn't post them straight back and loop. */
+const FROM_HOST: unique symbol = Symbol('yjs:from-host')
+
+/**
+ * Build the page's Y.Doc once, seeded from the host's state.
+ *
+ * Constructed lazily in `useState` rather than an effect because Tiptap's
+ * Collaboration extension binds to the doc when the editor is CREATED — a doc
+ * that appears one render later would leave the editor bound to nothing.
+ *
+ * This doc keeps its OWN clientID. Adopting the host's was the original plan,
+ * but Yjs refuses it — see `RichEditorInitCollab.clientID`. The local user
+ * still appears once, because this relay carries document updates only: the
+ * Awareness below never leaves the WebView, and board presence rides the
+ * host's socket.
+ */
+function useCollabDoc(init: RichEditorInitCollab | undefined): CollabBinding | null {
+    const [binding] = useState<CollabBinding | null>(() => {
+        if (!init) return null
+        const doc = new Y.Doc()
+        if (init.initialState) {
+            // FROM_HOST so seeding doesn't immediately echo the entire
+            // document back to the host as if the user had typed it.
+            Y.applyUpdate(doc, decodeUpdate(init.initialState), FROM_HOST)
+        }
+        // Awareness is page-local and drives only the carets rendered in this
+        // WebView. Board-level presence stays on the host's socket, which is
+        // where the avatar row reads from.
+        const awareness = init.user ? new Awareness(doc) : undefined
+        if (awareness && init.user) awareness.setLocalStateField('user', init.user)
+        return { doc, awareness, field: init.field, user: init.user }
+    })
+    return binding
+}
+
+/**
+ * Pump updates between the page's doc and the host.
+ *
+ * Outbound is guarded on FROM_HOST so an update we just applied is not posted
+ * straight back; the host guards the mirror-image case with its own
+ * RELAY_ORIGIN. Without both halves the two docs bounce a single keystroke
+ * between them forever.
+ */
+function useYjsRelay(collab: CollabBinding | null) {
+    useEffect(() => {
+        if (!collab) return
+        const { doc } = collab
+
+        function onLocalUpdate(update: Uint8Array, origin: unknown) {
+            if (origin === FROM_HOST) return
+            postToNative(makeMessage('yjs', YJS_UPDATE, { update: encodeUpdate(update) }))
+        }
+        doc.on('update', onLocalUpdate)
+
+        function onMessage(evt: MessageEvent | Event) {
+            const data = (evt as MessageEvent).data
+            if (typeof data !== 'string') return
+            let parsed: EditorMessage
+            try {
+                parsed = JSON.parse(data) as EditorMessage
+            } catch {
+                return
+            }
+            if (parsed.namespace !== 'yjs' || parsed.type !== YJS_UPDATE) return
+            const encoded = (parsed.payload as YjsUpdatePayload | undefined)?.update
+            if (typeof encoded !== 'string' || encoded.length === 0) return
+            try {
+                Y.applyUpdate(doc, decodeUpdate(encoded), FROM_HOST)
+            } catch {
+                // Convergent by construction: a malformed update is dropped
+                // and the next one from that peer carries the same state.
+            }
+        }
+        window.addEventListener('message', onMessage)
+        document.addEventListener('message', onMessage)
+
+        return () => {
+            doc.off('update', onLocalUpdate)
+            window.removeEventListener('message', onMessage)
+            document.removeEventListener('message', onMessage)
+        }
+    }, [collab])
 }
 
 /**
@@ -186,7 +302,7 @@ function useStateBroadcast(editor: TiptapEditor | null) {
  * Unwrapping that is load-bearing — without it every native toolbar button
  * reads as type 'action', matches nothing, and silently no-ops.
  */
-function useHostMessages(editor: TiptapEditor | null) {
+function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
     useEffect(() => {
         if (!editor) return
 
@@ -200,8 +316,10 @@ function useHostMessages(editor: TiptapEditor | null) {
                 return
             }
 
+            // Handled by useYjsRelay; not a format action.
+            if (parsed.namespace === 'yjs') return
             if (parsed.namespace === 'markdown') {
-                handleMarkdownMessage(editor, parsed)
+                handleMarkdownMessage(editor, parsed, isCollab)
                 return
             }
             dispatchFormatAction(editor, unwrapTenTapAction(parsed))
@@ -213,11 +331,19 @@ function useHostMessages(editor: TiptapEditor | null) {
             window.removeEventListener('message', onMessage)
             document.removeEventListener('message', onMessage)
         }
-    }, [editor])
+    }, [editor, isCollab])
 }
 
-function handleMarkdownMessage(editor: TiptapEditor, message: EditorMessage): void {
+function handleMarkdownMessage(
+    editor: TiptapEditor,
+    message: EditorMessage,
+    isCollab: boolean
+): void {
     if (message.type === MARKDOWN_SET) {
+        // A no-op under collaboration, by design: the shared doc is the source
+        // of truth, and replacing the whole document would delete every peer's
+        // concurrent text and re-insert this copy as new content.
+        if (isCollab) return
         const { markdown } = message.payload as MarkdownSetPayload
         editor.commands.setContent(markdown, { emitUpdate: false, contentType: 'markdown' })
         return

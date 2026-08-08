@@ -28,6 +28,17 @@ export const APP_SUBMIT_SHORTCUT = 'submit-shortcut'
 export const APP_ESCAPE = 'escape'
 
 /**
+ * Yjs document update, base64-encoded. Sent in BOTH directions: the host
+ * relays what arrives on the room socket, and the WebView relays what the
+ * local user types.
+ *
+ * The WebView never opens its own connection. text/ does that today and the
+ * second connection makes the local user appear twice in presence
+ * (TODO(text-native v1.1)) as well as shipping a credential into the page.
+ */
+export const YJS_UPDATE = 'update'
+
+/**
  * Everything the WebView needs to construct its editor.
  *
  * Sent once per mount, after the page reports ready. The page cannot build its
@@ -49,6 +60,49 @@ export interface RichEditorInitPayload {
     /** Theme colors resolved on the native side, applied as CSS in-page. */
     colors: RichEditorColors
     autofocus: boolean
+    /** Present iff this editor is collaborative. Absent → a local editor. */
+    collab?: RichEditorInitCollab
+}
+
+/**
+ * The collaboration binding, handed to the page at init.
+ *
+ * Everything here is a primitive or a plain object: it crosses a JSON pipe, so
+ * the Y.Doc itself cannot. The page builds its OWN Y.Doc from `initialState`
+ * and keeps it in sync by relaying updates through the host.
+ */
+export interface RichEditorInitCollab {
+    /** Which top-level fragment this editor owns, e.g. `card:<id>`. */
+    field: string
+    /**
+     * The host doc's clientID, for correlation only — the page does NOT adopt
+     * it.
+     *
+     * Adopting it was the original plan (TODO(cards M9): "the WebView reuses
+     * the native client's clientID so the local user does not appear twice").
+     * Yjs forbids it: two docs sharing a clientID would collide on item
+     * identity, and it defends itself — assigning the id and then applying the
+     * host's state logs "Changed the client-id because another client seems to
+     * be using it" and reassigns a random one. It sticks only while the host
+     * doc is empty, which is exactly the case that doesn't matter.
+     *
+     * Double presence is avoided a different way, and the reason it works is
+     * that this relay carries DOCUMENT UPDATES ONLY. The page's Awareness is
+     * local to the WebView and drives just the carets rendered in it; board
+     * presence stays on the host's single socket, which is the only thing
+     * peers ever see. Two clientIDs, one avatar.
+     */
+    clientID: number
+    /**
+     * Base64 `Y.encodeStateAsUpdate` of the host doc at init.
+     *
+     * The page applies this instead of `setContent`. Under collaboration the
+     * document arrives as Yjs state, and setting content on top of it would
+     * duplicate the text on every client that joins.
+     */
+    initialState: string
+    /** Caret identity — same {id,name,color} shape presence publishes. */
+    user?: { id: string; name: string; color: string }
 }
 
 export interface RichEditorColors {
@@ -66,6 +120,11 @@ export interface MarkdownSetPayload {
 
 export interface MarkdownResultPayload {
     markdown: string
+}
+
+export interface YjsUpdatePayload {
+    /** Base64 of a Yjs update — see encodeUpdate/decodeUpdate below. */
+    update: string
 }
 
 /**
