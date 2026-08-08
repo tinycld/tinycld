@@ -12,6 +12,7 @@ import {
     buildCliExtensionsSource,
     buildCliGoWork,
     buildMemberCliGoWork,
+    buildSearchSlugsSource,
     type CliPkg,
 } from './gen-cli'
 import { buildConfigSource, buildSeedsSource, type ConfigPkg } from './gen-config'
@@ -525,11 +526,11 @@ function emitGoWiring(features: Feature[]) {
     }
 }
 
-// cli/cli_extensions.go + cli/go.work — the CLI-side mirror of emitGoWiring.
-// Both files are always written (gitignored, regenerated every install): with
-// zero cli-declaring packages the extensions file is a valid no-op and the
-// go.work covers only the CLI module itself, so `go build` in cli/ works on
-// any assembly.
+// cli/cli_extensions.go + cli/go.work + cli/search_slugs.go — the CLI-side
+// mirror of emitGoWiring. All are always written (gitignored, regenerated every
+// install): with zero cli-declaring packages the extensions file is a valid
+// no-op, the go.work covers only the CLI module itself, and the slug list is an
+// empty slice, so `go build` in cli/ works on any assembly.
 function emitCliWiring(features: Feature[]) {
     const cliFeatures = features.filter(hasCliPackage)
     const cliPkgs: CliPkg[] = cliFeatures.map(f => ({
@@ -539,6 +540,12 @@ function emitCliWiring(features: Feature[]) {
     }))
     fs.writeFileSync(path.join(CLI_DIR, 'cli_extensions.go'), buildCliExtensionsSource(cliPkgs))
     fs.writeFileSync(path.join(CLI_DIR, 'go.work'), buildCliGoWork(cliPkgs))
+
+    // Every searchable package, not just the ones shipping CLI commands: the
+    // `tinycld search` grammar needs the full set to tell `cards:` (a chip)
+    // from `cards` (a word), and cards ships no CLI commands of its own.
+    const searchSlugs = features.filter(f => f.manifest.search).map(f => f.manifest.slug)
+    fs.writeFileSync(path.join(CLI_DIR, 'search_slugs.go'), buildSearchSlugsSource(searchSlugs))
 
     // Per-member go.work so each cli module resolves tinycld.org/cli when
     // built standalone (gitignored in the member repo, like server/go.work).

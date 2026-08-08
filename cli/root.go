@@ -103,6 +103,7 @@ func newRootCmd(d *deps) *cobra.Command {
 		newVersionCmd(d),
 		newContextCmd(d),
 		newAuthCmd(d),
+		newSearchCmd(d),
 	)
 	return root
 }
