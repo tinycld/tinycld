@@ -19,6 +19,7 @@ import {
     type MarkdownSetPayload,
     type RichEditorInitCollab,
     type RichEditorInitPayload,
+    UI_CONTENT_HEIGHT,
     YJS_UPDATE,
     type YjsUpdatePayload,
 } from './protocol'
@@ -126,6 +127,7 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
     useStateBroadcast(editor)
     useHostMessages(editor, collab != null)
     useEscapeKey()
+    useContentHeight(editor)
 
     return <EditorContent editor={editor} />
 }
@@ -455,6 +457,58 @@ function readLinkHref(payload: unknown): string {
         if (typeof href === 'string') return href
     }
     return ''
+}
+
+/**
+ * Tell the host how tall the document is.
+ *
+ * A WebView has no intrinsic height, and inside a ScrollView it has nothing to
+ * flex against either, so the host cannot work this out for itself — the
+ * editor ends up clipped to whatever fixed height was guessed. Measuring the
+ * page and reporting it is the only way the container can track content.
+ *
+ * `ResizeObserver` rather than an editor `update` listener: height changes for
+ * reasons ProseMirror never emits an update for — a font finishing loading, an
+ * image decoding, the keyboard changing the viewport width and reflowing a
+ * paragraph onto another line.
+ */
+function useContentHeight(editor: TiptapEditor | null) {
+    useEffect(() => {
+        if (!editor) return
+        let last = -1
+        function report() {
+            const node = editor?.view.dom as HTMLElement | undefined
+            if (!node) return
+            // Sum the CHILDREN's bounding boxes rather than reading the
+            // editor's own height. `.ProseMirror { min-height: 100% }` makes
+            // the node at least as tall as the WebView, so measuring it (or
+            // documentElement.scrollHeight) just reports the viewport back —
+            // a loop in which the height can only ever grow.
+            const children = Array.from(node.children) as HTMLElement[]
+            if (children.length === 0) return
+            const top = children[0].getBoundingClientRect().top
+            const bottom = children[children.length - 1].getBoundingClientRect().bottom
+            const height = Math.ceil(bottom - top)
+            if (height <= 0 || Math.abs(height - last) < 2) return
+            last = height
+            postToNative(makeMessage('ui', UI_CONTENT_HEIGHT, { height }))
+        }
+
+        const observer = new ResizeObserver(report)
+        // Observe the editor node, not documentElement: the latter's size is
+        // the viewport, which is what the host is being told to set.
+        observer.observe(editor.view.dom)
+        // ResizeObserver fires on observe, but the first frame can measure
+        // before styles land; an editor update is the other trigger that
+        // matters and costs nothing to also listen for.
+        editor.on('update', report)
+        report()
+
+        return () => {
+            observer.disconnect()
+            editor.off('update', report)
+        }
+    }, [editor])
 }
 
 /**

@@ -39,6 +39,19 @@ export const APP_ESCAPE = 'escape'
 export const YJS_UPDATE = 'update'
 
 /**
+ * WebView → host, on the 'ui' namespace: the document's height in CSS px.
+ *
+ * A WebView has no intrinsic height, so the host has to be told. Inside a
+ * ScrollView there is nothing to flex against either, which leaves the editor
+ * clipped to whatever the host guessed — or collapsed to zero. Posted on mount
+ * and whenever the content resizes.
+ *
+ * The host matches this string literally (like `document-scroll`), since
+ * use-webview-editor is package-agnostic and does not import from `rich/`.
+ */
+export const UI_CONTENT_HEIGHT = 'content-height'
+
+/**
  * Everything the WebView needs to construct its editor.
  *
  * Sent once per mount, after the page reports ready. The page cannot build its
