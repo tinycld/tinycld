@@ -197,7 +197,7 @@ func (b *Backend) PutAddressObject(ctx context.Context, path string, card vcard.
 	}
 
 	if existing != nil {
-		applyVCardToRecord(card, existing, src.VCard)
+		ApplyVCardToRecord(card, existing, src.VCard)
 		if err := b.saveAuthorized(user, existing, ruleUpdate); err != nil {
 			return nil, err
 		}
@@ -220,7 +220,7 @@ func (b *Backend) PutAddressObject(ctx context.Context, path string, card vcard.
 	}
 	record.Set(src.UIDField, uid)
 	record.Set(src.OwnerField, ownerID)
-	applyVCardToRecord(card, record, src.VCard)
+	ApplyVCardToRecord(card, record, src.VCard)
 
 	if err := b.saveAuthorized(user, record, ruleCreate); err != nil {
 		return nil, err
@@ -335,7 +335,7 @@ func (b *Backend) authFromContext(ctx context.Context) (*core.Record, error) {
 }
 
 func (b *Backend) recordToAddressObject(src Source, record *core.Record, bookPath string, _ *carddav.AddressDataRequest) (*carddav.AddressObject, error) {
-	card := recordToVCard(record, src.VCard)
+	card := RecordToVCard(record, src.VCard)
 
 	var buf bytes.Buffer
 	if err := vcard.NewEncoder(&buf).Encode(card); err != nil {

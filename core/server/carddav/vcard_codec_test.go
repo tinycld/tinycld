@@ -55,7 +55,7 @@ func TestRecordToVCard_MapsAllFields(t *testing.T) {
 		"vcard_uid":  "urn:uuid:abc",
 	})
 
-	card := recordToVCard(rec, contactsVCardMap)
+	card := RecordToVCard(rec, contactsVCardMap)
 
 	if got := card.Value(vcard.FieldFormattedName); got != "Alice Smith" {
 		t.Errorf("FN = %q, want %q", got, "Alice Smith")
@@ -88,7 +88,7 @@ func TestRecordToVCard_OmitsEmptySimpleFields(t *testing.T) {
 		"first_name": "Bob",
 		"last_name":  "Jones",
 	})
-	card := recordToVCard(rec, contactsVCardMap)
+	card := RecordToVCard(rec, contactsVCardMap)
 
 	if got := card.Value(vcard.FieldEmail); got != "" {
 		t.Errorf("empty email should be omitted, got %q", got)
@@ -105,7 +105,7 @@ func TestApplyVCardToRecord_PrefersN(t *testing.T) {
 	card.Set(vcard.FieldOrganization, &vcard.Field{Value: "Acme"})
 
 	rec := newContactRecord(t, nil)
-	applyVCardToRecord(card, rec, contactsVCardMap)
+	ApplyVCardToRecord(card, rec, contactsVCardMap)
 
 	if got := rec.GetString("first_name"); got != "Alice" {
 		t.Errorf("first_name = %q, want Alice", got)
@@ -126,7 +126,7 @@ func TestApplyVCardToRecord_FallsBackToFN(t *testing.T) {
 	card.SetValue(vcard.FieldFormattedName, "Carol Nguyen")
 
 	rec := newContactRecord(t, nil)
-	applyVCardToRecord(card, rec, contactsVCardMap)
+	ApplyVCardToRecord(card, rec, contactsVCardMap)
 
 	if got := rec.GetString("first_name"); got != "Carol" {
 		t.Errorf("first_name = %q, want Carol", got)
@@ -144,10 +144,10 @@ func TestVCardRoundTrip(t *testing.T) {
 		"email":      "dana@example.com",
 		"company":    "Globex",
 	})
-	card := recordToVCard(orig, contactsVCardMap)
+	card := RecordToVCard(orig, contactsVCardMap)
 
 	dst := newContactRecord(t, nil)
-	applyVCardToRecord(card, dst, contactsVCardMap)
+	ApplyVCardToRecord(card, dst, contactsVCardMap)
 
 	for _, f := range []string{"first_name", "last_name", "email", "company"} {
 		if orig.GetString(f) != dst.GetString(f) {
@@ -163,7 +163,7 @@ func TestRecordToVCard_RevFormatting(t *testing.T) {
 		"updated": "2026-03-15 09:30:00.000Z", // as PB stores/reads it
 	})
 
-	card := recordToVCard(rec, contactsVCardMap)
+	card := RecordToVCard(rec, contactsVCardMap)
 	if got := card.Value(vcard.FieldRevision); got != "20260315T093000Z" {
 		t.Errorf("REV = %q, want 20260315T093000Z", got)
 	}

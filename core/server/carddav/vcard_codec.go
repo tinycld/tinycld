@@ -10,10 +10,14 @@ import (
 // pbTimeLayout is PocketBase's stored datetime format (used for updated/REV).
 const pbTimeLayout = "2006-01-02 15:04:05.000Z"
 
-// recordToVCard builds a vCard from a record using the Source's field map. FN is
+// RecordToVCard builds a vCard from a record using the Source's field map. FN is
 // composed from the name parts; REV is formatted from the configured timestamp
 // field. Simple properties are emitted only when the source field is non-empty.
-func recordToVCard(record *core.Record, m VCardMap) vcard.Card {
+//
+// Exported so a package can serve a vCard outside the CardDAV protocol — the
+// contacts export endpoint reuses it, which is what keeps one field mapping
+// (the package's own carddav.Source) behind both CardDAV and file export.
+func RecordToVCard(record *core.Record, m VCardMap) vcard.Card {
 	card := make(vcard.Card)
 	version := m.Version
 	if version == "" {
@@ -44,10 +48,14 @@ func recordToVCard(record *core.Record, m VCardMap) vcard.Card {
 	return card
 }
 
-// applyVCardToRecord writes a vCard's values onto a record using the field map.
+// ApplyVCardToRecord writes a vCard's values onto a record using the field map.
 // N is preferred for the name; FN is split as a fallback. Simple properties set
 // their mapped record field when present.
-func applyVCardToRecord(card vcard.Card, record *core.Record, m VCardMap) {
+//
+// Exported alongside RecordToVCard so file import shares the CardDAV parse
+// path. Note it only SETS mapped fields — it never clears one the card omits,
+// so applying a partial card to an existing record leaves the rest intact.
+func ApplyVCardToRecord(card vcard.Card, record *core.Record, m VCardMap) {
 	if n := card.Name(); n != nil {
 		record.Set(m.Name.Given, n.GivenName)
 		record.Set(m.Name.Family, n.FamilyName)
