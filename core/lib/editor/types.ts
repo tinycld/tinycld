@@ -1,6 +1,17 @@
 export interface EditorHandle {
     getHTML(): Promise<string>
     getText(): Promise<string>
+    // Markdown serialization of the current document. Optional because the
+    // older editors (mail's own, text's document editor) predate it.
+    //
+    // Implementations MUST repair the raw @tiptap/markdown output before
+    // returning it — see lib/editor/rich/markdown-repair.ts. Unrepaired output
+    // corrupts code spans containing a backtick and drops table-cell pipe
+    // escapes, so it must never be persisted.
+    getMarkdown?(): Promise<string>
+    // Replace the document from markdown source. A no-op under collaboration,
+    // where the shared document is the source of truth.
+    setMarkdown?(markdown: string): void
     setContent(html: string): void
     focus(position?: 'start' | 'end'): void
     clear(): void
@@ -72,6 +83,10 @@ export interface EditorToolbarState {
     // Web variant computes this in the host using the Tiptap editor; native
     // variant receives it in the stateUpdate payload.
     wordCount?: number
+    // True when the document holds nothing a user would call content. Drives
+    // send-button enabling in composers, where an empty editor still has a
+    // paragraph node and so is not falsy by any simpler test.
+    isEmpty?: boolean
 }
 
 export interface EditorCommands {
