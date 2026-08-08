@@ -6,6 +6,8 @@ import (
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/useraccount"
 )
 
 // SearchResult is one search hit: the record id plus the configured Output
@@ -56,7 +58,7 @@ func Search(app core.App, cfg Config, userID string, opts SearchOpts) ([]SearchR
 	// never run on this path. Without this check a disabled account keeps
 	// reading titles and content until its token expires — the same hole drive
 	// had to patch separately.
-	if isDisabled(app, userID) {
+	if useraccount.IsSuspended(app, userID) {
 		return nil, 0, nil
 	}
 
@@ -148,17 +150,6 @@ func excludeClause(cfg Config) string {
 		return ""
 	}
 	return " AND c." + cfg.ExcludeField + " != true"
-}
-
-// isDisabled reports whether the user record is missing or flagged disabled.
-// A missing record is treated as disabled: a token for a deleted user must not
-// keep reading. Takes core.App for the same testability reason as Search.
-func isDisabled(app core.App, userID string) bool {
-	user, err := app.FindRecordById("users", userID)
-	if err != nil || user == nil {
-		return true
-	}
-	return user.GetBool("disabled")
 }
 
 // coerce converts a raw string cell to the JSON type an output column declares,

@@ -8,9 +8,32 @@ import { parseHelpTopicId } from '../../lib/help/types'
 
 interface Props {
     body: string
+    /**
+     * Intercepts a link press. Return true to signal "handled"; anything else
+     * falls through to the default `Linking.openURL`.
+     *
+     * Exists so a consumer outside the help system can render markdown without
+     * the `help://` scheme — and, more importantly, without this module's
+     * import edge to the help store. Help passes `openHelpLink`.
+     */
+    onLinkPress?: LinkPressHandler
+    /**
+     * Swap ⌘/⇧/⌥ for Ctrl/Shift/Alt on non-Mac platforms. Right for help
+     * topics, which are authored once with Mac glyphs; wrong for user-authored
+     * prose, where a typed ⌘ must survive verbatim.
+     */
+    translateModifierKeys?: boolean
+    /** Give shortcut-shaped tables a 20/80 column split. Help-specific. */
+    shortcutTableHeuristic?: boolean
 }
 
 const HELP_SCHEME = 'help://'
+
+/**
+ * A link interceptor. Returning true means "handled, don't open the URL";
+ * returning nothing falls through to the default.
+ */
+export type LinkPressHandler = (href: string) => boolean | undefined
 
 // Source markdown is authored with ⌘ (and ⇧ for Shift) because the
 // Mac glyphs are unambiguous and look right inline. On Windows/Linux/
@@ -33,16 +56,28 @@ function translateModifierKeys(value: string): string {
     return value.replace(/⌘/g, 'Ctrl').replace(/⇧/g, 'Shift').replace(/⌥/g, 'Alt')
 }
 
-function handleLinkPress(href: string) {
-    if (href.startsWith(HELP_SCHEME)) {
-        const id = href.slice(HELP_SCHEME.length)
-        const parsed = parseHelpTopicId(id)
-        if (parsed) {
-            openHelp(id as `${string}:${string}`)
-            return
-        }
-    }
+/**
+ * The `help://` scheme handler. Exported so HelpTopicView can pass it back in
+ * as `onLinkPress` — keeping the help-specific behavior opt-in rather than
+ * baked into every consumer.
+ */
+export function openHelpLink(href: string): boolean {
+    if (!href.startsWith(HELP_SCHEME)) return false
+    const id = href.slice(HELP_SCHEME.length)
+    if (!parseHelpTopicId(id)) return false
+    openHelp(id as `${string}:${string}`)
+    return true
+}
+
+function handleLinkPress(href: string, onLinkPress?: LinkPressHandler) {
+    if (onLinkPress?.(href) === true) return
     Linking.openURL(href).catch(() => {})
+}
+
+interface RendererOptions {
+    translateKeys: boolean
+    shortcutTables: boolean
+    onLinkPress?: LinkPressHandler
 }
 
 class HelpRenderer extends Renderer {
@@ -51,10 +86,14 @@ class HelpRenderer extends Renderer {
     // below applies the swap only when this flag is set, so docs
     // authored once render natively on every platform.
     private readonly translateKeys: boolean
+    private readonly shortcutTables: boolean
+    private readonly onLinkPress?: LinkPressHandler
 
-    constructor(options: { translateKeys: boolean }) {
+    constructor(options: RendererOptions) {
         super()
         this.translateKeys = options.translateKeys
+        this.shortcutTables = options.shortcutTables
+        this.onLinkPress = options.onLinkPress
     }
 
     override link(
@@ -68,7 +107,7 @@ class HelpRenderer extends Renderer {
                 key={this.getKey()}
                 accessibilityRole="link"
                 accessibilityLabel={title || 'Link'}
-                onPress={() => handleLinkPress(href)}
+                onPress={() => handleLinkPress(href, this.onLinkPress)}
                 style={styles}
             >
                 {children}
@@ -113,7 +152,7 @@ class HelpRenderer extends Renderer {
         // shortcut, second the description) and give them a 20/80
         // split — equal columns waste space on the keystroke side
         // and crowd the description.
-        const isShortcutTable = looksLikeShortcutTable(rows)
+        const isShortcutTable = this.shortcutTables && looksLikeShortcutTable(rows)
         const cellFlexFor = (col: number): ViewStyle => ({
             flex: isShortcutTable ? (col === 0 ? 1 : 4) : 1,
             flexShrink: 1,
@@ -184,13 +223,46 @@ function extractCellText(cell: ReactNode): string {
     return ''
 }
 
-// Two renderer instances — one that translates ⌘/⇧/⌥, one that
-// leaves them alone. Cached at module load so we don't allocate per
-// render. The component picks whichever matches the current platform.
-const macRenderer = new HelpRenderer({ translateKeys: false })
-const nonMacRenderer = new HelpRenderer({ translateKeys: true })
+// Renderer instances are cached by their option tuple rather than allocated
+// per render — react-native-marked holds no per-render state, and a fresh
+// renderer each pass would churn the whole token tree. The key space is tiny
+// (two booleans plus link-handler identity), so this stays bounded in
+// practice: a consumer passes the same handler reference every render.
+const rendererCache = new Map<string, HelpRenderer>()
 
-export function MarkdownRenderer({ body }: Props) {
+function rendererFor(options: RendererOptions): HelpRenderer {
+    // A per-consumer link handler can't be stringified, so it gets an identity
+    // tag: same function object → same cache slot.
+    const key = `${options.translateKeys}|${options.shortcutTables}|${linkHandlerTag(options.onLinkPress)}`
+    const cached = rendererCache.get(key)
+    if (cached) return cached
+    const renderer = new HelpRenderer(options)
+    rendererCache.set(key, renderer)
+    return renderer
+}
+
+const linkHandlerTags = new WeakMap<object, number>()
+let nextLinkHandlerTag = 1
+
+function linkHandlerTag(handler?: LinkPressHandler): string {
+    if (!handler) return 'none'
+    let tag = linkHandlerTags.get(handler)
+    if (tag === undefined) {
+        tag = nextLinkHandlerTag++
+        linkHandlerTags.set(handler, tag)
+    }
+    return String(tag)
+}
+
+export function MarkdownRenderer({
+    body,
+    onLinkPress,
+    // Aliased on destructure: the prop shares a name with the module-level
+    // translateModifierKeys() helper, and an unaliased binding would shadow it
+    // for anyone who later reaches for the function in this scope.
+    translateModifierKeys: shouldTranslateKeys = true,
+    shortcutTableHeuristic = true,
+}: Props) {
     // Codespan text uses `primary` (the brand teal — has matching
     // light + dark tokens) rather than `accent`. `accent` in this
     // theme is a near-white background fill, so `color: accent`
@@ -279,7 +351,14 @@ export function MarkdownRenderer({ body }: Props) {
         [foreground, muted, codeColor, link, surfaceSecondary, border]
     )
 
-    const renderer = isMacLike() ? macRenderer : nonMacRenderer
+    // The glyph swap only ever applies off Mac — on a Mac the source glyphs
+    // are already correct, so the flag and the platform are ANDed here rather
+    // than in the renderer.
+    const renderer = rendererFor({
+        translateKeys: shouldTranslateKeys && !isMacLike(),
+        shortcutTables: shortcutTableHeuristic,
+        onLinkPress,
+    })
 
     return (
         <Markdown

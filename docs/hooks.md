@@ -24,8 +24,8 @@ Hook points are opt-in and cost one atomic load when unused — see the section
 below for why that matters.
 
 > The `contacts` package is the end-to-end reference: `contacts/server/` ships
-> CardDAV, FTS + `/api/contacts/search`, audit logging, and a `vcard_uid` autogen
-> hook, and exposes `$contacts.search(...)` to TS.
+> CardDAV, FTS index sync feeding the federated `/api/search`, audit logging,
+> and a `vcard_uid` autogen hook, and exposes `$contacts.search(...)` to TS.
 
 ---
 

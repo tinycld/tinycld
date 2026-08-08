@@ -20,6 +20,7 @@ var contactsVCardMap = VCardMap{
 		vcard.FieldNote:         "notes",
 	},
 	RevField: "updated",
+	UIDField: "vcard_uid",
 }
 
 // newContactRecord builds a bare `contacts`-shaped record for codec tests.
@@ -55,7 +56,7 @@ func TestRecordToVCard_MapsAllFields(t *testing.T) {
 		"vcard_uid":  "urn:uuid:abc",
 	})
 
-	card := recordToVCard(rec, contactsVCardMap)
+	card := RecordToVCard(rec, contactsVCardMap)
 
 	if got := card.Value(vcard.FieldFormattedName); got != "Alice Smith" {
 		t.Errorf("FN = %q, want %q", got, "Alice Smith")
@@ -88,7 +89,7 @@ func TestRecordToVCard_OmitsEmptySimpleFields(t *testing.T) {
 		"first_name": "Bob",
 		"last_name":  "Jones",
 	})
-	card := recordToVCard(rec, contactsVCardMap)
+	card := RecordToVCard(rec, contactsVCardMap)
 
 	if got := card.Value(vcard.FieldEmail); got != "" {
 		t.Errorf("empty email should be omitted, got %q", got)
@@ -105,7 +106,7 @@ func TestApplyVCardToRecord_PrefersN(t *testing.T) {
 	card.Set(vcard.FieldOrganization, &vcard.Field{Value: "Acme"})
 
 	rec := newContactRecord(t, nil)
-	applyVCardToRecord(card, rec, contactsVCardMap)
+	ApplyVCardToRecord(card, rec, contactsVCardMap)
 
 	if got := rec.GetString("first_name"); got != "Alice" {
 		t.Errorf("first_name = %q, want Alice", got)
@@ -126,7 +127,7 @@ func TestApplyVCardToRecord_FallsBackToFN(t *testing.T) {
 	card.SetValue(vcard.FieldFormattedName, "Carol Nguyen")
 
 	rec := newContactRecord(t, nil)
-	applyVCardToRecord(card, rec, contactsVCardMap)
+	ApplyVCardToRecord(card, rec, contactsVCardMap)
 
 	if got := rec.GetString("first_name"); got != "Carol" {
 		t.Errorf("first_name = %q, want Carol", got)
@@ -144,15 +145,51 @@ func TestVCardRoundTrip(t *testing.T) {
 		"email":      "dana@example.com",
 		"company":    "Globex",
 	})
-	card := recordToVCard(orig, contactsVCardMap)
+	card := RecordToVCard(orig, contactsVCardMap)
 
 	dst := newContactRecord(t, nil)
-	applyVCardToRecord(card, dst, contactsVCardMap)
+	ApplyVCardToRecord(card, dst, contactsVCardMap)
 
 	for _, f := range []string{"first_name", "last_name", "email", "company"} {
 		if orig.GetString(f) != dst.GetString(f) {
 			t.Errorf("round-trip %s: %q != %q", f, orig.GetString(f), dst.GetString(f))
 		}
+	}
+}
+
+// UID must reach the card body. CardDAV addresses objects by URL path, so the
+// protocol never needed it there — but a vCard *file* has no path, and without
+// UID an exported book re-imports as all-new records instead of matching.
+func TestRecordToVCard_EmitsUID(t *testing.T) {
+	rec := newContactRecord(t, map[string]any{
+		"first_name": "Alice",
+		"last_name":  "Smith",
+		"vcard_uid":  "urn:uuid:abc-123",
+	})
+
+	card := RecordToVCard(rec, contactsVCardMap)
+
+	if got := card.Value(vcard.FieldUID); got != "urn:uuid:abc-123" {
+		t.Errorf("UID = %q, want urn:uuid:abc-123", got)
+	}
+}
+
+// Back-compat: a map that declares no UIDField, or a record whose UID field is
+// empty, must emit no UID property rather than an empty one.
+func TestRecordToVCard_OmitsUIDWhenUnmappedOrEmpty(t *testing.T) {
+	noUIDMap := contactsVCardMap
+	noUIDMap.UIDField = ""
+
+	withUID := newContactRecord(t, map[string]any{
+		"first_name": "Bob", "vcard_uid": "urn:uuid:xyz",
+	})
+	if got := RecordToVCard(withUID, noUIDMap).Value(vcard.FieldUID); got != "" {
+		t.Errorf("unmapped UIDField should emit no UID, got %q", got)
+	}
+
+	emptyUID := newContactRecord(t, map[string]any{"first_name": "Bob"})
+	if got := RecordToVCard(emptyUID, contactsVCardMap).Value(vcard.FieldUID); got != "" {
+		t.Errorf("empty UID field should emit no UID, got %q", got)
 	}
 }
 
@@ -163,7 +200,7 @@ func TestRecordToVCard_RevFormatting(t *testing.T) {
 		"updated": "2026-03-15 09:30:00.000Z", // as PB stores/reads it
 	})
 
-	card := recordToVCard(rec, contactsVCardMap)
+	card := RecordToVCard(rec, contactsVCardMap)
 	if got := card.Value(vcard.FieldRevision); got != "20260315T093000Z" {
 		t.Errorf("REV = %q, want 20260315T093000Z", got)
 	}

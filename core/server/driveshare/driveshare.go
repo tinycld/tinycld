@@ -41,6 +41,8 @@ import (
 	"os"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/useraccount"
 )
 
 // Collection names of the drive-owned tables this package reads.
@@ -96,23 +98,6 @@ func (r Role) CanWrite() bool {
 // CanRead reports whether the role grants any access at all.
 func (r Role) CanRead() bool {
 	return rank(r) > 0
-}
-
-// isDisabled reports whether the users row carries `disabled = true`.
-//
-// Fails CLOSED on a lookup error: if we cannot prove the account is active we
-// treat it as suspended. That is the opposite of the usual "unknown → deny
-// access" phrasing but the same outcome — a DB blip must not silently restore
-// a suspended user's reach.
-//
-// A deployment predating the `disabled` field simply has no such column, and
-// GetBool returns false, so this is a no-op there.
-func isDisabled(app core.App, userID string) bool {
-	user, err := app.FindRecordById(usersCollection, userID)
-	if err != nil {
-		return true
-	}
-	return user.GetBool("disabled")
 }
 
 // rank orders roles so ResolveRole can pick the highest when several share
@@ -172,7 +157,7 @@ func ResolveRoleForItem(app core.App, userID string, item *core.Record) (Role, e
 	// drive_items collection rules instead of this code, so those carry a
 	// matching `@request.auth.disabled != true` clause (drive migration
 	// 1782000000). Both halves are required; neither covers the other.
-	if isDisabled(app, userID) {
+	if useraccount.IsSuspended(app, userID) {
 		return RoleNone, ErrNoAccess
 	}
 	// The `created_by ?= @request.auth.id` disjunct. Short-circuits before
@@ -262,17 +247,3 @@ func IsOwner(app core.App, userID, itemID string) bool {
 	return CheckDelete(app, userID, itemID) == nil
 }
 
-// IsSuspended reports whether the account is disabled, for the paths that
-// authorize a whole query rather than one record and so cannot go through
-// ResolveRole — drive's FTS search is the case that needs it.
-//
-// Exported so those paths share this definition (including its fail-closed
-// behaviour on a lookup error) rather than re-deriving "is the account active"
-// alongside it, which is how the guard came to cover every drive read path
-// except search.
-func IsSuspended(app core.App, userID string) bool {
-	if userID == "" {
-		return true
-	}
-	return isDisabled(app, userID)
-}

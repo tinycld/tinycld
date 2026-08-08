@@ -72,6 +72,17 @@ type VCardMap struct {
 
 	// RevField is the record field (a datetime) emitted as the REV property.
 	RevField string
+
+	// UIDField is the record field emitted as the UID property (e.g.
+	// "vcard_uid"). It duplicates Source.UIDField because the codec receives
+	// only a VCardMap, never the Source.
+	//
+	// CardDAV itself does not need UID in the card body — it addresses objects
+	// by URL path (backend.go builds `<book>/<uid>.vcf`). A vCard *file* has no
+	// path, so without this a file export carries no identity and re-importing
+	// it duplicates every record instead of matching. UID is a mandatory
+	// property in vCard 4.0 (RFC 6350), so emitting it is also more correct.
+	UIDField string
 }
 
 // NameMap binds the vCard N (and composed FN) to record name fields.

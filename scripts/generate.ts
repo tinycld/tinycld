@@ -594,7 +594,21 @@ async function main() {
         })
     )
 
-    // --- 0. package builds (e.g. text's webview-editor → editorHtml.ts) ----
+    // --- 0. core's own WebView editor bundle -------------------------------
+    // Core has no manifest (it is not a feature), so it is absent from
+    // `features` and its build cannot be discovered the way a feature's is.
+    // Declare it explicitly. The output is the shared rich editor's WebView
+    // page — the markdown editor every native consumer mounts — so it has to
+    // exist before the feature builds, which may come to depend on it.
+    runPackageBuilds(WS_ROOT, [
+        {
+            packageName: '@tinycld/core',
+            packageDir: memberDir('@tinycld/core'),
+            script: 'lib/editor/rich/build',
+        },
+    ])
+
+    // --- 0a. package builds (e.g. text's webview-editor → editorHtml.ts) ---
     // Run any manifest.build scripts first so their outputs exist for the
     // config emit + the subsequent typecheck/bundle.
     const builds: BuildPkg[] = features
