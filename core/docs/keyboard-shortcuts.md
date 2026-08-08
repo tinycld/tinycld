@@ -70,15 +70,22 @@ Sequences like `t m` are two presses in quick succession (up to 1 second between
 | `Shift + ←` / `Shift + →` | Move focused card to the adjacent column |
 | `Shift + ↑` / `Shift + ↓` | Move focused card within its column |
 | `x` | Archive focused card |
+| `n` | Add a card to the focused column |
+| `Shift + N` | Add a list |
 
-Moving and archiving need edit rights on the board; a viewer sees only the navigation keys.
+Moving, archiving and adding need edit rights on the board; a viewer sees only the navigation keys.
+
+`n` resolves its target column from the focus ring (focused column → focused card's column → first column) and expands a collapsed column first, since a collapsed column mounts no composer. Both composers open through the cards UI store, because each lives inside a memoized `BoardColumn` the shortcut hook holds no reference to.
 
 ### Cards detail
 
 | Keys | Action |
 |---|---|
 | `j` / `k` | Next / previous card, in board order |
+| `e` | Edit the card title |
 | `Escape` | Close the card |
+
+`e` is registered by the peek (`modal`) and the page (`thread`), not by the shared `CardDetail` body they both render: `useRegisterShortcut` stamps the scope instance current when its effect runs, and child effects run before parent ones, so registering inside `CardDetail` picks up the wrong instance. `CardDetail` takes a ref and the containers own the binding — the general rule being that `useShortcutScope` and the registration belong in the same component.
 
 ### Calendar schedule view
 
