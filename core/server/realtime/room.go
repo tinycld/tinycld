@@ -305,6 +305,20 @@ func (r *Room) route(from *Client, frame []byte) {
 		}
 	case MsgAwarenessUpdate:
 		r.fanOut(from, frame)
+	case MsgAwarenessHello:
+		// Announce-only: record the sender's awareness clientID so
+		// broadcastLeave can name their slot, then stop. Deliberately NOT
+		// fanned out — peers learn each other's slots from the awareness
+		// payloads themselves.
+		//
+		// A malformed varuint is ignored rather than fatal: the only cost
+		// is falling back to the legacy zero-length leave frame for this
+		// connection. Do NOT give this switch a `default:` that closes the
+		// connection — a newer client talking to an older broker relies on
+		// unknown frames being dropped silently.
+		if id, ok := readVarUint(frame[frameOverhead:]); ok {
+			from.setYjsClientID(id)
+		}
 	case MsgSyncRequest:
 		// If a server-side mirror is configured, the server is the
 		// source of truth: build a SyncReply directly from the
@@ -402,16 +416,87 @@ func (r *Room) deliverByID(target [clientIDLen]byte, frame []byte) {
 // and fans it out to remaining members. Called by the transport once the
 // client's read/write loop has finished.
 //
-// Convention: a leave is signaled as an awareness frame from `c` with a
-// zero-byte payload. The y-protocols/awareness encoding for "remove this
-// client" is what clients should send on graceful close, but we send our
-// own zero-length frame as a fallback so that ungraceful disconnects (TCP
-// reset, killed tab) also surface to peers.
+// When the client announced its awareness clientID via MsgAwarenessHello,
+// the frame carries a REAL y-protocols awareness removal payload naming
+// that slot, so peers drop the avatar immediately. This is the whole point
+// of the hello: an ungraceful disconnect (TCP reset, killed tab) never gets
+// to send its own removal, and without a named slot a peer cannot tell
+// which avatar the leave refers to.
+//
+// When it did not (an older client build), we fall back to the legacy
+// zero-length payload. That frame is not actionable by the receiver — it
+// leaves the ghost to y-protocols' own 30s reaper — but emitting it keeps
+// the wire contract unchanged.
 func (r *Room) broadcastLeave(c *Client) {
-	frame := make([]byte, frameOverhead)
+	var payload []byte
+	if yjsID, ok := c.YjsClientID(); ok {
+		payload = encodeAwarenessRemoval(yjsID, awarenessRemovalClock)
+	}
+	frame := make([]byte, frameOverhead+len(payload))
 	copy(frame[:clientIDLen], c.id[:])
 	frame[clientIDLen] = byte(MsgAwarenessUpdate)
+	copy(frame[frameOverhead:], payload)
 	r.fanOut(c, frame)
+}
+
+// awarenessRemovalClock is the clock the broker stamps on a synthesized
+// removal. y-protocols accepts an incoming awareness entry when its clock
+// is GREATER than the one the receiver holds for that slot, or when the
+// clocks are equal and the state is null. The broker does not track
+// per-slot clocks — it never parses the awareness payloads it fans out —
+// so it stamps a value no live session will reach: an awareness clock
+// increments once per local state write, and y-protocols' own renewal
+// ticks at most once every 15s, so 2^31 is unreachable in any real
+// session lifetime.
+//
+// The alternative — having the hello carry the client's current clock —
+// is more precise but makes the hello stateful (it would have to be
+// re-sent on every local state change to stay accurate), which is a worse
+// trade for a frame whose only job is to name a slot.
+const awarenessRemovalClock = 1 << 31
+
+// encodeAwarenessRemoval builds a y-protocols awareness update marking one
+// client's slot as gone. Mirrors encodeAwarenessUpdate in
+// y-protocols/awareness.js for the single-client, null-state case:
+//
+//	varUint(1)          // one entry follows
+//	varUint(clientID)
+//	varUint(clock)
+//	varString("null")   // varUint(len) || utf8 bytes
+//
+// The literal "null" is what JSON.stringify(null) produces, and the
+// receiving applyAwarenessUpdate takes its state===null branch on exactly
+// that, calling states.delete(clientID). Pinned to real y-protocols output
+// by TestEncodeAwarenessRemovalGolden.
+func encodeAwarenessRemoval(clientID, clock uint64) []byte {
+	const nullJSON = "null"
+	out := make([]byte, 0, 16)
+	out = appendVarUint(out, 1)
+	out = appendVarUint(out, clientID)
+	out = appendVarUint(out, clock)
+	out = appendVarUint(out, uint64(len(nullJSON)))
+	return append(out, nullJSON...)
+}
+
+// readVarUint decodes a lib0 varuint from the front of b. Returns false on
+// a truncated or over-long encoding rather than panicking — the input is
+// attacker-controlled.
+func readVarUint(b []byte) (uint64, bool) {
+	var v uint64
+	var shift uint
+	for i, by := range b {
+		// A uint64 varuint is at most 10 bytes; anything longer is
+		// malformed and would overflow the shift.
+		if i >= 10 {
+			return 0, false
+		}
+		v |= uint64(by&0x7F) << shift
+		if by&0x80 == 0 {
+			return v, true
+		}
+		shift += 7
+	}
+	return 0, false
 }
 
 // deliver pushes a frame to a client's send buffer. If the buffer is

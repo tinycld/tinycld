@@ -361,7 +361,10 @@ func TestRoomCleanup(t *testing.T) {
 	t.Fatalf("room never cleaned up; count=%d", broker.roomCount())
 }
 
-// TestLeaveBroadcast: when A disconnects, B receives a leave frame.
+// TestLeaveBroadcast: a client that never announced an awareness
+// clientID still produces the legacy zero-length leave frame, so an
+// older client build talking to a current broker behaves as it always
+// did.
 func TestLeaveBroadcast(t *testing.T) {
 	broker := NewBroker()
 	opts := startTestServer(t, broker, allowAllAuth)
@@ -379,6 +382,155 @@ func TestLeaveBroadcast(t *testing.T) {
 	}
 	if len(p) != 0 {
 		t.Fatalf("expected empty leave payload, got %d bytes", len(p))
+	}
+}
+
+// TestLeaveBroadcastNamesAwarenessSlot: an UNGRACEFUL disconnect — the
+// transport dies with no chance for the client to send its own removal —
+// still produces a frame naming the departing awareness slot.
+//
+// This is the case the hello frame exists for. A killed tab or TCP reset
+// runs no client-side teardown, so the broker is the only party that can
+// tell peers the client is gone; and without the announced clientID the
+// frame cannot say WHICH avatar to drop.
+func TestLeaveBroadcastNamesAwarenessSlot(t *testing.T) {
+	broker := NewBroker()
+	opts := startTestServer(t, broker, allowAllAuth)
+
+	a := dialClient(t, opts, "leaveroom", "alice")
+	b := dialClient(t, opts, "leaveroom", "bob")
+	time.Sleep(50 * time.Millisecond)
+
+	const aliceYjs uint64 = 3101126589
+	writeFrame(t, a, MsgAwarenessHello, appendVarUint(nil, aliceYjs))
+	time.Sleep(50 * time.Millisecond)
+
+	// CloseNow skips the closing handshake — as close as this harness
+	// gets to a killed tab.
+	_ = a.conn.CloseNow()
+
+	mt, p := readFrame(t, b, 2*time.Second)
+	if mt != MsgAwarenessUpdate {
+		t.Fatalf("B expected AWARENESS_UPDATE leave frame, got 0x%02x", mt)
+	}
+	if len(p) == 0 {
+		t.Fatal("leave payload was empty; peers cannot tell which slot to drop")
+	}
+
+	// Decode the y-protocols shape: count, clientID, clock, varString.
+	rest := p
+	count, ok := readVarUint(rest)
+	if !ok || count != 1 {
+		t.Fatalf("expected exactly 1 awareness entry, got count=%d ok=%v", count, ok)
+	}
+	rest = rest[varUintSize(count):]
+	gotID, ok := readVarUint(rest)
+	if !ok || gotID != aliceYjs {
+		t.Fatalf("leave frame named clientID %d, want %d (ok=%v)", gotID, aliceYjs, ok)
+	}
+	rest = rest[varUintSize(gotID):]
+	clock, ok := readVarUint(rest)
+	if !ok || clock != awarenessRemovalClock {
+		t.Fatalf("leave frame clock=%d, want %d (ok=%v)", clock, uint64(awarenessRemovalClock), ok)
+	}
+	rest = rest[varUintSize(clock):]
+	// The remainder must be varString("null") — the literal that makes
+	// applyAwarenessUpdate delete the slot.
+	strLen, ok := readVarUint(rest)
+	if !ok || strLen != 4 {
+		t.Fatalf("expected varString of len 4, got %d (ok=%v)", strLen, ok)
+	}
+	if got := string(rest[varUintSize(strLen):]); got != "null" {
+		t.Fatalf("expected state %q, got %q", "null", got)
+	}
+}
+
+// TestAwarenessHelloIsNotFannedOut: the announce frame is broker
+// bookkeeping, not presence. If it were fanned out, peers would try to
+// parse it as a y-protocols awareness payload.
+func TestAwarenessHelloIsNotFannedOut(t *testing.T) {
+	broker := NewBroker()
+	opts := startTestServer(t, broker, allowAllAuth)
+
+	a := dialClient(t, opts, "helloroom", "alice")
+	b := dialClient(t, opts, "helloroom", "bob")
+	time.Sleep(50 * time.Millisecond)
+
+	writeFrame(t, a, MsgAwarenessHello, appendVarUint(nil, 42))
+	// A real awareness frame behind it: whatever B reads first must be
+	// this one, proving the hello was consumed rather than relayed.
+	writeFrame(t, a, MsgAwarenessUpdate, []byte{0xAA, 0xBB})
+
+	mt, p := readFrame(t, b, 2*time.Second)
+	if mt != MsgAwarenessUpdate {
+		t.Fatalf("B expected AWARENESS_UPDATE, got 0x%02x", mt)
+	}
+	if len(p) != 2 || p[0] != 0xAA || p[1] != 0xBB {
+		t.Fatalf("B received the wrong frame: %v", p)
+	}
+}
+
+// TestAwarenessHelloMalformedIsIgnored: a truncated varuint must neither
+// panic nor drop the connection — it just falls back to the legacy
+// zero-length leave frame.
+func TestAwarenessHelloMalformedIsIgnored(t *testing.T) {
+	broker := NewBroker()
+	opts := startTestServer(t, broker, allowAllAuth)
+
+	a := dialClient(t, opts, "badhelloroom", "alice")
+	b := dialClient(t, opts, "badhelloroom", "bob")
+	time.Sleep(50 * time.Millisecond)
+
+	// 0xFF sets the continuation bit with no following byte.
+	writeFrame(t, a, MsgAwarenessHello, []byte{0xFF})
+	time.Sleep(50 * time.Millisecond)
+
+	// The connection still works.
+	writeFrame(t, a, MsgAwarenessUpdate, []byte{0x01})
+	mt, p := readFrame(t, b, 2*time.Second)
+	if mt != MsgAwarenessUpdate || len(p) != 1 {
+		t.Fatalf("connection broken after malformed hello: mt=0x%02x p=%v", mt, p)
+	}
+
+	_ = a.conn.CloseNow()
+	mt, p = readFrame(t, b, 2*time.Second)
+	if mt != MsgAwarenessUpdate {
+		t.Fatalf("expected leave frame, got 0x%02x", mt)
+	}
+	if len(p) != 0 {
+		t.Fatalf("malformed hello should leave no recorded id, got %d payload bytes", len(p))
+	}
+}
+
+// TestEncodeAwarenessRemovalGolden pins the encoder against bytes
+// captured from y-protocols' own encodeAwarenessUpdate for a removed
+// slot (clientID 3101126589, clock 2), so a lib0 varuint change or a
+// field-order slip surfaces here rather than as a silent no-op ghost.
+func TestEncodeAwarenessRemovalGolden(t *testing.T) {
+	got := encodeAwarenessRemoval(3101126589, 2)
+	want := []byte{1, 189, 223, 221, 198, 11, 2, 4, 'n', 'u', 'l', 'l'}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("encodeAwarenessRemoval mismatch:\n got %v\nwant %v", got, want)
+	}
+}
+
+// TestReadVarUint covers the decode side, including the malformed inputs
+// the wire can carry.
+func TestReadVarUint(t *testing.T) {
+	for _, n := range []uint64{0, 1, 127, 128, 300, 3101126589, awarenessRemovalClock} {
+		got, ok := readVarUint(appendVarUint(nil, n))
+		if !ok || got != n {
+			t.Fatalf("round-trip %d: got %d ok=%v", n, got, ok)
+		}
+	}
+	if _, ok := readVarUint(nil); ok {
+		t.Fatal("empty input should not decode")
+	}
+	if _, ok := readVarUint([]byte{0xFF}); ok {
+		t.Fatal("truncated varuint should not decode")
+	}
+	if _, ok := readVarUint(bytes.Repeat([]byte{0xFF}, 12)); ok {
+		t.Fatal("over-long varuint should not decode")
 	}
 }
 

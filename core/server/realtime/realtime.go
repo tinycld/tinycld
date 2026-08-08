@@ -66,6 +66,21 @@ const (
 	// the room kind defines; clients route it via onServerSlot, never
 	// applying it to doc/awareness. See Room.PublishServerSlot.
 	MsgServerSlot MessageType = 0x07
+	// MsgAwarenessHello is sent by a client once per connection, right
+	// after MsgAssignID, to announce its numeric y-protocols awareness
+	// clientID. The payload is that id as a lib0 varuint. Consumed by
+	// the broker as bookkeeping — never fanned out.
+	//
+	// It exists so broadcastLeave can name the departing awareness slot.
+	// The broker's routing id is an opaque 16 bytes and shares no id
+	// space with y-protocols awareness, so without this a peer receiving
+	// a leave frame cannot tell WHICH avatar to drop, and an ungraceful
+	// disconnect (killed tab, TCP reset) leaves a ghost until
+	// y-protocols' own 30s reaper clears it.
+	//
+	// Optional: a client that never sends it still gets the legacy
+	// zero-length leave frame, so older builds keep working unchanged.
+	MsgAwarenessHello MessageType = 0x08
 )
 
 // clientIDLen is the fixed 16-byte UUID prefix on every wire frame.
@@ -194,6 +209,33 @@ type Client struct {
 	// to the WebSocket. Buffer size is bounded so a slow client does
 	// not pin memory; if the buffer overflows, the client is dropped.
 	send chan []byte
+
+	// yjsMu guards the awareness-clientID fields below. They are written
+	// once from the read loop (on MsgAwarenessHello) and read from
+	// broadcastLeave, which the transport runs from its own defer — a
+	// different goroutine in the ungraceful-close path, so the mutex is
+	// load-bearing under -race rather than decorative.
+	yjsMu sync.Mutex
+	// yjsClientID is this connection's y-protocols awareness clientID,
+	// announced via MsgAwarenessHello. yjsKnown distinguishes "not yet
+	// announced" from a legitimately-zero id.
+	yjsClientID uint64
+	yjsKnown    bool
+}
+
+// setYjsClientID records the awareness clientID this connection announced.
+func (c *Client) setYjsClientID(id uint64) {
+	c.yjsMu.Lock()
+	defer c.yjsMu.Unlock()
+	c.yjsClientID, c.yjsKnown = id, true
+}
+
+// YjsClientID returns the announced awareness clientID and whether one was
+// ever announced. Used by broadcastLeave to name the departing slot.
+func (c *Client) YjsClientID() (uint64, bool) {
+	c.yjsMu.Lock()
+	defer c.yjsMu.Unlock()
+	return c.yjsClientID, c.yjsKnown
 }
 
 // id of the client. Mostly used in tests; the byte prefix on each wire
