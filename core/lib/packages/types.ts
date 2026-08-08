@@ -230,12 +230,15 @@ export interface PackageManifest {
 
     /**
      * How this package participates in the global `/` search palette.
-     * `endpoint` is its search route; `adapter` is a package-exports subpath
-     * to a module exporting `toRow` and `useSearchActions`. Omit to stay out
+     * `adapter` is a package-exports subpath to a module exporting
+     * `useSearchActions`, the client-side selection handler. Omit to stay out
      * of the palette.
+     *
+     * There is deliberately no endpoint: rows come from core's federated
+     * /api/search, which reads the package's Go-registered search source. A
+     * per-package route would have no reader.
      */
     search?: {
-        endpoint: string
         adapter: string
         /** Chip and group label. Defaults to `nav.label`. */
         label?: string

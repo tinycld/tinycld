@@ -121,7 +121,7 @@ export interface PackageManifest {
         scopes?: string[]
     }
     help?: { directory: string }
-    search?: { endpoint: string; adapter: string; label?: string }
+    search?: { adapter: string; label?: string }
     repository?: { url: string; issueTemplate?: string }
     dependencies?: string[]
     // Semver ranges this version requires of other packages / @tinycld/core,

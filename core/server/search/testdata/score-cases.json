@@ -1,0 +1,83 @@
+{
+  "//": "Shared ranking fixture. Asserted by BOTH core/server/search/score_test.go and core/tests/unit/search-score.test.ts while the Go and TypeScript scorers coexist: two independent implementations of one ranking diverge silently otherwise, and the palette and the CLI would order the same query differently. Delete alongside the TS copy once ordering is server-side only.",
+  "cases": [
+    {
+      "why": "an exact title match outranks everything",
+      "include": ["budget"],
+      "row": { "title": "budget" },
+      "tier": "exactTitle"
+    },
+    {
+      "why": "a title prefix beats a mid-title word prefix",
+      "include": ["budget"],
+      "row": { "title": "budget review" },
+      "tier": "titlePrefix"
+    },
+    {
+      "why": "every term prefixing some word still ranks above a bare substring",
+      "include": ["budget"],
+      "row": { "title": "Q3 budgeting notes" },
+      "tier": "allTermsInTitle"
+    },
+    {
+      "why": "terms in the title but out of query order cannot be a prefix, so they land in the all-terms tier",
+      "include": ["budget", "q3"],
+      "row": { "title": "Q3 budget plan" },
+      "tier": "allTermsInTitle"
+    },
+    {
+      "why": "terms matching the title's leading words in order are a prefix, which outranks all-terms",
+      "include": ["q3", "budget"],
+      "row": { "title": "Q3 budget plan" },
+      "tier": "titlePrefix"
+    },
+    {
+      "why": "a title-only substring, no term prefixing a word boundary",
+      "include": ["udge"],
+      "row": { "title": "the budget" },
+      "tier": "titleSubstring"
+    },
+    {
+      "why": "a subtitle match when the title does not match at all",
+      "include": ["grace"],
+      "row": { "title": "Q3 approval", "subtitle": "Grace Hopper" },
+      "tier": "secondaryMatch"
+    },
+    {
+      "why": "meta counts as secondary text too",
+      "include": ["roadmap"],
+      "row": { "title": "Q3 approval", "meta": "Roadmap board" },
+      "tier": "secondaryMatch"
+    },
+    {
+      "why": "the backend matched invisible content (a mail body, file text)",
+      "include": ["budget"],
+      "row": { "title": "Q3 approval" },
+      "tier": "noVisibleMatch"
+    },
+    {
+      "why": "punctuation folds to a space, so these normalize identically",
+      "include": ["budget-2026"],
+      "row": { "title": "Budget 2026" },
+      "tier": "exactTitle"
+    },
+    {
+      "why": "case folds",
+      "include": ["BUDGET"],
+      "row": { "title": "budget" },
+      "tier": "exactTitle"
+    },
+    {
+      "why": "no usable terms scores the floor rather than erroring",
+      "include": ["!!!"],
+      "row": { "title": "budget" },
+      "tier": "noVisibleMatch"
+    },
+    {
+      "why": "one term missing from the title drops out of the all-terms tier",
+      "include": ["q3", "budget"],
+      "row": { "title": "Q3 plan" },
+      "tier": "noVisibleMatch"
+    }
+  ]
+}

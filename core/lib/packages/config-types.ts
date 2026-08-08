@@ -78,7 +78,6 @@ export interface PackageEntry<S extends SchemaDeclaration, R> {
     systemSettings?: PackageSystemSettingsPanel[]
     sidebarContributions?: SidebarContribution[]
     search?: {
-        endpoint: string
         label?: string
         load: () => Promise<unknown>
     }

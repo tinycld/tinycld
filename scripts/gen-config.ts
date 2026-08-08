@@ -18,7 +18,6 @@ export interface ConfigSidebarContribution {
 }
 
 export interface ConfigSearch {
-    endpoint: string
     adapter: string // package-exports subpath e.g. 'search-adapter'
     label?: string
 }
@@ -145,10 +144,9 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
         }
         if (p.search) {
             lines.push('        search: {')
-            lines.push(`            endpoint: ${jsonLiteral(p.search.endpoint)},`)
             if (p.search.label) lines.push(`            label: ${jsonLiteral(p.search.label)},`)
-            // A bare thunk, NOT lazy(): the adapter module exports two
-            // non-component values, which React.lazy cannot wrap.
+            // A bare thunk, NOT lazy(): the adapter exports a hook, not a
+            // component, and React.lazy cannot wrap it.
             lines.push(`            load: () => import('${p.packageName}/${p.search.adapter}'),`)
             lines.push('        },')
         }

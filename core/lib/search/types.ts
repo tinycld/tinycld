@@ -18,15 +18,6 @@ export interface SearchRow {
  */
 export interface SearchAdapterModule {
     /**
-     * Pure: one raw hit from this package's endpoint → one row, or null to
-     * skip the hit (e.g. its parent record has not synced yet).
-     *
-     * Takes `unknown` because the palette holds a heterogeneous map of
-     * adapters and cannot thread per-package types through it. Each adapter
-     * casts to its own response type on its first line.
-     */
-    toRow: (hit: unknown) => Omit<SearchRow, 'slug'> | null
-    /**
      * Returns this package's selection handler.
      *
      * MUST be side-effect free: the palette calls every in-scope package's
@@ -62,5 +53,4 @@ export interface SearchPackage {
     label: string
     icon: string
     order: number
-    endpoint: string
 }

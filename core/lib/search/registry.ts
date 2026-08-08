@@ -3,7 +3,7 @@ import type { SearchAdapterModule, SearchPackage } from './types'
 
 type SearchEntryLike = {
     manifest: { slug: string; nav?: { label?: string; icon?: string; order?: number } }
-    search?: { endpoint: string; label?: string; load: () => Promise<unknown> }
+    search?: { label?: string; load: () => Promise<unknown> }
 }
 
 /** Packages that declare `search`, ordered by nav.order. */
@@ -16,7 +16,6 @@ export function deriveSearchPackages(entries: readonly SearchEntryLike[]): Searc
             label: e.search.label ?? e.manifest.nav?.label ?? e.manifest.slug,
             icon: e.manifest.nav?.icon ?? 'search',
             order: e.manifest.nav?.order ?? 0,
-            endpoint: e.search.endpoint,
         })
     }
     return out.sort((a, b) => a.order - b.order)

@@ -185,6 +185,12 @@ jobs:
       - name: Scaffold shortcut-stub package
         working-directory: ws
         run: pnpm exec tsx tinycld/tests/scripts/scaffold-shortcut-stub.ts
+      # Same reasoning for the search palette: it needs two packages that
+      # contribute search sources, and app-shell CI installs no feature package.
+      # Must also precede the bundle build so the stubs' routes are exported.
+      - name: Scaffold search stub packages
+        working-directory: ws
+        run: pnpm exec tsx tinycld/tests/scripts/scaffold-search-stubs.ts
       # Shared e2e prep: installs the Playwright browser and pre-builds the
       # static web bundle (expo export + sourcemaps). The E2E step's
       # TINYCLD_E2E_SKIP_EXPORT=1 makes the webServer reuse this dist/ instead
