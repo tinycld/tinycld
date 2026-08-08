@@ -303,7 +303,13 @@ function useLeaveOnBlur(
     )
 
     useEffect(() => {
-        if (typeof window === 'undefined') return
+        // Feature-detect the METHOD, not the object. React Native defines a
+        // global `window` with no DOM event API, so a `typeof window` check
+        // passes there and then throws "addEventListener is not a function",
+        // taking the whole screen down. There is no pagehide on native
+        // anyway — the app is backgrounded, not unloaded, and blur already
+        // covers navigating away.
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
         window.addEventListener('pagehide', leave)
         return () => window.removeEventListener('pagehide', leave)
     }, [leave])
