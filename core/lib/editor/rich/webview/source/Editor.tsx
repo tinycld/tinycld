@@ -175,6 +175,16 @@ interface CollabBinding {
 const FROM_HOST: unique symbol = Symbol('yjs:from-host')
 
 /**
+ * Slack left below the last block when reporting the document's height.
+ *
+ * Covers the sub-pixel difference between what the page measures and what the
+ * native layout rounds to, which is enough on its own to shave the descender
+ * off a final line. It also gives the reader somewhere to tap to place the
+ * caret at the end.
+ */
+const TRAILING_SPACE_PX = 24
+
+/**
  * Build the page's Y.Doc once, seeded from the host's state.
  *
  * Constructed lazily in `useState` rather than an effect because Tiptap's
@@ -479,25 +489,38 @@ function useContentHeight(editor: TiptapEditor | null) {
         function report() {
             const node = editor?.view.dom as HTMLElement | undefined
             if (!node) return
-            // Sum the CHILDREN's bounding boxes rather than reading the
-            // editor's own height. `.ProseMirror { min-height: 100% }` makes
-            // the node at least as tall as the WebView, so measuring it (or
-            // documentElement.scrollHeight) just reports the viewport back —
-            // a loop in which the height can only ever grow.
             const children = Array.from(node.children) as HTMLElement[]
             if (children.length === 0) return
-            const top = children[0].getBoundingClientRect().top
-            const bottom = children[children.length - 1].getBoundingClientRect().bottom
-            const height = Math.ceil(bottom - top)
+            // Measure from the TOP OF THE PAGE to the last block's bottom,
+            // not first-child-top to last-child-bottom. The earlier version
+            // dropped whatever sits above the first block and, worse, both
+            // outer margins — which clipped the final line of a long
+            // description, since a collapsed bottom margin falls outside
+            // every child's bounding box.
+            //
+            // Deliberately NOT `node.getBoundingClientRect()` or
+            // `documentElement.scrollHeight`: `.ProseMirror` carries
+            // `min-height: 100%`, so both report the viewport back — the very
+            // value being set — and the loop can only grow.
+            const last_ = children[children.length - 1]
+            const bottom = last_.getBoundingClientRect().bottom + window.scrollY
+            const marginBottom = Number.parseFloat(getComputedStyle(last_).marginBottom) || 0
+            // Trailing breathing room. A description that ends flush against
+            // the container edge reads as cut off even when it isn't, and it
+            // leaves nowhere comfortable to tap to put the caret at the end.
+            const height = Math.ceil(bottom + marginBottom + TRAILING_SPACE_PX)
             if (height <= 0 || Math.abs(height - last) < 2) return
             last = height
             postToNative(makeMessage('ui', UI_CONTENT_HEIGHT, { height }))
         }
 
         const observer = new ResizeObserver(report)
-        // Observe the editor node, not documentElement: the latter's size is
-        // the viewport, which is what the host is being told to set.
-        observer.observe(editor.view.dom)
+        // Observe the BODY, not documentElement: the latter's size is the
+        // viewport, which is what the host is being told to set, so observing
+        // it would fire on our own resize. The body wraps the editor and grows
+        // with it — including a reflow inside a block, which resizing the
+        // editor node alone does not report.
+        observer.observe(document.body)
         // ResizeObserver fires on observe, but the first frame can measure
         // before styles land; an editor update is the other trigger that
         // matters and costs nothing to also listen for.
