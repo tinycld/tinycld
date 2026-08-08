@@ -12,7 +12,8 @@ const pbTimeLayout = "2006-01-02 15:04:05.000Z"
 
 // RecordToVCard builds a vCard from a record using the Source's field map. FN is
 // composed from the name parts; REV is formatted from the configured timestamp
-// field. Simple properties are emitted only when the source field is non-empty.
+// field; UID is emitted when VCardMap.UIDField is mapped. Simple properties are
+// emitted only when the source field is non-empty.
 //
 // Exported so a package can serve a vCard outside the CardDAV protocol — the
 // contacts export endpoint reuses it, which is what keeps one field mapping
@@ -29,6 +30,16 @@ func RecordToVCard(record *core.Record, m VCardMap) vcard.Card {
 	family := record.GetString(m.Name.Family)
 	card.SetValue(vcard.FieldFormattedName, strings.TrimSpace(given+" "+family))
 	card.Set(vcard.FieldName, &vcard.Field{Value: family + ";" + given + ";;;"})
+
+	// UID identifies the card across systems. CardDAV does not rely on this —
+	// it addresses objects by URL path — but a vCard file has no path, so file
+	// export/import matches on this property alone. Emitted only when mapped
+	// and non-empty, so a Source predating VCardMap.UIDField is unaffected.
+	if m.UIDField != "" {
+		if uid := record.GetString(m.UIDField); uid != "" {
+			card.SetValue(vcard.FieldUID, uid)
+		}
+	}
 
 	for prop, field := range m.Simple {
 		if v := record.GetString(field); v != "" {

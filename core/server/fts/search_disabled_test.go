@@ -7,14 +7,16 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-// search_disabled_test.go covers the two seams Search's security checks pass
-// through: the disabled/missing-user gate (isDisabled) and the nil-Scope
-// fail-closed guard. It does not attempt an end-to-end proof against a real
-// FTS-backed collection with rows and a membership table — that harness
-// (tests.NewTestApp() plus a seeded collection, à la drive's
-// search_disabled_test.go) belongs to the cards package task that actually
-// owns such a collection. Here we only have the "users" collection PocketBase
-// ships in every test app, which is exactly what isDisabled reads.
+// search_disabled_test.go covers the seams Search's security checks pass
+// through: that a suspended account gets no rows, and the nil-Scope fail-closed
+// guard. The suspension predicate itself is core/useraccount's, and is tested
+// there — this file proves Search actually consults it.
+//
+// It does not attempt an end-to-end proof against a real FTS-backed collection
+// with rows and a membership table — that harness (tests.NewTestApp() plus a
+// seeded collection, à la drive's search_disabled_test.go) belongs to the cards
+// package task that actually owns such a collection. Here we only have the
+// "users" collection PocketBase ships in every test app.
 
 // setupUsersApp returns a test app with the standard "users" collection
 // extended with a `disabled` bool field, plus one enabled user record.
@@ -45,15 +47,14 @@ func setupUsersApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	return app, user
 }
 
-func TestIsDisabled_EnabledUserReturnsFalse(t *testing.T) {
-	app, user := setupUsersApp(t)
-
-	if isDisabled(app, user.Id) {
-		t.Error("isDisabled(enabled user) = true, want false")
-	}
-}
-
-func TestIsDisabled_DisabledUserReturnsTrue(t *testing.T) {
+// Search must consult the suspension guard. Without it a disabled account keeps
+// reading titles and content until its token expires — raw SQL behind
+// requireAuth never runs PocketBase's collection rules.
+//
+// The Table here does not exist: if the guard fires first, as it must, the
+// query is never reached. That is what makes zero rows meaningful rather than
+// merely empty.
+func TestSearch_SuspendedUserGetsNoRows(t *testing.T) {
 	app, user := setupUsersApp(t)
 
 	fresh, err := app.FindRecordById("users", user.Id)
@@ -65,24 +66,19 @@ func TestIsDisabled_DisabledUserReturnsTrue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !isDisabled(app, user.Id) {
-		t.Error("isDisabled(disabled user) = false, want true")
+	cfg := Config{
+		Slug:       "test",
+		Collection: "users",
+		Table:      "fts_users_missing",
+		Scope:      OwnerScope{Field: "id"},
 	}
-}
 
-func TestIsDisabled_NonexistentUserFailsClosed(t *testing.T) {
-	app, _ := setupUsersApp(t)
-
-	if !isDisabled(app, "does-not-exist") {
-		t.Error("isDisabled(nonexistent user) = false, want true — a token for a deleted user must not keep reading")
+	results, total, err := Search(app, cfg, user.Id, SearchOpts{Query: "anything", Limit: 25})
+	if err != nil {
+		t.Fatalf("Search for a suspended user returned an error instead of no rows: %v", err)
 	}
-}
-
-func TestIsDisabled_EmptyUserIDFailsClosed(t *testing.T) {
-	app, _ := setupUsersApp(t)
-
-	if !isDisabled(app, "") {
-		t.Error("isDisabled(\"\") = false, want true")
+	if results != nil || total != 0 {
+		t.Fatalf("Search for a suspended user = (%v, %d), want (nil, 0)", results, total)
 	}
 }
 

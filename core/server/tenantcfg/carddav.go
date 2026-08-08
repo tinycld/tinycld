@@ -79,6 +79,12 @@ func Decode(sources []Source) []carddav.Source {
 				Name:     carddav.NameMap{Given: s.VCard.Name.Given, Family: s.VCard.Name.Family},
 				Simple:   s.VCard.Simple,
 				RevField: s.VCard.RevField,
+				// Derived from the Source's own UIDField rather than carried as
+				// a second wire field: both always name the same column, and a
+				// separate JSON key would only create a way for them to
+				// disagree. Keeping it out of the wire shape also means older
+				// routers' .runtime JSON still decodes to a UID-emitting map.
+				UIDField: s.UIDField,
 			},
 		})
 	}

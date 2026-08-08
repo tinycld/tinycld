@@ -118,7 +118,8 @@ var endpointScopes = map[string]scopeRule{
 	"GET /api/drive/share-links":        {ScopeDriveRead},
 	"POST /api/drive/versions/restore":  {ScopeDriveWrite},
 	"POST /api/drive/versions/snapshot": {ScopeDriveWrite},
-	"GET /api/contacts/search":          {ScopeContactsRead},
+	"GET /api/contacts/export":          {ScopeContactsRead},
+	"POST /api/contacts/import":         {ScopeContactsWrite},
 	"GET /api/cards/search":             {ScopeCardsRead},
 
 	// The federated search narrows itself: it drops the sources a caller's

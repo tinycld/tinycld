@@ -20,6 +20,7 @@ var contactsVCardMap = VCardMap{
 		vcard.FieldNote:         "notes",
 	},
 	RevField: "updated",
+	UIDField: "vcard_uid",
 }
 
 // newContactRecord builds a bare `contacts`-shaped record for codec tests.
@@ -153,6 +154,42 @@ func TestVCardRoundTrip(t *testing.T) {
 		if orig.GetString(f) != dst.GetString(f) {
 			t.Errorf("round-trip %s: %q != %q", f, orig.GetString(f), dst.GetString(f))
 		}
+	}
+}
+
+// UID must reach the card body. CardDAV addresses objects by URL path, so the
+// protocol never needed it there — but a vCard *file* has no path, and without
+// UID an exported book re-imports as all-new records instead of matching.
+func TestRecordToVCard_EmitsUID(t *testing.T) {
+	rec := newContactRecord(t, map[string]any{
+		"first_name": "Alice",
+		"last_name":  "Smith",
+		"vcard_uid":  "urn:uuid:abc-123",
+	})
+
+	card := RecordToVCard(rec, contactsVCardMap)
+
+	if got := card.Value(vcard.FieldUID); got != "urn:uuid:abc-123" {
+		t.Errorf("UID = %q, want urn:uuid:abc-123", got)
+	}
+}
+
+// Back-compat: a map that declares no UIDField, or a record whose UID field is
+// empty, must emit no UID property rather than an empty one.
+func TestRecordToVCard_OmitsUIDWhenUnmappedOrEmpty(t *testing.T) {
+	noUIDMap := contactsVCardMap
+	noUIDMap.UIDField = ""
+
+	withUID := newContactRecord(t, map[string]any{
+		"first_name": "Bob", "vcard_uid": "urn:uuid:xyz",
+	})
+	if got := RecordToVCard(withUID, noUIDMap).Value(vcard.FieldUID); got != "" {
+		t.Errorf("unmapped UIDField should emit no UID, got %q", got)
+	}
+
+	emptyUID := newContactRecord(t, map[string]any{"first_name": "Bob"})
+	if got := RecordToVCard(emptyUID, contactsVCardMap).Value(vcard.FieldUID); got != "" {
+		t.Errorf("empty UID field should emit no UID, got %q", got)
 	}
 }
 

@@ -463,11 +463,34 @@ func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
 		{"GET", "/api/drive/share-links", ScopeDriveRead},
 		{"POST", "/api/drive/versions/restore", ScopeDriveWrite},
 		{"POST", "/api/drive/versions/snapshot", ScopeDriveWrite},
+		// vCard file transfer. These are raw Go routes, so PocketBase's
+		// collection rules never run on them — this table is the only thing
+		// separating a read grant from a write one.
+		{"GET", "/api/contacts/export", ScopeContactsRead},
+		{"POST", "/api/contacts/import", ScopeContactsWrite},
 	}
 	for _, r := range reachable {
 		if got := ScopeForRoute(r.method, r.path); !onlyScope(got, r.scope) {
 			t.Errorf("ScopeForRoute(%s %s) = %v, want %q", r.method, r.path, got, r.scope)
 		}
+	}
+
+	// Export must not be reachable with a write-only grant, nor import with a
+	// read-only one. Asserting the mapping alone would pass even if both rows
+	// named the same scope.
+	if ScopeForRoute("GET", "/api/contacts/export").satisfiedBy([]string{ScopeContactsWrite}) {
+		t.Error("contacts export must NOT be satisfied by contacts:write alone")
+	}
+	if ScopeForRoute("POST", "/api/contacts/import").satisfiedBy([]string{ScopeContactsRead}) {
+		t.Error("contacts import must NOT be satisfied by contacts:read alone")
+	}
+
+	// GET /api/contacts/search is not mounted — contacts registers fts index
+	// sync only (fts.RegisterSync, not fts.Register) because both the palette
+	// and the CLI read the federated /api/search. A scope row for a route that
+	// does not exist reads as though the endpoint were live.
+	if got := ScopeForRoute("GET", "/api/contacts/search"); len(got) != 0 {
+		t.Errorf("unmounted contacts search route must not carry a scope, got %v", got)
 	}
 
 	// Aliases are administered in the app; the CLI only reads them.
