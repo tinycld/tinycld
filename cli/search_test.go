@@ -41,6 +41,10 @@ func searchDeps(t *testing.T, s *searchServer) *deps {
 	t.Helper()
 	d, store := testDeps(t)
 	d.httpClient = s.srv.Client()
+	// Fixed rather than the generated list: that one reflects whichever
+	// packages the checkout assembled (empty in CI), which would make these
+	// assertions pass or fail on the machine rather than on the code.
+	d.slugs = []string{"mail", "drive", "cards", "contacts"}
 
 	host := strings.TrimPrefix(s.srv.URL, "http://")
 	cfg := &config.Config{
@@ -290,6 +294,27 @@ func TestSearchRejectsNotFlagWithoutTerms(t *testing.T) {
 // --limit bounds the MERGED result set, and a package with more matches than
 // were returned must be named: without it a bounded list reads as the complete
 // answer, which is the failure --limit makes most likely.
+// A binary built without an assembled workspace has no generated slug list.
+// It must still search: validating --pkg against an empty list would reject
+// every package the server can actually reach, and the server validates scope
+// authoritatively anyway.
+func TestSearchWithNoGeneratedSlugsStillSearches(t *testing.T) {
+	s := newSearchServer(t)
+	d := searchDeps(t, s)
+	d.slugs = []string{}
+
+	if _, _, err := runCLI(t, d, "search", "budget", "--pkg", "mail"); err != nil {
+		t.Fatalf("should not reject --pkg with no slug list: %v", err)
+	}
+	if got := s.lastQuery["pkg"]; len(got) != 1 || got[0] != "mail" {
+		t.Errorf("pkg = %v, want [mail]", got)
+	}
+	// With no list, `mail:` cannot be recognized as a chip and stays a term.
+	if got := s.lastQuery.Get("q"); got != "budget" {
+		t.Errorf("q = %q, want %q", got, "budget")
+	}
+}
+
 func TestSearchLimitIsSentAndTruncationReported(t *testing.T) {
 	s := newSearchServer(t)
 	s.response = searchResponse{

@@ -61,10 +61,12 @@ func newSearchCmd(d *deps) *cobra.Command {
 				return err
 			}
 
+			slugs := d.searchSlugs()
+
 			// The same grammar the palette uses, so a query copied from the app
 			// behaves identically here (see parse_query.go).
-			parsed := parseQuery(args[0], searchSlugs)
-			parsed.Exclude = append(parsed.Exclude, parseQuery(not, searchSlugs).Include...)
+			parsed := parseQuery(args[0], slugs)
+			parsed.Exclude = append(parsed.Exclude, parseQuery(not, slugs).Include...)
 
 			// An exclude-only query has no meaning: FTS5 cannot subtract from
 			// nothing, and the server would return an empty set with no
@@ -73,11 +75,17 @@ func newSearchCmd(d *deps) *cobra.Command {
 				return fmt.Errorf("a search needs at least one term to match")
 			}
 
+			// An unbuilt binary (no generated slug list) knows of no packages.
+			// Validating --pkg against an empty list would reject every package
+			// the server can actually search, so leave the check to the server,
+			// which is authoritative either way.
 			scope := mergeScope(parsed.Chips, pkgs)
-			if unknown := unknownSlugs(scope, searchSlugs); len(unknown) > 0 {
-				return fmt.Errorf(
-					"unknown package(s): %s (installed and searchable: %s)",
-					strings.Join(unknown, ", "), strings.Join(searchSlugs, ", "))
+			if len(slugs) > 0 {
+				if unknown := unknownSlugs(scope, slugs); len(unknown) > 0 {
+					return fmt.Errorf(
+						"unknown package(s): %s (installed and searchable: %s)",
+						strings.Join(unknown, ", "), strings.Join(slugs, ", "))
+				}
 			}
 
 			q := url.Values{"q": {strings.Join(parsed.Include, " ")}}
