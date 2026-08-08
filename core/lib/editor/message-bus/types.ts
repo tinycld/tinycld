@@ -13,12 +13,47 @@
 //                     channel (used by the text package's FindReplaceBar
 //                     on native).
 //   'format'        - TenTap's per-bridge format commands (ToggleBold, etc.)
+//   'markdown'      - set/get for editors whose document format IS markdown
+//                     (card descriptions). The WebView owns the serializer,
+//                     so nothing pivots through HTML.
 //   'ui'            - the in-WebView editor asks the host to mediate UI
 //                     (e.g. show a bottom sheet anchored to the selected
 //                     image; an anchored popover for the slash menu).
+//   'yjs'           - binary Yjs updates relayed between the host's Y.Doc and
+//                     the WebView's. Reserved now, unused today: see below.
 //
 // Adding a new namespace requires updating this file's union. Adding
 // a new message type within an existing namespace is non-breaking.
+//
+// 'markdown' namespace message types:
+//
+//   set   (host -> WebView, no response)
+//     payload: { markdown: string }
+//     Replaces the document. A no-op under collaboration, where the shared
+//     document is the source of truth.
+//
+//   get   (host -> WebView, request)
+//     payload: null. Carries a requestId.
+//
+//   result  (WebView -> host, response)
+//     payload: { markdown: string }, requestId echoed.
+//     The WebView applies repairMarkdown() before posting — unrepaired
+//     @tiptap/markdown output corrupts code spans containing a backtick and
+//     drops table-cell pipe escapes, and this value gets persisted.
+//
+// 'yjs' namespace (reserved — native collaborative editing):
+//
+//   Yjs updates are binary (Uint8Array) and this channel is a JSON string
+//   pipe, so updates ride base64-encoded in the payload. Reserving the
+//   namespace now means turning collaboration on later is additive: the host
+//   gains an onYjsMessage ref beside onUiMessage/onCommentMessage, and the
+//   WebView enables Collaboration in its extension set. No message already in
+//   use changes shape.
+//
+//   The host keeps the single existing room socket and relays updates across
+//   this channel. The WebView must NOT open its own connection — the text
+//   package does that today and the second connection makes the local user
+//   appear twice in presence (TODO(text-native v1.1)).
 //
 // 'ui' namespace message types:
 //
@@ -90,8 +125,10 @@ export type EditorMessageNamespace =
     | 'core'
     | 'find-replace'
     | 'format'
+    | 'markdown'
     | 'suggestion'
     | 'ui'
+    | 'yjs'
 
 export interface EditorMessage<TPayload = unknown> {
     namespace: EditorMessageNamespace

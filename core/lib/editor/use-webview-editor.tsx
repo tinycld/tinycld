@@ -110,6 +110,18 @@ export interface UseWebViewEditorOptions {
     //
     // The callback identity is read through a ref.
     onSuggestionMessage?: (kind: string, payload: unknown) => void
+
+    // Subscribe to messages the WebView posts on namespaces this hook has no
+    // dedicated channel for — today 'markdown' (the shared rich editor's
+    // set/get responses) and 'app' (submit-shortcut, escape). Reserved 'yjs'
+    // updates will arrive here too when native collaboration lands, which is
+    // why this is a namespace-agnostic fallback rather than another named
+    // callback: adding a namespace shouldn't mean adding a prop.
+    //
+    // Runs after the named channels above, so it never shadows them.
+    //
+    // The callback identity is read through a ref.
+    onMessage?: (message: EditorMessage) => void
 }
 
 // Shared TenTap-customSource wrapper. Encapsulates:
@@ -135,6 +147,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         onCommentMessage,
         onFindReplaceMessage,
         onSuggestionMessage,
+        onMessage,
     } = options
 
     // Pin onUiMessage behind a ref so the consumer can pass an
@@ -172,6 +185,11 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // shape from Phase 2c Task 12.
     const onSuggestionMessageRef = useRef(onSuggestionMessage)
     onSuggestionMessageRef.current = onSuggestionMessage
+
+    // Namespace-agnostic fallback for channels without a dedicated ref above.
+    // The shared rich editor routes 'markdown' and 'app' through here.
+    const onMessageRef = useRef(onMessage)
+    onMessageRef.current = onMessage
 
     const liveBridge = useEditorBridge({
         initialContent,
@@ -319,7 +337,12 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                 onSuggestionMessageRef.current?.(kind, (parsed as { payload?: unknown }).payload)
                 return
             }
-            // other namespaces ignored
+            // Anything left that carries a namespace goes to the generic
+            // subscriber — the shared rich editor's 'markdown' and 'app'
+            // channels, and 'yjs' once native collaboration lands.
+            if (typeof parsed.namespace === 'string') {
+                onMessageRef.current?.(parsed)
+            }
         },
         []
     )
