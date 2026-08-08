@@ -54,6 +54,16 @@ export interface UseWebViewEditorOptions {
     // text document edit). Defaults to true.
     scrollEnabled?: boolean
 
+    // Floor for the WebView's height, in px.
+    //
+    // Load-bearing whenever the editor sits inside a ScrollView: a
+    // `flex-1` child of an unbounded parent resolves to zero, and a
+    // zero-height WebView renders nothing at all while reporting no
+    // error — the document is there, simply invisible. The default is
+    // roughly three lines, enough to read a short description and to
+    // make an empty editor look like somewhere to type.
+    minHeight?: number
+
     // Subscribe to messages with the 'ui' namespace from the WebView.
     // Called for every parsable message whose namespace === 'ui'; the
     // payload shape depends on the message type and is the consumer's
@@ -142,6 +152,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         avoidIosKeyboard = true,
         initialContent,
         scrollEnabled = true,
+        minHeight = 72,
         onUiMessage,
         onScroll,
         onCommentMessage,
@@ -357,7 +368,13 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             function WebViewEditorContent() {
                 const { RichText } = require('@10play/tentap-editor')
                 return (
-                    <View className="flex-1">
+                    // `flex-1` alone collapses to nothing inside a ScrollView:
+                    // there is no bounded height to fill, so the WebView gets
+                    // zero and the editor renders invisibly — no error, no
+                    // empty state, just a gap where the document should be.
+                    // `minHeight` gives it a floor for that case while still
+                    // letting it fill a bounded parent (mail's compose sheet).
+                    <View className="flex-1" style={{ minHeight }}>
                         <RichText
                             editor={bridge}
                             scrollEnabled={scrollEnabled}
@@ -367,7 +384,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                     </View>
                 )
             },
-        [bridge, scrollEnabled, onWebViewMessage]
+        [bridge, scrollEnabled, onWebViewMessage, minHeight]
     )
 
     // Surface the WebView ref through the EditorResult so host code can
