@@ -28,6 +28,10 @@ type deps struct {
 	// sleep is nil in production (real time.Sleep); tests inject a no-op so
 	// device-flow polling doesn't stall the suite.
 	sleep func(time.Duration)
+	// slugs overrides the generated searchable-package list. Nil in
+	// production, where searchSlugs() falls back to the generated var; tests
+	// set it so they do not depend on which packages this checkout assembled.
+	slugs []string
 
 	// resolved in the root PersistentPreRunE
 	out     output.Options
@@ -58,6 +62,17 @@ func (d *deps) store() keychain.Store {
 
 func (d *deps) loadConfig() (*config.Config, error) {
 	return config.Load(d.configDir)
+}
+
+// searchSlugs returns the packages this build can search. The generated list
+// (cli/search_slugs.go) reflects the assembly the binary was built from and is
+// empty in a bare checkout, so tests override it rather than depending on
+// which packages happen to be present.
+func (d *deps) searchSlugs() []string {
+	if d.slugs != nil {
+		return d.slugs
+	}
+	return searchSlugs
 }
 
 func newRootCmd(d *deps) *cobra.Command {
@@ -103,6 +118,7 @@ func newRootCmd(d *deps) *cobra.Command {
 		newVersionCmd(d),
 		newContextCmd(d),
 		newAuthCmd(d),
+		newSearchCmd(d),
 	)
 	return root
 }

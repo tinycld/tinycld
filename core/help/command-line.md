@@ -55,6 +55,9 @@ sign that terminal out remotely.
   against a second host adds another and switches to it.
 - `tinycld auth logout` revokes this device's access and forgets its
   credentials.
+- `tinycld search "budget -draft"` searches every installed package at once,
+  using the same grammar as the in-app palette — see
+  [Searching across packages](help://core:search).
 
 Every command accepts `--json` for scripting, and prompts are skipped with
 `--yes` so commands run cleanly in CI.

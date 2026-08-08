@@ -1,0 +1,167 @@
+{
+    "comment": "Golden cases for the palette query grammar, shared by the TypeScript parser (core/lib/search/parse-query.ts) and the Go port (cli/parse_query.go). Both read THIS file, so a change to the grammar that lands in only one of them fails the other's test. The web parser also returns a `remainder` used to render the chip input box; that field is web-only and asserted in the TS suite alone.",
+    "slugs": ["mail", "drive", "cards", "contacts"],
+    "cases": [
+        {
+            "name": "a matching word followed by a colon becomes a chip",
+            "input": "mail: budget",
+            "chips": ["mail"],
+            "include": ["budget"],
+            "exclude": []
+        },
+        {
+            "name": "a non-matching word with a colon stays literal text",
+            "input": "budget: q3",
+            "chips": [],
+            "include": ["budget", "q3"],
+            "exclude": []
+        },
+        {
+            "name": "a package name without a colon stays searchable text",
+            "input": "mail server",
+            "chips": [],
+            "include": ["mail", "server"],
+            "exclude": []
+        },
+        {
+            "name": "multiple leading chips are all recognized",
+            "input": "mail: drive: budget",
+            "chips": ["mail", "drive"],
+            "include": ["budget"],
+            "exclude": []
+        },
+        {
+            "name": "a duplicate chip is ignored but still consumed",
+            "input": "mail: mail: budget",
+            "chips": ["mail"],
+            "include": ["budget"],
+            "exclude": []
+        },
+        {
+            "name": "a slug matches case-insensitively",
+            "input": "Mail: budget",
+            "chips": ["mail"],
+            "include": ["budget"],
+            "exclude": []
+        },
+        {
+            "name": "free text preceding a chip-shaped token keeps that token literal",
+            "input": "budget mail: q3",
+            "chips": [],
+            "include": ["budget", "mail", "q3"],
+            "exclude": []
+        },
+        {
+            "name": "a second pkg: token is not promoted once free text broke the leading run",
+            "input": "cards: budget drive: q3",
+            "chips": ["cards"],
+            "include": ["budget", "drive", "q3"],
+            "exclude": []
+        },
+        {
+            "name": "a boundary hyphen becomes an exclusion",
+            "input": "budget -draft",
+            "chips": [],
+            "include": ["budget"],
+            "exclude": ["draft"]
+        },
+        {
+            "name": "a mid-token hyphen stays literal",
+            "input": "budget-2026.xlsx",
+            "chips": [],
+            "include": ["budget-2026.xlsx"],
+            "exclude": []
+        },
+        {
+            "name": "a leading hyphen at the start of input excludes",
+            "input": "-draft",
+            "chips": [],
+            "include": [],
+            "exclude": ["draft"]
+        },
+        {
+            "name": "a bare hyphen with no attached term is dropped",
+            "input": "budget - draft",
+            "chips": [],
+            "include": ["budget", "draft"],
+            "exclude": []
+        },
+        {
+            "name": "all leading hyphens are stripped from an exclusion",
+            "input": "--draft",
+            "chips": [],
+            "include": [],
+            "exclude": ["draft"]
+        },
+        {
+            "name": "ampersand operators are stripped",
+            "input": "a && b",
+            "chips": [],
+            "include": ["a", "b"],
+            "exclude": []
+        },
+        {
+            "name": "pipe operators are stripped",
+            "input": "a || b",
+            "chips": [],
+            "include": ["a", "b"],
+            "exclude": []
+        },
+        {
+            "name": "the bare word AND is dropped",
+            "input": "a AND b",
+            "chips": [],
+            "include": ["a", "b"],
+            "exclude": []
+        },
+        {
+            "name": "the bare word OR is dropped",
+            "input": "a OR b",
+            "chips": [],
+            "include": ["a", "b"],
+            "exclude": []
+        },
+        {
+            "name": "the bare word NOT is dropped",
+            "input": "a NOT b",
+            "chips": [],
+            "include": ["a", "b"],
+            "exclude": []
+        },
+        {
+            "name": "a leading bang is stripped",
+            "input": "!urgent",
+            "chips": [],
+            "include": ["urgent"],
+            "exclude": []
+        },
+        {
+            "name": "quotes are stripped and the phrase splits into words",
+            "input": "\"quoted phrase\"",
+            "chips": [],
+            "include": ["quoted", "phrase"],
+            "exclude": []
+        },
+        {
+            "name": "parentheses are stripped",
+            "input": "(grouped)",
+            "chips": [],
+            "include": ["grouped"],
+            "exclude": []
+        },
+        {
+            "name": "an operator word embedded in a hyphenated literal survives",
+            "input": "plan-NOT-final.docx",
+            "chips": [],
+            "include": ["plan-NOT-final.docx"],
+            "exclude": []
+        },
+        {
+            "name": "blank input yields nothing",
+            "input": "   ",
+            "chips": [],
+            "include": [],
+            "exclude": []
+        }
+    ]
+}

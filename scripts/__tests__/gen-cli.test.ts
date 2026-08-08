@@ -3,6 +3,7 @@ import {
     buildCliExtensionsSource,
     buildCliGoWork,
     buildMemberCliGoWork,
+    buildSearchSlugsSource,
     type CliPkg,
 } from '../gen-cli'
 
@@ -67,6 +68,25 @@ describe('buildCliGoWork', () => {
         expect(work).toContain('use (')
         expect(work).toContain('    .')
         expect(work).not.toContain('replace')
+    })
+})
+
+describe('buildSearchSlugsSource', () => {
+    it('emits the slugs of packages declaring search, sorted', () => {
+        const go = buildSearchSlugsSource(['mail', 'cards', 'drive'])
+        expect(go).toContain('var searchSlugs = []string{"cards", "drive", "mail"}')
+    })
+
+    // The search set is NOT the cli set: cards and contacts contribute a search
+    // source but ship no CLI commands, so deriving one list from the other
+    // would make `cards:` parse as a literal word in the terminal.
+    it('emits an empty slice when no package declares search', () => {
+        const go = buildSearchSlugsSource([])
+        expect(go).toContain('var searchSlugs = []string{}')
+    })
+
+    it('rejects a slug that would break out of the generated Go literal', () => {
+        expect(() => buildSearchSlugsSource(['mail"; evil()//'])).toThrow(/unsafe value/)
     })
 })
 

@@ -54,3 +54,38 @@ what search-as-you-type needs.
 - `↵` — open the selected result
 - `⌫` — remove the last scope chip (only when the box is otherwise empty)
 - `esc` — close the palette without opening anything
+
+## From the command line
+
+The [command line tool](help://core:command-line) searches the same packages
+with the same grammar, so a query that works in the palette works in a
+terminal unchanged:
+
+```
+tinycld search "drive: mail: budget -draft"
+```
+
+Quote the query so your shell keeps it as one argument. Scope chips also have
+a flag form, which you can mix with chips:
+
+```
+tinycld search budget --pkg drive --pkg mail
+```
+
+Exclusions have a flag form too — `--not draft` is the same as writing
+`-draft` inside the query. A query that *starts* with a hyphen has to come
+after `--`, otherwise the terminal reads it as an option:
+
+```
+tinycld search -- "-draft budget"
+```
+
+Results print as a table of package, title, subtitle, and detail. After them,
+a summary line reports how many matches each package holds. Two notes worth
+reading: if a package couldn't be reached, it's named as a warning — its rows
+are missing, not absent — and if a package holds more matches than were
+shown, it's named too, so a short list is never mistaken for the whole answer.
+
+Add `--json` for scripting. It prints the raw response, which carries extra
+per-package values the table has no column for, and keeps the summary out of
+the output so tools like `jq` read it cleanly.
