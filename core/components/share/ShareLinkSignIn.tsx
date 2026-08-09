@@ -62,7 +62,13 @@ export function ShareLinkSignIn({
     const submitCode = async () => {
         setSubmitting(true)
         setError(null)
-        const { user, error: err } = await verifyShareOtp(slug, token, email.trim(), code.trim(), otpId)
+        const { user, error: err } = await verifyShareOtp(
+            slug,
+            token,
+            email.trim(),
+            code.trim(),
+            otpId
+        )
         setSubmitting(false)
         if (err || !user) {
             setError(err ?? 'failed to verify code')
