@@ -243,9 +243,15 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // wrapping the WebView. Putting it in state here would change
     // EditorComponent's identity and remount the WebView on every
     // measurement — see the memo below.
-    const heightStore = useRef<HeightStore>(null as unknown as HeightStore)
-    if (heightStore.current === null) heightStore.current = createHeightStore()
-    const setContentHeight = heightStore.current.set
+    // Created once and never reassigned, so both the store and its setter are
+    // stable for the life of the hook. Read into locals rather than through
+    // `.current` at each use site: the memos below genuinely depend on them, and
+    // a `ref.current` in a dep array is neither honest nor something the linter
+    // can reason about.
+    const heightStoreRef = useRef<HeightStore>(null as unknown as HeightStore)
+    if (heightStoreRef.current === null) heightStoreRef.current = createHeightStore()
+    const heightStore = heightStoreRef.current
+    const setContentHeight = heightStore.set
 
     // Post the package's init payload once the WebView signals ready.
     // Idempotent guard prevents double-init on hot-reload edge cases.
@@ -371,12 +377,14 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             }
             // Anything left that carries a namespace goes to the generic
             // subscriber — the shared rich editor's 'markdown' and 'app'
-            // channels, and 'yjs' once native collaboration lands.
+            // channels, plus 'yjs' and 'awareness' for native collaboration.
             if (typeof parsed.namespace === 'string') {
                 onMessageRef.current?.(parsed)
             }
         },
-        []
+        // Everything else is read through a ref; setContentHeight comes from a
+        // store created once per mount, so this list never changes in practice.
+        [setContentHeight]
     )
 
     // RichText is loaded lazily inside the EditorComponent because this
@@ -401,7 +409,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                     // it owns a bounded viewport and should keep filling it
                     // rather than growing with its content.
                     <EditorHeightBox
-                        heightStore={heightStore.current}
+                        heightStore={heightStore}
                         minHeight={minHeight}
                         grows={!scrollEnabled}
                     >
@@ -420,7 +428,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         // viewport to minHeight — so feeding the measured height in here
         // makes the editor thrash between 72px and its real height and never
         // settle. The height is subscribed to inside EditorHeightBox instead.
-        [bridge, scrollEnabled, onWebViewMessage, minHeight, heightStore.current]
+        [bridge, scrollEnabled, onWebViewMessage, minHeight, heightStore]
     )
 
     // Surface the WebView ref through the EditorResult so host code can
