@@ -175,6 +175,7 @@
                 "**/core/lib/sentry.ts",
                 "**/core/lib/debug-trace.ts",
                 "**/core/lib/editor/webview-bundler/build.ts",
+                "**/core/lib/editor/rich/use-rich-editor.web.tsx",
                 "**/core/components/workspace/LazySidebarBoundary.tsx",
                 "**/core/components/AppErrorBoundary.tsx",
                 "**/lib/use-server-address-gate.ts",
