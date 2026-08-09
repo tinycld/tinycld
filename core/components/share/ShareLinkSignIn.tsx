@@ -3,10 +3,17 @@ import { useState } from 'react'
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native'
 
 export interface ShareLinkSignInProps {
+    /** The package whose share-link API to call — forms `/api/<slug>/share-link/…`. */
+    slug: string
     /** The opaque share token from the package's public route (e.g. /p/<slug>/share/<token>). */
     token: string
     /** The share role — affects copy ("comment" vs "edit"). */
     role: 'commentor' | 'editor'
+    /**
+     * What the visitor is joining, for the copy: "document", "board".
+     * Defaults to "document" so drive's existing call sites read unchanged.
+     */
+    subject?: string
     /** Called after a successful verify (the auth store is already updated). */
     onSuccess: () => void
 }
@@ -20,7 +27,13 @@ export interface ShareLinkSignInProps {
 // uniform "invalid or expired code" used by the verify endpoint (which
 // deliberately doesn't distinguish wrong-code from expired/unknown so
 // brute-forcing can't enumerate).
-export function ShareLinkSignIn({ token, role, onSuccess }: ShareLinkSignInProps) {
+export function ShareLinkSignIn({
+    slug,
+    token,
+    role,
+    subject = 'document',
+    onSuccess,
+}: ShareLinkSignInProps) {
     const requestShareOtp = useAuthStore(s => s.requestShareOtp)
     const verifyShareOtp = useAuthStore(s => s.verifyShareOtp)
 
@@ -36,7 +49,7 @@ export function ShareLinkSignIn({ token, role, onSuccess }: ShareLinkSignInProps
     const submitEmail = async () => {
         setSubmitting(true)
         setError(null)
-        const { otpId: id, error: err } = await requestShareOtp(token, email.trim())
+        const { otpId: id, error: err } = await requestShareOtp(slug, token, email.trim())
         setSubmitting(false)
         if (err || !id) {
             setError(err ?? 'failed to send code')
@@ -49,7 +62,7 @@ export function ShareLinkSignIn({ token, role, onSuccess }: ShareLinkSignInProps
     const submitCode = async () => {
         setSubmitting(true)
         setError(null)
-        const { user, error: err } = await verifyShareOtp(token, email.trim(), code.trim(), otpId)
+        const { user, error: err } = await verifyShareOtp(slug, token, email.trim(), code.trim(), otpId)
         setSubmitting(false)
         if (err || !user) {
             setError(err ?? 'failed to verify code')
@@ -62,7 +75,7 @@ export function ShareLinkSignIn({ token, role, onSuccess }: ShareLinkSignInProps
         return (
             <View className="gap-3 p-6 max-w-md w-full self-center">
                 <Text className="text-foreground" style={{ fontSize: 18, fontWeight: '600' }}>
-                    {`Sign in to ${verb} this document`}
+                    {`Sign in to ${verb} this ${subject}`}
                 </Text>
                 <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
                     {`We'll email you a one-time code. No password required.`}

@@ -50,6 +50,17 @@ async function teardownPushOnLogout(
     resetExpoPushRegistration()
 }
 
+/**
+ * A package's public share-link endpoint.
+ *
+ * Every package that ships share links follows the same shape, so the slug is
+ * the only variable. Kept in one place so the two callers below cannot drift
+ * from each other or from the routes a package registers.
+ */
+function shareLinkEndpoint(slug: string, token: string, action: string): string {
+    return `${PB_SERVER_ADDR}/api/${slug}/share-link/${encodeURIComponent(token)}/${action}`
+}
+
 type RequestOtpResult = {
     otpId: string | null
     error: string | null
@@ -68,8 +79,14 @@ interface AuthStoreState {
     login: (identifier: string, password: string) => Promise<LoginResult>
     logout: () => void
     refreshUser: () => Promise<void>
-    requestShareOtp: (token: string, email: string) => Promise<RequestOtpResult>
+    // `slug` names the package whose public share-link API to call, forming
+    // `/api/<slug>/share-link/<token>/…`. Required rather than defaulting to
+    // 'drive': a silent default is how drive's own viewer-only hardcode
+    // survived unnoticed, and a wrong endpoint here fails as a 404 at the one
+    // moment a visitor is trying to join.
+    requestShareOtp: (slug: string, token: string, email: string) => Promise<RequestOtpResult>
     verifyShareOtp: (
+        slug: string,
         token: string,
         email: string,
         code: string,
@@ -196,9 +213,9 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         set({ user: currentUser })
     },
 
-    requestShareOtp: async (token, email) => {
+    requestShareOtp: async (slug, token, email) => {
         try {
-            const res = await fetch(`${PB_SERVER_ADDR}/api/drive/share-link/${token}/otp-request`, {
+            const res = await fetch(shareLinkEndpoint(slug, token, 'otp-request'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email }),
@@ -220,9 +237,9 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         }
     },
 
-    verifyShareOtp: async (token, email, code, otpId) => {
+    verifyShareOtp: async (slug, token, email, code, otpId) => {
         try {
-            const res = await fetch(`${PB_SERVER_ADDR}/api/drive/share-link/${token}/otp-verify`, {
+            const res = await fetch(shareLinkEndpoint(slug, token, 'otp-verify'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, code, otp_id: otpId }),
