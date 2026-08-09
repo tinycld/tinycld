@@ -15,7 +15,13 @@ export function useOrgLiveQuery<TContext extends Context>(
     queryFn: (q: InitialQueryBuilder, org: OrgScope) => QueryBuilder<TContext> | undefined | null,
     deps: unknown[] = []
 ) {
-    const { user } = useAuth()
+    // Non-throwing, and consistent with the line below: this hook already
+    // treats "no user" as a first-class state by disabling the query, so
+    // throwing on the way there contradicted its own contract. It only ever
+    // surfaced once a package rendered a query-bearing surface OUTSIDE the auth
+    // gate — a /p/* public route — where being anonymous is the normal case and
+    // the throw turned the screen into an error boundary.
+    const { user } = useAuth({ throwIfAnon: false })
     const scope = useMemo(() => ({ userId: user?.id ?? '' }), [user?.id])
 
     return useLiveQuery(
