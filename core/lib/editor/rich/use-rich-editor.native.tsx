@@ -50,6 +50,8 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         characterLimit,
         onSubmitShortcut,
         onEscape,
+        onFocus,
+        onBlur,
         theme,
         collab,
     } = options
@@ -65,6 +67,10 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     submitRef.current = onSubmitShortcut
     const escapeRef = useRef(onEscape)
     escapeRef.current = onEscape
+    const focusRef = useRef(onFocus)
+    focusRef.current = onFocus
+    const blurRef = useRef(onBlur)
+    blurRef.current = onBlur
 
     // Constructed before the WebView exists, so it holds a poster indirection
     // rather than the poster itself — `postMessage` only becomes available
@@ -218,6 +224,12 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         // an inner scroll surface would fight it.
         scrollEnabled: false,
         onMessage,
+        // Split the host's single edge callback into the same pair of handlers
+        // the web variant exposes, so the shared .d.ts contract holds.
+        onFocusChange: (isFocused: boolean) => {
+            if (isFocused) focusRef.current?.()
+            else blurRef.current?.()
+        },
     })
 
     posterRef.current = result.postMessage ?? null

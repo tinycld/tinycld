@@ -40,6 +40,7 @@ export function deriveWebViewState(editor: Editor): RichEditorStatePayload {
         wordCount: characterCountStorage?.words?.() ?? countWords(text),
         canUndo: editor.can().undo(),
         canRedo: editor.can().redo(),
+        isFocused: editor.isFocused,
         isReady: true,
     }
 }

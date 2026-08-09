@@ -235,6 +235,12 @@ export interface RichEditorStatePayload {
     wordCount: number
     canUndo: boolean
     canRedo: boolean
+    /**
+     * Whether the editing surface itself holds focus. The host turns changes in
+     * this into the onFocus/onBlur callbacks, so focus-gated chrome behaves the
+     * same on native as on web.
+     */
+    isFocused: boolean
     /** TenTap's readiness flag. Consumers gate on it via EditorResult.isReady. */
     isReady: boolean
 }

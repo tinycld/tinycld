@@ -392,12 +392,20 @@ function useStateBroadcast(editor: TiptapEditor | null) {
 
         editor.on('transaction', schedule)
         editor.on('update', schedule)
+        // Focus and blur do not reliably produce a transaction, so without
+        // these two the payload's isFocused would only reach the host on the
+        // NEXT keystroke — focus-gated chrome would appear a beat late and
+        // never hide on blur at all.
+        editor.on('focus', schedule)
+        editor.on('blur', schedule)
         // Prime the host with a first snapshot so isReady flips without
         // requiring the user to touch the editor.
         schedule()
         return () => {
             editor.off('transaction', schedule)
             editor.off('update', schedule)
+            editor.off('focus', schedule)
+            editor.off('blur', schedule)
         }
     }, [editor])
 }

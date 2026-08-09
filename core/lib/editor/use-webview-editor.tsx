@@ -91,6 +91,14 @@ export interface UseWebViewEditorOptions {
     // The callback identity is read through a ref.
     onScroll?: () => void
 
+    // Called when the WebView's editing surface gains or loses focus,
+    // on the edge only. Fed by the `isFocused` field of the stateUpdate
+    // payload, so a page that doesn't broadcast it simply never fires
+    // this. Drives focus-gated host chrome (e.g. a formatting toolbar).
+    //
+    // The callback identity is read through a ref.
+    onFocusChange?: (isFocused: boolean) => void
+
     // Subscribe to messages with the 'comment' namespace from the
     // WebView. The text package's comment bridge uses this to route
     // tap / removed / selection-response / focus-response messages
@@ -157,6 +165,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         minHeight = 72,
         onUiMessage,
         onScroll,
+        onFocusChange,
         onCommentMessage,
         onFindReplaceMessage,
         onSuggestionMessage,
@@ -221,6 +230,22 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     const bridge = bridgeRef.current
 
     const bridgeState = useBridgeState(bridge)
+
+    // Fire onFocusChange on the EDGE, not on every state update: the
+    // WebView rebroadcasts its whole payload on each transaction, so
+    // calling on every render would invoke the consumer once per
+    // keystroke. Undefined (a page that doesn't broadcast the field)
+    // never produces an edge, so non-rich WebView editors are unaffected.
+    const isWebViewFocused = (bridgeState as unknown as Record<string, unknown>).isFocused
+    const focusChangeRef = useRef(onFocusChange)
+    focusChangeRef.current = onFocusChange
+    const lastFocusRef = useRef<boolean | undefined>(undefined)
+    useEffect(() => {
+        if (typeof isWebViewFocused !== 'boolean') return
+        if (lastFocusRef.current === isWebViewFocused) return
+        lastFocusRef.current = isWebViewFocused
+        focusChangeRef.current?.(isWebViewFocused)
+    }, [isWebViewFocused])
 
     // Plumb editable changes through to the WebView. setEditable is
     // safe to call before EditorReady; TenTap queues it.
