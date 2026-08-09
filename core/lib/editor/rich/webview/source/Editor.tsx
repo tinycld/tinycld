@@ -1,7 +1,7 @@
 import type { Editor as TiptapEditor } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { useEffect, useState } from 'react'
-import { Awareness } from 'y-protocols/awareness'
+import { Awareness, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import type { EditorMessage } from '../../../message-bus/types'
 import { makeMessage } from '../../../message-bus/types'
@@ -10,6 +10,11 @@ import { repairMarkdown } from '../../markdown-repair'
 import {
     APP_ESCAPE,
     APP_SUBMIT_SHORTCUT,
+    AWARENESS_CURSOR,
+    AWARENESS_LEAVE,
+    AWARENESS_PEERS,
+    type AwarenessLeavePayload,
+    type AwarenessPeersPayload,
     decodeUpdate,
     EDITOR_READY,
     encodeUpdate,
@@ -123,6 +128,7 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
     })
 
     useYjsRelay(collab)
+    useAwarenessRelay(collab)
     useInitialContent(editor, init, collab != null)
     useStateBroadcast(editor)
     useHostMessages(editor, collab != null)
@@ -174,6 +180,10 @@ interface CollabBinding {
  *  doesn't post them straight back and loop. */
 const FROM_HOST: unique symbol = Symbol('yjs:from-host')
 
+/** The same guard for awareness: peers' carets applied from the host must not
+ *  be posted back as if this page's cursor had moved. */
+const FROM_HOST_AWARENESS: unique symbol = Symbol('awareness:from-host')
+
 /**
  * Slack left below the last block when reporting the document's height.
  *
@@ -193,9 +203,9 @@ const TRAILING_SPACE_PX = 24
  *
  * This doc keeps its OWN clientID. Adopting the host's was the original plan,
  * but Yjs refuses it — see `RichEditorInitCollab.clientID`. The local user
- * still appears once, because this relay carries document updates only: the
- * Awareness below never leaves the WebView, and board presence rides the
- * host's socket.
+ * still appears once regardless, because this page's clientID never reaches the
+ * wire: the host merges the cursor below into its own awareness slot, and board
+ * presence rides the host's socket.
  */
 function useCollabDoc(init: RichEditorInitCollab | undefined): CollabBinding | null {
     const [binding] = useState<CollabBinding | null>(() => {
@@ -206,11 +216,23 @@ function useCollabDoc(init: RichEditorInitCollab | undefined): CollabBinding | n
             // document back to the host as if the user had typed it.
             Y.applyUpdate(doc, decodeUpdate(init.initialState), FROM_HOST)
         }
-        // Awareness is page-local and drives only the carets rendered in this
-        // WebView. Board-level presence stays on the host's socket, which is
-        // where the avatar row reads from.
+        // This Awareness drives the carets drawn in this page. Only its local
+        // slot ever leaves — as a bare cursor position, which the host merges
+        // into its own slot — so peers still see one avatar for this human.
         const awareness = init.user ? new Awareness(doc) : undefined
-        if (awareness && init.user) awareness.setLocalStateField('user', init.user)
+        if (awareness && init.user) {
+            awareness.setLocalStateField('user', init.user)
+            if (init.peers) {
+                // Whoever was already in the room. Seeded FROM_HOST_AWARENESS so
+                // it is not mistaken for this page's own cursor moving.
+                try {
+                    applyAwarenessUpdate(awareness, decodeUpdate(init.peers), FROM_HOST_AWARENESS)
+                } catch {
+                    // A bad seed costs the initial carets, not the editor; the
+                    // next awareness frame from each peer restores them.
+                }
+            }
+        }
         return { doc, awareness, field: init.field, user: init.user }
     })
     return binding
@@ -259,6 +281,80 @@ function useYjsRelay(collab: CollabBinding | null) {
 
         return () => {
             doc.off('update', onLocalUpdate)
+            window.removeEventListener('message', onMessage)
+            document.removeEventListener('message', onMessage)
+        }
+    }, [collab])
+}
+
+/**
+ * Pump collaborator carets between this page's Awareness and the host.
+ *
+ * Asymmetric, unlike the document relay, and deliberately so:
+ *
+ *  - OUTBOUND we send only this page's own CURSOR POSITION, never an encoded
+ *    awareness state. The host merges it into its own slot, so the phone stays
+ *    one peer with one avatar. Sending a state would put this page's clientID on
+ *    the wire and make one human look like two.
+ *  - INBOUND we apply whatever the host relays, which it has already filtered
+ *    down to remote peers.
+ *
+ * The identity skip matters: y-tiptap rewrites the cursor field on every
+ * transaction, so without it a burst of typing posts an identical cursor dozens
+ * of times.
+ */
+function useAwarenessRelay(collab: CollabBinding | null) {
+    useEffect(() => {
+        const awareness = collab?.awareness
+        if (!awareness) return
+
+        let lastSent: string | null = null
+        function onLocalAwareness(
+            { added, updated }: { added: number[]; updated: number[] },
+            origin: unknown
+        ) {
+            if (origin === FROM_HOST_AWARENESS) return
+            const local = awareness as Awareness
+            if (![...added, ...updated].includes(local.clientID)) return
+            const cursor = (local.getLocalState() as { cursor?: unknown } | null)?.cursor ?? null
+            const serialized = JSON.stringify(cursor ?? null)
+            if (serialized === lastSent) return
+            lastSent = serialized
+            postToNative(makeMessage('awareness', AWARENESS_CURSOR, { cursor }))
+        }
+        awareness.on('update', onLocalAwareness)
+
+        function onMessage(evt: MessageEvent | Event) {
+            const data = (evt as MessageEvent).data
+            if (typeof data !== 'string') return
+            let parsed: EditorMessage
+            try {
+                parsed = JSON.parse(data) as EditorMessage
+            } catch {
+                return
+            }
+            if (parsed.namespace !== 'awareness') return
+            const local = awareness as Awareness
+            try {
+                if (parsed.type === AWARENESS_PEERS) {
+                    const encoded = (parsed.payload as AwarenessPeersPayload | undefined)?.update
+                    if (typeof encoded !== 'string' || encoded.length === 0) return
+                    applyAwarenessUpdate(local, decodeUpdate(encoded), FROM_HOST_AWARENESS)
+                } else if (parsed.type === AWARENESS_LEAVE) {
+                    const ids = (parsed.payload as AwarenessLeavePayload | undefined)?.clientIDs
+                    if (!Array.isArray(ids) || ids.length === 0) return
+                    removeAwarenessStates(local, ids, FROM_HOST_AWARENESS)
+                }
+            } catch {
+                // A malformed frame costs one repaint of the carets, never the
+                // editor; the next frame from that peer restores them.
+            }
+        }
+        window.addEventListener('message', onMessage)
+        document.addEventListener('message', onMessage)
+
+        return () => {
+            awareness.off('update', onLocalAwareness)
             window.removeEventListener('message', onMessage)
             document.removeEventListener('message', onMessage)
         }
@@ -330,6 +426,11 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
 
             // Handled by useYjsRelay; not a format action.
             if (parsed.namespace === 'yjs') return
+            // Likewise useAwarenessRelay. Both bails matter: dispatchFormatAction
+            // no-ops on an unknown action today, so without them a relay message
+            // would fall through and become a latent bug the next time its
+            // default branch does something.
+            if (parsed.namespace === 'awareness') return
             if (parsed.namespace === 'markdown') {
                 handleMarkdownMessage(editor, parsed, isCollab)
                 return

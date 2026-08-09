@@ -32,11 +32,65 @@ export const APP_ESCAPE = 'escape'
  * relays what arrives on the room socket, and the WebView relays what the
  * local user types.
  *
- * The WebView never opens its own connection. text/ does that today and the
- * second connection makes the local user appear twice in presence
- * (TODO(text-native v1.1)) as well as shipping a credential into the page.
+ * The WebView never opens its own connection: a second one would make the local
+ * user appear twice in presence, as well as shipping a credential into the page.
  */
 export const YJS_UPDATE = 'update'
+
+/**
+ * Page → host, on the 'awareness' namespace: the page's OWN cursor position, as
+ * the JSON relative-position pair y-tiptap keeps in its awareness slot — or null
+ * when it has none (blur, or the editor going away).
+ *
+ * Deliberately NOT an encoded awareness update. The page's clientID must never
+ * reach the wire: the realtime client only ever encodes its own slot
+ * (`realtime/client.ts`, `encodeAwarenessUpdate(awareness, [localID])`), and the
+ * broker announces one awareness id per connection, so a second slot would
+ * strand a ghost caret on every peer until y-protocols' reaper cleared it. The
+ * host merges this cursor into its own slot instead — one peer, one avatar, one
+ * caret.
+ *
+ * A relative position survives the trip because it names ITEMS IN THE DOCUMENT,
+ * which are identical across every replica. No translation is needed.
+ */
+export const AWARENESS_CURSOR = 'cursor'
+
+/**
+ * Host → page, on the 'awareness' namespace: the REMOTE peers' awareness states,
+ * base64 of `encodeAwarenessUpdate` over their client ids.
+ *
+ * The host's own slot is excluded. It carries the cursor the page just sent, and
+ * relaying it back would arrive under a different clientID than the page's own —
+ * so y-tiptap's "don't draw my own caret" filter would not catch it and the user
+ * would watch a ghost caret with their own name trail their typing.
+ */
+export const AWARENESS_PEERS = 'peers'
+
+/**
+ * Host → page: peers who left, so the page drops their carets.
+ *
+ * Separate from `AWARENESS_PEERS` because a departed client is usually gone from
+ * the awareness `meta` map too, and `encodeAwarenessUpdate` reads
+ * `meta.get(clientID).clock` with no guard — encoding one throws.
+ */
+export const AWARENESS_LEAVE = 'leave'
+
+/** Payload for {@link AWARENESS_CURSOR}. */
+export interface AwarenessCursorPayload {
+    /** `{anchor, head}` relative positions as JSON, or null for no cursor. */
+    cursor: { anchor: unknown; head: unknown } | null
+}
+
+/** Payload for {@link AWARENESS_PEERS}. */
+export interface AwarenessPeersPayload {
+    /** Base64 `encodeAwarenessUpdate(awareness, remoteIDs)`. */
+    update: string
+}
+
+/** Payload for {@link AWARENESS_LEAVE}. */
+export interface AwarenessLeavePayload {
+    clientIDs: number[]
+}
 
 /**
  * WebView → host, on the 'ui' namespace: the document's height in CSS px.
@@ -99,11 +153,14 @@ export interface RichEditorInitCollab {
      * be using it" and reassigns a random one. It sticks only while the host
      * doc is empty, which is exactly the case that doesn't matter.
      *
-     * Double presence is avoided a different way, and the reason it works is
-     * that this relay carries DOCUMENT UPDATES ONLY. The page's Awareness is
-     * local to the WebView and drives just the carets rendered in it; board
-     * presence stays on the host's single socket, which is the only thing
-     * peers ever see. Two clientIDs, one avatar.
+     * Double presence is avoided a different way: the page's clientID never
+     * reaches the wire. The relay carries document updates, remote peers'
+     * awareness states inbound, and the page's cursor POSITION outbound — and
+     * the host merges that cursor into its own awareness slot rather than
+     * opening a second one. Board presence therefore still rides the host's
+     * single socket, which is the only thing peers ever see.
+     *
+     * Two clientIDs on the phone, one on the wire: one avatar, one caret.
      */
     clientID: number
     /**
@@ -114,6 +171,16 @@ export interface RichEditorInitCollab {
      * duplicate the text on every client that joins.
      */
     initialState: string
+    /**
+     * Base64 `encodeAwarenessUpdate` of the REMOTE peers' slots at init, absent
+     * when nobody else is in the room.
+     *
+     * Awareness frames are only fanned out as they are sent, so a joining client
+     * is told nothing about who is already present — the same gap cards' presence
+     * hook closes by republishing when someone arrives. Without this seed a phone
+     * would see no carets until a peer happened to move.
+     */
+    peers?: string
     /** Caret identity — same {id,name,color} shape presence publishes. */
     user?: { id: string; name: string; color: string }
 }

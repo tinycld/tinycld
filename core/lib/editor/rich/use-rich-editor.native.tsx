@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useThemeColor } from '../../use-app-theme'
 import type { EditorHandle, EditorResult } from '../types'
 import { useWebViewEditor } from '../use-webview-editor'
+import { AwarenessWebViewHost } from './awareness-webview-host'
 import { MarkdownWebViewHost } from './markdown-webview-host'
 import type { UseRichEditorOptions } from './options'
 import { editorHtml } from './webview/build/editorHtml'
@@ -33,9 +34,11 @@ import { YjsWebViewHost } from './yjs-webview-host'
  * Collaboration works here too. The caller's Y.Doc — the room's, already
  * connected on the native side — is relayed to the page over the 'yjs'
  * namespace as base64 updates, and the page's edits come back the same way.
- * The WebView never opens a socket of its own: that is what text/ does today,
- * and the second connection ships a credential into the page and makes the
- * local user appear twice in presence (TODO(text-native v1.1)).
+ * Collaborator carets ride the 'awareness' namespace alongside it.
+ *
+ * The WebView never opens a socket of its own. A second connection would ship a
+ * credential into the page and give the local user a second awareness identity,
+ * so one human would show up as two peers.
  */
 export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult {
     const {
@@ -85,6 +88,23 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     )
     useEffect(() => () => yjsHost?.destroy(), [yjsHost])
 
+    // The caret relay, alongside the document one. Without it the page's
+    // Awareness never leaves the WebView, so the phone sees no remote carets and
+    // shows none of its own — the gap that made native co-editing feel dead even
+    // though the text was syncing.
+    const collabAwareness = collab?.awareness ?? null
+    const awarenessHost = useMemo(
+        () =>
+            collabAwareness
+                ? new AwarenessWebViewHost({
+                      awareness: collabAwareness,
+                      postMessage: message => posterRef.current?.(message as never) ?? false,
+                  })
+                : null,
+        [collabAwareness]
+    )
+    useEffect(() => () => awarenessHost?.destroy(), [awarenessHost])
+
     // The init payload is posted once, after the page reports ready. It is
     // deliberately built from primitives so a parent re-render doesn't produce
     // a fresh object and re-trigger the handshake effect — hence the collab
@@ -94,8 +114,9 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const collabUserId = collab?.user?.id
     const collabUserName = collab?.user?.name
     const collabUserColor = collab?.user?.color
-    const initPayload: RichEditorInitPayload = useMemo(
-        () => ({
+    const initPayload: RichEditorInitPayload = useMemo(() => {
+        const peersAtHandshake = awarenessHost?.encodePeers() ?? null
+        return {
             contentFormat,
             initialContent: initialContent ?? '',
             placeholder,
@@ -117,6 +138,10 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                           field: collabField,
                           clientID: yjsHost.clientID(),
                           initialState: yjsHost.encodeState(),
+                          // Peers already in the room. Awareness frames are only
+                          // fanned out as they are sent, so without this seed the
+                          // page shows no carets until someone happens to move.
+                          ...(peersAtHandshake ? { peers: peersAtHandshake } : {}),
                           ...(collabUserId && collabUserName && collabUserColor
                               ? {
                                     user: {
@@ -129,26 +154,26 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                       },
                   }
                 : {}),
-        }),
-        [
-            contentFormat,
-            initialContent,
-            placeholder,
-            editable,
-            characterLimit,
-            autofocus,
-            theme?.backgroundColor,
-            bgColor,
-            fgColor,
-            placeholderColor,
-            primaryColor,
-            yjsHost,
-            collabField,
-            collabUserId,
-            collabUserName,
-            collabUserColor,
-        ]
-    )
+        }
+    }, [
+        contentFormat,
+        initialContent,
+        placeholder,
+        editable,
+        characterLimit,
+        autofocus,
+        theme?.backgroundColor,
+        bgColor,
+        fgColor,
+        placeholderColor,
+        primaryColor,
+        yjsHost,
+        awarenessHost,
+        collabField,
+        collabUserId,
+        collabUserName,
+        collabUserColor,
+    ])
 
     const markdownHostRef = useRef<MarkdownWebViewHost | null>(null)
     if (markdownHostRef.current === null) {
@@ -172,13 +197,14 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
 
     const onMessage = useCallback(
         (message: { namespace?: string; type?: string }) => {
+            if (awarenessHost?.handleMessage(message as never)) return
             if (yjsHost?.handleMessage(message as never)) return
             if (markdownHost.handleMessage(message as never)) return
             if (message.namespace !== 'app') return
             if (message.type === APP_SUBMIT_SHORTCUT) submitRef.current?.()
             else if (message.type === APP_ESCAPE) escapeRef.current?.()
         },
-        [markdownHost, yjsHost]
+        [markdownHost, yjsHost, awarenessHost]
     )
 
     const result = useWebViewEditor({

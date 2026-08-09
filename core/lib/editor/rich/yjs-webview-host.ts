@@ -12,11 +12,11 @@ import {
  * inside the WebView.
  *
  * The native side already holds an open room socket (cards' `useBoardPresence`
- * owns it), so the WebView must NOT open its own. text/ does that today, and
- * the second connection both ships a credential into the page and makes the
- * local user appear twice in presence (TODO(text-native v1.1)). Here the page
- * is a pure participant: it gets bytes, it sends bytes, and the host's existing
- * socket does all the networking.
+ * owns it, text's `useTextRoom` owns its own), so the WebView must NOT open its
+ * own: a second connection both ships a credential into the page and makes the
+ * local user appear twice in presence. Here the page is a pure participant: it
+ * gets bytes, it sends bytes, and the host's existing socket does all the
+ * networking. Carets ride the same arrangement — see `awareness-webview-host`.
  *
  * Both directions are guarded by RELAY_ORIGIN, which is what keeps a relay from
  * becoming an echo chamber:
@@ -70,7 +70,7 @@ export class YjsWebViewHost {
         return encodeUpdate(Y.encodeStateAsUpdate(this.doc))
     }
 
-    /** The clientID the page must adopt so the local user is one peer, not two. */
+    /** The host doc's clientID, for correlation only — the page cannot adopt it. */
     clientID(): number {
         return this.doc.clientID
     }
