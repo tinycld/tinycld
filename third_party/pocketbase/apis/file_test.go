@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
@@ -524,6 +525,45 @@ func TestFileDownload(t *testing.T) {
 	}
 
 	for _, scenario := range scenarios {
+		// FORK: give the users collection a rule a real deployment would use.
+		//
+		// This fork consults the collection's viewRule before serving ANY file,
+		// not only a `protected` one (apis/file.go). The fixture ships
+		// users.viewRule = `id = @request.auth.id` — nobody may view anyone
+		// else's record — so under enforcement the unauthenticated avatar
+		// fetches below correctly 404 and every 200 assertion fails.
+		//
+		// Those scenarios exercise thumb generation and content negotiation,
+		// not authorization, so rather than rewrite their expectations the
+		// users rule is relaxed to something deployable. tinycld's own is
+		// `(authed && role != "guest") || id = @request.auth.id` — any member
+		// may view any user, which is precisely what makes avatars work.
+		//
+		// The demo1/demo3 authorization scenarios are untouched and still
+		// carry the real assertions, including "protected file - guest without
+		// view access", which is what caught an earlier version of this fork
+		// that let a bad file token fall back to the request's own auth.
+		if strings.Contains(scenario.URL, "/api/files/_pb_users_auth_/") {
+			// Chained, not replaced: several of these scenarios already carry
+			// a BeforeTestFunc that binds OnFileDownloadRequest to assert on
+			// thumb errors, and overwriting it would silently drop the very
+			// assertion the scenario exists for.
+			prev := scenario.BeforeTestFunc
+			scenario.BeforeTestFunc = func(t testing.TB, app *tests.TestApp, e *core.ServeEvent) {
+				users, err := app.FindCollectionByNameOrId("users")
+				if err != nil {
+					t.Fatal(err)
+				}
+				users.ViewRule = types.Pointer("")
+				if err := app.Save(users); err != nil {
+					t.Fatal(err)
+				}
+				if prev != nil {
+					prev(t, app, e)
+				}
+			}
+		}
+
 		// clone for the HEAD test (the same as the original scenario but without body)
 		head := scenario
 		head.Method = http.MethodHead
