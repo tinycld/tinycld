@@ -33,6 +33,8 @@
             "!third_party/**/*",
             "!**/server",
             "!**/server/**/*",
+            "!**/cli",
+            "!**/cli/**/*",
             "!**/pb-migrations",
             "!**/pb-migrations/**/*",
             "!**/pb-hooks",
