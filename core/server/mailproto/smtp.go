@@ -212,16 +212,24 @@ func startSMTPDev(app core.App, tlsConfig *tls.Config, opts SMTPOptions) (func()
 		}
 		rawLn, err := listenWith(opts.Listen, tlsAddr)
 		if err != nil {
-			plainLn.Close()
-			return nil, fmt.Errorf("failed to listen on %s: %w", tlsAddr, err)
+			// Same reasoning as the IMAPS branch in imap.go: dev only, and the
+			// plain listener above is the one that matters. Closing it because
+			// an optional TLS port is already held by another local server
+			// turns a taken port into a total outage of the protocol.
+			app.Logger().Warn(
+				opts.Label+" implicit-TLS listener unavailable; continuing with plain only",
+				"addr", tlsAddr,
+				"error", err,
+			)
+		} else {
+			tlsLn = tls.NewListener(rawLn, tlsConfig)
+			app.Logger().Info(opts.Label+" server listening (implicit TLS)", "addr", tlsAddr)
+			go func() {
+				if err := server.Serve(tlsLn); err != nil {
+					app.Logger().Error(opts.Label+" server error", "addr", tlsAddr, "error", err)
+				}
+			}()
 		}
-		tlsLn = tls.NewListener(rawLn, tlsConfig)
-		app.Logger().Info(opts.Label+" server listening (implicit TLS)", "addr", tlsAddr)
-		go func() {
-			if err := server.Serve(tlsLn); err != nil {
-				app.Logger().Error(opts.Label+" server error", "addr", tlsAddr, "error", err)
-			}
-		}()
 	}
 
 	return func() {

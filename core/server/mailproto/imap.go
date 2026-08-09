@@ -204,16 +204,30 @@ func startIMAPDev(app core.App, tlsConfig *tls.Config, opts IMAPOptions) (func()
 		}
 		rawLn, err := listenWith(opts.Listen, imapsAddr)
 		if err != nil {
-			plainLn.Close()
-			return nil, fmt.Errorf("failed to listen on %s: %w", imapsAddr, err)
+			// Dev only, and deliberately not fatal: the implicit-TLS listener
+			// is a convenience here, while the PLAIN one on IMAP_ADDR is what
+			// clients and the e2e suite actually use. Tearing the plain
+			// listener down because an optional port is taken is how a dev
+			// server already holding :1993 made every IMAP e2e fail with
+			// ECONNREFUSED on a port that had just bound successfully —
+			// IMAP_ADDR is parameterized per-run, IMAPS_ADDR was not.
+			//
+			// Production never reaches this branch: it returns earlier via
+			// startIMAPTLSOnly, or refuses to boot without a TLS source.
+			app.Logger().Warn(
+				"IMAPS listener unavailable; continuing with plain IMAP only",
+				"addr", imapsAddr,
+				"error", err,
+			)
+		} else {
+			tlsLn = tls.NewListener(rawLn, tlsConfig)
+			app.Logger().Info("IMAPS server listening (implicit TLS)", "addr", imapsAddr)
+			go func() {
+				if err := server.Serve(tlsLn); err != nil {
+					app.Logger().Error("IMAPS server error", "addr", imapsAddr, "error", err)
+				}
+			}()
 		}
-		tlsLn = tls.NewListener(rawLn, tlsConfig)
-		app.Logger().Info("IMAPS server listening (implicit TLS)", "addr", imapsAddr)
-		go func() {
-			if err := server.Serve(tlsLn); err != nil {
-				app.Logger().Error("IMAPS server error", "addr", imapsAddr, "error", err)
-			}
-		}()
 	}
 
 	return func() {
