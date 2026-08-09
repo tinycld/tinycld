@@ -150,3 +150,71 @@ func TestCardsSearchIsClassified(t *testing.T) {
 		t.Error("an unrelated package's scope must not admit cards search")
 	}
 }
+
+// The board-content collections the cards CLI drives. Every one of these was
+// default-denied until the cards commands needed them, which is the failure
+// mode TestEveryRegisteredRouteIsClassified exists to catch one layer up: the
+// rules admit the caller, the handler runs in tests, and only a real OAuth
+// client sees the 403.
+func TestCardsContentCollectionsAreReadWrite(t *testing.T) {
+	// One representative verb per side. The table is per-collection, so a
+	// missing entry fails read and write together.
+	for _, collection := range []string{
+		"cards_projects", "cards_lists", "cards_cards", "cards_labels",
+		"cards_checklist_items", "cards_comments", "cards_attachments",
+	} {
+		path := "/api/collections/" + collection + "/records"
+		read := ScopeForRoute("GET", path)
+		if !read.satisfiedBy([]string{ScopeCardsRead}) {
+			t.Errorf("GET %s: cards:read must admit a read (got %q)", path, read)
+		}
+		write := ScopeForRoute("POST", path)
+		if !write.satisfiedBy([]string{ScopeCardsWrite}) {
+			t.Errorf("POST %s: cards:write must admit a write (got %q)", path, write)
+		}
+		// Read must not carry write. A token consented to read-only cards
+		// access that could still POST would make the consent screen a lie.
+		if read.satisfiedBy([]string{ScopeCardsWrite}) && !read.satisfiedBy([]string{ScopeCardsRead}) {
+			t.Errorf("GET %s admits cards:write but not cards:read", path)
+		}
+		if write.satisfiedBy([]string{ScopeCardsRead}) {
+			t.Errorf("POST %s: cards:read alone must NOT admit a write", path)
+		}
+		if read.satisfiedBy([]string{ScopeMailRead}) {
+			t.Errorf("GET %s: an unrelated package's scope must not admit it", path)
+		}
+	}
+}
+
+// The sharing surface is deliberately READ-ONLY for OAuth callers. A write to
+// cards_project_members adds a person to a board; a write to cards_share_links
+// mints a URL that opens the board to anyone holding it. Both are a
+// categorically larger grant than editing cards, and "cards:write" on the
+// consent screen does not read as "give other people my boards".
+//
+// Asserted positively so relaxing it is a deliberate edit to this test rather
+// than an unnoticed side effect of touching the table.
+func TestCardsSharingSurfaceIsReadOnlyForOAuth(t *testing.T) {
+	for _, collection := range []string{"cards_project_members", "cards_share_links"} {
+		path := "/api/collections/" + collection + "/records"
+		if !ScopeForRoute("GET", path).satisfiedBy([]string{ScopeCardsRead}) {
+			t.Errorf("GET %s: cards:read must still admit reading the roster/links", path)
+		}
+		// Every write verb, not just POST: revoking a link is a DELETE and
+		// changing a member's role is a PATCH, so a table entry that only
+		// blocked creates would leave both open.
+		for _, method := range []string{"POST", "PATCH", "PUT", "DELETE"} {
+			p := path
+			if method != "POST" {
+				p += "/abc123"
+			}
+			for _, scope := range []string{ScopeCardsWrite, ScopeCardsRead} {
+				if ScopeForRoute(method, p).satisfiedBy([]string{scope}) {
+					t.Errorf("%s %s must not be reachable with %q — an OAuth token "+
+						"must not be able to reshare a board or mint a public link",
+						method, p, scope)
+				}
+			}
+		}
+	}
+}

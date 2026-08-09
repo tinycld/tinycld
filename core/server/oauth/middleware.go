@@ -101,6 +101,36 @@ var collectionScopes = map[string]collectionAccess{
 	"label_assignments": {read: scopeRule{ScopeMailRead, ScopeContactsRead}, write: scopeRule{ScopeMailSend, ScopeContactsWrite}},
 
 	"drive_item_versions": {read: scopeRule{ScopeDriveRead}, write: scopeRule{ScopeDriveWrite}},
+
+	// Cards' board content. Every one of these carries a `project` relation
+	// (denormalized onto the content rows precisely so a rule can reach it),
+	// and the access rules resolve membership through cards_project_members —
+	// so a grant here widens WHICH ROWS a token may touch not at all. It only
+	// decides whether an OAuth caller may use the collection at all, on top of
+	// the membership the rules already demand.
+	"cards_projects":        {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+	"cards_lists":           {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+	"cards_cards":           {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+	"cards_labels":          {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+	"cards_checklist_items": {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+	"cards_comments":        {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+	"cards_attachments":     {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+
+	// READ-ONLY for OAuth callers, deliberately, and NOT because the rules are
+	// weak — they already confine both to owners. These two are the SHARING
+	// surface: a write to cards_project_members adds a person to a board, and a
+	// write to cards_share_links mints a URL that opens the board to anyone
+	// holding it. That is a categorically larger grant than editing cards, and
+	// `cards:write` reads to a user consenting on the OAuth screen as "change my
+	// cards" — not "give other people my boards".
+	//
+	// So a leaked or over-broad CLI token cannot reshare a board or publish a
+	// public link; those stay in the app, where the Share dialog shows exactly
+	// who gains access. Relaxing this later is one line and is backward
+	// compatible; the reverse would silently revoke a capability integrations
+	// had already built on, so start closed.
+	"cards_project_members": {read: scopeRule{ScopeCardsRead}},
+	"cards_share_links":     {read: scopeRule{ScopeCardsRead}},
 }
 
 // endpointScopes maps a bespoke Go endpoint to its required scope.
