@@ -33,6 +33,9 @@ import type { UseRichEditorOptions } from './options'
  * `.ProseMirror .ProseMirror-yjs-selection` into a rule that matches nothing.
  * (`@keyframes` blocks carry no leading `.ProseMirror` and are left alone.)
  */
+/** Searched in order, so the first match is the outermost heading at the caret. */
+const HEADING_LEVELS = [1, 2, 3, 4, 5, 6]
+
 const EDITOR_STYLE_TAG_ID = 'tinycld-rich-editor-styles'
 if (typeof document !== 'undefined' && !document.getElementById(EDITOR_STYLE_TAG_ID)) {
     const style = document.createElement('style')
@@ -60,6 +63,8 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         characterLimit,
         onSubmitShortcut,
         onEscape,
+        onFocus,
+        onBlur,
         collab,
     } = options
 
@@ -73,6 +78,10 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     submitRef.current = onSubmitShortcut
     const escapeRef = useRef(onEscape)
     escapeRef.current = onEscape
+    const focusRef = useRef(onFocus)
+    focusRef.current = onFocus
+    const blurRef = useRef(onBlur)
+    blurRef.current = onBlur
 
     // Rebuilding the extension list recreates the editor, and recreating the
     // editor re-renders, so an unstable list here is an infinite loop (React
@@ -131,6 +140,14 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const tiptapEditor = useEditor(
         {
             extensions,
+            // Tiptap v3's useEditor does NOT re-render on transactions by
+            // default, and `toolbarState` below is recomputed per render — so
+            // without this every active flag freezes at its mount-time value
+            // and a toolbar reads as permanently "not bold". The other two
+            // editors in the ecosystem already set it: text's
+            // use-document-editor.web.tsx and our own WebView page
+            // (rich/webview/source/Editor.tsx).
+            shouldRerenderOnTransaction: true,
             // Under collaboration the document arrives over the wire; passing
             // content here would have every client re-apply it on connect.
             content: collab ? undefined : (initialContent ?? ''),
@@ -141,6 +158,11 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             // Mail declared this option but never applied it on web; honoring
             // it here is why a reply opens with the caret already in the body.
             autofocus: autofocus ? 'end' : false,
+            // Read through refs for the same reason as the handlers above: the
+            // caller's inline closure would otherwise have to join the dep
+            // array, rebuilding the editor on every render.
+            onFocus: () => focusRef.current?.(),
+            onBlur: () => blurRef.current?.(),
             editorProps: {
                 handleKeyDown: (_view, event) =>
                     event.key === 'Escape' ? (escapeRef.current?.() ?? false) : false,
@@ -232,6 +254,11 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         isCodeActive: live?.isActive('code') ?? false,
         isCodeBlockActive: live?.isActive('codeBlock') ?? false,
         currentLink: (live?.getAttributes('link')?.href as string) ?? null,
+        // Mirrors deriveWebViewState's derivation so a heading button reads the
+        // same on both platforms; the WebView already broadcast this and web
+        // was the side left returning undefined.
+        activeHeadingLevel:
+            HEADING_LEVELS.find(level => live?.isActive('heading', { level })) ?? null,
         isEmpty: live?.isEmpty ?? true,
     }
 
