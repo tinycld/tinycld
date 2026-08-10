@@ -125,7 +125,7 @@ type IModalCloseButtonProps = React.ComponentProps<typeof UIModal.CloseButton> &
 let modalInstanceCounter = 0
 
 function ModalShortcutBridge({ onClose }: { onClose?: () => void }) {
-    useShortcutScope('modal')
+    const scopeOwner = useShortcutScope('modal')
     const id = React.useMemo(() => `modal.escape.${++modalInstanceCounter}`, [])
     const shortcut = React.useMemo(
         () =>
@@ -141,7 +141,7 @@ function ModalShortcutBridge({ onClose }: { onClose?: () => void }) {
                 : null,
         [id, onClose]
     )
-    useRegisterShortcut(shortcut)
+    useRegisterShortcut(shortcut, scopeOwner)
     return null
 }
 

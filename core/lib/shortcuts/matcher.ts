@@ -36,13 +36,24 @@ export interface MatcherContext {
 export function isScopeActive(shortcut: Shortcut): boolean {
     if (shortcut.scope === 'global') return true
     if (shortcut.scope !== topScope()) return false
-    // A screen frozen by `freezeOnBlur` stays mounted and keeps its shortcuts
-    // registered, so the live screen is not the only owner of its scope's keys
-    // — mail's list and a cards board both register 'list' j/k/x. Only the
-    // instance holding the keyboard may fire. Shortcuts registered before this
-    // stamp existed (scopeId undefined) keep the old scope-only behavior.
-    if (shortcut.scopeId != null && shortcut.scopeId !== topScopeId()) return false
-    return true
+    // A blurred screen stays mounted and keeps its shortcuts registered (on web
+    // `freezeOnBlur` only hides the subtree), so the live screen is not the only
+    // owner of its scope's keys — mail's list and a cards board both register
+    // 'list' j/k/x. Only the instance holding the keyboard may fire.
+    //
+    // An owner's id is assigned on MOUNT and never changes, so the stamp always
+    // names the instance that registered the shortcut — never whoever happened
+    // to hold the scope when a re-registration fired. That distinction is the
+    // whole point: on web a blurred screen stays mounted (`freezeOnBlur` only
+    // hides the subtree), its live queries keep emitting, and it re-registers on
+    // its own schedule. Re-deriving the stamp then handed the BLURRED screen the
+    // FOCUSED screen's id, and — being earlier in the registry's insertion order
+    // — it won the match and swallowed the keypress.
+    //
+    // `scopeId === undefined` means the shortcut was registered with no scope
+    // owner at all; it keeps the original scope-only behavior.
+    if (shortcut.scopeId === undefined) return true
+    return shortcut.scopeId === topScopeId()
 }
 
 function matches(shortcut: Shortcut, ctx: MatcherContext): boolean {
