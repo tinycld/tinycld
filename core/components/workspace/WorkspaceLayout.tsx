@@ -1,5 +1,6 @@
 import { DemoBanner } from '@tinycld/core/components/DemoBanner'
 import { NotificationDrawer } from '@tinycld/core/components/NotificationDrawer'
+import { FilePickerSheetHost } from '@tinycld/core/file-viewer/FilePickerSheetHost'
 import { usePackage } from '@tinycld/core/lib/packages/use-packages'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -91,6 +92,10 @@ export function WorkspaceLayout({ isReady = true }: { isReady?: boolean }) {
                         }}
                     >
                         <PackageTabs />
+                        {/* Native tablets take this branch, not MobileLayout,
+                            so the source-chooser sheet needs a host here too.
+                            Null on web. */}
+                        {isReady && <FilePickerSheetHost />}
                     </View>
                 </PackageProviderWrapper>
             </View>
