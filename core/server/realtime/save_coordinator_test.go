@@ -523,6 +523,91 @@ func TestSaveCoordinatorTruncateErrorIsLoggedAndIgnored(t *testing.T) {
 	}
 }
 
+// TestSaveCoordinatorTeardownTruncates: the teardown flush must retire the
+// journal rows it covered, exactly as the timer path does. This was the
+// document-duplication bug: a session shorter than the debounce window
+// reaches teardown without any timer flush ever having truncated, so the
+// journal still covered every edit the teardown flush wrote — and the next
+// room creation seeded the flushed snapshot AND replayed those rows on top,
+// doubling the entire document (caught by cards' toolbar e2e reload case).
+func TestSaveCoordinatorTeardownTruncates(t *testing.T) {
+	j := &recordingJournalForCoord{}
+	c := NewSaveCoordinator(func(string, DocHandle) error { return nil })
+	c.debounceEvery = 5 * time.Second // long; only the teardown flush runs
+	c.ceilingEvery = 5 * time.Second
+	c.teardownTimeout = 2 * time.Second
+	c.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.SetJournal("test-kind", j)
+
+	c.OnRoomCreate("teardown-room", &stubHandle{}, nil)
+	c.NoteSeq("teardown-room", 7)
+	c.OnDocUpdate("teardown-room")
+	c.OnRoomEmpty("teardown-room")
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if len(j.truncates) != 1 {
+		t.Fatalf("truncates = %d; want 1 (teardown flush must truncate)", len(j.truncates))
+	}
+	if j.truncates[0].throughSeq != 7 {
+		t.Fatalf("truncated through %d; want 7", j.truncates[0].throughSeq)
+	}
+}
+
+// TestSaveCoordinatorTeardownNoTruncateOnFailedFlush: a failed teardown
+// flush must leave the journal intact — the snapshot is stale, and the
+// untruncated rows are the only durable copy of the edits.
+func TestSaveCoordinatorTeardownNoTruncateOnFailedFlush(t *testing.T) {
+	j := &recordingJournalForCoord{}
+	c := NewSaveCoordinator(func(string, DocHandle) error { return errors.New("boom") })
+	c.debounceEvery = 5 * time.Second
+	c.ceilingEvery = 5 * time.Second
+	c.teardownTimeout = 2 * time.Second
+	c.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.SetJournal("test-kind", j)
+
+	c.OnRoomCreate("teardown-room", &stubHandle{}, nil)
+	c.NoteSeq("teardown-room", 7)
+	c.OnDocUpdate("teardown-room")
+	c.OnRoomEmpty("teardown-room")
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if len(j.truncates) != 0 {
+		t.Fatalf("truncates = %d; want 0 (failed flush must not truncate)", len(j.truncates))
+	}
+}
+
+// TestSaveCoordinatorFlushNowTruncates: the forced-flush path shares the
+// same contract. Without it, a FlushNow leaves a CLEAN room (dirty=false)
+// whose journal still covers the flushed edits — and the timer path never
+// revisits a clean room, so the rows sit until a teardown that may fail.
+func TestSaveCoordinatorFlushNowTruncates(t *testing.T) {
+	j := &recordingJournalForCoord{}
+	c := NewSaveCoordinator(func(string, DocHandle) error { return nil })
+	c.debounceEvery = 5 * time.Second
+	c.ceilingEvery = 5 * time.Second
+	c.teardownTimeout = 2 * time.Second
+	c.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.SetJournal("test-kind", j)
+
+	c.OnRoomCreate("flushnow-room", &stubHandle{}, nil)
+	c.NoteSeq("flushnow-room", 4)
+	c.OnDocUpdate("flushnow-room")
+	if err := c.FlushNow("flushnow-room"); err != nil {
+		t.Fatalf("FlushNow: %v", err)
+	}
+
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if len(j.truncates) != 1 {
+		t.Fatalf("truncates = %d; want 1 (FlushNow must truncate)", len(j.truncates))
+	}
+	if j.truncates[0].throughSeq != 4 {
+		t.Fatalf("truncated through %d; want 4", j.truncates[0].throughSeq)
+	}
+}
+
 // TestFlushNowNoRoomIsNoop: FlushNow on an unknown room returns nil
 // without invoking the flush — the durable blob is already current.
 func TestFlushNowNoRoomIsNoop(t *testing.T) {
