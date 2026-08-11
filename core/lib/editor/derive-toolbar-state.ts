@@ -72,5 +72,10 @@ export function deriveToolbarState(bridgeState: Record<string, unknown>): Editor
         // it, or before the initial stateUpdate arrives). The
         // WordCountBadge renders nothing in that case.
         wordCount: typeof bridgeState.wordCount === 'number' ? bridgeState.wordCount : undefined,
+        // Undefined until the page's first stateUpdate arrives, so a
+        // consumer gating a Send button must read `isEmpty ?? true` —
+        // "briefly disabled" is the acceptable failure mode, "sends an
+        // empty body" is not.
+        isEmpty: typeof bridgeState.isEmpty === 'boolean' ? bridgeState.isEmpty : undefined,
     }
 }
