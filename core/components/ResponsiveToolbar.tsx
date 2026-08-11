@@ -107,21 +107,30 @@ function WebToolbar({ items, rightItems, height = 44 }: ResponsiveToolbarProps) 
         const rightWidth = rightRef.current?.offsetWidth ?? 0
         const available = containerWidth - rightWidth - 8
 
+        // Measure EVERY item up front, not lazily inside the fitting loop.
+        // getItemWidth is also what populates the width cache, and the fitting
+        // loop breaks at the first item that doesn't fit — so measuring inside
+        // it left every item past the break uncached. `allCached` below then
+        // could never come true once overflow engaged, and the next re-render
+        // reset visibleCount to null with nothing left to set it again (the
+        // layout effect only re-runs when items change) — a toolbar stuck
+        // invisible in its measuring state. This runs while all items are
+        // still in the DOM, which is the only moment they CAN all be measured.
+        const widths = items.map((item, i) => getItemWidth(i, item))
+
         let usedWidth = 0
         let fitCount = items.length
 
         for (let i = 0; i < items.length; i++) {
-            const w = getItemWidth(i, items[i])
-            const needed = usedWidth + w
+            const needed = usedWidth + widths[i]
 
             if (needed > available) {
                 const availableWithOverflow = available - OVERFLOW_BUTTON_WIDTH
                 let recalcWidth = 0
                 fitCount = 0
                 for (let j = 0; j < i; j++) {
-                    const wJ = getItemWidth(j, items[j])
-                    if (recalcWidth + wJ > availableWithOverflow) break
-                    recalcWidth += wJ
+                    if (recalcWidth + widths[j] > availableWithOverflow) break
+                    recalcWidth += widths[j]
                     fitCount = j + 1
                 }
                 break
