@@ -1,7 +1,15 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import type { ReactNode } from 'react'
 import { useMemo } from 'react'
-import { Linking, Platform, Text, type TextStyle, View, type ViewStyle } from 'react-native'
+import {
+    type ImageStyle,
+    Linking,
+    Platform,
+    Text,
+    type TextStyle,
+    View,
+    type ViewStyle,
+} from 'react-native'
 import Markdown, { type MarkedStyles, Renderer } from 'react-native-marked'
 import { openHelp } from '../../lib/help/open-help'
 import { parseHelpTopicId } from '../../lib/help/types'
@@ -25,6 +33,13 @@ interface Props {
     translateModifierKeys?: boolean
     /** Give shortcut-shaped tables a 20/80 column split. Help-specific. */
     shortcutTableHeuristic?: boolean
+    /**
+     * Rewrite an image URI before it renders. Exists for protected PocketBase
+     * files: the stored src is tokenless (see lib/editor/rich/authed-image.ts)
+     * and the bytes 404 without a fresh `?token=`, which only the consumer can
+     * supply. Pass a stable reference — identity keys the renderer cache.
+     */
+    transformImageUri?: ImageUriTransform
 }
 
 const HELP_SCHEME = 'help://'
@@ -34,6 +49,9 @@ const HELP_SCHEME = 'help://'
  * returning nothing falls through to the default.
  */
 export type LinkPressHandler = (href: string) => boolean | undefined
+
+/** An image-src rewriter; returns the URI to actually fetch. */
+export type ImageUriTransform = (uri: string) => string
 
 // Source markdown is authored with ⌘ (and ⇧ for Shift) because the
 // Mac glyphs are unambiguous and look right inline. On Windows/Linux/
@@ -78,6 +96,7 @@ interface RendererOptions {
     translateKeys: boolean
     shortcutTables: boolean
     onLinkPress?: LinkPressHandler
+    transformImageUri?: ImageUriTransform
 }
 
 class HelpRenderer extends Renderer {
@@ -88,12 +107,22 @@ class HelpRenderer extends Renderer {
     private readonly translateKeys: boolean
     private readonly shortcutTables: boolean
     private readonly onLinkPress?: LinkPressHandler
+    private readonly transformImageUri?: ImageUriTransform
 
     constructor(options: RendererOptions) {
         super()
         this.translateKeys = options.translateKeys
         this.shortcutTables = options.shortcutTables
         this.onLinkPress = options.onLinkPress
+        this.transformImageUri = options.transformImageUri
+    }
+
+    // The default image() fetches the uri as-is, which 404s for a protected
+    // PocketBase file whose stored src is deliberately tokenless. The
+    // transform runs here — render time — so every draw carries a live token.
+    override image(uri: string, alt?: string, style?: ImageStyle, title?: string): ReactNode {
+        const resolved = this.transformImageUri ? this.transformImageUri(uri) : uri
+        return super.image(resolved, alt, style, title)
     }
 
     override link(
@@ -231,9 +260,9 @@ function extractCellText(cell: ReactNode): string {
 const rendererCache = new Map<string, HelpRenderer>()
 
 function rendererFor(options: RendererOptions): HelpRenderer {
-    // A per-consumer link handler can't be stringified, so it gets an identity
+    // Per-consumer functions can't be stringified, so each gets an identity
     // tag: same function object → same cache slot.
-    const key = `${options.translateKeys}|${options.shortcutTables}|${linkHandlerTag(options.onLinkPress)}`
+    const key = `${options.translateKeys}|${options.shortcutTables}|${functionTag(options.onLinkPress)}|${functionTag(options.transformImageUri)}`
     const cached = rendererCache.get(key)
     if (cached) return cached
     const renderer = new HelpRenderer(options)
@@ -241,15 +270,15 @@ function rendererFor(options: RendererOptions): HelpRenderer {
     return renderer
 }
 
-const linkHandlerTags = new WeakMap<object, number>()
-let nextLinkHandlerTag = 1
+const functionTags = new WeakMap<object, number>()
+let nextFunctionTag = 1
 
-function linkHandlerTag(handler?: LinkPressHandler): string {
+function functionTag(handler?: object): string {
     if (!handler) return 'none'
-    let tag = linkHandlerTags.get(handler)
+    let tag = functionTags.get(handler)
     if (tag === undefined) {
-        tag = nextLinkHandlerTag++
-        linkHandlerTags.set(handler, tag)
+        tag = nextFunctionTag++
+        functionTags.set(handler, tag)
     }
     return String(tag)
 }
@@ -262,6 +291,7 @@ export function MarkdownRenderer({
     // for anyone who later reaches for the function in this scope.
     translateModifierKeys: shouldTranslateKeys = true,
     shortcutTableHeuristic = true,
+    transformImageUri,
 }: Props) {
     // Codespan text uses `primary` (the brand teal — has matching
     // light + dark tokens) rather than `accent`. `accent` in this
@@ -358,6 +388,7 @@ export function MarkdownRenderer({
         translateKeys: shouldTranslateKeys && !isMacLike(),
         shortcutTables: shortcutTableHeuristic,
         onLinkPress,
+        transformImageUri,
     })
 
     return (

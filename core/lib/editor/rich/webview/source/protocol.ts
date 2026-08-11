@@ -26,6 +26,17 @@ export const APP_INIT = 'init'
 export const APP_SUBMIT_SHORTCUT = 'submit-shortcut'
 /** WebView → host, Escape inside the editor. */
 export const APP_ESCAPE = 'escape'
+/**
+ * host → WebView: the server base URL and a fresh PocketBase file token.
+ *
+ * The page has no PocketBase client and must never hold a credential beyond
+ * this — but an image in a description points at a PROTECTED file (the stored
+ * src is tokenless, see rich/authed-image.ts), so without a token every <img>
+ * in the WebView 404s. The host owns the token lifecycle (useFileToken, ~55min
+ * cache) and re-posts on every rotation; init carries the same shape for the
+ * common case where the token exists before the handshake.
+ */
+export const APP_FILE_TOKEN = 'file-auth'
 
 /**
  * Yjs document update, base64-encoded. Sent in BOTH directions: the host
@@ -129,6 +140,19 @@ export interface RichEditorInitPayload {
     autofocus: boolean
     /** Present iff this editor is collaborative. Absent → a local editor. */
     collab?: RichEditorInitCollab
+    /**
+     * File-token seed for protected images, when the host already holds one at
+     * handshake time. Later rotations arrive as {@link APP_FILE_TOKEN}.
+     */
+    fileAuth?: RichEditorFileAuth
+}
+
+/** Payload for {@link APP_FILE_TOKEN} and `RichEditorInitPayload.fileAuth`. */
+export interface RichEditorFileAuth {
+    /** The server origin image srcs resolve against (host-side `pb.baseURL`). */
+    baseURL: string
+    /** Short-lived per-user PocketBase file token. */
+    token: string
 }
 
 /**

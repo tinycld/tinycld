@@ -42,6 +42,15 @@ export interface UseRichEditorOptions {
      */
     onFocus?: () => void
     onBlur?: () => void
+    /**
+     * Receives image files dropped or pasted onto the editor, with the
+     * ProseMirror position they should land at (the drop point, or the caret
+     * for a paste). The caller owns upload + insertion — this hook must not
+     * know where files go. Web only: OS drops don't exist on native, and the
+     * WebView intercepts its own paste. Non-image drops are left to bubble so
+     * a surrounding DropZone can attach them.
+     */
+    onImageDrop?: (files: File[], pos: number) => void
     /** Native WebView chrome color. Web themes through CSS custom properties. */
     theme?: { backgroundColor?: string }
     /** Binds this editor to a shared document. See RichEditorCollabOptions. */

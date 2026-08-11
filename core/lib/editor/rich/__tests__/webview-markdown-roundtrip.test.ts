@@ -87,6 +87,28 @@ describe('WebView markdown round-trip', () => {
         expect(roundTrip('```\ncode line\n```')).toContain('code line')
     })
 
+    it('preserves images, tokenless relative src included', () => {
+        // The shape cards stores for a description image (see cards'
+        // lib/description-image.ts): a root-relative protected-file path with
+        // no token. The serializer must not mangle or absolutize it.
+        const source = '![diagram](/api/files/cards_attachments/rec123/d_abc.png)'
+        expect(roundTrip(source)).toBe(source)
+    })
+
+    it('inserts an image node at an explicit position', () => {
+        // What commands.insertImageAt does after a drop's upload settles. The
+        // position is clamped at call time — peers may have shrunk the doc.
+        editor = new Editor({
+            extensions: buildRichEditorExtensions(),
+            content: 'para one\n\npara two',
+            contentType: 'markdown',
+        })
+        const src = '/api/files/cards_attachments/rec123/d_abc.png'
+        const max = editor.state.doc.content.size
+        editor.commands.insertContentAt(Math.min(9999, max), { type: 'image', attrs: { src } })
+        expect(repairMarkdown(editor.getMarkdown())).toContain(`![](${src})`)
+    })
+
     it('is stable across a second round-trip', () => {
         // Instability here would mean every open/save rewrites the row and
         // churns the FTS index even when the user changed nothing.

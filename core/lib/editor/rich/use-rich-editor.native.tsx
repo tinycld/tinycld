@@ -1,6 +1,9 @@
 import { CoreBridge, TenTapStartKit } from '@10play/tentap-editor'
+import { useFileToken } from '@tinycld/core/file-viewer/use-authed-file-url'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { pb } from '../../pocketbase'
 import { useThemeColor } from '../../use-app-theme'
+import { makeMessage } from '../message-bus/types'
 import type { EditorHandle, EditorResult } from '../types'
 import { useWebViewEditor } from '../use-webview-editor'
 import { AwarenessWebViewHost } from './awareness-webview-host'
@@ -9,6 +12,7 @@ import type { UseRichEditorOptions } from './options'
 import { editorHtml } from './webview/build/editorHtml'
 import {
     APP_ESCAPE,
+    APP_FILE_TOKEN,
     APP_SUBMIT_SHORTCUT,
     type RichEditorInitPayload,
 } from './webview/source/protocol'
@@ -60,6 +64,12 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const fgColor = useThemeColor('foreground')
     const placeholderColor = useThemeColor('field-placeholder')
     const primaryColor = useThemeColor('primary')
+
+    // The page renders protected images (tokenless stored srcs — see
+    // rich/authed-image.ts) but holds no PB client, so the token reaches it
+    // from here: seeded in the init payload when it resolved first, and
+    // re-posted below on every rotation.
+    const { data: fileToken } = useFileToken()
 
     // Callers pass these inline, so their identity changes every render.
     // Reading them through refs keeps the WebView from remounting.
@@ -135,6 +145,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                 placeholder: placeholderColor,
                 primary: primaryColor,
             },
+            ...(fileToken ? { fileAuth: { baseURL: pb.baseURL, token: fileToken } } : {}),
             // Snapshotted at handshake time. Anything the doc gains between
             // now and the page mounting arrives as a normal relayed update, so
             // a slightly stale seed is not a lost edit.
@@ -179,7 +190,18 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         collabUserId,
         collabUserName,
         collabUserColor,
+        fileToken,
     ])
+
+    // Token rotations (and a token that resolves after the handshake) reach
+    // the page as a message — init is one-shot per mount, so the payload
+    // above only covers the token-before-ready ordering.
+    useEffect(() => {
+        if (!fileToken) return
+        posterRef.current?.(
+            makeMessage('app', APP_FILE_TOKEN, { baseURL: pb.baseURL, token: fileToken }) as never
+        )
+    }, [fileToken])
 
     const markdownHostRef = useRef<MarkdownWebViewHost | null>(null)
     if (markdownHostRef.current === null) {

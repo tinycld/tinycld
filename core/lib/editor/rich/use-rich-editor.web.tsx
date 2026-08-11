@@ -1,14 +1,16 @@
-import { EditorContent, useEditor } from '@tiptap/react'
+import { EditorContent, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
 import { useMemo, useRef } from 'react'
 import { View } from 'react-native'
 import { useThemeColor } from '../../use-app-theme'
 import type { EditorCommands, EditorHandle, EditorResult, EditorToolbarState } from '../types'
+import { AuthedImageView } from './AuthedImageView.web'
 import {
     EDITOR_CONTENT_STYLES,
     EDITOR_SCOPE_CLASS,
     scopeEditorStyles,
 } from './editor-content-styles'
 import { buildRichEditorExtensions } from './extensions'
+import { extractImageFilesFromDrop, extractImageFilesFromPaste } from './extract-image-files'
 import { repairMarkdown } from './markdown-repair'
 import type { UseRichEditorOptions } from './options'
 
@@ -35,6 +37,13 @@ import type { UseRichEditorOptions } from './options'
  */
 /** Searched in order, so the first match is the outermost heading at the caret. */
 const HEADING_LEVELS = [1, 2, 3, 4, 5, 6]
+
+/**
+ * Module-level so its identity never changes: it feeds the extension list,
+ * and an unstable value there rebuilds the editor every render (see the
+ * extensions memo below).
+ */
+const AUTHED_IMAGE_NODE_VIEW = ReactNodeViewRenderer(AuthedImageView)
 
 const EDITOR_STYLE_TAG_ID = 'tinycld-rich-editor-styles'
 if (typeof document !== 'undefined' && !document.getElementById(EDITOR_STYLE_TAG_ID)) {
@@ -65,6 +74,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         onEscape,
         onFocus,
         onBlur,
+        onImageDrop,
         collab,
     } = options
 
@@ -82,6 +92,8 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     focusRef.current = onFocus
     const blurRef = useRef(onBlur)
     blurRef.current = onBlur
+    const imageDropRef = useRef(onImageDrop)
+    imageDropRef.current = onImageDrop
 
     // Rebuilding the extension list recreates the editor, and recreating the
     // editor re-renders, so an unstable list here is an infinite loop (React
@@ -106,6 +118,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             buildRichEditorExtensions({
                 placeholder,
                 characterLimit,
+                imageNodeView: AUTHED_IMAGE_NODE_VIEW,
                 onSubmitShortcut: hasSubmitShortcut ? () => submitRef.current?.() : undefined,
                 collab:
                     collabDoc && collabField
@@ -166,6 +179,34 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             editorProps: {
                 handleKeyDown: (_view, event) =>
                     event.key === 'Escape' ? (escapeRef.current?.() ?? false) : false,
+                handleDrop: (view, event) => {
+                    const handler = imageDropRef.current
+                    if (!handler) return false
+                    const files = extractImageFilesFromDrop(event)
+                    // Non-image drops fall through (return false, no
+                    // preventDefault) so a surrounding DropZone still sees
+                    // them and attaches the file the ordinary way.
+                    if (files.length === 0) return false
+                    event.preventDefault()
+                    // Without this the same drop bubbles to the DropZone
+                    // wrapping the card detail, which would ALSO upload the
+                    // image as a plain attachment — every dropped image
+                    // attached twice.
+                    event.stopPropagation()
+                    const pos =
+                        view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ??
+                        view.state.selection.from
+                    handler(files, pos)
+                    return true
+                },
+                handlePaste: (view, event) => {
+                    const handler = imageDropRef.current
+                    if (!handler) return false
+                    const files = extractImageFilesFromPaste(event)
+                    if (files.length === 0) return false
+                    handler(files, view.state.selection.from)
+                    return true
+                },
             },
         },
         [extensions, editable]
@@ -237,6 +278,20 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             toggleCodeBlock: () => chain()?.toggleCodeBlock().run(),
             setLink: (url: string) => chain()?.setLink({ href: url }).run(),
             removeLink: () => chain()?.unsetLink().run(),
+            insertImage: (src: string, alt?: string) => chain()?.setImage({ src, alt }).run(),
+            insertImageAt: (src: string, pos: number, alt?: string) => {
+                if (!tiptapEditor || tiptapEditor.isDestroyed) return
+                // Clamped at CALL time, not capture time: the position was
+                // measured before an async upload, and collab peers may have
+                // shrunk the document since.
+                const max = tiptapEditor.state.doc.content.size
+                const at = Math.min(Math.max(pos, 0), max)
+                tiptapEditor
+                    .chain()
+                    .focus()
+                    .insertContentAt(at, { type: 'image', attrs: { src, alt } })
+                    .run()
+            },
             undo: () => chain()?.undo().run(),
             redo: () => chain()?.redo().run(),
         }
