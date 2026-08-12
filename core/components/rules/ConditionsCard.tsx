@@ -36,9 +36,12 @@ export function ConditionsCard({ draft, catalog, onChange }: ConditionsCardProps
                 </View>
             </View>
 
-            {draft.conditions.groups.map((_group, groupIndex) => (
+            {draft.conditions.groups.map((group, groupIndex) => (
                 <ConditionGroupBox
-                    key={groupIndex}
+                    // Keyed on the builder-local uid (see condition-helpers.ts),
+                    // not groupIndex — same reconciliation-identity rationale
+                    // as ConditionGroupBox's own ConditionRow keys.
+                    key={group.uid}
                     draft={draft}
                     fields={trigger?.fields ?? []}
                     groupIndex={groupIndex}

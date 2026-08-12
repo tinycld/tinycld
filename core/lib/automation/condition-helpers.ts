@@ -2,16 +2,47 @@
 // condition pickers (TriggerCard/ConditionsCard/ConditionRow). No React —
 // components stay thin wrappers around these.
 
+import { newRecordId } from 'pbtsdb/core'
 import type { CatalogField } from './api'
 import { ALL_OPS, OPERATORS_BY_TYPE } from './helpers'
 import type { ConditionOp } from './types'
 
-type Condition = { field: string; op: string; value?: string | number | boolean }
-type Group = { match: 'all' | 'any'; conditions: Condition[] }
-type ConditionsAst = { match: 'all' | 'any'; groups: Group[] }
+// `uid` is a builder-local React key, never sent to the server: it exists
+// solely so ConditionRow/ConditionGroupBox can key their list items on
+// something stable instead of array index — deleting a middle row while a
+// sibling's Menu is open must not reconcile that Menu onto the wrong row
+// (Menu owns its own isOpen state internally, keyed by React identity).
+// Optional so plain AST values (e.g. straight off the wire, pre-ensureUids)
+// remain assignable. draftToRecord strips it via conditionsAstSchema.parse
+// before the value is ever persisted.
+export type Condition = {
+    uid?: string
+    field: string
+    op: string
+    value?: string | number | boolean
+}
+export type Group = { uid?: string; match: 'all' | 'any'; conditions: Condition[] }
+export type ConditionsAst = { match: 'all' | 'any'; groups: Group[] }
 
 const EMPTY_GROUP: Group = { match: 'all', conditions: [] }
 const EMPTY_CONDITION: Condition = { field: '', op: '', value: undefined }
+
+/**
+ * Assigns a `uid` to every group/condition that's missing one, in place of
+ * doing so ad hoc — a single pass callers run once after loading/creating a
+ * draft (emptyDraft, recordToDraft) so every list item has a stable key from
+ * the moment it first renders, not just the ones added via addGroup/addCondition.
+ */
+export function ensureUids(ast: ConditionsAst): ConditionsAst {
+    return {
+        ...ast,
+        groups: ast.groups.map(g => ({
+            ...g,
+            uid: g.uid ?? newRecordId(),
+            conditions: g.conditions.map(c => ({ ...c, uid: c.uid ?? newRecordId() })),
+        })),
+    }
+}
 
 /**
  * Legal operators for a field: `is_empty` doesn't apply to numbers (there's
@@ -53,7 +84,10 @@ export function operatorLabel(op: string): string {
 
 /** Appends a new empty OR-group. */
 export function addGroup(ast: ConditionsAst): ConditionsAst {
-    return { ...ast, groups: [...ast.groups, { ...EMPTY_GROUP, conditions: [] }] }
+    return {
+        ...ast,
+        groups: [...ast.groups, { ...EMPTY_GROUP, uid: newRecordId(), conditions: [] }],
+    }
 }
 
 /** Removes the group at `groupIndex`. */
@@ -83,7 +117,12 @@ export function addCondition(ast: ConditionsAst, groupIndex: number): Conditions
     return {
         ...ast,
         groups: ast.groups.map((g, i) =>
-            i === groupIndex ? { ...g, conditions: [...g.conditions, { ...EMPTY_CONDITION }] } : g
+            i === groupIndex
+                ? {
+                      ...g,
+                      conditions: [...g.conditions, { ...EMPTY_CONDITION, uid: newRecordId() }],
+                  }
+                : g
         ),
     }
 }

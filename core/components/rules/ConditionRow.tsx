@@ -2,6 +2,7 @@ import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import type { CatalogField } from '@tinycld/core/lib/automation/api'
 import { operatorLabel, operatorsForField } from '@tinycld/core/lib/automation/condition-helpers'
 import { NO_VALUE_OPS } from '@tinycld/core/lib/automation/helpers'
+import type { ConditionOp } from '@tinycld/core/lib/automation/types'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { ChevronDown, Trash2 } from 'lucide-react-native'
@@ -9,6 +10,7 @@ import { Pressable, Text, View } from 'react-native'
 import { ValueInput } from './ValueInput'
 
 export interface ConditionRowCondition {
+    uid?: string
     field: string
     op: string
     value?: string | number | boolean
@@ -102,7 +104,7 @@ function OperatorMenu({
 export function ConditionRow({ condition, fields, onChange, onRemove }: ConditionRowProps) {
     const mutedColor = useThemeColor('muted-foreground')
     const selectedField = fields.find(f => f.key === condition.field)
-    const showValue = condition.op && !NO_VALUE_OPS.has(condition.op as never)
+    const showValue = condition.op && !NO_VALUE_OPS.has(condition.op as ConditionOp)
 
     const handleSelectField = (field: CatalogField) => {
         // Changing the field invalidates the operator (the old one may not
@@ -115,7 +117,7 @@ export function ConditionRow({ condition, fields, onChange, onRemove }: Conditio
         // An op switch to a value-less op (is_true/is_false/is_empty) must
         // drop any value already entered — it would otherwise be silently
         // ignored by the engine while lingering in the draft.
-        onChange({ op, value: NO_VALUE_OPS.has(op as never) ? undefined : condition.value })
+        onChange({ op, value: NO_VALUE_OPS.has(op as ConditionOp) ? undefined : condition.value })
     }
 
     return (

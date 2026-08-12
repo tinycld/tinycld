@@ -20,10 +20,6 @@ export interface ConditionGroupBoxProps {
     onChange: (patch: Partial<RuleDraft>) => void
 }
 
-// Groups/conditions carry no stable id in the draft AST (see draft.ts's
-// ConditionsAstDraft) — only appended/removed via the button below, never
-// reordered, so an index key is safe here despite the usual risk of index
-// keys breaking state identity across reorders.
 export function ConditionGroupBox({ draft, fields, groupIndex, onChange }: ConditionGroupBoxProps) {
     const mutedColor = useThemeColor('muted-foreground')
     const group = draft.conditions.groups[groupIndex]
@@ -56,7 +52,12 @@ export function ConditionGroupBox({ draft, fields, groupIndex, onChange }: Condi
 
             {group.conditions.map((condition, conditionIndex) => (
                 <ConditionRow
-                    key={conditionIndex}
+                    // Keyed on the builder-local uid (condition-helpers.ts's
+                    // ensureUids/addCondition), not conditionIndex — an index
+                    // key would let React reconcile a deleted row's open Menu
+                    // (Menu owns isOpen internally) onto whichever row now
+                    // occupies that index.
+                    key={condition.uid}
                     condition={condition}
                     fields={fields}
                     onChange={patch =>

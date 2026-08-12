@@ -3,6 +3,7 @@ import type { CatalogField } from '../api'
 import {
     addCondition,
     addGroup,
+    ensureUids,
     operatorLabel,
     operatorsForField,
     removeCondition,
@@ -55,10 +56,11 @@ describe('operatorLabel', () => {
 const EMPTY_AST = { match: 'all' as const, groups: [] }
 
 describe('addGroup / removeGroup', () => {
-    it('appends an empty all-match group', () => {
+    it('appends an empty all-match group with a generated uid', () => {
         const next = addGroup(EMPTY_AST)
         expect(next.groups).toHaveLength(1)
-        expect(next.groups[0]).toEqual({ match: 'all', conditions: [] })
+        expect(next.groups[0]).toMatchObject({ match: 'all', conditions: [] })
+        expect(next.groups[0].uid).toBeTruthy()
         // immutability: source untouched
         expect(EMPTY_AST.groups).toHaveLength(0)
     })
@@ -68,6 +70,11 @@ describe('addGroup / removeGroup', () => {
         const next = removeGroup(withTwo, 0)
         expect(next.groups).toHaveLength(1)
         expect(withTwo.groups).toHaveLength(2)
+    })
+
+    it('gives each added group a distinct uid', () => {
+        const ast = addGroup(addGroup(EMPTY_AST))
+        expect(ast.groups[0].uid).not.toBe(ast.groups[1].uid)
     })
 })
 
@@ -88,18 +95,28 @@ describe('setGroupMatch / setTopMatch', () => {
 })
 
 describe('addCondition / removeCondition / updateCondition', () => {
-    it('adds an empty condition to the target group only', () => {
+    it('adds an empty condition with a generated uid to the target group only', () => {
         const ast = addGroup(addGroup(EMPTY_AST))
         const next = addCondition(ast, 0)
-        expect(next.groups[0].conditions).toEqual([{ field: '', op: '', value: undefined }])
+        expect(next.groups[0].conditions).toMatchObject([{ field: '', op: '', value: undefined }])
+        expect(next.groups[0].conditions[0].uid).toBeTruthy()
         expect(next.groups[1].conditions).toHaveLength(0)
         expect(ast.groups[0].conditions).toHaveLength(0)
     })
 
-    it('updates a condition immutably by [group, condition] index', () => {
+    it('gives each added condition a distinct uid', () => {
+        let ast = addGroup(EMPTY_AST)
+        ast = addCondition(ast, 0)
+        ast = addCondition(ast, 0)
+        expect(ast.groups[0].conditions[0].uid).not.toBe(ast.groups[0].conditions[1].uid)
+    })
+
+    it('updates a condition immutably by [group, condition] index, preserving its uid', () => {
         const ast = addCondition(addGroup(EMPTY_AST), 0)
+        const uid = ast.groups[0].conditions[0].uid
         const next = updateCondition(ast, 0, 0, { field: 'subject', op: 'contains' })
         expect(next.groups[0].conditions[0]).toEqual({
+            uid,
             field: 'subject',
             op: 'contains',
             value: undefined,
@@ -113,7 +130,43 @@ describe('addCondition / removeCondition / updateCondition', () => {
         ast = addCondition(ast, 0)
         ast = updateCondition(ast, 0, 0, { field: 'a' })
         ast = updateCondition(ast, 0, 1, { field: 'b' })
+        const survivorUid = ast.groups[0].conditions[1].uid
         const next = removeCondition(ast, 0, 0)
-        expect(next.groups[0].conditions).toEqual([{ field: 'b', op: '', value: undefined }])
+        expect(next.groups[0].conditions).toEqual([
+            { uid: survivorUid, field: 'b', op: '', value: undefined },
+        ])
+    })
+})
+
+describe('ensureUids', () => {
+    it('is a no-op for an already-uid-bearing AST', () => {
+        const ast = addCondition(addGroup(EMPTY_AST), 0)
+        expect(ensureUids(ast)).toEqual(ast)
+    })
+
+    it('assigns uids to groups/conditions loaded without one (e.g. straight off the wire)', () => {
+        const wireAst = {
+            match: 'all' as const,
+            groups: [
+                {
+                    match: 'all' as const,
+                    conditions: [{ field: 'subject', op: 'contains', value: 'x' }],
+                },
+            ],
+        }
+        const next = ensureUids(wireAst)
+        expect(next.groups[0].uid).toBeTruthy()
+        expect(next.groups[0].conditions[0].uid).toBeTruthy()
+        // semantic content untouched
+        expect(next.groups[0].match).toBe('all')
+        expect(next.groups[0].conditions[0]).toMatchObject({
+            field: 'subject',
+            op: 'contains',
+            value: 'x',
+        })
+    })
+
+    it('is a no-op on an empty AST', () => {
+        expect(ensureUids(EMPTY_AST)).toEqual(EMPTY_AST)
     })
 })

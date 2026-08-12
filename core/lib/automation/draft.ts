@@ -4,6 +4,7 @@
 
 import type { Rules } from '@tinycld/core/types/pbSchema'
 import type { CatalogResponse } from './api'
+import { ensureUids } from './condition-helpers'
 import { OPERATORS_BY_TYPE } from './helpers'
 import { conditionsAstSchema } from './schemas'
 
@@ -22,12 +23,15 @@ export interface RuleDraft {
 
 // Re-derived locally (not imported from api.ts) to keep draft.ts's only
 // runtime dependency on schemas.ts, per the module's "pure, no React" remit;
-// the shape is identical to api.ts's ConditionsAst.
+// the shape is identical to api.ts's ConditionsAst, widened with the
+// builder-local `uid` condition-helpers.ts's ConditionsAst also carries (see
+// that module for why: stable React keys for ConditionRow/ConditionGroupBox).
 type ConditionsAstDraft = {
     match: 'all' | 'any'
     groups: {
+        uid?: string
         match: 'all' | 'any'
-        conditions: { field: string; op: string; value?: string | number | boolean }[]
+        conditions: { uid?: string; field: string; op: string; value?: string | number | boolean }[]
     }[]
 }
 
@@ -46,7 +50,7 @@ export function emptyDraft(scope: RuleDraft['scope']): RuleDraft {
         scope,
         trigger: '',
         triggerConfig: {},
-        conditions: EMPTY_AST,
+        conditions: ensureUids(EMPTY_AST),
         actions: [],
         enabled: true,
         stopProcessing: false,
@@ -56,10 +60,13 @@ export function emptyDraft(scope: RuleDraft['scope']): RuleDraft {
 
 // The engine owns the writes, but a version-skewed or hand-edited record must
 // never crash the builder — malformed JSON degrades to an empty AST/actions
-// list rather than throwing.
+// list rather than throwing. ensureUids runs on every load so a rule fetched
+// from the server (whose stored conditions never carry a uid — draftToRecord
+// strips it) gets stable React keys too, not just groups/conditions added
+// fresh in this session via addGroup/addCondition.
 function toConditionsAst(value: unknown): ConditionsAstDraft {
     const parsed = conditionsAstSchema.safeParse(value)
-    return parsed.success ? parsed.data : EMPTY_AST
+    return ensureUids(parsed.success ? parsed.data : EMPTY_AST)
 }
 
 function toActions(value: unknown): RuleDraftAction[] {
@@ -110,7 +117,13 @@ export function draftToRecord(draft: RuleDraft): RulesRecordFields {
         scope: draft.scope,
         trigger: draft.trigger,
         trigger_config: draft.triggerConfig,
-        conditions: draft.conditions,
+        // conditionsAstSchema has no `uid` field, so `.parse` strips it (zod's
+        // default unknown-key behavior) — the builder-local React key never
+        // reaches the server. The draft is always schema-valid by construction
+        // (condition-helpers.ts only ever produces well-formed ASTs), so this
+        // can't throw in practice; it's the serialization boundary, not a
+        // validation gate — validateDraft already ran before save.
+        conditions: conditionsAstSchema.parse(draft.conditions),
         actions: draft.actions,
         enabled: draft.enabled,
         stop_processing: draft.stopProcessing,

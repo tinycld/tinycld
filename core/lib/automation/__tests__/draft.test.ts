@@ -1,6 +1,7 @@
 import type { Rules } from '@tinycld/core/types/pbSchema'
 import { describe, expect, it } from 'vitest'
 import type { CatalogResponse } from '../api'
+import { addCondition, addGroup, updateCondition } from '../condition-helpers'
 import type { RuleDraft } from '../draft'
 import { draftToRecord, emptyDraft, recordToDraft, validateDraft } from '../draft'
 
@@ -204,6 +205,68 @@ describe('record <-> draft round-trip', () => {
         expect(fields).not.toHaveProperty('owner')
         expect(fields).not.toHaveProperty('created')
         expect(fields).not.toHaveProperty('updated')
+    })
+})
+
+describe('draftToRecord strips builder-local uids', () => {
+    it('serializes conditions without uid, preserving the semantic content', () => {
+        let conditions = addCondition(addGroup(emptyDraft('personal').conditions), 0)
+        conditions = updateCondition(conditions, 0, 0, {
+            field: 'subject',
+            op: 'contains',
+            value: 'invoice',
+        })
+        // Sanity: the draft-side AST really does carry uids before serializing.
+        expect(conditions.groups[0].uid).toBeTruthy()
+        expect(conditions.groups[0].conditions[0].uid).toBeTruthy()
+
+        const draft: RuleDraft = {
+            name: 'My rule',
+            scope: 'personal',
+            trigger: 'cat:item-created',
+            triggerConfig: {},
+            conditions,
+            actions: [{ ref: 'core:notify', params: { title: 'hi' } }],
+            enabled: true,
+            stopProcessing: false,
+            order: 0,
+        }
+
+        const fields = draftToRecord(draft)
+        expect(fields.conditions).toEqual({
+            match: 'all',
+            groups: [
+                {
+                    match: 'all',
+                    conditions: [{ field: 'subject', op: 'contains', value: 'invoice' }],
+                },
+            ],
+        })
+        expect(JSON.stringify(fields.conditions)).not.toContain('uid')
+    })
+})
+
+describe('recordToDraft assigns uids to loaded conditions', () => {
+    it('gives every group/condition a uid even though the stored record has none', () => {
+        const record = baseRecord({
+            conditions: {
+                match: 'all',
+                groups: [
+                    {
+                        match: 'all',
+                        conditions: [{ field: 'subject', op: 'contains', value: 'x' }],
+                    },
+                ],
+            },
+        })
+        const draft = recordToDraft(record)
+        expect(draft.conditions.groups[0].uid).toBeTruthy()
+        expect(draft.conditions.groups[0].conditions[0].uid).toBeTruthy()
+        expect(draft.conditions.groups[0].conditions[0]).toMatchObject({
+            field: 'subject',
+            op: 'contains',
+            value: 'x',
+        })
     })
 })
 
