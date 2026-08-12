@@ -3,8 +3,20 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every PR, whatever it targets — NOT `branches: [main]`.
+  #
+  # Core work here stacks deep: a PR usually targets the unmerged branch below
+  # it rather than main. A `branches: [main]` filter silently skips those, so a
+  # stacked PR reports "no checks reported" — which reads as passing-at-a-glance
+  # rather than never-run. That is how #171, #172, #174 and #176 came to sit on
+  # top of each other with zero CI between them, in the repo every package in
+  # the ecosystem builds against.
+  #
+  # A stacked PR is tested as a merge into ITS OWN base, which is the right
+  # increment: each PR verifies what it adds, and the branch below it is
+  # verified by its own run. The `push: [main]` trigger above still covers
+  # post-merge trunk.
   pull_request:
-    branches: [main]
 
 env:
   TEST_USER_LOGIN: user@tinycld.org
