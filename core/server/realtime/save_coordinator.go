@@ -286,6 +286,7 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 	wasDirty := rs.dirty
 	rs.dirty = false
 	handle := rs.handle
+	snapshotSeq := rs.lastSeq
 	rs.mu.Unlock()
 
 	if !wasDirty {
@@ -304,6 +305,17 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 	case err := <-done:
 		if err != nil {
 			c.logger.Error("realtime: teardown save failed", "driveItemID", driveItemID, "err", err)
+		} else {
+			// EVERY successful flush must truncate, this one most of all:
+			// the room is about to be recreated from scratch on the next
+			// join, where bootstrap re-seeds from the snapshot the flush
+			// just wrote and Replay applies whatever the journal still
+			// holds ON TOP of it. A journal left covering flushed edits
+			// therefore duplicates the entire document on reopen — and a
+			// short edit-then-close session (under the debounce window)
+			// reaches here without any timer-driven flush ever having
+			// truncated, so this was the common path, not the edge.
+			c.truncateJournal(driveItemID, snapshotSeq)
 		}
 	case <-time.After(c.teardownTimeout):
 		c.logger.Error("realtime: teardown save timed out", "driveItemID", driveItemID, "timeout", c.teardownTimeout)
@@ -312,6 +324,25 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 	rs.mu.Lock()
 	rs.closed = true
 	rs.mu.Unlock()
+}
+
+// truncateJournal drops journal rows covered by a successful flush. The
+// snapshot/WAL contract (see the bootstrap+Replay ordering in room
+// construction) only holds if every flush that wrote the snapshot also
+// retires the WAL rows it covered — a flush path without this call
+// re-applies those rows onto the re-seeded document at the next room
+// creation, duplicating content.
+func (c *SaveCoordinator) truncateJournal(driveItemID string, throughSeq int64) {
+	c.mu.Lock()
+	journal, kind := c.journal, c.kind
+	c.mu.Unlock()
+	if throughSeq <= 0 || journal == nil || kind == "" {
+		return
+	}
+	if err := journal.Truncate(kind, driveItemID, throughSeq); err != nil {
+		c.logger.Warn("realtime: journal truncate failed after flush",
+			"driveItemID", driveItemID, "through", throughSeq, "err", err)
+	}
 }
 
 // triggerSave is the central save scheduler. Runs on a timer
@@ -427,15 +458,7 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 	snapshotSeq := rs.snapshotSeq
 	rs.mu.Unlock()
 
-	c.mu.Lock()
-	journal, kind := c.journal, c.kind
-	c.mu.Unlock()
-	if snapshotSeq > 0 && journal != nil && kind != "" {
-		if err := journal.Truncate(kind, driveItemID, snapshotSeq); err != nil {
-			c.logger.Warn("realtime: journal truncate failed after flush",
-				"driveItemID", driveItemID, "through", snapshotSeq, "err", err)
-		}
-	}
+	c.truncateJournal(driveItemID, snapshotSeq)
 
 	if resave {
 		// Edits arrived during the in-flight save; immediately
@@ -485,6 +508,7 @@ func (c *SaveCoordinator) FlushNow(driveItemID string) error {
 		rs.saveInFlight = true
 		rs.dirty = false
 		handle := rs.handle
+		snapshotSeq := rs.lastSeq
 		rs.mu.Unlock()
 
 		err := c.flush(driveItemID, handle)
@@ -498,6 +522,14 @@ func (c *SaveCoordinator) FlushNow(driveItemID string) error {
 			rs.dirty = true
 		}
 		rs.mu.Unlock()
+		if err == nil {
+			// Same contract as every other flush path — see truncateJournal.
+			// Skipping it here would leave a clean room (dirty=false) whose
+			// journal still covers flushed edits, and the timer path never
+			// revisits a clean room, so the rows would sit until teardown
+			// and duplicate the document if that teardown flush failed.
+			c.truncateJournal(driveItemID, snapshotSeq)
+		}
 		return err
 	}
 }

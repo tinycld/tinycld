@@ -1,4 +1,4 @@
-import type { Extensions } from '@tiptap/core'
+import type { Extensions, NodeViewRenderer } from '@tiptap/core'
 import Collaboration from '@tiptap/extension-collaboration'
 import CollaborationCaret from '@tiptap/extension-collaboration-caret'
 import { Image } from '@tiptap/extension-image'
@@ -32,6 +32,12 @@ export interface BuildRichEditorExtensionsOptions {
     characterLimit?: number
     onSubmitShortcut?: () => void
     collab?: RichEditorCollabOptions
+    /**
+     * Custom renderer for image nodes. An option rather than baked in because
+     * the renderer is environment-specific (React node view on web, another
+     * inside the WebView page) and this builder must stay importable from both.
+     */
+    imageNodeView?: NodeViewRenderer
 }
 
 /**
@@ -52,7 +58,7 @@ export interface BuildRichEditorExtensionsOptions {
 export function buildRichEditorExtensions(
     options: BuildRichEditorExtensionsOptions = {}
 ): Extensions {
-    const { placeholder, characterLimit, onSubmitShortcut, collab } = options
+    const { placeholder, characterLimit, onSubmitShortcut, collab, imageNodeView } = options
 
     const extensions: Extensions = [
         StarterKit.configure({
@@ -67,7 +73,7 @@ export function buildRichEditorExtensions(
         TableRow,
         TableHeader,
         TableCell,
-        Image,
+        imageNodeView ? Image.extend({ addNodeView: () => imageNodeView }) : Image,
         Placeholder.configure({ placeholder: placeholder ?? '' }),
         Markdown.configure({ markedOptions: { gfm: true } }),
     ]

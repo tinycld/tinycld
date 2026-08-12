@@ -47,11 +47,12 @@ const (
 
 // Mark types.
 const (
-	MarkBold   = "bold"
-	MarkItalic = "italic"
-	MarkStrike = "strike"
-	MarkCode   = "code"
-	MarkLink   = "link"
+	MarkBold      = "bold"
+	MarkItalic    = "italic"
+	MarkStrike    = "strike"
+	MarkUnderline = "underline"
+	MarkCode      = "code"
+	MarkLink      = "link"
 )
 
 // PMNode is a ProseMirror node in its JSON form. The field set and omitempty

@@ -7,11 +7,12 @@ import (
 // markOrder fixes the nesting order of marks from outside in, so a run
 // carrying {bold, italic, link} always serializes as `[***…***](href)` and
 // never as one of its permutations. Ported from the TypeScript emitter in
-// text/tinycld/text/lib/markdown/pm-to-md.ts, extended with strike.
+// text/tinycld/text/lib/markdown/pm-to-md.ts, extended with strike and
+// underline (underline innermost, matching @tiptap/markdown: `**++b++**`).
 //
 // code is listed but handled separately: a code span renders verbatim, so it
 // wraps the raw text before any other mark and suppresses escaping.
-var markOrder = []string{MarkLink, MarkBold, MarkItalic, MarkStrike, MarkCode}
+var markOrder = []string{MarkLink, MarkBold, MarkItalic, MarkStrike, MarkUnderline, MarkCode}
 
 // escapeText escapes only what would actually change the parse at this
 // position. Escaping every candidate character unconditionally is tempting but
@@ -42,6 +43,13 @@ func escapeText(s string) string {
 			if isDelimiterCandidate(runes, i) {
 				b.WriteRune('\\')
 			}
+			// '+' is deliberately NOT escaped, though ++underline++ parsing
+			// (underline.go) gives a doubled plus delimiter power: the client
+			// serializer leaves it bare too, and parity with the client
+			// outranks the edge. Flanking rules keep the common literals
+			// ("C++", "+1") literal in both parsers, and a bare "++word++"
+			// converts to the underline MARK identically on both sides — the
+			// serialized bytes stay stable, which is what flush compares.
 		case '_':
 			// Intra-word underscores (snake_case) are literal in CommonMark,
 			// so only escape at a word boundary.
@@ -121,6 +129,8 @@ func applyMarks(text string, marks []PMMark) string {
 			body = "*" + body + "*"
 		case MarkStrike:
 			body = "~~" + body + "~~"
+		case MarkUnderline:
+			body = "++" + body + "++"
 		case MarkLink:
 			body = "[" + body + "](" + escapeLinkTarget(attrString(mark.Attrs, "href")) + ")"
 		}
@@ -420,6 +430,13 @@ func renderBlock(node *PMNode) string {
 		return renderTable(node)
 	case NodeHorizontalRule:
 		return "---"
+	case NodeImage:
+		// tiptap's Image is a BLOCK node, so a document can hold one at the
+		// top level — a description that is just a picture. renderInline
+		// covers the inline position; without this case the default branch
+		// walks the node's (empty) children and the whole image vanishes
+		// from the flush, wiping the description on the next seed.
+		return renderInline([]PMNode{*node})
 	default:
 		return renderInline(node.Content)
 	}

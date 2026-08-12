@@ -1,14 +1,23 @@
 import type { Editor as TiptapEditor } from '@tiptap/core'
-import { EditorContent, useEditor } from '@tiptap/react'
-import { useEffect, useState } from 'react'
+import {
+    EditorContent,
+    NodeViewWrapper,
+    type ReactNodeViewProps,
+    ReactNodeViewRenderer,
+    useEditor,
+} from '@tiptap/react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { Awareness, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import type { EditorMessage } from '../../../message-bus/types'
 import { makeMessage } from '../../../message-bus/types'
+import { resolveProtectedFileSrc } from '../../authed-image'
 import { buildRichEditorExtensions } from '../../extensions'
 import { repairMarkdown } from '../../markdown-repair'
+import { getFileAuth, setFileAuth, subscribeFileAuth } from './file-auth-store'
 import {
     APP_ESCAPE,
+    APP_FILE_TOKEN,
     APP_SUBMIT_SHORTCUT,
     AWARENESS_CURSOR,
     AWARENESS_LEAVE,
@@ -22,6 +31,7 @@ import {
     MARKDOWN_RESULT,
     MARKDOWN_SET,
     type MarkdownSetPayload,
+    type RichEditorFileAuth,
     type RichEditorInitCollab,
     type RichEditorInitPayload,
     UI_CONTENT_HEIGHT,
@@ -41,6 +51,35 @@ declare global {
 function postToNative(message: unknown): void {
     window.ReactNativeWebView?.postMessage(JSON.stringify(message))
 }
+
+/**
+ * The page's counterpart of core's AuthedImageView.web: renders an image whose
+ * stored src is a tokenless protected-file path, resolved against the
+ * credentials the host relays (see APP_FILE_TOKEN). Everything else — data:
+ * URIs, external URLs — passes through untouched.
+ */
+function AuthedImagePageView({ node }: ReactNodeViewProps<HTMLSpanElement>) {
+    const auth = useSyncExternalStore(subscribeFileAuth, getFileAuth)
+    const src = (node.attrs.src as string | null) ?? ''
+    const alt = (node.attrs.alt as string | null) ?? ''
+    const title = (node.attrs.title as string | null) ?? ''
+    const displaySrc = auth ? resolveProtectedFileSrc(src, auth.baseURL, auth.token) : src
+
+    return (
+        <NodeViewWrapper as="span" style={{ display: 'inline-block', lineHeight: 0 }}>
+            <img
+                src={displaySrc}
+                alt={alt || undefined}
+                title={title || undefined}
+                draggable={false}
+                style={{ maxWidth: '100%', height: 'auto' }}
+            />
+        </NodeViewWrapper>
+    )
+}
+
+/** Module-level so the extension list keeps a stable identity. */
+const AUTHED_IMAGE_NODE_VIEW = ReactNodeViewRenderer(AuthedImagePageView)
 
 /**
  * The rich editor's in-WebView page.
@@ -104,6 +143,13 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
         return () => style.remove()
     }, [init.colors])
 
+    // Seed the credential store before the editor's first paint, so images
+    // present in the initial document don't flash a broken frame while the
+    // relayed APP_FILE_TOKEN is still in flight.
+    useEffect(() => {
+        if (init.fileAuth) setFileAuth(init.fileAuth)
+    }, [init.fileAuth])
+
     const collab = useCollabDoc(init.collab)
 
     const editor = useEditor({
@@ -112,6 +158,7 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
         extensions: buildRichEditorExtensions({
             placeholder: init.placeholder,
             characterLimit: init.characterLimit,
+            imageNodeView: AUTHED_IMAGE_NODE_VIEW,
             onSubmitShortcut: () => postToNative(makeMessage('app', APP_SUBMIT_SHORTCUT, null)),
             collab: collab
                 ? {
@@ -443,6 +490,13 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
                 handleMarkdownMessage(editor, parsed, isCollab)
                 return
             }
+            if (parsed.namespace === 'app' && parsed.type === APP_FILE_TOKEN) {
+                const auth = parsed.payload as RichEditorFileAuth | undefined
+                if (auth && typeof auth.token === 'string' && typeof auth.baseURL === 'string') {
+                    setFileAuth(auth)
+                }
+                return
+            }
             dispatchFormatAction(editor, unwrapTenTapAction(parsed))
         }
 
@@ -541,6 +595,14 @@ function dispatchFormatAction(editor: TiptapEditor, action: IncomingAction): voi
             else chain().unsetLink().run()
             break
         }
+        case 'insert-image': {
+            const image = readImagePayload(action.payload)
+            // chain().focus() restores the selection the page held before the
+            // RN-side picker dialog took focus, so the image lands at the
+            // caret the user left.
+            if (image) chain().setImage(image).run()
+            break
+        }
         case 'undo':
             chain().undo().run()
             break
@@ -576,6 +638,13 @@ function readLinkHref(payload: unknown): string {
         if (typeof href === 'string') return href
     }
     return ''
+}
+
+function readImagePayload(payload: unknown): { src: string; alt?: string } | null {
+    if (typeof payload !== 'object' || payload === null) return null
+    const { src, alt } = payload as { src?: unknown; alt?: unknown }
+    if (typeof src !== 'string' || src.length === 0) return null
+    return { src, ...(typeof alt === 'string' ? { alt } : {}) }
 }
 
 /**

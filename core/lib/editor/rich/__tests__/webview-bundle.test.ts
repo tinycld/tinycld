@@ -99,5 +99,11 @@ describe('rich editor WebView bundle', () => {
         // from a bundle built before the awareness relay landed — checked
         // against the previous artifact rather than assumed.
         expect(built).toContain('"awareness"')
+        // The image support literals: the dispatcher case the toolbar's insert
+        // rides, and the file-auth message that lets a protected image render.
+        // Both absent from a bundle built before image support landed — the
+        // toolbar button would silently no-op and every image would 404.
+        expect(built).toContain('insert-image')
+        expect(built).toContain('file-auth')
     })
 })

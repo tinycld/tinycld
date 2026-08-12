@@ -1,5 +1,9 @@
-Plain text with **bold**, *italic*, ~~strike~~ and `code`.
+Plain text with **bold**, *italic*, ~~strike~~, ++underline++ and `code`.
 
-A [link](https://example.com) and an ![image](https://example.com/i.png).
+A [link](https://example.com) sits inline.
 
-Escaped specials: \*not italic\*, \_not emphasis\_, \~not strike\~.
+![image](https://example.com/i.png)
+
+Nested marks keep underline innermost: **++both++** and [++linked++](https://example.com).
+
+Escaped specials: \*not italic\*, \_not emphasis\_, \~not strike\~, C++ stays prose.

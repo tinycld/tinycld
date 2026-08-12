@@ -127,6 +127,13 @@ export interface EditorCommands {
     splitCell?(): void
     mergeOrSplit?(): void
     insertImage?(src: string, alt?: string): void
+    // Insert an image at an explicit ProseMirror position rather than the
+    // caret — what a drop needs, where the landing point is where the pointer
+    // released, not where the caret happens to sit. Implementations clamp the
+    // position at call time (an async upload separates capture from use). Web
+    // only today: drops don't exist on native, so the WebView bridge carries
+    // no position-addressed variant.
+    insertImageAt?(src: string, pos: number, alt?: string): void
     // Apply a border preset to the cells in the current table
     // selection. Preset is one of 'all' / 'inner' / 'outer' / 'top' /
     // 'right' / 'bottom' / 'left' / 'horizontal' / 'vertical' / 'none'.

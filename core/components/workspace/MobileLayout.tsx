@@ -1,5 +1,6 @@
 import { DemoBanner } from '@tinycld/core/components/DemoBanner'
 import { NotificationDrawer } from '@tinycld/core/components/NotificationDrawer'
+import { FilePickerSheetHost } from '@tinycld/core/file-viewer/FilePickerSheetHost'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
@@ -64,6 +65,7 @@ export const MobileLayout = memo(function MobileLayout({ isReady = true }: { isR
                     <PackageTabs />
                     {isReady && <MoreDrawer />}
                     {isReady && <NotificationDrawer mobile />}
+                    {isReady && <FilePickerSheetHost />}
                 </View>
                 {isReady && <MobileTabBar />}
                 {isReady && <MobileDrawer isVisible={isDrawerOpen} />}

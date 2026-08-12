@@ -7,13 +7,22 @@ import (
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	extast "github.com/yuin/goldmark/extension/ast"
+	gparser "github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
-// parser is shared: goldmark.Markdown is documented as safe for concurrent use
+// mdParser is shared: goldmark.Markdown is documented as safe for concurrent use
 // and building one per call would re-register every extension on a hot path
 // (seeding runs once per card at room open).
-var parser = goldmark.New(goldmark.WithExtensions(extension.GFM))
+var mdParser = goldmark.New(
+	goldmark.WithExtensions(extension.GFM),
+	// tiptap's ++underline++ — see underline.go. Priority 550 slots beside
+	// GFM's strikethrough (500) among the delimiter-driven inline parsers.
+	goldmark.WithParserOptions(
+		gparser.WithInlineParsers(util.Prioritized(&underlineParser{}, 550)),
+	),
+)
 
 // ToPM parses Markdown into a ProseMirror document.
 //
@@ -23,7 +32,7 @@ var parser = goldmark.New(goldmark.WithExtensions(extension.GFM))
 // worse than losing its formatting.
 func ToPM(src string) *PMNode {
 	source := []byte(src)
-	root := parser.Parser().Parse(text.NewReader(source))
+	root := mdParser.Parser().Parse(text.NewReader(source))
 
 	doc := &PMNode{Type: NodeDoc}
 	for child := root.FirstChild(); child != nil; child = child.NextSibling() {
@@ -34,15 +43,54 @@ func ToPM(src string) *PMNode {
 
 // blockToPM converts one block node. It returns a slice because a few
 // constructs (a list mixing task and plain items) expand to more than one node.
+// liftBlockImages splits a paragraph's inline run around any images, hoisting
+// each image to a sibling BLOCK node. Markdown has only inline images, so
+// goldmark parses `![…]` inside a paragraph — but tiptap's Image extension is
+// a BLOCK node, and an image seeded inside a paragraph is schema-invalid: the
+// first client to bind the fragment repairs its document by DELETING the
+// node, the repair syncs as an edit, and the next flush persists the loss.
+// (Found by cards' description-images e2e: insert image → reload → gone.)
+func liftBlockImages(inline []PMNode) []PMNode {
+	hasImage := false
+	for i := range inline {
+		if inline[i].Type == NodeImage {
+			hasImage = true
+			break
+		}
+	}
+	if !hasImage {
+		return []PMNode{{Type: NodeParagraph, Content: inline}}
+	}
+
+	var blocks []PMNode
+	var run []PMNode
+	flushRun := func() {
+		if len(run) > 0 {
+			blocks = append(blocks, PMNode{Type: NodeParagraph, Content: run})
+			run = nil
+		}
+	}
+	for i := range inline {
+		if inline[i].Type == NodeImage {
+			flushRun()
+			blocks = append(blocks, inline[i])
+			continue
+		}
+		run = append(run, inline[i])
+	}
+	flushRun()
+	return blocks
+}
+
 func blockToPM(n ast.Node, src []byte) []PMNode {
 	switch node := n.(type) {
 	case *ast.Paragraph:
-		return []PMNode{{Type: NodeParagraph, Content: inlineToPM(node, src)}}
+		return liftBlockImages(inlineToPM(node, src))
 
 	case *ast.TextBlock:
 		// A tight list item's content arrives as a TextBlock rather than a
 		// Paragraph; the editor schema has no TextBlock, so normalize it.
-		return []PMNode{{Type: NodeParagraph, Content: inlineToPM(node, src)}}
+		return liftBlockImages(inlineToPM(node, src))
 
 	case *ast.Heading:
 		return []PMNode{{
@@ -254,6 +302,9 @@ func inlineNodeToPM(n ast.Node, src []byte, marks []PMMark) []PMNode {
 
 	case *extast.Strikethrough:
 		return childInlines(node, src, appendMark(marks, PMMark{Type: MarkStrike}))
+
+	case *underlineNode:
+		return childInlines(node, src, appendMark(marks, PMMark{Type: MarkUnderline}))
 
 	case *ast.Link:
 		attrs := map[string]any{"href": string(node.Destination)}

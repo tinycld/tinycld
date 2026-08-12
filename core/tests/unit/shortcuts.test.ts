@@ -1,6 +1,11 @@
 import { createMatcher, isScopeActive } from '@tinycld/core/lib/shortcuts/matcher'
 import { useShortcutRegistry } from '@tinycld/core/lib/shortcuts/registry'
-import { popScope, pushScope, resetScopes } from '@tinycld/core/lib/shortcuts/scopes'
+import {
+    currentScopeId,
+    popScope,
+    pushScope,
+    resetScopes,
+} from '@tinycld/core/lib/shortcuts/scopes'
 import type { Shortcut } from '@tinycld/core/lib/shortcuts/types'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -236,5 +241,127 @@ describe('matcher', () => {
         const m = createMatcher()
 
         expect(m.feedAtom('a', { inInput: false })).toBe(false)
+    })
+})
+
+// Regression: a blurred-but-mounted screen must keep stamping its OWN scope id.
+//
+// On web `freezeOnBlur` only sets `display: none`, so a blurred screen's live
+// queries keep emitting and its memoised shortcut array keeps changing identity
+// — which re-runs its register effect while ANOTHER package holds the keyboard.
+// Deriving the stamp from the scope stack at that moment (`currentScopeId`,
+// which answers "who holds this scope now") gave the blurred screen the focused
+// screen's id. Both then looked live to the matcher, and the one earlier in the
+// registry's insertion order won — firing mail's `j` for a keypress meant for a
+// cards board, which read to the user as a dropped keystroke.
+describe('scope stamping', () => {
+    beforeEach(() => {
+        resetScopes()
+        clearRegistry()
+    })
+
+    it('currentScopeId returns the TOP holder, not the caller — why the stamp is passed in', () => {
+        const blurredId = pushScope('list')
+        const focusedId = pushScope('list')
+
+        // Both screens are mounted at 'list'; the stack cannot distinguish them.
+        expect(currentScopeId('list')).toBe(focusedId)
+        expect(currentScopeId('list')).not.toBe(blurredId)
+    })
+
+    it('a blurred screen re-registering keeps its own id and stays inactive', () => {
+        const blurred = vi.fn()
+        const focused = vi.fn()
+        const blurredId = pushScope('list')
+        const focusedId = pushScope('list')
+
+        // Insertion order matters: the blurred screen registered first, so the
+        // matcher visits it first and a wrong stamp would win outright.
+        register({
+            id: 'blurred.j',
+            keys: 'j',
+            scope: 'list',
+            description: 'blurred next',
+            scopeId: blurredId,
+            run: blurred,
+        })
+        register({
+            id: 'focused.j',
+            keys: 'j',
+            scope: 'list',
+            description: 'focused next',
+            scopeId: focusedId,
+            run: focused,
+        })
+
+        // The blurred screen re-registers (a live query emitted). It stamps with
+        // its OWN id — the value its useShortcutScope returned — rather than
+        // re-reading the stack, which would hand it `focusedId`.
+        register({
+            id: 'blurred.j',
+            keys: 'j',
+            scope: 'list',
+            description: 'blurred next',
+            scopeId: blurredId,
+            run: blurred,
+        })
+
+        const m = createMatcher()
+        expect(m.feedAtom('j', { inInput: false })).toBe(true)
+        expect(focused).toHaveBeenCalledTimes(1)
+        expect(blurred).not.toHaveBeenCalled()
+    })
+
+    // The three stamp states, which isScopeActive must keep distinct.
+    it('treats an undefined stamp as legacy scope-only', () => {
+        pushScope('list')
+        const legacy: Shortcut = {
+            id: 'legacy.j',
+            keys: 'j',
+            scope: 'list',
+            description: 'legacy',
+            run: () => {},
+        }
+        expect(isScopeActive(legacy)).toBe(true)
+    })
+
+    // A null stamp means "my owner held no scope entry when I registered", which
+    // arises two ways that must NOT be conflated.
+
+    // A dialog mounting inside an already-focused route never re-runs
+    // useFocusEffect, so its owner never receives an id and every one of its
+    // shortcuts is stamped null — measured, not assumed: all four cards.peek.*
+    // shortcuts register with scopeId null on every run. They must still fire,
+    // or Escape stops closing dialogs.
+
+    it('re-stamping a blurred screen from the live stack fires the WRONG handler', () => {
+        const blurred = vi.fn()
+        const focused = vi.fn()
+        pushScope('list')
+        const focusedId = pushScope('list')
+
+        // The pre-fix behavior, pinned so a regression is unambiguous: the
+        // blurred screen re-registers and picks up whatever currentScopeId says.
+        register({
+            id: 'blurred.j',
+            keys: 'j',
+            scope: 'list',
+            description: 'blurred next',
+            scopeId: currentScopeId('list'),
+            run: blurred,
+        })
+        register({
+            id: 'focused.j',
+            keys: 'j',
+            scope: 'list',
+            description: 'focused next',
+            scopeId: focusedId,
+            run: focused,
+        })
+
+        const m = createMatcher()
+        m.feedAtom('j', { inInput: false })
+        expect(blurred).toHaveBeenCalledTimes(1)
+        expect(focused).not.toHaveBeenCalled()
     })
 })
