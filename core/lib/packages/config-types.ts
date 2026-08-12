@@ -36,6 +36,17 @@ export interface SidebarContribution {
     order: number
     Component: ComponentType | LazyExoticComponent<ComponentType>
 }
+// A read-only event feed contributed to another package's event grid. `load`
+// is a bare thunk (not React.lazy) because the module exports a HOOK
+// (`useEventSource`) — see core/lib/event-sources/types.ts for the contract.
+export interface PackageEventSource {
+    target: string
+    id: string
+    label: string
+    color?: string
+    order: number
+    load: () => Promise<unknown>
+}
 export interface SeedContext {
     // Single-org: package seeds own data by the user id directly (the former
     // org/userOrg junction is gone; the `role` enum lives on the user record).
@@ -81,6 +92,7 @@ export interface PackageEntry<S extends SchemaDeclaration, R> {
         label?: string
         load: () => Promise<unknown>
     }
+    eventSources?: PackageEventSource[]
     seed?: (pb: PocketBase, ctx: SeedContext) => Promise<void>
 }
 
@@ -104,6 +116,7 @@ export function definePackageEntry<S extends SchemaDeclaration>() {
         systemSettings?: PackageEntry<S, R>['systemSettings']
         sidebarContributions?: PackageEntry<S, R>['sidebarContributions']
         search?: PackageEntry<S, R>['search']
+        eventSources?: PackageEntry<S, R>['eventSources']
         seed?: PackageEntry<S, R>['seed']
     }): PackageEntry<S, R> => entry as unknown as PackageEntry<S, R>
 }

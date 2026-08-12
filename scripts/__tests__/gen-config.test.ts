@@ -13,6 +13,8 @@ const contacts: ConfigPkg = {
     systemSettings: [],
     slots: [],
     sidebarContributions: [],
+    eventSources: [],
+    eventSourceHost: false,
     manifest: { name: 'Contacts', slug: 'contacts', version: '0.1.0', description: 'd' },
 }
 const takeout: ConfigPkg = {
@@ -27,6 +29,8 @@ const takeout: ConfigPkg = {
     systemSettings: [],
     slots: [],
     sidebarContributions: [],
+    eventSources: [],
+    eventSourceHost: false,
     manifest: {
         name: 'Takeout',
         slug: 'google-takeout-import',
@@ -105,6 +109,8 @@ describe('buildConfigSource', () => {
             systemSettings: [],
             slots: [],
             sidebarContributions: [],
+            eventSources: [],
+            eventSourceHost: false,
             manifest: { name: 'Drive', slug: 'drive', version: '0.1.0', description: 'd' },
         }
         const src = buildConfigSource([withProvider])
@@ -126,6 +132,8 @@ describe('buildConfigSource', () => {
             systemSettings: [],
             slots: [],
             sidebarContributions: [],
+            eventSources: [],
+            eventSourceHost: false,
             manifest: { name: 'Mail', slug: 'mail', version: '0.1.0', description: 'd' },
         }
         const src = buildConfigSource([contacts, mail])
@@ -188,6 +196,55 @@ describe('buildConfigSource', () => {
         expect(src).toContain(
             "Component: lazy(() => import('@tinycld/calendar-slots/sidebar-contributions/booking-pages'))"
         )
+    })
+
+    it('emits eventSources with a bare load thunk, never lazy()', () => {
+        const cardsPkg: ConfigPkg = {
+            ...contacts,
+            packageName: '@tinycld/cards',
+            slug: 'cards',
+            schemaType: '',
+            hasRegister: false,
+            hasSidebar: false,
+            hasSeed: false,
+            eventSources: [
+                {
+                    target: 'calendar',
+                    id: 'cards-due',
+                    label: 'Card due dates',
+                    module: 'calendar-source',
+                    color: 'graphite',
+                    order: 0,
+                },
+            ],
+            manifest: { name: 'Cards', slug: 'cards', version: '0.1.0', description: 'd' },
+        }
+        const src = buildConfigSource([cardsPkg])
+        expect(src).toContain('eventSources: [')
+        expect(src).toContain(
+            'target: "calendar", id: "cards-due", label: "Card due dates", color: "graphite", order: 0'
+        )
+        // A bare thunk: the module exports a hook, so React.lazy cannot wrap it.
+        expect(src).toContain("load: () => import('@tinycld/cards/calendar-source')")
+        expect(src).not.toContain("lazy(() => import('@tinycld/cards/calendar-source'))")
+        // An event source alone must not pull in the react lazy import.
+        expect(src).not.toContain("import { lazy } from 'react'")
+    })
+
+    it('rejects an eventSource module subpath containing a quote', () => {
+        const bad: ConfigPkg = {
+            ...takeout,
+            eventSources: [
+                {
+                    target: 'calendar',
+                    id: 'x',
+                    label: 'X',
+                    module: "calendar-source')//",
+                    order: 0,
+                },
+            ],
+        }
+        expect(() => buildConfigSource([bad])).toThrow(/unsafe value/)
     })
 })
 
