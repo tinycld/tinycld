@@ -45,6 +45,11 @@ func engineApp(t *testing.T) (core.App, *Engine, *core.Record) {
 	col.Fields.Add(&core.TextField{Name: "title"})
 	col.Fields.Add(&core.TextField{Name: "status"})
 	col.Fields.Add(&core.RelationField{Name: "user", CollectionId: users.Id, MaxSelect: 1})
+	// Every real generated collection carries autodate created/updated fields
+	// (see pb_migrations/1990000000_create_rules.js); dry-run's "-created"
+	// sort relies on that, same as it would against any feature collection.
+	col.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+	col.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
 	if err := app.Save(col); err != nil {
 		t.Fatal(err)
 	}
