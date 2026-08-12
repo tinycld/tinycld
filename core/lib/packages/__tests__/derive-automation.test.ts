@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { deriveAutomation } from '../derive-automation'
+import type { PackageManifest } from '../types'
 
 const mailEntry = {
     manifest: { name: 'Mail', slug: 'mail' },
@@ -34,5 +35,18 @@ describe('deriveAutomation', () => {
             pkgName: 'Mail',
         })
         expect(catalog.byPackage.map(p => p.pkgSlug)).toEqual(['core', 'mail'])
+    })
+})
+
+describe('use-packages automation passthrough', () => {
+    it('PackageManifest carries the raw automation pointer shape', () => {
+        const manifest = {
+            name: 'X',
+            slug: 'x',
+            version: '0.0.1',
+            description: 'd',
+            automation: { definitions: 'automation' },
+        } satisfies PackageManifest
+        expect(manifest.automation.definitions).toBe('automation')
     })
 })
