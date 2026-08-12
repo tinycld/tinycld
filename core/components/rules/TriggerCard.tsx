@@ -1,0 +1,192 @@
+import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
+import type { CatalogResponse, CatalogTrigger } from '@tinycld/core/lib/automation/api'
+import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
+import { parseRef } from '@tinycld/core/lib/automation/helpers'
+import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { Menu } from '@tinycld/core/ui/menu'
+import { PlainInput } from '@tinycld/core/ui/PlainInput'
+import { ChevronDown } from 'lucide-react-native'
+import { Fragment } from 'react'
+import { Pressable, Text, View } from 'react-native'
+
+export interface TriggerCardProps {
+    draft: RuleDraft
+    catalog: CatalogResponse
+    onChange: (patch: Partial<RuleDraft>) => void
+    isLocked: boolean
+}
+
+const SCHEDULE_TRIGGER_REF = 'core:schedule'
+
+const SCHEDULE_PRESETS = [
+    { label: 'Every hour', cron: '0 * * * *' },
+    { label: 'Every day at 8:00', cron: '0 8 * * *' },
+    { label: 'Every Monday at 8:00', cron: '0 8 * * 1' },
+    { label: 'Custom…', cron: null },
+] as const
+
+function groupTriggersByPackage(triggers: CatalogTrigger[]): Map<string, CatalogTrigger[]> {
+    const groups = new Map<string, CatalogTrigger[]>()
+    for (const trigger of triggers) {
+        const list = groups.get(trigger.pkg) ?? []
+        list.push(trigger)
+        groups.set(trigger.pkg, list)
+    }
+    return groups
+}
+
+function TriggerMenu({
+    catalog,
+    selectedRef,
+    onSelect,
+}: {
+    catalog: CatalogResponse
+    selectedRef: string
+    onSelect: (trigger: CatalogTrigger) => void
+}) {
+    const mutedColor = useThemeColor('muted-foreground')
+    const selected = catalog.triggers.find(t => t.ref === selectedRef)
+    const groups = groupTriggersByPackage(catalog.triggers)
+
+    return (
+        <Menu>
+            <Menu.Trigger>
+                <Pressable className="flex-1 flex-row items-center justify-between border rounded-lg px-2.5 py-1.5 border-border bg-background">
+                    <Text className="text-sm text-foreground" numberOfLines={1}>
+                        {selected?.label ?? 'Select a trigger…'}
+                    </Text>
+                    <ChevronDown size={14} color={mutedColor} />
+                </Pressable>
+            </Menu.Trigger>
+            <Menu.Portal>
+                <Menu.Overlay />
+                <Menu.Content presentation="popover" placement="bottom" align="start">
+                    {[...groups.entries()].map(([pkg, triggers]) => (
+                        <Fragment key={pkg}>
+                            <Menu.Label>{pkg}</Menu.Label>
+                            {triggers.map(trigger => (
+                                <MenuActionItem
+                                    key={trigger.ref}
+                                    label={trigger.label}
+                                    isActive={trigger.ref === selectedRef}
+                                    onPress={() => onSelect(trigger)}
+                                />
+                            ))}
+                        </Fragment>
+                    ))}
+                </Menu.Content>
+            </Menu.Portal>
+        </Menu>
+    )
+}
+
+function LockedTriggerLabel({
+    triggerRef,
+    catalog,
+}: {
+    triggerRef: string
+    catalog: CatalogResponse
+}) {
+    const trigger = catalog.triggers.find(t => t.ref === triggerRef)
+    const { pkg } = parseRef(triggerRef)
+    return (
+        <Text className="text-sm text-foreground">
+            {trigger?.label ?? triggerRef}
+            <Text className="text-xs text-muted-foreground"> ({pkg})</Text>
+        </Text>
+    )
+}
+
+function SchedulePresetMenu({
+    cron,
+    onSelectCron,
+}: {
+    cron: string
+    onSelectCron: (cron: string) => void
+}) {
+    const mutedColor = useThemeColor('muted-foreground')
+    const activePreset = SCHEDULE_PRESETS.find(p => p.cron === cron)
+
+    return (
+        <Menu>
+            <Menu.Trigger>
+                <Pressable className="flex-row items-center justify-between border rounded-lg px-2.5 py-1.5 border-border bg-background">
+                    <Text className="text-sm text-foreground" numberOfLines={1}>
+                        {activePreset?.label ?? 'Custom…'}
+                    </Text>
+                    <ChevronDown size={14} color={mutedColor} />
+                </Pressable>
+            </Menu.Trigger>
+            <Menu.Portal>
+                <Menu.Overlay />
+                <Menu.Content presentation="popover" placement="bottom" align="start">
+                    {SCHEDULE_PRESETS.map(preset => (
+                        <MenuActionItem
+                            key={preset.label}
+                            label={preset.label}
+                            isActive={preset.cron === cron}
+                            onPress={() => preset.cron && onSelectCron(preset.cron)}
+                        />
+                    ))}
+                </Menu.Content>
+            </Menu.Portal>
+        </Menu>
+    )
+}
+
+function ScheduleRow({
+    draft,
+    onChange,
+}: {
+    draft: RuleDraft
+    onChange: (patch: Partial<RuleDraft>) => void
+}) {
+    const cron = draft.triggerConfig.cron ?? ''
+
+    const handleCronText = (text: string) => {
+        onChange({ triggerConfig: { ...draft.triggerConfig, cron: text } })
+    }
+
+    return (
+        <View className="gap-2">
+            <SchedulePresetMenu cron={cron} onSelectCron={handleCronText} />
+            <PlainInput
+                value={cron}
+                onChangeText={handleCronText}
+                placeholder="* * * * *"
+                className="font-mono border rounded-lg px-2.5 py-1.5 text-sm text-foreground bg-background border-border"
+            />
+        </View>
+    )
+}
+
+export function TriggerCard({ draft, catalog, onChange, isLocked }: TriggerCardProps) {
+    const isSchedule = draft.trigger === SCHEDULE_TRIGGER_REF
+
+    const handleSelectTrigger = (trigger: CatalogTrigger) => {
+        // Switching triggers invalidates conditions (built against the old
+        // trigger's field set) and actions (may target the old trigger's
+        // collection) — both reset rather than silently carrying over.
+        onChange({
+            trigger: trigger.ref,
+            conditions: { match: 'all', groups: [] },
+            actions: [],
+        })
+    }
+
+    return (
+        <View className="rounded-xl border p-4 bg-surface-secondary border-border gap-3">
+            <Text className="text-sm font-semibold text-foreground">WHEN</Text>
+            {isLocked ? (
+                <LockedTriggerLabel catalog={catalog} triggerRef={draft.trigger} />
+            ) : (
+                <TriggerMenu
+                    catalog={catalog}
+                    selectedRef={draft.trigger}
+                    onSelect={handleSelectTrigger}
+                />
+            )}
+            {isSchedule ? <ScheduleRow draft={draft} onChange={onChange} /> : null}
+        </View>
+    )
+}
