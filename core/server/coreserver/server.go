@@ -14,6 +14,7 @@ import (
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 	"github.com/pocketbase/pocketbase/tools/hook"
 
+	"tinycld.org/core/automation"
 	"tinycld.org/core/notify"
 	"tinycld.org/core/oauth"
 	"tinycld.org/core/offboard"
@@ -302,6 +303,15 @@ func registerSharedCore(app *pocketbase.PocketBase) {
 	// package Register, so with no packages linked this serves an empty result
 	// rather than failing.
 	search.Register(app)
+
+	// Workflow rules engine: record-hook + scheduled dispatch, manual-run and
+	// dry-run endpoints. Shared for the same reason as OAuth/search above — a
+	// tenant's rules fire exactly as a self-hosted deployment's do. Inert with
+	// no materialized defs (a workspace with no automation-contributing
+	// packages), so this is a no-op call in that case.
+	automation.Register(app, automation.Options{
+		DefsPath: filepath.Join(resolveServerDir(), "automation_defs.json"),
+	})
 
 	// Keep the /carddav (and /caldav, /dav) CORS bypass here even though core no
 	// longer serves a protocol handler itself: a package's own Go server (e.g.
