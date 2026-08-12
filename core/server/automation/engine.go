@@ -28,6 +28,10 @@ type event struct {
 	Record     *core.Record
 	Depth      int
 	SourceRule string
+	// RuleID targets one specific rule (scheduled dispatch — each cron job
+	// has its own cadence, so a firing must hit exactly its rule). Empty
+	// means all enabled rules on the trigger, the record-hook path's behavior.
+	RuleID string
 }
 
 type Engine struct {
@@ -112,12 +116,43 @@ func (e *Engine) Start() {
 	}
 	e.app.OnRecordAfterCreateSuccess("rules").BindFunc(reload)
 	e.app.OnRecordAfterUpdateSuccess("rules").BindFunc(reload)
-	e.app.OnRecordAfterDeleteSuccess("rules").BindFunc(reload)
+	e.app.OnRecordAfterDeleteSuccess("rules").BindFunc(func(ev *core.RecordEvent) error {
+		// A deleted record's fields still read as they were pre-delete (e.g.
+		// enabled=true), so routing through reloadScheduleFor's field check
+		// would re-Add instead of Remove. The row is gone either way — just
+		// drop the job unconditionally.
+		takeEngineWrite(ev.Record.Id)
+		e.app.Cron().Remove(scheduleJobID(ev.Record.Id))
+		return ev.Next()
+	})
+
+	e.syncSchedules()
 }
 
-// reloadScheduleFor is completed in the schedule task; the hook binding above
-// must exist from the start so no rules write is missed between tasks.
-func (e *Engine) reloadScheduleFor(rule *core.Record) {}
+// reloadScheduleFor reconciles one rule's cron registration after any rules
+// write — the base_backup.go loadJob shape: Add replaces by id, Remove is a
+// no-op for unknown ids, so this is idempotent for every transition
+// (create/enable/disable/delete/edit-expression).
+func (e *Engine) reloadScheduleFor(rule *core.Record) {
+	jobID := scheduleJobID(rule.Id)
+	if rule.GetString("trigger") != "core:schedule" || !rule.GetBool("enabled") {
+		e.app.Cron().Remove(jobID)
+		return
+	}
+	cfg := decodeScheduleConfig(rule.Get("trigger_config"))
+	trigger, _, _ := e.defs.Trigger("core:schedule")
+	ruleID := rule.Id
+	err := e.app.Cron().Add(jobID, cfg.Cron, func() {
+		if !appIsLive(e.app) {
+			return
+		}
+		e.enqueue(event{TriggerRef: "core:schedule", Trigger: trigger, Record: nil, RuleID: ruleID})
+	})
+	if err != nil {
+		e.app.Logger().Warn("automation: invalid schedule", "rule", rule.Id, "cron", cfg.Cron, "err", err)
+		WriteRun(e.app, rule, nil, TriggerDef{}, RunOutcome{Err: "invalid schedule: " + cfg.Cron})
+	}
+}
 
 func (e *Engine) recordHookHandler(col, op string) func(*core.RecordEvent) error {
 	return func(ev *core.RecordEvent) error {
@@ -202,6 +237,18 @@ func (e *Engine) dispatch(ev event) {
 	if err != nil || len(rules) == 0 {
 		return
 	}
+	if ev.RuleID != "" {
+		filtered := rules[:0]
+		for _, r := range rules {
+			if r.Id == ev.RuleID {
+				filtered = append(filtered, r)
+			}
+		}
+		rules = filtered
+		if len(rules) == 0 {
+			return
+		}
+	}
 	// Org rules first, then personal — order preserved within each tier.
 	sort.SliceStable(rules, func(i, j int) bool {
 		si, sj := rules[i].GetString("scope"), rules[j].GetString("scope")
@@ -225,7 +272,10 @@ func (e *Engine) dispatch(ev event) {
 		if rule.Id == ev.SourceRule {
 			continue // a rule never re-fires on its own write
 		}
-		if rule.GetString("scope") == "personal" && !ownerSet[rule.GetString("owner")] {
+		// No record → no owner to resolve (ResolveOwners returns nil); the
+		// rule firing IS the owner's context (e.g. a scheduled rule), so the
+		// personal-owner filter doesn't apply.
+		if ev.Record != nil && rule.GetString("scope") == "personal" && !ownerSet[rule.GetString("owner")] {
 			continue
 		}
 		start := time.Now()
