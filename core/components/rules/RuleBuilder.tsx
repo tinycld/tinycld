@@ -15,6 +15,7 @@ import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { Switch } from '@tinycld/core/ui/switch'
 import { X } from 'lucide-react-native'
+import { useRef } from 'react'
 import { ActivityIndicator, ScrollView, Text, View } from 'react-native'
 import { ActionsCard } from './ActionsCard'
 import { ConditionsCard } from './ConditionsCard'
@@ -55,7 +56,13 @@ function initialDraft(
     return record ? recordToDraft(record) : emptyDraft(scope)
 }
 
-function BuilderContent({ onClose, scope, ruleId, presetPkg }: Omit<RuleBuilderProps, 'isOpen'>) {
+function BuilderContent({
+    onClose,
+    scope,
+    ruleId,
+    presetPkg,
+    sessionKey,
+}: Omit<RuleBuilderProps, 'isOpen'> & { sessionKey: number }) {
     const { record, isReady: recordReady } = useEditingRecord(ruleId)
     const { catalog, isReady: catalogReady } = useAutomationCatalog()
     const { save } = useRuleMutations()
@@ -69,7 +76,13 @@ function BuilderContent({ onClose, scope, ruleId, presetPkg }: Omit<RuleBuilderP
 
     return (
         <RuleBuilderForm
-            key={record?.id ?? 'new'}
+            // sessionKey (bumped on every open transition, see RuleBuilder
+            // below) forces a fresh useRuleDraft seed each time the builder
+            // opens — record?.id alone doesn't, because Modal/BottomDrawer
+            // content can stay mounted across a close (animation, or a
+            // persistently-mounted caller that just toggles isOpen), which
+            // would otherwise reopen the same session's stale unsaved draft.
+            key={`${sessionKey}:${record?.id ?? 'new'}`}
             onClose={onClose}
             scope={scope}
             presetPkg={presetPkg}
@@ -249,6 +262,20 @@ function BuilderFooter({
 export function RuleBuilder({ isOpen, onClose, scope, ruleId, presetPkg }: RuleBuilderProps) {
     const isMobile = useBreakpoint() === 'mobile'
 
+    // Modal/BottomDrawer content can outlive a close (close animation, or a
+    // caller — Task 7's panel — that mounts one RuleBuilder instance and just
+    // flips isOpen rather than unmounting), so `record?.id` alone isn't
+    // enough to key a fresh draft: reopening the same rule (or "new") would
+    // reuse the previous session's <RuleBuilderForm>, stale edits and all.
+    // Counting open transitions during render (no effect needed — this is a
+    // plain derived value, not a side effect) gives BuilderContent a key that
+    // changes on every open, guaranteeing useRuleDraft reseeds every time.
+    const session = useRef({ wasOpen: false, count: 0 })
+    if (isOpen && !session.current.wasOpen) {
+        session.current.count += 1
+    }
+    session.current.wasOpen = isOpen
+
     if (isMobile) {
         return (
             <BottomDrawer isOpen={isOpen} onClose={onClose}>
@@ -258,6 +285,7 @@ export function RuleBuilder({ isOpen, onClose, scope, ruleId, presetPkg }: RuleB
                         scope={scope}
                         ruleId={ruleId}
                         presetPkg={presetPkg}
+                        sessionKey={session.current.count}
                     />
                 </View>
             </BottomDrawer>
@@ -273,6 +301,7 @@ export function RuleBuilder({ isOpen, onClose, scope, ruleId, presetPkg }: RuleB
                     scope={scope}
                     ruleId={ruleId}
                     presetPkg={presetPkg}
+                    sessionKey={session.current.count}
                 />
             </ModalContent>
         </Modal>
