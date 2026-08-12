@@ -7,16 +7,27 @@ migrate(
             type: 'base',
             system: false,
             // Personal rules: owner only. Org rules: readable by every
-            // authenticated user (so people can see why org automation touches
-            // their data) but writable only by admins/owners.
-            listRule: "owner = @request.auth.id || (scope = 'org' && @request.auth.id != '')",
-            viewRule: "owner = @request.auth.id || (scope = 'org' && @request.auth.id != '')",
+            // non-guest authenticated user (so people can see why org
+            // automation touches their data) but writable only by
+            // admins/owners. Guests get neither read nor create (matches the
+            // house posture: 1870000000_exclude_guests_from_org_rls.js,
+            // 1960000000_audit_logs_admin_only.js).
+            listRule:
+                'owner = @request.auth.id || (scope = "org" && @request.auth.id != "" && @request.auth.role != "guest")',
+            viewRule:
+                'owner = @request.auth.id || (scope = "org" && @request.auth.id != "" && @request.auth.role != "guest")',
             createRule:
-                "@request.auth.id != '' && owner = @request.auth.id && (scope = 'personal' || @request.auth.role = 'admin' || @request.auth.role = 'owner')",
+                '@request.auth.id != "" && @request.auth.role != "guest" && owner = @request.auth.id && (scope = "personal" || @request.auth.role = "admin" || @request.auth.role = "owner")',
+            // Body-locked: a personal-rule owner may PATCH other fields but
+            // must not smuggle `scope`/`owner` changes into the same request
+            // (the stored-value check alone can't see the body) — otherwise a
+            // personal-rule owner could PATCH { scope: 'org' } or
+            // { owner: <other> } and escalate. Admins/owners are trusted on
+            // the org branch, so no body locks there.
             updateRule:
-                "(scope = 'personal' && owner = @request.auth.id) || (scope = 'org' && (@request.auth.role = 'admin' || @request.auth.role = 'owner'))",
+                '(scope = "personal" && owner = @request.auth.id && (@request.body.scope:isset = false || @request.body.scope = "personal") && (@request.body.owner:isset = false || @request.body.owner = @request.auth.id)) || (scope = "org" && (@request.auth.role = "admin" || @request.auth.role = "owner"))',
             deleteRule:
-                "(scope = 'personal' && owner = @request.auth.id) || (scope = 'org' && (@request.auth.role = 'admin' || @request.auth.role = 'owner'))",
+                '(scope = "personal" && owner = @request.auth.id) || (scope = "org" && (@request.auth.role = "admin" || @request.auth.role = "owner"))',
             fields: [
                 {
                     id: 'rules_name',

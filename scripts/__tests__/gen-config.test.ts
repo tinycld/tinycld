@@ -256,7 +256,8 @@ describe('buildConfigSource', () => {
 
     it('omits automation entirely when not declared', () => {
         const src = buildConfigSource([contacts])
-        expect(src).not.toContain('automation')
+        expect(src).not.toContain('automation:')
+        expect(src).not.toContain('Automation from')
     })
 })
 

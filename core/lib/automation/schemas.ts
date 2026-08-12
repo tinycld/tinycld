@@ -15,6 +15,9 @@ export const conditionSchema = z
         if (!NO_VALUE_OPS.has(c.op) && c.value === undefined) {
             ctx.addIssue({ code: 'custom', message: `operator '${c.op}' requires a value` })
         }
+        if (NO_VALUE_OPS.has(c.op) && c.value !== undefined) {
+            ctx.addIssue({ code: 'custom', message: `operator '${c.op}' takes no value` })
+        }
     })
 
 export const conditionGroupSchema = z.object({
@@ -64,8 +67,20 @@ export function validateDefinitions(
                     `${pkgSlug}: trigger '${t.id}' is synthetic — only core may declare synthetic triggers`
                 )
             }
-        } else if (!t.collection) {
-            errors.push(`${pkgSlug}: trigger '${t.id}' has no collection`)
+        } else {
+            if (!t.collection) {
+                errors.push(`${pkgSlug}: trigger '${t.id}' has no collection`)
+            }
+            if (t.watch && t.on !== 'update') {
+                errors.push(
+                    `${pkgSlug}: trigger '${t.id}' declares watch but is not an update trigger`
+                )
+            }
+            if (t.fields && t.fields.length === 0) {
+                errors.push(
+                    `${pkgSlug}: trigger '${t.id}' has an empty fields list — omit fields to expose all columns`
+                )
+            }
         }
     }
     const actionIds = new Set<string>()

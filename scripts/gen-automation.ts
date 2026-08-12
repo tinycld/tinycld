@@ -21,7 +21,7 @@ export async function loadAutomationDefs(
     const pkgJsonPath = path.join(packageDir, 'package.json')
     const exportsMap = (JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8')).exports ?? {}) as Record<
         string,
-        string
+        string | Record<string, unknown>
     >
     const rel = exportsMap[`./${subpath}`]
     if (!rel) {
@@ -29,7 +29,17 @@ export async function loadAutomationDefs(
             `[generate] ${packageName}: manifest declares automation definitions '${subpath}' but package.json exports has no './${subpath}' entry`
         )
     }
+    if (typeof rel !== 'string') {
+        throw new Error(
+            `[generate] ${packageName}: exports entry './${subpath}' is not a plain string (conditional exports are unsupported here)`
+        )
+    }
     const mod = await import(pathToFileURL(path.join(packageDir, rel)).href)
+    if (!mod.default) {
+        throw new Error(
+            `[generate] ${packageName}: module '${rel}' must default-export an AutomationDefinitions object`
+        )
+    }
     return mod.default as AutomationDefinitions
 }
 

@@ -46,6 +46,32 @@ describe('loadAutomationDefs', () => {
             /no '\.\/automation' entry/
         )
     })
+
+    it('throws when the module has no default export', async () => {
+        const dir = makePkg(
+            { './automation': './tinycld/fake/automation.js' },
+            { 'tinycld/fake/automation.js': 'export const x = 1\n' }
+        )
+        await expect(loadAutomationDefs(dir, '@tinycld/fake', 'automation')).rejects.toThrow(
+            /default-export/i
+        )
+    })
+
+    it('throws naming the entry when the exports map value is a conditional-exports object', async () => {
+        const dir = makePkg({}, {})
+        // makePkg only accepts string exports values; overwrite package.json
+        // directly to exercise the conditional-exports (object entry) shape.
+        fs.writeFileSync(
+            path.join(dir, 'package.json'),
+            JSON.stringify({
+                name: '@tinycld/fake',
+                exports: { './automation': { import: './tinycld/fake/automation.js' } },
+            })
+        )
+        await expect(loadAutomationDefs(dir, '@tinycld/fake', 'automation')).rejects.toThrow(
+            /'\.\/automation'.*not a plain string/
+        )
+    })
 })
 
 describe('mergeAutomationDefs', () => {

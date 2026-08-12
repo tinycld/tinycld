@@ -49,6 +49,14 @@ describe('conditionsAstSchema', () => {
         expect(conditionsAstSchema.safeParse(ok).success).toBe(true)
     })
 
+    it('rejects a value-less op that carries a stray value', () => {
+        const bad = {
+            match: 'all',
+            groups: [{ match: 'any', conditions: [{ field: 'x', op: 'is_empty', value: 'junk' }] }],
+        }
+        expect(conditionsAstSchema.safeParse(bad).success).toBe(false)
+    })
+
     it('rejects a group with zero conditions', () => {
         const bad = { match: 'all', groups: [{ match: 'any', conditions: [] }] }
         expect(conditionsAstSchema.safeParse(bad).success).toBe(false)
@@ -125,6 +133,38 @@ describe('validateDefinitions', () => {
         }
         expect(validateDefinitions('mail', synthetic).some(e => e.includes('synthetic'))).toBe(true)
         expect(validateDefinitions('core', synthetic, { allowSynthetic: true })).toEqual([])
+    })
+
+    it('rejects a watch clause on a non-update trigger', () => {
+        const bad: AutomationDefinitions = {
+            triggers: [
+                {
+                    id: 'thing-created',
+                    label: 'A thing is created',
+                    collection: 'things',
+                    on: 'create',
+                    watch: ['status'],
+                },
+            ],
+        }
+        expect(validateDefinitions('mail', bad).some(e => e.includes('declares watch'))).toBe(true)
+    })
+
+    it('rejects an empty fields list on a trigger', () => {
+        const bad: AutomationDefinitions = {
+            triggers: [
+                {
+                    id: 'message-received',
+                    label: 'A message arrives',
+                    collection: 'mail_messages',
+                    on: 'create',
+                    fields: [],
+                },
+            ],
+        }
+        expect(validateDefinitions('mail', bad).some(e => e.includes('empty fields list'))).toBe(
+            true
+        )
     })
 
     it('rejects a record-op whose set references an undeclared param', () => {

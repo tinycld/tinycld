@@ -20,7 +20,7 @@ const plainEntry = { manifest: { name: 'Calc', slug: 'calc' } }
 
 describe('deriveAutomation', () => {
     it('always includes the core catalog, first', () => {
-        const catalog = deriveAutomation([] as never)
+        const catalog = deriveAutomation([])
         expect(catalog.byPackage[0].pkgSlug).toBe('core')
         expect(catalog.triggers['core:schedule']).toBeDefined()
         expect(catalog.triggers['core:manual']).toBeDefined()
@@ -29,7 +29,7 @@ describe('deriveAutomation', () => {
     })
 
     it('keys package declarations by qualified ref and skips packages without automation', () => {
-        const catalog = deriveAutomation([mailEntry, plainEntry] as never)
+        const catalog = deriveAutomation([mailEntry, plainEntry])
         expect(catalog.triggers['mail:message-received']).toMatchObject({
             pkgSlug: 'mail',
             pkgName: 'Mail',
@@ -38,7 +38,7 @@ describe('deriveAutomation', () => {
     })
 })
 
-describe('use-packages automation passthrough', () => {
+describe('PackageManifest automation field shape', () => {
     it('PackageManifest carries the raw automation pointer shape', () => {
         const manifest = {
             name: 'X',

@@ -639,7 +639,7 @@ async function main() {
     )
     emitAutomationDefs(mergeAutomationDefs(automationFeatures))
 
-    // --- 1b. @tinycld/app-generated package manifest -----------------------
+    // --- 1c. @tinycld/app-generated package manifest -----------------------
     // Makes lib/generated/ a real, name-resolvable package so `@tinycld/app-generated/*`
     // resolves by name (via the node_modules/@tinycld/app-generated symlink that
     // link-members.ts creates) — no consumer tsconfig `paths` entry required. The

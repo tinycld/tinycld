@@ -9,9 +9,9 @@ migrate(
             // Readable by whoever can read the rule; written only by the
             // engine (superuser DAO) — no client create/update/delete.
             listRule:
-                "rule.owner = @request.auth.id || (rule.scope = 'org' && (@request.auth.role = 'admin' || @request.auth.role = 'owner'))",
+                'rule.owner = @request.auth.id || (rule.scope = "org" && (@request.auth.role = "admin" || @request.auth.role = "owner"))',
             viewRule:
-                "rule.owner = @request.auth.id || (rule.scope = 'org' && (@request.auth.role = 'admin' || @request.auth.role = 'owner'))",
+                'rule.owner = @request.auth.id || (rule.scope = "org" && (@request.auth.role = "admin" || @request.auth.role = "owner"))',
             createRule: null,
             updateRule: null,
             deleteRule: null,
