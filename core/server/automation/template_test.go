@@ -64,4 +64,15 @@ func TestSystemAndHiddenFieldsNeverSubstitute(t *testing.T) {
 	if !strings.Contains(gotAllowlist, expectedName) {
 		t.Fatalf("name field should substitute in allowlist, got %q", gotAllowlist)
 	}
+
+	// Autodate timestamps must still work on open triggers.
+	created := SubstituteTemplates("{{created}}", u, TriggerDef{})
+	if created == "" || created == "{{created}}" {
+		t.Fatalf("created (autodate) must substitute on open trigger, got %q", created)
+	}
+	// And on curated allowlists that explicitly name them.
+	curatedCreated := TriggerDef{Fields: []FieldRef{{Key: "created"}}}
+	if got := SubstituteTemplates("{{created}}", u, curatedCreated); got == "" || got == "{{created}}" {
+		t.Fatalf("created (autodate) must substitute when explicitly allowlisted, got %q", got)
+	}
 }
