@@ -38,7 +38,13 @@ function useRelationRecords(target: string) {
     const { data } = useLiveQuery(
         q => {
             if (!collection) return null
-            return q.from({ record: collection }).limit(50)
+            // TanStack DB requires an ORDER BY whenever LIMIT is present (it
+            // won't guess a deterministic order for you) — order by id so the
+            // list of "first 50 records" is stable across reloads.
+            return q
+                .from({ record: collection })
+                .orderBy(({ record }) => record.id, 'asc')
+                .limit(50)
         },
         [collection]
     )
