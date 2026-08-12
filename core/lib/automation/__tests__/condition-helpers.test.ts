@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { CatalogField } from '../api'
+import type { CatalogAction, CatalogField, CatalogTrigger } from '../api'
 import {
     addCondition,
     addGroup,
+    appendPlaceholder,
+    compatibleActions,
     ensureUids,
+    moveAction,
     operatorLabel,
     operatorsForField,
     removeCondition,
@@ -168,5 +171,157 @@ describe('ensureUids', () => {
 
     it('is a no-op on an empty AST', () => {
         expect(ensureUids(EMPTY_AST)).toEqual(EMPTY_AST)
+    })
+})
+
+// Mirrors draft.test.ts's catalog fixture shape (see api.test.ts / catalog_test.go).
+const recordTrigger: CatalogTrigger = {
+    ref: 'cat:item-created',
+    pkg: 'cat',
+    label: 'An item is created',
+    collection: 'cat_items',
+    fields: [{ key: 'subject', label: 'Subject', type: 'text' }],
+}
+const otherCollectionTrigger: CatalogTrigger = {
+    ref: 'cat:other-created',
+    pkg: 'cat',
+    label: 'An other-thing is created',
+    collection: 'cat_others',
+    fields: [{ key: 'subject', label: 'Subject', type: 'text' }],
+}
+const syntheticTrigger: CatalogTrigger = {
+    ref: 'core:manual',
+    pkg: 'core',
+    label: 'Run manually',
+    synthetic: 'manual',
+}
+
+const nativeAction: CatalogAction = {
+    ref: 'core:notify',
+    pkg: 'core',
+    label: 'Notify',
+    kind: 'native',
+    available: true,
+}
+const unavailableAction: CatalogAction = {
+    ref: 'core:unavailable-action',
+    pkg: 'core',
+    label: 'Unavailable',
+    kind: 'native',
+    available: false,
+}
+const createOpAction: CatalogAction = {
+    ref: 'cat:create-item',
+    pkg: 'cat',
+    label: 'Create item',
+    kind: 'record-op',
+    collection: 'cat_items',
+    opType: 'create',
+    available: true,
+}
+const triggerRecordOpAction: CatalogAction = {
+    ref: 'cat:set-folder',
+    pkg: 'cat',
+    label: 'Move to folder',
+    kind: 'record-op',
+    collection: 'cat_items',
+    opType: 'update',
+    opTarget: 'trigger-record',
+    available: true,
+}
+const otherTriggerRecordOpAction: CatalogAction = {
+    ref: 'cat:other-set-folder',
+    pkg: 'cat',
+    label: 'Move other to folder (different collection)',
+    kind: 'record-op',
+    collection: 'cat_others',
+    opType: 'update',
+    opTarget: 'trigger-record',
+    available: true,
+}
+
+describe('compatibleActions', () => {
+    const allActions = [
+        nativeAction,
+        unavailableAction,
+        createOpAction,
+        triggerRecordOpAction,
+        otherTriggerRecordOpAction,
+    ]
+    const catalog = { triggers: [recordTrigger], actions: allActions }
+
+    it('includes trigger-record ops only when their collection matches the trigger', () => {
+        const refs = compatibleActions(catalog, recordTrigger).map(a => a.ref)
+        expect(refs).toContain(triggerRecordOpAction.ref)
+        expect(refs).not.toContain(otherTriggerRecordOpAction.ref)
+    })
+
+    it('includes the matching trigger-record op for a different trigger collection', () => {
+        const catalogForOther = { triggers: [otherCollectionTrigger], actions: allActions }
+        const refs = compatibleActions(catalogForOther, otherCollectionTrigger).map(a => a.ref)
+        expect(refs).toContain(otherTriggerRecordOpAction.ref)
+        expect(refs).not.toContain(triggerRecordOpAction.ref)
+    })
+
+    it('always includes create-op record actions and native actions', () => {
+        const refs = compatibleActions(catalog, recordTrigger).map(a => a.ref)
+        expect(refs).toContain(createOpAction.ref)
+        expect(refs).toContain(nativeAction.ref)
+    })
+
+    it('excludes all trigger-record ops for a synthetic trigger', () => {
+        const refs = compatibleActions(catalog, syntheticTrigger).map(a => a.ref)
+        expect(refs).not.toContain(triggerRecordOpAction.ref)
+        expect(refs).not.toContain(otherTriggerRecordOpAction.ref)
+        // create-op and native actions remain available even with no trigger record
+        expect(refs).toContain(createOpAction.ref)
+        expect(refs).toContain(nativeAction.ref)
+    })
+
+    it('keeps unavailable actions listed with available:false rather than filtering them out', () => {
+        const result = compatibleActions(catalog, recordTrigger)
+        const unavailable = result.find(a => a.ref === unavailableAction.ref)
+        expect(unavailable).toBeDefined()
+        expect(unavailable?.available).toBe(false)
+    })
+})
+
+describe('moveAction', () => {
+    it('swaps an item earlier in the list', () => {
+        expect(moveAction(['a', 'b', 'c'], 1, 0)).toEqual(['b', 'a', 'c'])
+    })
+
+    it('swaps an item later in the list', () => {
+        expect(moveAction(['a', 'b', 'c'], 0, 2)).toEqual(['b', 'c', 'a'])
+    })
+
+    it('is a no-op when the destination is out of bounds (below zero)', () => {
+        const list = ['a', 'b', 'c']
+        expect(moveAction(list, 0, -1)).toEqual(list)
+    })
+
+    it('is a no-op when the destination is out of bounds (past the end)', () => {
+        const list = ['a', 'b', 'c']
+        expect(moveAction(list, 2, 3)).toEqual(list)
+    })
+
+    it('does not mutate the source array', () => {
+        const list = ['a', 'b', 'c']
+        moveAction(list, 0, 1)
+        expect(list).toEqual(['a', 'b', 'c'])
+    })
+})
+
+describe('appendPlaceholder', () => {
+    it('appends a {{key}} placeholder to an empty value', () => {
+        expect(appendPlaceholder('', 'subject')).toBe('{{subject}}')
+    })
+
+    it('appends to existing text without a separating space', () => {
+        expect(appendPlaceholder('Re: ', 'subject')).toBe('Re: {{subject}}')
+    })
+
+    it('appends after existing text that has no trailing space', () => {
+        expect(appendPlaceholder('Hello', 'name')).toBe('Hello{{name}}')
     })
 })

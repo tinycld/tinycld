@@ -3,7 +3,7 @@
 // components stay thin wrappers around these.
 
 import { newRecordId } from 'pbtsdb/core'
-import type { CatalogField } from './api'
+import type { CatalogAction, CatalogField, CatalogResponse, CatalogTrigger } from './api'
 import { ALL_OPS, OPERATORS_BY_TYPE } from './helpers'
 import type { ConditionOp } from './types'
 
@@ -163,6 +163,48 @@ export function updateCondition(
                 : g
         ),
     }
+}
+
+/**
+ * Actions the THEN card may offer for the given trigger. A trigger-record op
+ * (`opTarget === 'trigger-record'`) only makes sense against the record that
+ * actually fired the trigger, so it's excluded unless its own `collection`
+ * matches the trigger's — and excluded entirely for a synthetic trigger
+ * (schedule/manual), which has no record at all. `create`-op record actions
+ * and native actions don't touch the trigger record, so they're always
+ * listed. Unavailable actions (`available: false`, e.g. an uninstalled
+ * package) stay in the list — the caller renders them disabled with a "needs
+ * {pkg}" suffix rather than hiding them outright.
+ */
+export function compatibleActions(
+    catalog: CatalogResponse,
+    trigger: CatalogTrigger
+): CatalogAction[] {
+    return catalog.actions.filter(action => {
+        if (action.opTarget !== 'trigger-record') return true
+        if (trigger.synthetic) return false
+        return action.collection === trigger.collection
+    })
+}
+
+/**
+ * Immutably moves the item at `from` to index `to`. Out-of-bounds `to` is a
+ * no-op (returns a value equal to `list`, not necessarily the same
+ * reference) rather than clamping — an up/down button already can't request
+ * an out-of-bounds move under normal use (it's disabled at the ends), so this
+ * is a defensive guard, not a UI-reachable path.
+ */
+export function moveAction<T>(list: T[], from: number, to: number): T[] {
+    if (to < 0 || to >= list.length) return list
+    const next = [...list]
+    const [item] = next.splice(from, 1)
+    next.splice(to, 0, item)
+    return next
+}
+
+/** Appends a `{{key}}` template placeholder to a param's current text value. */
+export function appendPlaceholder(value: string, key: string): string {
+    return `${value}{{${key}}}`
 }
 
 export { ALL_OPS }
