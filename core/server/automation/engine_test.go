@@ -206,6 +206,26 @@ func TestStopProcessingAndOrdering(t *testing.T) {
 	}
 }
 
+func TestStartIsIdempotent(t *testing.T) {
+	app, eng, _ := engineApp(t)
+
+	before := rlstest.HookHandlerCounts(t, app)
+
+	// Must not panic (e.g. double-close of the done channel) and must not
+	// spawn a second worker or rebind hooks.
+	eng.Start()
+
+	after := rlstest.HookHandlerCounts(t, app)
+	for name, count := range before {
+		if after[name] != count {
+			t.Fatalf("second Start() must be a no-op: hook %s went from %d to %d handlers", name, count, after[name])
+		}
+	}
+	if !eng.started {
+		t.Fatal("started flag must remain set")
+	}
+}
+
 func TestSelfRetriggerAndChainDepth(t *testing.T) {
 	app, _, u := engineApp(t)
 	// set-status writes the trigger record → refires the update hook. There is

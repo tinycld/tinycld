@@ -14,6 +14,12 @@ const (
 	maxChainDepth    = 3
 	actionTimeout    = 30 * time.Second
 	dispatchQueueLen = 1024
+	// shutdownDrainWait bounds how long OnTerminate waits for an in-flight
+	// dispatch to finish. Long enough for the common case — a dispatch mid-
+	// flight finishes its current DB call — but a hung action must not hold
+	// up process shutdown, mirroring the abandon-don't-kill design of the
+	// per-action timeout below.
+	shutdownDrainWait = 5 * time.Second
 )
 
 type event struct {
@@ -25,11 +31,12 @@ type event struct {
 }
 
 type Engine struct {
-	app    core.App
-	defs   *Defs
-	queue  chan event
-	cancel context.CancelFunc
-	done   chan struct{}
+	app     core.App
+	defs    *Defs
+	queue   chan event
+	cancel  context.CancelFunc
+	done    chan struct{}
+	started bool
 }
 
 func NewEngine(app core.App, defs *Defs) *Engine {
@@ -41,6 +48,12 @@ func NewEngine(app core.App, defs *Defs) *Engine {
 // Rule execution never runs on the hook goroutine: a slow rule must not block
 // an SMTP delivery.
 func (e *Engine) Start() {
+	if e.started {
+		e.app.Logger().Warn("automation: Start called more than once, ignoring")
+		return
+	}
+	e.started = true
+
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancel = cancel
 	e.app.OnTerminate().BindFunc(func(te *core.TerminateEvent) error {
@@ -49,7 +62,15 @@ func (e *Engine) Start() {
 		// proceed: cancelling only stops it from picking up the NEXT event —
 		// a dispatch already in flight is still touching the DB, and a test
 		// app's Cleanup() tears the DB down right after this hook returns.
-		<-e.done
+		// Bounded rather than unconditional: a dispatch can run N rules × M
+		// actions × a 30s per-action timeout plus prune I/O, and a hung
+		// action must not hold up process shutdown — same abandon-don't-kill
+		// tradeoff as the per-action timeout itself.
+		select {
+		case <-e.done:
+		case <-time.After(shutdownDrainWait):
+			e.app.Logger().Warn("automation: worker did not drain before terminate; abandoning in-flight dispatch")
+		}
 		return te.Next()
 	})
 	go e.worker(ctx)
@@ -79,6 +100,13 @@ func (e *Engine) Start() {
 	}
 
 	reload := func(ev *core.RecordEvent) error {
+		// The auto-disable path (recordRunResult) marks an engine-write
+		// sentinel before saving the rule it just disabled. Nothing else
+		// ever consumes that sentinel for the "rules" collection itself, so
+		// drain it here — otherwise it lingers and misattributes provenance
+		// (depth/source rule) to whatever later legitimate save of the same
+		// rule row happens to land next.
+		takeEngineWrite(ev.Record.Id)
 		e.reloadScheduleFor(ev.Record)
 		return ev.Next()
 	}
