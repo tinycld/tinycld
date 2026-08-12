@@ -262,7 +262,33 @@ function Trigger({ children, disableClick }: TriggerProps) {
         measureWeb()
     }, [disableClick, measureWeb])
 
+    type PressableChildProps = {
+        onPress?: (e: unknown) => void
+        ref?: React.Ref<View>
+    }
+    const child = children as React.ReactElement<PressableChildProps>
+    const childOnPress = child.props.onPress
+
     if (Platform.OS === 'web') {
+        // The wrapper div stays — it is what measures the trigger rect and
+        // catches hover — but the child is ALSO cloned with an onPress.
+        //
+        // Not cosmetic: a trigger child may branch on `onPress` to decide
+        // whether it is interactive at all (cards' assignee/label/due values
+        // render bare, unpressable text when it is absent, which is how a
+        // read-only card is drawn). Passing children straight through left
+        // that prop undefined on web only, so an OWNER'S card properties
+        // rendered as inert "None" text with no way to open the picker, while
+        // native was fine. The clone makes the contract the same on both
+        // platforms: a Menu.Trigger child always receives an onPress.
+        //
+        // The div keeps `onClickCapture`, which runs BEFORE the child's own
+        // handler and already toggles the menu, so the injected onPress only
+        // forwards the child's original — toggling here too would open and
+        // immediately re-close.
+        const webChild = React.cloneElement(child, {
+            onPress: childOnPress ?? (() => {}),
+        })
         return (
             // biome-ignore lint/a11y/noStaticElementInteractions: wrapper div augments the interactive child (Pressable) with click/hover measurement; the child carries the button role and keyboard semantics.
             <div
@@ -274,18 +300,12 @@ function Trigger({ children, disableClick }: TriggerProps) {
                 onClickCapture={handleClick}
                 onMouseEnter={handleMouseEnter}
             >
-                {children}
+                {webChild}
             </div>
         )
     }
 
     // Wrapping a Pressable child in another Pressable swallows touches on native — the inner responder wins. Clone the child to inject onPress + ref.
-    type PressableChildProps = {
-        onPress?: (e: unknown) => void
-        ref?: React.Ref<View>
-    }
-    const child = children as React.ReactElement<PressableChildProps>
-    const childOnPress = child.props.onPress
     const composedOnPress = (e: unknown) => {
         childOnPress?.(e)
         handleClick()
