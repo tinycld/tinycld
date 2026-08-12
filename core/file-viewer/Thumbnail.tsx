@@ -13,11 +13,15 @@ export function Thumbnail({ source, size = 120 }: ThumbnailProps) {
 
     if (!url) {
         return (
+            // Square, like the image branch — NOT `w-full`. A thumbnail that
+            // fills its parent works in drive's fixed-width grid cell and
+            // silently eats the whole row anywhere else: in a flex row it
+            // takes every pixel and collapses the filename beside it to zero
+            // width. `size` is a request for a box, and both branches owe the
+            // caller the same one.
             <View
-                className="items-center justify-center w-full"
-                style={{
-                    height: size,
-                }}
+                className="items-center justify-center shrink-0"
+                style={{ width: size, height: size }}
             >
                 <FileIcon size={size * 0.33} color={iconColor} />
             </View>

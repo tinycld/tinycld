@@ -10,6 +10,7 @@ import { clearAuthBlob, parseAuthBlob, readAuthBlob, writeAuthBlob } from './aut
 import { PB_SERVER_ADDR } from './config'
 import { getResolvedAddress, subscribeResolvedAddress } from './server-address'
 import { createReachabilityTracker } from './server-reachability'
+import { shareTokenHeaders } from './share-token'
 import { useConnectivityStore } from './stores/connectivity-store'
 import type { UserSession } from './types'
 
@@ -123,6 +124,20 @@ export const pb = new PocketBase(PB_SERVER_ADDR, store)
 
 pb.autoCancellation(false)
 
+// A share-link visitor is unauthenticated, so every row they may read is
+// authorized by a token rather than by `@request.auth.id`. Attaching it here
+// covers every REST call the SDK makes; the realtime half rides
+// `subscribeOptions` on the collection factory below, and both arrive at the
+// rule as `@request.headers.x_share_token` because PocketBase snakecases header
+// names identically on the two paths.
+pb.beforeSend = (url, options) => {
+    const headers = shareTokenHeaders()
+    if (headers) {
+        options.headers = { ...options.headers, ...headers }
+    }
+    return { url, options }
+}
+
 // The server-unreachable signal (which drives the offline overlay) is
 // derived from pb.send outcomes via a rolling sustained-failure tracker.
 // See server-reachability.ts for the rationale — in short, a single blip,
@@ -199,7 +214,17 @@ const queryClient = new QueryClient({
     }),
 })
 
-const newCollection = createCollection<MergedSchema>(pb, queryClient)
+// `subscribeOptions` is a GETTER, called at subscribe time rather than read
+// once: a subscription is re-established on reconnect and whenever a
+// collection's subscriber count rises from zero, so a captured value would go
+// stale exactly when it matters — most sharply at OTP sign-in, where the token
+// stops being sent and the membership half of the rule takes over.
+const newCollection = createCollection<MergedSchema>(pb, queryClient, {
+    subscribeOptions: () => {
+        const headers = shareTokenHeaders()
+        return headers ? { headers } : undefined
+    },
+})
 
 const indexing = {
     collectionOptions: {

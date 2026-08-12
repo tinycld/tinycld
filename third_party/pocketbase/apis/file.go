@@ -105,22 +105,87 @@ func (api *fileApi) download(e *core.RequestEvent) error {
 		return e.NotFoundError("", nil)
 	}
 
-	// check whether the request is authorized to view the protected file
-	if fileField.Protected {
-		originalRequestInfo, err := e.RequestInfo()
-		if err != nil {
-			return e.InternalServerError("Failed to load request info", err)
-		}
+	// FORK CHANGE — the collection's viewRule gates EVERY file, not only a
+	// `protected` one.
+	//
+	// Upstream checks the viewRule here only when the field sets Protected,
+	// and says so in field_file.go: "by default all files are publicly
+	// accessible … all file names have a random part appended which needs to
+	// be known by the user before accessing the file". That is security by
+	// obscurity, and it is the wrong default for this app: every file field we
+	// ship holds tenant data (mail attachments, drive items, cards
+	// attachments, text snapshots), a filename leaks through any share of the
+	// URL, and none of our collections had opted in — so a record id plus a
+	// filename downloaded anyone's file, unauthenticated. Found while testing
+	// the cards share-link rules; it predates them and spans every package.
+	//
+	// So the check is now unconditional and `Protected` means only "ALSO
+	// accept a short-lived file token in ?token=". Deliberately NOT renamed to
+	// an inverted `Public` flag: the field is persisted collection schema
+	// (`json:"protected"`, read by migrations/1717233556_v0.23_migrate.go), so
+	// flipping the stored key's meaning would make every existing collection
+	// deserialize as the opposite of what it is.
+	//
+	// A caller that fails the viewRule now gets 404 instead of bytes. That is
+	// the point, but it means any client fetching a file it cannot read the
+	// record for breaks — which is correct and worth knowing when a thumbnail
+	// goes blank.
+	originalRequestInfo, err := e.RequestInfo()
+	if err != nil {
+		return e.InternalServerError("Failed to load request info", err)
+	}
 
-		token := e.Request.URL.Query().Get("token")
-		authRecord, _ := e.App.FindAuthRecordByToken(token, core.TokenTypeFile)
+	// Enforce when the collection DECLARES a viewRule, or when the field opted
+	// into `protected` regardless of the rule.
+	//
+	// The nil-viewRule carve-out is upstream compatibility, not a hole we lean
+	// on: nil means "superusers only" to CanAccessRecord, yet upstream has
+	// always served such a collection's files publicly and its own suite
+	// downloads from one unauthenticated. Every file-bearing collection we ship
+	// declares a rule (mail, drive, cards and text were each checked), so the
+	// carve-out never applies to us.
+	//
+	// `|| fileField.Protected` is load-bearing: demo1 in upstream's fixture is
+	// exactly a nil-rule collection with a protected field, and a bare nil
+	// check would skip the token gate and serve a protected file to a guest —
+	// caught by upstream's own "protected file - guest without view access".
+	if record.Collection().ViewRule != nil || fileField.Protected {
+		// Whose identity the rule is evaluated as.
+		//
+		// A `protected` field keeps upstream's semantics EXACTLY: the ?token=
+		// file token is the only identity, and an absent, expired or
+		// IP-rejected token evaluates the rule as nobody. It must NOT fall back
+		// to the request's own auth — doing so makes a protected file MORE
+		// reachable than before (upstream's "guest without view access" case
+		// starts returning bytes), which is the precise opposite of the intent
+		// here.
+		//
+		// Every other field is evaluated as the caller. That is the fork
+		// change: previously such a field skipped the rule altogether.
+		var authRecord *core.Record
+		if fileField.Protected {
+			token := e.Request.URL.Query().Get("token")
+			authRecord, _ = e.App.FindAuthRecordByToken(token, core.TokenTypeFile)
 
-		// reset the auth state if it is superuser and it is not whitelisted
-		// (not critical because file tokens are short-lived but checked nonetheless as an extra precaution)
-		if authRecord != nil && authRecord.IsSuperuser() {
-			allowedIPs := e.App.Settings().SuperuserIPs
-			if len(allowedIPs) > 0 && !isIPInList(allowedIPs, e.RealIP()) {
-				authRecord = nil
+			// reset the auth state if it is superuser and it is not whitelisted
+			// (not critical because file tokens are short-lived but checked nonetheless as an extra precaution)
+			if authRecord != nil && authRecord.IsSuperuser() {
+				allowedIPs := e.App.Settings().SuperuserIPs
+				if len(allowedIPs) > 0 && !isIPInList(allowedIPs, e.RealIP()) {
+					authRecord = nil
+				}
+			}
+		} else {
+			// An unprotected field still honours a ?token= when one is
+			// supplied, because that is how this app's own clients fetch files
+			// (core/file-viewer/use-authed-file-url.ts appends one to every
+			// URL so native HTTP fetches, which carry no cookies or headers,
+			// can be authorized at all).
+			if token := e.Request.URL.Query().Get("token"); token != "" {
+				authRecord, _ = e.App.FindAuthRecordByToken(token, core.TokenTypeFile)
+			}
+			if authRecord == nil {
+				authRecord = originalRequestInfo.Auth
 			}
 		}
 
