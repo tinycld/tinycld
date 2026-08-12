@@ -2,10 +2,14 @@
 package automation
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"github.com/pocketbase/pocketbase/tools/types"
+
+	"tinycld.org/core/rlstest"
 )
 
 // actionApp builds: users (fixture), label_assignments-like target collection,
@@ -145,5 +149,170 @@ func TestTriggerRecordOpNeedsMatchingCollection(t *testing.T) {
 	app, _, rule, defs := actionApp(t)
 	if err := ExecuteAction(app, defs, "things:set-status", nil, rule, openTrigger, nil, 0); err == nil {
 		t.Fatal("trigger-record op with nil record must error")
+	}
+}
+
+// pkgaccessApp applies core's REAL shipped migrations (rlstest), so
+// checkPersonalAccess is exercised against the actual pkg_registry /
+// org_pkg_access / rules schema rather than the fake_rules stand-in the other
+// tests use. It creates the same "things" source collection as actionApp,
+// registers it in pkg_registry as an installed package (pkgaccess derives
+// ownership from the collection name matching an installed slug), and
+// returns (app, trigger record, member user, personal rule, Defs) for
+// things:set-status.
+func pkgaccessApp(t *testing.T) (*tests.TestApp, *core.Record, *core.Record, *core.Record, *Defs) {
+	t.Helper()
+	t.Cleanup(ResetRegistriesForTest)
+	app := rlstest.NewApp(t)
+
+	// Same fixture reconciliation as coreserver's RLS suites: drop the
+	// bundled username index so 1820000000 (users_username_required) applies
+	// the way it does against a real DB.
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept types.JSONArray[string]
+	for _, idx := range users.Indexes {
+		if !strings.Contains(idx, "username") {
+			kept = append(kept, idx)
+		}
+	}
+	users.Indexes = kept
+	users.PasswordAuth.IdentityFields = []string{"email"}
+	if err := app.Save(users); err != nil {
+		t.Fatalf("drop fixture username index: %v", err)
+	}
+
+	rlstest.Apply(t, app, rlstest.MigrationsDir(t, "../pb_migrations"))
+
+	src := core.NewBaseCollection("things")
+	src.Fields.Add(&core.TextField{Name: "title"})
+	src.Fields.Add(&core.TextField{Name: "status"})
+	if err := app.Save(src); err != nil {
+		t.Fatal(err)
+	}
+
+	registry, err := app.FindCollectionByNameOrId("pkg_registry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := core.NewRecord(registry)
+	reg.Set("name", "Things")
+	reg.Set("slug", "things")
+	reg.Set("status", "installed")
+	if err := app.Save(reg); err != nil {
+		t.Fatal(err)
+	}
+
+	member := pkgaccessTestUser(t, app, "member@test.local", "member")
+
+	rulesCol, err := app.FindCollectionByNameOrId("rules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := core.NewRecord(rulesCol)
+	rule.Set("name", "file it")
+	rule.Set("scope", "personal")
+	rule.Set("owner", member.Id)
+	rule.Set("trigger", "things:create")
+	rule.Set("actions", `[]`)
+	if err := app.Save(rule); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := core.NewRecord(src)
+	rec.Set("title", "Invoice #7")
+	rec.Set("status", "new")
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	defs := &Defs{Packages: []PackageDefs{{
+		Slug: "things",
+		Actions: []ActionDef{{
+			ID: "set-status", Kind: "record-op", Collection: "things",
+			Op:     RecordOp{Type: "update", Target: "trigger-record", Set: map[string]SetValue{"status": {Param: "status"}}},
+			Params: []ParamDef{{Key: "status", Field: "status"}},
+		}},
+	}}}
+	return app, rec, member, rule, defs
+}
+
+func pkgaccessTestUser(t *testing.T, app core.App, email, role string) *core.Record {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := core.NewRecord(col)
+	r.SetEmail(email)
+	r.Set("username", strings.SplitN(email, "@", 2)[0])
+	r.Set("name", "Test")
+	r.Set("role", role)
+	r.SetVerified(true)
+	r.SetPassword("Password123!")
+	if err := app.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func denyOrgPkgAccess(t *testing.T, app core.App, userID, pkg, access string) {
+	t.Helper()
+	col, err := app.FindCollectionByNameOrId("org_pkg_access")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := core.NewRecord(col)
+	r.Set("user", userID)
+	r.Set("pkg", pkg)
+	r.Set("access", access)
+	if err := app.Save(r); err != nil {
+		t.Fatalf("seed org_pkg_access: %v", err)
+	}
+}
+
+// TestPersonalScopePkgaccess proves ExecuteAction's checkPersonalAccess is
+// wired to the REAL pkgaccess package against the shipped schema: a personal
+// rule owned by a member with no write access to the "things" package is
+// denied; the identical action under an org-scope rule bypasses the check
+// (system authority, spec-documented); and a personal rule succeeds once the
+// member is granted "full" access.
+func TestPersonalScopePkgaccess(t *testing.T) {
+	app, rec, member, rule, defs := pkgaccessApp(t)
+
+	// No org_pkg_access row would default to LevelFull (see LevelFor), so
+	// deny explicitly to exercise the readonly branch of WriteError.
+	denyOrgPkgAccess(t, app, member.Id, "things", "readonly")
+
+	if err := ExecuteAction(app, defs, "things:set-status", map[string]any{"status": "filed"}, rule, openTrigger, rec, 0); err == nil {
+		t.Fatal("personal rule with readonly pkgaccess must be denied")
+	}
+
+	rule.Set("scope", "org")
+	if err := app.Save(rule); err != nil {
+		t.Fatal(err)
+	}
+	if err := ExecuteAction(app, defs, "things:set-status", map[string]any{"status": "filed"}, rule, openTrigger, rec, 0); err != nil {
+		t.Fatalf("org rule must bypass pkgaccess (system authority): %v", err)
+	}
+
+	rule.Set("scope", "personal")
+	if err := app.Save(rule); err != nil {
+		t.Fatal(err)
+	}
+	existing, err := app.FindFirstRecordByFilter("org_pkg_access",
+		"user = {:user} && pkg = {:pkg}",
+		map[string]any{"user": member.Id, "pkg": "things"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing.Set("access", "full")
+	if err := app.Save(existing); err != nil {
+		t.Fatal(err)
+	}
+	if err := ExecuteAction(app, defs, "things:set-status", map[string]any{"status": "filed"}, rule, openTrigger, rec, 0); err != nil {
+		t.Fatalf("personal rule with full pkgaccess must succeed: %v", err)
 	}
 }
