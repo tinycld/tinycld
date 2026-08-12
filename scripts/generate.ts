@@ -8,6 +8,7 @@ import {
     validateNavShortcuts,
     validateSidebarContributions,
 } from './describe-packages'
+import { emitAutomationDefs, loadAutomationDefs, mergeAutomationDefs } from './gen-automation'
 import { type BuildPkg, runPackageBuilds } from './gen-build'
 import {
     buildCliExtensionsSource,
@@ -626,6 +627,17 @@ async function main() {
     validateNavShortcuts(configPkgs)
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.config.ts'), buildConfigSource(configPkgs))
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.seeds.ts'), buildSeedsSource(configPkgs))
+
+    // --- 1b. automation definitions → server/automation_defs.json ----------
+    const automationFeatures = await Promise.all(
+        features
+            .filter(f => f.manifest.automation)
+            .map(async f => ({
+                slug: f.manifest.slug,
+                defs: await loadAutomationDefs(f.dir, f.name, f.manifest.automation!.definitions),
+            }))
+    )
+    emitAutomationDefs(mergeAutomationDefs(automationFeatures))
 
     // --- 1b. @tinycld/app-generated package manifest -----------------------
     // Makes lib/generated/ a real, name-resolvable package so `@tinycld/app-generated/*`
