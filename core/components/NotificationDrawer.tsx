@@ -179,7 +179,11 @@ function NotificationContent() {
                         }}
                         color={primaryColor}
                     />
-                    <Pressable onPress={() => close(false)} hitSlop={8}>
+                    <Pressable
+                        onPress={() => close(false)}
+                        hitSlop={8}
+                        accessibilityLabel="Close notifications"
+                    >
                         <X size={18} color={mutedColor} />
                     </Pressable>
                 </View>

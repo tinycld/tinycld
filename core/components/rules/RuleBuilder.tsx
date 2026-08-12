@@ -164,6 +164,7 @@ function RuleBuilderForm({
                     />
                     <ConditionsCard draft={draft} catalog={catalog} onChange={patch} />
                     <ActionsCard draft={draft} catalog={catalog} onChange={patch} />
+                    {/* Phase-4 candidate: dry-run resolver-aware scoping (see endpoints.go) */}
                     <DryRunPanel
                         draft={draft}
                         catalog={catalog}
