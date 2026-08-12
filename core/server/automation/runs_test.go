@@ -10,6 +10,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
 
+	"tinycld.org/core/notify"
 	"tinycld.org/core/rlstest"
 )
 
@@ -97,6 +98,17 @@ func TestPruneKeeps200(t *testing.T) {
 
 func TestAutoDisableAfterConsecutiveFailures(t *testing.T) {
 	app, rule := runsApp(t)
+
+	notified := make(chan notify.NotifyParams, 1)
+	orig := notifyUser
+	notifyUser = func(app core.App, p notify.NotifyParams) {
+		select {
+		case notified <- p:
+		default:
+		}
+	}
+	t.Cleanup(func() { notifyUser = orig })
+
 	for i := 0; i < autoDisableAfter-1; i++ {
 		recordRunResult(app, rule, true)
 	}
@@ -111,5 +123,17 @@ func TestAutoDisableAfterConsecutiveFailures(t *testing.T) {
 	fresh, _ = app.FindRecordById("rules", rule.Id)
 	if fresh.GetBool("enabled") {
 		t.Fatal(fmt.Sprintf("must disable after %d consecutive failures", autoDisableAfter))
+	}
+
+	select {
+	case p := <-notified:
+		if p.Type != "automation_disabled" {
+			t.Fatalf("notification type: %q", p.Type)
+		}
+		if p.UserID != rule.GetString("owner") {
+			t.Fatalf("notification UserID: got %q want %q", p.UserID, rule.GetString("owner"))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("auto-disable notification was not sent")
 	}
 }

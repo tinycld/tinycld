@@ -16,6 +16,19 @@ const (
 	autoDisableAfter = 20
 )
 
+// notifyUser is an indirection so tests can intercept the auto-disable
+// notification without racing the real push I/O against app teardown.
+var notifyUser = notify.NotifyUser
+
+// appIsLive reports whether app still has a usable DB connection pool. The
+// auto-disable notification fires from a background goroutine that can
+// outlive the request/test that triggered it; checking this before touching
+// app avoids a nil-pointer panic against a torn-down app. engine.go's worker
+// (Task 7) reuses this same helper rather than redefining it.
+func appIsLive(app core.App) bool {
+	return app != nil && app.ConcurrentDB() != nil
+}
+
 type ActionResult struct {
 	Ref     string `json:"ref"`
 	Status  string `json:"status"`
@@ -116,16 +129,17 @@ func recordRunResult(app core.App, rule *core.Record, fullyFailed bool) {
 		app.Logger().Error("automation: auto-disable", "rule", rule.Id, "err", err)
 		return
 	}
-	// Synchronous, matching invite.go's call site: NotifyUser does its own
-	// I/O quickly, and firing it via `go` here raced app teardown in tests
-	// (the goroutine could still be running against app after t.Cleanup
-	// closed it) with nothing upstream to wait on it.
-	notify.NotifyUser(app, notify.NotifyParams{
-		UserID:  rule.GetString("owner"),
-		Type:    "automation_disabled",
-		Package: "core",
-		Title:   "Automation rule disabled",
-		Body:    "\"" + rule.GetString("name") + "\" failed repeatedly and was turned off.",
-		URL:     "/",
-	})
+	go func() {
+		if !appIsLive(app) {
+			return
+		}
+		notifyUser(app, notify.NotifyParams{
+			UserID:  rule.GetString("owner"),
+			Type:    "automation_disabled",
+			Package: "core",
+			Title:   "Automation rule disabled",
+			Body:    "\"" + rule.GetString("name") + "\" failed repeatedly and was turned off.",
+			URL:     "/",
+		})
+	}()
 }
