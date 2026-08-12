@@ -4,6 +4,7 @@ import * as path from 'node:path'
 import { getPackages } from '../../tinycld.packages'
 import {
     manifestToConfigPkg,
+    validateEventSources,
     validateNavShortcuts,
     validateSidebarContributions,
 } from './describe-packages'
@@ -621,6 +622,7 @@ async function main() {
     // --- 1. tinycld.config.ts + tinycld.seeds.ts (at app root) -------------
     const configPkgs: ConfigPkg[] = features.map(f => manifestToConfigPkg(f.name, f.manifest))
     validateSidebarContributions(configPkgs)
+    validateEventSources(configPkgs)
     validateNavShortcuts(configPkgs)
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.config.ts'), buildConfigSource(configPkgs))
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.seeds.ts'), buildSeedsSource(configPkgs))
