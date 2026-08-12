@@ -200,7 +200,8 @@
                 "**/calc/components/pivot/PivotGrid.tsx",
                 "**/calc/components/pivot/PivotSidePanel.tsx",
                 "**/text/components/ImportWarningBanner.tsx",
-                "**/core/components/rules/ConditionsCard.tsx"
+                "**/core/components/rules/ConditionsCard.tsx",
+                "**/core/components/rules/ConditionGroupBox.tsx"
             ],
             "linter": {
                 "rules": {

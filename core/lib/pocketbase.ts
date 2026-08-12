@@ -469,3 +469,16 @@ export async function resetSessionState() {
 }
 
 export { PBTSDBProvider, queryClient, stores, useStore }
+
+/**
+ * Dynamic-by-name collection lookup for callers that receive a collection
+ * name as DATA rather than a literal (e.g. an automation relation target
+ * pulled from the catalog) — `useStore` can't be called with a runtime
+ * string, since its typed overloads are keyed on `stores`' literal keys.
+ * Returns `undefined` for names not registered in `stores` (an unlinked
+ * package's collection, or a name outside the tinycld schema entirely) so
+ * callers degrade gracefully instead of reaching for raw PB.
+ */
+export function collectionByName(name: string): (typeof stores)[keyof typeof stores] | undefined {
+    return (stores as Record<string, (typeof stores)[keyof typeof stores]>)[name]
+}
