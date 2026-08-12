@@ -16,6 +16,7 @@ import {
     Tag,
     User,
     Users,
+    Workflow,
 } from 'lucide-react-native'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
@@ -35,6 +36,11 @@ export default function SettingsIndex() {
                         label="Personal"
                         onPress={() => router.push(orgHref('settings/personal'))}
                         icon={<User size={20} color={foregroundColor} />}
+                    />
+                    <SettingsLink
+                        label="Rules"
+                        onPress={() => router.push(orgHref('settings/rules'))}
+                        icon={<Workflow size={20} color={foregroundColor} />}
                     />
                 </SettingsGroup>
 
