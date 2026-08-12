@@ -22,6 +22,15 @@ export interface ConfigSearch {
     label?: string
 }
 
+export interface ConfigEventSource {
+    target: string
+    id: string
+    label: string
+    module: string // package-exports subpath e.g. 'calendar-source'
+    color?: string
+    order: number
+}
+
 export interface ConfigPkg {
     packageName: string
     slug: string
@@ -35,6 +44,8 @@ export interface ConfigPkg {
     slots: string[]
     sidebarContributions: ConfigSidebarContribution[]
     search?: ConfigSearch
+    eventSources: ConfigEventSource[]
+    eventSourceHost: boolean
     manifest: { name: string; slug: string; version: string; description: string } & Record<
         string,
         unknown
@@ -67,6 +78,20 @@ function validateConfigPkg(p: ConfigPkg): void {
         assertSafeImportField('sidebarContributions[].component', c.component)
     }
     if (p.search) assertSafeImportField('search.adapter', p.search.adapter)
+    for (const s of p.eventSources) assertSafeImportField('eventSources[].module', s.module)
+}
+
+function pushEventSourceLines(lines: string[], p: ConfigPkg): void {
+    if (p.eventSources.length === 0) return
+    lines.push('        eventSources: [')
+    for (const s of p.eventSources) {
+        // Same bare-thunk rationale as search: the module exports a hook.
+        const color = s.color ? ` color: ${jsonLiteral(s.color)},` : ''
+        lines.push(
+            `            { target: ${jsonLiteral(s.target)}, id: ${jsonLiteral(s.id)}, label: ${jsonLiteral(s.label)},${color} order: ${s.order}, load: () => import('${p.packageName}/${s.module}') },`
+        )
+    }
+    lines.push('        ],')
 }
 
 export function buildConfigSource(pkgs: ConfigPkg[]): string {
@@ -150,6 +175,7 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
             lines.push(`            load: () => import('${p.packageName}/${p.search.adapter}'),`)
             lines.push('        },')
         }
+        pushEventSourceLines(lines, p)
         lines.push('    }),')
     }
     lines.push('] as const')

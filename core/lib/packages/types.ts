@@ -84,6 +84,35 @@ export interface PackageManifest {
         order?: number
     }[]
 
+    /**
+     * Read-only event feeds this package contributes to another package's
+     * event grid (today: the calendar). `target` is the host package slug —
+     * the host must declare `eventSourceHost: true` or generation fails;
+     * an absent host leaves the source silently inactive (lean shell).
+     * `id` is unique per target and restricted to `[a-z0-9-]` (the host embeds
+     * it in `:`-delimited synthetic event ids). `module` is a package-exports
+     * subpath to a module exporting `useEventSource` — see
+     * `core/lib/event-sources/types.ts` for the contract. Items are read-only
+     * on the host grid: no drag, no edit; a press navigates to the item's
+     * `href`. `color` names a calendar color key the host resolves.
+     */
+    eventSources?: {
+        target: string
+        id: string
+        label: string
+        module: string
+        color?: string
+        order?: number
+    }[]
+
+    /**
+     * Declares this package hosts event-source contributions: it mounts the
+     * collectors, merges contributed items into its grid, and renders the
+     * per-source visibility toggles. Contributions targeting a package
+     * without this flag fail generation.
+     */
+    eventSourceHost?: boolean
+
     seed?: {
         script: string
     }

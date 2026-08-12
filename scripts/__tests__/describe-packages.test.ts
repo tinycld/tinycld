@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
     manifestToConfigPkg,
     schemaTypeName,
+    validateEventSources,
     validateNavShortcuts,
     validateSidebarContributions,
 } from '../describe-packages'
@@ -157,6 +158,88 @@ describe('validateSidebarContributions', () => {
         } finally {
             warn.mockRestore()
         }
+    })
+})
+
+describe('validateEventSources', () => {
+    const source = (overrides: Partial<{ target: string; id: string }> = {}) => ({
+        target: 'calendar',
+        id: 'cards-due',
+        label: 'Card due dates',
+        module: 'calendar-source',
+        ...overrides,
+    })
+
+    const contributor = (slug: string, sources = [source()]) =>
+        manifestToConfigPkg(`@tinycld/${slug}`, {
+            name: slug,
+            slug,
+            version: '0.1.0',
+            description: 'd',
+            eventSources: sources,
+        })
+
+    const host = manifestToConfigPkg('@tinycld/calendar', {
+        name: 'Calendar',
+        slug: 'calendar',
+        version: '0.1.0',
+        description: 'd',
+        eventSourceHost: true,
+    })
+
+    it('maps eventSources onto ConfigPkg, defaulting order to 0', () => {
+        const cp = contributor('cards')
+        expect(cp.eventSources).toEqual([
+            {
+                target: 'calendar',
+                id: 'cards-due',
+                label: 'Card due dates',
+                module: 'calendar-source',
+                order: 0,
+            },
+        ])
+        expect(cp.eventSourceHost).toBe(false)
+        expect(host.eventSourceHost).toBe(true)
+    })
+
+    it('accepts a source targeting a present host', () => {
+        expect(() => validateEventSources([host, contributor('cards')])).not.toThrow()
+    })
+
+    it('tolerates a source targeting an absent host (partial checkout)', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        try {
+            expect(() => validateEventSources([contributor('cards')])).not.toThrow()
+            expect(warn).toHaveBeenCalledWith(
+                expect.stringMatching(/not installed in this workspace/)
+            )
+        } finally {
+            warn.mockRestore()
+        }
+    })
+
+    it('rejects a source targeting a present package that is not a host', () => {
+        const nonHost = manifestToConfigPkg('@tinycld/calendar', {
+            name: 'Calendar',
+            slug: 'calendar',
+            version: '0.1.0',
+            description: 'd',
+        })
+        expect(() => validateEventSources([nonHost, contributor('cards')])).toThrow(
+            /does not declare eventSourceHost/
+        )
+    })
+
+    it('rejects an id outside [a-z0-9-]', () => {
+        expect(() =>
+            validateEventSources([host, contributor('cards', [source({ id: 'Cards:Due' })])])
+        ).toThrow(/must match \[a-z0-9-\]\+/)
+    })
+
+    it('rejects a duplicate (target, id) across contributors', () => {
+        expect(() =>
+            validateEventSources([host, contributor('cards'), contributor('tasks')])
+        ).toThrow(/declared by both 'cards' and 'tasks'/)
     })
 })
 
