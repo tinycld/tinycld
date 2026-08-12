@@ -1,0 +1,195 @@
+import { expect, type Page, test } from '@playwright/test'
+import { login } from './helpers'
+
+// Element-gated settings navigation, mirroring mail's
+// navigateToMailboxSettings (mail/tests/helpers.ts): click the rail's
+// settings button, then click into the "Rules" link by its visible text —
+// never page.goto(), which would tear down the SPA mid-navigation.
+async function navigateToRulesSettings(page: Page) {
+    await page.getByTestId('nav-settings').click()
+    await page.getByText('Rules', { exact: true }).first().click()
+    await expect(page.getByText('My rules', { exact: true })).toBeVisible()
+}
+
+// The builder's trigger/action pickers are the house Menu component (a plain
+// Pressable trigger + text-labeled items, not native <select>/role=menu) —
+// click the trigger, then click the option by its exact label.
+async function selectFromMenu(
+    page: Page,
+    trigger: import('@playwright/test').Locator,
+    optionLabel: string
+) {
+    await trigger.click()
+    await page.getByText(optionLabel, { exact: true }).click()
+}
+
+// RuleRow's DOM nesting isn't stable enough to hop a fixed number of parents
+// from the name Text up to the row (RuleRowMain wraps it in a couple of extra
+// Views for the badges row). Instead find the nearest ancestor that also
+// contains the row's "More actions" trigger — true regardless of exactly how
+// deep the name Text sits.
+function ruleRow(page: Page, ruleName: string) {
+    return page
+        .locator('div')
+        .filter({ has: page.getByText(ruleName, { exact: true }) })
+        .filter({ has: page.getByLabel('More actions') })
+        .last()
+}
+
+async function openOverflowMenu(page: Page, ruleName: string) {
+    await ruleRow(page, ruleName).getByLabel('More actions').click()
+}
+
+test.describe('Rules', () => {
+    test('create a manual rule, run it now, and see the notification', async ({ page }) => {
+        await login(page)
+        await navigateToRulesSettings(page)
+
+        const ruleName = `E2E manual rule ${Date.now()}`
+        const notifyTitle = `E2E notify ${Date.now()}`
+
+        await page.getByText('New rule', { exact: true }).first().click()
+        await expect(page.getByText('New rule', { exact: true }).last()).toBeVisible()
+
+        await page.getByPlaceholder('Rule name').fill(ruleName)
+
+        await selectFromMenu(
+            page,
+            page.getByText('Select a trigger…', { exact: true }),
+            'Run manually'
+        )
+
+        await page.getByText('add action', { exact: true }).click()
+        await page.getByText('Send me a notification', { exact: true }).click()
+
+        await page.getByText('Title').locator('..').getByRole('textbox').first().fill(notifyTitle)
+
+        await page.getByText('Save', { exact: true }).click()
+
+        // The builder closes on save; the new row renders with its summary line.
+        await expect(page.getByText(ruleName, { exact: true })).toBeVisible()
+        await expect(
+            page.getByText('Run manually · Send me a notification', { exact: false })
+        ).toBeVisible()
+
+        await openOverflowMenu(page, ruleName)
+        await page.getByText('Run now', { exact: true }).click()
+
+        // "Run now" leaves transient local feedback on the menu item itself
+        // (label swaps to "Queued ✓" for 2s) before the menu auto-closes —
+        // the real assertion is the notification actually landing.
+        const bell = page.getByLabel(/Notifications/)
+        await bell.click()
+        await expect(page.getByText(notifyTitle, { exact: true })).toBeVisible({ timeout: 15_000 })
+        // The drawer's own close button has no accessible name; the bell
+        // itself toggles isNotificationsOpen, so clicking it again closes the
+        // drawer without depending on an unlabeled element.
+        await bell.click()
+    })
+
+    test('validation surfaces both missing-name and missing-trigger errors', async ({ page }) => {
+        await login(page)
+        await navigateToRulesSettings(page)
+
+        await page.getByText('New rule', { exact: true }).first().click()
+        await expect(page.getByText('New rule', { exact: true }).last()).toBeVisible()
+
+        await page.getByText('Save', { exact: true }).click()
+
+        await expect(
+            page.getByText('Please fix the following errors:', { exact: true })
+        ).toBeVisible()
+        await expect(page.getByText('Name is required', { exact: true })).toBeVisible()
+        await expect(page.getByText('Trigger is required', { exact: true })).toBeVisible()
+
+        await page.getByText('Cancel', { exact: true }).click()
+        await expect(
+            page.getByText('Please fix the following errors:', { exact: true })
+        ).not.toBeVisible()
+    })
+
+    test('toggle and delete a rule', async ({ page }) => {
+        await login(page)
+        await navigateToRulesSettings(page)
+
+        const ruleName = `E2E toggle-delete rule ${Date.now()}`
+
+        await page.getByText('New rule', { exact: true }).first().click()
+        await expect(page.getByText('New rule', { exact: true }).last()).toBeVisible()
+        await page.getByPlaceholder('Rule name').fill(ruleName)
+        await selectFromMenu(
+            page,
+            page.getByText('Select a trigger…', { exact: true }),
+            'Run manually'
+        )
+        await page.getByText('add action', { exact: true }).click()
+        await page.getByText('Send me a notification', { exact: true }).click()
+        await page.getByText('Save', { exact: true }).click()
+        await expect(page.getByText(ruleName, { exact: true })).toBeVisible()
+
+        const enableSwitch = page.getByLabel(`Disable ${ruleName}`)
+        await expect(enableSwitch).toHaveAttribute('aria-checked', 'true')
+        await enableSwitch.click()
+        await expect(page.getByLabel(`Enable ${ruleName}`)).toHaveAttribute('aria-checked', 'false')
+
+        await openOverflowMenu(page, ruleName)
+        await page.getByText('Delete', { exact: true }).click()
+
+        await expect(page.getByText(`Delete "${ruleName}"?`, { exact: true })).toBeVisible()
+        // The dialog's own confirm button, not the row's menu item — scope by
+        // the dialog to avoid ambiguity with any other "Delete" text on screen.
+        await page
+            .getByText(`Delete "${ruleName}"?`, { exact: true })
+            .locator('..')
+            .getByText('Delete', { exact: true })
+            .last()
+            .click()
+
+        await expect(page.getByText(ruleName, { exact: true })).not.toBeVisible()
+    })
+
+    test('run history shows a matched run', async ({ page }) => {
+        await login(page)
+        await navigateToRulesSettings(page)
+
+        const ruleName = `E2E history rule ${Date.now()}`
+
+        await page.getByText('New rule', { exact: true }).first().click()
+        await expect(page.getByText('New rule', { exact: true }).last()).toBeVisible()
+        await page.getByPlaceholder('Rule name').fill(ruleName)
+        await selectFromMenu(
+            page,
+            page.getByText('Select a trigger…', { exact: true }),
+            'Run manually'
+        )
+        await page.getByText('add action', { exact: true }).click()
+        await page.getByText('Send me a notification', { exact: true }).click()
+        await page.getByText('Save', { exact: true }).click()
+        await expect(page.getByText(ruleName, { exact: true })).toBeVisible()
+
+        await openOverflowMenu(page, ruleName)
+        await page.getByText('Run now', { exact: true }).click()
+
+        await openOverflowMenu(page, ruleName)
+        await page.getByText('Run history', { exact: true }).click()
+
+        await expect(page.getByText('Run history', { exact: true })).toBeVisible()
+        await expect(page.getByText('Matched', { exact: true }).first()).toBeVisible({
+            timeout: 15_000,
+        })
+    })
+
+    test('the rules help topic is searchable and renders', async ({ page }) => {
+        await login(page)
+
+        await page.getByTestId('nav-help').click()
+        await expect(page).toHaveURL(/\/help$/)
+
+        await page.getByPlaceholder('Search help topics').fill('rules')
+        await expect(page.getByText('Automation rules', { exact: true })).toBeVisible()
+
+        await page.getByText('Automation rules', { exact: true }).click()
+        await expect(page).toHaveURL(/\/help\/core\/rules$/)
+        await expect(page.getByText('What a rule does', { exact: true })).toBeVisible()
+    })
+})
