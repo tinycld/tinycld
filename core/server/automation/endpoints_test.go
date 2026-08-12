@@ -3,8 +3,11 @@ package automation
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/notify"
 )
 
 // Endpoint auth/validation logic is factored into plain funcs so it tests
@@ -70,5 +73,55 @@ func TestDryRunScoping(t *testing.T) {
 	}
 	if res.Total != 3 || len(res.Matches) != 2 {
 		t.Fatalf("dry run: total=%d matches=%d", res.Total, len(res.Matches))
+	}
+}
+
+// TestCoreNotifyHandler exercises the real core:notify handler as Register
+// installs it — not a test-local stub (actions_test.go's
+// TestNativeDispatchAndMissingHandler registers its own) — and asserts it
+// goes through the notifyUser seam rather than calling notify.NotifyUser
+// directly, so a test can observe it without racing real push I/O.
+func TestCoreNotifyHandler(t *testing.T) {
+	t.Cleanup(ResetRegistriesForTest)
+	registerCoreNativeActions()
+
+	captured := make(chan notify.NotifyParams, 1)
+	original := notifyUser
+	notifyUser = func(app core.App, params notify.NotifyParams) {
+		captured <- params
+	}
+	t.Cleanup(func() { notifyUser = original })
+
+	app, rule := runsApp(t)
+	defs := &Defs{Packages: []PackageDefs{{
+		Slug: "core",
+		Actions: []ActionDef{{
+			ID: "notify", Kind: "native",
+			Params: []ParamDef{{Key: "title"}, {Key: "body"}, {Key: "url"}},
+		}},
+	}}}
+	rawParams := map[string]any{"title": "Hello {{title}}", "body": "a body", "url": "/somewhere"}
+	scratchCol := core.NewBaseCollection("scratch")
+	scratchCol.Fields.Add(&core.TextField{Name: "title"})
+	rec := core.NewRecord(scratchCol)
+	rec.Set("title", "World")
+
+	if err := ExecuteAction(app, defs, "core:notify", rawParams, rule, TriggerDef{}, rec, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case params := <-captured:
+		if params.Type != "automation" || params.Package != "core" {
+			t.Fatalf("notification shape: %+v", params)
+		}
+		if params.Title != "Hello World" {
+			t.Fatalf("substituted title: %q", params.Title)
+		}
+		if params.UserID != rule.GetString("owner") {
+			t.Fatalf("UserID must be the rule owner: got %q want %q", params.UserID, rule.GetString("owner"))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the async core:notify handler")
 	}
 }

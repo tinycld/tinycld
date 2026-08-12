@@ -26,12 +26,30 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		return
 	}
 
+	registerCoreNativeActions()
+
+	engine := NewEngine(app, defs)
+	registerEndpoints(app, engine)
+	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		engine.Start()
+		return se.Next()
+	})
+}
+
+// registerCoreNativeActions installs the Go handlers for core's own native
+// action refs. Factored out of Register so a test can install them without
+// the full app-bootstrap path (LoadDefs + OnServe binding).
+func registerCoreNativeActions() {
 	RegisterAction("core:notify", func(a core.App, req ActionRequest) error {
 		go func() {
 			if !appIsLive(a) {
 				return
 			}
-			notify.NotifyUser(a, notify.NotifyParams{
+			// notifyUser is runs.go's package-level seam over notify.NotifyUser —
+			// tests intercept it to assert on the notification without racing the
+			// real push I/O against app teardown (same rationale as the
+			// auto-disable notification's use of the seam).
+			notifyUser(a, notify.NotifyParams{
 				UserID:  req.OwnerID,
 				Type:    "automation",
 				Package: "core",
@@ -41,12 +59,5 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 			})
 		}()
 		return nil
-	})
-
-	engine := NewEngine(app, defs)
-	registerEndpoints(app, engine)
-	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		engine.Start()
-		return se.Next()
 	})
 }
