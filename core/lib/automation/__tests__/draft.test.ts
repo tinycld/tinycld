@@ -168,6 +168,11 @@ describe('record <-> draft round-trip', () => {
         })
 
         const draft = recordToDraft(record)
+        // recordToDraft assigns each loaded action a builder-local uid (see
+        // 'recordToDraft assigns uids to loaded actions' below) — asserted
+        // separately since the uid values themselves are generated, not fixed.
+        expect(draft.actions[0].uid).toBeTruthy()
+        expect(draft.actions[1].uid).toBeTruthy()
         expect(draft).toEqual<RuleDraft>({
             id: record.id,
             name: record.name,
@@ -176,8 +181,16 @@ describe('record <-> draft round-trip', () => {
             triggerConfig: { cron: '0 * * * *' },
             conditions: { match: 'all', groups: [] },
             actions: [
-                { ref: 'core:notify', params: { title: 'hi', urgent: true, count: 3 } },
-                { ref: 'cat:set-folder', params: { folder: 'folder123456789' } },
+                {
+                    uid: draft.actions[0].uid,
+                    ref: 'core:notify',
+                    params: { title: 'hi', urgent: true, count: 3 },
+                },
+                {
+                    uid: draft.actions[1].uid,
+                    ref: 'cat:set-folder',
+                    params: { folder: 'folder123456789' },
+                },
             ],
             enabled: record.enabled,
             stopProcessing: true,
@@ -191,11 +204,15 @@ describe('record <-> draft round-trip', () => {
             trigger: record.trigger,
             trigger_config: { cron: '0 * * * *' },
             conditions: { match: 'all', groups: [] },
-            actions: draft.actions,
+            actions: [
+                { ref: 'core:notify', params: { title: 'hi', urgent: true, count: 3 } },
+                { ref: 'cat:set-folder', params: { folder: 'folder123456789' } },
+            ],
             enabled: record.enabled,
             stop_processing: true,
             order: 5,
         })
+        expect(JSON.stringify(fields.actions)).not.toContain('uid')
     })
 
     it('draftToRecord omits id/owner/created/updated', () => {
@@ -226,7 +243,7 @@ describe('draftToRecord strips builder-local uids', () => {
             trigger: 'cat:item-created',
             triggerConfig: {},
             conditions,
-            actions: [{ ref: 'core:notify', params: { title: 'hi' } }],
+            actions: [{ uid: 'draft-local-uid', ref: 'core:notify', params: { title: 'hi' } }],
             enabled: true,
             stopProcessing: false,
             order: 0,
@@ -243,6 +260,40 @@ describe('draftToRecord strips builder-local uids', () => {
             ],
         })
         expect(JSON.stringify(fields.conditions)).not.toContain('uid')
+    })
+
+    it('serializes actions without uid, preserving the semantic content', () => {
+        const draft: RuleDraft = {
+            name: 'My rule',
+            scope: 'personal',
+            trigger: 'cat:item-created',
+            triggerConfig: {},
+            conditions: { match: 'all', groups: [] },
+            actions: [{ uid: 'draft-local-uid', ref: 'core:notify', params: { title: 'hi' } }],
+            enabled: true,
+            stopProcessing: false,
+            order: 0,
+        }
+
+        const fields = draftToRecord(draft)
+        expect(fields.actions).toEqual([{ ref: 'core:notify', params: { title: 'hi' } }])
+        expect(JSON.stringify(fields.actions)).not.toContain('uid')
+    })
+
+    it('serializes an empty actions list as [] (ruleActionsSchema.min(1) would otherwise reject it)', () => {
+        const draft: RuleDraft = {
+            name: 'My rule',
+            scope: 'personal',
+            trigger: 'core:manual',
+            triggerConfig: {},
+            conditions: { match: 'all', groups: [] },
+            actions: [],
+            enabled: true,
+            stopProcessing: false,
+            order: 0,
+        }
+
+        expect(draftToRecord(draft).actions).toEqual([])
     })
 })
 
@@ -267,6 +318,22 @@ describe('recordToDraft assigns uids to loaded conditions', () => {
             op: 'contains',
             value: 'x',
         })
+    })
+})
+
+describe('recordToDraft assigns uids to loaded actions', () => {
+    it('gives every action a uid even though the stored record has none, and each is distinct', () => {
+        const record = baseRecord({
+            actions: [
+                { ref: 'core:notify', params: { title: 'hi' } },
+                { ref: 'cat:set-folder', params: { folder: 'folder123456789' } },
+            ],
+        })
+        const draft = recordToDraft(record)
+        expect(draft.actions[0].uid).toBeTruthy()
+        expect(draft.actions[1].uid).toBeTruthy()
+        expect(draft.actions[0].uid).not.toBe(draft.actions[1].uid)
+        expect(draft.actions[0]).toMatchObject({ ref: 'core:notify', params: { title: 'hi' } })
     })
 })
 

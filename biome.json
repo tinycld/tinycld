@@ -194,7 +194,6 @@
         {
             "includes": [
                 "**/core/components/help/MarkdownRenderer.tsx",
-                "**/core/components/rules/ActionsCard.tsx",
                 "**/calc/components/CsvImportDialog.tsx",
                 "**/calc/components/grid/FilterColumnDialog.tsx",
                 "**/calc/components/pivot/FieldList.tsx",

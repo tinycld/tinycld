@@ -15,6 +15,7 @@ import { parseRef } from '@tinycld/core/lib/automation/helpers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { ArrowDown, ArrowUp, Braces, Plus, Trash2 } from 'lucide-react-native'
+import { newRecordId } from 'pbtsdb/core'
 import { Fragment } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import { ValueInput } from './ValueInput'
@@ -220,7 +221,9 @@ export function ActionsCard({ draft, catalog, onChange }: ActionsCardProps) {
     const trigger = catalog.triggers.find(t => t.ref === draft.trigger)
 
     const handleSelectAction = (action: CatalogAction) => {
-        onChange({ actions: [...draft.actions, { ref: action.ref, params: {} }] })
+        onChange({
+            actions: [...draft.actions, { uid: newRecordId(), ref: action.ref, params: {} }],
+        })
     }
 
     const handleChangeParams = (
@@ -246,16 +249,15 @@ export function ActionsCard({ draft, catalog, onChange }: ActionsCardProps) {
 
             {draft.actions.map((draftAction, index) => (
                 <ActionEntry
-                    // Draft actions carry no builder-local uid the way conditions
-                    // do (condition-helpers.ts) — adding one would touch draft.ts's
-                    // wire-facing RuleDraftAction shape and its existing round-trip
-                    // tests, out of this task's scope. Keying on index means an
-                    // open param Menu can visually "jump" to the entry that swaps
-                    // into its slot during an up/down move — a minor, self-correcting
-                    // glitch (the Menu still shows correct data for whichever entry
-                    // now occupies that slot), not data corruption. See this file's
-                    // biome.json override for noArrayIndexKey.
-                    key={index}
+                    // Keyed on the builder-local uid (condition-helpers.ts's
+                    // ensureActionUids/ActionsCard's handleSelectAction), not
+                    // index — moveAction actively remaps index on every up/down
+                    // reorder, and an index key would reconcile an open param
+                    // Menu (TemplateFieldMenu/ValueInput's relation & select
+                    // Menus own isOpen internally) or a focused input onto
+                    // whichever action slides into that slot. Same rationale as
+                    // ConditionRow/ConditionGroupBox's uid keys.
+                    key={draftAction.uid}
                     index={index}
                     total={draft.actions.length}
                     draftAction={draftAction}

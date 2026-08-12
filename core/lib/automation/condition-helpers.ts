@@ -24,6 +24,19 @@ export type Condition = {
 export type Group = { uid?: string; match: 'all' | 'any'; conditions: Condition[] }
 export type ConditionsAst = { match: 'all' | 'any'; groups: Group[] }
 
+// Same rationale as Condition/Group's `uid` above, applied to THEN actions:
+// ActionsCard's up/down reorder (moveAction) actively remaps array indices,
+// so an index key would reconcile an open param Menu or focused input onto
+// whichever action slides into that slot. `uid` gives ActionEntry a stable
+// React key that moves WITH its action. Optional so a plain action item
+// (straight off the wire, pre-ensureActionUids) remains assignable.
+// draftToRecord strips it via ruleActionsSchema.parse before persisting.
+export type ActionItem = {
+    uid?: string
+    ref: string
+    params: Record<string, string | number | boolean>
+}
+
 const EMPTY_GROUP: Group = { match: 'all', conditions: [] }
 const EMPTY_CONDITION: Condition = { field: '', op: '', value: undefined }
 
@@ -42,6 +55,17 @@ export function ensureUids(ast: ConditionsAst): ConditionsAst {
             conditions: g.conditions.map(c => ({ ...c, uid: c.uid ?? newRecordId() })),
         })),
     }
+}
+
+/**
+ * Assigns a `uid` to every action missing one — same one-pass-on-load
+ * rationale as ensureUids, run by emptyDraft/recordToDraft so a rule loaded
+ * from the server (whose stored actions never carry a uid — draftToRecord
+ * strips it) gets stable keys too, not just actions appended fresh in this
+ * session via ActionsCard's add-action Menu.
+ */
+export function ensureActionUids(actions: ActionItem[]): ActionItem[] {
+    return actions.map(a => ({ ...a, uid: a.uid ?? newRecordId() }))
 }
 
 /**

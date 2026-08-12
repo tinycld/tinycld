@@ -4,9 +4,10 @@
 
 import type { Rules } from '@tinycld/core/types/pbSchema'
 import type { CatalogResponse } from './api'
-import { ensureUids } from './condition-helpers'
+import type { ActionItem } from './condition-helpers'
+import { ensureActionUids, ensureUids } from './condition-helpers'
 import { OPERATORS_BY_TYPE } from './helpers'
-import { conditionsAstSchema } from './schemas'
+import { conditionsAstSchema, ruleActionsSchema } from './schemas'
 
 export interface RuleDraft {
     id?: string
@@ -35,10 +36,11 @@ type ConditionsAstDraft = {
     }[]
 }
 
-interface RuleDraftAction {
-    ref: string
-    params: Record<string, string | number | boolean>
-}
+// Re-derived from condition-helpers.ts's ActionItem, same reasoning as
+// ConditionsAstDraft above: draft.ts stays pure/no-React while ActionsCard
+// (and condition-helpers.ts's ensureActionUids/moveAction) work against the
+// uid-bearing shape.
+type RuleDraftAction = ActionItem
 
 const EMPTY_AST: ConditionsAstDraft = { match: 'all', groups: [] }
 
@@ -51,7 +53,7 @@ export function emptyDraft(scope: RuleDraft['scope']): RuleDraft {
         trigger: '',
         triggerConfig: {},
         conditions: ensureUids(EMPTY_AST),
-        actions: [],
+        actions: ensureActionUids([]),
         enabled: true,
         stopProcessing: false,
         order: 0,
@@ -87,7 +89,10 @@ function toActions(value: unknown): RuleDraftAction[] {
         }
         actions.push({ ref, params })
     }
-    return actions
+    // ensureActionUids runs on every load so a rule fetched from the server
+    // (whose stored actions never carry a uid — draftToRecord strips it) gets
+    // stable React keys too, not just actions added fresh in this session.
+    return ensureActionUids(actions)
 }
 
 function toTriggerConfig(value: unknown): { cron?: string } {
@@ -124,7 +129,11 @@ export function draftToRecord(draft: RuleDraft): RulesRecordFields {
         // can't throw in practice; it's the serialization boundary, not a
         // validation gate — validateDraft already ran before save.
         conditions: conditionsAstSchema.parse(draft.conditions),
-        actions: draft.actions,
+        // Same uid-stripping as conditions above, via ruleActionsSchema (also
+        // has no `uid` field). ruleActionsSchema.min(1) rejects an empty
+        // array, so an empty draft.actions is passed through as `[]` directly
+        // rather than through .parse — there's no uid to strip from nothing.
+        actions: draft.actions.length > 0 ? ruleActionsSchema.parse(draft.actions) : [],
         enabled: draft.enabled,
         stop_processing: draft.stopProcessing,
         order: draft.order,

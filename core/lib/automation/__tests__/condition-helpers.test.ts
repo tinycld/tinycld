@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CatalogAction, CatalogField, CatalogTrigger } from '../api'
+import type { ActionItem } from '../condition-helpers'
 import {
     addCondition,
     addGroup,
@@ -309,6 +310,20 @@ describe('moveAction', () => {
         const list = ['a', 'b', 'c']
         moveAction(list, 0, 1)
         expect(list).toEqual(['a', 'b', 'c'])
+    })
+
+    it('preserves each action object (and its uid) across a reorder — moves whole objects, not just values', () => {
+        const actions: ActionItem[] = [
+            { uid: 'uid-a', ref: 'core:notify', params: {} },
+            { uid: 'uid-b', ref: 'core:notify', params: {} },
+            { uid: 'uid-c', ref: 'core:notify', params: {} },
+        ]
+        const next = moveAction(actions, 0, 2)
+        expect(next.map(a => a.uid)).toEqual(['uid-b', 'uid-c', 'uid-a'])
+        // Each entry is the exact same object reference, not a rebuilt copy —
+        // so ActionEntry's key={draftAction.uid} really does travel with its
+        // action's identity, not just a copied uid string.
+        expect(next[2]).toBe(actions[0])
     })
 })
 
