@@ -46,7 +46,7 @@ const EMPTY_AST: ConditionsAstDraft = { match: 'all', groups: [] }
 
 export type RulesRecordFields = Omit<Rules, 'id' | 'owner' | 'created' | 'updated'>
 
-export function emptyDraft(scope: RuleDraft['scope']): RuleDraft {
+export function emptyDraft(scope: RuleDraft['scope'], order = 0): RuleDraft {
     return {
         name: '',
         scope,
@@ -56,7 +56,7 @@ export function emptyDraft(scope: RuleDraft['scope']): RuleDraft {
         actions: ensureActionUids([]),
         enabled: true,
         stopProcessing: false,
-        order: 0,
+        order,
     }
 }
 

@@ -158,12 +158,22 @@ func resolveCatalogField(app core.App, field core.Field, labelOverride string) c
 
 // resolveTriggerFields resolves a trigger's exposed field set: the declared
 // allowlist in declaration order (skipping fields that don't resolve to a
-// usable type or don't exist), or — for open triggers — every resolvable
-// column sorted alphabetically.
+// usable type, don't exist, or aren't exposable per exposedFields' hidden/
+// system rules), or — for open triggers — every resolvable column sorted
+// alphabetically. Both branches run through exposedFields (the same set
+// SubstituteTemplates enforces at runtime) so a trigger def that names a
+// hidden/system field in its declared allowlist can't leak it into the
+// catalog — declaring a field doesn't override the collection's own
+// hidden/system flags, it only narrows an already-exposable set.
 func resolveTriggerFields(app core.App, col *core.Collection, trigger TriggerDef) []catalogField {
+	dummy := core.NewRecord(col)
+	exposed := exposedFields(dummy, trigger)
 	if len(trigger.Fields) > 0 {
 		out := make([]catalogField, 0, len(trigger.Fields))
 		for _, fr := range trigger.Fields {
+			if !exposed[fr.Key] {
+				continue
+			}
 			field := col.Fields.GetByName(fr.Key)
 			if field == nil {
 				continue

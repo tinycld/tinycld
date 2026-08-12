@@ -14,6 +14,11 @@ export interface TriggerCardProps {
     catalog: CatalogResponse
     onChange: (patch: Partial<RuleDraft>) => void
     isLocked: boolean
+    /** Narrows the trigger picker to one package's triggers (e.g. mail's
+     * "Rules" screen only offers mail-flavored automation) — core's
+     * synthetic triggers (manual/schedule) stay available regardless, since
+     * they're package-neutral starting points, not mail/calendar/etc-owned. */
+    presetPkg?: string
 }
 
 const SCHEDULE_TRIGGER_REF = 'core:schedule'
@@ -160,8 +165,20 @@ function ScheduleRow({
     )
 }
 
-export function TriggerCard({ draft, catalog, onChange, isLocked }: TriggerCardProps) {
+// presetPkg narrows the picker to that package's own triggers, plus core's
+// synthetic built-ins (manual/schedule) — those are scope-neutral starting
+// points, not owned by any one feature package, so they stay visible in a
+// preset view. Only the trigger LIST is filtered; catalog.actions is passed
+// through unfiltered everywhere else since cross-package actions (e.g. mail
+// rules notifying via a core action) are the point.
+function triggersForPreset(catalog: CatalogResponse, presetPkg: string | undefined) {
+    if (!presetPkg) return catalog.triggers
+    return catalog.triggers.filter(t => t.pkg === presetPkg || t.synthetic)
+}
+
+export function TriggerCard({ draft, catalog, onChange, isLocked, presetPkg }: TriggerCardProps) {
     const isSchedule = draft.trigger === SCHEDULE_TRIGGER_REF
+    const triggers = triggersForPreset(catalog, presetPkg)
 
     const handleSelectTrigger = (trigger: CatalogTrigger) => {
         // Switching triggers invalidates conditions (built against the old
@@ -181,7 +198,7 @@ export function TriggerCard({ draft, catalog, onChange, isLocked }: TriggerCardP
                 <LockedTriggerLabel catalog={catalog} triggerRef={draft.trigger} />
             ) : (
                 <TriggerMenu
-                    catalog={catalog}
+                    catalog={{ ...catalog, triggers }}
                     selectedRef={draft.trigger}
                     onSelect={handleSelectTrigger}
                 />

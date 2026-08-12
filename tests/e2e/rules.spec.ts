@@ -81,10 +81,9 @@ test.describe('Rules', () => {
         const bell = page.getByLabel(/Notifications/)
         await bell.click()
         await expect(page.getByText(notifyTitle, { exact: true })).toBeVisible({ timeout: 15_000 })
-        // The drawer's own close button has no accessible name; the bell
-        // itself toggles isNotificationsOpen, so clicking it again closes the
-        // drawer without depending on an unlabeled element.
-        await bell.click()
+        // NotificationDrawer's close button carries accessibilityLabel="Close
+        // notifications" — use it directly rather than toggling the bell.
+        await page.getByLabel('Close notifications').click()
     })
 
     test('validation surfaces both missing-name and missing-trigger errors', async ({ page }) => {

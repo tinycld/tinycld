@@ -13,7 +13,7 @@ import type { Rules } from '@tinycld/core/types/pbSchema'
 import { ConfirmDialog } from '@tinycld/core/ui/ConfirmDialog'
 import { Switch } from '@tinycld/core/ui/switch'
 import { Clock, History, Pencil, Play, Trash2 } from 'lucide-react-native'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Text, View } from 'react-native'
 
 export interface RuleRowProps {
@@ -170,6 +170,17 @@ function RuleRowMenu({
 }) {
     const { runNow } = useRuleMutations()
     const [isQueued, setIsQueued] = useState(false)
+    const queuedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+    // A pending timeout must not fire setState after this row unmounts (menu
+    // closed, rule deleted, list re-filtered) — clear it on unmount, and also
+    // clear any prior pending timeout before scheduling a new one so rapid
+    // repeat "Run now" clicks can't leave stale timers behind.
+    useEffect(() => {
+        return () => {
+            if (queuedTimeoutRef.current) clearTimeout(queuedTimeoutRef.current)
+        }
+    }, [])
 
     // notify.emit requires a registered event name (no "rule run queued" event
     // exists in the typed registry), so feedback is transient local UI state
@@ -180,8 +191,9 @@ function RuleRowMenu({
     const handleRunNow = () => {
         runNow.mutate(rule.id, {
             onSuccess: () => {
+                if (queuedTimeoutRef.current) clearTimeout(queuedTimeoutRef.current)
                 setIsQueued(true)
-                setTimeout(() => setIsQueued(false), 2000)
+                queuedTimeoutRef.current = setTimeout(() => setIsQueued(false), 2000)
             },
         })
     }

@@ -103,6 +103,15 @@ function sortByOrder(rules: Rules[]): Rules[] {
     return [...rules].sort((a, b) => a.order - b.order)
 }
 
+// A new rule seeds order past the current max so ties (every rule sharing
+// order 0) can't cause display/execution divergence — max is taken over the
+// FULL rule set, not the pkgFilter-narrowed `rules` list, so a mail-scoped
+// "New rule" still lands after every org/personal rule regardless of package.
+function nextOrderFor(allRules: Rules[]): number {
+    if (allRules.length === 0) return 0
+    return Math.max(...allRules.map(r => r.order)) + 1
+}
+
 export function RulesPanel({ scope, pkgFilter, canEdit }: RulesPanelProps) {
     const { data: rawRules, isReady } = useScopedRules(scope)
     const { catalog, isReady: catalogReady } = useAutomationCatalog()
@@ -116,6 +125,7 @@ export function RulesPanel({ scope, pkgFilter, canEdit }: RulesPanelProps) {
     const allRules = useMemo(() => sortByOrder(rawRules ?? []), [rawRules])
     const rules = useMemo(() => filterByPkg(allRules, pkgFilter), [allRules, pkgFilter])
     const lastRunByRule = useLastRunByRule(rules, scope)
+    const nextOrder = nextOrderFor(allRules)
 
     // A pkgFilter panel (e.g. mail's) only ever sees/drags a subset of the
     // full ordered list — renumbering just that subset to 0..N-1 would
@@ -132,9 +142,11 @@ export function RulesPanel({ scope, pkgFilter, canEdit }: RulesPanelProps) {
     if (!isReady || !catalogReady) return <RulesPanelLoading />
     if (!catalog) return <RulesPanelCatalogError />
 
+    const handleNewRule = () => openCreate(scope, nextOrder, pkgFilter)
+
     return (
         <View className="gap-3">
-            <RulesPanelHeader canEdit={canEdit} onNewRule={() => openCreate(scope, pkgFilter)} />
+            <RulesPanelHeader canEdit={canEdit} onNewRule={handleNewRule} />
 
             <RulesPanelBody
                 rules={rules}
@@ -143,7 +155,7 @@ export function RulesPanel({ scope, pkgFilter, canEdit }: RulesPanelProps) {
                 scope={scope}
                 lastRunByRule={lastRunByRule}
                 onReorder={handleReorder}
-                onCreate={() => openCreate(scope, pkgFilter)}
+                onCreate={handleNewRule}
             />
 
             <RuleBuilder
@@ -152,6 +164,7 @@ export function RulesPanel({ scope, pkgFilter, canEdit }: RulesPanelProps) {
                 scope={builder.mode === 'create' ? builder.scope : scope}
                 ruleId={builder.mode === 'edit' ? builder.ruleId : undefined}
                 presetPkg={builder.mode === 'create' ? builder.presetPkg : undefined}
+                nextOrder={builder.mode === 'create' ? builder.nextOrder : 0}
             />
             <RunHistory ruleId={historyRuleId} onClose={closeHistory} />
         </View>
@@ -167,10 +180,11 @@ function RulesPanelHeader({ canEdit, onNewRule }: { canEdit: boolean; onNewRule:
 }
 
 function NewRuleButton({ isVisible, onPress }: { isVisible: boolean; onPress: () => void }) {
+    const iconColor = useThemeColor('primary-foreground')
     if (!isVisible) return null
     return (
         <Button onPress={onPress} size="sm">
-            <Plus size={16} />
+            <Plus size={16} color={iconColor} />
             <ButtonText>New rule</ButtonText>
         </Button>
     )

@@ -2,13 +2,13 @@ import { create } from '@tinycld/core/lib/store'
 
 type BuilderState =
     | { mode: 'closed' }
-    | { mode: 'create'; scope: 'personal' | 'org'; presetPkg?: string }
+    | { mode: 'create'; scope: 'personal' | 'org'; presetPkg?: string; nextOrder: number }
     | { mode: 'edit'; ruleId: string }
 
 interface RulesUiState {
     builder: BuilderState
     historyRuleId: string | null
-    openCreate: (scope: 'personal' | 'org', presetPkg?: string) => void
+    openCreate: (scope: 'personal' | 'org', nextOrder: number, presetPkg?: string) => void
     openEdit: (ruleId: string) => void
     closeBuilder: () => void
     openHistory: (ruleId: string) => void
@@ -21,7 +21,8 @@ interface RulesUiState {
 export const useRulesUiStore = create<RulesUiState>()(set => ({
     builder: { mode: 'closed' },
     historyRuleId: null,
-    openCreate: (scope, presetPkg) => set({ builder: { mode: 'create', scope, presetPkg } }),
+    openCreate: (scope, nextOrder, presetPkg) =>
+        set({ builder: { mode: 'create', scope, presetPkg, nextOrder } }),
     openEdit: ruleId => set({ builder: { mode: 'edit', ruleId } }),
     closeBuilder: () => set({ builder: { mode: 'closed' } }),
     openHistory: ruleId => set({ historyRuleId: ruleId }),

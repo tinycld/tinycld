@@ -37,7 +37,13 @@ function useRuleRuns(ruleId: string | null) {
 
 function sortRunsDesc(runs: RuleRuns[] | undefined): RuleRuns[] {
     if (!runs) return []
-    return [...runs].sort((a, b) => (b.fired_at > a.fired_at ? 1 : -1))
+    // Equal fired_at must compare as 0 — the previous `? 1 : -1` claimed
+    // b < a AND a < b for a tie (violates the comparator contract: sort
+    // order for same-timestamp runs becomes engine-dependent/unstable).
+    return [...runs].sort((a, b) => {
+        if (a.fired_at === b.fired_at) return 0
+        return b.fired_at > a.fired_at ? 1 : -1
+    })
 }
 
 export function RunHistory({ ruleId, onClose }: RunHistoryProps) {
@@ -153,12 +159,26 @@ function MatchedPill({ matched }: { matched: boolean }) {
     )
 }
 
+// A rule can run the same action ref more than once in a single run, so
+// result.ref alone isn't a unique React key — disambiguate repeats by
+// occurrence count (computed here, not from the map callback's index, so
+// biome's noArrayIndexKey doesn't flag it) while keeping the key stable
+// across re-renders of this render-only, never-reordered list.
+function keyActionResults(results: RunActionResult[]): (RunActionResult & { key: string })[] {
+    const seen = new Map<string, number>()
+    return results.map(result => {
+        const occurrence = seen.get(result.ref) ?? 0
+        seen.set(result.ref, occurrence + 1)
+        return { ...result, key: `${result.ref}#${occurrence}` }
+    })
+}
+
 function ActionResultsList({ results }: { results: RunActionResult[] }) {
     if (results.length === 0) return null
     return (
         <View className="gap-1">
-            {results.map(result => (
-                <ActionResultRow key={result.ref} result={result} />
+            {keyActionResults(results).map(result => (
+                <ActionResultRow key={result.key} result={result} />
             ))}
         </View>
     )

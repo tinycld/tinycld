@@ -4,6 +4,7 @@ import { conditionsAstSchema } from '@tinycld/core/lib/automation/schemas'
 import { useRuleMutations } from '@tinycld/core/lib/automation/use-rule-mutations'
 import { errorToString } from '@tinycld/core/lib/errors'
 import { Button, ButtonSpinner, ButtonText } from '@tinycld/core/ui/button'
+import { useMemo } from 'react'
 import { Text, View } from 'react-native'
 
 export interface DryRunPanelProps {
@@ -45,23 +46,62 @@ function ResultSummary({ result, fieldKeys }: { result: DryRunResponse; fieldKey
     )
 }
 
-// The 400 "cannot be scoped" case (core/server/automation/endpoints.go's
-// dryRun: a trigger whose owner can't be resolved to the caller, e.g. no
-// direct user/owner/author column) is expected, common for non-admins, and
-// not a bug — it renders as an informational row, never an error toast.
-// Distinguishing it from a genuine failure (bad trigger ref, server error)
-// is deferred to Phase 2 per the task brief; for now every dry-run error
-// renders this same muted message rather than surfacing two code paths.
+// The engine's dryRun always answers with HTTP 400 (core/server/automation/
+// endpoints.go wraps every error — unknown trigger, unscopable owner, a
+// FindRecordsByFilter failure — in the same BadRequestError), so there's no
+// status code to branch on client-side. The unscopable case has one fixed
+// message (engine.dryRun's "cannot be scoped to you" error) — match on that
+// text to decide whether the "ask an admin" follow-up applies; any other
+// message (bad trigger ref, genuine server error) renders alone. PocketBase's
+// router runs every ApiError message through inflector.Sentenize (uppercases
+// the first letter, appends a trailing period) before it hits the wire, so
+// this matches case-insensitively on the stable middle of the sentence
+// rather than the literal Go source string.
+const UNSCOPABLE_MESSAGE_FRAGMENT = 'cannot be scoped to you'
+
 function ErrorNotice({ error }: { error: unknown }) {
+    const message = errorToString(error)
+    const isUnscopable = message.toLowerCase().includes(UNSCOPABLE_MESSAGE_FRAGMENT)
     return (
         <View className="gap-1">
-            <Text className="text-sm text-muted-foreground">{errorToString(error)}</Text>
-            <Text className="text-sm text-muted-foreground">Org admins can test this trigger.</Text>
+            <Text className="text-sm text-muted-foreground">{message}</Text>
+            {isUnscopable ? (
+                <Text className="text-sm text-muted-foreground">
+                    Org admins can test this trigger.
+                </Text>
+            ) : null}
         </View>
     )
 }
 
 export function DryRunPanel({ draft, catalog, isVisible }: DryRunPanelProps) {
+    if (!isVisible) return null
+    const trigger = catalog.triggers.find(t => t.ref === draft.trigger)
+    if (!trigger || trigger.synthetic) return null
+
+    // Keying on trigger + a stringified snapshot of conditions remounts the
+    // content below whenever either changes — the simplest way to drop a
+    // stale dry-run result/error without an effect: useMutation's data/error
+    // live in that mount's local state, so a fresh key means a fresh
+    // (empty) mutation state, same as if the user had never pressed Test.
+    const conditionsKey = JSON.stringify(draft.conditions)
+
+    return (
+        <DryRunPanelContent
+            key={`${draft.trigger}:${conditionsKey}`}
+            draft={draft}
+            trigger={trigger}
+        />
+    )
+}
+
+function DryRunPanelContent({
+    draft,
+    trigger,
+}: {
+    draft: RuleDraft
+    trigger: CatalogResponse['triggers'][number]
+}) {
     // dryRun's onError is an explicit no-op: the mutation's default onError
     // (see use-mutation.ts's reportUnhandledMutationError) would toast + report
     // to Sentry on every "cannot be scoped" 400, which is an expected outcome
@@ -70,12 +110,7 @@ export function DryRunPanel({ draft, catalog, isVisible }: DryRunPanelProps) {
     // instead. See core/server/automation/endpoints.go's dryRun for the
     // server-side condition this suppresses.
     const { dryRun } = useRuleMutations()
-
-    if (!isVisible) return null
-    const trigger = catalog.triggers.find(t => t.ref === draft.trigger)
-    if (!trigger || trigger.synthetic) return null
-
-    const fieldKeys = (trigger.fields ?? []).slice(0, 2).map(f => f.key)
+    const fieldKeys = useMemo(() => (trigger.fields ?? []).slice(0, 2).map(f => f.key), [trigger])
 
     const handleTest = () => {
         dryRun.mutate(

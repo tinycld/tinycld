@@ -153,6 +153,12 @@ describe('emptyDraft', () => {
         expect(errors.some(e => /trigger/i.test(e))).toBe(true)
         expect(errors.some(e => /action/i.test(e))).toBe(true)
     })
+
+    it('seeds order from the optional second argument (defaults to 0)', () => {
+        expect(emptyDraft('personal').order).toBe(0)
+        expect(emptyDraft('personal', 0).order).toBe(0)
+        expect(emptyDraft('personal', 5).order).toBe(5)
+    })
 })
 
 describe('record <-> draft round-trip', () => {

@@ -15,7 +15,7 @@ import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { Switch } from '@tinycld/core/ui/switch'
 import { X } from 'lucide-react-native'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { ActivityIndicator, ScrollView, Text, View } from 'react-native'
 import { ActionsCard } from './ActionsCard'
 import { ConditionsCard } from './ConditionsCard'
@@ -28,6 +28,10 @@ export interface RuleBuilderProps {
     scope: 'personal' | 'org'
     ruleId?: string
     presetPkg?: string
+    /** Order to seed a NEW rule's draft with (ignored when editing — the
+     * loaded record's own order wins). Callers compute max(existing order) +
+     * 1 so ties can't cause display/execution divergence; see RulesPanel. */
+    nextOrder?: number
 }
 
 // Loads the record being edited (if any). Returns `isReady: true` for the
@@ -46,14 +50,15 @@ function useEditingRecord(ruleId: string | undefined) {
     return { record: data?.[0] ?? null, isReady }
 }
 
-// presetPkg (Task 4 plumbing) only narrows the trigger picker's package group
-// inside TriggerCard's menu — it isn't a trigger ref itself, so it plays no
-// part in seeding the draft.
+// presetPkg only narrows the trigger picker's package group inside
+// TriggerCard's menu (see TriggerCard.triggersForPreset) — it isn't a
+// trigger ref itself, so it plays no part in seeding the draft.
 function initialDraft(
     scope: 'personal' | 'org',
-    record: ReturnType<typeof useEditingRecord>['record']
+    record: ReturnType<typeof useEditingRecord>['record'],
+    nextOrder: number
 ): RuleDraft {
-    return record ? recordToDraft(record) : emptyDraft(scope)
+    return record ? recordToDraft(record) : emptyDraft(scope, nextOrder)
 }
 
 function BuilderContent({
@@ -61,16 +66,29 @@ function BuilderContent({
     scope,
     ruleId,
     presetPkg,
+    nextOrder = 0,
     sessionKey,
 }: Omit<RuleBuilderProps, 'isOpen'> & { sessionKey: number }) {
     const { record, isReady: recordReady } = useEditingRecord(ruleId)
     const { catalog, isReady: catalogReady } = useAutomationCatalog()
     const { save } = useRuleMutations()
 
+    // ruleId set but the record vanished (deleted while the builder was
+    // open, or a stale/bad id) — closing avoids showing an empty "Edit rule"
+    // form whose Save would silently CREATE a new rule instead of updating
+    // the one the user thought they were editing. A genuine side effect
+    // (calling the parent's close callback), not a derivable render value,
+    // so it belongs in an effect rather than being invoked during render.
+    const recordVanished = recordReady && Boolean(ruleId) && !record
+    useEffect(() => {
+        if (recordVanished) onClose()
+    }, [recordVanished, onClose])
+
     // The draft's initial value is only meaningful once the record we're
     // editing (if any) has loaded — until then hold off on mounting the form
     // so useRuleDraft doesn't seed itself from a still-loading `null` record.
     if (!recordReady) return <BuilderLoading />
+    if (recordVanished) return <BuilderLoading />
     if (!catalogReady) return <BuilderLoading />
     if (!catalog) return <BuilderCatalogError onRetry={onClose} />
 
@@ -86,7 +104,7 @@ function BuilderContent({
             onClose={onClose}
             scope={scope}
             presetPkg={presetPkg}
-            initial={initialDraft(scope, record)}
+            initial={initialDraft(scope, record, nextOrder)}
             catalog={catalog}
             isLocked={Boolean(ruleId)}
             isSaving={save.isPending}
@@ -129,6 +147,7 @@ interface RuleBuilderFormProps {
 
 function RuleBuilderForm({
     onClose,
+    presetPkg,
     initial,
     catalog,
     isLocked,
@@ -152,7 +171,6 @@ function RuleBuilderForm({
                         value={draft.name}
                         onChangeText={name => patch({ name })}
                         placeholder="Rule name"
-                        editable={!isLocked}
                         className="text-base font-semibold px-3 py-2 border rounded-lg text-foreground bg-background border-border"
                     />
 
@@ -161,6 +179,7 @@ function RuleBuilderForm({
                         catalog={catalog}
                         onChange={patch}
                         isLocked={isLocked}
+                        presetPkg={presetPkg}
                     />
                     <ConditionsCard draft={draft} catalog={catalog} onChange={patch} />
                     <ActionsCard draft={draft} catalog={catalog} onChange={patch} />
@@ -260,7 +279,14 @@ function BuilderFooter({
 // mount screens (Task 8) are responsible for that placement; this component
 // only renders the drawer inline where it's used, same as
 // NotificationDrawer/FilePickerSheetHost.
-export function RuleBuilder({ isOpen, onClose, scope, ruleId, presetPkg }: RuleBuilderProps) {
+export function RuleBuilder({
+    isOpen,
+    onClose,
+    scope,
+    ruleId,
+    presetPkg,
+    nextOrder,
+}: RuleBuilderProps) {
     const isMobile = useBreakpoint() === 'mobile'
 
     // Modal/BottomDrawer content can outlive a close (close animation, or a
@@ -286,6 +312,7 @@ export function RuleBuilder({ isOpen, onClose, scope, ruleId, presetPkg }: RuleB
                         scope={scope}
                         ruleId={ruleId}
                         presetPkg={presetPkg}
+                        nextOrder={nextOrder}
                         sessionKey={session.current.count}
                     />
                 </View>
@@ -302,6 +329,7 @@ export function RuleBuilder({ isOpen, onClose, scope, ruleId, presetPkg }: RuleB
                     scope={scope}
                     ruleId={ruleId}
                     presetPkg={presetPkg}
+                    nextOrder={nextOrder}
                     sessionKey={session.current.count}
                 />
             </ModalContent>

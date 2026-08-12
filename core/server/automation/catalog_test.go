@@ -121,6 +121,56 @@ func TestCatalogActionAvailability(t *testing.T) {
 	}
 }
 
+// TestCatalogDeclaredAllowlistFiltersHiddenFields covers the same
+// system/hidden filter exposedFields applies to an OPEN trigger (see
+// resolvableColumns), now proven for a DECLARED allowlist too: a trigger
+// def that names a hidden field (tokenKey, on the auth-collection-backed
+// users table) must not publish it into the catalog, even though the field
+// exists and would otherwise resolve to a usable "text" type. Regression
+// test for the declared branch skipping the hidden/system filter the open
+// branch already applied.
+func TestCatalogDeclaredAllowlistFiltersHiddenFields(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ResetRegistriesForTest)
+	t.Cleanup(func() { app.Cleanup() })
+
+	defs := &Defs{Packages: []PackageDefs{
+		{Slug: "auth", Triggers: []TriggerDef{{
+			ID: "user-created", Label: "A user is created", Collection: "users", On: "create",
+			Fields: []FieldRef{{Key: "tokenKey"}, {Key: "name"}},
+		}}},
+	}}
+	eng := NewEngine(app, defs)
+	res := eng.buildCatalog(app)
+
+	var trig *catalogTrigger
+	for i := range res.Triggers {
+		if res.Triggers[i].Ref == "auth:user-created" {
+			trig = &res.Triggers[i]
+		}
+	}
+	if trig == nil {
+		t.Fatal("trigger missing from catalog")
+	}
+	for _, f := range trig.Fields {
+		if f.Key == "tokenKey" {
+			t.Fatalf("hidden field tokenKey must not be published in the catalog, got fields: %+v", trig.Fields)
+		}
+	}
+	found := false
+	for _, f := range trig.Fields {
+		if f.Key == "name" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("regular declared field 'name' should still resolve, got: %+v", trig.Fields)
+	}
+}
+
 func actionIndex(actions []catalogAction, ref string) int {
 	for i, a := range actions {
 		if a.Ref == ref {
