@@ -98,8 +98,15 @@ func TestCatalogActionAvailability(t *testing.T) {
 		t.Fatalf("action %s missing", ref)
 		return catalogAction{}
 	}
-	if get("core:notify").Available {
+	notify := get("core:notify")
+	if notify.Available {
 		t.Fatal("native action without a handler must be unavailable")
+	}
+	// Template is a pure type-derived flag (server has no notion of "which
+	// trigger will this rule use" — that's a UI-time choice), so a novel
+	// text param is always templatable regardless of handler registration.
+	if !notify.Params[0].Template {
+		t.Fatalf("text param must be marked templatable: %+v", notify.Params[0])
 	}
 	RegisterAction("core:notify", func(a core.App, req ActionRequest) error { return nil })
 	if !eng.buildCatalog(app).Actions[actionIndex(eng.buildCatalog(app).Actions, "core:notify")].Available {
@@ -108,6 +115,9 @@ func TestCatalogActionAvailability(t *testing.T) {
 	sf := get("cat:set-folder")
 	if !sf.Available || sf.OpTarget != "trigger-record" || sf.Params[0].Field.RelationTarget != "cat_folders" {
 		t.Fatalf("record-op resolution: %+v", sf)
+	}
+	if sf.Params[0].Template {
+		t.Fatalf("relation-typed param must not be marked templatable: %+v", sf.Params[0])
 	}
 }
 

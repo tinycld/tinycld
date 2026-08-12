@@ -208,10 +208,14 @@ func resolveTrigger(app core.App, pkg string, t TriggerDef) catalogTrigger {
 // resolveParam resolves one action param: a column-referencing param takes
 // its type from the named field on the action's collection; a novel param
 // (no Field, has Type) synthesizes a catalogField from its own declared
-// type/options. Template is true for text params on triggers that carry
-// fields — the UI shows the {{placeholder}} menu only when there's something
-// to insert.
-func resolveParam(app core.App, col *core.Collection, p ParamDef, triggerHasFields bool) catalogParam {
+// type/options. Template is true for every text-typed param, full stop — the
+// server has no authoritative answer to "does the trigger this rule ends up
+// using have fields to insert" (that's a build-time UI-only fact: which
+// trigger the rule author picked), so it can't gate this flag by trigger. The
+// UI decides whether to actually show the {{placeholder}} MENU based on the
+// selected trigger's resolved fields; this flag only says the param's TYPE
+// supports templating at all.
+func resolveParam(app core.App, col *core.Collection, p ParamDef) catalogParam {
 	out := catalogParam{Key: p.Key}
 	if p.Label != "" {
 		out.Label = p.Label
@@ -225,36 +229,15 @@ func resolveParam(app core.App, col *core.Collection, p ParamDef, triggerHasFiel
 	} else {
 		out.Field = catalogField{Key: p.Key, Label: out.Label, Type: p.Type, Options: p.Options}
 	}
-	out.Template = out.Field.Type == "text" && triggerHasFields
+	out.Template = out.Field.Type == "text"
 	return out
-}
-
-// actionTriggerHasFields reports whether any trigger that could plausibly
-// feed this record-op action (i.e. a create/update/delete trigger declared
-// on the same collection) carries a resolved field set — that's what makes
-// {{placeholder}} template substitution meaningful for a text param on this
-// action. Checked across all three ops since a UI author may wire the action
-// to any trigger on that collection, not just the one matching Op.Type.
-func actionTriggerHasFields(app core.App, defs *Defs, collection string) bool {
-	for _, op := range []string{"create", "update", "delete"} {
-		for _, qt := range defs.TriggersFor(collection, op) {
-			col, err := app.FindCachedCollectionByNameOrId(collection)
-			if err != nil {
-				continue
-			}
-			if len(resolveTriggerFields(app, col, qt.Def)) > 0 {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // resolveAction builds one catalogAction. For record-ops, Available is
 // always true unless the action's collection is absent from this deployment
 // (package data absent), in which case it stays false so the UI can show
 // "needs X" rather than silently omitting the action.
-func resolveAction(app core.App, defs *Defs, pkg string, a ActionDef) catalogAction {
+func resolveAction(app core.App, pkg string, a ActionDef) catalogAction {
 	out := catalogAction{
 		Ref:   pkg + ":" + a.ID,
 		Pkg:   pkg,
@@ -265,7 +248,6 @@ func resolveAction(app core.App, defs *Defs, pkg string, a ActionDef) catalogAct
 	// novel/typed params. A record-op's params may reference the action's
 	// own collection's fields.
 	var col *core.Collection
-	triggerHasFields := false
 	if a.Kind == "native" {
 		_, out.Available = actionHandler(out.Ref)
 	} else {
@@ -275,13 +257,10 @@ func resolveAction(app core.App, defs *Defs, pkg string, a ActionDef) catalogAct
 		var err error
 		col, err = app.FindCachedCollectionByNameOrId(a.Collection)
 		out.Available = err == nil
-		if out.Available {
-			triggerHasFields = actionTriggerHasFields(app, defs, a.Collection)
-		}
 	}
 	out.Params = make([]catalogParam, 0, len(a.Params))
 	for _, p := range a.Params {
-		out.Params = append(out.Params, resolveParam(app, col, p, triggerHasFields))
+		out.Params = append(out.Params, resolveParam(app, col, p))
 	}
 	return out
 }
@@ -297,7 +276,7 @@ func (e *Engine) buildCatalog(app core.App) catalogResponse {
 			res.Triggers = append(res.Triggers, resolveTrigger(app, p.Slug, t))
 		}
 		for _, a := range p.Actions {
-			res.Actions = append(res.Actions, resolveAction(app, e.defs, p.Slug, a))
+			res.Actions = append(res.Actions, resolveAction(app, p.Slug, a))
 		}
 	}
 	return res
