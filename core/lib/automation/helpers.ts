@@ -6,10 +6,10 @@ export const OPERATORS_BY_TYPE: Record<FieldType, readonly ConditionOp[]> = {
     boolean: ['is_true', 'is_false'],
     date: ['before', 'after', 'within_last_days'],
     relation: ['is', 'is_not', 'is_empty'],
-    select: [],
+    select: ['is', 'is_not'],
 }
 
-export const ALL_OPS: readonly ConditionOp[] = Object.values(OPERATORS_BY_TYPE).flat()
+export const ALL_OPS: readonly ConditionOp[] = [...new Set(Object.values(OPERATORS_BY_TYPE).flat())]
 
 export const NO_VALUE_OPS: ReadonlySet<ConditionOp> = new Set(['is_true', 'is_false', 'is_empty'])
 

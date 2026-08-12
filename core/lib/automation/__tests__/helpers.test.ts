@@ -39,10 +39,10 @@ describe('operator sets', () => {
         ])
     })
 
-    it('every operator appears in ALL_OPS exactly once', () => {
-        const flattened = Object.values(OPERATORS_BY_TYPE).flat()
-        expect(new Set(flattened).size).toBe(flattened.length)
-        expect([...flattened].sort()).toEqual([...ALL_OPS].sort())
+    it('ALL_OPS is the deduplicated union of every type operator set', () => {
+        const unique = [...new Set(Object.values(OPERATORS_BY_TYPE).flat())]
+        expect([...ALL_OPS].sort()).toEqual(unique.sort())
+        expect(new Set(ALL_OPS).size).toBe(ALL_OPS.length)
     })
 
     it('value-less operators are exactly the is_true/is_false/is_empty set', () => {
