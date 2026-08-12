@@ -186,6 +186,40 @@ func TestPersonalScopeFiltering(t *testing.T) {
 	_ = rule
 }
 
+func TestTriggerFilterGatesEnqueue(t *testing.T) {
+	app, _, u := engineApp(t)
+	RegisterTriggerFilter("tickets:ticket-created", func(app core.App, record *core.Record) bool {
+		return record.GetString("status") != "draft"
+	})
+	rule := makeRule(t, app, u.Id, "org", nil,
+		[]any{map[string]any{"ref": "tickets:set-status", "params": map[string]any{"status": "x"}}}, 0, false)
+
+	col, _ := app.FindCollectionByNameOrId("tickets")
+	filtered := core.NewRecord(col)
+	filtered.Set("title", "filtered out")
+	filtered.Set("status", "draft")
+	filtered.Set("user", u.Id)
+	if err := app.Save(filtered); err != nil {
+		t.Fatal(err)
+	}
+
+	// Give the worker a beat, then assert the filtered-out create produced NO run row.
+	time.Sleep(300 * time.Millisecond)
+	runs, _ := app.FindRecordsByFilter("rule_runs", "rule = {:id}", "", 0, 0, map[string]any{"id": rule.Id})
+	if len(runs) != 0 {
+		t.Fatalf("a trigger filtered out must not enqueue: %d runs", len(runs))
+	}
+
+	allowed := core.NewRecord(col)
+	allowed.Set("title", "allowed through")
+	allowed.Set("status", "ready")
+	allowed.Set("user", u.Id)
+	if err := app.Save(allowed); err != nil {
+		t.Fatal(err)
+	}
+	waitForRuns(t, app, rule.Id, 1)
+}
+
 func TestStopProcessingAndOrdering(t *testing.T) {
 	app, _, u := engineApp(t)
 	first := makeRule(t, app, u.Id, "personal", nil,

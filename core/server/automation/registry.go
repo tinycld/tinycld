@@ -22,10 +22,18 @@ type ActionHandler func(app core.App, req ActionRequest) error
 // mailboxes). Empty result = the event has no personal scope.
 type OwnerResolver func(app core.App, record *core.Record) []string
 
+// TriggerFilter gates whether a record event counts as this trigger at all —
+// for triggers whose collection carries rows the trigger's semantics exclude
+// (e.g. mail's "message-received" must not fire on drafts or outbound sends).
+// Applies to ALL rule scopes, unlike OwnerResolver which only scopes personal
+// rules.
+type TriggerFilter func(app core.App, record *core.Record) bool
+
 var (
 	registryMu     sync.RWMutex
 	actionHandlers = map[string]ActionHandler{}
 	ownerResolvers = map[string]OwnerResolver{}
+	triggerFilters = map[string]TriggerFilter{}
 )
 
 // RegisterAction installs the Go handler for a native action ref. Packages
@@ -50,11 +58,33 @@ func RegisterOwnerResolver(triggerRef string, r OwnerResolver) {
 	ownerResolvers[triggerRef] = r
 }
 
+// RegisterTriggerFilter installs a gate for one trigger ref: a record event
+// is only treated as that trigger when the filter returns true. Applies
+// before owner resolution and to org-scoped rules alike.
+func RegisterTriggerFilter(triggerRef string, f TriggerFilter) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	triggerFilters[triggerRef] = f
+}
+
+// triggerAllowed reports whether record counts as triggerRef. No registered
+// filter = always allowed.
+func triggerAllowed(app core.App, triggerRef string, record *core.Record) bool {
+	registryMu.RLock()
+	filter, ok := triggerFilters[triggerRef]
+	registryMu.RUnlock()
+	if !ok {
+		return true
+	}
+	return filter(app, record)
+}
+
 func ResetRegistriesForTest() {
 	registryMu.Lock()
 	defer registryMu.Unlock()
 	actionHandlers = map[string]ActionHandler{}
 	ownerResolvers = map[string]OwnerResolver{}
+	triggerFilters = map[string]TriggerFilter{}
 }
 
 var autoOwnerFields = []string{"user", "owner", "author"}

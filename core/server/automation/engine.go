@@ -175,6 +175,9 @@ func (e *Engine) recordHookHandler(col, op string) func(*core.RecordEvent) error
 			if op == "update" && !WatchChanged(ev.Record, qt.Def.Watch) {
 				continue
 			}
+			if !triggerAllowed(e.app, qt.Ref, ev.Record) {
+				continue
+			}
 			e.enqueue(event{TriggerRef: qt.Ref, Trigger: qt.Def, Record: ev.Record, Depth: depth, SourceRule: source})
 		}
 		return ev.Next()

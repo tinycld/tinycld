@@ -84,3 +84,35 @@ func TestOwnerAutoDetect(t *testing.T) {
 		t.Fatalf("resolver must win: %v", owners)
 	}
 }
+
+func TestTriggerFilterRegistry(t *testing.T) {
+	t.Cleanup(ResetRegistriesForTest)
+
+	// No registered filter = always allowed.
+	if !triggerAllowed(nil, "pkg:unfiltered", nil) {
+		t.Fatal("a trigger ref with no registered filter must default to allowed")
+	}
+
+	RegisterTriggerFilter("pkg:gated", func(app core.App, record *core.Record) bool {
+		return record != nil && record.GetString("status") == "ready"
+	})
+
+	col := core.NewBaseCollection("gated_things")
+	col.Fields.Add(&core.TextField{Name: "status"})
+	ready := core.NewRecord(col)
+	ready.Set("status", "ready")
+	notReady := core.NewRecord(col)
+	notReady.Set("status", "draft")
+
+	if !triggerAllowed(nil, "pkg:gated", ready) {
+		t.Fatal("record satisfying the filter must be allowed")
+	}
+	if triggerAllowed(nil, "pkg:gated", notReady) {
+		t.Fatal("record failing the filter must be rejected")
+	}
+
+	ResetRegistriesForTest()
+	if !triggerAllowed(nil, "pkg:gated", notReady) {
+		t.Fatal("reset must clear registered filters back to default-allow")
+	}
+}
