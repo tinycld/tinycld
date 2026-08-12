@@ -174,10 +174,16 @@ function RuleRowMenu({
     // notify.emit requires a registered event name (no "rule run queued" event
     // exists in the typed registry), so feedback is transient local UI state
     // rather than a toast — the menu item label swaps to "Queued ✓" for 2s.
+    // Only flips on success: on failure the default onError toast already
+    // reports it, and a "Queued ✓" label the run never actually queued would
+    // be misleading.
     const handleRunNow = () => {
-        runNow.mutate(rule.id)
-        setIsQueued(true)
-        setTimeout(() => setIsQueued(false), 2000)
+        runNow.mutate(rule.id, {
+            onSuccess: () => {
+                setIsQueued(true)
+                setTimeout(() => setIsQueued(false), 2000)
+            },
+        })
     }
 
     return (

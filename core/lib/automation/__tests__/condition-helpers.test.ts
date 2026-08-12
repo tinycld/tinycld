@@ -7,6 +7,7 @@ import {
     appendPlaceholder,
     compatibleActions,
     ensureUids,
+    mergeReorderedSubset,
     moveAction,
     operatorLabel,
     operatorsForField,
@@ -338,5 +339,33 @@ describe('appendPlaceholder', () => {
 
     it('appends after existing text that has no trailing space', () => {
         expect(appendPlaceholder('Hello', 'name')).toBe('Hello{{name}}')
+    })
+})
+
+describe('mergeReorderedSubset', () => {
+    it('keeps ids outside the subset fixed while the subset scattered through the list reorders in place', () => {
+        // Full list: a b c d e — subset {b, d} (mail-filtered rows), reversed
+        // to d then b. a/c/e (non-mail rows) must stay exactly where they were.
+        const full = ['a', 'b', 'c', 'd', 'e']
+        const reorderedSubset = ['d', 'b']
+        expect(mergeReorderedSubset(full, reorderedSubset)).toEqual(['a', 'd', 'c', 'b', 'e'])
+    })
+
+    it('is identity-compatible when the subset is the full list (no pkgFilter case)', () => {
+        const full = ['a', 'b', 'c']
+        const reordered = ['c', 'a', 'b']
+        expect(mergeReorderedSubset(full, reordered)).toEqual(reordered)
+    })
+
+    it('is a true no-op when the subset order is unchanged', () => {
+        const full = ['a', 'b', 'c', 'd']
+        const subset = ['b', 'd']
+        expect(mergeReorderedSubset(full, subset)).toEqual(full)
+    })
+
+    it('appends ids present in the subset but absent from the full list, defensively', () => {
+        const full = ['a', 'b']
+        const reorderedSubset = ['b', 'a', 'z']
+        expect(mergeReorderedSubset(full, reorderedSubset)).toEqual(['b', 'a', 'z'])
     })
 })

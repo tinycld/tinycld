@@ -231,4 +231,29 @@ export function appendPlaceholder(value: string, key: string): string {
     return `${value}{{${key}}}`
 }
 
+/**
+ * Splices a reordered subset back into the full ordered id list: subset
+ * members keep their new relative order but occupy the same POSITIONS the
+ * subset occupied in the full sequence, so ids outside the subset (e.g. rules
+ * hidden by a package filter) are untouched. The caller renumbers the full
+ * result 0..N-1 — this only fixes relative order, not the numbering.
+ *
+ * Ids present in the subset but absent from the full list are appended at
+ * the end; this shouldn't happen in practice (the subset is always derived
+ * from the full list) but is handled defensively rather than dropping data.
+ */
+export function mergeReorderedSubset(
+    fullOrderedIds: string[],
+    reorderedSubsetIds: string[]
+): string[] {
+    const subsetPositions = new Set(reorderedSubsetIds)
+    let nextSubsetIndex = 0
+    const merged = fullOrderedIds.map(id => {
+        if (!subsetPositions.has(id)) return id
+        return reorderedSubsetIds[nextSubsetIndex++]
+    })
+    const leftover = reorderedSubsetIds.slice(nextSubsetIndex)
+    return [...merged, ...leftover]
+}
+
 export { ALL_OPS }

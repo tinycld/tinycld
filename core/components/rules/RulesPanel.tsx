@@ -10,6 +10,7 @@ import { RuleRow } from '@tinycld/core/components/rules/RuleRow'
 import { RunHistory } from '@tinycld/core/components/rules/RunHistory'
 import { SortableList } from '@tinycld/core/components/SortableList'
 import type { CatalogResponse } from '@tinycld/core/lib/automation/api'
+import { mergeReorderedSubset } from '@tinycld/core/lib/automation/condition-helpers'
 import { parseRef } from '@tinycld/core/lib/automation/helpers'
 import { useAutomationCatalog } from '@tinycld/core/lib/automation/use-automation-catalog'
 import { useRuleMutations } from '@tinycld/core/lib/automation/use-rule-mutations'
@@ -48,16 +49,29 @@ function useScopedRules(scope: 'personal' | 'org') {
 // query per row. Joins rule_runs to rules (mail/hooks/useMailboxes.ts's join
 // idiom) and reduces to the newest row per rule client-side, since TanStack
 // DB joins can't express "latest row per group" directly.
-function useLastRunByRule(rules: Rules[]) {
+//
+// The scope `.where()` mirrors useScopedRules's own filter (personal: owned
+// by the current user; org: scope = 'org') so a personal panel never pulls
+// org-wide run history and vice versa — the join condition itself stays a
+// single equality (run.rule = rule.id) per house style, with scope pushed
+// into a following where clause rather than folded into the join predicate.
+// pkgFilter stays client-side in the caller's `rules` list (a string-prefix
+// match on the trigger ref isn't expressible in this query).
+function useLastRunByRule(rules: Rules[], scope: 'personal' | 'org') {
     const [rulesCollection, runsCollection] = useStore('rules', 'rule_runs')
     const ruleIds = useMemo(() => new Set(rules.map(r => r.id)), [rules])
 
     const { data: rows } = useOrgLiveQuery(
-        query =>
+        (query, { userId }) =>
             query
                 .from({ run: runsCollection })
-                .innerJoin({ rule: rulesCollection }, ({ run, rule }) => eq(run.rule, rule.id)),
-        []
+                .innerJoin({ rule: rulesCollection }, ({ run, rule }) => eq(run.rule, rule.id))
+                .where(({ rule }) =>
+                    scope === 'personal'
+                        ? and(eq(rule.scope, 'personal'), eq(rule.owner, userId))
+                        : eq(rule.scope, 'org')
+                ),
+        [scope]
     )
 
     return useMemo(() => {
@@ -99,11 +113,21 @@ export function RulesPanel({ scope, pkgFilter, canEdit }: RulesPanelProps) {
     const historyRuleId = useRulesUiStore(s => s.historyRuleId)
     const closeHistory = useRulesUiStore(s => s.closeHistory)
 
-    const rules = useMemo(
-        () => sortByOrder(filterByPkg(rawRules ?? [], pkgFilter)),
-        [rawRules, pkgFilter]
-    )
-    const lastRunByRule = useLastRunByRule(rules)
+    const allRules = useMemo(() => sortByOrder(rawRules ?? []), [rawRules])
+    const rules = useMemo(() => filterByPkg(allRules, pkgFilter), [allRules, pkgFilter])
+    const lastRunByRule = useLastRunByRule(rules, scope)
+
+    // A pkgFilter panel (e.g. mail's) only ever sees/drags a subset of the
+    // full ordered list — renumbering just that subset to 0..N-1 would
+    // collide with rules outside the filter. mergeReorderedSubset splices the
+    // dragged subset back into its original positions in the FULL id list
+    // first; reorder.mutate then renumbers the whole thing, which is safe.
+    // With no pkgFilter, `rules` already equals `allRules`, so the merge is
+    // an identity pass — one code path, no special case.
+    const handleReorder = (draggedSubsetIds: string[]) => {
+        const fullIds = allRules.map(r => r.id)
+        reorder.mutate(mergeReorderedSubset(fullIds, draggedSubsetIds))
+    }
 
     if (!isReady || !catalogReady) return <RulesPanelLoading />
     if (!catalog) return <RulesPanelCatalogError />
@@ -118,7 +142,7 @@ export function RulesPanel({ scope, pkgFilter, canEdit }: RulesPanelProps) {
                 canEdit={canEdit}
                 scope={scope}
                 lastRunByRule={lastRunByRule}
-                onReorder={ids => reorder.mutate(ids)}
+                onReorder={handleReorder}
                 onCreate={() => openCreate(scope, pkgFilter)}
             />
 
