@@ -44,6 +44,14 @@ type dryRunResult struct {
 // ownerFilterFor builds the caller-scoping filter for dry runs from the same
 // owner-field detection the dispatcher uses. ok=false when the collection has
 // no resolvable owner field.
+//
+// Known gap (deferred to Phase 3): this only detects a direct user/owner/author
+// relation column via autoOwnerFields/OwnerField. A trigger whose owner is
+// resolved dynamically via RegisterOwnerResolver (e.g. mail's shared-mailbox
+// resolver) has no such column, so dry-run treats it as unscoped/admin-only
+// even though ResolveOwners could, in principle, scope it per caller. Fixing
+// this requires threading a per-record OwnerResolver call into the dry-run
+// filter/query path, not just a static field-name lookup.
 func (e *Engine) ownerFilterFor(trigger TriggerDef) (string, bool) {
 	col, err := e.app.FindCollectionByNameOrId(trigger.Collection)
 	if err != nil {
@@ -87,7 +95,10 @@ func (e *Engine) dryRun(caller *core.Record, triggerRef string, ast ConditionsAS
 	}
 	out.Total = len(records)
 	for _, r := range records {
-		if EvaluateConditions(ast, r) {
+		if !triggerAllowed(e.app, triggerRef, r) {
+			continue
+		}
+		if EvaluateConditions(ast, r, trigger) {
 			out.Matches = append(out.Matches, dryRunMatch{ID: r.Id, Summary: triggerSummary(r, trigger)})
 		}
 	}

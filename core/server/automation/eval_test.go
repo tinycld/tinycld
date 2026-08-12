@@ -24,6 +24,9 @@ func evalRecord(t *testing.T) (*tests.TestApp, *core.Record) {
 	col.Fields.Add(&core.NumberField{Name: "size"})
 	col.Fields.Add(&core.DateField{Name: "happened"})
 	col.Fields.Add(&core.SelectField{Name: "tags", Values: []string{"a", "b", "c"}, MaxSelect: 3})
+	// tokenKey stands in for a curated-away/hidden secret column: rule
+	// conditions must never be able to probe it via match/no-match.
+	col.Fields.Add(&core.TextField{Name: "tokenKey", Hidden: true})
 	if err := app.Save(col); err != nil {
 		t.Fatal(err)
 	}
@@ -34,6 +37,7 @@ func evalRecord(t *testing.T) (*tests.TestApp, *core.Record) {
 	r.Set("size", 1500)
 	r.Set("happened", time.Now().Add(-48*time.Hour).UTC().Format("2006-01-02 15:04:05.000Z"))
 	r.Set("tags", []string{"a", "c"})
+	r.Set("tokenKey", "super-secret-value")
 	if err := app.Save(r); err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +52,11 @@ func one(c Condition) ConditionsAST {
 	return ConditionsAST{Match: "all", Groups: []ConditionGroup{{Match: "all", Conditions: []Condition{c}}}}
 }
 
+// openEvalTrigger declares no Fields allowlist, so exposedFields exposes every
+// non-system, non-hidden column of eval_things — the pre-existing behavior
+// TestOperatorTable/TestGroupSemantics rely on.
+var openEvalTrigger = TriggerDef{}
+
 func TestOperatorTable(t *testing.T) {
 	_, r := evalRecord(t)
 	cases := []struct {
@@ -61,6 +70,7 @@ func TestOperatorTable(t *testing.T) {
 		{"equals ci", cond("sender", "equals", "Billing@acme.com"), true},
 		{"starts_with", cond("subject", "starts_with", "invoice #"), true},
 		{"eq", cond("size", "eq", 1500), true},
+		{"eq partial-parse string rejected", cond("size", "eq", "1500abc"), false},
 		{"neq", cond("size", "neq", 1500), false},
 		{"gt", cond("size", "gt", 1000), true},
 		{"lt", cond("size", "lt", 1000), false},
@@ -76,7 +86,7 @@ func TestOperatorTable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := EvaluateConditions(one(tc.c), r); got != tc.want {
+			if got := EvaluateConditions(one(tc.c), r, openEvalTrigger); got != tc.want {
 				t.Fatalf("%s: got %v want %v", tc.name, got, tc.want)
 			}
 		})
@@ -91,17 +101,52 @@ func TestGroupSemantics(t *testing.T) {
 	anyGroup := ConditionGroup{Match: "any", Conditions: []Condition{miss, hit}}
 	allGroup := ConditionGroup{Match: "all", Conditions: []Condition{hit, miss}}
 
-	if !EvaluateConditions(ConditionsAST{Match: "all", Groups: []ConditionGroup{anyGroup}}, r) {
+	if !EvaluateConditions(ConditionsAST{Match: "all", Groups: []ConditionGroup{anyGroup}}, r, openEvalTrigger) {
 		t.Fatal("any-group with one hit must pass")
 	}
-	if EvaluateConditions(ConditionsAST{Match: "all", Groups: []ConditionGroup{anyGroup, allGroup}}, r) {
+	if EvaluateConditions(ConditionsAST{Match: "all", Groups: []ConditionGroup{anyGroup, allGroup}}, r, openEvalTrigger) {
 		t.Fatal("all-of-groups with a failing group must fail")
 	}
-	if !EvaluateConditions(ConditionsAST{Match: "any", Groups: []ConditionGroup{anyGroup, allGroup}}, r) {
+	if !EvaluateConditions(ConditionsAST{Match: "any", Groups: []ConditionGroup{anyGroup, allGroup}}, r, openEvalTrigger) {
 		t.Fatal("any-of-groups with a passing group must pass")
 	}
-	if !EvaluateConditions(ConditionsAST{}, r) {
+	if !EvaluateConditions(ConditionsAST{}, r, openEvalTrigger) {
 		t.Fatal("empty AST must pass (no conditions = always match)")
+	}
+}
+
+// TestConditionsFailClosedOnNonExposedFields proves a rule condition can't be
+// used as a match/no-match oracle to probe a field the trigger doesn't expose
+// — hidden columns, and columns curated away by an explicit Fields allowlist.
+func TestConditionsFailClosedOnNonExposedFields(t *testing.T) {
+	_, r := evalRecord(t)
+
+	// Hidden field: even under the open trigger (no Fields declared, so every
+	// non-hidden column is exposed), tokenKey is hidden and must never match —
+	// regardless of the actual value or operator outcome.
+	hiddenHit := cond("tokenKey", "equals", "super-secret-value")
+	if EvaluateConditions(one(hiddenHit), r, openEvalTrigger) {
+		t.Fatal("condition on a hidden field must evaluate false even when the value would otherwise match")
+	}
+	hiddenMiss := cond("tokenKey", "equals", "definitely-not-it")
+	if EvaluateConditions(one(hiddenMiss), r, openEvalTrigger) {
+		t.Fatal("condition on a hidden field must stay false on the non-matching branch too (no oracle either direction)")
+	}
+
+	// Curated-away field: an allowlisted trigger that only exposes "subject"
+	// must reject a condition on "sender", a real, non-hidden column that
+	// simply isn't in the allowlist.
+	curatedTrigger := TriggerDef{Fields: []FieldRef{{Key: "subject"}}}
+	curatedAwayHit := cond("sender", "equals", "billing@acme.com")
+	if EvaluateConditions(one(curatedAwayHit), r, curatedTrigger) {
+		t.Fatal("condition on a field curated away by the trigger's allowlist must evaluate false")
+	}
+
+	// Exposed field: behavior for an allowlisted, actually-exposed field is
+	// unchanged.
+	exposedHit := cond("subject", "contains", "invoice")
+	if !EvaluateConditions(one(exposedHit), r, curatedTrigger) {
+		t.Fatal("condition on an exposed, allowlisted field must evaluate normally")
 	}
 }
 

@@ -76,6 +76,43 @@ func TestDryRunScoping(t *testing.T) {
 	}
 }
 
+// TestDryRunUnscopedRequiresAdmin covers the "collection has no resolvable
+// owner field" branch: ownerFilterFor returns ok=false for "broadcasts" (no
+// user/owner/author relation), so dry-run can't scope results to the caller.
+// A non-admin caller must be rejected outright; an admin caller gets results
+// across every record, unscoped.
+func TestDryRunUnscopedRequiresAdmin(t *testing.T) {
+	app, eng, u := engineApp(t)
+	col, _ := app.FindCollectionByNameOrId("broadcasts")
+	for _, title := range []string{"alert one", "routine note", "ALERT two"} {
+		r := core.NewRecord(col)
+		r.Set("title", title)
+		if err := app.Save(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ast := ConditionsAST{Match: "all", Groups: []ConditionGroup{{
+		Match:      "any",
+		Conditions: []Condition{{Field: "title", Op: "contains", Value: "alert"}},
+	}}}
+
+	if _, err := eng.dryRun(u, "tickets:broadcast-created", ast); err == nil {
+		t.Fatal("non-admin caller against an unscoped collection must be rejected")
+	}
+
+	u.Set("role", "admin")
+	if err := app.Save(u); err != nil {
+		t.Fatal(err)
+	}
+	res, err := eng.dryRun(u, "tickets:broadcast-created", ast)
+	if err != nil {
+		t.Fatalf("admin caller must be allowed against an unscoped collection: %v", err)
+	}
+	if res.Total != 3 || len(res.Matches) != 2 {
+		t.Fatalf("admin dry run: total=%d matches=%d", res.Total, len(res.Matches))
+	}
+}
+
 // TestCoreNotifyHandler exercises the real core:notify handler as Register
 // installs it — not a test-local stub (actions_test.go's
 // TestNativeDispatchAndMissingHandler registers its own) — and asserts it

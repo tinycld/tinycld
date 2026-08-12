@@ -40,6 +40,11 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 // action refs. Factored out of Register so a test can install them without
 // the full app-bootstrap path (LoadDefs + OnServe binding).
 func registerCoreNativeActions() {
+	// core:notify is fire-and-forget: the handler returns nil immediately and
+	// the actual push happens on a detached goroutine. The engine records this
+	// action's ActionResult as "ok" the instant the handler returns, before
+	// notifyUser has run (or even before its liveness check) — a delivery
+	// failure inside the goroutine is invisible to rule_runs.results.
 	RegisterAction("core:notify", func(a core.App, req ActionRequest) error {
 		go func() {
 			if !appIsLive(a) {

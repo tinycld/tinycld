@@ -3,6 +3,7 @@ package automation
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,8 +72,10 @@ func toFloat(v any) (float64, bool) {
 		f, err := t.Float64()
 		return f, err == nil
 	case string:
-		var f float64
-		_, err := fmt.Sscanf(t, "%g", &f)
+		// ParseFloat rejects trailing garbage (e.g. "1500abc"); Sscanf with
+		// "%g" would happily accept it and silently drop the suffix, letting
+		// a malformed rule value match on a truncated number. Fail closed.
+		f, err := strconv.ParseFloat(t, 64)
 		return f, err == nil
 	default:
 		return 0, false
@@ -142,9 +145,15 @@ func evalCondition(c Condition, record *core.Record) bool {
 		if err != nil {
 			// Date-only form from the builder ("2026-08-11")
 			want, err = time.Parse("2006-01-02", normalize(c.Value))
-			if err != nil {
-				return false
-			}
+		}
+		if err != nil {
+			// RFC3339 ("2026-08-11T15:04:05Z"): the Phase 3 condition builder
+			// may emit either this or the PB DB format above depending on
+			// which UI control produced the value.
+			want, err = time.Parse(time.RFC3339, normalize(c.Value))
+		}
+		if err != nil {
+			return false
 		}
 		if c.Op == "before" {
 			return have.Before(want)
@@ -171,12 +180,12 @@ func evalCondition(c Condition, record *core.Record) bool {
 	return false
 }
 
-func evalGroup(g ConditionGroup, record *core.Record) bool {
+func evalGroup(g ConditionGroup, record *core.Record, exposed map[string]bool, gate bool) bool {
 	if len(g.Conditions) == 0 {
 		return true
 	}
 	for _, c := range g.Conditions {
-		hit := evalCondition(c, record)
+		hit := (!gate || exposed[c.Field]) && evalCondition(c, record)
 		if g.Match == "any" && hit {
 			return true
 		}
@@ -188,12 +197,29 @@ func evalGroup(g ConditionGroup, record *core.Record) bool {
 }
 
 // EvaluateConditions applies the one-level AND/OR AST. No conditions = match.
-func EvaluateConditions(ast ConditionsAST, record *core.Record) bool {
+//
+// record != nil: a condition whose Field isn't in this trigger's
+// exposedFields evaluates to false regardless of operator — fail closed, the
+// same convention as an unknown operator. Without this gate, evalCondition
+// would happily read any record.Get(field), letting a rule author or dry-run
+// caller probe curated-away/hidden columns via match/no-match (e.g.
+// starts_with as a binary-search oracle over a hidden field's value).
+//
+// record == nil (scheduled trigger): unchanged from pre-fix behavior — there
+// is no record whose fields could leak, so the exposure gate doesn't apply;
+// an empty AST still matches, a non-empty AST falls through to evalCondition
+// exactly as before this fix.
+func EvaluateConditions(ast ConditionsAST, record *core.Record, trigger TriggerDef) bool {
 	if len(ast.Groups) == 0 {
 		return true
 	}
+	gate := record != nil
+	var exposed map[string]bool
+	if gate {
+		exposed = exposedFields(record, trigger)
+	}
 	for _, g := range ast.Groups {
-		hit := evalGroup(g, record)
+		hit := evalGroup(g, record, exposed, gate)
 		if ast.Match == "any" && hit {
 			return true
 		}

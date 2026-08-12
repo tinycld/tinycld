@@ -124,8 +124,17 @@ func ExecuteAction(app core.App, defs *Defs, ref string, rawParams map[string]an
 			}
 			made.Set(field, v)
 		}
-		markEngineWrite(made.Id, rule.Id, depth)
-		return app.Save(made)
+		marked := defsHaveTrigger(defs, action.Collection, "create")
+		if marked {
+			markEngineWrite(made.Id, rule.Id, depth)
+		}
+		if err := app.Save(made); err != nil {
+			if marked {
+				takeEngineWrite(made.Id)
+			}
+			return err
+		}
+		return nil
 	case "update", "delete":
 		if action.Op.Target != "trigger-record" {
 			return fmt.Errorf("record-op %q: unsupported target %q", ref, action.Op.Target)
@@ -137,8 +146,17 @@ func ExecuteAction(app core.App, defs *Defs, ref string, rawParams map[string]an
 			return fmt.Errorf("record-op %q: trigger record is %q, action declares %q", ref, record.Collection().Name, action.Collection)
 		}
 		if action.Op.Type == "delete" {
-			markEngineWrite(record.Id, rule.Id, depth)
-			return app.Delete(record)
+			marked := defsHaveTrigger(defs, action.Collection, "delete")
+			if marked {
+				markEngineWrite(record.Id, rule.Id, depth)
+			}
+			if err := app.Delete(record); err != nil {
+				if marked {
+					takeEngineWrite(record.Id)
+				}
+				return err
+			}
+			return nil
 		}
 		for field, sv := range action.Op.Set {
 			v, err := resolveSetValue(sv, params, record, ownerID)
@@ -147,9 +165,26 @@ func ExecuteAction(app core.App, defs *Defs, ref string, rawParams map[string]an
 			}
 			record.Set(field, v)
 		}
-		markEngineWrite(record.Id, rule.Id, depth)
-		return app.Save(record)
+		marked := defsHaveTrigger(defs, action.Collection, "update")
+		if marked {
+			markEngineWrite(record.Id, rule.Id, depth)
+		}
+		if err := app.Save(record); err != nil {
+			if marked {
+				takeEngineWrite(record.Id)
+			}
+			return err
+		}
+		return nil
 	default:
 		return fmt.Errorf("record-op %q: unknown op type %q", ref, action.Op.Type)
 	}
+}
+
+// defsHaveTrigger reports whether any package declares a (collection, op)
+// trigger — i.e. whether some hook is actually bound for this write. Marking
+// a sentinel for a write nothing will ever consume (e.g. core:apply-label →
+// label_assignments has no bound hook) leaks the sync.Map entry forever.
+func defsHaveTrigger(defs *Defs, collection, op string) bool {
+	return len(defs.TriggersFor(collection, op)) > 0
 }

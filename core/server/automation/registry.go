@@ -1,3 +1,10 @@
+// Package automation's registries (actionHandlers, ownerResolvers,
+// triggerFilters below) are process-global vars, not per-app state. In
+// multi-org mode one process hosts many tenant apps, each with its own
+// Engine — all of them share these same maps. That's fine in practice: refs
+// are package-qualified ("mail:send", "core:notify", …) and collide only on a
+// 15-char random id, which random-id generation makes negligible. Do not
+// assume a registered handler/resolver/filter is scoped to one tenant.
 package automation
 
 import (
@@ -8,6 +15,11 @@ import (
 
 // ActionRequest is what a native action handler receives. Params are already
 // template-substituted strings; Record is nil for synthetic triggers.
+//
+// Native handlers run outside the record-op/pkgaccess path (see
+// checkPersonalAccess in actions.go, which only re-applies pkgaccess to
+// record-op actions): a native handler must self-enforce any access control
+// it needs, the engine does not gate it for you.
 type ActionRequest struct {
 	Rule    *core.Record
 	OwnerID string
@@ -15,6 +27,9 @@ type ActionRequest struct {
 	Record  *core.Record
 }
 
+// ActionHandler is the function shape RegisterAction installs. See
+// ActionRequest's doc for the access-control implication: nothing upstream of
+// the handler enforces pkgaccess for native actions.
 type ActionHandler func(app core.App, req ActionRequest) error
 
 // OwnerResolver maps a trigger record to the user ids the event belongs to,
@@ -38,6 +53,9 @@ var (
 
 // RegisterAction installs the Go handler for a native action ref. Packages
 // call this from their Register(app), mirroring $-binding registration.
+// pkgaccess is NOT applied to native actions (only to record-ops, via
+// checkPersonalAccess) — the handler itself must enforce any access control
+// it needs.
 func RegisterAction(ref string, h ActionHandler) {
 	registryMu.Lock()
 	defer registryMu.Unlock()

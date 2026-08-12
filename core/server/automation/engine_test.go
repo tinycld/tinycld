@@ -54,13 +54,38 @@ func engineApp(t *testing.T) (core.App, *Engine, *core.Record) {
 		t.Fatal(err)
 	}
 
+	// broadcasts: no user/owner/author relation at all — exercises the
+	// unscoped dry-run path (TestDryRunUnscopedRequiresAdmin), which
+	// ownerFilterFor can't resolve to a per-caller filter.
+	broadcasts := core.NewBaseCollection("broadcasts")
+	broadcasts.Fields.Add(&core.TextField{Name: "title"})
+	broadcasts.Fields.Add(&core.AutodateField{Name: "created", OnCreate: true})
+	broadcasts.Fields.Add(&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true})
+	if err := app.Save(broadcasts); err != nil {
+		t.Fatal(err)
+	}
+
 	defs := &Defs{Packages: []PackageDefs{{
-		Slug:     "tickets",
-		Triggers: []TriggerDef{{ID: "ticket-created", Label: "created", Collection: "tickets", On: "create"}},
+		Slug: "tickets",
+		Triggers: []TriggerDef{
+			{ID: "ticket-created", Label: "created", Collection: "tickets", On: "create"},
+			{ID: "broadcast-created", Label: "broadcast", Collection: "broadcasts", On: "create"},
+		},
 		Actions: []ActionDef{{
 			ID: "set-status", Label: "set", Kind: "record-op", Collection: "tickets",
 			Op:     RecordOp{Type: "update", Target: "trigger-record", Set: map[string]SetValue{"status": {Param: "status"}}},
 			Params: []ParamDef{{Key: "status", Field: "status"}},
+		}, {
+			// clone-ticket lets a test build a self-triggering chain: each
+			// created ticket's rule creates another ticket owned by the same
+			// user (so a personal rule keeps matching each generation),
+			// re-firing the create hook — used to exercise the
+			// chain-depth-exceeded path.
+			ID: "clone-ticket", Label: "clone", Kind: "record-op", Collection: "tickets",
+			Op: RecordOp{Type: "create", Set: map[string]SetValue{
+				"title": {Literal: "clone"},
+				"user":  {Context: "owner"},
+			}},
 		}},
 	}}}
 	eng := NewEngine(app, defs)
@@ -285,5 +310,98 @@ func TestSelfRetriggerAndChainDepth(t *testing.T) {
 	runs, _ := app.FindRecordsByFilter("rule_runs", "rule = {:id}", "", 0, 0, map[string]any{"id": rule.Id})
 	if len(runs) != 1 {
 		t.Fatalf("rule must fire exactly once, got %d", len(runs))
+	}
+}
+
+// TestChainDepthExceededRunRow drives a genuine chain of ticket creates past
+// maxChainDepth, then asserts the resulting run row: written with an error,
+// and — the fix under test — trigger_summary is empty rather than a snapshot
+// of every column, because the chain-depth-exceeded WriteRun call passes a
+// nil record instead of the real one under an empty TriggerDef (which would
+// otherwise fall into the "expose everything" branch).
+func TestChainDepthExceededRunRow(t *testing.T) {
+	app, _, u := engineApp(t)
+	// A single rule can't chain past depth 1: the "a rule never re-fires on
+	// its own write" guard (dispatch's rule.Id == ev.SourceRule check) blocks
+	// it. Two rules that both clone on every ticket-created ping-pong past
+	// each other's sentinel instead, so depth keeps climbing past
+	// maxChainDepth.
+	makeRule(t, app, u.Id, "org", nil,
+		[]any{map[string]any{"ref": "tickets:clone-ticket"}}, 0, false)
+	makeRule(t, app, u.Id, "org", nil,
+		[]any{map[string]any{"ref": "tickets:clone-ticket"}}, 1, false)
+
+	col, _ := app.FindCollectionByNameOrId("tickets")
+	rec := core.NewRecord(col)
+	rec.Set("title", "seed")
+	rec.Set("user", u.Id)
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Each generation's rule run enqueues another create from the OTHER
+	// rule's next hop; wait for the chain to run past maxChainDepth (3) and
+	// produce the depth-exceeded run row — distinguished from ordinary
+	// matched runs by having a non-empty error. Either rule can end up as the
+	// row's owner depending on ping-pong parity, so query across both.
+	deadline := time.Now().Add(5 * time.Second)
+	var errRun *core.Record
+	for time.Now().Before(deadline) {
+		runs, _ := app.FindRecordsByFilter("rule_runs", "error != ''", "", 0, 0, nil)
+		if len(runs) > 0 {
+			errRun = runs[0]
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if errRun == nil {
+		t.Fatal("timed out waiting for the chain-depth-exceeded run row")
+	}
+	if errRun.GetString("error") != "chain-depth-exceeded" {
+		t.Fatalf("error string: %q", errRun.GetString("error"))
+	}
+	summary, _ := errRun.Get("trigger_summary").(map[string]any)
+	if len(summary) != 0 {
+		t.Fatalf("chain-depth-exceeded row must have an empty trigger_summary, got %+v", summary)
+	}
+}
+
+// TestManualRunOfDisabledRuleStillExecutes proves the manual-run endpoint's
+// promise: it replies {"queued": true} regardless of the rule's enabled
+// state, so dispatch must honor that for a RuleID-targeted event even though
+// the rule is disabled — the auto-disable scenario being the motivating case.
+// Before the fix, dispatch loaded only `enabled = true` rules and then
+// filtered by RuleID, so a disabled rule silently vanished and no run row
+// was ever written.
+func TestManualRunOfDisabledRuleStillExecutes(t *testing.T) {
+	app, eng, u := engineApp(t)
+	rule := makeRule(t, app, u.Id, "personal", nil,
+		[]any{map[string]any{"ref": "tickets:set-status", "params": map[string]any{"status": "ran-anyway"}}}, 0, false)
+	rule.Set("enabled", false) // auto-disable-style: the rule a manual run is meant to bypass
+	if err := app.Save(rule); err != nil {
+		t.Fatal(err)
+	}
+
+	col, _ := app.FindCollectionByNameOrId("tickets")
+	rec := core.NewRecord(col)
+	rec.Set("title", "t")
+	rec.Set("user", u.Id)
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	trigger, _, _ := eng.defs.Trigger("tickets:ticket-created")
+	eng.DispatchForTest(event{TriggerRef: "tickets:ticket-created", Trigger: trigger, Record: rec, RuleID: rule.Id})
+
+	runs, _ := app.FindRecordsByFilter("rule_runs", "rule = {:id}", "", 0, 0, map[string]any{"id": rule.Id})
+	if len(runs) != 1 {
+		t.Fatalf("manual-run of a disabled rule must still write a run row: got %d", len(runs))
+	}
+	if !runs[0].GetBool("matched") {
+		t.Fatal("disabled rule targeted by RuleID must still evaluate and match")
+	}
+	fresh, _ := app.FindRecordById("tickets", rec.Id)
+	if fresh.GetString("status") != "ran-anyway" {
+		t.Fatalf("disabled rule's action must still execute: %q", fresh.GetString("status"))
 	}
 }

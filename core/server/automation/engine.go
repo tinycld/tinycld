@@ -166,7 +166,13 @@ func (e *Engine) recordHookHandler(col, op string) func(*core.RecordEvent) error
 			e.app.Logger().Warn("automation: chain depth exceeded", "collection", col, "record", ev.Record.Id, "sourceRule", source)
 			if source != "" {
 				if rule, err := e.app.FindRecordById("rules", source); err == nil {
-					WriteRun(e.app, rule, ev.Record, TriggerDef{}, RunOutcome{Err: "chain-depth-exceeded"})
+					// nil record, not ev.Record: an empty TriggerDef has no
+					// declared field allowlist, so triggerSummary would fall
+					// into the "open trigger" branch and snapshot EVERY column
+					// of the record — including curated-away/hidden fields.
+					// The error string is the payload here; the record adds
+					// nothing but a leak.
+					WriteRun(e.app, rule, nil, TriggerDef{}, RunOutcome{Err: "chain-depth-exceeded"})
 				}
 			}
 			return ev.Next()
@@ -233,24 +239,29 @@ func decodeActions(raw any) ([]storedAction, error) {
 }
 
 func (e *Engine) dispatch(ev event) {
-	rules, err := e.app.FindRecordsByFilter(
-		"rules", "trigger = {:ref} && enabled = true", "order", 0, 0,
-		map[string]any{"ref": ev.TriggerRef},
-	)
-	if err != nil || len(rules) == 0 {
-		return
-	}
+	var rules []*core.Record
 	if ev.RuleID != "" {
-		filtered := rules[:0]
-		for _, r := range rules {
-			if r.Id == ev.RuleID {
-				filtered = append(filtered, r)
-			}
-		}
-		rules = filtered
-		if len(rules) == 0 {
+		// Manual-run/scheduled-run targets one specific rule directly, bypassing
+		// the enabled filter: the endpoint already replied {"queued": true}
+		// regardless of enabled, so a disabled rule must still run here or the
+		// dispatch silently no-ops after promising the caller it was queued.
+		rule, err := e.app.FindRecordById("rules", ev.RuleID)
+		if err != nil {
 			return
 		}
+		if rule.GetString("trigger") != ev.TriggerRef {
+			return
+		}
+		rules = []*core.Record{rule}
+	} else {
+		found, err := e.app.FindRecordsByFilter(
+			"rules", "trigger = {:ref} && enabled = true", "order", 0, 0,
+			map[string]any{"ref": ev.TriggerRef},
+		)
+		if err != nil || len(found) == 0 {
+			return
+		}
+		rules = found
 	}
 	// Org rules first, then personal — order preserved within each tier.
 	sort.SliceStable(rules, func(i, j int) bool {
@@ -288,7 +299,7 @@ func (e *Engine) dispatch(ev event) {
 			WriteRun(e.app, rule, ev.Record, ev.Trigger, RunOutcome{Err: "invalid conditions: " + err.Error(), Duration: time.Since(start)})
 			continue
 		}
-		if !EvaluateConditions(ast, ev.Record) {
+		if !EvaluateConditions(ast, ev.Record, ev.Trigger) {
 			WriteRun(e.app, rule, ev.Record, ev.Trigger, RunOutcome{Matched: false, Duration: time.Since(start)})
 			continue
 		}
@@ -328,7 +339,12 @@ func (timeoutErr) Error() string { return "action timed out" }
 
 // runActionWithTimeout abandons (does not kill) an overrunning action: the PB
 // SDK has no context-cancellable Save, so the goroutine finishes on its own
-// while the run is recorded as timed out.
+// while the run is recorded as timed out. Abandoned means exactly that — the
+// goroutine keeps running against ev.Record (and whatever else ExecuteAction
+// touches) after this function has returned and the dispatch loop has moved
+// on to the next rule/event using that same *core.Record. A hung Save that
+// eventually completes (e.g. a 30s+ stall) can still mutate the record out
+// from under later code that assumed the timeout meant nothing happened.
 func (e *Engine) runActionWithTimeout(a storedAction, rule *core.Record, ev event) error {
 	done := make(chan error, 1)
 	go func() {

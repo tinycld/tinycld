@@ -78,6 +78,10 @@ func actionApp(t *testing.T) (*tests.TestApp, *core.Record, *core.Record, *Defs)
 		},
 	}, {
 		Slug: "things",
+		// An update trigger IS declared here (unlike thing_labels above) so
+		// TestRecordOpUpdateTriggerRecord exercises the positive sentinel-marking
+		// path: a hook is actually bound for (things, update).
+		Triggers: []TriggerDef{{ID: "updated", Collection: "things", On: "update"}},
 		Actions: []ActionDef{{
 			ID: "set-status", Kind: "record-op", Collection: "things",
 			Op:     RecordOp{Type: "update", Target: "trigger-record", Set: map[string]SetValue{"status": {Param: "status"}}},
@@ -105,8 +109,11 @@ func TestRecordOpCreateWithContext(t *testing.T) {
 	if made.GetString("collection") != "things" || made.GetString("user") != rule.GetString("owner") {
 		t.Fatalf("context values: %+v", made.PublicExport())
 	}
-	if _, ok := takeEngineWrite(made.Id); !ok {
-		t.Fatal("engine create must carry provenance")
+	// thing_labels has no bound hook in this defs set (core:apply-label-style
+	// write with nothing declared to trigger on it) — marking a sentinel here
+	// would leak the sync.Map entry forever since nothing will ever consume it.
+	if _, ok := takeEngineWrite(made.Id); ok {
+		t.Fatal("create into a collection with no trigger must not leave a sentinel")
 	}
 }
 
@@ -122,6 +129,41 @@ func TestRecordOpUpdateTriggerRecord(t *testing.T) {
 	w, ok := takeEngineWrite(rec.Id)
 	if !ok || w.Depth != 1 || w.RuleID != rule.Id {
 		t.Fatalf("provenance: %+v %v", w, ok)
+	}
+}
+
+// TestFailedSaveLeavesNoSentinel proves the mark-before-write ordering
+// doesn't strand a sentinel on a real record id when the write itself fails:
+// a stranded sentinel would mis-attribute provenance (depth/source rule) to
+// whatever legitimate save of that same id happens next, wrongly suppressing
+// a rule that should fire.
+func TestFailedSaveLeavesNoSentinel(t *testing.T) {
+	app, rec, rule, defs := actionApp(t)
+
+	// Add a required field to "things" with no default and nothing in the
+	// action's Set map — Save must fail validation.
+	col, err := app.FindCollectionByNameOrId("things")
+	if err != nil {
+		t.Fatal(err)
+	}
+	col.Fields.Add(&core.TextField{Name: "must_have", Required: true})
+	if err := app.Save(col); err != nil {
+		t.Fatal(err)
+	}
+	// Re-fetch: rec was constructed against the pre-migration collection
+	// schema, so its captured Collection() wouldn't see the new required
+	// field and validation would silently pass it by.
+	rec, err = app.FindRecordById("things", rec.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// things:update already has a trigger declared in actionApp's defs, so
+	// this write would be marked absent the fix under test.
+	if err := ExecuteAction(app, defs, "things:set-status", map[string]any{"status": "filed"}, rule, openTrigger, rec, 0); err == nil {
+		t.Fatal("save must fail: required field unset")
+	}
+	if _, ok := takeEngineWrite(rec.Id); ok {
+		t.Fatal("a failed save must not strand a sentinel on the record id")
 	}
 }
 
