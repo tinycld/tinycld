@@ -316,6 +316,18 @@ const notifications = newCollection('notifications', {
 })
 export const notificationsCollection = notifications
 
+const rules = newCollection('rules', {
+    omitOnInsert: ['created', 'updated'],
+    expand: { owner: users },
+    ...indexing,
+})
+
+const rule_runs = newCollection('rule_runs', {
+    omitOnInsert: ['created', 'updated'],
+    expand: { rule: rules },
+    ...indexing,
+})
+
 // NOTE: the `comment_mentions` store registration was removed in the new
 // standalone-core layout because the collection is created by a feature
 // package's migration (drive's create_comment_mentions), not core's own — so
@@ -336,6 +348,8 @@ const coreStores = {
     audit_logs,
     pkg_install_log,
     notifications,
+    rules,
+    rule_runs,
     system_settings,
     oauth_grants,
 }
