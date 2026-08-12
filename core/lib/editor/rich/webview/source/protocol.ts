@@ -28,6 +28,84 @@ export const APP_SUBMIT_SHORTCUT = 'submit-shortcut'
 export const APP_ESCAPE = 'escape'
 
 /**
+ * Yjs document update, base64-encoded. Sent in BOTH directions: the host
+ * relays what arrives on the room socket, and the WebView relays what the
+ * local user types.
+ *
+ * The WebView never opens its own connection: a second one would make the local
+ * user appear twice in presence, as well as shipping a credential into the page.
+ */
+export const YJS_UPDATE = 'update'
+
+/**
+ * Page → host, on the 'awareness' namespace: the page's OWN cursor position, as
+ * the JSON relative-position pair y-tiptap keeps in its awareness slot — or null
+ * when it has none (blur, or the editor going away).
+ *
+ * Deliberately NOT an encoded awareness update. The page's clientID must never
+ * reach the wire: the realtime client only ever encodes its own slot
+ * (`realtime/client.ts`, `encodeAwarenessUpdate(awareness, [localID])`), and the
+ * broker announces one awareness id per connection, so a second slot would
+ * strand a ghost caret on every peer until y-protocols' reaper cleared it. The
+ * host merges this cursor into its own slot instead — one peer, one avatar, one
+ * caret.
+ *
+ * A relative position survives the trip because it names ITEMS IN THE DOCUMENT,
+ * which are identical across every replica. No translation is needed.
+ */
+export const AWARENESS_CURSOR = 'cursor'
+
+/**
+ * Host → page, on the 'awareness' namespace: the REMOTE peers' awareness states,
+ * base64 of `encodeAwarenessUpdate` over their client ids.
+ *
+ * The host's own slot is excluded. It carries the cursor the page just sent, and
+ * relaying it back would arrive under a different clientID than the page's own —
+ * so y-tiptap's "don't draw my own caret" filter would not catch it and the user
+ * would watch a ghost caret with their own name trail their typing.
+ */
+export const AWARENESS_PEERS = 'peers'
+
+/**
+ * Host → page: peers who left, so the page drops their carets.
+ *
+ * Separate from `AWARENESS_PEERS` because a departed client is usually gone from
+ * the awareness `meta` map too, and `encodeAwarenessUpdate` reads
+ * `meta.get(clientID).clock` with no guard — encoding one throws.
+ */
+export const AWARENESS_LEAVE = 'leave'
+
+/** Payload for {@link AWARENESS_CURSOR}. */
+export interface AwarenessCursorPayload {
+    /** `{anchor, head}` relative positions as JSON, or null for no cursor. */
+    cursor: { anchor: unknown; head: unknown } | null
+}
+
+/** Payload for {@link AWARENESS_PEERS}. */
+export interface AwarenessPeersPayload {
+    /** Base64 `encodeAwarenessUpdate(awareness, remoteIDs)`. */
+    update: string
+}
+
+/** Payload for {@link AWARENESS_LEAVE}. */
+export interface AwarenessLeavePayload {
+    clientIDs: number[]
+}
+
+/**
+ * WebView → host, on the 'ui' namespace: the document's height in CSS px.
+ *
+ * A WebView has no intrinsic height, so the host has to be told. Inside a
+ * ScrollView there is nothing to flex against either, which leaves the editor
+ * clipped to whatever the host guessed — or collapsed to zero. Posted on mount
+ * and whenever the content resizes.
+ *
+ * The host matches this string literally (like `document-scroll`), since
+ * use-webview-editor is package-agnostic and does not import from `rich/`.
+ */
+export const UI_CONTENT_HEIGHT = 'content-height'
+
+/**
  * Everything the WebView needs to construct its editor.
  *
  * Sent once per mount, after the page reports ready. The page cannot build its
@@ -49,6 +127,62 @@ export interface RichEditorInitPayload {
     /** Theme colors resolved on the native side, applied as CSS in-page. */
     colors: RichEditorColors
     autofocus: boolean
+    /** Present iff this editor is collaborative. Absent → a local editor. */
+    collab?: RichEditorInitCollab
+}
+
+/**
+ * The collaboration binding, handed to the page at init.
+ *
+ * Everything here is a primitive or a plain object: it crosses a JSON pipe, so
+ * the Y.Doc itself cannot. The page builds its OWN Y.Doc from `initialState`
+ * and keeps it in sync by relaying updates through the host.
+ */
+export interface RichEditorInitCollab {
+    /** Which top-level fragment this editor owns, e.g. `card:<id>`. */
+    field: string
+    /**
+     * The host doc's clientID, for correlation only — the page does NOT adopt
+     * it.
+     *
+     * Adopting it was the original plan (TODO(cards M9): "the WebView reuses
+     * the native client's clientID so the local user does not appear twice").
+     * Yjs forbids it: two docs sharing a clientID would collide on item
+     * identity, and it defends itself — assigning the id and then applying the
+     * host's state logs "Changed the client-id because another client seems to
+     * be using it" and reassigns a random one. It sticks only while the host
+     * doc is empty, which is exactly the case that doesn't matter.
+     *
+     * Double presence is avoided a different way: the page's clientID never
+     * reaches the wire. The relay carries document updates, remote peers'
+     * awareness states inbound, and the page's cursor POSITION outbound — and
+     * the host merges that cursor into its own awareness slot rather than
+     * opening a second one. Board presence therefore still rides the host's
+     * single socket, which is the only thing peers ever see.
+     *
+     * Two clientIDs on the phone, one on the wire: one avatar, one caret.
+     */
+    clientID: number
+    /**
+     * Base64 `Y.encodeStateAsUpdate` of the host doc at init.
+     *
+     * The page applies this instead of `setContent`. Under collaboration the
+     * document arrives as Yjs state, and setting content on top of it would
+     * duplicate the text on every client that joins.
+     */
+    initialState: string
+    /**
+     * Base64 `encodeAwarenessUpdate` of the REMOTE peers' slots at init, absent
+     * when nobody else is in the room.
+     *
+     * Awareness frames are only fanned out as they are sent, so a joining client
+     * is told nothing about who is already present — the same gap cards' presence
+     * hook closes by republishing when someone arrives. Without this seed a phone
+     * would see no carets until a peer happened to move.
+     */
+    peers?: string
+    /** Caret identity — same {id,name,color} shape presence publishes. */
+    user?: { id: string; name: string; color: string }
 }
 
 export interface RichEditorColors {
@@ -66,6 +200,11 @@ export interface MarkdownSetPayload {
 
 export interface MarkdownResultPayload {
     markdown: string
+}
+
+export interface YjsUpdatePayload {
+    /** Base64 of a Yjs update — see encodeUpdate/decodeUpdate below. */
+    update: string
 }
 
 /**
@@ -96,6 +235,12 @@ export interface RichEditorStatePayload {
     wordCount: number
     canUndo: boolean
     canRedo: boolean
+    /**
+     * Whether the editing surface itself holds focus. The host turns changes in
+     * this into the onFocus/onBlur callbacks, so focus-gated chrome behaves the
+     * same on native as on web.
+     */
+    isFocused: boolean
     /** TenTap's readiness flag. Consumers gate on it via EditorResult.isReady. */
     isReady: boolean
 }

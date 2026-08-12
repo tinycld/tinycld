@@ -3,9 +3,46 @@ import { useMemo, useRef } from 'react'
 import { View } from 'react-native'
 import { useThemeColor } from '../../use-app-theme'
 import type { EditorCommands, EditorHandle, EditorResult, EditorToolbarState } from '../types'
+import {
+    EDITOR_CONTENT_STYLES,
+    EDITOR_SCOPE_CLASS,
+    scopeEditorStyles,
+} from './editor-content-styles'
 import { buildRichEditorExtensions } from './extensions'
 import { repairMarkdown } from './markdown-repair'
 import type { UseRichEditorOptions } from './options'
+
+/**
+ * Inject the shared content stylesheet once per page.
+ *
+ * Uniwind/Tailwind preflight strips browser defaults for h1–h6, ul, ol, a and
+ * the rest, so without this a card description renders as a wall of flat text
+ * with no heading hierarchy or list markers — and remote collaborator carets,
+ * which the extension styles only with an inline border-COLOR, render as an
+ * invisible zero-width span.
+ *
+ * EDITOR_CONTENT_STYLES targets a bare `.ProseMirror`. On native it goes into
+ * the WebView's isolated document, so that is fine. Here it goes into the shared
+ * `document.head`, where an unscoped selector would leak onto every other
+ * ProseMirror on the page — notably mail's compose body, which uses this same
+ * editor and has its own `.tinycld-mail-editor` rules. Prefixing each selector's
+ * LEADING `.ProseMirror` with the wrapper class confines them.
+ *
+ * Anchored at the start of a selector on purpose: a blanket replace also rewrites
+ * the second token of a descendant selector, turning
+ * `.ProseMirror .ProseMirror-yjs-selection` into a rule that matches nothing.
+ * (`@keyframes` blocks carry no leading `.ProseMirror` and are left alone.)
+ */
+/** Searched in order, so the first match is the outermost heading at the caret. */
+const HEADING_LEVELS = [1, 2, 3, 4, 5, 6]
+
+const EDITOR_STYLE_TAG_ID = 'tinycld-rich-editor-styles'
+if (typeof document !== 'undefined' && !document.getElementById(EDITOR_STYLE_TAG_ID)) {
+    const style = document.createElement('style')
+    style.id = EDITOR_STYLE_TAG_ID
+    style.textContent = scopeEditorStyles(EDITOR_CONTENT_STYLES)
+    document.head.appendChild(style)
+}
 
 /**
  * The shared rich-text editor: one schema, one set of commands, used by mail
@@ -26,6 +63,8 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         characterLimit,
         onSubmitShortcut,
         onEscape,
+        onFocus,
+        onBlur,
         collab,
     } = options
 
@@ -39,6 +78,10 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     submitRef.current = onSubmitShortcut
     const escapeRef = useRef(onEscape)
     escapeRef.current = onEscape
+    const focusRef = useRef(onFocus)
+    focusRef.current = onFocus
+    const blurRef = useRef(onBlur)
+    blurRef.current = onBlur
 
     // Rebuilding the extension list recreates the editor, and recreating the
     // editor re-renders, so an unstable list here is an infinite loop (React
@@ -51,12 +94,19 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const collabUserName = collab?.user?.name ?? null
     const collabUserColor = collab?.user?.color ?? null
 
+    // Only WHETHER a submit handler exists belongs in the deps below — the ref
+    // carries the value, and depending on the caller's inline closure would
+    // rebuild the extension list (and so the editor) on every render. Hoisted to
+    // a named boolean because an inline `!!onSubmitShortcut` in the dep array
+    // reads to the linter as a missing dependency.
+    const hasSubmitShortcut = !!onSubmitShortcut
+
     const extensions = useMemo(
         () =>
             buildRichEditorExtensions({
                 placeholder,
                 characterLimit,
-                onSubmitShortcut: onSubmitShortcut ? () => submitRef.current?.() : undefined,
+                onSubmitShortcut: hasSubmitShortcut ? () => submitRef.current?.() : undefined,
                 collab:
                     collabDoc && collabField
                         ? {
@@ -77,8 +127,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         [
             placeholder,
             characterLimit,
-            // Only whether a handler exists matters; the ref carries the value.
-            !!onSubmitShortcut,
+            hasSubmitShortcut,
             collabDoc,
             collabField,
             collabAwareness,
@@ -91,6 +140,14 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const tiptapEditor = useEditor(
         {
             extensions,
+            // Tiptap v3's useEditor does NOT re-render on transactions by
+            // default, and `toolbarState` below is recomputed per render — so
+            // without this every active flag freezes at its mount-time value
+            // and a toolbar reads as permanently "not bold". The other two
+            // editors in the ecosystem already set it: text's
+            // use-document-editor.web.tsx and our own WebView page
+            // (rich/webview/source/Editor.tsx).
+            shouldRerenderOnTransaction: true,
             // Under collaboration the document arrives over the wire; passing
             // content here would have every client re-apply it on connect.
             content: collab ? undefined : (initialContent ?? ''),
@@ -101,6 +158,11 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             // Mail declared this option but never applied it on web; honoring
             // it here is why a reply opens with the caret already in the body.
             autofocus: autofocus ? 'end' : false,
+            // Read through refs for the same reason as the handlers above: the
+            // caller's inline closure would otherwise have to join the dep
+            // array, rebuilding the editor on every render.
+            onFocus: () => focusRef.current?.(),
+            onBlur: () => blurRef.current?.(),
             editorProps: {
                 handleKeyDown: (_view, event) =>
                     event.key === 'Escape' ? (escapeRef.current?.() ?? false) : false,
@@ -192,6 +254,11 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         isCodeActive: live?.isActive('code') ?? false,
         isCodeBlockActive: live?.isActive('codeBlock') ?? false,
         currentLink: (live?.getAttributes('link')?.href as string) ?? null,
+        // Mirrors deriveWebViewState's derivation so a heading button reads the
+        // same on both platforms; the WebView already broadcast this and web
+        // was the side left returning undefined.
+        activeHeadingLevel:
+            HEADING_LEVELS.find(level => live?.isActive('heading', { level })) ?? null,
         isEmpty: live?.isEmpty ?? true,
     }
 
@@ -200,7 +267,13 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             function RichEditorContent() {
                 return (
                     <View
-                        className={containerClassName}
+                        // The scope class is what makes the injected stylesheet
+                        // above apply; without it the editor is unstyled.
+                        className={
+                            containerClassName
+                                ? `${EDITOR_SCOPE_CLASS} ${containerClassName}`
+                                : EDITOR_SCOPE_CLASS
+                        }
                         style={{
                             // @ts-expect-error CSS custom properties for web
                             '--editor-placeholder-color': placeholderColor,

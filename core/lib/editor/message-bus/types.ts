@@ -41,19 +41,22 @@
 //     @tiptap/markdown output corrupts code spans containing a backtick and
 //     drops table-cell pipe escapes, and this value gets persisted.
 //
-// 'yjs' namespace (reserved — native collaborative editing):
+// 'yjs' and 'awareness' namespaces (native collaborative editing):
 //
-//   Yjs updates are binary (Uint8Array) and this channel is a JSON string
-//   pipe, so updates ride base64-encoded in the payload. Reserving the
-//   namespace now means turning collaboration on later is additive: the host
-//   gains an onYjsMessage ref beside onUiMessage/onCommentMessage, and the
-//   WebView enables Collaboration in its extension set. No message already in
-//   use changes shape.
+//   Yjs updates and awareness states are binary (Uint8Array) and this channel
+//   is a JSON string pipe, so both ride base64-encoded in the payload. 'yjs'
+//   carries the document; 'awareness' carries collaborator carets.
 //
-//   The host keeps the single existing room socket and relays updates across
-//   this channel. The WebView must NOT open its own connection — the text
-//   package does that today and the second connection makes the local user
-//   appear twice in presence (TODO(text-native v1.1)).
+//   The host keeps the single existing room socket and relays across these
+//   channels. The WebView must NOT open its own connection: a second one ships
+//   a credential into the page and gives the local user a second awareness
+//   identity, so one human shows up as two peers. Both cards and text ride the
+//   relay for exactly that reason.
+//
+//   The awareness relay is deliberately asymmetric — the page sends its cursor
+//   POSITION and the host merges it into its own slot, rather than the page
+//   sending an awareness state of its own. See
+//   `core/lib/editor/rich/awareness-webview-host.ts`.
 //
 // 'ui' namespace message types:
 //

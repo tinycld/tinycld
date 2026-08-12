@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useThemeColor } from '../../use-app-theme'
 import type { EditorHandle, EditorResult } from '../types'
 import { useWebViewEditor } from '../use-webview-editor'
+import { AwarenessWebViewHost } from './awareness-webview-host'
 import { MarkdownWebViewHost } from './markdown-webview-host'
 import type { UseRichEditorOptions } from './options'
 import { editorHtml } from './webview/build/editorHtml'
@@ -11,6 +12,7 @@ import {
     APP_SUBMIT_SHORTCUT,
     type RichEditorInitPayload,
 } from './webview/source/protocol'
+import { YjsWebViewHost } from './yjs-webview-host'
 
 /**
  * Native build of the shared editor: Tiptap inside a WebView page we own.
@@ -29,10 +31,14 @@ import {
  * `avoidIosKeyboard` — keyboard avoidance and the focus/scroll handling are the
  * genuinely fiddly part and are worth keeping.
  *
- * Collaboration is still web-only. The channel this hook speaks is ready for it
- * (the protocol reserves a 'yjs' namespace for base64-encoded binary updates),
- * but nothing relays updates yet, so passing `collab` warns in development
- * rather than pretending to sync.
+ * Collaboration works here too. The caller's Y.Doc — the room's, already
+ * connected on the native side — is relayed to the page over the 'yjs'
+ * namespace as base64 updates, and the page's edits come back the same way.
+ * Collaborator carets ride the 'awareness' namespace alongside it.
+ *
+ * The WebView never opens a socket of its own. A second connection would ship a
+ * credential into the page and give the local user a second awareness identity,
+ * so one human would show up as two peers.
  */
 export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult {
     const {
@@ -44,6 +50,8 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         characterLimit,
         onSubmitShortcut,
         onEscape,
+        onFocus,
+        onBlur,
         theme,
         collab,
     } = options
@@ -53,24 +61,68 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const placeholderColor = useThemeColor('field-placeholder')
     const primaryColor = useThemeColor('primary')
 
-    if (collab && __DEV__) {
-        console.warn(
-            '[editor] collaborative editing is not yet supported on native; rendering a local editor'
-        )
-    }
-
     // Callers pass these inline, so their identity changes every render.
     // Reading them through refs keeps the WebView from remounting.
     const submitRef = useRef(onSubmitShortcut)
     submitRef.current = onSubmitShortcut
     const escapeRef = useRef(onEscape)
     escapeRef.current = onEscape
+    const focusRef = useRef(onFocus)
+    focusRef.current = onFocus
+    const blurRef = useRef(onBlur)
+    blurRef.current = onBlur
+
+    // Constructed before the WebView exists, so it holds a poster indirection
+    // rather than the poster itself — `postMessage` only becomes available
+    // once useWebViewEditor returns.
+    const posterRef = useRef<((message: never) => boolean) | null>(null)
+
+    // The relay onto the caller's Y.Doc. Rebuilt only when the doc identity
+    // changes (a different card, a reconnected room), because it subscribes to
+    // that doc — keeping a stale subscription would relay a dead document's
+    // updates into the live editor.
+    const collabDoc = collab?.document ?? null
+    const yjsHost = useMemo(
+        () =>
+            collabDoc
+                ? new YjsWebViewHost({
+                      doc: collabDoc,
+                      postMessage: message => posterRef.current?.(message as never) ?? false,
+                  })
+                : null,
+        [collabDoc]
+    )
+    useEffect(() => () => yjsHost?.destroy(), [yjsHost])
+
+    // The caret relay, alongside the document one. Without it the page's
+    // Awareness never leaves the WebView, so the phone sees no remote carets and
+    // shows none of its own — the gap that made native co-editing feel dead even
+    // though the text was syncing.
+    const collabAwareness = collab?.awareness ?? null
+    const awarenessHost = useMemo(
+        () =>
+            collabAwareness
+                ? new AwarenessWebViewHost({
+                      awareness: collabAwareness,
+                      postMessage: message => posterRef.current?.(message as never) ?? false,
+                  })
+                : null,
+        [collabAwareness]
+    )
+    useEffect(() => () => awarenessHost?.destroy(), [awarenessHost])
 
     // The init payload is posted once, after the page reports ready. It is
     // deliberately built from primitives so a parent re-render doesn't produce
-    // a fresh object and re-trigger the handshake effect.
-    const initPayload: RichEditorInitPayload = useMemo(
-        () => ({
+    // a fresh object and re-trigger the handshake effect — hence the collab
+    // identity is spread into its own primitives rather than passed as an
+    // object, matching what the web hook does with its six.
+    const collabField = collab?.field
+    const collabUserId = collab?.user?.id
+    const collabUserName = collab?.user?.name
+    const collabUserColor = collab?.user?.color
+    const initPayload: RichEditorInitPayload = useMemo(() => {
+        const peersAtHandshake = awarenessHost?.encodePeers() ?? null
+        return {
             contentFormat,
             initialContent: initialContent ?? '',
             placeholder,
@@ -83,26 +135,52 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                 placeholder: placeholderColor,
                 primary: primaryColor,
             },
-        }),
-        [
-            contentFormat,
-            initialContent,
-            placeholder,
-            editable,
-            characterLimit,
-            autofocus,
-            theme?.backgroundColor,
-            bgColor,
-            fgColor,
-            placeholderColor,
-            primaryColor,
-        ]
-    )
+            // Snapshotted at handshake time. Anything the doc gains between
+            // now and the page mounting arrives as a normal relayed update, so
+            // a slightly stale seed is not a lost edit.
+            ...(yjsHost && collabField
+                ? {
+                      collab: {
+                          field: collabField,
+                          clientID: yjsHost.clientID(),
+                          initialState: yjsHost.encodeState(),
+                          // Peers already in the room. Awareness frames are only
+                          // fanned out as they are sent, so without this seed the
+                          // page shows no carets until someone happens to move.
+                          ...(peersAtHandshake ? { peers: peersAtHandshake } : {}),
+                          ...(collabUserId && collabUserName && collabUserColor
+                              ? {
+                                    user: {
+                                        id: collabUserId,
+                                        name: collabUserName,
+                                        color: collabUserColor,
+                                    },
+                                }
+                              : {}),
+                      },
+                  }
+                : {}),
+        }
+    }, [
+        contentFormat,
+        initialContent,
+        placeholder,
+        editable,
+        characterLimit,
+        autofocus,
+        theme?.backgroundColor,
+        bgColor,
+        fgColor,
+        placeholderColor,
+        primaryColor,
+        yjsHost,
+        awarenessHost,
+        collabField,
+        collabUserId,
+        collabUserName,
+        collabUserColor,
+    ])
 
-    // Constructed before the WebView exists, so it holds a poster indirection
-    // rather than the poster itself — `postMessage` only becomes available
-    // once useWebViewEditor returns.
-    const posterRef = useRef<((message: never) => boolean) | null>(null)
     const markdownHostRef = useRef<MarkdownWebViewHost | null>(null)
     if (markdownHostRef.current === null) {
         markdownHostRef.current = new MarkdownWebViewHost({
@@ -125,12 +203,14 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
 
     const onMessage = useCallback(
         (message: { namespace?: string; type?: string }) => {
+            if (awarenessHost?.handleMessage(message as never)) return
+            if (yjsHost?.handleMessage(message as never)) return
             if (markdownHost.handleMessage(message as never)) return
             if (message.namespace !== 'app') return
             if (message.type === APP_SUBMIT_SHORTCUT) submitRef.current?.()
             else if (message.type === APP_ESCAPE) escapeRef.current?.()
         },
-        [markdownHost]
+        [markdownHost, yjsHost, awarenessHost]
     )
 
     const result = useWebViewEditor({
@@ -144,6 +224,12 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         // an inner scroll surface would fight it.
         scrollEnabled: false,
         onMessage,
+        // Split the host's single edge callback into the same pair of handlers
+        // the web variant exposes, so the shared .d.ts contract holds.
+        onFocusChange: (isFocused: boolean) => {
+            if (isFocused) focusRef.current?.()
+            else blurRef.current?.()
+        },
     })
 
     posterRef.current = result.postMessage ?? null

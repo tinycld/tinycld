@@ -4,10 +4,12 @@ import {
     useBridgeState,
     useEditorBridge,
 } from '@10play/tentap-editor'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type React from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { View } from 'react-native'
 import type { WebViewMessageEvent } from 'react-native-webview'
 import { deriveToolbarState } from './derive-toolbar-state'
+import { createHeightStore, type HeightStore } from './height-store'
 import { type EditorMessage, makeMessage } from './message-bus/types'
 import type { EditorCommands, EditorHandle, EditorResult } from './types'
 import { buildWebViewEditorCommands } from './webview-editor-commands'
@@ -54,6 +56,16 @@ export interface UseWebViewEditorOptions {
     // text document edit). Defaults to true.
     scrollEnabled?: boolean
 
+    // Floor for the WebView's height, in px.
+    //
+    // Load-bearing whenever the editor sits inside a ScrollView: a
+    // `flex-1` child of an unbounded parent resolves to zero, and a
+    // zero-height WebView renders nothing at all while reporting no
+    // error — the document is there, simply invisible. The default is
+    // roughly three lines, enough to read a short description and to
+    // make an empty editor look like somewhere to type.
+    minHeight?: number
+
     // Subscribe to messages with the 'ui' namespace from the WebView.
     // Called for every parsable message whose namespace === 'ui'; the
     // payload shape depends on the message type and is the consumer's
@@ -78,6 +90,14 @@ export interface UseWebViewEditorOptions {
     //
     // The callback identity is read through a ref.
     onScroll?: () => void
+
+    // Called when the WebView's editing surface gains or loses focus,
+    // on the edge only. Fed by the `isFocused` field of the stateUpdate
+    // payload, so a page that doesn't broadcast it simply never fires
+    // this. Drives focus-gated host chrome (e.g. a formatting toolbar).
+    //
+    // The callback identity is read through a ref.
+    onFocusChange?: (isFocused: boolean) => void
 
     // Subscribe to messages with the 'comment' namespace from the
     // WebView. The text package's comment bridge uses this to route
@@ -142,8 +162,10 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         avoidIosKeyboard = true,
         initialContent,
         scrollEnabled = true,
+        minHeight = 72,
         onUiMessage,
         onScroll,
+        onFocusChange,
         onCommentMessage,
         onFindReplaceMessage,
         onSuggestionMessage,
@@ -209,6 +231,22 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
 
     const bridgeState = useBridgeState(bridge)
 
+    // Fire onFocusChange on the EDGE, not on every state update: the
+    // WebView rebroadcasts its whole payload on each transaction, so
+    // calling on every render would invoke the consumer once per
+    // keystroke. Undefined (a page that doesn't broadcast the field)
+    // never produces an edge, so non-rich WebView editors are unaffected.
+    const isWebViewFocused = (bridgeState as unknown as Record<string, unknown>).isFocused
+    const focusChangeRef = useRef(onFocusChange)
+    focusChangeRef.current = onFocusChange
+    const lastFocusRef = useRef<boolean | undefined>(undefined)
+    useEffect(() => {
+        if (typeof isWebViewFocused !== 'boolean') return
+        if (lastFocusRef.current === isWebViewFocused) return
+        lastFocusRef.current = isWebViewFocused
+        focusChangeRef.current?.(isWebViewFocused)
+    }, [isWebViewFocused])
+
     // Plumb editable changes through to the WebView. setEditable is
     // safe to call before EditorReady; TenTap queues it.
     useEffect(() => {
@@ -224,6 +262,21 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // when the WebView sends a `stateUpdate`, which our custom Editor
     // only sends after init arrives — chicken-and-egg.
     const [webviewReady, setWebviewReady] = useState(false)
+
+    // Height the page reported for its own content, held in a tiny store
+    // rather than state so that a new measurement re-renders ONLY the box
+    // wrapping the WebView. Putting it in state here would change
+    // EditorComponent's identity and remount the WebView on every
+    // measurement — see the memo below.
+    // Created once and never reassigned, so both the store and its setter are
+    // stable for the life of the hook. Read into locals rather than through
+    // `.current` at each use site: the memos below genuinely depend on them, and
+    // a `ref.current` in a dep array is neither honest nor something the linter
+    // can reason about.
+    const heightStoreRef = useRef<HeightStore>(null as unknown as HeightStore)
+    if (heightStoreRef.current === null) heightStoreRef.current = createHeightStore()
+    const heightStore = heightStoreRef.current
+    const setContentHeight = heightStore.set
 
     // Post the package's init payload once the WebView signals ready.
     // Idempotent guard prevents double-init on hot-reload edge cases.
@@ -315,6 +368,16 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                     onScrollRef.current?.()
                     return
                 }
+                // The page measured itself. A WebView has no intrinsic
+                // height, so this is the only way the container can track
+                // its content — without it the editor is clipped to a
+                // guess (or, inside a ScrollView where flex resolves to
+                // zero, invisible).
+                if (parsed.type === 'content-height') {
+                    const height = (parsed.payload as { height?: unknown } | undefined)?.height
+                    if (typeof height === 'number' && height > 0) setContentHeight(height)
+                    return
+                }
                 onUiMessageRef.current?.(parsed)
                 return
             }
@@ -339,12 +402,14 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             }
             // Anything left that carries a namespace goes to the generic
             // subscriber — the shared rich editor's 'markdown' and 'app'
-            // channels, and 'yjs' once native collaboration lands.
+            // channels, plus 'yjs' and 'awareness' for native collaboration.
             if (typeof parsed.namespace === 'string') {
                 onMessageRef.current?.(parsed)
             }
         },
-        []
+        // Everything else is read through a ref; setContentHeight comes from a
+        // store created once per mount, so this list never changes in practice.
+        [setContentHeight]
     )
 
     // RichText is loaded lazily inside the EditorComponent because this
@@ -357,17 +422,38 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             function WebViewEditorContent() {
                 const { RichText } = require('@10play/tentap-editor')
                 return (
-                    <View className="flex-1">
+                    // Height is the page's to report, not ours to guess. A
+                    // WebView has no intrinsic height, and `flex-1` resolves
+                    // to ZERO inside a ScrollView (nothing bounded to fill),
+                    // so the editor renders invisibly — no error, just a gap.
+                    // Once the page measures itself we take that height
+                    // exactly; `minHeight` covers the frames before the first
+                    // measurement.
+                    //
+                    // When the editor IS the scroll surface (scrollEnabled),
+                    // it owns a bounded viewport and should keep filling it
+                    // rather than growing with its content.
+                    <EditorHeightBox
+                        heightStore={heightStore}
+                        minHeight={minHeight}
+                        grows={!scrollEnabled}
+                    >
                         <RichText
                             editor={bridge}
                             scrollEnabled={scrollEnabled}
                             onMessage={onWebViewMessage}
                             exclusivelyUseCustomOnMessage={false}
                         />
-                    </View>
+                    </EditorHeightBox>
                 )
             },
-        [bridge, scrollEnabled, onWebViewMessage]
+        // contentHeight is deliberately ABSENT: this memo produces a component
+        // IDENTITY, and consumers render it as <EditorComponent />. A new
+        // identity unmounts and remounts the WebView, which resets its
+        // viewport to minHeight — so feeding the measured height in here
+        // makes the editor thrash between 72px and its real height and never
+        // settle. The height is subscribed to inside EditorHeightBox instead.
+        [bridge, scrollEnabled, onWebViewMessage, minHeight, heightStore]
     )
 
     // Surface the WebView ref through the EditorResult so host code can
@@ -406,4 +492,37 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         postMessage,
         isReady: bridgeState.isReady === true,
     }
+}
+
+/**
+ * Sizes the WebView to the height the page reported.
+ *
+ * A WebView has no intrinsic height, and `flex-1` resolves to zero inside a
+ * ScrollView (nothing bounded to fill), so without this the editor is either
+ * invisible or clipped to a guess. `grows` is false when the editor IS the
+ * scroll surface — there it owns a bounded viewport and should fill it rather
+ * than growing with its content.
+ */
+function EditorHeightBox({
+    heightStore,
+    minHeight,
+    grows,
+    children,
+}: {
+    heightStore: HeightStore
+    minHeight: number
+    grows: boolean
+    children: React.ReactNode
+}) {
+    const height = useSyncExternalStore(heightStore.subscribe, heightStore.get, heightStore.get)
+    return (
+        <View
+            className="flex-1"
+            style={
+                grows && height != null ? { height: Math.max(height, minHeight) } : { minHeight }
+            }
+        >
+            {children}
+        </View>
+    )
 }

@@ -104,4 +104,29 @@ describe('deriveWebViewState', () => {
         expect(state.characterCount).toBe('one two three'.length)
         expect(state.wordCount).toBe(3)
     })
+
+    // The host turns edges in this field into onFocus/onBlur, which is what
+    // gates the description toolbar on native. Dropping it from the payload
+    // would leave that toolbar permanently hidden on a phone.
+    //
+    // Mounted into an attached element on purpose: isFocused reflects real DOM
+    // focus, and `commands.focus()` alone does not move it under happy-dom
+    // (the editor's own view reports hasFocus() === false). Focusing the
+    // contenteditable node is what the user's tap actually does.
+    it('reports focus state', () => {
+        const element = document.createElement('div')
+        document.body.appendChild(element)
+        editor = new Editor({
+            element,
+            extensions: buildRichEditorExtensions(),
+            content: 'some words',
+            contentType: 'markdown',
+        })
+
+        expect(deriveWebViewState(editor).isFocused).toBe(false)
+        ;(editor.view.dom as HTMLElement).focus()
+        expect(deriveWebViewState(editor).isFocused).toBe(true)
+
+        element.remove()
+    })
 })

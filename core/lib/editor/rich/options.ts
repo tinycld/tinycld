@@ -32,6 +32,16 @@ export interface UseRichEditorOptions {
      * mid-sentence loses the sentence.
      */
     onEscape?: () => boolean
+    /**
+     * Focus/blur of the editing surface itself, not the container view.
+     *
+     * Drives chrome that should only appear while someone is writing — a
+     * formatting toolbar, a focused border. On native these fire from the
+     * WebView's own focus state relayed over the bridge, so both platforms
+     * agree on what "focused" means.
+     */
+    onFocus?: () => void
+    onBlur?: () => void
     /** Native WebView chrome color. Web themes through CSS custom properties. */
     theme?: { backgroundColor?: string }
     /** Binds this editor to a shared document. See RichEditorCollabOptions. */
