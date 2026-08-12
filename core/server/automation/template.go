@@ -14,17 +14,24 @@ var placeholderRe = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_]+)\s*\}\}`)
 // see for this trigger: the declared allowlist, or (when the declaration
 // omitted fields) every non-system column plus created/updated — mirroring
 // the Phase 1 contract ("fields omitted = expose every schema column").
+// System and hidden fields are never exposed, even if explicitly named.
 func exposedFields(record *core.Record, trigger TriggerDef) map[string]bool {
 	out := map[string]bool{}
+	col := record.Collection()
 	if len(trigger.Fields) > 0 {
+		// Curated allowlist: filter out system/hidden fields even if explicitly named.
 		for _, f := range trigger.Fields {
-			out[f.Key] = true
+			field := col.Fields.GetByName(f.Key)
+			if field != nil && !field.GetSystem() && !field.GetHidden() {
+				out[f.Key] = true
+			}
 		}
 		return out
 	}
-	for _, field := range record.Collection().Fields {
+	// Open trigger: expose all non-system, non-hidden columns.
+	for _, field := range col.Fields {
 		name := field.GetName()
-		if name == "id" || strings.HasPrefix(name, "_") {
+		if name == "id" || strings.HasPrefix(name, "_") || field.GetSystem() || field.GetHidden() {
 			continue
 		}
 		out[name] = true

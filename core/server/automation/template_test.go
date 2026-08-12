@@ -1,7 +1,12 @@
 // tinycld/core/server/automation/template_test.go
 package automation
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/pocketbase/pocketbase/tests"
+)
 
 func TestSubstituteTemplates(t *testing.T) {
 	_, r := evalRecord(t)
@@ -28,5 +33,35 @@ func TestSubstituteTemplates(t *testing.T) {
 	}
 	if got := SubstituteTemplates("{{subject}}", nil, trig); got != "{{subject}}" {
 		t.Fatalf("nil record leaves input unchanged, got %q", got)
+	}
+}
+
+func TestSystemAndHiddenFieldsNeverSubstitute(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+	u, err := app.FindFirstRecordByFilter("users", "id != ''")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Open trigger (all columns): hidden/system auth fields must never substitute,
+	// even if they have values. They should become empty strings.
+	got := SubstituteTemplates("{{tokenKey}}x{{password}}", u, TriggerDef{})
+	if got != "x" {
+		t.Fatalf("system/hidden fields must not substitute, got %q want 'x'", got)
+	}
+	// Even an explicit allowlist naming system/hidden fields must not leak.
+	curated := TriggerDef{Fields: []FieldRef{{Key: "tokenKey"}, {Key: "name"}}}
+	gotAllowlist := SubstituteTemplates("{{tokenKey}}|{{name}}", u, curated)
+	// tokenKey should have been filtered out (it's system/hidden), so it becomes empty.
+	if !strings.HasPrefix(gotAllowlist, "|") {
+		t.Fatalf("tokenKey (system field) must not substitute in curated allowlist, got %q", gotAllowlist)
+	}
+	// The name field should still substitute (it's a regular field).
+	expectedName := u.GetString("name")
+	if !strings.Contains(gotAllowlist, expectedName) {
+		t.Fatalf("name field should substitute in allowlist, got %q", gotAllowlist)
 	}
 }
