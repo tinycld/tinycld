@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useFocusEffect } from 'expo-router'
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react'
 import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import { PB_SERVER_ADDR } from '../config'
@@ -221,6 +222,26 @@ export function useRealtimeRoom({
         }
     }, [roomKind, roomID])
 
+    // Publish a clean leave whenever this screen stops being visible, and
+    // republish on the way back.
+    //
+    // Keyed on FOCUS and on pagehide, NOT on unmount alone. The effect
+    // cleanup above only runs when the component actually unmounts, and for
+    // package-to-package navigation it never does: the package tabs render
+    // with `freezeOnBlur` (core/components/workspace/PackageTabs.tsx), which
+    // leaves a departed screen mounted-but-frozen so returning to it is
+    // instant. Its socket therefore stays open and its awareness slot stays
+    // populated, so remote peers kept showing an avatar for someone who had
+    // left the package — the bug cards/tests/e2e/board-presence.spec.ts
+    // catches. core/lib/shortcuts/scopes.ts solves the same freeze the same
+    // way, for the same reason.
+    //
+    // A tab close is the other half: it never unmounts anything either, and
+    // `pagehide` is the one event that fires reliably on mobile Safari and
+    // also covers bfcache eviction. Web-only, hence the typeof guard — this
+    // module is imported by React Native.
+    useLeaveOnBlur(handleRef)
+
     if (!handleRef.current) return null
     return {
         doc: handleRef.current.doc,
@@ -230,6 +251,68 @@ export function useRealtimeRoom({
         serverHello,
         serverSlot,
     }
+}
+
+// useLeaveOnBlur publishes an awareness removal when the owning route
+// blurs or the page hides, and restores the slot on refocus.
+//
+// The saved slot is what makes this reversible: `setLocalState(null)`
+// deletes the local state outright, so without stashing it first a
+// refocus would restore an empty slot and the user would be invisible
+// to peers until something else happened to republish. Consumers that
+// keep their own publish effect (cards' useBoardPresence) would recover
+// eventually; ones that publish only via `initialAwareness` would not,
+// since that is captured on the room's first effect run only.
+function useLeaveOnBlur(
+    handleRef: RefObject<{ doc: Y.Doc; awareness: Awareness; client: RealtimeClient } | null>
+) {
+    const savedSlot = useRef<Record<string, unknown> | null>(null)
+
+    const leave = useCallback(() => {
+        const awareness = handleRef.current?.awareness
+        if (awareness == null) return
+        const current = awareness.getLocalState()
+        // Don't clobber a good saved slot with the null we just wrote —
+        // pagehide and blur can both fire for one departure.
+        if (current != null) savedSlot.current = current as Record<string, unknown>
+        try {
+            awareness.setLocalState(null)
+        } catch {
+            // best effort — a destroyed awareness is already "left"
+        }
+    }, [handleRef])
+
+    const rejoin = useCallback(() => {
+        const awareness = handleRef.current?.awareness
+        if (awareness == null || savedSlot.current == null) return
+        try {
+            awareness.setLocalState(savedSlot.current)
+        } catch {
+            // best effort
+        }
+        savedSlot.current = null
+    }, [handleRef])
+
+    useFocusEffect(
+        useCallback(() => {
+            // Refocusing a frozen screen remounts nothing, so the slot has
+            // to be restored here rather than by the room effect.
+            rejoin()
+            return leave
+        }, [leave, rejoin])
+    )
+
+    useEffect(() => {
+        // Feature-detect the METHOD, not the object. React Native defines a
+        // global `window` with no DOM event API, so a `typeof window` check
+        // passes there and then throws "addEventListener is not a function",
+        // taking the whole screen down. There is no pagehide on native
+        // anyway — the app is backgrounded, not unloaded, and blur already
+        // covers navigating away.
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
+        window.addEventListener('pagehide', leave)
+        return () => window.removeEventListener('pagehide', leave)
+    }, [leave])
 }
 
 // defaultIsEmpty considers a Y.Doc empty when no top-level shared

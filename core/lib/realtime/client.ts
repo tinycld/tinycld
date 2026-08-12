@@ -19,6 +19,11 @@ const MSG_SYNC_REPLY = 0x04
 const MSG_ASSIGN_ID = 0x05
 const MSG_SERVER_HELLO = 0x06
 const MSG_SERVER_SLOT = 0x07
+// Announces this connection's y-protocols awareness clientID to the
+// broker, so it can name our slot in the synthetic leave frame it sends
+// on our behalf when the connection drops ungracefully. Bookkeeping
+// only — the broker never fans it out.
+const MSG_AWARENESS_HELLO = 0x08
 
 // Reconnect backoff: start small, cap so a long-down server doesn't
 // hammer us. The backoff resets on a successful connect.
@@ -226,6 +231,18 @@ export class RealtimeClient {
                 id.set(frame.subarray(0, CLIENT_ID_LEN))
                 this.clientID = id
 
+                // Announce our y-protocols awareness clientID so the
+                // broker can name our slot in the leave frame it
+                // synthesizes when this connection drops. Without it a
+                // killed tab or TCP reset leaves an avatar behind on
+                // every peer until y-protocols' 30s reaper clears it,
+                // because the broker's own 16-byte routing id shares no
+                // id space with awareness.
+                //
+                // Sent before the queue flush so the broker knows the
+                // slot before any awareness state that references it.
+                this.sendNow(MSG_AWARENESS_HELLO, encodeVarUint(this.opts.awareness.clientID))
+
                 const queued = this.pendingFrames
                 this.pendingFrames = []
                 for (const q of queued) {
@@ -258,13 +275,16 @@ export class RealtimeClient {
 
             case MSG_AWARENESS_UPDATE:
                 if (payload.length === 0) {
-                    // Synthetic leave frame: a peer's connection
-                    // closed. The server emits these so we can drop
-                    // remote awareness slots even on ungraceful
-                    // disconnect. We don't know which slot was theirs
-                    // from the frame alone — the awareness layer will
-                    // age it out via heartbeat absence, or the next
-                    // refresh of their state will re-populate.
+                    // Legacy synthetic leave frame, from a broker that
+                    // predates MSG_AWARENESS_HELLO. It names the
+                    // departing BROKER id, which shares no id space
+                    // with y-protocols awareness, so there is no slot
+                    // we can map it to. Nothing to do but let
+                    // y-protocols' own outdated-state reaper drop the
+                    // slot after 30s — it runs unconditionally from the
+                    // Awareness constructor. A current broker sends a
+                    // real removal payload here instead and the avatar
+                    // goes immediately.
                     break
                 }
                 applyAwarenessUpdate(this.opts.awareness, payload, REMOTE_ORIGIN)
@@ -318,6 +338,16 @@ export class RealtimeClient {
             }
         }
     }
+}
+
+// encodeVarUint writes a single lib0 varuint — the payload shape of
+// MSG_AWARENESS_HELLO. Goes through lib0 rather than a hand-rolled loop
+// so the bytes stay identical to what the rest of the y-protocols stack
+// emits, and to what the Go side's readVarUint expects.
+function encodeVarUint(n: number): Uint8Array {
+    const enc = encoding.createEncoder()
+    encoding.writeVarUint(enc, n)
+    return encoding.toUint8Array(enc)
 }
 
 // REMOTE_ORIGIN tags routine updates received from the network (peer
