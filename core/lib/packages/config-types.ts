@@ -3,6 +3,7 @@ import type { Schema } from '@tinycld/core/types/pbSchema'
 import type { createCollection, SchemaDeclaration } from 'pbtsdb/core'
 import type PocketBase from 'pocketbase'
 import type { ComponentType, LazyExoticComponent, ReactNode } from 'react'
+import type { AutomationDefinitions } from '../automation/types'
 import type { PackageManifest } from './types'
 
 // --- Spike-2-proven helpers (see ~/code/tinycld/new/spike2/sim.ts) ----------
@@ -93,6 +94,7 @@ export interface PackageEntry<S extends SchemaDeclaration, R> {
         load: () => Promise<unknown>
     }
     eventSources?: PackageEventSource[]
+    automation?: AutomationDefinitions
     seed?: (pb: PocketBase, ctx: SeedContext) => Promise<void>
 }
 
@@ -117,6 +119,7 @@ export function definePackageEntry<S extends SchemaDeclaration>() {
         sidebarContributions?: PackageEntry<S, R>['sidebarContributions']
         search?: PackageEntry<S, R>['search']
         eventSources?: PackageEntry<S, R>['eventSources']
+        automation?: PackageEntry<S, R>['automation']
         seed?: PackageEntry<S, R>['seed']
     }): PackageEntry<S, R> => entry as unknown as PackageEntry<S, R>
 }

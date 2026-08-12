@@ -246,6 +246,18 @@ describe('buildConfigSource', () => {
         }
         expect(() => buildConfigSource([bad])).toThrow(/unsafe value/)
     })
+
+    it('imports and attaches automation definitions when declared', () => {
+        const withAutomation: ConfigPkg = { ...contacts, automation: 'automation' }
+        const src = buildConfigSource([withAutomation])
+        expect(src).toContain("import contactsAutomation from '@tinycld/contacts/automation'")
+        expect(src).toContain('automation: contactsAutomation,')
+    })
+
+    it('omits automation entirely when not declared', () => {
+        const src = buildConfigSource([contacts])
+        expect(src).not.toContain('automation')
+    })
 })
 
 describe('buildSeedsSource', () => {

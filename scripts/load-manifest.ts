@@ -122,6 +122,9 @@ export interface PackageManifest {
     }
     help?: { directory: string }
     search?: { adapter: string; label?: string }
+    // Workflow-rules catalog: exports subpath to the package's
+    // AutomationDefinitions module. See core/lib/packages/types.ts.
+    automation?: { definitions: string }
     // Read-only event feeds this package contributes to another package's
     // event grid (today: the calendar). `module` is a package-exports subpath
     // to a module exporting `useEventSource` — see the PackageManifest doc in

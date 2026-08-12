@@ -44,6 +44,7 @@ export interface ConfigPkg {
     slots: string[]
     sidebarContributions: ConfigSidebarContribution[]
     search?: ConfigSearch
+    automation?: string // exports subpath to the AutomationDefinitions module
     eventSources: ConfigEventSource[]
     eventSourceHost: boolean
     manifest: { name: string; slug: string; version: string; description: string } & Record<
@@ -78,6 +79,7 @@ function validateConfigPkg(p: ConfigPkg): void {
         assertSafeImportField('sidebarContributions[].component', c.component)
     }
     if (p.search) assertSafeImportField('search.adapter', p.search.adapter)
+    if (p.automation) assertSafeImportField('automation', p.automation)
     for (const s of p.eventSources) assertSafeImportField('eventSources[].module', s.module)
 }
 
@@ -122,6 +124,9 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
                 `import { registerCollections as ${ident(p.slug)}Register } from '${p.packageName}/collections'`
             )
             lines.push(`import type { ${p.schemaType} } from '${p.packageName}/types'`)
+        }
+        if (p.automation) {
+            lines.push(`import ${ident(p.slug)}Automation from '${p.packageName}/${p.automation}'`)
         }
     }
 
@@ -176,6 +181,7 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
             lines.push('        },')
         }
         pushEventSourceLines(lines, p)
+        if (p.automation) lines.push(`        automation: ${ident(p.slug)}Automation,`)
         lines.push('    }),')
     }
     lines.push('] as const')

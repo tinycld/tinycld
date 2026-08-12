@@ -100,6 +100,27 @@ describe('manifestToConfigPkg', () => {
             })
         ).toThrow(/duplicate slot name 'sidebar\.after-calendars'/)
     })
+
+    it('maps manifest.automation.definitions to ConfigPkg.automation', () => {
+        const pkg = manifestToConfigPkg('@tinycld/contacts', {
+            name: 'Contacts',
+            slug: 'contacts',
+            version: '0.1.0',
+            description: 'd',
+            automation: { definitions: 'automation' },
+        })
+        expect(pkg.automation).toBe('automation')
+    })
+
+    it('leaves ConfigPkg.automation undefined when the manifest has none', () => {
+        const pkg = manifestToConfigPkg('@tinycld/contacts', {
+            name: 'Contacts',
+            slug: 'contacts',
+            version: '0.1.0',
+            description: 'd',
+        })
+        expect(pkg.automation).toBeUndefined()
+    })
 })
 
 describe('validateSidebarContributions', () => {

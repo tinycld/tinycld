@@ -273,6 +273,16 @@ export interface PackageManifest {
         label?: string
     }
 
+    /**
+     * Workflow-rules catalog. `definitions` is a package-exports subpath (like
+     * `seed.script`) resolving to a TS module default-exporting an
+     * AutomationDefinitions object — pure data, typed against the package's
+     * schema. See docs/superpowers/specs/2026-08-11-workflow-rules-design.md.
+     */
+    automation?: {
+        definitions: string
+    }
+
     repository?: {
         url: string
         issueTemplate?: string

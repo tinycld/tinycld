@@ -44,6 +44,7 @@ export function manifestToConfigPkg(packageName: string, manifest: PackageManife
             order: c.order ?? 0,
         })),
         ...(manifest.search ? { search: manifest.search } : {}),
+        ...(manifest.automation ? { automation: manifest.automation.definitions } : {}),
         eventSources: (manifest.eventSources ?? []).map(s => ({
             target: s.target,
             id: s.id,
