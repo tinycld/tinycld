@@ -13,6 +13,7 @@ import { buildRichEditorExtensions } from './extensions'
 import { extractImageFilesFromDrop, extractImageFilesFromPaste } from './extract-image-files'
 import { repairMarkdown } from './markdown-repair'
 import type { UseRichEditorOptions } from './options'
+import type { TriggerConfig } from './triggers'
 
 /**
  * Inject the shared content stylesheet once per page.
@@ -76,6 +77,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         onBlur,
         onImageDrop,
         collab,
+        triggers,
     } = options
 
     const placeholderColor = useThemeColor('field-placeholder')
@@ -92,6 +94,45 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     focusRef.current = onFocus
     const blurRef = useRef(onBlur)
     blurRef.current = onBlur
+    // Triggers carry callbacks (`items`, `onStateChange`) that close over
+    // fresh state, and callers build the array inline — so its identity churns
+    // every render. Rebuilding the extension list on that identity would
+    // recreate the whole editor on every keystroke. Instead the array is read
+    // through a ref and each trigger is wrapped ONCE in a stable config that
+    // forwards to the current one, keyed by trigger id. Same reasoning as the
+    // handler refs above; the extra step is that the wrapper must survive too.
+    const triggersRef = useRef(triggers)
+    triggersRef.current = triggers
+
+    // What actually warrants a rebuild: which triggers exist, not the identity
+    // of the callbacks they carry. Derived into a plain string so the memo
+    // below depends on a VALUE rather than an array literal — a dependency the
+    // linter can check, instead of one it has to be told to ignore.
+    const triggerSignature = (triggers ?? []).map(t => `${t.id}:${t.char}`).join(',')
+
+    // Each trigger is wrapped once in a stable config that forwards to whatever
+    // is current, looked up by id through the ref. Without this the editor
+    // would be recreated on every keystroke.
+    const stableTriggers = useMemo(
+        () =>
+            triggerSignature
+                .split(',')
+                .filter(Boolean)
+                .map((entry): TriggerConfig => {
+                    const id = entry.slice(0, entry.lastIndexOf(':'))
+                    const char = entry.slice(entry.lastIndexOf(':') + 1)
+                    const current = () => triggersRef.current?.find(x => x.id === id)
+                    return {
+                        id,
+                        char,
+                        items: query => current()?.items(query) ?? [],
+                        toInsertText: item => current()?.toInsertText(item) ?? '',
+                        onStateChange: state => current()?.onStateChange(state),
+                    }
+                }),
+        [triggerSignature]
+    )
+
     const imageDropRef = useRef(onImageDrop)
     imageDropRef.current = onImageDrop
 
@@ -118,6 +159,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             buildRichEditorExtensions({
                 placeholder,
                 characterLimit,
+                triggers: stableTriggers,
                 imageNodeView: AUTHED_IMAGE_NODE_VIEW,
                 onSubmitShortcut: hasSubmitShortcut ? () => submitRef.current?.() : undefined,
                 collab:
@@ -140,6 +182,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         [
             placeholder,
             characterLimit,
+            stableTriggers,
             hasSubmitShortcut,
             collabDoc,
             collabField,

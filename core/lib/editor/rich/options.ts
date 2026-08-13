@@ -1,4 +1,5 @@
 import type { RichEditorCollabOptions } from './extensions'
+import type { TriggerConfig } from './triggers'
 
 export type { RichEditorCollabOptions }
 
@@ -55,4 +56,10 @@ export interface UseRichEditorOptions {
     theme?: { backgroundColor?: string }
     /** Binds this editor to a shared document. See RichEditorCollabOptions. */
     collab?: RichEditorCollabOptions
+    /**
+     * Character-triggered autocompletes (e.g. `@` mentions). Handled inside the
+     * shared extension builder so web and the native WebView behave identically
+     * — see rich/triggers.ts.
+     */
+    triggers?: TriggerConfig[]
 }

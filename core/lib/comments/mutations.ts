@@ -41,6 +41,14 @@ export interface CommentMentionInsert {
     comment_record: string
     drive_item: string
     mentioned_user: string
+    // The polymorphic target, added when `comment_mentions` stopped being
+    // drive-only (core migration 1985000002). Document packages set it to
+    // ('drive_items', <driveItemId>) — the same thing `drive_item` says, but in
+    // the columns every consumer now reads. The Go notify hook still falls back
+    // to `drive_item`, so an older client mid-rollout keeps working; new writes
+    // should not rely on that.
+    target_collection: string
+    target_record: string
 }
 
 // Optional mentions support. When supplied, the add/reply mutations
@@ -130,6 +138,8 @@ export function useBaseCommentMutations<
                     comment_record: commentId,
                     drive_item: driveItemId,
                     mentioned_user: m.userId,
+                    target_collection: 'drive_items',
+                    target_record: driveItemId,
                 })
             )
         }

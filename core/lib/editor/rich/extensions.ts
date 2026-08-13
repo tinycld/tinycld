@@ -11,6 +11,7 @@ import StarterKit from '@tiptap/starter-kit'
 import type { Awareness } from 'y-protocols/awareness'
 import type * as Y from 'yjs'
 import { SubmitShortcut } from './submit-shortcut'
+import { createTriggerExtension, type TriggerConfig } from './triggers'
 
 export interface RichEditorCollabOptions {
     /** The Y.Doc to bind to. Never construct one per editor — pass the room's. */
@@ -38,6 +39,14 @@ export interface BuildRichEditorExtensionsOptions {
      * inside the WebView page) and this builder must stay importable from both.
      */
     imageNodeView?: NodeViewRenderer
+    /**
+     * Character-triggered autocompletes (`@` mentions, and whatever wants the
+     * same shape later). Built here rather than added by the caller so BOTH
+     * platforms get them from the one schema — the native editor is a prebuilt
+     * WebView bundle, so a plugin a package adds at runtime would exist on web
+     * and silently not on native. See triggers.ts.
+     */
+    triggers?: TriggerConfig[]
 }
 
 /**
@@ -58,7 +67,8 @@ export interface BuildRichEditorExtensionsOptions {
 export function buildRichEditorExtensions(
     options: BuildRichEditorExtensionsOptions = {}
 ): Extensions {
-    const { placeholder, characterLimit, onSubmitShortcut, collab, imageNodeView } = options
+    const { placeholder, characterLimit, onSubmitShortcut, collab, imageNodeView, triggers } =
+        options
 
     const extensions: Extensions = [
         StarterKit.configure({
@@ -83,6 +93,9 @@ export function buildRichEditorExtensions(
     }
     if (onSubmitShortcut) {
         extensions.push(SubmitShortcut.configure({ onSubmit: onSubmitShortcut }))
+    }
+    for (const trigger of triggers ?? []) {
+        extensions.push(createTriggerExtension(trigger))
     }
     if (collab) {
         extensions.push(Collaboration.configure({ document: collab.document, field: collab.field }))
