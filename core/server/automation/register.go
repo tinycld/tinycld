@@ -32,6 +32,10 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	registerEndpoints(app, engine)
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
 		engine.Start()
+		// Native action availability depends on which packages' Go registered
+		// their RegisterAction/RegisterExtras handlers — that happens before
+		// OnServe, so the catalog snapshot taken here is accurate.
+		engine.syncCatalog()
 		return se.Next()
 	})
 }

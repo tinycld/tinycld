@@ -328,6 +328,14 @@ const rule_runs = newCollection('rule_runs', {
     ...indexing,
 })
 
+// Materialized trigger/action catalog for the rule builder UI. Read-only from
+// the client — the engine's boot-time sync (automation/catalog.go) is the
+// only writer, mirroring pkg_registry's read-many/write-engine posture.
+const automation_catalog = newCollection('automation_catalog', {
+    omitOnInsert: ['created', 'updated'],
+    ...indexing,
+})
+
 // NOTE: the `comment_mentions` store registration was removed in the new
 // standalone-core layout because the collection is created by a feature
 // package's migration (drive's create_comment_mentions), not core's own — so
@@ -350,6 +358,7 @@ const coreStores = {
     notifications,
     rules,
     rule_runs,
+    automation_catalog,
     system_settings,
     oauth_grants,
 }
@@ -460,3 +469,16 @@ export async function resetSessionState() {
 }
 
 export { PBTSDBProvider, queryClient, stores, useStore }
+
+/**
+ * Dynamic-by-name collection lookup for callers that receive a collection
+ * name as DATA rather than a literal (e.g. an automation relation target
+ * pulled from the catalog) — `useStore` can't be called with a runtime
+ * string, since its typed overloads are keyed on `stores`' literal keys.
+ * Returns `undefined` for names not registered in `stores` (an unlinked
+ * package's collection, or a name outside the tinycld schema entirely) so
+ * callers degrade gracefully instead of reaching for raw PB.
+ */
+export function collectionByName(name: string): (typeof stores)[keyof typeof stores] | undefined {
+    return (stores as Record<string, (typeof stores)[keyof typeof stores]>)[name]
+}

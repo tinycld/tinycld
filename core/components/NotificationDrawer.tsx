@@ -179,7 +179,11 @@ function NotificationContent() {
                         }}
                         color={primaryColor}
                     />
-                    <Pressable onPress={() => close(false)} hitSlop={8}>
+                    <Pressable
+                        onPress={() => close(false)}
+                        hitSlop={8}
+                        accessibilityLabel="Close notifications"
+                    >
                         <X size={18} color={mutedColor} />
                     </Pressable>
                 </View>
@@ -306,7 +310,9 @@ function UnreadDot({ isVisible, color }: { isVisible: boolean; color: string }) 
     )
 }
 
-function formatRelativeTime(dateStr: string | undefined): string {
+// Exported so other panels (RunHistory) needing a relative timestamp reuse
+// this rather than re-implementing the same seconds/minutes/hours/days ladder.
+export function formatRelativeTime(dateStr: string | undefined): string {
     if (!dateStr) return 'just now'
     const date = new Date(dateStr.replace(' ', 'T'))
     const now = Date.now()
