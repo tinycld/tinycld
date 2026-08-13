@@ -60,6 +60,10 @@
 //
 // 'ui' namespace message types:
 //
+//   The popover messages below are TYPED in ./popover-protocol.ts, which both
+//   the in-WebView bridge and the host controller import. What follows is the
+//   narrative half — why the protocol has this shape. Change both together.
+//
 //   selection-changed  (WebView -> host, no response)
 //     payload: { kind: 'image' | 'none', image?: ImageSelection }
 //     Already in use since Milestone B.

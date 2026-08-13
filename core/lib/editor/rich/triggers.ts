@@ -1,6 +1,6 @@
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
-import Suggestion from '@tiptap/suggestion'
+import Suggestion, { type SuggestionOptions } from '@tiptap/suggestion'
 
 // Character-triggered autocomplete for the shared rich editor.
 //
@@ -25,9 +25,21 @@ import Suggestion from '@tiptap/suggestion'
 // it differs by platform: on web the popover is a DOM overlay positioned from
 // `clientRect`; inside the native WebView there is no host UI, so the page
 // posts `show-popover` over the message bus and the host renders it (the
-// protocol is already specified in lib/editor/message-bus/types.ts). This
-// module therefore takes CALLBACKS rather than rendering anything — the caller
-// supplies `onStateChange`, and web/native each answer it their own way.
+// protocol lives in lib/editor/message-bus/popover-protocol.ts). Web therefore
+// gets the default CALLBACK strategy — the caller supplies `onStateChange` —
+// while the native page injects its own `render` (webview/source/
+// trigger-render-bridge.ts). An injectable rather than a mode flag, so the
+// bridge module (which reaches for `window.ReactNativeWebView`) never lands in
+// the web bundle.
+//
+// WHY THE CONFIG IS DECLARATIVE. `allItems` + `insertTemplate` rather than
+// `items(query)` + `toInsertText(item)` closures, because the native editor
+// page is a PREBUILT BUNDLE: a closure cannot cross into it. The host pushes
+// the candidate array over the bridge and the page filters locally, which also
+// keeps typing off the WebView round-trip. Both platforms then run the SAME
+// `filterTriggerItems`/`renderInsertTemplate`, so web and native cannot rank or
+// insert differently — a divergence that would otherwise be invisible until a
+// user compared their phone against their laptop.
 
 /** One selectable entry in a trigger's popover. */
 export interface TriggerItem {
@@ -79,20 +91,91 @@ export const CLOSED_TRIGGER_STATE: TriggerState = {
     onSelect: () => {},
 }
 
-export interface TriggerConfig {
+/**
+ * The part of a trigger that survives JSON — everything the native WebView
+ * page needs to run the plugin itself. Kept separate from {@link TriggerConfig}
+ * because the page receives exactly this and nothing more.
+ */
+export interface SerializableTriggerConfig {
     /** Distinguishes this trigger's plugin from any other on the editor. */
     id: string
     /** The character that opens it. */
     char: string
-    /** Candidates for the current query. Called on every keystroke. */
-    items: (query: string) => TriggerItem[]
+    /** The full candidate pool. Filtering happens per keystroke, locally. */
+    allItems: TriggerItem[]
+    /** How many rows to offer. Beyond this the user narrows by typing. */
+    limit?: number
     /**
-     * The text to put in the document in place of `<char><query>`. Returning ''
+     * What replaces `<char><query>`, with `{id}` / `{label}` / `{secondary}`
+     * substituted from the chosen item — e.g. `'[[@{id}]] '`. An empty result
      * removes the trigger text and inserts nothing.
      */
-    toInsertText: (item: TriggerItem) => string
+    insertTemplate: string
+}
+
+export interface TriggerConfig extends SerializableTriggerConfig {
     /** Notifies the consumer whenever the popover should change. */
     onStateChange: (state: TriggerState) => void
+    /**
+     * Overrides how the popover is presented. Absent → the callback strategy,
+     * which is what web uses. The native page supplies a bridge that posts over
+     * the message bus instead.
+     */
+    render?: NonNullable<SuggestionOptions<TriggerItem>['render']>
+}
+
+/** How many rows a trigger offers when its config does not say. */
+const DEFAULT_TRIGGER_LIMIT = 6
+
+/**
+ * Narrow a candidate pool to a query, case-insensitively, across both lines.
+ *
+ * Shared deliberately: web calls it through {@link createTriggerExtension} and
+ * the native page calls it directly, so the two cannot rank differently.
+ */
+export function filterTriggerItems(
+    items: TriggerItem[],
+    query: string,
+    limit: number = DEFAULT_TRIGGER_LIMIT
+): TriggerItem[] {
+    const q = query.trim().toLowerCase()
+    const matches = q
+        ? items.filter(
+              item =>
+                  item.label.toLowerCase().includes(q) ||
+                  (item.secondary?.toLowerCase().includes(q) ?? false)
+          )
+        : items
+    return matches.slice(0, limit)
+}
+
+/**
+ * Fill a trigger's insert template from the chosen item.
+ *
+ * Unknown placeholders are left verbatim rather than blanked: a template is
+ * author-supplied, and silently swallowing a typo would produce a token that
+ * looks right in the source and parses as nothing downstream.
+ */
+export function renderInsertTemplate(template: string, item: TriggerItem): string {
+    return template.replace(/\{(id|label|secondary)\}/g, (whole, field: string) => {
+        const value = item[field as keyof TriggerItem]
+        return typeof value === 'string' ? value : whole
+    })
+}
+
+/**
+ * The plugin key for a trigger id.
+ *
+ * Stable per id, because the native bridge needs the SAME instance the plugin
+ * registered under in order to call `exitSuggestion` when the host dismisses.
+ */
+const pluginKeys = new Map<string, PluginKey>()
+export function triggerPluginKey(id: string): PluginKey {
+    const existing = pluginKeys.get(id)
+    if (existing) return existing
+    const created = new PluginKey(`tinycldTrigger:${id}`)
+    pluginKeys.set(id, created)
+    return created
 }
 
 // Translate the plugin's DOMRect into the serializable anchor shape. A DOMRect
@@ -117,7 +200,7 @@ function toAnchor(rect: DOMRect | null | undefined): TriggerAnchor | null {
  * would otherwise move the text caret instead of the selection.
  */
 export function createTriggerExtension(config: TriggerConfig): Extension {
-    const pluginKey = new PluginKey(`tinycldTrigger:${config.id}`)
+    const pluginKey = triggerPluginKey(config.id)
 
     return Extension.create({
         name: `tinycldTrigger_${config.id}`,
@@ -168,69 +251,71 @@ export function createTriggerExtension(config: TriggerConfig): Extension {
                     // A mention query is one token; allowing spaces would keep
                     // the popover open across the rest of the sentence.
                     allowSpaces: false,
-                    items: ({ query: q }) => config.items(q),
+                    items: ({ query: q }) => filterTriggerItems(config.allItems, q, config.limit),
                     command: ({ editor, range, props }) => {
-                        const text = config.toInsertText(props)
+                        const text = renderInsertTemplate(config.insertTemplate, props)
                         const chain = editor.chain().focus().deleteRange(range)
                         if (text) chain.insertContent(text)
                         chain.run()
                     },
-                    render: () => ({
-                        onStart: props => {
-                            currentCommand = props.command
-                            items = props.items
-                            query = props.query
-                            selectedIndex = 0
-                            anchor = toAnchor(props.clientRect?.())
-                            publish(true)
-                        },
-                        onUpdate: props => {
-                            currentCommand = props.command
-                            items = props.items
-                            query = props.query
-                            // Clamp rather than reset: re-filtering must not
-                            // throw the highlight back to the top on every key.
-                            if (selectedIndex >= items.length) {
-                                selectedIndex = Math.max(0, items.length - 1)
-                            }
-                            anchor = toAnchor(props.clientRect?.())
-                            publish(true)
-                        },
-                        onKeyDown: ({ event }) => {
-                            if (items.length === 0) return false
-                            switch (event.key) {
-                                case 'ArrowDown':
-                                    selectedIndex = (selectedIndex + 1) % items.length
-                                    publish(true)
-                                    event.preventDefault()
-                                    return true
-                                case 'ArrowUp':
-                                    selectedIndex =
-                                        (selectedIndex - 1 + items.length) % items.length
-                                    publish(true)
-                                    event.preventDefault()
-                                    return true
-                                case 'Enter':
-                                case 'Tab':
-                                    if (!select(items[selectedIndex])) return false
-                                    event.preventDefault()
-                                    return true
-                                case 'Escape':
-                                    publish(false)
-                                    event.preventDefault()
-                                    return true
-                                default:
-                                    return false
-                            }
-                        },
-                        onExit: () => {
-                            currentCommand = null
-                            items = []
-                            query = ''
-                            anchor = null
-                            publish(false)
-                        },
-                    }),
+                    render:
+                        config.render ??
+                        (() => ({
+                            onStart: props => {
+                                currentCommand = props.command
+                                items = props.items
+                                query = props.query
+                                selectedIndex = 0
+                                anchor = toAnchor(props.clientRect?.())
+                                publish(true)
+                            },
+                            onUpdate: props => {
+                                currentCommand = props.command
+                                items = props.items
+                                query = props.query
+                                // Clamp rather than reset: re-filtering must not
+                                // throw the highlight back to the top on every key.
+                                if (selectedIndex >= items.length) {
+                                    selectedIndex = Math.max(0, items.length - 1)
+                                }
+                                anchor = toAnchor(props.clientRect?.())
+                                publish(true)
+                            },
+                            onKeyDown: ({ event }) => {
+                                if (items.length === 0) return false
+                                switch (event.key) {
+                                    case 'ArrowDown':
+                                        selectedIndex = (selectedIndex + 1) % items.length
+                                        publish(true)
+                                        event.preventDefault()
+                                        return true
+                                    case 'ArrowUp':
+                                        selectedIndex =
+                                            (selectedIndex - 1 + items.length) % items.length
+                                        publish(true)
+                                        event.preventDefault()
+                                        return true
+                                    case 'Enter':
+                                    case 'Tab':
+                                        if (!select(items[selectedIndex])) return false
+                                        event.preventDefault()
+                                        return true
+                                    case 'Escape':
+                                        publish(false)
+                                        event.preventDefault()
+                                        return true
+                                    default:
+                                        return false
+                                }
+                            },
+                            onExit: () => {
+                                currentCommand = null
+                                items = []
+                                query = ''
+                                anchor = null
+                                publish(false)
+                            },
+                        })),
                 }),
             ]
         },

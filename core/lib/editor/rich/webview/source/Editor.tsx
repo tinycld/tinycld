@@ -6,7 +6,8 @@ import {
     ReactNodeViewRenderer,
     useEditor,
 } from '@tiptap/react'
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { exitSuggestion } from '@tiptap/suggestion'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { Awareness, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import type { EditorMessage } from '../../../message-bus/types'
@@ -19,6 +20,7 @@ import {
     APP_ESCAPE,
     APP_FILE_TOKEN,
     APP_SUBMIT_SHORTCUT,
+    APP_TRIGGER_ITEMS,
     AWARENESS_CURSOR,
     AWARENESS_LEAVE,
     AWARENESS_PEERS,
@@ -34,12 +36,19 @@ import {
     type RichEditorFileAuth,
     type RichEditorInitCollab,
     type RichEditorInitPayload,
+    type TriggerItemsPayload,
     UI_CONTENT_HEIGHT,
     YJS_UPDATE,
     type YjsUpdatePayload,
 } from './protocol'
 import { deriveWebViewState } from './state'
 import { buildEditorCSS } from './styles'
+import { getTriggerItems, setTriggerItems } from './trigger-items-store'
+import {
+    createTriggerBridgeRender,
+    defaultNewRequestId,
+    defaultPostToHost,
+} from './trigger-render-bridge'
 
 declare global {
     interface Window {
@@ -150,6 +159,15 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
         if (init.fileAuth) setFileAuth(init.fileAuth)
     }, [init.fileAuth])
 
+    // Same reasoning for the trigger rosters, but seeded during render rather
+    // than in an effect: the suggestion plugin reads the store synchronously
+    // from a transaction, and an effect would leave an `@` typed before the
+    // first paint looking at an empty roster. Idempotent, so a re-render costs
+    // a Map write; a later APP_TRIGGER_ITEMS overwrites it.
+    useMemo(() => {
+        for (const trigger of init.triggers ?? []) setTriggerItems(trigger.id, trigger.allItems)
+    }, [init.triggers])
+
     const collab = useCollabDoc(init.collab)
 
     const editor = useEditor({
@@ -160,6 +178,24 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
             characterLimit: init.characterLimit,
             imageNodeView: AUTHED_IMAGE_NODE_VIEW,
             onSubmitShortcut: () => postToNative(makeMessage('app', APP_SUBMIT_SHORTCUT, null)),
+            // Candidates come from the store rather than the init payload's
+            // frozen copy, so a roster pushed later is picked up without
+            // rebuilding the editor. `onStateChange` is the web callback
+            // channel and has nobody to talk to here — the bridge posts to the
+            // host instead.
+            triggers: (init.triggers ?? []).map(trigger => ({
+                ...trigger,
+                get allItems() {
+                    return getTriggerItems(trigger.id)
+                },
+                onStateChange: () => {},
+                render: createTriggerBridgeRender(trigger, {
+                    postToHost: defaultPostToHost,
+                    newRequestId: defaultNewRequestId,
+                    exitSuggestion,
+                    editorInstanceId: init.editorInstanceId,
+                }),
+            })),
             collab: collab
                 ? {
                       document: collab.doc,
@@ -494,6 +530,13 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
                 const auth = parsed.payload as RichEditorFileAuth | undefined
                 if (auth && typeof auth.token === 'string' && typeof auth.baseURL === 'string') {
                     setFileAuth(auth)
+                }
+                return
+            }
+            if (parsed.namespace === 'app' && parsed.type === APP_TRIGGER_ITEMS) {
+                const roster = parsed.payload as TriggerItemsPayload | undefined
+                if (roster && typeof roster.triggerId === 'string' && Array.isArray(roster.items)) {
+                    setTriggerItems(roster.triggerId, roster.items)
                 }
                 return
             }

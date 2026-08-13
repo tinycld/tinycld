@@ -62,4 +62,14 @@ export interface UseRichEditorOptions {
      * — see rich/triggers.ts.
      */
     triggers?: TriggerConfig[]
+    /**
+     * Publishes this editor's handle so a host-drawn overlay (a native trigger
+     * popover) can anchor to it. Native-only; web popovers position from the
+     * DOM and ignore it.
+     *
+     * Must be unique PER EDITOR. A card detail mounts a description editor and
+     * a comment composer against the same board, so anything derived from the
+     * board alone would anchor one's popover to the other's WebView.
+     */
+    overlayKey?: string
 }

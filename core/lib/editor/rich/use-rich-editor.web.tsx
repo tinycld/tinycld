@@ -112,7 +112,8 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
 
     // Each trigger is wrapped once in a stable config that forwards to whatever
     // is current, looked up by id through the ref. Without this the editor
-    // would be recreated on every keystroke.
+    // would be recreated on every keystroke — and, since `allItems` is a fresh
+    // array whenever the roster query re-emits, on every membership change too.
     const stableTriggers = useMemo(
         () =>
             triggerSignature
@@ -122,11 +123,21 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                     const id = entry.slice(0, entry.lastIndexOf(':'))
                     const char = entry.slice(entry.lastIndexOf(':') + 1)
                     const current = () => triggersRef.current?.find(x => x.id === id)
+                    // `allItems` is a getter rather than a value: the roster
+                    // changes as members join, and baking the array in here
+                    // would freeze the candidate list at editor-creation time.
                     return {
                         id,
                         char,
-                        items: query => current()?.items(query) ?? [],
-                        toInsertText: item => current()?.toInsertText(item) ?? '',
+                        get allItems() {
+                            return current()?.allItems ?? []
+                        },
+                        get limit() {
+                            return current()?.limit
+                        },
+                        get insertTemplate() {
+                            return current()?.insertTemplate ?? ''
+                        },
                         onStateChange: state => current()?.onStateChange(state),
                     }
                 }),
