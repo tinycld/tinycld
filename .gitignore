@@ -87,6 +87,7 @@ server/pb_test_releases/
 /server/bundled-packages.json
 /server/pb_migrations_owner.json
 /server/pb_migrations/
+/server/automation_defs.json
 /server/pb_hooks/
 /server/tinycld
 /server/app

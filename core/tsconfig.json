@@ -34,11 +34,5 @@
     "typeAcquisition": {
         "enable": true
     },
-    "include": [
-        "**/*.ts",
-        "**/*.tsx",
-        "expo-env.d.ts",
-        "../uniwind-types.d.ts",
-        "../lucide-icons.d.ts"
-    ]
+    "include": ["**/*.ts", "**/*.tsx", "expo-env.d.ts", "../uniwind-types.d.ts"]
 }

@@ -48,6 +48,13 @@ export function usePackages(): PackageEntry[] {
                 seed: manifest.seed,
                 tests: manifest.tests,
                 server: manifest.server,
+                // Raw manifest pointer ({ definitions: subpath }) — NOT the
+                // resolved AutomationDefinitions that static config entries
+                // carry. deriveAutomation reads only the static config today;
+                // DB-installed packages get resolved defs embedded in
+                // manifest_json in a later phase. Passed through so the field
+                // is not silently dropped (see the automation spec).
+                automation: manifest.automation,
                 repository: manifest.repository,
                 dependencies: manifest.dependencies,
                 packageName: record.npm_package ?? manifest.slug,
