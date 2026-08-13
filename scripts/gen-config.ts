@@ -22,6 +22,15 @@ export interface ConfigSearch {
     label?: string
 }
 
+export interface ConfigEventSource {
+    target: string
+    id: string
+    label: string
+    module: string // package-exports subpath e.g. 'calendar-source'
+    color?: string
+    order: number
+}
+
 export interface ConfigPkg {
     packageName: string
     slug: string
@@ -35,6 +44,9 @@ export interface ConfigPkg {
     slots: string[]
     sidebarContributions: ConfigSidebarContribution[]
     search?: ConfigSearch
+    automation?: string // exports subpath to the AutomationDefinitions module
+    eventSources: ConfigEventSource[]
+    eventSourceHost: boolean
     manifest: { name: string; slug: string; version: string; description: string } & Record<
         string,
         unknown
@@ -67,6 +79,21 @@ function validateConfigPkg(p: ConfigPkg): void {
         assertSafeImportField('sidebarContributions[].component', c.component)
     }
     if (p.search) assertSafeImportField('search.adapter', p.search.adapter)
+    if (p.automation) assertSafeImportField('automation', p.automation)
+    for (const s of p.eventSources) assertSafeImportField('eventSources[].module', s.module)
+}
+
+function pushEventSourceLines(lines: string[], p: ConfigPkg): void {
+    if (p.eventSources.length === 0) return
+    lines.push('        eventSources: [')
+    for (const s of p.eventSources) {
+        // Same bare-thunk rationale as search: the module exports a hook.
+        const color = s.color ? ` color: ${jsonLiteral(s.color)},` : ''
+        lines.push(
+            `            { target: ${jsonLiteral(s.target)}, id: ${jsonLiteral(s.id)}, label: ${jsonLiteral(s.label)},${color} order: ${s.order}, load: () => import('${p.packageName}/${s.module}') },`
+        )
+    }
+    lines.push('        ],')
 }
 
 export function buildConfigSource(pkgs: ConfigPkg[]): string {
@@ -97,6 +124,9 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
                 `import { registerCollections as ${ident(p.slug)}Register } from '${p.packageName}/collections'`
             )
             lines.push(`import type { ${p.schemaType} } from '${p.packageName}/types'`)
+        }
+        if (p.automation) {
+            lines.push(`import ${ident(p.slug)}Automation from '${p.packageName}/${p.automation}'`)
         }
     }
 
@@ -150,6 +180,8 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
             lines.push(`            load: () => import('${p.packageName}/${p.search.adapter}'),`)
             lines.push('        },')
         }
+        pushEventSourceLines(lines, p)
+        if (p.automation) lines.push(`        automation: ${ident(p.slug)}Automation,`)
         lines.push('    }),')
     }
     lines.push('] as const')

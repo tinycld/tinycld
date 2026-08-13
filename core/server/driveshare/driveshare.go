@@ -246,4 +246,3 @@ func CheckDelete(app core.App, userID, itemID string) error {
 func IsOwner(app core.App, userID, itemID string) bool {
 	return CheckDelete(app, userID, itemID) == nil
 }
-

@@ -1,7 +1,8 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import type { ReactNode } from 'react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
+    Image,
     type ImageStyle,
     Linking,
     Platform,
@@ -40,6 +41,13 @@ interface Props {
      * supply. Pass a stable reference — identity keys the renderer cache.
      */
     transformImageUri?: ImageUriTransform
+    /**
+     * Cap rendered images to this height, letterboxed with `contain`. Exists
+     * for compact surfaces — a card comment shouldn't be dominated by a
+     * full-width screenshot the way a description or help topic can be.
+     * Undefined keeps the library's own sizing.
+     */
+    imageMaxHeight?: number
 }
 
 const HELP_SCHEME = 'help://'
@@ -97,6 +105,45 @@ interface RendererOptions {
     shortcutTables: boolean
     onLinkPress?: LinkPressHandler
     transformImageUri?: ImageUriTransform
+    imageMaxHeight?: number
+}
+
+/**
+ * An image scaled DOWN to fit a height cap, never up past its natural size.
+ * The intrinsic dimensions arrive async (Image.getSize), so until they do the
+ * box reserves the cap square — a brief placeholder beats a layout jump when
+ * the ratio lands. maxWidth keeps a very wide image inside the column, with
+ * `contain` absorbing the difference.
+ */
+function CappedImage({ uri, alt, maxHeight }: { uri: string; alt?: string; maxHeight: number }) {
+    const [size, setSize] = useState<{ width: number; height: number } | null>(null)
+
+    useEffect(() => {
+        let isLive = true
+        Image.getSize(
+            uri,
+            (width, height) => {
+                if (isLive && width > 0 && height > 0) setSize({ width, height })
+            },
+            () => {}
+        )
+        return () => {
+            isLive = false
+        }
+    }, [uri])
+
+    const height = size ? Math.min(size.height, maxHeight) : maxHeight
+    const aspectRatio = size ? size.width / size.height : 1
+
+    return (
+        <Image
+            source={{ uri }}
+            accessibilityRole="image"
+            accessibilityLabel={alt || 'Image'}
+            resizeMode="contain"
+            style={{ height, aspectRatio, maxWidth: '100%', alignSelf: 'flex-start' }}
+        />
+    )
 }
 
 class HelpRenderer extends Renderer {
@@ -108,6 +155,7 @@ class HelpRenderer extends Renderer {
     private readonly shortcutTables: boolean
     private readonly onLinkPress?: LinkPressHandler
     private readonly transformImageUri?: ImageUriTransform
+    private readonly imageMaxHeight?: number
 
     constructor(options: RendererOptions) {
         super()
@@ -115,13 +163,30 @@ class HelpRenderer extends Renderer {
         this.shortcutTables = options.shortcutTables
         this.onLinkPress = options.onLinkPress
         this.transformImageUri = options.transformImageUri
+        this.imageMaxHeight = options.imageMaxHeight
     }
 
     // The default image() fetches the uri as-is, which 404s for a protected
     // PocketBase file whose stored src is deliberately tokenless. The
     // transform runs here — render time — so every draw carries a live token.
+    //
+    // The height cap cannot ride the style param: the library's MDImage
+    // hardcodes `width: '100%'` + the intrinsic aspect ratio on its OUTER
+    // box and applies the passed style only to the inner image — so a
+    // maxHeight there letterboxes the pixels while the layout box stays
+    // full-bleed. A capped surface therefore renders its own image.
     override image(uri: string, alt?: string, style?: ImageStyle, title?: string): ReactNode {
         const resolved = this.transformImageUri ? this.transformImageUri(uri) : uri
+        if (this.imageMaxHeight) {
+            return (
+                <CappedImage
+                    key={this.getKey()}
+                    uri={resolved}
+                    alt={alt || title}
+                    maxHeight={this.imageMaxHeight}
+                />
+            )
+        }
         return super.image(resolved, alt, style, title)
     }
 
@@ -262,7 +327,7 @@ const rendererCache = new Map<string, HelpRenderer>()
 function rendererFor(options: RendererOptions): HelpRenderer {
     // Per-consumer functions can't be stringified, so each gets an identity
     // tag: same function object → same cache slot.
-    const key = `${options.translateKeys}|${options.shortcutTables}|${functionTag(options.onLinkPress)}|${functionTag(options.transformImageUri)}`
+    const key = `${options.translateKeys}|${options.shortcutTables}|${functionTag(options.onLinkPress)}|${functionTag(options.transformImageUri)}|${options.imageMaxHeight ?? 'none'}`
     const cached = rendererCache.get(key)
     if (cached) return cached
     const renderer = new HelpRenderer(options)
@@ -292,6 +357,7 @@ export function MarkdownRenderer({
     translateModifierKeys: shouldTranslateKeys = true,
     shortcutTableHeuristic = true,
     transformImageUri,
+    imageMaxHeight,
 }: Props) {
     // Codespan text uses `primary` (the brand teal — has matching
     // light + dark tokens) rather than `accent`. `accent` in this
@@ -389,6 +455,7 @@ export function MarkdownRenderer({
         shortcutTables: shortcutTableHeuristic,
         onLinkPress,
         transformImageUri,
+        imageMaxHeight,
     })
 
     return (
@@ -400,6 +467,13 @@ export function MarkdownRenderer({
                 initialNumToRender: 8,
                 scrollEnabled: false,
                 contentContainerStyle: { paddingBottom: 8 },
+                // Override the library's hardcoded #fff/#000 scheme background
+                // (its own style loses to flatListProps). An OPAQUE box here
+                // paints over anything a caller's negative margin pulls it
+                // across — cards' comment rows lost the bottom of their
+                // author line to exactly that — and a raw hex never matches
+                // the themed surface it sits on anyway.
+                style: { backgroundColor: 'transparent' },
             }}
         />
     )

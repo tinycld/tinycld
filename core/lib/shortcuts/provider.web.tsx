@@ -8,16 +8,33 @@ export interface ShortcutsProviderProps {
 }
 
 /**
- * Is the currently-focused element a text input? The matcher skips most
- * shortcuts when this is true (unless `allowInInputs` is set on the shortcut).
+ * Did this key event come from a text input? The matcher skips most shortcuts
+ * when it did (unless `allowInInputs` is set on the shortcut).
+ *
+ * Decided from the event TARGET, not `document.activeElement`. The two
+ * disagree in exactly the case that matters: an editor whose Escape handler
+ * blurs or unmounts it. React flushes discrete-event updates synchronously
+ * while the event is still bubbling, so by the time it reaches this window
+ * listener the editor is gone and `activeElement` is BODY — and a shortcut
+ * like the card peek's Escape would fire on the very keystroke the editor
+ * already handled, closing the panel on the FIRST Escape instead of the
+ * second. The target is immutable for the dispatch, so it still names the
+ * input the key was actually typed into. (`isContentEditable` is computed
+ * from layout and reads false on a node React has already detached, hence the
+ * attribute fallback beside it.)
  */
-function isFocusInInput(): boolean {
-    const el = document.activeElement as HTMLElement | null
-    if (!el) return false
-    const tag = el.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
-    if (el.isContentEditable) return true
-    if (el.closest?.('.ProseMirror')) return true
+export function isInputKeyEvent(event: KeyboardEvent): boolean {
+    const targets = [
+        event.target as HTMLElement | null,
+        document.activeElement as HTMLElement | null,
+    ]
+    for (const el of targets) {
+        if (!el || typeof el.closest !== 'function') continue
+        const tag = el.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
+        if (el.isContentEditable) return true
+        if (el.closest('[contenteditable="true"], [contenteditable=""], .ProseMirror')) return true
+    }
     return false
 }
 
@@ -39,7 +56,7 @@ export function ShortcutsProvider({ children }: ShortcutsProviderProps) {
         for (const atom of atoms) {
             bindings[atom] = event => {
                 const consumed = matcherRef.current.feedAtom(atom, {
-                    inInput: isFocusInInput(),
+                    inInput: isInputKeyEvent(event),
                 })
                 if (consumed) event.preventDefault()
             }
