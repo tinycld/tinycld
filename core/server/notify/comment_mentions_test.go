@@ -379,3 +379,270 @@ func TestCommentMention_HookIsRegisteredAndFiresAsync(t *testing.T) {
 		t.Fatal("expected notification to be written by registered hook within 1s")
 	}
 }
+
+// --- polymorphic target (core 1985000002) ---
+//
+// `comment_mentions` is no longer drive-only: it carries target_collection /
+// target_record so a mention can hang off any package's record. These tests
+// cover the cards path (no drive item at all) and the legacy fallback.
+
+// addCardsComments extends the fixture app with the cards_comments table the
+// cards path resolves its author through. Mirrors the real collection's
+// shape only as far as this hook reads it.
+func addCardsComments(t *testing.T, app core.App, usersID string) *core.Collection {
+	t.Helper()
+	c := core.NewBaseCollection("cards_comments")
+	c.Fields.Add(&core.TextField{Name: "card"})
+	c.Fields.Add(&core.TextField{Name: "project"})
+	c.Fields.Add(&core.TextField{Name: "body"})
+	c.Fields.Add(&core.TextField{Name: "parent_comment"})
+	c.Fields.Add(&core.RelationField{
+		Name: "author", Required: true, CollectionId: usersID, MaxSelect: 1,
+	})
+	c.Fields.Add(&core.TextField{Name: "author_name"})
+	if err := app.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// seedCardsMention builds a cards comment + a mention row pointing at a CARD,
+// with drive_item deliberately empty — the shape drive's schema used to forbid.
+func seedCardsMention(t *testing.T, f *mentionFixture, cardID string) *core.Record {
+	t.Helper()
+	usersCol, _ := f.app.FindCollectionByNameOrId("users")
+	cardsCol := addCardsComments(t, f.app, usersCol.Id)
+
+	comment := core.NewRecord(cardsCol)
+	comment.Set("card", cardID)
+	comment.Set("project", "proj0000000000")
+	comment.Set("body", "ping [[@"+f.mentionUser.Id+"]]")
+	comment.Set("author", f.authorUser.Id)
+	comment.Set("author_name", "Alice")
+	if err := f.app.Save(comment); err != nil {
+		t.Fatal(err)
+	}
+
+	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
+	mention := core.NewRecord(cmCol)
+	mention.Set("comment_collection", "cards_comments")
+	mention.Set("comment_record", comment.Id)
+	mention.Set("target_collection", "cards_cards")
+	mention.Set("target_record", cardID)
+	mention.Set("mentioned_user", f.mentionUser.Id)
+	// drive_item intentionally NOT set.
+	if err := f.app.Save(mention); err != nil {
+		t.Fatal(err)
+	}
+	return mention
+}
+
+func TestCommentMention_CardsTargetNotifiesWithoutDriveItem(t *testing.T) {
+	f := seedMentionFixture(t)
+	// The drive_item relation is required in this fixture's inline schema, so
+	// relax it the way core 1985000002 does before inserting a cards row.
+	relaxFixtureDriveItem(t, f.app)
+
+	const cardID = "card0000000000"
+	mention := seedCardsMention(t, f, cardID)
+	runHookSync(t, f.app, mention)
+
+	n := findLatestNotification(t, f.app, f.mentionUser.Id)
+	if n == nil {
+		t.Fatal("expected a notification for a cards mention, got none")
+	}
+	if got := n.GetString("package"); got != "cards" {
+		t.Errorf("package = %q, want cards", got)
+	}
+	// Cards routes its board at /cards and opens a card via ?focused=.
+	wantURL := "https://app.test.local/cards?focused=" + cardID
+	if got := n.GetString("url"); got != wantURL {
+		t.Errorf("url = %q, want %q", got, wantURL)
+	}
+}
+
+// A cards author who mentions themselves must not be notified — the same
+// defense-in-depth check the drive path gets.
+func TestCommentMention_CardsSkipsSelfMention(t *testing.T) {
+	f := seedMentionFixture(t)
+	relaxFixtureDriveItem(t, f.app)
+
+	usersCol, _ := f.app.FindCollectionByNameOrId("users")
+	cardsCol := addCardsComments(t, f.app, usersCol.Id)
+	comment := core.NewRecord(cardsCol)
+	comment.Set("card", "card0000000000")
+	comment.Set("body", "talking to myself")
+	// Author IS the mentioned user.
+	comment.Set("author", f.mentionUser.Id)
+	comment.Set("author_name", "Bob")
+	if err := f.app.Save(comment); err != nil {
+		t.Fatal(err)
+	}
+
+	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
+	mention := core.NewRecord(cmCol)
+	mention.Set("comment_collection", "cards_comments")
+	mention.Set("comment_record", comment.Id)
+	mention.Set("target_collection", "cards_cards")
+	mention.Set("target_record", "card0000000000")
+	mention.Set("mentioned_user", f.mentionUser.Id)
+	if err := f.app.Save(mention); err != nil {
+		t.Fatal(err)
+	}
+
+	runHookSync(t, f.app, mention)
+	if got := findLatestNotification(t, f.app, f.mentionUser.Id); got != nil {
+		t.Errorf("expected no notification for a self-mention, got %v", got.Id)
+	}
+}
+
+// A row written by an older client carries only `drive_item`. The hook must
+// still resolve it, or the migration window silently drops notifications.
+func TestCommentMention_LegacyRowWithoutTargetColumns(t *testing.T) {
+	f := seedMentionFixture(t)
+	mention := mkMention(t, f.app, f, "text_comments") // sets drive_item only
+	runHookSync(t, f.app, mention)
+
+	n := findLatestNotification(t, f.app, f.mentionUser.Id)
+	if n == nil {
+		t.Fatal("expected a notification for a legacy drive-only row, got none")
+	}
+	wantURL := "https://app.test.local/p/text/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
+	if got := n.GetString("url"); got != wantURL {
+		t.Errorf("url = %q, want %q", got, wantURL)
+	}
+}
+
+// relaxFixtureDriveItem mirrors what core migration 1985000002 does to the
+// real table, so the inline fixture can hold a row with no drive item.
+func relaxFixtureDriveItem(t *testing.T, app core.App) {
+	t.Helper()
+	cm, err := app.FindCollectionByNameOrId("comment_mentions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := cm.Fields.GetByName("drive_item")
+	if rel, ok := f.(*core.RelationField); ok {
+		rel.Required = false
+	}
+	cm.Fields.Add(&core.TextField{Name: "target_collection", Max: 64})
+	cm.Fields.Add(&core.TextField{Name: "target_record", Max: 32})
+	if err := app.Save(cm); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The notification TYPE is what the per-user mute preference is keyed on, so a
+// package's two mention sources must agree. Cards' DESCRIPTION mentions come
+// from its own flush hook and send "cards_mention"; a cards COMMENT mention
+// must send the same, or muting cards would silence only half of them.
+func TestCommentMention_CardsUsesPackageScopedType(t *testing.T) {
+	f := seedMentionFixture(t)
+	relaxFixtureDriveItem(t, f.app)
+
+	mention := seedCardsMention(t, f, "card0000000000")
+	runHookSync(t, f.app, mention)
+
+	n := findLatestNotification(t, f.app, f.mentionUser.Id)
+	if n == nil {
+		t.Fatal("expected a notification, got none")
+	}
+	if got := n.GetString("type"); got != "cards_mention" {
+		t.Errorf("type = %q, want cards_mention (must match the description "+
+			"hook's type, or one mute switch cannot cover both)", got)
+	}
+}
+
+// Document packages keep sharing one switch: being @mentioned in a text or calc
+// comment is one thing to a reader.
+func TestCommentMention_DocumentPackagesShareOneType(t *testing.T) {
+	f := seedMentionFixture(t)
+	mention := mkMention(t, f.app, f, "text_comments")
+	runHookSync(t, f.app, mention)
+
+	n := findLatestNotification(t, f.app, f.mentionUser.Id)
+	if n == nil {
+		t.Fatal("expected a notification, got none")
+	}
+	if got := n.GetString("type"); got != "comment_mention" {
+		t.Errorf("type = %q, want comment_mention", got)
+	}
+}
+
+// --- muting ---
+//
+// The preference is a flat {type: bool} JSON map on a user_preferences row
+// (app='notifications', key='preferences'); isNotificationMuted reads it by
+// TYPE. Nothing exercised that path before, so a rename of either the type
+// string or the row's app/key would have silently stopped honouring mutes.
+
+// addUserPreferences extends the fixture with the collection isNotificationMuted
+// queries. Not in the base fixture because most tests do not mute anything.
+func addUserPreferences(t *testing.T, app core.App, usersID string) *core.Collection {
+	t.Helper()
+	c := core.NewBaseCollection("user_preferences")
+	c.Fields.Add(&core.RelationField{
+		Name: "user", Required: true, CollectionId: usersID, MaxSelect: 1,
+	})
+	c.Fields.Add(&core.TextField{Name: "app"})
+	c.Fields.Add(&core.TextField{Name: "key"})
+	c.Fields.Add(&core.JSONField{Name: "value"})
+	if err := app.Save(c); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func mutePreference(t *testing.T, app core.App, userID string, prefs map[string]any) {
+	t.Helper()
+	usersCol, _ := app.FindCollectionByNameOrId("users")
+	col := addUserPreferences(t, app, usersCol.Id)
+	rec := core.NewRecord(col)
+	rec.Set("user", userID)
+	rec.Set("app", "notifications")
+	rec.Set("key", "preferences")
+	rec.Set("value", prefs)
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCommentMention_MutedTypeIsNotDelivered(t *testing.T) {
+	f := seedMentionFixture(t)
+	mutePreference(t, f.app, f.mentionUser.Id, map[string]any{"comment_mention": false})
+
+	mention := mkMention(t, f.app, f, "text_comments")
+	runHookSync(t, f.app, mention)
+
+	if got := findLatestNotification(t, f.app, f.mentionUser.Id); got != nil {
+		t.Errorf("a muted mention was delivered: %v", got.Id)
+	}
+}
+
+// Muting cards must NOT mute document mentions — the reason they are separate
+// switches at all.
+func TestCommentMention_MutingCardsLeavesDocumentMentions(t *testing.T) {
+	f := seedMentionFixture(t)
+	mutePreference(t, f.app, f.mentionUser.Id, map[string]any{"cards_mention": false})
+
+	mention := mkMention(t, f.app, f, "text_comments")
+	runHookSync(t, f.app, mention)
+
+	if got := findLatestNotification(t, f.app, f.mentionUser.Id); got == nil {
+		t.Error("muting cards_mention also silenced a document mention")
+	}
+}
+
+// A type left enabled (or absent entirely) must still deliver — the server
+// defaults to sending, so a missing key is not a mute.
+func TestCommentMention_UnrelatedMuteDoesNotBlock(t *testing.T) {
+	f := seedMentionFixture(t)
+	mutePreference(t, f.app, f.mentionUser.Id, map[string]any{"mail_new_message": false})
+
+	mention := mkMention(t, f.app, f, "text_comments")
+	runHookSync(t, f.app, mention)
+
+	if got := findLatestNotification(t, f.app, f.mentionUser.Id); got == nil {
+		t.Error("an unrelated mute blocked a mention")
+	}
+}

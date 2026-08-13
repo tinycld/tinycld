@@ -10,6 +10,7 @@
  * types their payloads.
  */
 import type { EditorContentFormat } from '../../options'
+import type { SerializableTriggerConfig, TriggerItem } from '../../triggers'
 
 /** host → WebView. Replaces the document. */
 export const MARKDOWN_SET = 'set'
@@ -37,6 +38,18 @@ export const APP_ESCAPE = 'escape'
  * common case where the token exists before the handshake.
  */
 export const APP_FILE_TOKEN = 'file-auth'
+
+/**
+ * host → WebView: replace one trigger's candidate pool.
+ *
+ * The page holds a SNAPSHOT of the candidates rather than asking per keystroke.
+ * A round-trip per character would cross the bridge on a JS thread already
+ * carrying the Yjs relay, and would need sequence numbers to stop a late `@na`
+ * response rendering under a typed `@nath`. The cost is that a member added
+ * while the popover is open appears on the next push rather than the next
+ * keystroke — bounded, and invisible at human speed.
+ */
+export const APP_TRIGGER_ITEMS = 'trigger-items'
 
 /**
  * Yjs document update, base64-encoded. Sent in BOTH directions: the host
@@ -145,6 +158,23 @@ export interface RichEditorInitPayload {
      * handshake time. Later rotations arrive as {@link APP_FILE_TOKEN}.
      */
     fileAuth?: RichEditorFileAuth
+    /**
+     * Character-triggered autocompletes, in their serializable form. Absent →
+     * the page installs none. Rosters are refreshed by {@link APP_TRIGGER_ITEMS}.
+     */
+    triggers?: SerializableTriggerConfig[]
+    /**
+     * Identifies this editor among any others mounted on the same screen, so a
+     * host overlay can tell whose popover it is drawing. See
+     * {@link ShowPopoverPayload.editorInstanceId}.
+     */
+    editorInstanceId?: string
+}
+
+/** Payload for {@link APP_TRIGGER_ITEMS}. */
+export interface TriggerItemsPayload {
+    triggerId: string
+    items: TriggerItem[]
 }
 
 /** Payload for {@link APP_FILE_TOKEN} and `RichEditorInitPayload.fileAuth`. */

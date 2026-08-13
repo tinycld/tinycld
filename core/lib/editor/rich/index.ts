@@ -13,4 +13,18 @@ export { buildRichEditorExtensions } from './extensions'
 export { findDamagedTableRows, repairMarkdown } from './markdown-repair'
 export type { EditorContentFormat, UseRichEditorOptions } from './options'
 export { setContentWhenReady } from './set-content-when-ready'
+export type {
+    SerializableTriggerConfig,
+    TriggerAnchor,
+    TriggerConfig,
+    TriggerItem,
+    TriggerState,
+} from './triggers'
+export {
+    CLOSED_TRIGGER_STATE,
+    createTriggerExtension,
+    filterTriggerItems,
+    renderInsertTemplate,
+    triggerPluginKey,
+} from './triggers'
 export { useRichEditor } from './use-rich-editor'

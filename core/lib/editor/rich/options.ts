@@ -1,4 +1,5 @@
 import type { RichEditorCollabOptions } from './extensions'
+import type { TriggerConfig } from './triggers'
 
 export type { RichEditorCollabOptions }
 
@@ -55,4 +56,20 @@ export interface UseRichEditorOptions {
     theme?: { backgroundColor?: string }
     /** Binds this editor to a shared document. See RichEditorCollabOptions. */
     collab?: RichEditorCollabOptions
+    /**
+     * Character-triggered autocompletes (e.g. `@` mentions). Handled inside the
+     * shared extension builder so web and the native WebView behave identically
+     * — see rich/triggers.ts.
+     */
+    triggers?: TriggerConfig[]
+    /**
+     * Publishes this editor's handle so a host-drawn overlay (a native trigger
+     * popover) can anchor to it. Native-only; web popovers position from the
+     * DOM and ignore it.
+     *
+     * Must be unique PER EDITOR. A card detail mounts a description editor and
+     * a comment composer against the same board, so anything derived from the
+     * board alone would anchor one's popover to the other's WebView.
+     */
+    overlayKey?: string
 }

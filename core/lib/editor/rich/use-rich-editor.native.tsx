@@ -3,12 +3,16 @@ import { useFileToken } from '@tinycld/core/file-viewer/use-authed-file-url'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { pb } from '../../pocketbase'
 import { useThemeColor } from '../../use-app-theme'
+import { UI_POPOVER_DISMISS_ON_SCROLL } from '../message-bus/popover-protocol'
 import { makeMessage } from '../message-bus/types'
+import { publishUiMessage, registerEditorOverlay } from '../overlay'
 import type { EditorHandle, EditorResult } from '../types'
 import { useWebViewEditor } from '../use-webview-editor'
 import { AwarenessWebViewHost } from './awareness-webview-host'
 import { MarkdownWebViewHost } from './markdown-webview-host'
 import type { UseRichEditorOptions } from './options'
+import { TriggerItemsWebViewHost } from './trigger-items-webview-host'
+import type { TriggerItem } from './triggers'
 import { editorHtml } from './webview/build/editorHtml'
 import {
     APP_ESCAPE,
@@ -44,6 +48,9 @@ import { YjsWebViewHost } from './yjs-webview-host'
  * credential into the page and give the local user a second awareness identity,
  * so one human would show up as two peers.
  */
+/** Distinguishes concurrently-mounted editors. Never reused within a session. */
+let editorInstanceCounter = 0
+
 export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult {
     const {
         initialContent,
@@ -58,6 +65,8 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         onBlur,
         theme,
         collab,
+        triggers,
+        overlayKey,
     } = options
 
     const bgColor = useThemeColor('background')
@@ -130,6 +139,26 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const collabUserId = collab?.user?.id
     const collabUserName = collab?.user?.name
     const collabUserColor = collab?.user?.color
+    // Identifies this editor among any others on the same screen, so a host
+    // overlay answers only its own popovers. A module counter rather than
+    // useId(): the value crosses to the page and back over a JSON pipe, and
+    // useId's colons are awkward in that round trip.
+    const instanceIdRef = useRef<string>('')
+    if (!instanceIdRef.current) instanceIdRef.current = `rich-${++editorInstanceCounter}`
+    const editorInstanceId = instanceIdRef.current
+
+    // Only the SHAPE of the triggers belongs in the init payload — the roster
+    // is pushed separately, because it changes as members come and go while
+    // init is one-shot per mount.
+    const triggerSignature = JSON.stringify(
+        (triggers ?? []).map(t => ({
+            id: t.id,
+            char: t.char,
+            limit: t.limit,
+            insertTemplate: t.insertTemplate,
+        }))
+    )
+
     const initPayload: RichEditorInitPayload = useMemo(() => {
         const peersAtHandshake = awarenessHost?.encodePeers() ?? null
         return {
@@ -146,6 +175,22 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                 primary: primaryColor,
             },
             ...(fileToken ? { fileAuth: { baseURL: pb.baseURL, token: fileToken } } : {}),
+            editorInstanceId,
+            // Seeded with an EMPTY roster: the real one follows immediately as
+            // a push, and baking it in here would rebuild the whole handshake
+            // every time someone joined the board.
+            ...(triggerSignature === '[]'
+                ? {}
+                : {
+                      triggers: (
+                          JSON.parse(triggerSignature) as {
+                              id: string
+                              char: string
+                              limit?: number
+                              insertTemplate: string
+                          }[]
+                      ).map(t => ({ ...t, allItems: [] })),
+                  }),
             // Snapshotted at handshake time. Anything the doc gains between
             // now and the page mounting arrives as a normal relayed update, so
             // a slightly stale seed is not a lost edit.
@@ -191,6 +236,8 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         collabUserName,
         collabUserColor,
         fileToken,
+        editorInstanceId,
+        triggerSignature,
     ])
 
     // Token rotations (and a token that resolves after the handshake) reach
@@ -218,10 +265,37 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
 
     useEffect(() => () => markdownHost.destroy(), [markdownHost])
 
+    const triggerItemsHostRef = useRef<TriggerItemsWebViewHost | null>(null)
+    if (triggerItemsHostRef.current === null) {
+        triggerItemsHostRef.current = new TriggerItemsWebViewHost({
+            postMessage: message => posterRef.current?.(message as never) ?? false,
+        })
+    }
+    const triggerItemsHost = triggerItemsHostRef.current
+
+    // Push each roster whenever it changes. The effect depends on the
+    // SERIALIZED rosters rather than the array: a live query hands back a fresh
+    // array on every emission, so an identity dep would post on writes that
+    // changed nobody. Parsing the signature back is what keeps the dep honest —
+    // the effect reads only what it depends on.
+    const rosterSignature = useMemo(
+        () => JSON.stringify((triggers ?? []).map(t => [t.id, t.allItems])),
+        [triggers]
+    )
+    useEffect(() => {
+        for (const [id, items] of JSON.parse(rosterSignature) as [string, TriggerItem[]][]) {
+            triggerItemsHost.push(id, items)
+        }
+    }, [rosterSignature, triggerItemsHost])
+
     // TenTap's stock bridges still drive the toolbar commands and the
     // getHTML/getText/setContent/focus surface that mail relies on. Their
     // Tiptap counterparts live in our page, which registers the same schema.
     const bridgeExtensions = useMemo(() => [...TenTapStartKit, CoreBridge.configureCSS('')], [])
+
+    const onDocumentScroll = useCallback(() => {
+        publishUiMessage({ namespace: 'ui', type: UI_POPOVER_DISMISS_ON_SCROLL, payload: null })
+    }, [])
 
     const onMessage = useCallback(
         (message: { namespace?: string; type?: string }) => {
@@ -246,6 +320,15 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         // an inner scroll surface would fight it.
         scrollEnabled: false,
         onMessage,
+        // Everything on the 'ui' namespace goes to the bus, where a mounted
+        // overlay controller for THIS editor picks it up. The hook itself draws
+        // nothing — an autocomplete popover is the consumer's UI, not core's.
+        onUiMessage: publishUiMessage,
+        // An overlay anchored to a range that has scrolled away is worse than
+        // no overlay, so a document scroll closes any open popover. Published
+        // without an instance id: it is a screen-wide gesture, so every
+        // controller should hear it.
+        onScroll: onDocumentScroll,
         // Split the host's single edge callback into the same pair of handlers
         // the web variant exposes, so the shared .d.ts contract holds.
         onFocusChange: (isFocused: boolean) => {
@@ -255,6 +338,15 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     })
 
     posterRef.current = result.postMessage ?? null
+
+    // Publish the handle a host overlay needs to anchor to this editor. The
+    // popover is rendered as a sibling (often in another subtree entirely), so
+    // context cannot reach it — see editor-overlay-registry.ts.
+    const webViewRef = result.webViewRef
+    useEffect(() => {
+        if (!overlayKey) return
+        return registerEditorOverlay(overlayKey, { webViewRef, editorInstanceId })
+    }, [overlayKey, webViewRef, editorInstanceId])
 
     // Layer the markdown channel onto the shared handle. Everything else —
     // getHTML, setContent, focus, clear — is TenTap's, unchanged, which is what
