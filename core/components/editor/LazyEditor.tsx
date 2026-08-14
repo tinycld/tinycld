@@ -46,6 +46,19 @@ export interface LazyEditorProps {
     onCommit: (content: string) => void
     /** Absent when there is nothing to revert (a collaborative description). */
     onCancel?: () => void
+    /**
+     * True while a dialog the editor opened holds the focus, so a blur is not
+     * the session ending — the editor must survive until the picked image or
+     * link lands in it.
+     *
+     * Two ways to say this, and a caller should pick one. `slots.setDialogOpen`
+     * suits a caller that learns about the dialog from inside the rendered
+     * chrome. This prop suits one that already knows: a card description owns
+     * both dialogs' open state itself, and pushing it back up through an effect
+     * only to receive it again is the useState+useEffect pairing the style
+     * guide names as the signal to switch primitives. When supplied, this wins.
+     */
+    isDialogOpen?: boolean
     /** The consumer's chrome around the editing surface. */
     renderEditor: (slots: LazyEditorSlots) => ReactNode
     /**
@@ -100,13 +113,17 @@ export function useLazyEditor({
     commitOnBlur = false,
     onCommit,
     onCancel,
+    isDialogOpen: dialogOpenProp,
     renderEditor,
     renderHeader,
     testID,
     accessibilityLabel = 'Edit',
 }: LazyEditorProps): LazyEditorRenderSlots {
     const [isEditing, setIsEditing] = useState(false)
-    const [isDialogOpen, setIsDialogOpen] = useState(false)
+    const [dialogOpenState, setIsDialogOpen] = useState(false)
+    // The prop wins when given, so a caller that already owns the dialog state
+    // does not have to echo it back through setDialogOpen.
+    const isDialogOpen = dialogOpenProp ?? dialogOpenState
     // The revert/no-op baseline, snapshotted when the session opens so a
     // realtime update mid-edit cannot become the comparison target.
     const baselineRef = useRef(value)
