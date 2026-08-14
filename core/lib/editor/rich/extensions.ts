@@ -10,6 +10,7 @@ import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import type { Awareness } from 'y-protocols/awareness'
 import type * as Y from 'yjs'
+import { MentionNode, setMentionLabels } from './mention-node'
 import { SubmitShortcut } from './submit-shortcut'
 import { createTriggerExtension, type TriggerConfig } from './triggers'
 
@@ -96,6 +97,12 @@ export function buildRichEditorExtensions(
     }
     for (const trigger of triggers ?? []) {
         extensions.push(createTriggerExtension(trigger))
+        // One node instance per mention trigger, bound to that trigger's
+        // roster, so two triggers on one editor cannot resolve each other's ids.
+        if (trigger.insertsMentionNode) {
+            extensions.push(MentionNode.configure({ triggerId: trigger.id }))
+            setMentionLabels(trigger.id, trigger.allItems)
+        }
     }
     if (collab) {
         extensions.push(Collaboration.configure({ document: collab.document, field: collab.field }))

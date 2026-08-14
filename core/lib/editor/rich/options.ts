@@ -23,6 +23,16 @@ export interface UseRichEditorOptions {
     editable?: boolean
     /** Extra classes for the wrapping view (web). */
     containerClassName?: string
+    /**
+     * Minimum height of the editing surface, in px.
+     *
+     * Needed because `containerClassName` is WEB-ONLY: a WebView has no
+     * intrinsic height and reports its own once the page measures itself, so
+     * the caller's `min-h-[60px]` did nothing on native and the composer
+     * collapsed to a one-line sliver until the first measurement arrived.
+     * Express the floor here and both platforms honour it.
+     */
+    minHeight?: number
     /** Hard character ceiling; typing stops here rather than failing on save. */
     characterLimit?: number
     /** ⌘/Ctrl+Enter handler. See SubmitShortcut for why this is not a DOM listener. */

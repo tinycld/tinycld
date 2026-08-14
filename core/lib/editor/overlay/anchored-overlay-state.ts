@@ -222,10 +222,21 @@ export interface ResolvePositionInput {
     gap: number
 }
 
-export function resolvePopoverPosition(input: ResolvePositionInput): {
-    top: number
+/**
+ * Where the popover should sit, in screen coordinates.
+ *
+ * Exactly one of `top` / `bottom` is set. Below the caret the TOP edge is
+ * anchored; flipped above it, the BOTTOM edge is — so the popover always
+ * touches the caret regardless of how tall it turns out to be, and its real
+ * height never has to be known in advance.
+ */
+export interface PopoverPosition {
+    top?: number
+    bottom?: number
     left: number
-} {
+}
+
+export function resolvePopoverPosition(input: ResolvePositionInput): PopoverPosition {
     const {
         rect,
         webViewOriginX,
@@ -248,14 +259,23 @@ export function resolvePopoverPosition(input: ResolvePositionInput): {
 
     const wouldOverflowBottom = anchorBottomScreen + gap + popoverHeightEstimate > viewportHeight
 
-    const top = wouldOverflowBottom
-        ? Math.max(8, anchorTopScreen - gap - popoverHeightEstimate)
-        : anchorBottomScreen + gap
-
     const left = Math.min(
         Math.max(8, anchorLeftScreen),
         Math.max(8, viewportWidth - popoverWidth - 8)
     )
 
-    return { top, left }
+    if (!wouldOverflowBottom) {
+        return { top: anchorBottomScreen + gap, left }
+    }
+
+    // Flipped above the caret, the popover's BOTTOM is what must sit against
+    // it — so that edge is pinned and the box grows upward from there.
+    //
+    // Returning a `top` computed as `anchorTop - gap - estimate` is what the
+    // first version did, and it put the popover wherever the ESTIMATE said
+    // rather than against the caret: the estimate is a deliberately generous
+    // 320px, a one-row picker is nearer 70, and the gap between those two
+    // numbers is exactly how far above the text it drew. The estimate should
+    // only decide WHETHER to flip, never where the popover lands.
+    return { bottom: Math.max(8, viewportHeight - (anchorTopScreen - gap)), left }
 }

@@ -1,6 +1,7 @@
 import { type ReactNode, useRef } from 'react'
 import { TextInput, View } from 'react-native'
 import { KeyboardExtendedView } from 'react-native-external-keyboard'
+import { isEditorFocused } from '../editor/editor-focus-state'
 import { createMatcher } from './matcher'
 
 export interface ShortcutsProviderProps {
@@ -76,6 +77,12 @@ function namedKeyFromCode(keyCode: number, char: string): string | null {
 }
 
 function isTextInputFocused(): boolean {
+    // A rich editor is a WebView, and TextInput.State cannot see inside one, so
+    // it reports "nothing focused" while the user is typing a description. Every
+    // plain letter then reached the matcher as a global shortcut — `e` opened
+    // the card title and swallowed the rest of the sentence. Ask the editor
+    // registry first.
+    if (isEditorFocused()) return true
     // React Native exposes a single global text input focus state via
     // TextInput.State, which isn't in the public RN type surface.
     const State = (TextInput as unknown as { State?: { currentlyFocusedInput?: () => unknown } })

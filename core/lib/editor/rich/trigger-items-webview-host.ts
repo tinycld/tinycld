@@ -37,9 +37,18 @@ export class TriggerItemsWebViewHost {
     push(triggerId: string, items: TriggerItem[]): boolean {
         const serialized = JSON.stringify(items)
         if (this.sent.get(triggerId) === serialized) return false
-        this.sent.set(triggerId, serialized)
         const payload: TriggerItemsPayload = { triggerId, items }
-        return this.postMessage(makeMessage('app', APP_TRIGGER_ITEMS, payload))
+        const delivered = this.postMessage(makeMessage('app', APP_TRIGGER_ITEMS, payload))
+        // Remember ONLY what actually crossed the bridge. postMessage returns
+        // false while the WebView is still mounting, and recording that attempt
+        // made the roster unsendable forever: the editor mounts before the
+        // members query resolves, so the first push is the empty array, and the
+        // real roster that follows differs from it and goes out — but if THAT
+        // one is dropped, every later emission carries the same members, matches
+        // the memo, and is skipped. The page keeps the empty list and `@` offers
+        // "No matches" for the rest of the session.
+        if (delivered) this.sent.set(triggerId, serialized)
+        return delivered
     }
 
     /**

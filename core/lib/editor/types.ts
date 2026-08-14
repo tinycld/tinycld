@@ -230,6 +230,13 @@ export interface EditorResult {
     // the call site (e.g. cast to a shape that has .measure /
     // .postMessage).
     webViewRef?: React.RefObject<unknown> | null
+    // The view host overlays should MEASURE against (native only; null on
+    // web). Points at the plain RN View wrapping the WebView, not at the
+    // WebView itself: under Bridgeless the WebView ref is a native-command
+    // handle with no .measure/.measureInWindow, so measuring it always failed
+    // and anchored popovers were dismissed before they could be drawn. Same
+    // box, so the origin is identical — but an ordinary measurable view.
+    measureRef?: React.RefObject<unknown> | null
     // Post an arbitrary message to the WebView. Native variants use
     // this to drive WebView-side bridge protocols (e.g. text's
     // 'comment' namespace) that don't have first-class command

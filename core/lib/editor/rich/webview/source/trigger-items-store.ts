@@ -1,3 +1,4 @@
+import { setMentionLabels } from '../../mention-node'
 import type { TriggerItem } from '../../triggers'
 
 /**
@@ -18,6 +19,13 @@ const items = new Map<string, TriggerItem[]>()
 
 export function setTriggerItems(triggerId: string, next: TriggerItem[]): void {
     items.set(triggerId, next)
+    // Mention nodes render a NAME from an id, and they resolve it through this
+    // same roster. Keeping the two in step here is what makes an existing
+    // description readable: on native the extensions are built from the init
+    // payload, whose roster is deliberately EMPTY (it is pushed separately), so
+    // a node registered only at build time would resolve every id to
+    // "@someone" for the life of the mount.
+    setMentionLabels(triggerId, next)
 }
 
 export function getTriggerItems(triggerId: string): TriggerItem[] {

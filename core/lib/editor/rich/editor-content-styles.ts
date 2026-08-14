@@ -99,6 +99,34 @@ export const EDITOR_CONTENT_STYLES = `
 .ProseMirror pre code {
     font-size: 0.9em;
 }
+/* A mention is one indivisible thing, so it reads as a chip rather than as
+   styled prose — the tint and rounding are what tell you the name is a
+   reference to a person and not a word someone typed. Uses the accent already
+   carrying links so it inherits the theme in both light and dark, rather than
+   a hex that would be right in exactly one of them.
+
+   white-space: nowrap keeps a two-word name from breaking across lines and
+   splitting the chip in half. */
+.ProseMirror .tinycld-mention {
+    /* inline-block, not inline: an inline box does not lay out its own
+       background, padding or rounding the way a chip needs — the tint either
+       does not paint at all or bleeds past the text — so the pill only exists
+       once the node is given a box of its own. */
+    display: inline-block;
+    white-space: nowrap;
+    padding: 0.05em 0.35em;
+    border-radius: 999px;
+    font-size: 0.95em;
+    font-weight: 500;
+    /* Text in the accent that already carries links, so it follows the theme
+       in both light and dark rather than a hex that is right in only one.
+
+       The fill is a mid-grey at low alpha: it reads as a subtle tint against
+       both a light and a dark page, so it needs no theme-specific variant and
+       no second CSS variable for the host to keep in step. */
+    color: var(--editor-primary-color, #2563eb);
+    background-color: rgba(127, 127, 127, 0.16);
+}
 /* Task lists: the checkbox is interactive, so it needs a real hit area on touch,
    and the marker must not double up with the <ul> bullet. */
 .ProseMirror ul[data-type='taskList'] {

@@ -173,8 +173,47 @@ describe('resolvePopoverPosition', () => {
     it('flips above the anchor when it would overflow the bottom', () => {
         // Otherwise the picker lands off-screen exactly when someone is typing
         // at the bottom of a long description.
-        const { top } = resolvePopoverPosition({ ...base, viewportHeight: 340 })
-        expect(top).toBeLessThan(200 + 100)
+        //
+        // Anchored by its BOTTOM edge, not its top. Returning a `top` computed
+        // from the height ESTIMATE is what this used to do, and it placed the
+        // popover where the estimate said rather than against the caret — a
+        // generous 320px estimate against a ~70px one-row picker drew it some
+        // 250px above the text it belonged to. The estimate may decide WHICH
+        // WAY to open and nothing else.
+        const { top, bottom } = resolvePopoverPosition({ ...base, viewportHeight: 340 })
+        expect(top).toBeUndefined()
+        // The anchor's top is 200 + 100 = 300, so the popover's bottom sits a
+        // gap above it: 340 - (300 - 4) = 44 up from the viewport bottom.
+        expect(bottom).toBe(44)
+    })
+
+    // The exact geometry the bug was reported with: an iPhone-sized window,
+    // the comment composer pinned near the bottom of a card detail. The
+    // popover drew at top=351 while the caret sat at 693.
+    it('anchors to the caret for a composer at the bottom of a phone screen', () => {
+        const { top, bottom } = resolvePopoverPosition({
+            rect: { top: 1, left: 17, width: 2, height: 18, scrollX: 0, scrollY: 0 },
+            webViewOriginX: 54,
+            webViewOriginY: 674,
+            viewportWidth: 402,
+            viewportHeight: 874,
+            popoverWidth: 260,
+            popoverHeightEstimate: 320,
+            gap: 4,
+        })
+        expect(top).toBeUndefined()
+        // Caret top is 674 + 1 = 675; 874 - (675 - 4) = 203.
+        expect(bottom).toBe(203)
+    })
+
+    it('never runs off the top when the caret is near it', () => {
+        const { bottom } = resolvePopoverPosition({
+            ...base,
+            rect: { ...RECT, top: 0 },
+            webViewOriginY: 0,
+            viewportHeight: 100,
+        })
+        expect(bottom).toBeGreaterThanOrEqual(8)
     })
 
     it('clamps to the left edge instead of going negative', () => {

@@ -14,6 +14,7 @@ import {
 import Markdown, { type MarkedStyles, Renderer } from 'react-native-marked'
 import { openHelp } from '../../lib/help/open-help'
 import { parseHelpTopicId } from '../../lib/help/types'
+import { type MarkdownPurpose, markdownScale } from './markdown-purpose'
 
 interface Props {
     body: string
@@ -48,6 +49,15 @@ interface Props {
      * Undefined keeps the library's own sizing.
      */
     imageMaxHeight?: number
+    /**
+     * Which surface this is rendering into — see markdown-purpose.ts.
+     *
+     * Defaults to 'documentation': the values every existing caller was
+     * already getting, so the help hub is untouched. `description` matches the
+     * card editor to the pixel, so tapping a description to edit it does not
+     * reflow the prose; `compact` is a comment in a thread.
+     */
+    purpose?: MarkdownPurpose
 }
 
 const HELP_SCHEME = 'help://'
@@ -358,7 +368,9 @@ export function MarkdownRenderer({
     shortcutTableHeuristic = true,
     transformImageUri,
     imageMaxHeight,
+    purpose = 'documentation',
 }: Props) {
+    const scale = markdownScale(purpose)
     // Codespan text uses `primary` (the brand teal — has matching
     // light + dark tokens) rather than `accent`. `accent` in this
     // theme is a near-white background fill, so `color: accent`
@@ -374,41 +386,64 @@ export function MarkdownRenderer({
 
     const styles = useMemo<MarkedStyles>(
         () => ({
-            text: { color: foreground, fontSize: 15, lineHeight: 22 },
-            paragraph: { marginVertical: 6 },
+            text: { color: foreground, fontSize: scale.bodySize, lineHeight: scale.bodyLineHeight },
+            paragraph: { marginVertical: scale.paragraphSpacing },
             em: { fontStyle: 'italic' },
             strong: { fontWeight: '600' },
             link: { color: link, textDecorationLine: 'underline' },
+            // The library gives h1 and h2 a bottom border of their own, which
+            // our styles merge ON TOP of rather than replace — so a card
+            // comment drew a full-width rule under any `#` heading and read as
+            // if it had sections. Zeroed explicitly wherever a rule is wrong
+            // for the surface; the help hub still gets one.
             h1: {
                 color: foreground,
-                fontSize: 24,
-                fontWeight: '700',
-                marginTop: 16,
-                marginBottom: 8,
+                fontSize: scale.h1.size,
+                fontWeight: scale.h1.weight,
+                marginTop: scale.h1.marginTop,
+                marginBottom: scale.h1.marginBottom,
+                ...(scale.headingRule ? {} : { borderBottomWidth: 0, paddingBottom: 0 }),
             },
             h2: {
                 color: foreground,
-                fontSize: 20,
-                fontWeight: '600',
-                marginTop: 16,
-                marginBottom: 6,
+                fontSize: scale.h2.size,
+                fontWeight: scale.h2.weight,
+                marginTop: scale.h2.marginTop,
+                marginBottom: scale.h2.marginBottom,
+                ...(scale.headingRule ? {} : { borderBottomWidth: 0, paddingBottom: 0 }),
             },
             h3: {
                 color: foreground,
-                fontSize: 17,
-                fontWeight: '600',
-                marginTop: 12,
-                marginBottom: 4,
+                fontSize: scale.h3.size,
+                fontWeight: scale.h3.weight,
+                marginTop: scale.h3.marginTop,
+                marginBottom: scale.h3.marginBottom,
             },
             h4: {
                 color: foreground,
-                fontSize: 15,
-                fontWeight: '600',
-                marginTop: 10,
-                marginBottom: 4,
+                fontSize: scale.h4.size,
+                fontWeight: scale.h4.weight,
+                marginTop: scale.h4.marginTop,
+                marginBottom: scale.h4.marginBottom,
             },
-            h5: { color: muted, fontSize: 14, fontWeight: '600', marginTop: 8 },
-            h6: { color: muted, fontSize: 13, fontWeight: '600', marginTop: 8 },
+            // h5/h6 keep the muted color ONLY where headings carry document
+            // hierarchy. On a comment they are just small emphasis, and greying
+            // them made the deepest heading read as less important than the
+            // body text around it.
+            h5: {
+                color: purpose === 'documentation' ? muted : foreground,
+                fontSize: scale.h5.size,
+                fontWeight: scale.h5.weight,
+                marginTop: scale.h5.marginTop,
+                marginBottom: scale.h5.marginBottom,
+            },
+            h6: {
+                color: purpose === 'documentation' ? muted : foreground,
+                fontSize: scale.h6.size,
+                fontWeight: scale.h6.weight,
+                marginTop: scale.h6.marginTop,
+                marginBottom: scale.h6.marginBottom,
+            },
             codespan: {
                 color: codeColor,
                 backgroundColor: surfaceSecondary,
@@ -435,8 +470,12 @@ export function MarkdownRenderer({
                 marginVertical: 8,
             },
             hr: { borderBottomColor: border, borderBottomWidth: 1, marginVertical: 12 },
-            list: { marginVertical: 6 },
-            li: { color: foreground, fontSize: 15, lineHeight: 22 },
+            list: { marginVertical: scale.listSpacing },
+            li: {
+                color: foreground,
+                fontSize: scale.bodySize,
+                lineHeight: scale.bodyLineHeight,
+            },
             // The library merges these with its defaults and passes them
             // to HelpRenderer.table(), which then draws the per-cell grid.
             // Setting borderWidth: 0 here suppresses the library's
@@ -444,7 +483,7 @@ export function MarkdownRenderer({
             table: { borderColor: border, borderWidth: 0 },
             tableCell: { padding: 8 },
         }),
-        [foreground, muted, codeColor, link, surfaceSecondary, border]
+        [foreground, muted, codeColor, link, surfaceSecondary, border, scale, purpose]
     )
 
     // The glyph swap only ever applies off Mac — on a Mac the source glyphs

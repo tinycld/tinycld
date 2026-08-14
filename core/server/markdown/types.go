@@ -39,8 +39,15 @@ const (
 	// flattening is NOT copied here, because a doc seeded with plain cells
 	// loses its header row the first time it round-trips.
 	NodeTableHeader    = "tableHeader"
-	NodeImage          = "image"
-	NodeText           = "text"
+	NodeImage = "image"
+	NodeText  = "text"
+	// NodeMention is an @mention. It is an ATOM carrying only a user id — the
+	// name a reader sees is resolved at render time from the board roster, so
+	// the node has no children and no text of its own. That is why it needs an
+	// explicit case in the serializer: the default branch renders an unknown
+	// inline node's descendants, and an atom has none, so a mention would
+	// serialize to nothing and be wiped from the description on the next flush.
+	NodeMention        = "tinycldMention"
 	NodeHardBreak      = "hardBreak"
 	NodeHorizontalRule = "horizontalRule"
 )

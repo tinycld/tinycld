@@ -200,6 +200,55 @@ Package authors don't implement any of this, but should know it:
   match any element of multi-value fields; dates accept PB datetime, bare
   date, or RFC3339).
 
+## Your ingress must finish before it fires a trigger
+
+**If your package writes records around the one a trigger watches, wrap that
+write path in `app.RunInTransaction`.** This is the one execution detail that
+*is* your responsibility, and getting it wrong produces a rule that reports
+success and does nothing visible.
+
+Dispatch is bound to `OnRecordAfterCreateSuccess` (and the update/delete
+equivalents). Outside a transaction that hook fires *the instant the record is
+saved* — while the rest of your ingress function is still running. Rule actions
+then execute on a worker goroutine, concurrently with your remaining writes.
+
+Mail hit this. Its inbound path stored the message (firing the trigger), then
+wrote each recipient's `mail_thread_state` with `folder: "inbox"`. A
+`mail:move-to-folder` action archived the thread, and delivery's write landed
+afterwards and put it back:
+
+```go
+storeMessage(app, thread.Id, stored)   // fires the trigger; actions start
+...
+ensureThreadState(app, thread.Id, userID, "inbox", false)  // clobbers the action
+```
+
+The run logged `matched: true` with `status: "ok"`. Nothing was red — no error,
+no failed test — and the message simply stayed in the inbox.
+
+The fix is structural, because `OnModelAfterCreateSuccess` is *"delayed and
+executed only AFTER the transaction has been committed"* and is **not**
+triggered on rollback:
+
+```go
+return app.RunInTransaction(func(txApp core.App) error {
+    // every write for this delivery, using txApp
+    return nil
+})  // hook fires here, once, over settled state
+```
+
+Two properties you get for free: rules fire exactly once with all related rows
+in place, and a failure partway through means rules never fire at all rather
+than firing against a half-written record.
+
+Reordering so the triggering save comes last also works, but leaves the
+ordering load-bearing — the next person to add a write to that function
+reintroduces the bug. Prefer the transaction.
+
+Worth checking in your package: bulk importers that save in a loop (each
+iteration is a dispatch), and any path that writes a parent/summary record
+after the child rows.
+
 ## The catalog (how the UI learns about you)
 
 At boot the engine resolves every declared trigger/action against live
@@ -225,6 +274,11 @@ unavailable rather than vanishing.
 - E2E: drive the builder UI and use your package's real ingress (mail uses
   its inbound webhook helper) — never raw PB writes. `mail/tests/rules.spec.ts`
   is the reference.
+- **Assert the visible effect, not the run row.** `rule_runs` saying
+  `matched: true` / `status: "ok"` only proves the action was called — it
+  survives the ingress race above, and it survives an action that writes
+  somewhere no view reads. Assert what the user would see: the row appears in
+  the destination, and is gone from where it was.
 
 ## Gotchas
 
