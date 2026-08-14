@@ -262,6 +262,10 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // when the WebView sends a `stateUpdate`, which our custom Editor
     // only sends after init arrives — chicken-and-egg.
     const [webviewReady, setWebviewReady] = useState(false)
+    // Mount timestamp for the dev-only phase timings below. A WebView editor is
+    // an expensive thing to create — a browser cold start plus a bundle — and
+    // the three marks (page-ready, init-sent, first-height) are what tell you
+    // WHICH of those phases a slow open actually spent its time in.
     const mountAtRef = useRef(Date.now())
 
     // Height the page reported for its own content, held in a tiny store
@@ -293,7 +297,9 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         if (!webview) return
         const message = makeMessage('app', 'init', initPayload)
         try {
-            console.log('[LAG] init-sent at', Date.now() - mountAtRef.current, 'ms')
+            if (__DEV__) {
+                console.debug('[editor.mount] init-sent', Date.now() - mountAtRef.current, 'ms')
+            }
             webview.postMessage(JSON.stringify(message))
             initSentRef.current = true
         } catch {
@@ -362,7 +368,13 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             // alongside its dispatch), but it doesn't flip any
             // bridgeState flag from it.
             if (parsed.type === 'editor-ready') {
-                console.log('[LAG] page-ready at', Date.now() - mountAtRef.current, 'ms')
+                if (__DEV__) {
+                    console.debug(
+                        '[editor.mount] page-ready',
+                        Date.now() - mountAtRef.current,
+                        'ms'
+                    )
+                }
                 setWebviewReady(true)
                 return
             }
@@ -379,7 +391,13 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                 if (parsed.type === 'content-height') {
                     const height = (parsed.payload as { height?: unknown } | undefined)?.height
                     if (typeof height === 'number' && height > 0) {
-                        console.log('[LAG] first-height at', Date.now() - mountAtRef.current, 'ms')
+                        if (__DEV__) {
+                            console.debug(
+                                '[editor.mount] first-height',
+                                Date.now() - mountAtRef.current,
+                                'ms'
+                            )
+                        }
                         setContentHeight(height)
                     }
                     return
