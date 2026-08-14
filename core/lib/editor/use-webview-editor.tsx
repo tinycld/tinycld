@@ -267,6 +267,14 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // the three marks (page-ready, init-sent, first-height) are what tell you
     // WHICH of those phases a slow open actually spent its time in.
     const mountAtRef = useRef(Date.now())
+    // t0. Logged once per editor so the marks below have a visible origin —
+    // without it a slow open is indistinguishable from an editor that mounted
+    // late for reasons upstream of this hook.
+    const loggedMountRef = useRef(false)
+    if (__DEV__ && !loggedMountRef.current) {
+        loggedMountRef.current = true
+        console.log('[editor.mount] mounted (t0)')
+    }
 
     // Height the page reported for its own content, held in a tiny store
     // rather than state so that a new measurement re-renders ONLY the box
@@ -298,7 +306,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         const message = makeMessage('app', 'init', initPayload)
         try {
             if (__DEV__) {
-                console.debug('[editor.mount] init-sent', Date.now() - mountAtRef.current, 'ms')
+                console.log('[editor.mount] init-sent', Date.now() - mountAtRef.current, 'ms')
             }
             webview.postMessage(JSON.stringify(message))
             initSentRef.current = true
@@ -369,11 +377,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             // bridgeState flag from it.
             if (parsed.type === 'editor-ready') {
                 if (__DEV__) {
-                    console.debug(
-                        '[editor.mount] page-ready',
-                        Date.now() - mountAtRef.current,
-                        'ms'
-                    )
+                    console.log('[editor.mount] page-ready', Date.now() - mountAtRef.current, 'ms')
                 }
                 setWebviewReady(true)
                 return
@@ -392,7 +396,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                     const height = (parsed.payload as { height?: unknown } | undefined)?.height
                     if (typeof height === 'number' && height > 0) {
                         if (__DEV__) {
-                            console.debug(
+                            console.log(
                                 '[editor.mount] first-height',
                                 Date.now() - mountAtRef.current,
                                 'ms'
