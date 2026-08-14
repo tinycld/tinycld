@@ -51,6 +51,7 @@ function FieldMenu({
                     {fields.map(field => (
                         <MenuActionItem
                             key={field.key}
+                            testID={`condition-field-option-${field.key}`}
                             label={field.label}
                             isActive={field.key === condition.field}
                             onPress={() => onSelectField(field)}
