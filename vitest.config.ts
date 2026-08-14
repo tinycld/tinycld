@@ -107,6 +107,15 @@ export default defineConfig({
                 find: /^expo-image$/,
                 replacement: path.join(APP_DIR, '..', 'tests', 'expo-image-stub.tsx'),
             },
+            // @10play/tentap-editor's `react-native` export condition resolves
+            // to src/index.tsx, whose RichText and bridge modules reach
+            // react-native internals carrying Flow syntax. Same failure mode as
+            // the react-native-svg stub above; without it any test importing
+            // use-webview-editor.tsx dies at collect time.
+            {
+                find: /^@10play\/tentap-editor$/,
+                replacement: path.join(APP_DIR, 'tests', 'tentap-editor-stub.cjs'),
+            },
             // ~/* — package source. Resolved relative to the package's own dir
             // at invocation time via the test root, so we map it dynamically below.
         ],
