@@ -128,20 +128,52 @@ and "save" have nowhere to live.
 #### Switch policy
 
 When a surface acquires the instance from another, the outgoing surface's text
-is **committed if it has commit semantics, discarded if it does not**. Applied
-per surface, this preserves existing behavior:
+is **committed if it has commit semantics, and otherwise preserved rather than
+lost**. Applied per surface, this preserves existing behavior in every case:
 
 - An inline comment edit already commits on blur today → switching away commits.
   Unchanged.
-- The composer has no blur-commit → its draft is discarded.
+- The composer has no blur-commit → its draft is stashed, not discarded. See
+  below.
 
-This is a deliberate, known behavior change. Today `CommentComposer` stays
-mounted for the life of the open card specifically so a half-typed draft
-survives (`CommentComposer.tsx:44` documents this). Under a singleton, opening
-the composer, typing, then tapping an existing comment to edit will discard the
-composer draft. Accepted: the affected sequence is narrow, and the alternative
-(a host-side draft store keyed by surface) was considered and set aside as scope
-not worth carrying now.
+Discarding the composer's draft outright would be a behavior regression. Today
+`CommentComposer` stays mounted for the life of the open card specifically so a
+half-typed draft survives (`CommentComposer.tsx:44` documents this), and under a
+singleton that mount no longer holds the text. A composer-scoped draft store
+closes exactly that gap.
+
+#### The composer draft store
+
+Release already has the outgoing text in hand — the singleton must be read
+before it is handed over. For the composer, that value is kept instead of
+dropped:
+
+- On **release**, read the content back through the format's channel
+  (`markdownHost.get()`, `use-rich-editor.native.tsx:410`) and stash it.
+- On **acquire**, seed a stashed draft into the init payload's `initialContent`
+  in place of the persisted value.
+- On **commit or explicit clear**, drop the entry.
+
+**Scoped to the composer, and to the life of the open card.** That is the whole
+of the lifetime policy, and it costs nothing to enforce: `CardDetail` is already
+keyed on the card id at both mount sites (`CardPeek.tsx:172` and
+`screens/[cardId].tsx:167`, both keyed because the description editor binds to
+one Yjs fragment per mount), so a card switch remounts the subtree and the store
+goes with it. The result is today's behavior exactly — a draft that survives
+switching to another editor within the card, and dies with the card.
+
+Deliberately **not** carried further:
+
+- **Not the description.** It is Yjs-backed, so a stashed draft could contradict
+  the shared document. It has no draft to lose in any case — every keystroke is
+  already flushed.
+- **Not inline comment edits.** They commit on blur today, so switching away
+  commits rather than stashing. Unchanged.
+- **Not across card close, logout, or restart.** Surviving a reopen would be new
+  behavior nobody asked for, and it is what forces an eviction policy, a
+  persisted-vs-draft arbitration on acquire, and an answer for what clears a
+  draft whose comment someone else deleted. Scoping to the mount avoids all of
+  it.
 
 ### Web is a pass-through
 
@@ -218,12 +250,17 @@ a broken editor.
 
   **E2E cannot cover the switch policy.** Playwright runs on web, where there is
   no warm singleton and each surface still mounts its own editor — so the
-  commit-or-discard behavior never triggers there. No existing spec asserts
-  composer-draft survival across an inline edit (checked), so nothing goes red;
-  but nothing guards it either. The switch policy is therefore covered by unit
-  tests over the acquire/release state machine (which surface holds the
-  instance, what release does to its content) rather than end to end, and the
-  discard path needs one manual device check.
+  handover never triggers there. No existing spec asserts composer-draft
+  survival across an inline edit (checked), so nothing goes red; but nothing
+  guards it either.
+
+  The switch policy is therefore covered by unit tests over the acquire/release
+  state machine — which surface holds the instance, what release does to its
+  content — rather than end to end. The draft store is plain host code with no
+  WebView in it, so it is directly unit-testable: stash on release, seed on
+  acquire, drop on commit, and that a description or inline-edit release stashes
+  nothing. One manual device check confirms the composer draft survives a
+  round-trip through an inline edit.
 - **Device:** the measurement that motivated this work, re-taken. The four
   `__DEV__` marks in `use-webview-editor.tsx` stay; a warm acquire should show
   no `page-ready` mark at all, only `init-sent` and `first-height`.
@@ -235,5 +272,7 @@ a broken editor.
   picker has not been exercised there. Called out in the handoff doc as owed
   regardless of this work.
 - **Backfilling old `@someone` mentions.** A migration, no decision made.
-- **A host-side draft store.** Considered for the composer-draft case above and
-  set aside; revisit if the discard proves annoying in use.
+- **Draft persistence beyond the open card.** The composer draft store is scoped
+  to `CardDetail`'s mount (see above). Surviving card close, logout, or restart
+  is deliberately excluded — it is new behavior, and it is what would force an
+  eviction policy and a persisted-vs-draft arbitration.
