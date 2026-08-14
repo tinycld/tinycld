@@ -10,6 +10,22 @@ const CORE_DIR = path.join(APP_DIR, 'core')
 
 export default defineConfig({
     resolve: {
+        // Platform-split modules (`use-rich-editor.web.tsx` / `.native.tsx`, with
+        // a `.d.ts` carrying the shared contract) are resolved by Metro at build
+        // time from a bare `./use-rich-editor` specifier. Vite has no such rule,
+        // so a test importing one fails to resolve the bare path. Prefer the web
+        // variant, which is the platform unit tests run as.
+        extensions: [
+            '.web.tsx',
+            '.web.ts',
+            '.web.jsx',
+            '.web.js',
+            '.tsx',
+            '.ts',
+            '.jsx',
+            '.js',
+            '.json',
+        ],
         alias: [
             // @tinycld/core/* — Vite's exports resolution lacks Metro's
             // directory-index fallback, so remap straight to the core dir.

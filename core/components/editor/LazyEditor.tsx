@@ -18,6 +18,20 @@ export interface LazyEditorSlots {
     setDialogOpen: (open: boolean) => void
 }
 
+export interface LazyEditorHeaderState {
+    /** Drives the label ⇄ toolbar swap; the row itself is always rendered. */
+    isEditing: boolean
+    /** Null while idle — there is no editor to drive a toolbar with. */
+    slots: LazyEditorSlots | null
+}
+
+export interface LazyEditorRenderSlots {
+    /** The row above the surface, or null when no `renderHeader` was given. */
+    header: ReactNode
+    /** The read view, or the editing surface once a session opens. */
+    body: ReactNode
+}
+
 export interface LazyEditorProps {
     /** Shown while idle. The consumer's component — core never interprets content. */
     readView: ReactNode
@@ -34,6 +48,16 @@ export interface LazyEditorProps {
     onCancel?: () => void
     /** The consumer's chrome around the editing surface. */
     renderEditor: (slots: LazyEditorSlots) => ReactNode
+    /**
+     * A row drawn ABOVE the editing surface, placed by the caller rather than
+     * nested in the returned tree.
+     *
+     * Only meaningful through {@link useLazyEditor}. A card description draws
+     * its formatting toolbar into a row that must stay a direct child of the
+     * scroll view for `stickyHeaderIndices` to pin it, so the two halves cannot
+     * be one tree. Given no `renderHeader`, the header slot is null.
+     */
+    renderHeader?: (state: LazyEditorHeaderState) => ReactNode
     testID?: string
     accessibilityLabel?: string
 }
@@ -55,7 +79,18 @@ export interface LazyEditorProps {
  * back through — so mail's HTML surfaces use this exactly as cards' markdown
  * ones do.
  */
-export function LazyEditor({
+export function LazyEditor(props: LazyEditorProps) {
+    return <>{useLazyEditor(props).body}</>
+}
+
+/**
+ * The slot-returning form of {@link LazyEditor}.
+ *
+ * Same swap, same commit rules; the only difference is that the header comes
+ * back separately instead of nested, for a caller that must place the two halves
+ * in different parents. `LazyEditor` is this hook with the header dropped.
+ */
+export function useLazyEditor({
     readView,
     value,
     contentFormat,
@@ -66,9 +101,10 @@ export function LazyEditor({
     onCommit,
     onCancel,
     renderEditor,
+    renderHeader,
     testID,
     accessibilityLabel = 'Edit',
-}: LazyEditorProps) {
+}: LazyEditorProps): LazyEditorRenderSlots {
     const [isEditing, setIsEditing] = useState(false)
     const [isDialogOpen, setIsDialogOpen] = useState(false)
     // The revert/no-op baseline, snapshotted when the session opens so a
@@ -82,6 +118,30 @@ export function LazyEditor({
         contentFormat,
         initialContent: value,
     })
+
+    const submitRef = useRef<() => void>(() => {})
+    const blurRef = useRef<() => void>(() => {})
+
+    // The warm instance when one is available; otherwise this surface mounts its
+    // own and pays the cold start. Warm is an optimization, never a correctness
+    // dependency.
+    //
+    // Called unconditionally, including while idle: a hook cannot sit behind the
+    // swap's branch. On native that costs nothing — the WebView belongs to the
+    // warm host, and this hook only builds the host-side handle. On web it is
+    // the same Tiptap instance the previous hand-rolled swaps mounted.
+    const own = useRichEditor({
+        ...editorOptions,
+        contentFormat,
+        initialContent: value,
+        autofocus: true,
+        onFocus: () => {
+            hasFocusedRef.current = true
+        },
+        onBlur: () => blurRef.current(),
+        onSubmitShortcut: () => submitRef.current(),
+    })
+    const active = lease.result ?? own
 
     const startEditing = useCallback(() => {
         baselineRef.current = value
@@ -97,75 +157,6 @@ export function LazyEditor({
         setIsEditing(false)
     }, [lease])
 
-    if (!isEditing) {
-        if (!canEdit) return <>{readView}</>
-        return (
-            <Pressable
-                testID={testID}
-                onPress={startEditing}
-                accessibilityRole="button"
-                accessibilityLabel={accessibilityLabel}
-            >
-                {readView}
-            </Pressable>
-        )
-    }
-
-    return (
-        <LazyEditorSession
-            lease={lease}
-            value={value}
-            contentFormat={contentFormat}
-            editorOptions={editorOptions}
-            commitOnBlur={commitOnBlur}
-            isDialogOpen={isDialogOpen}
-            setDialogOpen={setIsDialogOpen}
-            baselineRef={baselineRef}
-            hasFocusedRef={hasFocusedRef}
-            settledRef={settledRef}
-            onCommit={onCommit}
-            onCancel={onCancel}
-            endSession={endSession}
-            renderEditor={renderEditor}
-        />
-    )
-}
-
-/**
- * The live editing session, split out so the fallback `useRichEditor` below is
- * only ever called while editing — a hook cannot sit behind the swap's branch.
- */
-function LazyEditorSession({
-    lease,
-    value,
-    contentFormat,
-    editorOptions,
-    commitOnBlur,
-    isDialogOpen,
-    setDialogOpen,
-    baselineRef,
-    hasFocusedRef,
-    settledRef,
-    onCommit,
-    onCancel,
-    endSession,
-    renderEditor,
-}: {
-    lease: ReturnType<typeof useWarmEditor>
-    value: string
-    contentFormat: 'markdown' | 'html'
-    editorOptions: UseRichEditorOptions
-    commitOnBlur: boolean
-    isDialogOpen: boolean
-    setDialogOpen: (open: boolean) => void
-    baselineRef: { current: string }
-    hasFocusedRef: { current: boolean }
-    settledRef: { current: boolean }
-    onCommit: (content: string) => void
-    onCancel?: () => void
-    endSession: () => void
-    renderEditor: (slots: LazyEditorSlots) => ReactNode
-}) {
     const readContent = useCallback(
         async (editor: EditorHandle): Promise<string> =>
             contentFormat === 'markdown'
@@ -173,25 +164,6 @@ function LazyEditorSession({
                 : editor.getHTML(),
         [contentFormat]
     )
-
-    const submitRef = useRef<() => void>(() => {})
-    const blurRef = useRef<() => void>(() => {})
-
-    // The warm instance when one is available; otherwise this surface mounts
-    // its own and pays the cold start. Warm is an optimization, never a
-    // correctness dependency.
-    const own = useRichEditor({
-        ...editorOptions,
-        contentFormat,
-        initialContent: value,
-        autofocus: true,
-        onFocus: () => {
-            hasFocusedRef.current = true
-        },
-        onBlur: () => blurRef.current(),
-        onSubmitShortcut: () => submitRef.current(),
-    })
-    const active = lease.result ?? own
 
     const submit = useCallback(() => {
         if (settledRef.current) return
@@ -213,7 +185,13 @@ function LazyEditorSession({
             onCommit(content)
             endSession()
         })()
-    }, [active.editor, readContent, onCommit, onCancel, endSession, baselineRef, settledRef])
+    }, [active.editor, readContent, onCommit, onCancel, endSession])
+
+    const cancel = useCallback(() => {
+        settledRef.current = true
+        endSession()
+        onCancel?.()
+    }, [endSession, onCancel])
 
     submitRef.current = submit
     blurRef.current = () => {
@@ -233,22 +211,40 @@ function LazyEditorSession({
         if (!commitOnBlur && hasFocusedRef.current && !isDialogOpen) endSession()
     }
 
-    const cancel = useCallback(() => {
-        settledRef.current = true
-        endSession()
-        onCancel?.()
-    }, [endSession, onCancel, settledRef])
+    if (!isEditing) {
+        return {
+            // Rendered even while idle: the row reserves its height, so swapping
+            // a toolbar into it does not shift the prose under the reader's
+            // finger at the moment they tap it.
+            header: renderHeader?.({ isEditing: false, slots: null }) ?? null,
+            body: canEdit ? (
+                <Pressable
+                    testID={testID}
+                    onPress={startEditing}
+                    accessibilityRole="button"
+                    accessibilityLabel={accessibilityLabel}
+                >
+                    {readView}
+                </Pressable>
+            ) : (
+                readView
+            ),
+        }
+    }
 
-    return (
-        <>
-            {renderEditor({
-                EditorComponent: active.EditorComponent,
-                commands: active.commands,
-                toolbarState: active.toolbarState,
-                submit,
-                cancel,
-                setDialogOpen,
-            })}
-        </>
-    )
+    // One set of slots feeds both halves, so the header's toolbar and the body's
+    // surface are driven by the SAME editor rather than two mounts of it.
+    const slots: LazyEditorSlots = {
+        EditorComponent: active.EditorComponent,
+        commands: active.commands,
+        toolbarState: active.toolbarState,
+        submit,
+        cancel,
+        setDialogOpen: setIsDialogOpen,
+    }
+
+    return {
+        header: renderHeader?.({ isEditing: true, slots }) ?? null,
+        body: renderEditor(slots),
+    }
 }
