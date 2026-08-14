@@ -18,7 +18,17 @@ import { useCallback, useSyncExternalStore } from 'react'
  * other's WebView.
  */
 export interface EditorOverlayHandle {
+    /** Where responses are POSTED. Only the WebView ref can reach the page. */
     webViewRef: unknown
+    /**
+     * What the overlay is MEASURED against — the host View wrapping the
+     * WebView. Separate from webViewRef because under the New Architecture
+     * that ref carries native WebView commands and no measurement methods, so
+     * measuring it returns nothing and the popover is dismissed before it can
+     * be drawn. Optional: a caller that has no host view still positions
+     * nothing, which is the pre-existing fail-closed behavior.
+     */
+    measureRef?: unknown
     editorInstanceId: string
 }
 

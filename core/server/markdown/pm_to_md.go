@@ -158,6 +158,17 @@ func renderInline(nodes []PMNode) string {
 			// Two trailing spaces is the portable hard break; a backslash
 			// break is GFM-only and reads as a stray character elsewhere.
 			b.WriteString("  \n")
+		case NodeMention:
+			// Back to the wire token, which is what the whole mention feature
+			// is keyed on: the flush hook parses the ID out of the stored
+			// description to decide who to notify, and an id survives the
+			// person renaming themselves. The display name is written beside
+			// it as a FALLBACK, so the mention stays readable to anyone who
+			// cannot resolve the id — leaving a board does not un-say the
+			// sentence that named you.
+			if userID := attrString(node.Attrs, "userId"); userID != "" {
+				b.WriteString(serializeMention(userID, attrString(node.Attrs, "name")))
+			}
 		case NodeText:
 			if node.Text == "\n" {
 				b.WriteString("  \n")
@@ -481,4 +492,26 @@ func itoa(n int) string {
 		buf[i] = '-'
 	}
 	return string(buf[i:])
+}
+
+// serializeMention writes the stored form of a mention.
+//
+// The display name rides along so the mention stays readable when the id cannot
+// be resolved — the person left the board, or the roster has not loaded. Names
+// are user-controlled, so `]` and `|` are PERCENT-encoded: they would otherwise
+// end the token early and spill the rest into visible text, and a backslash
+// escape does not survive (markdown strips it before the token is matched).
+// Mirrors serializeMentionToken in mention-node.ts.
+func serializeMention(userID, name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "[[@" + userID + "]]"
+	}
+	return "[[@" + userID + "|" + escapeMentionName(trimmed) + "]]"
+}
+
+// `%` is encoded FIRST so decoding cannot turn a literal `%5D` into a bracket.
+func escapeMentionName(name string) string {
+	r := strings.NewReplacer("%", "%25", "|", "%7C", "]", "%5D")
+	return r.Replace(name)
 }

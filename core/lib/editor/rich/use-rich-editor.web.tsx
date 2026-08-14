@@ -1,5 +1,5 @@
 import { EditorContent, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { View } from 'react-native'
 import { useThemeColor } from '../../use-app-theme'
 import type { EditorCommands, EditorHandle, EditorResult, EditorToolbarState } from '../types'
@@ -12,6 +12,7 @@ import {
 import { buildRichEditorExtensions } from './extensions'
 import { extractImageFilesFromDrop, extractImageFilesFromPaste } from './extract-image-files'
 import { repairMarkdown } from './markdown-repair'
+import { setMentionLabels } from './mention-node'
 import type { UseRichEditorOptions } from './options'
 import type { TriggerConfig } from './triggers'
 
@@ -138,11 +139,39 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                         get insertTemplate() {
                             return current()?.insertTemplate ?? ''
                         },
+                        get insertsMentionNode() {
+                            return current()?.insertsMentionNode
+                        },
                         onStateChange: state => current()?.onStateChange(state),
                     }
                 }),
         [triggerSignature]
     )
+
+    // Keep each mention trigger's label roster current.
+    //
+    // The extension list is deliberately NOT rebuilt when the roster changes
+    // (that would recreate the editor on every membership change), so a node
+    // registered only at build time would resolve names against whatever the
+    // query had returned at mount — usually nothing, since it resolves after.
+    // Publishing on every change is what makes a mention render as a name
+    // rather than "@someone".
+    const mentionRosterSignature = JSON.stringify(
+        (triggers ?? [])
+            .filter(t => t.insertsMentionNode)
+            .map(t => [t.id, t.allItems.map(i => [i.id, i.label])])
+    )
+    useEffect(() => {
+        for (const [id, pairs] of JSON.parse(mentionRosterSignature) as [
+            string,
+            [string, string][],
+        ][]) {
+            setMentionLabels(
+                id,
+                pairs.map(([itemId, label]) => ({ id: itemId, label }))
+            )
+        }
+    }, [mentionRosterSignature])
 
     const imageDropRef = useRef(onImageDrop)
     imageDropRef.current = onImageDrop

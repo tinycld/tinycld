@@ -111,6 +111,19 @@ export interface SerializableTriggerConfig {
      * removes the trigger text and inserts nothing.
      */
     insertTemplate: string
+    /**
+     * Insert a mention NODE rather than the template's raw text.
+     *
+     * The node carries the chosen item's id and renders that person's name, so
+     * the document reads as prose while still serializing to `insertTemplate`'s
+     * token. Without it the picker writes the template literally and the reader
+     * is left looking at `[[@9rsya4ylg4y2vkp]]` mid-sentence.
+     *
+     * Serializable, so the native page makes the same choice — a mention that
+     * was a node on web and raw text on the phone would round-trip differently
+     * depending on which device last touched the card.
+     */
+    insertsMentionNode?: boolean
 }
 
 export interface TriggerConfig extends SerializableTriggerConfig {
@@ -253,9 +266,27 @@ export function createTriggerExtension(config: TriggerConfig): Extension {
                     allowSpaces: false,
                     items: ({ query: q }) => filterTriggerItems(config.allItems, q, config.limit),
                     command: ({ editor, range, props }) => {
-                        const text = renderInsertTemplate(config.insertTemplate, props)
                         const chain = editor.chain().focus().deleteRange(range)
-                        if (text) chain.insertContent(text)
+                        if (config.insertsMentionNode) {
+                            // A node plus the trailing space the template's
+                            // text form carried, so typing continues after the
+                            // mention rather than inside it. The node is an
+                            // atom, so without the space the caret would sit
+                            // against it with nowhere to put the next word.
+                            chain.insertContent([
+                                {
+                                    type: 'tinycldMention',
+                                    // The label rides along so the mention stays
+                                    // readable for anyone who cannot resolve the
+                                    // id later — see the mention node's token.
+                                    attrs: { userId: props.id, name: props.label },
+                                },
+                                { type: 'text', text: ' ' },
+                            ])
+                        } else {
+                            const text = renderInsertTemplate(config.insertTemplate, props)
+                            if (text) chain.insertContent(text)
+                        }
                         chain.run()
                     },
                     render:

@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useState } from 'react'
-import { Dimensions, Modal, Platform, Pressable, View } from 'react-native'
+import { Dimensions, Platform, StyleSheet, View } from 'react-native'
+import { FullWindowOverlay } from 'react-native-screens'
 import { UI_POPOVER_RESULT } from '../message-bus/popover-protocol'
 import { makeMessage } from '../message-bus/types'
 import {
@@ -9,6 +10,7 @@ import {
     anchoredOverlayReducer,
     decodeUiMessage,
     initialAnchoredOverlayState,
+    type PopoverPosition,
     resolvePopoverPosition,
 } from './anchored-overlay-state'
 import { subscribeUiMessage } from './ui-message-bus'
@@ -39,6 +41,16 @@ interface WebViewMeasurable {
             pageY: number
         ) => void
     ): void
+    /**
+     * The PRIMARY measurement, despite the name order here.
+     *
+     * It reports WINDOW coordinates, which is the space the popover is
+     * positioned in — `measure` reports parent-relative ones, so an editor low
+     * on the screen anchored its popover far above the caret. It is also the
+     * one that fires at all for a WebView under the New Architecture
+     * (Bridgeless), where `measure` silently never invokes its callback.
+     */
+    measureInWindow(cb: (x: number, y: number, width: number, height: number) => void): void
     postMessage(message: string): void
 }
 
@@ -64,6 +76,13 @@ export interface AnchoredOverlayRegistry {
 
 export interface AnchoredOverlayControllerProps {
     webViewRef: WebViewRef
+    /**
+     * The view to measure for positioning. Falls back to `webViewRef`, which
+     * only works on the old architecture — under Bridgeless the WebView ref
+     * exposes no measurement methods, so a caller that wants a popover to
+     * actually appear must pass the host view wrapping the editor.
+     */
+    measureRef?: WebViewRef
     registry: AnchoredOverlayRegistry
     /**
      * Which editor's popovers this controller answers. Omitted → it answers
@@ -83,27 +102,58 @@ export interface AnchoredOverlayControllerProps {
 async function measureWebView(
     ref: WebViewRef
 ): Promise<{ pageX: number; pageY: number; width: number; height: number } | null> {
+    // measureInWindow FIRST, and it is the one that is actually correct here.
+    //
+    // The popover is positioned in screen space, and only measureInWindow
+    // reports screen coordinates. `measure`'s pageX/pageY are relative to the
+    // view's PARENT, which for an editor low on the screen — the comment
+    // composer pinned at the bottom of a card — is a far smaller Y than the
+    // caret's real position, so the popover drew hundreds of points above the
+    // text it belonged to.
+    //
+    // `measure` stays as the fallback rather than being dropped: it is the one
+    // that answers when the view is not yet attached to a window.
+    const inWindow = await runMeasure(ref, 'measureInWindow')
+    if (inWindow && inWindow.width > 0) return inWindow
+    return runMeasure(ref, 'measure')
+}
+
+/**
+ * Run one of the two measurement methods, resolving null if it does not answer.
+ *
+ * Both are callback-based and neither reports failure, so the timeout is the
+ * only way to notice that a call was dropped — which is the normal outcome for
+ * `measure` on a WebView under Bridgeless.
+ */
+function runMeasure(
+    ref: WebViewRef,
+    method: 'measure' | 'measureInWindow'
+): Promise<{ pageX: number; pageY: number; width: number; height: number } | null> {
     const r = ref?.current as Partial<WebViewMeasurable> | null | undefined
-    if (!r || typeof r.measure !== 'function') return null
+    if (!r || typeof r[method] !== 'function') return Promise.resolve(null)
     return new Promise(resolve => {
         let resolved = false
-        const fallback = setTimeout(() => {
-            if (!resolved) {
-                resolved = true
-                resolve(null)
-            }
-        }, 250)
-        try {
-            ;(r as WebViewMeasurable).measure((_x, _y, width, height, pageX, pageY) => {
-                if (resolved) return
-                resolved = true
-                clearTimeout(fallback)
-                resolve({ pageX, pageY, width, height })
-            })
-        } catch {
-            clearTimeout(fallback)
+        const settle = (
+            value: { pageX: number; pageY: number; width: number; height: number } | null
+        ) => {
+            if (resolved) return
             resolved = true
-            resolve(null)
+            clearTimeout(fallback)
+            resolve(value)
+        }
+        const fallback = setTimeout(() => settle(null), 250)
+        try {
+            if (method === 'measureInWindow') {
+                ;(r as WebViewMeasurable).measureInWindow((x, y, width, height) => {
+                    settle({ pageX: x, pageY: y, width, height })
+                })
+            } else {
+                ;(r as WebViewMeasurable).measure((_x, _y, width, height, pageX, pageY) => {
+                    settle({ pageX, pageY, width, height })
+                })
+            }
+        } catch {
+            settle(null)
         }
     })
 }
@@ -134,11 +184,12 @@ function postUiToWebView(ref: WebViewRef, type: string, payload: unknown, reques
 // Modal), which keeps screen-level mounting platform-agnostic.
 export function AnchoredOverlayController({
     webViewRef,
+    measureRef,
     registry,
     editorInstanceId,
 }: AnchoredOverlayControllerProps): React.ReactElement | null {
     const [state, dispatch] = useReducer(anchoredOverlayReducer, initialAnchoredOverlayState)
-    const [screenPos, setScreenPos] = useState<{ top: number; left: number } | null>(null)
+    const [screenPos, setScreenPos] = useState<PopoverPosition | null>(null)
 
     // Subscribe to the bus so 'show-popover' / 'popover-update' /
     // 'popover-dismiss-on-scroll' / 'popover-exited' messages get
@@ -176,7 +227,7 @@ export function AnchoredOverlayController({
         let cancelled = false
         const open = state.open
         ;(async () => {
-            const m = await measureWebView(webViewRef)
+            const m = await measureWebView(measureRef ?? webViewRef)
             if (cancelled) return
             if (!m) {
                 // Measure failed (no ref, timed out, threw). Falling
@@ -195,18 +246,17 @@ export function AnchoredOverlayController({
                 return
             }
             const { width: vw, height: vh } = Dimensions.get('window')
-            setScreenPos(
-                resolvePopoverPosition({
-                    rect: open.rect,
-                    webViewOriginX: m.pageX,
-                    webViewOriginY: m.pageY,
-                    viewportWidth: vw,
-                    viewportHeight: vh,
-                    popoverWidth: POPOVER_WIDTH_PX,
-                    popoverHeightEstimate: POPOVER_HEIGHT_ESTIMATE_PX,
-                    gap: POPOVER_GAP_PX,
-                })
-            )
+            const pos = resolvePopoverPosition({
+                rect: open.rect,
+                webViewOriginX: m.pageX,
+                webViewOriginY: m.pageY,
+                viewportWidth: vw,
+                viewportHeight: vh,
+                popoverWidth: POPOVER_WIDTH_PX,
+                popoverHeightEstimate: POPOVER_HEIGHT_ESTIMATE_PX,
+                gap: POPOVER_GAP_PX,
+            })
+            setScreenPos(pos)
         })()
         return () => {
             cancelled = true
@@ -230,53 +280,83 @@ export function AnchoredOverlayController({
         dispatch({ type: 'respond', requestId: open.requestId })
     }
 
-    const dismissExternal = () => {
-        postUiToWebView(
-            webViewRef,
-            UI_POPOVER_RESULT,
-            { action: 'dismiss' as AnchoredOverlayResponseAction },
-            open.requestId
-        )
-        dispatch({ type: 'dismiss-external' })
-    }
-
-    // Modal is transparent so the absolutely-positioned popover floats
-    // over the WebView at the computed screen coords. The full-screen
-    // Pressable behind it captures backdrop taps for dismiss without
-    // intercepting touches on the popover itself.
+    // Deliberately NOT a <Modal>. On iOS a Modal is a separate window that
+    // takes first responder the moment it appears, which blurs the WebView and
+    // dismisses the soft keyboard — so the caret vanished mid-word and the user
+    // could not keep typing to narrow the list, which is the whole point of an
+    // autocomplete. (Worse, with the keyboard gone the editor no longer held
+    // the keys, so on iOS the next letter reached the global shortcut matcher.)
+    //
+    // An absolutely-positioned sibling in the SAME window has no first-responder
+    // of its own, so the WebView keeps focus and the keyboard stays up. The
+    // coordinates are already screen-space — resolvePopoverPosition translated
+    // them through the WebView's measured origin — so the layer this renders
+    // into must also be screen-space: it is pinned to the full window rather
+    // than laid out in flow, which is what `position: absolute` with all four
+    // insets at 0 gives us inside a parent that does not clip.
+    //
+    // pointerEvents="box-none" on the wrapper is load-bearing: it lets touches
+    // pass through the transparent full-screen layer to the editor underneath,
+    // so tapping outside the popover still moves the caret rather than being
+    // swallowed by an invisible backdrop.
     return (
-        <Modal
-            transparent
-            visible
-            animationType="none"
-            onRequestClose={dismissExternal}
-            // statusBarTranslucent matches our app's other Modals so the
-            // popover anchor math (which uses Dimensions.get('window'))
-            // matches the actual layer the popover renders into.
-            statusBarTranslucent
-        >
-            <Pressable
-                onPress={dismissExternal}
-                accessibilityRole="button"
-                accessibilityLabel="Dismiss popover"
-                style={{ flex: 1 }}
+        <ScreenOverlayLayer>
+            {/* There is no backdrop catcher on purpose. Tapping away moves the
+                caret in the still-focused editor, which breaks the trigger and
+                makes the page post popover-exited — the overlay closes on its
+                own. A full-screen catcher would have to swallow that tap to
+                report it, so the tap would dismiss the popover WITHOUT moving
+                the caret, and the user would have to tap twice. */}
+            {/* Exactly one of top/bottom is set: below the caret the popover
+                hangs from its top edge, flipped above it the BOTTOM edge is
+                pinned to the caret instead. Anchoring the flipped case by its
+                bottom is what lets the box be whatever height it turns out to
+                be — the estimate below only caps it and decides which way to
+                open, and is never used to compute a position. */}
+            <View
+                style={{
+                    position: 'absolute',
+                    ...(screenPos.top === undefined ? {} : { top: screenPos.top }),
+                    ...(screenPos.bottom === undefined ? {} : { bottom: screenPos.bottom }),
+                    left: screenPos.left,
+                    width: POPOVER_WIDTH_PX,
+                    maxHeight: POPOVER_HEIGHT_ESTIMATE_PX,
+                }}
             >
-                <View
-                    style={{
-                        position: 'absolute',
-                        top: screenPos.top,
-                        left: screenPos.left,
-                        width: POPOVER_WIDTH_PX,
-                        maxHeight: POPOVER_HEIGHT_ESTIMATE_PX,
-                    }}
-                    // onStartShouldSetResponder=true stops backdrop taps
-                    // that originate inside the popover from bubbling up
-                    // to the backdrop Pressable.
-                    onStartShouldSetResponder={() => true}
-                >
-                    <Body payload={open.payload} respond={respond} />
-                </View>
-            </Pressable>
-        </Modal>
+                <Body payload={open.payload} respond={respond} />
+            </View>
+        </ScreenOverlayLayer>
+    )
+}
+
+/**
+ * The screen-space layer the popover is positioned into.
+ *
+ * The coordinates handed to it are absolute screen coordinates
+ * (resolvePopoverPosition already translated them through the WebView's
+ * measured origin), so this layer must span the window and must not be clipped
+ * or scrolled by whatever subtree the controller happens to be mounted in — in
+ * a card detail that is a `View` several levels inside a `ScrollView`.
+ *
+ * On iOS `FullWindowOverlay` gives exactly that: a sibling UIView in the window
+ * above the app's content. Crucially it is NOT a UIWindow and has no first
+ * responder of its own, so — unlike the `Modal` this replaced — presenting it
+ * does not blur the WebView or dismiss the keyboard, and the user can keep
+ * typing to filter.
+ *
+ * Elsewhere it is a plain absolutely-positioned layer. Android has no
+ * equivalent primitive (FullWindowOverlay warns and degrades to a View there),
+ * so the popover relies on its ancestors staying overflow-visible; it is
+ * `box-none` so the transparent layer never swallows a touch meant for the
+ * editor beneath it.
+ */
+function ScreenOverlayLayer({ children }: { children: React.ReactNode }) {
+    if (Platform.OS === 'ios') {
+        return <FullWindowOverlay>{children}</FullWindowOverlay>
+    }
+    return (
+        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+            {children}
+        </View>
     )
 }

@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -244,7 +245,7 @@ func codeText(n ast.Node, src []byte) []PMNode {
 
 func rawLines(lines *text.Segments, src []byte) string {
 	var b []byte
-	for i := 0; i < lines.Len(); i++ {
+	for i := range lines.Len() {
 		seg := lines.At(i)
 		b = append(b, seg.Value(src)...)
 	}
@@ -259,7 +260,24 @@ func inlineToPM(n ast.Node, src []byte) []PMNode {
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 		out = append(out, inlineNodeToPM(child, src, nil)...)
 	}
-	return mergeAdjacentText(out)
+	// Mentions are extracted AFTER the runs are merged, never per text node.
+	// `[` is link syntax, so goldmark shreds `[[@u1]]` across four Text nodes
+	// ("owner is [", "[", "@u1]", "]") — a token can only be recognized once
+	// those are stitched back together.
+	return extractMentions(mergeAdjacentText(out))
+}
+
+// extractMentions replaces `[[@id]]` inside merged text runs with mention atoms.
+func extractMentions(nodes []PMNode) []PMNode {
+	out := make([]PMNode, 0, len(nodes))
+	for _, node := range nodes {
+		if node.Type != NodeText || !strings.Contains(node.Text, "[@") {
+			out = append(out, node)
+			continue
+		}
+		out = append(out, splitMentions(node.Text, node.Marks)...)
+	}
+	return out
 }
 
 func inlineNodeToPM(n ast.Node, src []byte, marks []PMMark) []PMNode {
@@ -455,4 +473,73 @@ func sameMarks(a, b []PMMark) bool {
 		}
 	}
 	return true
+}
+
+// mentionToken matches the `[[@<userId>|<name>]]` wire format inside a text run.
+//
+// The name half is OPTIONAL, so the bare `[[@id]]` written before the format
+// carried one still parses — those documents are already stored. It exists so a
+// mention stays readable when the id cannot be resolved (the person left the
+// board, or the roster has not loaded), while the id remains the identity that
+// drives notifications and survives a rename.
+//
+// Mirrors TOKEN_PATTERN in mention-node.ts — the two sides must agree exactly
+// about what counts as a mention. The backslash-escaped spelling is accepted
+// too: the editor serializes through markdown, where `[` is syntax, so a stored
+// token can come back as `\[\[@id\]\]`.
+var mentionToken = regexp.MustCompile(`\\?\[\\?\[@([A-Za-z0-9_-]+)(?:\|([^\]|]*))?\\?\]\\?\]`)
+
+// splitMentions breaks a text run into text nodes and mention atoms.
+//
+// Mentions are stored as tokens in the markdown, but the editor represents them
+// as a node — so seeding a room from stored text without this leaves the raw
+// `[[@id]]` sitting in the document, which is exactly what a reader must never
+// see. Marks carry across the split: a mention inside bold text stays bold.
+func splitMentions(txt string, marks []PMMark) []PMNode {
+	matches := mentionToken.FindAllStringSubmatchIndex(txt, -1)
+	if len(matches) == 0 {
+		return []PMNode{{Type: NodeText, Text: txt, Marks: cloneMarks(marks)}}
+	}
+	var out []PMNode
+	cursor := 0
+	for _, m := range matches {
+		if lead := txt[cursor:m[0]]; lead != "" {
+			out = append(out, PMNode{Type: NodeText, Text: lead, Marks: cloneMarks(marks)})
+		}
+		attrs := map[string]any{"userId": txt[m[2]:m[3]]}
+		// Capture group 2 is the optional display name. -1 means the token was
+		// the bare `[[@id]]` form, which carries no name.
+		if m[4] >= 0 {
+			if name := unescapeMentionName(txt[m[4]:m[5]]); name != "" {
+				attrs["name"] = name
+			}
+		}
+		out = append(out, PMNode{
+			Type:  NodeMention,
+			Attrs: attrs,
+			Marks: cloneMarks(marks),
+		})
+		cursor = m[1]
+	}
+	if tail := txt[cursor:]; tail != "" {
+		out = append(out, PMNode{Type: NodeText, Text: tail, Marks: cloneMarks(marks)})
+	}
+	return out
+}
+
+// unescapeMentionName reverses the encoding the writer applies to a mention's
+// display name.
+//
+// `]` and `|` would end the token early and are stored PERCENT-encoded, not
+// backslash-escaped: markdown owns the backslash and strips it before the token
+// is matched, so an escaped bracket arrives bare and truncates the name.
+// Mirrors unescapeMentionName in mention-node.ts; `%25` is decoded last so a
+// literal `%5D` a user typed cannot become a bracket.
+func unescapeMentionName(raw string) string {
+	if !strings.Contains(raw, "%") {
+		return raw
+	}
+	r := strings.NewReplacer("%5D", "]", "%5d", "]", "%7C", "|", "%7c", "|")
+	out := r.Replace(raw)
+	return strings.ReplaceAll(strings.ReplaceAll(out, "%25", "%"), "%25", "%")
 }

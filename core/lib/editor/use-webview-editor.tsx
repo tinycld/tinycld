@@ -262,6 +262,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // when the WebView sends a `stateUpdate`, which our custom Editor
     // only sends after init arrives — chicken-and-egg.
     const [webviewReady, setWebviewReady] = useState(false)
+    const mountAtRef = useRef(Date.now())
 
     // Height the page reported for its own content, held in a tiny store
     // rather than state so that a new measurement re-renders ONLY the box
@@ -292,6 +293,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         if (!webview) return
         const message = makeMessage('app', 'init', initPayload)
         try {
+            console.log('[LAG] init-sent at', Date.now() - mountAtRef.current, 'ms')
             webview.postMessage(JSON.stringify(message))
             initSentRef.current = true
         } catch {
@@ -360,6 +362,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             // alongside its dispatch), but it doesn't flip any
             // bridgeState flag from it.
             if (parsed.type === 'editor-ready') {
+                console.log('[LAG] page-ready at', Date.now() - mountAtRef.current, 'ms')
                 setWebviewReady(true)
                 return
             }
@@ -375,7 +378,10 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                 // zero, invisible).
                 if (parsed.type === 'content-height') {
                     const height = (parsed.payload as { height?: unknown } | undefined)?.height
-                    if (typeof height === 'number' && height > 0) setContentHeight(height)
+                    if (typeof height === 'number' && height > 0) {
+                        console.log('[LAG] first-height at', Date.now() - mountAtRef.current, 'ms')
+                        setContentHeight(height)
+                    }
                     return
                 }
                 onUiMessageRef.current?.(parsed)
@@ -412,6 +418,22 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         [setContentHeight]
     )
 
+    // The anchor host overlays measure against.
+    //
+    // NOT the WebView ref. Under the New Architecture (Bridgeless) TenTap's
+    // `webviewRef.current` is a Fabric native-command handle exposing only
+    // WebView commands — goForward, reload, postMessage, injectJavaScript and
+    // friends — with no `measure` or `measureInWindow` on it or its prototype.
+    // Every anchored popover therefore measured null, and the controller's
+    // fail-closed path dismissed the request before drawing anything: on
+    // device the mention picker never appeared at all.
+    //
+    // This ref points at the plain host View wrapping the WebView, which is an
+    // ordinary RN view with the usual measurement methods. It is the same box,
+    // so its origin is the WebView's origin — exactly what the popover math
+    // wants — and it keeps working regardless of what TenTap's ref becomes.
+    const measureRef = useRef<View | null>(null)
+
     // RichText is loaded lazily inside the EditorComponent because this
     // hook is a single non-platform file (not a .native.tsx split). A
     // top-level import of RichText would force web bundles to resolve
@@ -437,6 +459,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                         heightStore={heightStore}
                         minHeight={minHeight}
                         grows={!scrollEnabled}
+                        measureRef={measureRef}
                     >
                         <RichText
                             editor={bridge}
@@ -453,6 +476,9 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         // viewport to minHeight — so feeding the measured height in here
         // makes the editor thrash between 72px and its real height and never
         // settle. The height is subscribed to inside EditorHeightBox instead.
+        // measureRef is deliberately absent: it is a useRef object, stable for
+        // the life of the mount. Listing it would be a no-op at best, and this
+        // memo produces a component IDENTITY — a new one remounts the WebView.
         [bridge, scrollEnabled, onWebViewMessage, minHeight, heightStore]
     )
 
@@ -489,6 +515,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         commands,
         toolbarState,
         webViewRef,
+        measureRef,
         postMessage,
         isReady: bridgeState.isReady === true,
     }
@@ -507,20 +534,32 @@ function EditorHeightBox({
     heightStore,
     minHeight,
     grows,
+    measureRef,
     children,
 }: {
     heightStore: HeightStore
     minHeight: number
     grows: boolean
+    /** Anchor for host overlays — see `measureRef` on the hook's result. */
+    measureRef?: React.RefObject<View | null>
     children: React.ReactNode
 }) {
     const height = useSyncExternalStore(heightStore.subscribe, heightStore.get, heightStore.get)
+    const resolved =
+        grows && height != null ? { height: Math.max(height, minHeight) } : { minHeight }
     return (
         <View
-            className="flex-1"
-            style={
-                grows && height != null ? { height: Math.max(height, minHeight) } : { minHeight }
-            }
+            ref={measureRef}
+            // `flex-1` ONLY when the editor is the scroll surface and should
+            // fill its parent. When it grows with its content the height above
+            // is the answer, and flex-1 actively fights it: it carries
+            // flexShrink:1, so a tight parent shrinks the box below that height
+            // — the comment composer inside the card peek collapsed to a
+            // one-line sliver while its own toolbar and Send button, which do
+            // not shrink, kept their size. flexShrink:0 pins the measured
+            // height as a floor the layout cannot claw back.
+            className={grows ? undefined : 'flex-1'}
+            style={grows ? { ...resolved, flexShrink: 0 } : resolved}
         >
             {children}
         </View>
