@@ -179,6 +179,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const initPayload: RichEditorInitPayload = useMemo(() => {
         const peersAtHandshake = awarenessHost?.encodePeers() ?? null
         return {
+            generation: 0,
             contentFormat,
             initialContent: initialContent ?? '',
             placeholder,
