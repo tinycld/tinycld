@@ -196,14 +196,26 @@ platforms; the native path simply skips a cost web never paid.
 
 - `use-webview-editor.tsx`: replace the one-shot `initSentRef` latch with
   generation tracking, so a new payload is posted rather than suppressed.
-- **The host-side relays must be rebuilt on each acquire, not just the page's.**
-  `YjsWebViewHost` and `AwarenessWebViewHost` subscribe to a specific Y.Doc and
-  Awareness (`use-rich-editor.native.tsx:116-143`, memoized on doc identity). A
-  relay left over from the previous occupant would pump a dead document's
-  updates into the live editor. Acquire destroys and reconstructs both, mirroring
-  the page-side teardown; the existing `destroy()` cleanups are the hook.
-  `MarkdownWebViewHost` likewise re-seeds so a `getMarkdown` that times out
-  returns the newly-acquired content rather than the prior surface's.
+- **The host-side relays need no new teardown — verified, and recorded here so it
+  is not "fixed" later.** `YjsWebViewHost` and `AwarenessWebViewHost` are
+  memoized on **document identity** (`use-rich-editor.native.tsx:116-143`), and
+  in cards that document is the board's: `useBoardPresence.ts:141` returns
+  `room?.doc`, one Y.Doc holding a fragment per card. It is the same object
+  across every card on a board, so the relay is correctly shared and the only
+  thing varying per acquire is the `field` (`card:<id>`) — which rides in the
+  init payload and is consumed when the page rebuilds its own doc in
+  `useCollabDoc`.
+
+  The stale-relay hazard is real but belongs to a different case: a consumer
+  swapping to a **different** Y.Doc. The existing memo already covers it — a new
+  doc identity rebuilds both hosts and the `useEffect` cleanups destroy the old
+  ones.
+
+- **`MarkdownWebViewHost` must re-seed on acquire.** Its `lastKnown` fallback is
+  what `getMarkdown` returns when the round-trip times out
+  (`markdown-webview-host.ts:48`), and that value sits on the save path. Left
+  unseeded, a timeout during a handover would return the *previous surface's*
+  text and persist it over the current one.
 - New `lib/editor/warm/`:
   - `WarmEditorHost` — renders the parked WebView. Positioned absolutely
     off-viewport **at real size**, not `display:none` and not zero-height: a
