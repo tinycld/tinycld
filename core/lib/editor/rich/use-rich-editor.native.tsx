@@ -69,6 +69,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         collab,
         triggers,
         overlayKey,
+        generation = 0,
     } = options
 
     const bgColor = useThemeColor('background')
@@ -179,7 +180,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const initPayload: RichEditorInitPayload = useMemo(() => {
         const peersAtHandshake = awarenessHost?.encodePeers() ?? null
         return {
-            generation: 0,
+            generation,
             contentFormat,
             initialContent: initialContent ?? '',
             placeholder,
@@ -234,6 +235,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                 : {}),
         }
     }, [
+        generation,
         contentFormat,
         initialContent,
         placeholder,
@@ -280,6 +282,19 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const markdownHost = markdownHostRef.current
 
     useEffect(() => () => markdownHost.destroy(), [markdownHost])
+
+    // A warm editor is reused across surfaces, so the timeout fallback has to
+    // follow the current one. Without this a slow getMarkdown during a handover
+    // resolves with the PREVIOUS surface's text — and that value gets saved.
+    //
+    // Keyed on `generation` rather than `initialContent`: a handover between two
+    // surfaces holding identical text leaves initialContent unchanged, and the
+    // seed still has to move — along with any request the displaced surface left
+    // in flight.
+    useEffect(() => {
+        if (contentFormat !== 'markdown') return
+        markdownHost.seedGeneration(generation, initialContent ?? '')
+    }, [markdownHost, contentFormat, initialContent, generation])
 
     const triggerItemsHostRef = useRef<TriggerItemsWebViewHost | null>(null)
     if (triggerItemsHostRef.current === null) {

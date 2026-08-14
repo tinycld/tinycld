@@ -118,4 +118,39 @@ describe('MarkdownWebViewHost', () => {
         expect(host.handleMessage(resultMessage('pushed'))).toBe(true)
         await expect(host.get()).resolves.toBe('pushed')
     })
+
+    /**
+     * A warm editor is reused across surfaces, and `lastKnown` sits on the save
+     * path — so a handover that left it holding the previous surface's text
+     * would write one comment's words over another's.
+     */
+    describe('handover between surfaces', () => {
+        it('moves the fallback to the incoming surface', async () => {
+            const { host } = makeHost({ canPost: false })
+            host.seedGeneration(1, 'first surface')
+            host.seedGeneration(2, 'second surface')
+            await expect(host.get()).resolves.toBe('second surface')
+        })
+
+        /** Driven from an effect, so a re-render must not re-seed over typing. */
+        it('ignores a repeated generation', async () => {
+            const { host } = makeHost({ canPost: false })
+            host.seedGeneration(1, 'opened with')
+            host.handleMessage(resultMessage('typed since'))
+            host.seedGeneration(1, 'opened with')
+            await expect(host.get()).resolves.toBe('typed since')
+        })
+
+        /**
+         * The displaced surface's save is still in flight. Left pending it would
+         * time out against the INCOMING surface's seed and persist that text.
+         */
+        it('settles a displaced surface request with its own text', async () => {
+            const { host } = makeHost()
+            host.seedGeneration(1, 'first surface')
+            const pending = host.get()
+            host.seedGeneration(2, 'second surface')
+            await expect(pending).resolves.toBe('first surface')
+        })
+    })
 })

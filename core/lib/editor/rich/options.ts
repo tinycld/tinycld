@@ -82,4 +82,12 @@ export interface UseRichEditorOptions {
      * board alone would anchor one's popover to the other's WebView.
      */
     overlayKey?: string
+    /**
+     * Configuration generation, for a reused (warm) editor.
+     *
+     * Bumping this re-initializes the underlying WebView page in place — a full
+     * stage-two reconstruction — instead of mounting a new one. Omitted by
+     * ordinary consumers, which mount and destroy their own editor.
+     */
+    generation?: number
 }

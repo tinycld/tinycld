@@ -46,6 +46,8 @@ export class MarkdownWebViewHost {
      * document the user opened rather than an empty string.
      */
     private lastKnown = ''
+    /** Which warm-editor generation `lastKnown` belongs to. See seedGeneration. */
+    private seededGeneration: number | null = null
     private destroyed = false
 
     constructor(options: MarkdownWebViewHostOptions) {
@@ -55,6 +57,30 @@ export class MarkdownWebViewHost {
 
     /** Seed the fallback value, e.g. with the editor's initial content. */
     seed(markdown: string): void {
+        this.lastKnown = markdown
+    }
+
+    /**
+     * Seed the fallback for a warm editor that has just been handed to another
+     * surface.
+     *
+     * Distinct from {@link seed} because a handover has to invalidate requests
+     * the PREVIOUS surface left in flight. Those resolve from `lastKnown` on
+     * timeout, so re-seeding alone would hand one surface's text to the other's
+     * pending save. Repeat calls for the same generation are ignored, which is
+     * what lets a caller drive this from an effect.
+     */
+    seedGeneration(generation: number, markdown: string): void {
+        if (generation === this.seededGeneration) return
+        this.seededGeneration = generation
+        // Anything still pending belongs to the surface being displaced. Settle
+        // it with the text it was opened with rather than letting it time out
+        // against the incoming surface's seed.
+        for (const [id, entry] of this.pending) {
+            clearTimeout(entry.timer)
+            entry.resolve(this.lastKnown)
+            this.pending.delete(id)
+        }
         this.lastKnown = markdown
     }
 
