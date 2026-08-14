@@ -65,22 +65,34 @@ export function RelationRecordPicker({
     const { isRegistered, records } = useRelationRecords(target)
     const [search, setSearch] = useState('')
 
-    // Sorted by what the user actually reads, then filtered, then capped.
-    // Ordering by id and capping first meant a collection larger than the cap
-    // hid most of itself behind an arbitrary boundary — a folder created a
-    // moment ago was typically unreachable, with no way to search for it.
+    // Labelling is independent of the search term, so it is memoized on its own
+    // — otherwise every keystroke re-derived a label for every row.
+    const labelled = useMemo(
+        () =>
+            records.map(record => ({
+                record,
+                label: recordLabel(record, displayField),
+            })),
+        [records, displayField]
+    )
+
+    // Filter FIRST, then sort. Sorting the whole collection before filtering
+    // ran an O(n log n) pass per keystroke over every row, when the sort only
+    // ever needs to order what survives the filter — usually a handful.
+    //
+    // Capping comes last, and after the sort rather than before it: ordering by
+    // id and capping first (the previous behavior) meant a collection larger
+    // than the cap hid most of itself behind an arbitrary boundary, so a folder
+    // created a moment ago was typically unreachable with no way to search for
+    // it.
     const matches = useMemo(() => {
         const needle = search.trim().toLowerCase()
-        const labelled = records.map(record => ({
-            record,
-            label: recordLabel(record, displayField),
-        }))
-        labelled.sort((a, b) => a.label.localeCompare(b.label))
         const filtered = needle
             ? labelled.filter(entry => entry.label.toLowerCase().includes(needle))
-            : labelled
+            : [...labelled]
+        filtered.sort((a, b) => a.label.localeCompare(b.label))
         return { visible: filtered.slice(0, VISIBLE_LIMIT), total: filtered.length }
-    }, [records, displayField, search])
+    }, [labelled, search])
 
     if (!isRegistered) {
         return (
@@ -93,8 +105,11 @@ export function RelationRecordPicker({
         )
     }
 
-    const selected = records.find(r => r.id === value)
-    const label = selected ? recordLabel(selected, displayField) : value || 'Select…'
+    // Resolved against the full labelled set, not `matches` — the trigger must
+    // keep showing the selected record's name while a search is narrowing the
+    // list, and the selection is frequently filtered out of it.
+    const selected = labelled.find(entry => entry.record.id === value)
+    const label = selected ? selected.label : value || 'Select…'
 
     return (
         <Menu>
@@ -106,7 +121,7 @@ export function RelationRecordPicker({
                     <ChevronDown size={14} color={mutedColor} />
                 </Pressable>
             </Menu.Trigger>
-            <Menu.Portal>
+            <Menu.Portal hasTextInput>
                 <Menu.Overlay />
                 <Menu.Content presentation="popover" placement="bottom" align="start">
                     <View className="px-2 pt-1 pb-2">

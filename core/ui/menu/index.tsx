@@ -318,7 +318,22 @@ function Trigger({ children, disableClick }: TriggerProps) {
 
 // ── Portal ──
 
-function Portal({ children }: { children: React.ReactNode }) {
+function Portal({
+    children,
+    hasTextInput,
+}: {
+    children: React.ReactNode
+    /**
+     * Set when the menu contains a focusable text input (a searchable picker).
+     *
+     * isKeyboardDismissable closes the overlay on the hardware/soft keyboard's
+     * dismiss, which is right for a menu of buttons and wrong for one holding
+     * an input: on Android, dismissing the soft keyboard after typing would
+     * take the whole menu with it, losing the search mid-selection. Off in that
+     * case; the backdrop and onRequestClose still close the menu.
+     */
+    hasTextInput?: boolean
+}) {
     const ctx = useMenuContext()
 
     // On native, render the overlay inside a real RN Modal
@@ -340,7 +355,7 @@ function Portal({ children }: { children: React.ReactNode }) {
     return (
         <GluestackOverlay
             isOpen={ctx.isOpen}
-            isKeyboardDismissable
+            isKeyboardDismissable={!hasTextInput}
             useRNModalOnAndroid
             useRNModal={Platform.OS === 'ios'}
             animationPreset="none"
@@ -569,6 +584,42 @@ const Item = forwardRef<View, ItemProps>(function Item(
             >
                 {children}
             </a>
+        )
+    }
+
+    // Web, no href. RN's Pressable renders a bare div with no tabIndex and no
+    // key handling, so a menu built from these was mouse-only: reachable by
+    // pointer, invisible to Tab and unactivatable by Enter. The href branch
+    // above gets this free from <a>, and SubTrigger hand-rolls the same thing
+    // below — this is that treatment for the ordinary item.
+    if (Platform.OS === 'web') {
+        return (
+            <div
+                ref={ref as unknown as React.Ref<HTMLDivElement>}
+                role="menuitem"
+                data-testid={testID}
+                tabIndex={isDisabled ? -1 : 0}
+                aria-disabled={isDisabled || undefined}
+                onClick={() => handlePress()}
+                onKeyDown={e => {
+                    // Space as well as Enter: both activate a menuitem per ARIA,
+                    // and Space would otherwise scroll the popover instead.
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        handlePress()
+                    }
+                }}
+                onMouseEnter={() => setHovered(true)}
+                onMouseLeave={() => setHovered(false)}
+                className={itemClass}
+                style={{
+                    display: 'flex',
+                    cursor: isDisabled ? 'default' : 'pointer',
+                    ...(styleProp as React.CSSProperties),
+                }}
+            >
+                {children}
+            </div>
         )
     }
 
