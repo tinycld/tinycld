@@ -23,6 +23,7 @@
 - **`editorHtml.ts` is generated** by the webview-bundler and is gitignored — never edit or commit it. After any change under `core/lib/editor/rich/webview/source/`, regenerate with `cd ~/code/tinycld/tinycld && pnpm run packages:generate` or the change is inert.
 - **Warm is an optimization, never a correctness dependency.** Every path must degrade to a fresh mount rather than to a broken editor.
 - Run checks from inside the member changed: `pnpm exec tinycld-pkg check` (biome + tsc + vitest).
+- **Component tests use `@testing-library/react`, never `@testing-library/react-native`** — the latter is not a dependency of this workspace. React Native components render under it with a `// @vitest-environment happy-dom` pragma as the first line of the file. `core/lib/editor/__tests__/editor-mount.test.tsx` is the reference example.
 
 ## File Structure
 
@@ -878,7 +879,8 @@ git commit -m "feat(editor): add the composer draft store"
 Create `core/lib/editor/warm/__tests__/warm-context.test.tsx`:
 
 ```tsx
-import { render } from '@testing-library/react-native'
+// @vitest-environment happy-dom
+import { render } from '@testing-library/react'
 import { Text } from 'react-native'
 import { describe, expect, it } from 'vitest'
 import { WarmEditorHost } from '../WarmEditorHost.web'
