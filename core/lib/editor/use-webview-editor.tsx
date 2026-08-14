@@ -8,6 +8,7 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { View } from 'react-native'
 import type { WebViewMessageEvent } from 'react-native-webview'
+import { captureException } from '../errors'
 import { deriveToolbarState } from './derive-toolbar-state'
 import { createHeightStore, type HeightStore } from './height-store'
 import { type EditorMessage, makeMessage } from './message-bus/types'
@@ -142,6 +143,22 @@ export interface UseWebViewEditorOptions {
     //
     // The callback identity is read through a ref.
     onMessage?: (message: EditorMessage) => void
+}
+
+/**
+ * Whether the host should post this init payload.
+ *
+ * Replaces the previous one-shot latch. A warm editor is reconfigured by
+ * re-sending init, so the rule is "each generation exactly once, never before
+ * the page reports ready" rather than "only ever once".
+ */
+export function shouldPostInit(
+    lastPostedGeneration: number | null,
+    incomingGeneration: number,
+    isReady: boolean
+): boolean {
+    if (!isReady) return false
+    return lastPostedGeneration === null || incomingGeneration > lastPostedGeneration
 }
 
 // Shared TenTap-customSource wrapper. Encapsulates:
@@ -291,16 +308,15 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     const heightStore = heightStoreRef.current
     const setContentHeight = heightStore.set
 
-    // Post the package's init payload once the WebView signals ready.
-    // Idempotent guard prevents double-init on hot-reload edge cases.
-    // Intentionally one-shot per mount; if the in-WebView page reloads
-    // itself (transient disconnect, in-WebView crash), it must re-fetch
-    // state from its own bootstrap rather than rely on a re-init
-    // payload from native.
-    const initSentRef = useRef(false)
+    // Which generation has been posted, rather than whether ANY init was — the
+    // warm editor reconfigures itself by posting a new one.
+    const lastInitGenerationRef = useRef<number | null>(null)
     useEffect(() => {
-        if (initSentRef.current) return
-        if (!webviewReady) return
+        const generation = (initPayload as { generation?: unknown })?.generation
+        // Consumers that predate the warm path (mail, text) send no generation;
+        // treat those as a single one-shot init, exactly as before.
+        const incoming = typeof generation === 'number' ? generation : 0
+        if (!shouldPostInit(lastInitGenerationRef.current, incoming, webviewReady)) return
         const webview = bridge.webviewRef?.current
         if (!webview) return
         const message = makeMessage('app', 'init', initPayload)
@@ -309,10 +325,12 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                 console.log('[editor.mount] init-sent', Date.now() - mountAtRef.current, 'ms')
             }
             webview.postMessage(JSON.stringify(message))
-            initSentRef.current = true
-        } catch {
+            lastInitGenerationRef.current = incoming
+        } catch (err) {
             // postMessage can fail mid-handshake; the next render's
-            // webviewReady or bridge identity change will retry.
+            // webviewReady or bridge identity change will retry. The generation
+            // is deliberately NOT recorded here, so the retry still fires.
+            captureException('editor.postInit', err, { generation: incoming })
         }
     }, [bridge, webviewReady, initPayload])
 

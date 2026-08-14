@@ -23,6 +23,16 @@ export const MARKDOWN_RESULT = 'result'
 export const EDITOR_READY = 'editor-ready'
 /** host → WebView, the one-shot init payload. */
 export const APP_INIT = 'init'
+/**
+ * host → WebView: drop back to stage one — no Tiptap, no document, no
+ * awareness — while keeping the page itself booted.
+ *
+ * This is what makes a warm editor possible. The expensive part of an editor is
+ * the browser cold start and bundle parse, which happen BEFORE init; tearing
+ * down only what init built leaves a page that can be reconfigured for the next
+ * surface in ~34 ms instead of ~1135 ms.
+ */
+export const APP_PARK = 'park'
 /** WebView → host, ⌘/Ctrl+Enter inside the editor. */
 export const APP_SUBMIT_SHORTCUT = 'submit-shortcut'
 /** WebView → host, Escape inside the editor. */
@@ -137,6 +147,21 @@ export const UI_CONTENT_HEIGHT = 'content-height'
  * placeholder, character limit, and (later) the collaboration binding.
  */
 export interface RichEditorInitPayload {
+    /**
+     * Monotonic counter identifying this configuration.
+     *
+     * Init is no longer one-shot: a warm editor is handed from surface to
+     * surface by re-sending this payload. The page keys its editor subtree on
+     * this value, so a bump is a full reconstruction — new Tiptap, new Y.Doc,
+     * new undo stack. That is deliberate rather than wasteful: a partial reset
+     * would risk leaking one surface's undo history into another, and since a
+     * blur COMMITS an inline comment edit, leaked state is a data-loss risk
+     * rather than a cosmetic one.
+     *
+     * A repeated value must be ignored, so a re-delivered payload does not
+     * discard what the user has typed.
+     */
+    generation: number
     /**
      * How `initialContent` is interpreted. Markdown is the native format for
      * card descriptions; mail passes 'html' and never touches the markdown

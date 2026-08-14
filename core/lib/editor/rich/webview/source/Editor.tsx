@@ -19,6 +19,7 @@ import { getFileAuth, setFileAuth, subscribeFileAuth } from './file-auth-store'
 import {
     APP_ESCAPE,
     APP_FILE_TOKEN,
+    APP_PARK,
     APP_SUBMIT_SHORTCUT,
     APP_TRIGGER_ITEMS,
     AWARENESS_CURSOR,
@@ -91,6 +92,25 @@ function AuthedImagePageView({ node }: ReactNodeViewProps<HTMLSpanElement>) {
 const AUTHED_IMAGE_NODE_VIEW = ReactNodeViewRenderer(AuthedImagePageView)
 
 /**
+ * Decide what an incoming init means for the page's current configuration.
+ *
+ * Pure so it can be tested without a DOM — the message plumbing around it needs
+ * a WebView, but the interesting decisions are here.
+ *
+ * `null` incoming is a park request: drop to stage one, keeping the booted page.
+ */
+export function reduceInit(
+    current: RichEditorInitPayload | null,
+    incoming: RichEditorInitPayload | null
+): RichEditorInitPayload | null {
+    if (incoming === null) return null
+    // A repeat or a late-arriving older payload must not rebuild the editor —
+    // that discards whatever has been typed since the current one was applied.
+    if (current !== null && incoming.generation <= current.generation) return current
+    return incoming
+}
+
+/**
  * The rich editor's in-WebView page.
  *
  * This is what makes markdown the editor's native format on mobile. The editor
@@ -122,7 +142,12 @@ export function Editor() {
                 return
             }
             if (parsed.namespace === 'app' && parsed.type === 'init') {
-                setInit(parsed.payload as RichEditorInitPayload)
+                const incoming = parsed.payload as RichEditorInitPayload
+                setInit(current => reduceInit(current, incoming))
+                return
+            }
+            if (parsed.namespace === 'app' && parsed.type === APP_PARK) {
+                setInit(current => reduceInit(current, null))
             }
         }
         // Some platforms deliver WebView messages on window, others on
@@ -140,7 +165,11 @@ export function Editor() {
 
     if (init == null) return null
 
-    return <EditorMounted init={init} />
+    // Keyed on the generation so a handover is a full reconstruction: new
+    // Tiptap, new Y.Doc (useCollabDoc's useState initializer reruns), new undo
+    // stack, new extension set. Nothing survives the swap, which is what makes
+    // it safe to reuse one page across surfaces.
+    return <EditorMounted key={init.generation} init={init} />
 }
 
 function EditorMounted({ init }: { init: RichEditorInitPayload }) {

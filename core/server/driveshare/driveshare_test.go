@@ -426,3 +426,153 @@ func TestResolveRole_UnknownUserFailsClosed(t *testing.T) {
 		t.Errorf("unknown user: got %v, want ErrNoAccess", err)
 	}
 }
+
+// ParticipantIDs is the inverse of everything above: given only an item, who
+// can reach it. Automation's owner resolvers are the caller — the engine uses
+// the result to decide whose personal rules fire on a record, so a wrong
+// answer runs other users' rules on data they cannot see.
+
+func TestParticipantIDs_CreatorAndShareHolders(t *testing.T) {
+	app := setupApp(t)
+	creator := mkUser(t, app, "creator@example.com")
+	viewer := mkUser(t, app, "viewer@example.com")
+	editor := mkUser(t, app, "editor@example.com")
+	item := mkItem(t, app, creator, "doc")
+	grant(t, app, item, viewer, RoleViewer)
+	grant(t, app, item, editor, RoleEditor)
+
+	got := ParticipantIDs(app, item.Id)
+	want := map[string]bool{creator.Id: true, viewer.Id: true, editor.Id: true}
+	if len(got) != len(want) {
+		t.Fatalf("got %d participants (%v), want %d", len(got), got, len(want))
+	}
+	for _, id := range got {
+		if !want[id] {
+			t.Errorf("unexpected participant %s", id)
+		}
+	}
+}
+
+// The creator needs no share row — same disjunct TestResolveRole_Creator pins.
+func TestParticipantIDs_CreatorWithoutShareRow(t *testing.T) {
+	app := setupApp(t)
+	creator := mkUser(t, app, "solo@example.com")
+	item := mkItem(t, app, creator, "unshared")
+
+	got := ParticipantIDs(app, item.Id)
+	if len(got) != 1 || got[0] != creator.Id {
+		t.Fatalf("got %v, want just the creator (%s)", got, creator.Id)
+	}
+}
+
+// A user holding two rows (possible for rows predating the UNIQUE index)
+// must appear once — a duplicated owner would dispatch a rule twice.
+func TestParticipantIDs_DeduplicatesAndSkipsDoubleCountingTheCreator(t *testing.T) {
+	app := setupApp(t)
+	creator := mkUser(t, app, "creator@example.com")
+	item := mkItem(t, app, creator, "doc")
+	// The creator ALSO holding an explicit share is the normal case: drive's
+	// owner-share hook writes one.
+	grant(t, app, item, creator, RoleOwner)
+	other := mkUser(t, app, "other@example.com")
+	grant(t, app, item, other, RoleViewer)
+	grant(t, app, item, other, RoleEditor)
+
+	got := ParticipantIDs(app, item.Id)
+	if len(got) != 2 {
+		t.Fatalf("got %v, want exactly two distinct participants", got)
+	}
+}
+
+// Suspension outranks ownership everywhere else in this file; it must here
+// too, or a disabled account's personal rules keep firing on documents it
+// can no longer open.
+func TestParticipantIDs_ExcludesSuspendedUsers(t *testing.T) {
+	app := setupApp(t)
+	creator := mkUser(t, app, "creator@example.com")
+	shared := mkUser(t, app, "shared@example.com")
+	item := mkItem(t, app, creator, "doc")
+	grant(t, app, item, shared, RoleEditor)
+
+	shared.Set("disabled", true)
+	if err := app.Save(shared); err != nil {
+		t.Fatalf("set disabled: %v", err)
+	}
+
+	got := ParticipantIDs(app, item.Id)
+	if len(got) != 1 || got[0] != creator.Id {
+		t.Fatalf("got %v, want only the active creator (%s)", got, creator.Id)
+	}
+}
+
+func TestParticipantIDs_SuspendedCreatorIsExcluded(t *testing.T) {
+	app := setupApp(t)
+	creator := mkUser(t, app, "creator@example.com")
+	item := mkItem(t, app, creator, "doc")
+
+	creator.Set("disabled", true)
+	if err := app.Save(creator); err != nil {
+		t.Fatalf("set disabled: %v", err)
+	}
+
+	if got := ParticipantIDs(app, item.Id); len(got) != 0 {
+		t.Fatalf("got %v, want none — a suspended creator reaches nothing", got)
+	}
+}
+
+// Mirrors TestResolveRole_UnknownRoleFailsClosed: a role this build doesn't
+// understand grants nothing, so its holder is not a participant.
+func TestParticipantIDs_UnknownRoleFailsClosed(t *testing.T) {
+	app := setupApp(t)
+	creator := mkUser(t, app, "creator@example.com")
+	stranger := mkUser(t, app, "stranger@example.com")
+	item := mkItem(t, app, creator, "doc")
+	grant(t, app, item, stranger, Role("archivist"))
+
+	got := ParticipantIDs(app, item.Id)
+	if len(got) != 1 || got[0] != creator.Id {
+		t.Fatalf("got %v, want only the creator — an unknown role admits nobody", got)
+	}
+}
+
+func TestParticipantIDs_MissingItemOrEmptyID(t *testing.T) {
+	app := setupApp(t)
+	if got := ParticipantIDs(app, ""); got != nil {
+		t.Errorf("empty id: got %v, want nil", got)
+	}
+	if got := ParticipantIDs(app, "ghost00000000000"); got != nil {
+		t.Errorf("unknown item: got %v, want nil", got)
+	}
+}
+
+// The set ParticipantIDs returns must be exactly the set ResolveRoleForItem
+// grants access to — if the two drift, a resolver hands the engine owners
+// who can't actually open the document.
+func TestParticipantIDs_AgreesWithResolveRole(t *testing.T) {
+	app := setupApp(t)
+	creator := mkUser(t, app, "creator@example.com")
+	viewer := mkUser(t, app, "viewer@example.com")
+	suspended := mkUser(t, app, "suspended@example.com")
+	stranger := mkUser(t, app, "stranger@example.com")
+	item := mkItem(t, app, creator, "doc")
+	grant(t, app, item, viewer, RoleViewer)
+	grant(t, app, item, suspended, RoleEditor)
+	suspended.Set("disabled", true)
+	if err := app.Save(suspended); err != nil {
+		t.Fatalf("set disabled: %v", err)
+	}
+
+	participants := make(map[string]bool)
+	for _, id := range ParticipantIDs(app, item.Id) {
+		participants[id] = true
+	}
+
+	for _, u := range []*core.Record{creator, viewer, suspended, stranger} {
+		_, err := ResolveRole(app, u.Id, item.Id)
+		hasAccess := err == nil
+		if participants[u.Id] != hasAccess {
+			t.Errorf("user %s: participant=%v but ResolveRole access=%v",
+				u.Email(), participants[u.Id], hasAccess)
+		}
+	}
+}
