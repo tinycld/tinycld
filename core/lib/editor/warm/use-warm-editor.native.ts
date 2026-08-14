@@ -50,5 +50,6 @@ export function useWarmEditor(
         acquire,
         release,
         result: isHolder ? warm.result : null,
+        generation: snapshot.generation,
     }
 }

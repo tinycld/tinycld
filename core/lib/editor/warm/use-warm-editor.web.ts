@@ -17,5 +17,8 @@ export function useWarmEditor(
         acquire: () => {},
         release: () => {},
         result: null,
+        // Constant: each surface owns its editor here, so there is no handover
+        // that could invalidate an in-flight read.
+        generation: 0,
     }
 }

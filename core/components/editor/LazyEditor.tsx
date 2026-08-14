@@ -113,32 +113,23 @@ export function useLazyEditor({
     const hasFocusedRef = useRef(false)
     const settledRef = useRef(false)
 
-    const lease = useWarmEditor(surfaceId, {
-        ...editorOptions,
-        contentFormat,
-        initialContent: value,
-    })
-
     const submitRef = useRef<() => void>(() => {})
     const blurRef = useRef<() => void>(() => {})
 
-    // The warm instance when one is available; otherwise this surface mounts its
-    // own and pays the cold start. Warm is an optimization, never a correctness
-    // dependency.
-    //
-    // Called unconditionally, including while idle: a hook cannot sit behind the
-    // swap's branch. On native that costs nothing — the WebView belongs to the
-    // warm host, and this hook only builds the host-side handle. On web it is
-    // the same Tiptap instance the previous hand-rolled swaps mounted.
     // The consumer's own focus handlers are CHAINED rather than replaced: a
     // caller uses them to drive its chrome (a card description swaps its section
     // label for a formatting toolbar on focus), and silently dropping them
     // leaves that chrome permanently in its idle state.
-    const own = useRichEditor({
+    //
+    // These wrappers carry the entire commit policy — hasFocusedRef gates
+    // shouldCommitOnBlur, blurRef fires the blur-commit, submitRef answers ⌘↵ —
+    // so BOTH the warm instance and the cold fallback must receive them. Giving
+    // them only to `own` left the policy inert on the warm path, which is the
+    // only path native ever takes: blur never committed and ⌘↵ never submitted.
+    const chainedOptions: UseRichEditorOptions = {
         ...editorOptions,
         contentFormat,
         initialContent: value,
-        autofocus: true,
         onFocus: () => {
             hasFocusedRef.current = true
             editorOptions.onFocus?.()
@@ -151,7 +142,18 @@ export function useLazyEditor({
             editorOptions.onSubmitShortcut?.()
             submitRef.current()
         },
-    })
+    }
+
+    const lease = useWarmEditor(surfaceId, chainedOptions)
+
+    // The cold fallback, used when no warm host is mounted (always on web, and
+    // on native before the host boots). Warm is an optimization, never a
+    // correctness dependency.
+    //
+    // Called unconditionally, including while idle: a hook cannot sit behind the
+    // swap's branch. On web it is the same Tiptap instance the previous
+    // hand-rolled swaps mounted.
+    const own = useRichEditor({ ...chainedOptions, autofocus: true })
     const active = lease.result ?? own
 
     const startEditing = useCallback(() => {
@@ -161,6 +163,28 @@ export function useLazyEditor({
         lease.acquire()
         setIsEditing(true)
     }, [lease, value])
+
+    // The warm instance parks with autofocus off — focusing a parked editor
+    // would open the keyboard over a card nobody is editing — so the surface
+    // that acquires it has to take the caret itself. Without this, tapping a
+    // description on native swaps in an editor with no cursor and the user has
+    // to tap a second time.
+    //
+    // Keyed on the generation rather than isEditing so a handover refocuses the
+    // incoming surface too. The cold fallback sets autofocus: true and needs
+    // none of this, hence the isWarm guard.
+    const focusedGenerationRef = useRef<number | null>(null)
+    if (isEditing && lease.isWarm && lease.result != null) {
+        if (focusedGenerationRef.current !== lease.generation) {
+            focusedGenerationRef.current = lease.generation
+            // Deferred: the editor is reconfigured during this commit, and
+            // focusing before it has applied the new content moves the caret in
+            // the outgoing surface's document.
+            queueMicrotask(() => lease.result?.editor.focus('end'))
+        }
+    } else if (!isEditing) {
+        focusedGenerationRef.current = null
+    }
 
     const endSession = useCallback(() => {
         settledRef.current = true
@@ -178,25 +202,45 @@ export function useLazyEditor({
 
     const submit = useCallback(() => {
         if (settledRef.current) return
+        // Claimed BEFORE the await, not after. On native every surface shares
+        // one editor, so a tap on another surface during the read reconfigures
+        // it under us: the content that resolves then belongs to the incoming
+        // surface, and writing it through onCommit would put one card's text on
+        // another card's record. Settling up front makes the second caller a
+        // no-op, and the generation check below discards the stale read.
+        settledRef.current = true
+        const generationAtRead = lease.generation
         void (async () => {
             let content: string
             try {
                 content = (await readContent(active.editor)).trim()
             } catch (err) {
                 captureException('editor.lazy.readContent', err)
+                endSession()
+                return
+            }
+            // A handover bumps the generation, so a mismatch means these bytes
+            // came from an editor that has already been handed to someone else.
+            // Dropping the write is the only safe move: we cannot tell whose
+            // text this is, and the outgoing surface keeps its persisted value.
+            if (lease.generation !== generationAtRead) {
+                captureException(
+                    'editor.lazy.staleRead',
+                    new Error('editor was handed over mid-submit; dropping the read'),
+                    { surfaceId, generationAtRead, generationNow: lease.generation }
+                )
+                endSession()
                 return
             }
             if (onCancel && isNoOpEdit(content, baselineRef.current)) {
-                settledRef.current = true
                 endSession()
                 onCancel()
                 return
             }
-            settledRef.current = true
             onCommit(content)
             endSession()
         })()
-    }, [active.editor, readContent, onCommit, onCancel, endSession])
+    }, [active.editor, readContent, onCommit, onCancel, endSession, lease.generation, surfaceId])
 
     const cancel = useCallback(() => {
         settledRef.current = true
