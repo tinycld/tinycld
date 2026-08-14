@@ -72,6 +72,7 @@ function TriggerMenu({
                             {triggers.map(trigger => (
                                 <MenuActionItem
                                     key={trigger.ref}
+                                    testID={`trigger-option-${trigger.ref}`}
                                     label={trigger.label}
                                     isActive={trigger.ref === selectedRef}
                                     onPress={() => onSelect(trigger)}

@@ -516,10 +516,17 @@ interface ItemProps {
     isDisabled?: boolean
     className?: string
     style?: object
+    /**
+     * Stable identity for tests. Menu labels are not unique — two packages can
+     * contribute an action with the same label — and items sit as flat
+     * siblings under their group heading, so there is nothing to scope a
+     * selection to without this.
+     */
+    testID?: string
 }
 
 const Item = forwardRef<View, ItemProps>(function Item(
-    { children, onPress: onPressProp, href, isDisabled, className, style: styleProp },
+    { children, onPress: onPressProp, href, isDisabled, className, style: styleProp, testID },
     ref
 ) {
     const { onOpenChange } = useMenuContext()
@@ -543,6 +550,7 @@ const Item = forwardRef<View, ItemProps>(function Item(
                 ref={ref as React.Ref<HTMLAnchorElement>}
                 href={href}
                 role="menuitem"
+                data-testid={testID}
                 onClick={e => {
                     if (e.metaKey || e.ctrlKey || e.shiftKey) return
                     e.preventDefault()
@@ -569,6 +577,7 @@ const Item = forwardRef<View, ItemProps>(function Item(
             ref={ref}
             onPress={handlePress}
             disabled={isDisabled}
+            testID={testID}
             accessibilityRole="menuitem"
             onHoverIn={() => setHovered(true)}
             onHoverOut={() => setHovered(false)}
