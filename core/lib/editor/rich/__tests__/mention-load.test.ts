@@ -2,7 +2,7 @@
 //
 // Tiptap needs a DOM to mount an editor; core's suite defaults to node.
 import { Editor } from '@tiptap/core'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildRichEditorExtensions } from '../extensions'
 import { resetMentionLabels, setMentionLabels } from '../mention-node'
 
@@ -18,8 +18,15 @@ import { resetMentionLabels, setMentionLabels } from '../mention-node'
 // `Hi @admin@admin&lt;/span&gt;`. Real data loss, caught on a device rather than
 // here, which is why these tests exist.
 
+// Every editor made here is destroyed after its test. ProseMirror's DOMObserver
+// schedules a flush on a timer, and that flush reads `document` — so an editor
+// left alive past teardown throws "document is not defined" from a stray timer,
+// surfacing as an uncaught exception that fails the run even though every
+// assertion passed.
+const openEditors: Editor[] = []
+
 function makeEditor() {
-    return new Editor({
+    const editor = new Editor({
         extensions: buildRichEditorExtensions({
             triggers: [
                 {
@@ -33,12 +40,18 @@ function makeEditor() {
             ],
         }),
     })
+    openEditors.push(editor)
+    return editor
 }
 
 describe('loading content that contains mentions', () => {
     beforeEach(() => {
         resetMentionLabels()
         setMentionLabels('m', [{ id: 'u1', label: 'Ada' }])
+    })
+
+    afterEach(() => {
+        for (const editor of openEditors.splice(0)) editor.destroy()
     })
 
     it('turns a stored token into a mention node', () => {
