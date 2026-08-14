@@ -36,6 +36,35 @@ function groupActionsByPackage(actions: CatalogAction[]): Map<string, CatalogAct
     return groups
 }
 
+/**
+ * The label shown for one action in the add-action menu.
+ *
+ * Packages pick their own action labels, so collisions are normal — drive and
+ * mail both call theirs "Move to folder". The group heading above each item
+ * says which package it is, but two identically-worded rows a few lines apart
+ * are easy to misread, so an ambiguous label carries its package inline. The
+ * unambiguous majority stay clean.
+ */
+function actionOptionLabel(action: CatalogAction, isAmbiguous: boolean): string {
+    if (!action.available) return `${action.label} (needs ${action.pkg})`
+    return isAmbiguous ? `${action.label} (${action.pkg})` : action.label
+}
+
+/** Labels contributed by more than one package, so they need qualifying. */
+function ambiguousLabels(actions: CatalogAction[]): Set<string> {
+    const seen = new Map<string, string>()
+    const ambiguous = new Set<string>()
+    for (const action of actions) {
+        const owner = seen.get(action.label)
+        if (owner === undefined) {
+            seen.set(action.label, action.pkg)
+        } else if (owner !== action.pkg) {
+            ambiguous.add(action.label)
+        }
+    }
+    return ambiguous
+}
+
 function AddActionMenu({
     catalog,
     trigger,
@@ -48,6 +77,7 @@ function AddActionMenu({
     const mutedColor = useThemeColor('muted-foreground')
     const options = trigger ? compatibleActions(catalog, trigger) : []
     const groups = groupActionsByPackage(options)
+    const ambiguous = ambiguousLabels(options)
 
     return (
         <Menu>
@@ -66,11 +96,8 @@ function AddActionMenu({
                             {actions.map(action => (
                                 <MenuActionItem
                                     key={action.ref}
-                                    label={
-                                        action.available
-                                            ? action.label
-                                            : `${action.label} (needs ${action.pkg})`
-                                    }
+                                    testID={`action-option-${action.ref}`}
+                                    label={actionOptionLabel(action, ambiguous.has(action.label))}
                                     disabled={!action.available}
                                     onPress={() => onSelect(action)}
                                 />

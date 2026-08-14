@@ -37,6 +37,8 @@ interface MenuActionItemProps {
     isActive?: boolean
     colorDot?: string
     disabled?: boolean
+    /** Stable identity for tests when labels aren't unique. */
+    testID?: string
 }
 
 export function MenuActionItem({
@@ -48,12 +50,18 @@ export function MenuActionItem({
     isActive,
     colorDot,
     disabled,
+    testID,
 }: MenuActionItemProps) {
     const mutedColor = useThemeColor('muted-foreground')
     const primaryColor = useThemeColor('primary')
 
     return (
-        <Menu.Item onPress={disabled ? undefined : onPress} href={href} isDisabled={disabled}>
+        <Menu.Item
+            onPress={disabled ? undefined : onPress}
+            href={href}
+            isDisabled={disabled}
+            testID={testID}
+        >
             {leading ? (
                 leading
             ) : Icon ? (

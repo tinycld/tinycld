@@ -5,7 +5,8 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ChevronDown } from 'lucide-react-native'
-import { Pressable, Text } from 'react-native'
+import { useMemo, useState } from 'react'
+import { Pressable, Text, View } from 'react-native'
 
 export interface RelationRecordPickerProps {
     target: string
@@ -33,18 +34,20 @@ function recordLabel(record: Record<string, unknown>, displayField: string): str
 // belong to another package entirely), so org/user scoping is the caller's
 // concern, not this generic picker's — rows are already RLS-filtered by the
 // server.
+// How many matches the menu will render at once. The list is filtered before
+// it is capped, so this bounds the DOM, not what the user can reach.
+const VISIBLE_LIMIT = 50
+
 function useRelationRecords(target: string) {
     const collection = collectionByName(target)
     const { data } = useLiveQuery(
         q => {
             if (!collection) return null
-            // TanStack DB requires an ORDER BY whenever LIMIT is present (it
-            // won't guess a deterministic order for you) — order by id so the
-            // list of "first 50 records" is stable across reloads.
-            return q
-                .from({ record: collection })
-                .orderBy(({ record }) => record.id, 'asc')
-                .limit(50)
+            // No LIMIT here: the cap has to be applied AFTER filtering, or the
+            // filter only ever searches the first N rows. Ordering by id is
+            // likewise wrong as a user-facing order — it's random to a human —
+            // so both are handled below against the display field.
+            return q.from({ record: collection })
         },
         [collection]
     )
@@ -58,7 +61,38 @@ export function RelationRecordPicker({
     onChange,
 }: RelationRecordPickerProps) {
     const mutedColor = useThemeColor('muted-foreground')
+    const placeholderColor = useThemeColor('field-placeholder')
     const { isRegistered, records } = useRelationRecords(target)
+    const [search, setSearch] = useState('')
+
+    // Labelling is independent of the search term, so it is memoized on its own
+    // — otherwise every keystroke re-derived a label for every row.
+    const labelled = useMemo(
+        () =>
+            records.map(record => ({
+                record,
+                label: recordLabel(record, displayField),
+            })),
+        [records, displayField]
+    )
+
+    // Filter FIRST, then sort. Sorting the whole collection before filtering
+    // ran an O(n log n) pass per keystroke over every row, when the sort only
+    // ever needs to order what survives the filter — usually a handful.
+    //
+    // Capping comes last, and after the sort rather than before it: ordering by
+    // id and capping first (the previous behavior) meant a collection larger
+    // than the cap hid most of itself behind an arbitrary boundary, so a folder
+    // created a moment ago was typically unreachable with no way to search for
+    // it.
+    const matches = useMemo(() => {
+        const needle = search.trim().toLowerCase()
+        const filtered = needle
+            ? labelled.filter(entry => entry.label.toLowerCase().includes(needle))
+            : [...labelled]
+        filtered.sort((a, b) => a.label.localeCompare(b.label))
+        return { visible: filtered.slice(0, VISIBLE_LIMIT), total: filtered.length }
+    }, [labelled, search])
 
     if (!isRegistered) {
         return (
@@ -71,8 +105,11 @@ export function RelationRecordPicker({
         )
     }
 
-    const selected = records.find(r => r.id === value)
-    const label = selected ? recordLabel(selected, displayField) : value || 'Select…'
+    // Resolved against the full labelled set, not `matches` — the trigger must
+    // keep showing the selected record's name while a search is narrowing the
+    // list, and the selection is frequently filtered out of it.
+    const selected = labelled.find(entry => entry.record.id === value)
+    const label = selected ? selected.label : value || 'Select…'
 
     return (
         <Menu>
@@ -84,17 +121,39 @@ export function RelationRecordPicker({
                     <ChevronDown size={14} color={mutedColor} />
                 </Pressable>
             </Menu.Trigger>
-            <Menu.Portal>
+            <Menu.Portal hasTextInput>
                 <Menu.Overlay />
                 <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {records.map(record => (
+                    <View className="px-2 pt-1 pb-2">
+                        <PlainInput
+                            value={search}
+                            onChangeText={setSearch}
+                            placeholder="Search…"
+                            placeholderTextColor={placeholderColor}
+                            className="border rounded-lg px-2.5 py-1.5 text-sm text-foreground bg-background border-border"
+                        />
+                    </View>
+                    {matches.visible.map(({ record, label: recordName }) => (
                         <MenuActionItem
                             key={record.id as string}
-                            label={recordLabel(record, displayField)}
+                            label={recordName}
                             isActive={record.id === value}
                             onPress={() => onChange(record.id as string)}
                         />
                     ))}
+                    {matches.visible.length === 0 ? (
+                        <Text className="px-3 py-2 text-xs text-muted-foreground">
+                            {records.length === 0 ? 'Nothing to choose from' : 'No matches'}
+                        </Text>
+                    ) : null}
+                    {matches.total > matches.visible.length ? (
+                        // Say so rather than silently truncating: a user who
+                        // can't see their record needs to know to narrow the
+                        // search, not assume it doesn't exist.
+                        <Text className="px-3 py-2 text-xs text-muted-foreground">
+                            {matches.total - matches.visible.length} more — keep typing to narrow
+                        </Text>
+                    ) : null}
                 </Menu.Content>
             </Menu.Portal>
         </Menu>
