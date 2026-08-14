@@ -130,6 +130,10 @@ export function useLazyEditor({
     // swap's branch. On native that costs nothing — the WebView belongs to the
     // warm host, and this hook only builds the host-side handle. On web it is
     // the same Tiptap instance the previous hand-rolled swaps mounted.
+    // The consumer's own focus handlers are CHAINED rather than replaced: a
+    // caller uses them to drive its chrome (a card description swaps its section
+    // label for a formatting toolbar on focus), and silently dropping them
+    // leaves that chrome permanently in its idle state.
     const own = useRichEditor({
         ...editorOptions,
         contentFormat,
@@ -137,9 +141,16 @@ export function useLazyEditor({
         autofocus: true,
         onFocus: () => {
             hasFocusedRef.current = true
+            editorOptions.onFocus?.()
         },
-        onBlur: () => blurRef.current(),
-        onSubmitShortcut: () => submitRef.current(),
+        onBlur: () => {
+            editorOptions.onBlur?.()
+            blurRef.current()
+        },
+        onSubmitShortcut: () => {
+            editorOptions.onSubmitShortcut?.()
+            submitRef.current()
+        },
     })
     const active = lease.result ?? own
 
