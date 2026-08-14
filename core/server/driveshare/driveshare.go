@@ -246,3 +246,70 @@ func CheckDelete(app core.App, userID, itemID string) error {
 func IsOwner(app core.App, userID, itemID string) bool {
 	return CheckDelete(app, userID, itemID) == nil
 }
+
+// ParticipantIDs returns every user who can reach an item: its creator plus
+// the holder of each drive_shares row. Suspended accounts are excluded, so
+// the result is the set ResolveRoleForItem would grant a non-None role to.
+//
+// This is the inverse of the rest of this file. Every other entry point
+// answers "may THIS user reach this item?" and takes a userID, because every
+// caller (a request, a WebDAV walk) already has one in hand. Automation's
+// owner resolvers are the first caller that has only the item and must
+// discover the users — a comment arrives with no user attached, and the
+// engine needs the list to decide whose personal rules fire on it.
+//
+// Deriving this in the calling package instead would mean re-implementing the
+// creator/share/suspension rules per package, and an owner resolver that gets
+// them wrong fires OTHER users' personal rules on data they can't see. It
+// belongs next to the semantics it mirrors.
+//
+// Order is unspecified and the result may be empty (the item is gone, or
+// everyone who could reach it is suspended); an empty result means personal
+// rules simply don't fire, which is the engine's documented no-owner case.
+func ParticipantIDs(app core.App, itemID string) []string {
+	if itemID == "" {
+		return nil
+	}
+	item, err := app.FindRecordById(driveItemsCollection, itemID)
+	if err != nil {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var out []string
+	add := func(userID string) {
+		if userID == "" || seen[userID] {
+			return
+		}
+		// Mirrors ResolveRoleForItem: suspension outranks ownership, so a
+		// suspended creator is not a participant either.
+		if useraccount.IsSuspended(app, userID) {
+			return
+		}
+		seen[userID] = true
+		out = append(out, userID)
+	}
+
+	add(item.GetString("created_by"))
+
+	rows, err := app.FindRecordsByFilter(
+		sharesCollection,
+		"item = {:item}",
+		"", 0, 0,
+		map[string]any{"item": itemID},
+	)
+	if err != nil {
+		// The creator is still a genuine participant; returning them beats
+		// resolving to nobody because the share lookup failed.
+		return out
+	}
+	for _, r := range rows {
+		// Skip roles this build doesn't recognize, matching
+		// ResolveRoleForItem's refusal to admit on an unknown role.
+		if rank(Role(r.GetString("role"))) <= rank(RoleNone) {
+			continue
+		}
+		add(r.GetString("user"))
+	}
+	return out
+}
