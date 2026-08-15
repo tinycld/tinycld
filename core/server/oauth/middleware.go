@@ -89,9 +89,16 @@ var collectionScopes = map[string]collectionAccess{
 	// Read-only surfaces the CLI needs: per-folder unread counts (a view), the
 	// caller's mailbox memberships, and the mailbox aliases a send can pick a
 	// From identity from. Aliases are administered in the app, so no write.
+	//
+	// mail_domains belongs here for a non-obvious reason: mail_mailboxes.address
+	// stores only the LOCAL PART, so every full address the CLI prints or matches
+	// on has to join the domain row. Without it `mail mailboxes`, `mail send`,
+	// and `--mailbox <address>` all fail closed on the domain read, even holding
+	// mail:read and mail:send. Domains are administered in the app, so no write.
 	"mail_folder_counts":   {read: scopeRule{ScopeMailRead}},
 	"mail_mailbox_members": {read: scopeRule{ScopeMailRead}},
 	"mail_mailbox_aliases": {read: scopeRule{ScopeMailRead}},
+	"mail_domains":         {read: scopeRule{ScopeMailRead}},
 
 	// Labels are CORE collections shared across packages (mail threads and
 	// contacts both get labelled through label_assignments), so either
