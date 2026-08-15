@@ -8,7 +8,7 @@ import type { WarmEditorLease } from '../../../lib/editor/warm/types'
 /**
  * The mid-submit handover.
  *
- * On native every surface shares one editor, and reading its content is async.
+ * Every surface in the app shares one editor, and reading its content is async.
  * If another surface acquires the instance during that read, the bytes that
  * resolve belong to the INCOMING surface — writing them through onCommit puts
  * one card's text onto another card's record.
@@ -17,9 +17,9 @@ import type { WarmEditorLease } from '../../../lib/editor/warm/types'
  * settled flag was set after the await rather than before it, so the guard at
  * the top of submit never fired for the second caller.
  *
- * Driven through mocked warm/rich modules rather than a real WebView — the
- * race is in LazyEditor's bookkeeping, and a booted editor would only make it
- * harder to schedule deterministically.
+ * Driven through a mocked lease rather than a real editor — the race is in
+ * LazyEditor's bookkeeping, and a booted editor would only make it harder to
+ * schedule deterministically.
  */
 
 let generation = 1
@@ -49,6 +49,8 @@ const warmResult = {
 
 const lease: WarmEditorLease = {
     isWarm: true,
+    ready: true,
+    holder: 'comment:a',
     acquire: vi.fn(),
     release: vi.fn(),
     result: warmResult as never,
@@ -59,23 +61,6 @@ const lease: WarmEditorLease = {
 
 vi.mock('../../../lib/editor/warm', () => ({
     useWarmEditor: () => lease,
-}))
-
-vi.mock('../../../lib/editor/rich', () => ({
-    useRichEditor: () => ({
-        editor: {
-            getHTML: vi.fn(async () => '<p>cold</p>'),
-            getText: vi.fn(async () => 'cold'),
-            getMarkdown: vi.fn(async () => 'cold'),
-            setContent: vi.fn(),
-            focus: vi.fn(),
-            clear: vi.fn(),
-            getSelection: vi.fn(async () => null),
-        },
-        EditorComponent: () => null,
-        commands: {},
-        toolbarState: {},
-    }),
 }))
 
 const { useLazyEditor } = await import('../LazyEditor')
