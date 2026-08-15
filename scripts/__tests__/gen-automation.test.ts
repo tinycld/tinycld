@@ -92,7 +92,13 @@ describe('mergeAutomationDefs', () => {
             },
         ])
         expect(merged.packages[0].slug).toBe('core')
-        expect(merged.packages[0].triggers.map(t => t.id)).toEqual(['schedule', 'manual'])
+        // The assertion is the ORDER — core first — not core's catalog, which
+        // grows. Pin the two synthetic triggers that make core special (a
+        // feature package may not declare them; see the test below) rather
+        // than the whole list.
+        expect(merged.packages[0].triggers.map(t => t.id)).toEqual(
+            expect.arrayContaining(['schedule', 'manual'])
+        )
         expect(merged.packages[1].slug).toBe('mail')
     })
 

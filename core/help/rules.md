@@ -37,6 +37,22 @@ Select **Save** when you're done. If something's missing — no name, no
 trigger, no action — the builder lists exactly what to fix before it will
 save.
 
+## What every workspace can do
+
+Three things are always available, whichever packages are installed:
+
+- **A user joins** — a trigger for onboarding: welcome someone, add them to a
+  board, create a contact for them. Make it an organization rule; a new user
+  doesn't belong to anyone, so personal rules never match it.
+- **Send me a notification** — the in-app bell.
+- **Send an email** — sends to any address, with a subject and body you write.
+  Both accept `{{ }}` placeholders, so the mail can describe whatever started
+  the rule.
+
+A rule that sends email is capped at 20 messages an hour so an exchange with
+someone else's auto-responder can't run away. Hitting the cap is recorded in
+the rule's run history.
+
 ## Personal vs. organization rules
 
 Settings → Rules has two segments:
