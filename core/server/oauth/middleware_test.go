@@ -457,6 +457,12 @@ func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
 		method, path, scope string
 	}{
 		{"GET", "/api/collections/mail_mailbox_aliases/records", ScopeMailRead},
+		// mail_domains: mail_mailboxes.address holds only the local part, so
+		// resolving any full address joins the domain row. Missing here, a
+		// mail:read+mail:send grant still failed closed on `mail mailboxes`,
+		// `mail send`, and `--mailbox <address>`. Found by the first live
+		// smoke test — every fake-server test served the row unguarded.
+		{"GET", "/api/collections/mail_domains/records", ScopeMailRead},
 		{"GET", "/api/collections/drive_item_versions/records", ScopeDriveRead},
 		{"POST", "/api/collections/drive_item_versions/records", ScopeDriveWrite},
 		{"POST", "/api/drive/share-link", ScopeDriveWrite},
@@ -496,6 +502,14 @@ func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
 	// Aliases are administered in the app; the CLI only reads them.
 	if got := ScopeForRoute("PATCH", "/api/collections/mail_mailbox_aliases/records/abc"); len(got) != 0 {
 		t.Errorf("alias writes must stay denied, got %v", got)
+	}
+
+	// Same for domains — granting the read must not have opened a write path
+	// to DNS/verification state.
+	for _, m := range []string{"POST", "PATCH", "DELETE"} {
+		if got := ScopeForRoute(m, "/api/collections/mail_domains/records/abc"); len(got) != 0 {
+			t.Errorf("domain %s must stay denied, got %v", m, got)
+		}
 	}
 }
 
