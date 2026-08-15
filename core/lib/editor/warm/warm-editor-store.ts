@@ -4,6 +4,16 @@ export type SurfaceId = string
 export interface WarmSnapshot {
     holder: SurfaceId | null
     generation: number
+    /**
+     * Whether the one editor has finished booting and can actually be rendered.
+     *
+     * Holding the instance is not the same as having a usable one: a surface can
+     * acquire during the boot (the user taps the moment the section opens). The
+     * lease reports `result: null` until this flips, so "is there an editor to
+     * render" stays a single null check at every call site rather than a second
+     * condition each one could forget.
+     */
+    ready: boolean
 }
 
 export interface WarmEditorStore {
@@ -13,6 +23,9 @@ export interface WarmEditorStore {
     release(surfaceId: SurfaceId): boolean
     holder(): SurfaceId | null
     generation(): number
+    /** Publish whether the editor is usable. Idempotent — a repeat is ignored. */
+    setReady(ready: boolean): void
+    isReady(): boolean
     subscribe(listener: () => void): () => void
     getSnapshot(): WarmSnapshot
 }
@@ -28,13 +41,14 @@ export interface WarmEditorStore {
 export function createWarmEditorStore(): WarmEditorStore {
     let holder: SurfaceId | null = null
     let generation = 0
+    let ready = false
     // Rebuilt only on change: useSyncExternalStore compares snapshots by
     // identity and loops forever if a fresh object is returned each call.
-    let snapshot: WarmSnapshot = { holder, generation }
+    let snapshot: WarmSnapshot = { holder, generation, ready }
     const listeners = new Set<() => void>()
 
     function commit() {
-        snapshot = { holder, generation }
+        snapshot = { holder, generation, ready }
         for (const listener of listeners) listener()
     }
 
@@ -59,6 +73,16 @@ export function createWarmEditorStore(): WarmEditorStore {
         },
         holder: () => holder,
         generation: () => generation,
+        setReady(next) {
+            // Guarded rather than committed unconditionally: this is called from
+            // a render-time subscription on every render of the provider, and
+            // notifying listeners with an unchanged snapshot re-renders every
+            // subscribed surface for nothing.
+            if (ready === next) return
+            ready = next
+            commit()
+        },
+        isReady: () => ready,
         subscribe(listener) {
             listeners.add(listener)
             return () => {
