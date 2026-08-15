@@ -94,6 +94,35 @@ const TEST_DEFAULTS = {
     userName: 'Test User',
 }
 
+// A SECOND ordinary member, seeded ready-to-use so a spec that needs "another
+// person on the board" can just sign them in.
+//
+// Before this existed the only way to get a second account was
+// createInvitedUser(), which drives the whole invite arc through the UI: owner
+// → Settings → Members → Invite → extract token → NEW browser context →
+// /accept-invite → set password → wait for the shell. Measured, that is ~4.4s
+// on a fast dev machine, and it strands the owner's page on Settings so every
+// caller then pays another ~1.4s login() to get back. ~5.8s of setup before a
+// single assertion — which is why seven cards specs carried test.slow(), and
+// why all of them timed out on CI once the slower, contended runner multiplied
+// that baseline. The marker was the symptom; this fixture is the cause.
+//
+// Seeding it is not a rules bypass: provisioning fixtures is exactly the seed
+// layer's job (the fixture owner and each package's demo data arrive the same
+// way). The invite FLOW keeps its own dedicated coverage in
+// tests/e2e/invite-flow.spec.ts, and specs that genuinely need to mint a
+// throwaway account (change-password, password-reset, admin-role-access) still
+// call createInvitedUser.
+//
+// role is 'member', deliberately NOT 'owner': a second owner would silently
+// weaken every last-owner and role-gate assertion that relies on the fixture
+// owner being the only one.
+const COLLABORATOR_DEFAULTS = {
+    email: process.env.TEST_COLLABORATOR_LOGIN || 'collaborator@tinycld.org',
+    username: process.env.TEST_COLLABORATOR_USERNAME || 'collaborator',
+    name: 'Collaborator Tester',
+}
+
 // These mirror the singleton constants in
 // core/server/coreserver/demo_start.go. Keep in sync.
 // REVIEW_DEMO_EMAIL overrides userEmail at runtime; if you set it to
@@ -403,6 +432,73 @@ async function ensureAdminAppUser(pb: PocketBase, config: SeedConfig): Promise<v
     }
 }
 
+/**
+ * The collaborator's password, resolved the same way the fixture user's is.
+ *
+ * TEST_COLLABORATOR_PW wins so CI can set it; otherwise the collaborator shares
+ * the fixture user's password. Falling back to the SAME literal the e2e helper
+ * hardcodes is what makes a clean checkout work at all — playwright.config.ts
+ * never loads .env, so seed and helper can only meet at a shared constant.
+ */
+function collaboratorPassword(config: SeedConfig): string {
+    return (
+        process.env.TEST_COLLABORATOR_PW ||
+        (config.userPasswordExplicit ? config.userPassword : TEST_USER_DEFAULT_PASSWORD)
+    )
+}
+
+/**
+ * Find-or-create the seeded collaborator (see COLLABORATOR_DEFAULTS).
+ *
+ * Runs BEFORE seedForUser so package seeds that look for a "teammate" (cards'
+ * seed resolves its `teammate` rows from the other users in the deployment)
+ * find a real one, rather than collapsing those rows onto the seeded owner.
+ *
+ * Idempotent in the same shape as ensureAdminAppUser: an existing row keeps its
+ * id but has its password reset to the known fixture value, because a
+ * re-seeded DB must be signable-into with the credential the e2e helper
+ * hardcodes — a row left with an unknown password would fail every
+ * signInAsCollaborator() with no clue why.
+ */
+async function ensureCollaboratorUser(pb: PocketBase, password: string): Promise<void> {
+    let existing: { id: string } | null = null
+    try {
+        existing = await pb
+            .collection('users')
+            .getFirstListItem(`username = "${COLLABORATOR_DEFAULTS.username}"`)
+    } catch (err) {
+        if (!isNotFoundError(err)) throw err
+    }
+
+    if (existing) {
+        log('Found existing collaborator user:', COLLABORATOR_DEFAULTS.username)
+        await pb.collection('users').update(existing.id, {
+            email: COLLABORATOR_DEFAULTS.email,
+            name: COLLABORATOR_DEFAULTS.name,
+            password,
+            passwordConfirm: password,
+            role: 'member',
+        })
+        return
+    }
+
+    log('Creating collaborator user:', COLLABORATOR_DEFAULTS.username)
+    await pb.collection('users').create({
+        username: COLLABORATOR_DEFAULTS.username,
+        email: COLLABORATOR_DEFAULTS.email,
+        password,
+        passwordConfirm: password,
+        name: COLLABORATOR_DEFAULTS.name,
+        // The share dialog searches people by email; a collaborator whose email
+        // is hidden cannot be found and added through the real UI.
+        emailVisibility: true,
+        verified: true,
+        // `role` is required (1940000000_backfill_and_require_users_role) and
+        // must be set on the create itself.
+        role: 'member',
+    })
+}
+
 export async function authSuperuser(config: {
     url: string
     adminEmail: string
@@ -473,6 +569,13 @@ async function main() {
     const pb = await authSuperuser(config)
     await seedAppName(pb)
     await ensureAdminAppUser(pb, config)
+    // Before seedForUser: package seeds resolve their "teammate" rows from the
+    // other users present, so the collaborator has to exist by then.
+    // Demo mode is a single-visitor tour — a second signed-in member there
+    // would show up in rosters and pickers as a stranger.
+    if (!config.isDemo) {
+        await ensureCollaboratorUser(pb, collaboratorPassword(config))
+    }
     const login = await seedForUser(pb, config)
     log('Seeding complete!')
     printLoginSummary(config, login)
