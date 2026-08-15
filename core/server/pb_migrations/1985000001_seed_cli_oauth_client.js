@@ -19,10 +19,14 @@ migrate(
         // The CLI uses the device grant, which has no redirect. The loopback
         // entry is there for a future `--browser` authorization-code login.
         cli.set('redirect_uris', ['http://127.0.0.1/callback'])
+        // Keep in step with oauth.AllScopes and the CLI's own cliScopes. A
+        // package whose scopes are missing here cannot be used from the CLI at
+        // all: this row is the ceiling ValidateClientScopes enforces.
         cli.set(
             'scopes',
             'profile mail:read mail:send drive:read drive:write ' +
-                'contacts:read contacts:write calendar:read calendar:write'
+                'contacts:read contacts:write calendar:read calendar:write ' +
+                'cards:read cards:write'
         )
         app.save(cli)
     },

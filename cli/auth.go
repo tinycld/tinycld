@@ -18,12 +18,21 @@ import (
 // cliScopes mirrors the scope set granted to the seeded tinycld-cli client:
 // the CLI is first-party, so it asks for everything up front and the consent
 // screen shows the full list.
+//
+// This list, the seed migration's `scopes`, and oauth.AllScopes must stay in
+// step, and nothing enforces that — the module boundary keeps the constants
+// out of reach (see gen-cli.ts). The client row is a hard CEILING
+// (ValidateClientScopes), so a scope missing THERE fails the login outright,
+// while one missing HERE fails later and quietly: the grant is issued without
+// it and the command 403s. cards:* was missing from both for an entire
+// release — `tinycld cards` could not run at all.
 var cliScopes = []string{
 	"profile",
 	"mail:read", "mail:send",
 	"drive:read", "drive:write",
 	"contacts:read", "contacts:write",
 	"calendar:read", "calendar:write",
+	"cards:read", "cards:write",
 }
 
 // contextTokenStore adapts the keychain to client.TokenStore for one context.
