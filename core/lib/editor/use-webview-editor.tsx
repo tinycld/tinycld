@@ -290,7 +290,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     const loggedMountRef = useRef(false)
     if (__DEV__ && !loggedMountRef.current) {
         loggedMountRef.current = true
-        console.log('[editor.mount] mounted (t0)')
+        console.debug('[editor.mount] mounted (t0)')
     }
 
     // Height the page reported for its own content, held in a tiny store
@@ -322,7 +322,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         const message = makeMessage('app', 'init', initPayload)
         try {
             if (__DEV__) {
-                console.log('[editor.mount] init-sent', Date.now() - mountAtRef.current, 'ms')
+                console.debug('[editor.mount] init-sent', Date.now() - mountAtRef.current, 'ms')
             }
             webview.postMessage(JSON.stringify(message))
             lastInitGenerationRef.current = incoming
@@ -395,7 +395,11 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             // bridgeState flag from it.
             if (parsed.type === 'editor-ready') {
                 if (__DEV__) {
-                    console.log('[editor.mount] page-ready', Date.now() - mountAtRef.current, 'ms')
+                    console.debug(
+                        '[editor.mount] page-ready',
+                        Date.now() - mountAtRef.current,
+                        'ms'
+                    )
                 }
                 setWebviewReady(true)
                 return
@@ -414,7 +418,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                     const height = (parsed.payload as { height?: unknown } | undefined)?.height
                     if (typeof height === 'number' && height > 0) {
                         if (__DEV__) {
-                            console.log(
+                            console.debug(
                                 '[editor.mount] first-height',
                                 Date.now() - mountAtRef.current,
                                 'ms'
