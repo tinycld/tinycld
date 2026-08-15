@@ -2,8 +2,36 @@
 import { act, cleanup, render } from '@testing-library/react'
 import { isValidElement } from 'react'
 import { Text, View } from 'react-native'
-import { afterEach, describe, expect, it } from 'vitest'
-import { useLazyEditor } from '../LazyEditor'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// A held lease. There is one editor app-wide, and a surface that does not hold
+// it renders its read view — so a test about the EDITING slots has to be the
+// holder, or there is nothing to render.
+vi.mock('../../../lib/editor/warm', () => ({
+    useWarmEditor: () => ({
+        isWarm: true,
+        ready: true,
+        acquire: vi.fn(),
+        release: vi.fn(),
+        result: {
+            editor: {
+                getHTML: vi.fn(async () => '<p>x</p>'),
+                getText: vi.fn(async () => 'x'),
+                getMarkdown: vi.fn(async () => 'typed'),
+                setContent: vi.fn(),
+                focus: vi.fn(),
+                clear: vi.fn(),
+                getSelection: vi.fn(async () => null),
+            },
+            EditorComponent: () => null,
+            commands: {},
+            toolbarState: {},
+        },
+        generation: 1,
+    }),
+}))
+
+const { useLazyEditor } = await import('../LazyEditor')
 
 /**
  * Some surfaces cannot take the editor as one tree. A card description draws its

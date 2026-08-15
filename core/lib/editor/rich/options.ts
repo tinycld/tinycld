@@ -83,11 +83,15 @@ export interface UseRichEditorOptions {
      */
     overlayKey?: string
     /**
-     * Configuration generation, for a reused (warm) editor.
+     * Configuration generation, for a reused (shared) editor.
      *
-     * Bumping this re-initializes the underlying WebView page in place — a full
-     * stage-two reconstruction — instead of mounting a new one. Omitted by
-     * ordinary consumers, which mount and destroy their own editor.
+     * Bumping this fully reconstructs the editor in place instead of mounting a
+     * new one: native re-initializes the WebView page (a stage-two
+     * reconstruction), web tears down and rebuilds the in-process Tiptap. Either
+     * way nothing survives the swap — new schema, new undo stack, new selection
+     * — which is what makes handing one instance between surfaces safe.
+     *
+     * Omitted by ordinary consumers, which mount and destroy their own editor.
      */
     generation?: number
 }

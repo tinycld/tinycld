@@ -21,32 +21,32 @@ import type { UseRichEditorOptions } from '../../../lib/editor/rich/options'
 // blur the same way the real editor would.
 let captured: UseRichEditorOptions | null = null
 
+// A HELD lease: there is one editor app-wide and these cases are all about a
+// surface that has it. A lease reporting no editor would render the read view,
+// so there would be no session for a dialog to keep alive.
 vi.mock('../../../lib/editor/warm', () => ({
-    useWarmEditor: () => ({
-        isWarm: false,
-        acquire: vi.fn(),
-        release: vi.fn(),
-        result: null,
-        generation: 0,
-    }),
-}))
-
-vi.mock('../../../lib/editor/rich', () => ({
-    useRichEditor: (options: UseRichEditorOptions) => {
+    useWarmEditor: (_surfaceId: string, options: UseRichEditorOptions) => {
         captured = options
         return {
-            editor: {
-                getHTML: vi.fn(async () => '<p>x</p>'),
-                getText: vi.fn(async () => 'x'),
-                getMarkdown: vi.fn(async () => 'typed'),
-                setContent: vi.fn(),
-                focus: vi.fn(),
-                clear: vi.fn(),
-                getSelection: vi.fn(async () => null),
+            isWarm: true,
+            ready: true,
+            acquire: vi.fn(),
+            release: vi.fn(),
+            result: {
+                editor: {
+                    getHTML: vi.fn(async () => '<p>x</p>'),
+                    getText: vi.fn(async () => 'x'),
+                    getMarkdown: vi.fn(async () => 'typed'),
+                    setContent: vi.fn(),
+                    focus: vi.fn(),
+                    clear: vi.fn(),
+                    getSelection: vi.fn(async () => null),
+                },
+                EditorComponent: () => null,
+                commands: {},
+                toolbarState: {},
             },
-            EditorComponent: () => null,
-            commands: {},
-            toolbarState: {},
+            generation: 1,
         }
     },
 }))

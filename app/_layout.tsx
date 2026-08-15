@@ -12,6 +12,7 @@ import '~/global.css'
 import { AppErrorBoundary } from '@tinycld/core/components/AppErrorBoundary'
 import { NewVersionToast } from '@tinycld/core/components/NewVersionToast'
 import { BundleSentinel } from '@tinycld/core/lib/bundle-sentinel'
+import { EditorSingletonProvider } from '@tinycld/core/lib/editor/warm'
 import { installFatalRollbackHandler } from '@tinycld/core/lib/install-fatal-rollback'
 import { initSentry } from '@tinycld/core/lib/sentry'
 import { useAppUpdates } from '@tinycld/core/lib/use-app-updates'
@@ -58,7 +59,14 @@ export default function Layout() {
         <Providers>
             <MarkBundleHealthy />
             <BundleSentinel />
-            <Slot />
+            {/* Above the route tree so the one editor outlives any package's
+                section — leaving Cards and returning re-uses it instead of
+                re-paying the ~1135 ms boot. Constructs nothing until a package
+                calls useEditorNeeded(), so an app whose user never opens an
+                editing package pays nothing for this. */}
+            <EditorSingletonProvider>
+                <Slot />
+            </EditorSingletonProvider>
             <NewVersionToast />
         </Providers>
     )

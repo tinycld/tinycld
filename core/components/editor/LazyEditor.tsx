@@ -1,6 +1,5 @@
 import { type ComponentType, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable } from 'react-native'
-import { useRichEditor } from '../../lib/editor/rich'
 import type { UseRichEditorOptions } from '../../lib/editor/rich/options'
 import type { EditorCommands, EditorHandle, EditorToolbarState } from '../../lib/editor/types'
 import { useWarmEditor } from '../../lib/editor/warm'
@@ -33,7 +32,16 @@ export interface LazyEditorRenderSlots {
 }
 
 export interface LazyEditorProps {
-    /** Shown while idle. The consumer's component — core never interprets content. */
+    /**
+     * Shown whenever this surface does not hold a usable editor — idle,
+     * displaced by another surface, or still booting. The consumer's component;
+     * core never interprets content.
+     *
+     * Effectively REQUIRED. Null renders an invisible box the user cannot get
+     * back into, which is precisely what made a displaced composer look
+     * broken. A composer with no prose to show still has something to render:
+     * its stashed draft as static text, or its placeholder when empty.
+     */
     readView: ReactNode
     /** Current persisted content, in `contentFormat`. */
     value: string
@@ -80,13 +88,26 @@ export interface LazyEditorProps {
      * editing has already begun, so an idle read view would be a second, stale
      * source of truth about whether a session exists.
      *
-     * Such a surface also never closes itself on a blur. The parent decides when
-     * editing is over — it is the one that will unmount this — and a composer
-     * has no read view to fall back to anyway, so closing would leave an empty
-     * box the user cannot get back. A blur still RELEASES the shared instance
-     * and stashes the draft; it just does not end the session.
+     * Such a surface also never closes itself on a blur: the parent decides
+     * when editing is over, since it is the one that will unmount this. A blur
+     * still RELEASES the shared instance and stashes the draft; it just does not
+     * end the session.
+     *
+     * This does NOT imply a distinct rendering. A `startOpen` surface that does
+     * not hold the editor renders `readView` like any other — the difference is
+     * only that it opened its session without waiting for a tap.
      */
     startOpen?: boolean
+    /**
+     * Change this to say "the caret belongs in this surface now".
+     *
+     * Only meaningful with `startOpen`. Such a session stays open when another
+     * surface steals the editor, so the caller needs a way to claim it back on
+     * an explicit user action — a comment composer keys this on its reply
+     * target, so pressing Reply on a comment brings the editor back to the
+     * composer that the reply will be written in.
+     */
+    acquireToken?: string | number
     /**
      * Keep the session open after a commit, clearing the editor instead.
      *
@@ -112,14 +133,26 @@ export interface LazyEditorProps {
 }
 
 /**
- * Renders content, and swaps in a real editor when someone starts editing.
+ * Renders content, and swaps in the app's one editor when someone starts
+ * editing.
+ *
+ * **It renders exactly two things: `readView`, or the editor.** Holding a
+ * usable instance renders the editor; everything else — idle, displaced by
+ * another surface's acquire, or waiting on a boot that has not finished —
+ * renders `readView`. There is no third rendering and no loading state here,
+ * because what the read view SHOWS is the caller's decision: prose, a stashed
+ * draft, a placeholder. Core never interprets it, exactly as it never
+ * interprets content.
+ *
+ * That makes `readView` effectively required. A caller passing null gets an
+ * invisible box the user cannot get back into.
  *
  * Two jobs, both previously hand-rolled per consumer:
  *
  *  - **The swap.** The read view IS the boot placeholder, so an edit never
- *    shows an empty box while the editor initializes. On native the editor is
- *    the package's warm instance when one is available, which turns a ~1135 ms
- *    cold start into a ~34 ms reconfiguration.
+ *    shows an empty box while the editor initializes. The editor is the app's
+ *    single instance, which turns a ~1135 ms cold start into a ~34 ms
+ *    reconfiguration.
  *  - **The commit rules.** See commit-policy.ts — each clause protects a write,
  *    and a blur COMMITS, so getting them wrong loses or invents user text.
  *
@@ -152,6 +185,7 @@ export function useLazyEditor({
     onRelease,
     isDialogOpen: dialogOpenProp,
     startOpen = false,
+    acquireToken,
     stayOpenOnCommit = false,
     renderEditor,
     renderHeader,
@@ -202,15 +236,17 @@ export function useLazyEditor({
 
     const lease = useWarmEditor(surfaceId, chainedOptions)
 
-    // The cold fallback, used when no warm host is mounted (always on web, and
-    // on native before the host boots). Warm is an optimization, never a
-    // correctness dependency.
-    //
-    // Called unconditionally, including while idle: a hook cannot sit behind the
-    // swap's branch. On web it is the same Tiptap instance the previous
-    // hand-rolled swaps mounted.
-    const own = useRichEditor({ ...chainedOptions, autofocus: true })
-    const active = lease.result ?? own
+    // The ONLY editor. There is no fallback: a second instance is what let one
+    // surface keep editing while another held the shared one, and on web it hid
+    // every handover branch from CI. Null whenever this surface does not hold a
+    // usable editor — idle, displaced by a steal, or still booting — and all
+    // three render `readView`.
+    const active = lease.result
+    // The current holding, for callbacks that can outlive the render they were
+    // created in (a dialog's Save, a blur arriving after a steal). Reading the
+    // captured `active` there would test a holding this surface no longer has.
+    const activeRef = useRef(active)
+    activeRef.current = active
 
     const startEditing = useCallback(() => {
         baselineRef.current = value
@@ -227,11 +263,30 @@ export function useLazyEditor({
     //
     // In an effect, not during render: acquire mutates the shared store and
     // notifies every other surface subscribed to it.
-    const acquireRef = useRef(lease.acquire)
-    acquireRef.current = lease.acquire
+    // Re-run when the lease's acquire changes identity, which it does when the
+    // singleton finishes booting. A surface that mounts DURING the boot — the
+    // composer on a freshly opened card — would otherwise acquire once against
+    // a provider that had no editor yet and never try again, leaving it stuck
+    // on its read view for the life of the card.
+    // `acquireToken` re-runs it on demand. A parent-owned session survives a
+    // steal (#193), so a composer can be open while another surface holds the
+    // editor; when the parent does something that means "the caret belongs here
+    // now" — pressing Reply, which targets THIS composer — it changes the token
+    // and the instance comes back. Without it the composer stays open with no
+    // editor in it and no way in but a tap.
+    //
+    // Deliberately caller-driven rather than a blanket "reclaim whenever idle":
+    // the editor falls idle for a moment during every ordinary handover, and
+    // grabbing it there would rip it out of the surface the user just clicked.
+    const acquire = lease.acquire
+    // Null when this surface should not claim the instance at all, and a NEW
+    // value each time the caller says the caret belongs here again. Reading it
+    // in the effect makes it a genuine dependency rather than one the linter can
+    // prove does nothing — the token IS the trigger.
+    const claim = startOpen ? `${surfaceId}:${acquireToken ?? ''}` : null
     useEffect(() => {
-        if (startOpen) acquireRef.current()
-    }, [startOpen])
+        if (claim) acquire()
+    }, [claim, acquire])
 
     // The warm instance parks with autofocus off — focusing a parked editor
     // would open the keyboard over a card nobody is editing — so the surface
@@ -240,10 +295,9 @@ export function useLazyEditor({
     // to tap a second time.
     //
     // Keyed on the generation rather than isEditing so a handover refocuses the
-    // incoming surface too. The cold fallback sets autofocus: true and needs
-    // none of this, hence the isWarm guard.
+    // incoming surface too.
     const focusedGenerationRef = useRef<number | null>(null)
-    if (isEditing && lease.isWarm && lease.result != null) {
+    if (isEditing && lease.result != null) {
         if (focusedGenerationRef.current !== lease.generation) {
             focusedGenerationRef.current = lease.generation
             // Deferred: the editor is reconfigured during this commit, and
@@ -275,18 +329,36 @@ export function useLazyEditor({
         ({ stash }: { stash?: boolean } = {}) => {
             settledRef.current = true
             // Read BEFORE the release, while this surface still holds the
-            // editor. The composer's draft used to survive only because its
-            // editor stayed mounted; under one shared instance it no longer
-            // does, so this is where it goes instead.
-            if (stash && onRelease) {
-                const editor = active.editor
+            // editor. With no second editor to fall back on, this async read is
+            // the ONLY copy of an uncommitted draft — the composer's text used
+            // to survive because its own editor stayed mounted, and it no
+            // longer does.
+            const held = activeRef.current
+            if (stash && onRelease && held) {
+                const editor = held.editor
+                // The generation at the moment this surface still held the
+                // instance. A blur caused BY a steal runs after the editor has
+                // already been reconfigured for the incoming surface, so reading
+                // it now returns THEIR text — the composer would stash the
+                // comment someone just clicked into and redisplay it as its own
+                // draft. Discard the read if the instance moved.
+                const generationAtStash = lease.generation
                 void (async () => {
                     try {
-                        onRelease(await readContent(editor))
+                        const content = await readContent(editor)
+                        if (lease.generation !== generationAtStash) return
+                        onRelease(content)
                     } catch (err) {
-                        // A draft that cannot be read is a lost draft, not a
-                        // broken editor — the session still ends.
+                        // The session still ends — a broken read is not a
+                        // reason to trap the user in an editor. But it IS a lost
+                        // draft, so the surface is told rather than left to
+                        // re-seed from a stash that never arrived: onRelease
+                        // with the baseline restores what was last persisted
+                        // instead of silently showing an empty composer.
                         captureException('editor.lazy.readOnRelease', err, { surfaceId })
+                        if (lease.generation === generationAtStash) {
+                            onRelease(baselineRef.current)
+                        }
                     }
                 })()
             }
@@ -298,11 +370,30 @@ export function useLazyEditor({
             // released above, so a handover works; only the swap is withheld.
             if (!startOpen) setIsEditing(false)
         },
-        [lease, onRelease, active.editor, readContent, surfaceId, startOpen]
+        [lease, onRelease, readContent, surfaceId, startOpen]
     )
 
     const submit = useCallback(() => {
         if (settledRef.current) return
+        // Read through the ref, not the captured `active`: a submit handler can
+        // outlive the render that produced it — a dialog's Save button holds the
+        // one it was given when it opened — and the captured value would still
+        // point at an editor this surface has since lost. What matters is
+        // whether it holds one NOW.
+        const held = activeRef.current
+        // No editor means nothing to read, and reading nothing would resolve to
+        // '' — writing that through onCommit would blank the user's content.
+        // Ending without committing keeps the persisted value, which is the
+        // only safe answer when the text is not reachable.
+        if (!held) {
+            captureException(
+                'editor.lazy.submitWithoutEditor',
+                new Error('submit with no editor held; dropping the write'),
+                { surfaceId }
+            )
+            endSession()
+            return
+        }
         // Claimed BEFORE the await, not after. On native every surface shares
         // one editor, so a tap on another surface during the read reconfigures
         // it under us: the content that resolves then belongs to the incoming
@@ -311,10 +402,14 @@ export function useLazyEditor({
         // no-op, and the generation check below discards the stale read.
         settledRef.current = true
         const generationAtRead = lease.generation
+        // Captured now, so the async block below reads from the instance this
+        // surface held when submit was pressed rather than from whatever the
+        // lease points at after a handover.
+        const editor = held.editor
         void (async () => {
             let content: string
             try {
-                content = (await readContent(active.editor)).trim()
+                content = (await readContent(editor)).trim()
             } catch (err) {
                 captureException('editor.lazy.readContent', err)
                 endSession()
@@ -343,8 +438,8 @@ export function useLazyEditor({
                 // A composer sends and stays: the next comment goes in the same
                 // box. Clearing rather than ending is also what keeps the editor
                 // mounted, so the second comment does not re-pay the boot.
-                if (contentFormat === 'markdown') active.editor.setMarkdown?.('')
-                else active.editor.setContent('')
+                if (contentFormat === 'markdown') editor.setMarkdown?.('')
+                else editor.setContent('')
                 // The session continues, so its guards reset with it — otherwise
                 // the next comment would be refused as already-settled.
                 settledRef.current = false
@@ -354,7 +449,6 @@ export function useLazyEditor({
             endSession()
         })()
     }, [
-        active.editor,
         readContent,
         onCommit,
         onCancel,
@@ -402,7 +496,15 @@ export function useLazyEditor({
         }
     }
 
-    if (!isEditing) {
+    // The whole rule, in one condition. Wanting to edit is not enough — this
+    // surface must actually HOLD a usable editor, because there is only one and
+    // someone else may have it. Idle, displaced by a steal, and still booting
+    // are the same case here: no editor, so the read view.
+    //
+    // Pressing it re-acquires, which is what makes a displaced surface
+    // recoverable rather than dead. `startOpen` no longer implies a distinct
+    // rendering; it only decides whether the session opened without a tap.
+    if (!isEditing || active == null) {
         return {
             // Rendered even while idle: the row reserves its height, so swapping
             // a toolbar into it does not shift the prose under the reader's

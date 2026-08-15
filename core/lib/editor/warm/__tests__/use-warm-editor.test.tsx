@@ -7,17 +7,17 @@ import type { WarmEditorLease } from '../types'
 import { createWarmEditorStore } from '../warm-editor-store'
 
 /**
- * Covers the NATIVE lease — the path every other warm test skips.
+ * The lease's bookkeeping: who holds the instance, what generation is live,
+ * whether the surface's options reach the singleton, and when a holder actually
+ * gets a usable editor back.
  *
- * The rest of the suite imports the `.web` variants, where `isWarm` is false
- * and `result` is always null, so the branch LazyEditor actually takes on
- * native is never exercised. That gap hid two real defects: the commit policy
- * never reaching the warm editor, and a handover mid-submit writing one
- * surface's text onto another's record.
+ * ONE hook now serves both platforms, so this runs the same path the app takes
+ * everywhere. It used to cover only a `.native` variant while CI ran the `.web`
+ * stub — a gap that hid two real defects: the commit policy never reaching the
+ * shared editor, and a handover mid-submit writing one surface's text onto
+ * another's record.
  *
- * The WebView is mocked, not booted. What matters here is the lease's
- * bookkeeping — who holds the instance, what generation is live, and whether
- * the surface's options reach the host — none of which needs a real editor.
+ * The editor is mocked, not booted. None of this needs a real one.
  */
 
 const editorResult = () =>
@@ -37,25 +37,28 @@ const editorResult = () =>
     }) as unknown as EditorResult
 
 /**
- * A stand-in for WarmEditorHost that shares its contract — one store, one
- * result, an options setter — without mounting a WebView. useWarmEditor reads
- * the context through useWarmContext, so the module is mocked to hand back
- * this fake.
+ * A stand-in for the singleton that shares its contract — one store, one
+ * result, an options setter — without booting an editor. useWarmEditor reads it
+ * through useEditorSingleton, so that module is mocked to hand back this fake.
+ *
+ * Ready by default: these tests are about the lease's bookkeeping, and the boot
+ * window has its own test below.
  */
 function createFakeHost() {
     const store = createWarmEditorStore()
+    store.setReady(true)
     const result = editorResult()
     const setOptions = vi.fn()
-    return { store, result, setOptions, drafts: null as never }
+    return { store, result, setOptions, drafts: null as never, declareNeed: vi.fn() }
 }
 
 let host = createFakeHost()
 
-vi.mock('../WarmEditorHost.native', () => ({
-    useWarmContext: () => host,
+vi.mock('../editor-singleton', () => ({
+    useEditorSingleton: () => host,
 }))
 
-const { useWarmEditor } = await import('../use-warm-editor.native')
+const { useWarmEditor } = await import('../use-warm-editor')
 
 function Harness({
     surfaceId,
@@ -80,11 +83,32 @@ afterEach(() => {
     host = createFakeHost()
 })
 
-describe('useWarmEditor (native)', () => {
-    it('reports warm when a host is mounted', () => {
+describe('useWarmEditor', () => {
+    it('reports warm when the singleton is mounted', () => {
         let lease!: WarmEditorLease
         render(<Harness surfaceId="comment:a" onLease={l => (lease = l)} />)
         expect(lease.isWarm).toBe(true)
+    })
+
+    /**
+     * Acquiring during the boot is ordinary — the user taps the moment the
+     * section opens. Handing back a half-built editor is what would render a
+     * dead box, so a holder gets null until the instance is usable and shows
+     * its read view in the meantime.
+     */
+    it('withholds the editor from a holder while it is still booting', () => {
+        host.store.setReady(false)
+        let lease!: WarmEditorLease
+        render(<Harness surfaceId="comment:a" onLease={l => (lease = l)} />)
+
+        act(() => lease.acquire())
+        expect(host.store.holder()).toBe('comment:a')
+        expect(lease.result).toBeNull()
+        expect(lease.ready).toBe(false)
+
+        act(() => host.store.setReady(true))
+        expect(lease.result).not.toBeNull()
+        expect(lease.ready).toBe(true)
     })
 
     it('hands the instance over only to the surface holding it', () => {

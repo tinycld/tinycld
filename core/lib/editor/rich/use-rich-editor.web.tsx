@@ -72,6 +72,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         editable = true,
         containerClassName,
         characterLimit,
+        generation = 0,
         onSubmitShortcut,
         onEscape,
         onFocus,
@@ -292,7 +293,15 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                 },
             },
         },
-        [extensions, editable]
+        // `generation` is what makes a handover a full reconstruction rather
+        // than a mutation: tiptap tears the editor down and rebuilds it on a dep
+        // change, so the incoming surface gets a new schema, a new undo stack
+        // and a fresh selection, and `content` above is re-read from the new
+        // surface's initialContent. Without it the previous surface's history
+        // and caret would leak into the next one — the native page has always
+        // done this by keying its mount on the same value (webview/source/
+        // Editor.tsx, `key={init.generation}`).
+        [extensions, editable, generation]
     )
 
     const editor: EditorHandle = useMemo(() => {
