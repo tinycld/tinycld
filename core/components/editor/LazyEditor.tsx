@@ -1,4 +1,4 @@
-import { type ComponentType, type ReactNode, useCallback, useRef, useState } from 'react'
+import { type ComponentType, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable } from 'react-native'
 import { useRichEditor } from '../../lib/editor/rich'
 import type { UseRichEditorOptions } from '../../lib/editor/rich/options'
@@ -47,6 +47,18 @@ export interface LazyEditorProps {
     /** Absent when there is nothing to revert (a collaborative description). */
     onCancel?: () => void
     /**
+     * The session is ending WITHOUT a commit — here is what was in the editor.
+     *
+     * For a surface that has no commit semantics and therefore nowhere else to
+     * put uncommitted text. A comment composer is the case: it does not write on
+     * blur, and before the shared editor its half-typed draft survived only
+     * because its own editor stayed mounted. Stash it here and seed `value` from
+     * the stash to get that back.
+     *
+     * Not called on a commit — `onCommit` already carries the content.
+     */
+    onRelease?: (content: string) => void
+    /**
      * True while a dialog the editor opened holds the focus, so a blur is not
      * the session ending — the editor must survive until the picked image or
      * link lands in it.
@@ -59,6 +71,30 @@ export interface LazyEditorProps {
      * guide names as the signal to switch primitives. When supplied, this wins.
      */
     isDialogOpen?: boolean
+    /**
+     * Open the session on mount instead of waiting for a press.
+     *
+     * For a surface whose swap is decided ELSEWHERE: a comment composer that a
+     * collapsed row already expanded, or an inline edit whose parent tracks
+     * which single comment is open. Those callers mount this component only when
+     * editing has already begun, so an idle read view would be a second, stale
+     * source of truth about whether a session exists.
+     *
+     * Such a surface also never closes itself on a blur. The parent decides when
+     * editing is over — it is the one that will unmount this — and a composer
+     * has no read view to fall back to anyway, so closing would leave an empty
+     * box the user cannot get back. A blur still RELEASES the shared instance
+     * and stashes the draft; it just does not end the session.
+     */
+    startOpen?: boolean
+    /**
+     * Keep the session open after a commit, clearing the editor instead.
+     *
+     * A composer sends and stays — the next comment goes in the same box, and
+     * ending the session would unmount the editor only to rebuild it. An edit of
+     * existing content is the opposite: it ends at its first commit.
+     */
+    stayOpenOnCommit?: boolean
     /** The consumer's chrome around the editing surface. */
     renderEditor: (slots: LazyEditorSlots) => ReactNode
     /**
@@ -113,13 +149,16 @@ export function useLazyEditor({
     commitOnBlur = false,
     onCommit,
     onCancel,
+    onRelease,
     isDialogOpen: dialogOpenProp,
+    startOpen = false,
+    stayOpenOnCommit = false,
     renderEditor,
     renderHeader,
     testID,
     accessibilityLabel = 'Edit',
 }: LazyEditorProps): LazyEditorRenderSlots {
-    const [isEditing, setIsEditing] = useState(false)
+    const [isEditing, setIsEditing] = useState(startOpen)
     const [dialogOpenState, setIsDialogOpen] = useState(false)
     // The prop wins when given, so a caller that already owns the dialog state
     // does not have to echo it back through setDialogOpen.
@@ -181,6 +220,19 @@ export function useLazyEditor({
         setIsEditing(true)
     }, [lease, value])
 
+    // A session that opened on mount still has to TAKE the instance. Without
+    // this it renders an editing surface while holding no lease, so `result` is
+    // null and it silently falls back to a cold editor — the exact cost this
+    // whole mechanism exists to remove.
+    //
+    // In an effect, not during render: acquire mutates the shared store and
+    // notifies every other surface subscribed to it.
+    const acquireRef = useRef(lease.acquire)
+    acquireRef.current = lease.acquire
+    useEffect(() => {
+        if (startOpen) acquireRef.current()
+    }, [startOpen])
+
     // The warm instance parks with autofocus off — focusing a parked editor
     // would open the keyboard over a card nobody is editing — so the surface
     // that acquires it has to take the caret itself. Without this, tapping a
@@ -203,18 +255,50 @@ export function useLazyEditor({
         focusedGenerationRef.current = null
     }
 
-    const endSession = useCallback(() => {
-        settledRef.current = true
-        lease.release()
-        setIsEditing(false)
-    }, [lease])
-
     const readContent = useCallback(
         async (editor: EditorHandle): Promise<string> =>
             contentFormat === 'markdown'
                 ? ((await editor.getMarkdown?.()) ?? '')
                 : editor.getHTML(),
         [contentFormat]
+    )
+
+    /**
+     * End the session and give the instance back.
+     *
+     * `stash` is for the one path that leaves text behind: a surface with no
+     * commit semantics blurring away. A commit or a cancel has already decided
+     * what happens to the content, and stashing there would resurrect a comment
+     * that was just sent.
+     */
+    const endSession = useCallback(
+        ({ stash }: { stash?: boolean } = {}) => {
+            settledRef.current = true
+            // Read BEFORE the release, while this surface still holds the
+            // editor. The composer's draft used to survive only because its
+            // editor stayed mounted; under one shared instance it no longer
+            // does, so this is where it goes instead.
+            if (stash && onRelease) {
+                const editor = active.editor
+                void (async () => {
+                    try {
+                        onRelease(await readContent(editor))
+                    } catch (err) {
+                        // A draft that cannot be read is a lost draft, not a
+                        // broken editor — the session still ends.
+                        captureException('editor.lazy.readOnRelease', err, { surfaceId })
+                    }
+                })()
+            }
+            lease.release()
+            // A parent-owned session (startOpen) does NOT close itself: the
+            // caller that mounted it decides when editing is over, and a
+            // composer has no read view to fall back to — closing would leave
+            // an empty box with no way back into it. The instance is still
+            // released above, so a handover works; only the swap is withheld.
+            if (!startOpen) setIsEditing(false)
+        },
+        [lease, onRelease, active.editor, readContent, surfaceId, startOpen]
     )
 
     const submit = useCallback(() => {
@@ -255,9 +339,31 @@ export function useLazyEditor({
                 return
             }
             onCommit(content)
+            if (stayOpenOnCommit) {
+                // A composer sends and stays: the next comment goes in the same
+                // box. Clearing rather than ending is also what keeps the editor
+                // mounted, so the second comment does not re-pay the boot.
+                if (contentFormat === 'markdown') active.editor.setMarkdown?.('')
+                else active.editor.setContent('')
+                // The session continues, so its guards reset with it — otherwise
+                // the next comment would be refused as already-settled.
+                settledRef.current = false
+                baselineRef.current = ''
+                return
+            }
             endSession()
         })()
-    }, [active.editor, readContent, onCommit, onCancel, endSession, lease.generation, surfaceId])
+    }, [
+        active.editor,
+        readContent,
+        onCommit,
+        onCancel,
+        endSession,
+        lease.generation,
+        surfaceId,
+        stayOpenOnCommit,
+        contentFormat,
+    ])
 
     const cancel = useCallback(() => {
         settledRef.current = true
@@ -278,9 +384,22 @@ export function useLazyEditor({
             submit()
             return
         }
-        // A surface with no blur-commit still ends its session on blur — the
-        // caller decides whether that text was worth keeping.
-        if (!commitOnBlur && hasFocusedRef.current && !isDialogOpen) endSession()
+        // A surface with no blur-commit still ends its session on blur — and
+        // this is the one exit that leaves uncommitted text, so it is the one
+        // that stashes.
+        if (!commitOnBlur && hasFocusedRef.current && !isDialogOpen) {
+            endSession({ stash: true })
+            // A parent-owned session survived that call, so the guards it just
+            // set have to come back with it: `settled` would otherwise refuse
+            // the next send, and `hasFocused` must re-arm so a LATER blur can
+            // stash again. Re-focusing the composer resets the latter anyway;
+            // clearing it here keeps a blurred-but-open surface from stashing
+            // twice off one focus.
+            if (startOpen) {
+                settledRef.current = false
+                hasFocusedRef.current = false
+            }
+        }
     }
 
     if (!isEditing) {
