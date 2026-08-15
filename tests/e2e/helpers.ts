@@ -132,7 +132,18 @@ export async function login(page: Page) {
     // unusable in any mobile-viewport spec — it waited out the full timeout for
     // an element that layout never renders. Accept either.
     const shellReady = appShell(page)
-    const authError = page.getByText('Failed to authenticate', { exact: false })
+    // Match EITHER message the sign-in form can render for a failed attempt.
+    // 'Failed to authenticate' is the clean credential rejection; 'Something
+    // went wrong' is the generic fallback in core/lib/errors.ts, which is what
+    // a TRANSIENT failure under parallel load actually produces. Watching only
+    // the first meant the common case never retried: the race below resolved
+    // 'timeout' after 15s, fell through to a final 15s wait, and blew the 30s
+    // test budget in beforeEach — taking every worker that hit the same moment
+    // with it (three at once, in the run that surfaced this).
+    const authError = page
+        .getByText('Failed to authenticate', { exact: false })
+        .or(page.getByText('Something went wrong', { exact: false }))
+        .first()
     const maxAttempts = 3
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         await page.getByText('Sign in', { exact: true }).last().click()
@@ -148,7 +159,14 @@ export async function login(page: Page) {
                 .catch(() => 'timeout' as const),
         ])
         if (outcome === 'ok') return
-        if (outcome === 'error' && attempt < maxAttempts) continue
+        if (outcome === 'error' && attempt < maxAttempts) {
+            // Wait out the visible error before re-clicking. It stays on screen
+            // after a failed attempt, so an immediate retry would race the
+            // banner it just saw and resolve 'error' again instantly, burning
+            // every attempt in a few milliseconds without a real retry.
+            await authError.waitFor({ state: 'hidden', timeout: 5_000 }).catch(() => {})
+            continue
+        }
         // Timed out with no shell and no error banner, or exhausted retries: one
         // last direct wait so the failure surfaces with a clear message + screenshot.
         await shellReady.waitFor({ state: 'visible', timeout: 15_000 })
@@ -160,6 +178,60 @@ export interface InvitedUser {
     username: string
     email: string
     password: string
+}
+
+// The second member the seed provisions ready-to-use (scripts/seed-db.ts,
+// COLLABORATOR_DEFAULTS). These MUST match that file: playwright.config.ts
+// never loads .env, so on a clean checkout the seed and this helper can only
+// agree via a shared literal. The env vars are the CI override for both sides.
+export const TEST_COLLABORATOR_EMAIL =
+    process.env.TEST_COLLABORATOR_LOGIN || 'collaborator@tinycld.org'
+export const TEST_COLLABORATOR_USERNAME = process.env.TEST_COLLABORATOR_USERNAME || 'collaborator'
+// The DISPLAY name, which is what collaborative UI (presence avatars, caret
+// labels) actually renders — so specs assert against this rather than a literal.
+export const TEST_COLLABORATOR_NAME = 'Collaborator Tester'
+export const TEST_COLLABORATOR_PASSWORD =
+    process.env.TEST_COLLABORATOR_PW || process.env.TEST_USER_PW || TEST_USER_PASSWORD
+
+/**
+ * A SECOND signed-in person, in their own browser context.
+ *
+ * Use this whenever a spec needs "somebody else" — a viewer to gate, a
+ * collaborator to see a live edit, a non-member to refuse. It signs in the
+ * pre-seeded collaborator account, which costs ONE login (~1.4s) against
+ * createInvitedUser's ~5.8s: that helper drives the entire invite arc through
+ * the UI (two full app boots) and leaves the owner's page stranded on Settings,
+ * forcing every caller into a second login() just to get back to their board.
+ * That setup cost — not the assertions — is what made seven cards specs carry
+ * test.slow() and then time out on CI.
+ *
+ * Reach for createInvitedUser instead ONLY when the invite flow itself is under
+ * test, or when the spec MUTATES the account's credentials (change-password,
+ * password-reset): this account is shared across the run, so changing its
+ * password would break every later spec that signs in with it.
+ *
+ * The caller's own `page` is untouched — no re-login needed afterwards.
+ *
+ *     const { page: bobPage, user: bob, close } = await signInAsCollaborator(page)
+ *     try { ... } finally { await close() }
+ */
+export async function signInAsCollaborator(page: Page): Promise<{
+    page: Page
+    user: InvitedUser
+    close: () => Promise<void>
+}> {
+    const context = await page.context().browser()!.newContext()
+    const collaboratorPage = await context.newPage()
+    await loginAs(collaboratorPage, TEST_COLLABORATOR_EMAIL, TEST_COLLABORATOR_PASSWORD)
+    return {
+        page: collaboratorPage,
+        user: {
+            username: TEST_COLLABORATOR_USERNAME,
+            email: TEST_COLLABORATOR_EMAIL,
+            password: TEST_COLLABORATOR_PASSWORD,
+        },
+        close: () => context.close(),
+    }
 }
 
 // Provision a fresh org member via the invite flow, in an isolated browser
