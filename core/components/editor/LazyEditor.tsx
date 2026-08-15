@@ -1,4 +1,14 @@
-import { type ComponentType, type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
+import {
+    type ComponentType,
+    forwardRef,
+    type ReactNode,
+    useCallback,
+    useEffect,
+    useImperativeHandle,
+    useMemo,
+    useRef,
+    useState,
+} from 'react'
 import { Pressable } from 'react-native'
 import type { UseRichEditorOptions } from '../../lib/editor/rich/options'
 import type { EditorCommands, EditorHandle, EditorToolbarState } from '../../lib/editor/types'
@@ -24,11 +34,47 @@ export interface LazyEditorHeaderState {
     slots: LazyEditorSlots | null
 }
 
+/**
+ * Drive the surface from OUTSIDE its own chrome.
+ *
+ * For a caller that decides elsewhere that this surface should be editing: a
+ * comment composer whose Reply button lives in the activity list, a keyboard
+ * shortcut registered by the screen. `slots` already carries submit/cancel, but
+ * only while editing — and the whole point here is to reach a surface that is
+ * not.
+ *
+ * Stable across renders, so it is safe to hold in a ref or a dependency array.
+ */
+export interface LazyEditorHandle {
+    /**
+     * Start editing: take the shared instance, and put the caret in it.
+     *
+     * The imperative form of pressing the read view. Idempotent — calling it on
+     * a session that is already open reclaims the editor without resetting the
+     * revert baseline, so a repeated press cannot turn half-typed text into the
+     * thing Escape reverts to.
+     */
+    edit: () => void
+    /** Commit through the ordinary path, guards and all. */
+    submit: () => void
+    /** Discard and end the session, as Escape does. */
+    cancel: () => void
+    /**
+     * Whether this surface is editing AND holds a usable editor.
+     *
+     * A method rather than a field because the handle outlives the render that
+     * produced it; a boolean would be a snapshot that silently went stale.
+     */
+    isEditing: () => boolean
+}
+
 export interface LazyEditorRenderSlots {
     /** The row above the surface, or null when no `renderHeader` was given. */
     header: ReactNode
     /** The read view, or the editing surface once a session opens. */
     body: ReactNode
+    /** Drive the surface from outside its chrome. See {@link LazyEditorHandle}. */
+    handle: LazyEditorHandle
 }
 
 export interface LazyEditorProps {
@@ -99,16 +145,6 @@ export interface LazyEditorProps {
      */
     startOpen?: boolean
     /**
-     * Change this to say "the caret belongs in this surface now".
-     *
-     * Only meaningful with `startOpen`. Such a session stays open when another
-     * surface steals the editor, so the caller needs a way to claim it back on
-     * an explicit user action — a comment composer keys this on its reply
-     * target, so pressing Reply on a comment brings the editor back to the
-     * composer that the reply will be written in.
-     */
-    acquireToken?: string | number
-    /**
      * Keep the session open after a commit, clearing the editor instead.
      *
      * A composer sends and stays — the next comment goes in the same box, and
@@ -161,9 +197,14 @@ export interface LazyEditorProps {
  * back through — so mail's HTML surfaces use this exactly as cards' markdown
  * ones do.
  */
-export function LazyEditor(props: LazyEditorProps) {
-    return <>{useLazyEditor(props).body}</>
-}
+export const LazyEditor = forwardRef<LazyEditorHandle, LazyEditorProps>(
+    function LazyEditor(props, ref) {
+        const { body, handle } = useLazyEditor(props)
+        // The SAME object the hook returns, so the two forms cannot drift.
+        useImperativeHandle(ref, () => handle, [handle])
+        return <>{body}</>
+    }
+)
 
 /**
  * The slot-returning form of {@link LazyEditor}.
@@ -185,7 +226,6 @@ export function useLazyEditor({
     onRelease,
     isDialogOpen: dialogOpenProp,
     startOpen = false,
-    acquireToken,
     stayOpenOnCommit = false,
     renderEditor,
     renderHeader,
@@ -248,13 +288,27 @@ export function useLazyEditor({
     const activeRef = useRef(active)
     activeRef.current = active
 
-    const startEditing = useCallback(() => {
+    // Opening a session and RECLAIMING the instance for one already open are
+    // different things, and only the first may touch the guards.
+    //
+    // `baselineRef` is the revert target, snapshotted when the session opens so
+    // a realtime update mid-edit cannot become it. Re-snapshotting on a surface
+    // that is already editing would capture the user's half-typed text instead,
+    // and a later Escape would "revert" to that rather than to what was
+    // persisted — so the reclaim path leaves all three alone.
+    const openSession = useCallback(() => {
         baselineRef.current = value
         hasFocusedRef.current = false
         settledRef.current = false
         lease.acquire()
         setIsEditing(true)
     }, [lease, value])
+
+    // Take the instance back without disturbing a session in progress. Focus
+    // follows from the generation effect below, which fires on every acquire.
+    const reclaim = useCallback(() => {
+        lease.acquire()
+    }, [lease])
 
     // A session that opened on mount still has to TAKE the instance. Without
     // this it renders an editing surface while holding no lease, so `result` is
@@ -268,25 +322,14 @@ export function useLazyEditor({
     // composer on a freshly opened card — would otherwise acquire once against
     // a provider that had no editor yet and never try again, leaving it stuck
     // on its read view for the life of the card.
-    // `acquireToken` re-runs it on demand. A parent-owned session survives a
-    // steal (#193), so a composer can be open while another surface holds the
-    // editor; when the parent does something that means "the caret belongs here
-    // now" — pressing Reply, which targets THIS composer — it changes the token
-    // and the instance comes back. Without it the composer stays open with no
-    // editor in it and no way in but a tap.
-    //
-    // Deliberately caller-driven rather than a blanket "reclaim whenever idle":
-    // the editor falls idle for a moment during every ordinary handover, and
-    // grabbing it there would rip it out of the surface the user just clicked.
+    // A parent-owned session that LOSES the instance to a steal does not get it
+    // back here — that is `handle.edit()`, driven by the caller, because the
+    // editor falls idle for a moment during every ordinary handover and
+    // reclaiming on idle would rip it out of the surface the user just clicked.
     const acquire = lease.acquire
-    // Null when this surface should not claim the instance at all, and a NEW
-    // value each time the caller says the caret belongs here again. Reading it
-    // in the effect makes it a genuine dependency rather than one the linter can
-    // prove does nothing — the token IS the trigger.
-    const claim = startOpen ? `${surfaceId}:${acquireToken ?? ''}` : null
     useEffect(() => {
-        if (claim) acquire()
-    }, [claim, acquire])
+        if (startOpen) acquire()
+    }, [startOpen, acquire])
 
     // The warm instance parks with autofocus off — focusing a parked editor
     // would open the keyboard over a card nobody is editing — so the surface
@@ -465,6 +508,55 @@ export function useLazyEditor({
         onCancel?.()
     }, [endSession, onCancel])
 
+    // Everything the handle calls, read at call time rather than captured.
+    //
+    // A handle is HELD across renders — a keyboard shortcut registered once, a
+    // parent effect that fires much later — so a captured closure would call
+    // into a stale render's state. The object identity below therefore stays
+    // fixed while its behavior stays current, which is what lets a caller put it
+    // in a dependency array without re-running on every keystroke.
+    const handleFnsRef = useRef({
+        openSession,
+        reclaim,
+        submit,
+        cancel,
+        isEditing: false,
+        isSessionOpen: false,
+    })
+    handleFnsRef.current = {
+        openSession,
+        reclaim,
+        submit,
+        cancel,
+        // What a CALLER means by "is it editing": holding a usable editor. A
+        // displaced surface whose session is still open has nothing to type
+        // into, so it reads false.
+        isEditing: isEditing && active != null,
+        // Whether a session exists at all, displaced or not. Distinct from the
+        // above, and the one `edit()` must branch on — a displaced session is
+        // still a session, and re-opening it would reset its revert baseline.
+        isSessionOpen: isEditing,
+    }
+
+    const handle = useMemo<LazyEditorHandle>(
+        () => ({
+            edit: () => {
+                const fns = handleFnsRef.current
+                // A session already open — INCLUDING one displaced by a steal,
+                // which is the case this exists for — only takes the instance
+                // back. Re-opening would snapshot the user's half-typed text as
+                // the thing Escape reverts to, and clear the settled guard on a
+                // surface that may have already committed.
+                if (fns.isSessionOpen) fns.reclaim()
+                else fns.openSession()
+            },
+            submit: () => handleFnsRef.current.submit(),
+            cancel: () => handleFnsRef.current.cancel(),
+            isEditing: () => handleFnsRef.current.isEditing,
+        }),
+        []
+    )
+
     submitRef.current = submit
     blurRef.current = () => {
         if (
@@ -513,7 +605,11 @@ export function useLazyEditor({
             body: canEdit ? (
                 <Pressable
                     testID={testID}
-                    onPress={startEditing}
+                    // Through the handle, not openSession: a DISPLACED session
+                    // renders this branch too, and it must reclaim the instance
+                    // rather than re-open — otherwise tapping back into a
+                    // composer would make its half-typed draft the revert target.
+                    onPress={handle.edit}
                     accessibilityRole="button"
                     accessibilityLabel={accessibilityLabel}
                 >
@@ -522,6 +618,7 @@ export function useLazyEditor({
             ) : (
                 readView
             ),
+            handle,
         }
     }
 
@@ -539,5 +636,6 @@ export function useLazyEditor({
     return {
         header: renderHeader?.({ isEditing: true, slots }) ?? null,
         body: renderEditor(slots),
+        handle,
     }
 }
