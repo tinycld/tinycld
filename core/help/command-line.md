@@ -75,3 +75,14 @@ Each installed package contributes its own command group:
   `search`, `export`, …)
 - [Cards from the command line](help://cards:command-line) — boards, lists,
   and cards (`tinycld cards board list`, `card view`, …)
+- [Calendar from the command line](help://calendar:command-line) — your
+  agenda, events, and RSVPs, including iCalendar export and import
+  (`tinycld calendar agenda`, `add`, `rsvp`, …)
+- [Text from the command line](help://text:command-line) — comments on your
+  documents (`tinycld text comments`)
+- [Calc from the command line](help://calc:command-line) — comments on your
+  spreadsheets (`tinycld calc comments`)
+
+Documents and spreadsheets are Drive files, so creating, listing, and
+downloading them are `drive` commands — the `text` and `calc` groups cover
+their comments.
