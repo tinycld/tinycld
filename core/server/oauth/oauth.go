@@ -44,6 +44,15 @@ const (
 	ScopeCalendarWrite = "calendar:write"
 	ScopeCardsRead     = "cards:read"
 	ScopeCardsWrite    = "cards:write"
+	// text and calc own only their comment collections — the documents and
+	// spreadsheets themselves are drive_items, governed by drive:*. So these
+	// scopes are narrower than they look, and a token that can do anything
+	// useful with them holds drive:read too: a comment is unreachable without
+	// access to the item it hangs off (the rules reach through drive_item).
+	ScopeTextRead  = "text:read"
+	ScopeTextWrite = "text:write"
+	ScopeCalcRead  = "calc:read"
+	ScopeCalcWrite = "calc:write"
 )
 
 // AllScopes is the full catalog, used to validate a requested scope string and
@@ -55,6 +64,8 @@ var AllScopes = []string{
 	ScopeContactsRead, ScopeContactsWrite,
 	ScopeCalendarRead, ScopeCalendarWrite,
 	ScopeCardsRead, ScopeCardsWrite,
+	ScopeTextRead, ScopeTextWrite,
+	ScopeCalcRead, ScopeCalcWrite,
 }
 
 var (

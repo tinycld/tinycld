@@ -33,6 +33,8 @@ var cliScopes = []string{
 	"contacts:read", "contacts:write",
 	"calendar:read", "calendar:write",
 	"cards:read", "cards:write",
+	"text:read", "text:write",
+	"calc:read", "calc:write",
 }
 
 // contextTokenStore adapts the keychain to client.TokenStore for one context.
