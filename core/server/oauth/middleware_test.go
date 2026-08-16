@@ -474,6 +474,11 @@ func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
 		// separating a read grant from a write one.
 		{"GET", "/api/contacts/export", ScopeContactsRead},
 		{"POST", "/api/contacts/import", ScopeContactsWrite},
+
+		// iCalendar file transfer, same reasoning as the vCard pair above.
+		{"GET", "/api/calendar/export", ScopeCalendarRead},
+		{"POST", "/api/calendar/import", ScopeCalendarWrite},
+
 		// text and calc own only their comment collections. Unclassified,
 		// these default-denied, so `tinycld text comments` could not run at
 		// all — the same hole cards:* fell into before the first live smoke
@@ -482,6 +487,7 @@ func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
 		{"POST", "/api/collections/text_comments/records", ScopeTextWrite},
 		{"GET", "/api/collections/calc_comments/records", ScopeCalcRead},
 		{"POST", "/api/collections/calc_comments/records", ScopeCalcWrite},
+
 	}
 	for _, r := range reachable {
 		if got := ScopeForRoute(r.method, r.path); !onlyScope(got, r.scope) {
@@ -497,6 +503,16 @@ func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
 	}
 	if ScopeForRoute("POST", "/api/contacts/import").satisfiedBy([]string{ScopeContactsRead}) {
 		t.Error("contacts import must NOT be satisfied by contacts:read alone")
+	}
+
+	// Same asymmetry for calendar. It matters more here than for contacts:
+	// calendar read access is membership in ANY role, so a viewer legitimately
+	// holds calendar:read — and must still not be able to import.
+	if ScopeForRoute("GET", "/api/calendar/export").satisfiedBy([]string{ScopeCalendarWrite}) {
+		t.Error("calendar export must NOT be satisfied by calendar:write alone")
+	}
+	if ScopeForRoute("POST", "/api/calendar/import").satisfiedBy([]string{ScopeCalendarRead}) {
+		t.Error("calendar import must NOT be satisfied by calendar:read alone")
 	}
 
 	// GET /api/contacts/search is not mounted — contacts registers fts index
