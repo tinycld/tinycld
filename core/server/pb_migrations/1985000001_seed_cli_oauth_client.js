@@ -26,7 +26,7 @@ migrate(
             'scopes',
             'profile mail:read mail:send drive:read drive:write ' +
                 'contacts:read contacts:write calendar:read calendar:write ' +
-                'cards:read cards:write'
+                'cards:read cards:write text:read text:write calc:read calc:write'
         )
         app.save(cli)
     },
