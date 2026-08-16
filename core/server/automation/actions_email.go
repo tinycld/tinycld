@@ -5,10 +5,10 @@ import (
 	"fmt"
 	netmail "net/mail"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/types"
 
 	"tinycld.org/core/mailer"
 )
@@ -17,11 +17,14 @@ import (
 //
 // The engine's depth cap stops a rule re-triggering itself inside one
 // dispatch, but it cannot see across dispatches — an auto-reply answering
-// another system's auto-responder is two systems each doing one hop, forever.
-// A per-rule hourly ceiling bounds that without stopping legitimate bursts.
+// another system's auto-responder returns as genuinely new inbound mail at
+// depth 0, so two systems each doing one hop can loop forever. This ceiling
+// is the only control bounding that exchange.
 //
 // Mail's send actions cap per MAILBOX because several rules share one outbox;
-// core has no mailbox to key on, so the rule is the unit.
+// core has no mailbox to key on, so the rule is the unit. Per-recipient was
+// considered and rejected: a rule replying to N distinct senders would evade
+// it, while an address-pair loop always recurs through the same rule.
 const maxEmailsPerRulePerHour = 20
 
 // sendEmailNow is the seam tests replace. Production sends through the same
@@ -33,9 +36,9 @@ var sendEmailNow = func(ctx context.Context, msg *mailer.Message) error {
 
 // registerCoreEmailAction installs core:send-email.
 //
-// Native, but native IN CORE, which is the whole point: a multi-org tenant
-// links no feature package's Go, so mail:send-message is unavailable there
-// while this is not. It is the universal "email me when X".
+// Native, but native IN CORE, which is the point: it ships in every build
+// regardless of which feature packages an org installed, so an org without
+// mail still gets the universal "email me when X".
 func registerCoreEmailAction() {
 	RegisterAction("core:send-email", actionSendEmail)
 }
@@ -53,8 +56,12 @@ func actionSendEmail(app core.App, req ActionRequest) error {
 		return fmt.Errorf("core:send-email: %w", err)
 	}
 
-	if err := checkEmailRateLimit(app, req); err != nil {
-		return fmt.Errorf("core:send-email: %w", err)
+	// A request with no rule (a dry-run style invocation) has nothing to
+	// count against; every engine path supplies the rule.
+	if req.Rule != nil {
+		if err := reserveEmailSend(req.Rule.Id, time.Now()); err != nil {
+			return fmt.Errorf("core:send-email: %w", err)
+		}
 	}
 
 	subject := strings.TrimSpace(req.Params["subject"])
@@ -92,47 +99,51 @@ func emailRecipient(to string) (string, error) {
 	return parsed.Address, nil
 }
 
-// checkEmailRateLimit reports whether the rule has room to send.
+// emailSendLedger tracks each rule's sends inside the rolling hour, in memory.
 //
-// Counts this rule's matched runs in the last hour from rule_runs — the same
-// durable log the run-history UI reads, so a restart doesn't reset the ceiling
-// the way an in-memory counter would.
+// In-memory is deliberate (the failureStreaks precedent): there is no query
+// that can fail, so the cap cannot fail open — this ceiling is the only
+// control bounding a cross-dispatch mail loop, and an unavailable count must
+// never be read as permission to send. It also cannot be pruned out from
+// under itself the way a rule_runs-based count was (pruneRuns deletes the
+// rows such a count relies on).
 //
-// Fails OPEN on a query error: a broken count should not silently stop a
-// user's mail. That is the opposite of mail's per-mailbox limiter, which fails
-// closed — there, an unresolvable mailbox means an unverifiable self-send,
-// which is the loop being guarded. Here there is no self-send to verify, so
-// the risk of blocking legitimate mail outweighs one uncounted send.
-func checkEmailRateLimit(app core.App, req ActionRequest) error {
-	if req.Rule == nil {
-		return nil
+// A new process starts with an empty ledger. That is acceptable because the
+// processes involved do not recycle mid-loop: a single-tenant server restarts
+// when an operator says so, and a multi-org tenant is evicted only after 30
+// idle minutes with zero connections — a state an active mail loop never
+// reaches.
+var emailSendLedger = struct {
+	sync.Mutex
+	sends map[string][]time.Time
+}{sends: map[string][]time.Time{}}
+
+// reserveEmailSend claims one send slot for the rule, or reports the rule is
+// over its hourly ceiling.
+//
+// The slot is claimed BEFORE the send so the in-flight message is part of its
+// own hour (a rule with several send actions is metered per message, and a
+// concurrent dispatch cannot slip past the ceiling). A claimed slot stays
+// consumed even if the send then fails or is abandoned by the action timeout
+// — over-counting is the safe direction for a loop guard.
+func reserveEmailSend(ruleID string, now time.Time) error {
+	emailSendLedger.Lock()
+	defer emailSendLedger.Unlock()
+
+	cutoff := now.Add(-time.Hour)
+	kept := emailSendLedger.sends[ruleID][:0]
+	for _, t := range emailSendLedger.sends[ruleID] {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
 	}
-
-	// types.DateTime, not an RFC3339 string: PocketBase persists dates as
-	// "2006-01-02 15:04:05.000Z" and compares them as text, so an RFC3339
-	// literal sorts above every stored value and the filter would silently
-	// match nothing — the cap would never engage.
-	since := types.NowDateTime().Add(-time.Hour)
-
-	runs, err := app.FindRecordsByFilter(
-		"rule_runs",
-		"rule = {:rule} && matched = true && fired_at >= {:since}",
-		"",
-		maxEmailsPerRulePerHour+1,
-		0,
-		map[string]any{"rule": req.Rule.Id, "since": since},
-	)
-	if err != nil {
-		app.Logger().Warn("automation: email rate-limit check failed, allowing send",
-			"rule", req.Rule.Id, "error", err)
-		return nil
-	}
-
-	if len(runs) >= maxEmailsPerRulePerHour {
+	if len(kept) >= maxEmailsPerRulePerHour {
+		emailSendLedger.sends[ruleID] = kept
 		return fmt.Errorf(
 			"rule %s reached its hourly email limit (%d) — skipping to break a possible loop",
-			req.Rule.Id, maxEmailsPerRulePerHour,
+			ruleID, maxEmailsPerRulePerHour,
 		)
 	}
+	emailSendLedger.sends[ruleID] = append(kept, now)
 	return nil
 }

@@ -124,8 +124,8 @@ rules on this data — treat resolvers as security code.
 ## Actions
 
 Two kinds. **Record-ops** are declarative database writes the core engine
-executes itself — they work in every deployment, including multi-org
-tenants where your package's Go isn't linked:
+executes itself — no handler to register, though a relation param still
+needs its authorizer (see **Record-level authorization** below):
 
 ```ts
 {
@@ -147,9 +147,14 @@ tenants where your package's Go isn't linked:
   a literal.
 - Params with `field: '<column>'` inherit the column's type, relation
   target, and select options; novel params declare `type` (`text`,
-  `number`, `boolean`, `date`, `select`, `relation`). Every text param
-  accepts `{{field}}` placeholders filled from the trigger's exposed fields
-  — no opt-in flag.
+  `number`, `boolean`, `date`, `select`, `relation`). A novel `relation`
+  param must also declare `relationTarget: '<collection>'` — the generator
+  rejects one without it (there is no column to inherit a target from, and
+  a targetless relation param renders a picker over nothing). Every text
+  param accepts `{{field}}` placeholders filled from the trigger's exposed
+  fields — no opt-in flag; relation params are never template-substituted
+  (ids are picker-chosen, and letting trigger content pick the id would be
+  an injection channel).
 
 **Native actions** dispatch to a Go handler you register in `Register(app)`
 (mirrors `$`-binding registration — must run before hooks load):
@@ -169,16 +174,82 @@ automation.RegisterAction("mail:send-message", func(app core.App, req automation
 
 Native-action caveats:
 
-- **Single-tenant only** unless the handler lives in core: a multi-org
-  tenant links no feature Go, so your handler is absent there. The catalog
-  marks the action unavailable and the UI greys it out ("needs <pkg>") —
+- **Available wherever your package's Go is linked.** Every deployment
+  shape links feature Go — a multi-org router builds a per-org artifact
+  from exactly that org's package set (`multi-org/README.md`), so your
+  handler exists wherever your package is installed. The catalog marks an
+  action whose handler is absent (package removed / not installed)
+  unavailable and the UI greys it out ("needs <pkg>") —
   declared-but-unregistered is a supported state, not an error.
-- **Handlers self-enforce access.** The engine applies `pkgaccess` to
-  personal-rule *record-ops* automatically; native handlers receive
-  superuser-powered `app` and must apply their own checks (the rule owner
-  is `req.OwnerID`).
+- **Handlers self-enforce access** — see **Record-level authorization**
+  below for what the engine gates for you (relation params) and what stays
+  your job (everything else).
 - Returning an error records the action as failed in `rule_runs` and
   continues to the rule's later actions (mail-filter semantics).
+
+## Record-level authorization
+
+The engine runs actions with system authority: record-ops write with a
+superuser `Save`, and native handlers receive a superuser-powered `app`.
+PocketBase collection rules therefore do NOT protect anything on this path —
+whatever check a write needs has to happen in engine or package Go. The
+division of labor:
+
+**The engine gates relation params — and only relation params.** A relation
+param's value is a caller-supplied record id (the rule JSON is
+client-authored; the picker is a convenience, not a boundary). Before an
+action of either kind runs, every non-empty relation param passes two
+fail-closed layers:
+
+1. **The floor (engine-owned, generic):** the rule owner must pass the
+   target collection's own `viewRule` for the referenced record, evaluated
+   as the owner (`CanAccessRecord`). Missing record, failed rule, or a
+   locked (nil) rule refuses the action. This proves the owner may *see*
+   the record — nothing more. Rule branches needing request context beyond
+   auth (e.g. a share-link token header) correctly evaluate false:
+   automation acts as the rule owner, never as an anonymous link holder.
+2. **Your registered `RelationAuthorizer` (required):** the write-level
+   question — may this rule file into that folder, assign that user, move
+   to that list — is package semantics the engine cannot know. Declaring a
+   relation param without registering its authorizer is refused at
+   execution and greys the action out in the catalog, so the question gets
+   answered in code, not assumed:
+
+   ```go
+   automation.RegisterRelationAuthorizer("drive:move-to-folder", "parent",
+       func(app core.App, req automation.ActionRequest, id string) error {
+           return destinationWritableBy(app, req.OwnerID, id)
+       })
+   ```
+
+   A deliberate pass is fine when the collection's own model is org-wide —
+   core's `apply-label` authorizer returns nil with a comment saying why
+   (labels are org-wide by design). The point is that the decision is
+   written down where review can see it.
+
+**Everything else stays the handler's job.** The floor+authorizer pair
+covers ids the *engine* hands you; records your handler looks up itself,
+text params that name things (recipients, addresses), and who an action
+acts *as* are still yours to check — `checkPersonalAccess` applies
+`pkgaccess` to personal-rule record-ops only, deliberately: it is a
+package-level floor that answers "may this user write to this package at
+all", never *which record*, and every real bug this system has produced
+was a which-record bug. Reference implementations worth copying:
+
+- `mail/server/automation_actions.go` — `actionAudience`/`applyToAudience`
+  (org rules act on all mailbox members, personal rules only as a
+  still-current member) and `ruleRecipient` (a rule may not mail the
+  mailbox's own addresses — the self-feeding-loop check).
+- `calendar/server/automation.go` — `ownedCalendarFor` +
+  `writableCalendarRoles` (rule-created events land only on a calendar the
+  owner can write, mirroring the collection's create rule the superuser
+  path bypasses).
+- `text/server/automation.go` / `calc/server/automation.go` — delegate to
+  core's `driveshare.ParticipantIDs` rather than re-deriving sharing rules
+  (a second copy would drift, and an over-reporting resolver fires other
+  users' rules on documents they cannot see).
+- `cards/server/automation.go` — `cardOwnerResolver` (project membership
+  scopes which personal rules fire at all).
 
 ## Execution semantics you inherit
 

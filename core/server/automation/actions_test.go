@@ -2,6 +2,7 @@
 package automation
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -357,4 +358,200 @@ func TestPersonalScopePkgaccess(t *testing.T) {
 	if err := ExecuteAction(app, defs, "things:set-status", map[string]any{"status": "filed"}, rule, openTrigger, rec, 0); err != nil {
 		t.Fatalf("personal rule with full pkgaccess must succeed: %v", err)
 	}
+}
+
+// relationGateApp builds the fixture the relation-param gates need: two
+// users, a per-user-visible target collection (boxes, view rule
+// `owner = @request.auth.id`), a LOCKED target collection (vaults, nil view
+// rule), a source collection whose record-op param names a relation column,
+// and native actions declaring typed relation params against both targets.
+func relationGateApp(t *testing.T) (app *tests.TestApp, u1, u2, rule, crate, box1, box2, vault *core.Record, defs *Defs) {
+	t.Helper()
+	t.Cleanup(ResetRegistriesForTest)
+	testApp, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { testApp.Cleanup() })
+	app = testApp
+	users, _ := app.FindCollectionByNameOrId("users")
+
+	newUser := func(email string) *core.Record {
+		r := core.NewRecord(users)
+		r.SetEmail(email)
+		r.SetPassword("Password123!")
+		r.SetVerified(true)
+		if err := app.Save(r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	u1, u2 = newUser("gate-owner@test.local"), newUser("gate-other@test.local")
+
+	boxes := core.NewBaseCollection("boxes")
+	boxes.Fields.Add(&core.TextField{Name: "name"})
+	boxes.Fields.Add(&core.RelationField{Name: "owner", CollectionId: users.Id, MaxSelect: 1})
+	boxes.ViewRule = types.Pointer("owner = @request.auth.id")
+	if err := app.Save(boxes); err != nil {
+		t.Fatal(err)
+	}
+	vaults := core.NewBaseCollection("vaults")
+	vaults.Fields.Add(&core.TextField{Name: "name"})
+	if err := app.Save(vaults); err != nil {
+		t.Fatal(err)
+	}
+	crates := core.NewBaseCollection("crates")
+	crates.Fields.Add(&core.TextField{Name: "title"})
+	crates.Fields.Add(&core.RelationField{Name: "box", CollectionId: boxes.Id, MaxSelect: 1})
+	if err := app.Save(crates); err != nil {
+		t.Fatal(err)
+	}
+	rulesCol := core.NewBaseCollection("fake_rules")
+	rulesCol.Fields.Add(&core.TextField{Name: "scope"})
+	rulesCol.Fields.Add(&core.TextField{Name: "owner"})
+	if err := app.Save(rulesCol); err != nil {
+		t.Fatal(err)
+	}
+
+	mkBox := func(owner *core.Record) *core.Record {
+		r := core.NewRecord(boxes)
+		r.Set("name", "box of "+owner.Email())
+		r.Set("owner", owner.Id)
+		if err := app.Save(r); err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	box1, box2 = mkBox(u1), mkBox(u2)
+	vault = core.NewRecord(vaults)
+	vault.Set("name", "locked")
+	if err := app.Save(vault); err != nil {
+		t.Fatal(err)
+	}
+
+	crate = core.NewRecord(crates)
+	// The title deliberately holds a REAL box id: if a relation param were
+	// template-substituted, "{{title}}" would resolve to it and succeed —
+	// the no-substitution test relies on it failing verbatim instead.
+	crate.Set("title", box1.Id)
+	if err := app.Save(crate); err != nil {
+		t.Fatal(err)
+	}
+
+	rule = core.NewRecord(rulesCol)
+	rule.Set("scope", "org")
+	rule.Set("owner", u1.Id)
+	if err := app.Save(rule); err != nil {
+		t.Fatal(err)
+	}
+
+	defs = &Defs{Packages: []PackageDefs{{
+		Slug: "crates",
+		Actions: []ActionDef{
+			{
+				ID: "file", Kind: "record-op", Collection: "crates",
+				Op:     RecordOp{Type: "update", Target: "trigger-record", Set: map[string]SetValue{"box": {Param: "box"}}},
+				Params: []ParamDef{{Key: "box", Field: "box"}},
+			},
+			{ID: "file-native", Kind: "native",
+				Params: []ParamDef{{Key: "box", Type: "relation", RelationTarget: "boxes"}}},
+			{ID: "vault-native", Kind: "native",
+				Params: []ParamDef{{Key: "vault", Type: "relation", RelationTarget: "vaults"}}},
+		},
+	}}}
+	return app, u1, u2, rule, crate, box1, box2, vault, defs
+}
+
+var crateTrigger = TriggerDef{Collection: "crates", On: "create"}
+
+func allowRelation(ref, key string) {
+	RegisterRelationAuthorizer(ref, key, func(core.App, ActionRequest, string) error { return nil })
+}
+
+func TestRelationParamGates(t *testing.T) {
+	app, _, _, rule, crate, box1, box2, vault, defs := relationGateApp(t)
+
+	t.Run("no authorizer refuses even the owner's own record", func(t *testing.T) {
+		err := ExecuteAction(app, defs, "crates:file", map[string]any{"box": box1.Id}, rule, crateTrigger, crate, 0)
+		if err == nil || !strings.Contains(err.Error(), "no registered authorizer") {
+			t.Fatalf("want the missing-authorizer refusal, got %v", err)
+		}
+	})
+
+	allowRelation("crates:file", "box")
+	allowRelation("crates:file-native", "box")
+	allowRelation("crates:vault-native", "vault")
+
+	t.Run("owner-visible record passes", func(t *testing.T) {
+		if err := ExecuteAction(app, defs, "crates:file", map[string]any{"box": box1.Id}, rule, crateTrigger, crate, 0); err != nil {
+			t.Fatalf("owner's own box must pass: %v", err)
+		}
+		fresh, _ := app.FindRecordById("crates", crate.Id)
+		if fresh.GetString("box") != box1.Id {
+			t.Fatalf("box = %q, want %q", fresh.GetString("box"), box1.Id)
+		}
+	})
+
+	t.Run("floor blocks a record the owner cannot view", func(t *testing.T) {
+		err := ExecuteAction(app, defs, "crates:file", map[string]any{"box": box2.Id}, rule, crateTrigger, crate, 0)
+		if err == nil || !strings.Contains(err.Error(), "may not use") {
+			t.Fatalf("want the floor denial, got %v", err)
+		}
+	})
+
+	t.Run("missing record is refused", func(t *testing.T) {
+		err := ExecuteAction(app, defs, "crates:file", map[string]any{"box": "nope12345"}, rule, crateTrigger, crate, 0)
+		if err == nil || !strings.Contains(err.Error(), "no boxes record") {
+			t.Fatalf("want the missing-record refusal, got %v", err)
+		}
+	})
+
+	t.Run("relation params are never template-substituted", func(t *testing.T) {
+		// crate.title IS box1's id — substitution would resolve and succeed.
+		err := ExecuteAction(app, defs, "crates:file", map[string]any{"box": "{{title}}"}, rule, crateTrigger, crate, 0)
+		if err == nil || !strings.Contains(err.Error(), "no boxes record") {
+			t.Fatalf("a templated relation param must fail verbatim, got %v", err)
+		}
+	})
+
+	t.Run("empty value skips the gates", func(t *testing.T) {
+		if err := ExecuteAction(app, defs, "crates:file", map[string]any{"box": ""}, rule, crateTrigger, crate, 0); err != nil {
+			t.Fatalf("an empty relation value has nothing to authorize: %v", err)
+		}
+	})
+
+	t.Run("locked target collection blocks via the floor", func(t *testing.T) {
+		RegisterAction("crates:vault-native", func(core.App, ActionRequest) error { return nil })
+		err := ExecuteAction(app, defs, "crates:vault-native", map[string]any{"vault": vault.Id}, rule, crateTrigger, crate, 0)
+		if err == nil || !strings.Contains(err.Error(), "may not use") {
+			t.Fatalf("a nil view rule must fail closed, got %v", err)
+		}
+	})
+
+	t.Run("native handler runs only after the gates", func(t *testing.T) {
+		got := ""
+		RegisterAction("crates:file-native", func(_ core.App, req ActionRequest) error {
+			got = req.Params["box"]
+			return nil
+		})
+		if err := ExecuteAction(app, defs, "crates:file-native", map[string]any{"box": box1.Id}, rule, crateTrigger, crate, 0); err != nil {
+			t.Fatalf("gated native must run: %v", err)
+		}
+		if got != box1.Id {
+			t.Fatalf("handler saw %q, want %q", got, box1.Id)
+		}
+		if err := ExecuteAction(app, defs, "crates:file-native", map[string]any{"box": box2.Id}, rule, crateTrigger, crate, 0); err == nil {
+			t.Fatal("native handler must not run for a floor-blocked id")
+		}
+	})
+
+	t.Run("authorizer veto fails the action", func(t *testing.T) {
+		RegisterRelationAuthorizer("crates:file", "box", func(core.App, ActionRequest, string) error {
+			return fmt.Errorf("destination is read-only for this user")
+		})
+		err := ExecuteAction(app, defs, "crates:file", map[string]any{"box": box1.Id}, rule, crateTrigger, crate, 0)
+		if err == nil || !strings.Contains(err.Error(), "read-only for this user") {
+			t.Fatalf("want the authorizer's veto, got %v", err)
+		}
+	})
 }

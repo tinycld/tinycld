@@ -1,10 +1,9 @@
 // Package automation's registries (actionHandlers, ownerResolvers,
-// triggerFilters below) are process-global vars, not per-app state. In
-// multi-org mode one process hosts many tenant apps, each with its own
-// Engine — all of them share these same maps. That's fine in practice: refs
-// are package-qualified ("mail:send", "core:notify", …) and collide only on a
-// 15-char random id, which random-id generation makes negligible. Do not
-// assume a registered handler/resolver/filter is scoped to one tenant.
+// triggerFilters, relationAuthorizers below) are process-global vars, not
+// per-app state. Every deployment shape runs one org per OS process — a
+// multi-org router spawns a per-org build artifact as its own process
+// (multi-org/README.md) — so these maps only ever serve one org's Engine;
+// they are package globals for registration ergonomics, not for sharing.
 package automation
 
 import (
@@ -14,12 +13,17 @@ import (
 )
 
 // ActionRequest is what a native action handler receives. Params are already
-// template-substituted strings; Record is nil for synthetic triggers.
+// template-substituted strings (relation params pass verbatim — ids are
+// picker-chosen, never templated); Record is nil for synthetic triggers.
 //
 // Native handlers run outside the record-op/pkgaccess path (see
 // checkPersonalAccess in actions.go, which only re-applies pkgaccess to
 // record-op actions): a native handler must self-enforce any access control
-// it needs, the engine does not gate it for you.
+// it needs, the engine does not gate it for you. The one exception is
+// relation params, which the engine does gate — a view-rule floor plus the
+// action's registered RelationAuthorizer — because their values are
+// caller-supplied record ids; everything else (recipients, folders named by
+// text, the records a handler looks up itself) remains the handler's job.
 type ActionRequest struct {
 	Rule    *core.Record
 	OwnerID string
@@ -44,11 +48,23 @@ type OwnerResolver func(app core.App, record *core.Record) []string
 // rules.
 type TriggerFilter func(app core.App, record *core.Record) bool
 
+// RelationAuthorizer answers the which-record question for one relation param:
+// may this rule use the record `recordID` names? The engine refuses to run an
+// action whose relation param has no registered authorizer, so declaring the
+// param forces the package to answer — in code, not in a comment. The engine
+// has already applied its own floor (the rule owner passes the target
+// collection's view rule) before calling this; the authorizer adds the
+// package's write-level semantics (membership, roles, ownership). Return nil
+// to allow; a returned error fails the action and lands in run history.
+type RelationAuthorizer func(app core.App, req ActionRequest, recordID string) error
+
 var (
 	registryMu     sync.RWMutex
 	actionHandlers = map[string]ActionHandler{}
 	ownerResolvers = map[string]OwnerResolver{}
 	triggerFilters = map[string]TriggerFilter{}
+	// actionRef -> paramKey -> authorizer
+	relationAuthorizers = map[string]map[string]RelationAuthorizer{}
 )
 
 // RegisterAction installs the Go handler for a native action ref. Packages
@@ -67,6 +83,35 @@ func actionHandler(ref string) (ActionHandler, bool) {
 	defer registryMu.RUnlock()
 	h, ok := actionHandlers[ref]
 	return h, ok
+}
+
+// RegisterRelationAuthorizer installs the which-record check for one relation
+// param of one action. Packages call this next to RegisterAction (or, for a
+// record-op's relation param, next to their other registrations) — an action
+// with an unauthorized relation param is unavailable in the catalog and
+// refused at execution, so this is not optional hardening but part of
+// declaring the param.
+func RegisterRelationAuthorizer(actionRef, paramKey string, a RelationAuthorizer) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	m, ok := relationAuthorizers[actionRef]
+	if !ok {
+		m = map[string]RelationAuthorizer{}
+		relationAuthorizers[actionRef] = m
+	}
+	m[paramKey] = a
+}
+
+func relationAuthorizer(actionRef, paramKey string) (RelationAuthorizer, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	a, ok := relationAuthorizers[actionRef][paramKey]
+	return a, ok
+}
+
+func hasRelationAuthorizer(actionRef, paramKey string) bool {
+	_, ok := relationAuthorizer(actionRef, paramKey)
+	return ok
 }
 
 // RegisterOwnerResolver overrides owner auto-detection for one trigger ref.
@@ -103,6 +148,7 @@ func ResetRegistriesForTest() {
 	actionHandlers = map[string]ActionHandler{}
 	ownerResolvers = map[string]OwnerResolver{}
 	triggerFilters = map[string]TriggerFilter{}
+	relationAuthorizers = map[string]map[string]RelationAuthorizer{}
 }
 
 var autoOwnerFields = []string{"user", "owner", "author"}

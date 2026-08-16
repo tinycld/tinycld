@@ -3,11 +3,11 @@ package automation
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/types"
 
 	"tinycld.org/core/mailer"
 )
@@ -133,58 +133,135 @@ func TestActionSendEmail_EmptySubjectGetsAPlaceholder(t *testing.T) {
 
 // The engine's depth cap stops a rule re-triggering itself within one
 // dispatch; it cannot see an exchange with another system's auto-responder.
-func TestCheckEmailRateLimit(t *testing.T) {
+// The ledger counts SENDS, not matched runs: an earlier rule_runs-based count
+// let a rule with N send actions emit N× the ceiling.
+func TestReserveEmailSend(t *testing.T) {
 	tests := []struct {
-		name       string
-		recentRuns int
-		age        time.Duration
-		wantErr    bool
+		name      string
+		prior     int
+		age       time.Duration
+		wantBlock bool
 	}{
-		{name: "no history sends", recentRuns: 0, age: time.Minute},
-		{name: "under the cap sends", recentRuns: maxEmailsPerRulePerHour - 1, age: time.Minute},
-		{name: "at the cap is blocked", recentRuns: maxEmailsPerRulePerHour, age: time.Minute, wantErr: true},
+		{name: "no history sends", prior: 0, age: time.Minute},
+		{name: "under the cap sends", prior: maxEmailsPerRulePerHour - 1, age: time.Minute},
+		{name: "at the cap is blocked", prior: maxEmailsPerRulePerHour, age: time.Minute, wantBlock: true},
 		{
 			// A rolling hour, not a lifetime total: yesterday's burst must not
 			// stop today's mail.
-			name: "old runs fall outside the window", recentRuns: maxEmailsPerRulePerHour + 5,
+			name: "old sends fall outside the window", prior: maxEmailsPerRulePerHour + 5,
 			age: 2 * time.Hour,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			app, rule := runsApp(t)
-			col, err := app.FindCollectionByNameOrId("rule_runs")
-			if err != nil {
-				t.Fatal(err)
+			t.Cleanup(ResetRunStateForTest)
+			now := time.Now()
+			emailSendLedger.Lock()
+			for i := 0; i < tc.prior; i++ {
+				emailSendLedger.sends["rule-a"] = append(emailSendLedger.sends["rule-a"], now.Add(-tc.age))
 			}
-			for i := 0; i < tc.recentRuns; i++ {
-				r := core.NewRecord(col)
-				r.Set("rule", rule.Id)
-				r.Set("matched", true)
-				r.Set("fired_at", types.NowDateTime().Add(-tc.age))
-				if err := app.Save(r); err != nil {
-					t.Fatal(err)
-				}
-			}
+			emailSendLedger.Unlock()
 
-			err = checkEmailRateLimit(app, ActionRequest{Rule: rule})
-			if tc.wantErr && err == nil {
+			err := reserveEmailSend("rule-a", now)
+			if tc.wantBlock && err == nil {
 				t.Error("expected the send to be blocked, got nil")
 			}
-			if !tc.wantErr && err != nil {
+			if !tc.wantBlock && err != nil {
 				t.Errorf("expected the send to be allowed, got %v", err)
 			}
 		})
 	}
 }
 
-// A manual or scheduled rule with no rule record still sends: there is
-// nothing to count against, and refusing would break "run now".
-func TestCheckEmailRateLimit_NoRuleIsAllowed(t *testing.T) {
+// The slot is claimed before the send and stays consumed on failure, so the
+// in-flight message is inside its own hour (no off-by-one) and a rule whose
+// sends all fail still cannot spin: 20 failed attempts exhaust the budget.
+func TestReserveEmailSend_FailedSendsStillConsumeBudget(t *testing.T) {
+	app, rule := runsApp(t)
+	original := sendEmailNow
+	sendEmailNow = func(_ context.Context, _ *mailer.Message) error {
+		return fmt.Errorf("provider refused")
+	}
+	t.Cleanup(func() { sendEmailNow = original })
+
+	req := ActionRequest{
+		Rule:   rule,
+		Params: map[string]string{"to": "a@example.com", "subject": "s", "body": "b"},
+	}
+	for i := 0; i < maxEmailsPerRulePerHour; i++ {
+		if err := actionSendEmail(app, req); err == nil {
+			t.Fatalf("send %d: provider failure must surface", i)
+		}
+	}
+
+	err := actionSendEmail(app, req)
+	if err == nil || !strings.Contains(err.Error(), "hourly email limit") {
+		t.Fatalf("send %d must be blocked by the ledger, got %v", maxEmailsPerRulePerHour+1, err)
+	}
+}
+
+// One ledger, many workers: the reservation must hand out exactly the cap.
+func TestReserveEmailSend_ConcurrentReservationsRespectTheCap(t *testing.T) {
+	t.Cleanup(ResetRunStateForTest)
+	now := time.Now()
+
+	var wg sync.WaitGroup
+	var allowed atomic.Int32
+	for i := 0; i < 2*maxEmailsPerRulePerHour; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if reserveEmailSend("rule-a", now) == nil {
+				allowed.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if got := allowed.Load(); got != maxEmailsPerRulePerHour {
+		t.Fatalf("allowed %d concurrent sends, want exactly %d", got, maxEmailsPerRulePerHour)
+	}
+}
+
+// End to end through the handler: the 21st delivery attempt within the hour
+// is refused and never reaches the mailer.
+func TestActionSendEmail_MetersPerSend(t *testing.T) {
+	app, rule := runsApp(t)
+	sent := captureEmails(t)
+
+	req := ActionRequest{
+		Rule:   rule,
+		Params: map[string]string{"to": "a@example.com", "subject": "s", "body": "b"},
+	}
+	for i := 0; i < maxEmailsPerRulePerHour; i++ {
+		if err := actionSendEmail(app, req); err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+	}
+
+	err := actionSendEmail(app, req)
+	if err == nil || !strings.Contains(err.Error(), "hourly email limit") {
+		t.Fatalf("want the ledger to block the send, got %v", err)
+	}
+	if len(*sent) != maxEmailsPerRulePerHour {
+		t.Fatalf("mailer saw %d messages, want %d", len(*sent), maxEmailsPerRulePerHour)
+	}
+}
+
+// A request with no rule record has nothing to count against, and refusing
+// would break "run now"-style invocations.
+func TestActionSendEmail_NoRuleIsNotMetered(t *testing.T) {
 	app, _ := runsApp(t)
-	if err := checkEmailRateLimit(app, ActionRequest{}); err != nil {
-		t.Errorf("a request with no rule must be allowed: %v", err)
+	sent := captureEmails(t)
+
+	if err := actionSendEmail(app, ActionRequest{
+		Params: map[string]string{"to": "a@example.com", "subject": "s", "body": "b"},
+	}); err != nil {
+		t.Errorf("a request with no rule must send: %v", err)
+	}
+	if len(*sent) != 1 {
+		t.Fatalf("mailer saw %d messages, want 1", len(*sent))
 	}
 }
 

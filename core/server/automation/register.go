@@ -46,6 +46,17 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 func registerCoreNativeActions() {
 	registerCoreEmailAction()
 
+	// core:apply-label's `label` param is a caller-supplied record id, so it
+	// needs a registered authorizer like any other relation param. The check
+	// itself is deliberately a pass: labels are org-wide by design — any
+	// non-guest may view, apply, and edit any label (the labels collection's
+	// own rules say so, and the engine's floor has already held the rule
+	// owner to them). If labels ever become per-user, this is the line that
+	// changes.
+	RegisterRelationAuthorizer("core:apply-label", "label", func(core.App, ActionRequest, string) error {
+		return nil
+	})
+
 	// core:notify is fire-and-forget: the handler returns nil immediately and
 	// the actual push happens on a detached goroutine. The engine records this
 	// action's ActionResult as "ok" the instant the handler returns, before

@@ -92,6 +92,14 @@ export interface TypedParamDef {
     type: FieldType
     label?: string
     options?: string[]
+    /**
+     * Required when `type` is 'relation' (validateDefinitions enforces both
+     * directions): the target collection NAME the record picker lists. A
+     * column-referencing param inherits its target from the column instead;
+     * this field exists so native actions — which reference no collection —
+     * can offer a picker at all.
+     */
+    relationTarget?: string
 }
 
 export type ParamDef<F extends string = string> = ColumnParamDef<F> | TypedParamDef

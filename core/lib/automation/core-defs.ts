@@ -59,9 +59,10 @@ export const CORE_AUTOMATION: AutomationDefinitions = {
         },
         {
             // The universal "email me / the team when X". Native, but native
-            // IN CORE — which is the point: a multi-org tenant links no
-            // feature package's Go, so mail:send-message is unavailable
-            // there while this is not.
+            // IN CORE — which is the point: it ships in every build
+            // regardless of which feature packages an org installed, so an
+            // org without mail (whose build links no mail Go, hence no
+            // mail:send-message) still has it.
             //
             // Backed by the same core mailer every transactional email uses,
             // so it inherits the deployment's configured provider rather
