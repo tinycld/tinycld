@@ -6,8 +6,15 @@ import type { CatalogAction, CatalogResponse, CatalogTrigger } from './api'
 
 export function useAutomationCatalog(): { catalog: CatalogResponse | undefined; isReady: boolean } {
     const [catalogCollection] = useStore('automation_catalog')
+    // Ordered by ref so the menus built from this catalog are stable. Without
+    // it row order is whatever the store hands back, which varies run to run:
+    // TriggerCard groups by package in encounter order, so a package could
+    // land anywhere in the list and, in a viewport-height popover, below the
+    // fold — where it renders but can't be clicked.
     const { data: rows, isReady } = useOrgLiveQuery(query =>
-        query.from({ automation_catalog: catalogCollection })
+        query
+            .from({ automation_catalog: catalogCollection })
+            .orderBy(({ automation_catalog }) => automation_catalog.ref)
     )
     // definition is a json column: tolerate malformed rows (skip, don't throw) —
     // the engine owns the writes, but a version-skewed client must not crash.
