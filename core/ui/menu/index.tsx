@@ -11,7 +11,16 @@ import React, {
     useRef,
     useState,
 } from 'react'
-import { Dimensions, Platform, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native'
+import {
+    Dimensions,
+    Platform,
+    Pressable,
+    ScrollView,
+    StatusBar,
+    StyleSheet,
+    Text,
+    View,
+} from 'react-native'
 
 // The menu overlay renders inside a statusBarTranslucent RN Modal whose
 // content origin is the true top of the screen (behind the status bar).
@@ -448,13 +457,30 @@ const Content = forwardRef<View, ContentProps>(function Content(
             if (typeof pos.left === 'number' && pos.left < 8) pos.left = 8
         }
 
-        // Flip vertical if overflowing
+        // Flip vertical if overflowing, then cap the height to whatever room
+        // that side actually has.
+        //
+        // Flipping alone is not enough: a menu TALLER than the viewport
+        // overflows whichever way it faces, and the two guards below would
+        // then bounce it between them — the catalog trigger menu (one group
+        // per installed package) hit exactly this, rendering items that were
+        // in the tree but past the bottom edge, so they could never be
+        // clicked. Capping to the larger side and letting Content scroll
+        // internally keeps every item reachable at any window height.
         if (contentSize && typeof pos.top === 'number') {
+            const spaceBelow = windowDim.height - (triggerLayout.y + triggerLayout.height + gap) - 8
+            const spaceAbove = triggerLayout.y - gap - 8
+
             if (pos.top + contentSize.height > windowDim.height - 8) {
-                pos.top = triggerLayout.y - contentSize.height - gap
-            }
-            if (pos.top < 8) {
-                pos.top = triggerLayout.y + triggerLayout.height + gap
+                const flipped = triggerLayout.y - contentSize.height - gap
+                // Prefer the side with more room rather than always flipping
+                // up — flipping into a smaller gap trades one clip for another.
+                if (flipped >= 8 || spaceAbove > spaceBelow) {
+                    pos.top = Math.max(8, flipped)
+                    pos.maxHeight = spaceAbove
+                } else {
+                    pos.maxHeight = spaceBelow
+                }
             }
         }
 
@@ -508,16 +534,36 @@ const Content = forwardRef<View, ContentProps>(function Content(
     return (
         <View
             ref={setRefs}
-            onLayout={e => {
-                const { width, height } = e.nativeEvent.layout
-                setContentSize(prev =>
-                    prev?.width === width && prev?.height === height ? prev : { width, height }
-                )
-            }}
             className={`${MENU_CONTENT_CLASS} ${className ?? ''}`}
             style={[MENU_CONTENT_SHADOW, positionStyle, styleProp]}
         >
-            {children}
+            {/* Scrolls only once positionStyle caps the height; an uncapped
+                menu lays out exactly as before.
+
+                Measurement sits on the scroll CONTENT, not the outer View:
+                positionStyle derives maxHeight from contentSize, so measuring
+                the (already clamped) outer box would feed its own cap back in
+                and settle the menu at the wrong height. The content wrapper
+                keeps reporting the natural, unclamped size. */}
+            <ScrollView
+                bounces={false}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ flexGrow: 1 }}
+            >
+                <View
+                    onLayout={e => {
+                        const { width, height } = e.nativeEvent.layout
+                        setContentSize(prev =>
+                            prev?.width === width && prev?.height === height
+                                ? prev
+                                : { width, height }
+                        )
+                    }}
+                >
+                    {children}
+                </View>
+            </ScrollView>
         </View>
     )
 })
