@@ -186,4 +186,74 @@ describe('validateDefinitions', () => {
         }
         expect(validateDefinitions('mail', bad).some(e => e.includes('missing'))).toBe(true)
     })
+
+    // A typed relation param with no target reaches the UI as a picker over
+    // nothing — the failure that stayed silent until runtime before this rule.
+    it('rejects a typed relation param without a relationTarget', () => {
+        const bad: AutomationDefinitions = {
+            actions: [
+                {
+                    id: 'add-assignee',
+                    label: 'Add an assignee',
+                    kind: 'native',
+                    params: [{ key: 'user', type: 'relation' }],
+                },
+            ],
+        }
+        expect(validateDefinitions('cards', bad).some(e => e.includes('no relationTarget'))).toBe(
+            true
+        )
+    })
+
+    it('rejects a relationTarget on a non-relation typed param', () => {
+        const bad: AutomationDefinitions = {
+            actions: [
+                {
+                    id: 'add-assignee',
+                    label: 'Add an assignee',
+                    kind: 'native',
+                    params: [{ key: 'note', type: 'text', relationTarget: 'users' }],
+                },
+            ],
+        }
+        expect(
+            validateDefinitions('cards', bad).some(e => e.includes('declares relationTarget'))
+        ).toBe(true)
+    })
+
+    it('accepts a typed relation param that names its target', () => {
+        const good: AutomationDefinitions = {
+            actions: [
+                {
+                    id: 'add-assignee',
+                    label: 'Add an assignee',
+                    kind: 'native',
+                    params: [{ key: 'user', type: 'relation', relationTarget: 'users' }],
+                },
+            ],
+        }
+        expect(validateDefinitions('cards', good)).toEqual([])
+    })
+
+    // Column params inherit the column's target; declaring one is not the
+    // authoring mistake the typed-param rule guards against.
+    it('leaves column-referencing params out of the relation checks', () => {
+        const good: AutomationDefinitions = {
+            actions: [
+                {
+                    id: 'move',
+                    label: 'Move',
+                    kind: 'record-op',
+                    collection: 'c',
+                    op: {
+                        type: 'update',
+                        target: 'trigger-record',
+                        set: { folder: { param: 'folder' } },
+                    },
+                    params: [{ key: 'folder', field: 'folder' }],
+                },
+            ],
+        }
+        expect(validateDefinitions('mail', good)).toEqual([])
+    })
 })

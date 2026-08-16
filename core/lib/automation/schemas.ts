@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { ALL_OPS, NO_VALUE_OPS } from './helpers'
-import type { AutomationDefinitions, ConditionOp } from './types'
+import type { AutomationDefinitions, ConditionOp, ParamDef } from './types'
 
 const ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 const REF_RE = /^[a-z0-9-]+:[a-z0-9-]+$/
@@ -47,6 +47,35 @@ function checkId(errors: string[], pkgSlug: string, what: string, id: string, se
     seen.add(id)
 }
 
+/** Per-action param checks; returns the declared keys for the `set` cross-check. */
+function checkActionParams(
+    errors: string[],
+    pkgSlug: string,
+    action: { id: string; params?: ParamDef[] }
+): Set<string> {
+    const paramKeys = new Set<string>()
+    for (const p of action.params ?? []) {
+        if (paramKeys.has(p.key))
+            errors.push(`${pkgSlug}: action '${action.id}' duplicate param '${p.key}'`)
+        paramKeys.add(p.key)
+        // Column params inherit their relation target from the column; a
+        // typed relation param without a declared target reaches the UI as a
+        // picker over nothing — fail the generate instead.
+        if ('field' in p) continue
+        if (p.type === 'relation' && !p.relationTarget) {
+            errors.push(
+                `${pkgSlug}: action '${action.id}' param '${p.key}' is type 'relation' but declares no relationTarget`
+            )
+        }
+        if (p.type !== 'relation' && p.relationTarget) {
+            errors.push(
+                `${pkgSlug}: action '${action.id}' param '${p.key}' declares relationTarget but is type '${p.type}'`
+            )
+        }
+    }
+    return paramKeys
+}
+
 /**
  * Structural validation of a package's automation definitions. Collection and
  * column EXISTENCE is not checked here — the package's own typecheck enforces
@@ -86,12 +115,7 @@ export function validateDefinitions(
     const actionIds = new Set<string>()
     for (const a of defs.actions ?? []) {
         checkId(errors, pkgSlug, 'action', a.id, actionIds)
-        const paramKeys = new Set<string>()
-        for (const p of a.params ?? []) {
-            if (paramKeys.has(p.key))
-                errors.push(`${pkgSlug}: action '${a.id}' duplicate param '${p.key}'`)
-            paramKeys.add(p.key)
-        }
+        const paramKeys = checkActionParams(errors, pkgSlug, a)
         if (a.kind === 'record-op') {
             if (!a.collection)
                 errors.push(`${pkgSlug}: record-op action '${a.id}' has no collection`)

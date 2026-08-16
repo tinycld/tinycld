@@ -113,11 +113,59 @@ func TestCatalogActionAvailability(t *testing.T) {
 		t.Fatal("registered native action must be available")
 	}
 	sf := get("cat:set-folder")
-	if !sf.Available || sf.OpTarget != "trigger-record" || sf.Params[0].Field.RelationTarget != "cat_folders" {
+	if sf.OpTarget != "trigger-record" || sf.Params[0].Field.RelationTarget != "cat_folders" {
 		t.Fatalf("record-op resolution: %+v", sf)
 	}
 	if sf.Params[0].Template {
 		t.Fatalf("relation-typed param must not be marked templatable: %+v", sf.Params[0])
+	}
+	// The engine refuses relation params with no registered authorizer, so
+	// the catalog must grey the action out until the package registers one.
+	if sf.Available {
+		t.Fatal("a relation param without an authorizer must leave the action unavailable")
+	}
+	RegisterRelationAuthorizer("cat:set-folder", "folder", func(core.App, ActionRequest, string) error { return nil })
+	rebuilt := eng.buildCatalog(app)
+	if !rebuilt.Actions[actionIndex(rebuilt.Actions, "cat:set-folder")].Available {
+		t.Fatal("record-op with a resolvable target and an authorizer must be available")
+	}
+}
+
+// A typed relation param names its target collection directly — the native
+// action case, where there is no column to inherit from. An unresolvable
+// target must grey the action out rather than ship a picker over nothing.
+func TestCatalogTypedRelationParams(t *testing.T) {
+	app, _ := catalogApp(t)
+	defs := &Defs{Packages: []PackageDefs{{
+		Slug: "cat",
+		Actions: []ActionDef{
+			{ID: "file-into", Label: "File into", Kind: "native",
+				Params: []ParamDef{{Key: "folder", Type: "relation", RelationTarget: "cat_folders"}}},
+			{ID: "file-into-void", Label: "File into the void", Kind: "native",
+				Params: []ParamDef{{Key: "folder", Type: "relation", RelationTarget: "not_installed_here"}}},
+		},
+	}}}
+	for _, ref := range []string{"cat:file-into", "cat:file-into-void"} {
+		RegisterAction(ref, func(core.App, ActionRequest) error { return nil })
+		RegisterRelationAuthorizer(ref, "folder", func(core.App, ActionRequest, string) error { return nil })
+	}
+	res := NewEngine(app, defs).buildCatalog(app)
+
+	ok := res.Actions[actionIndex(res.Actions, "cat:file-into")]
+	f := ok.Params[0].Field
+	if f.Type != "relation" || f.RelationTarget != "cat_folders" || f.DisplayField != "name" {
+		t.Fatalf("declared target must resolve like a column's: %+v", f)
+	}
+	if !ok.Available {
+		t.Fatal("native action with handler + authorizer + resolvable target must be available")
+	}
+
+	void := res.Actions[actionIndex(res.Actions, "cat:file-into-void")]
+	if void.Params[0].Field.RelationTarget != "" {
+		t.Fatalf("absent target must resolve empty: %+v", void.Params[0].Field)
+	}
+	if void.Available {
+		t.Fatal("native action whose relation target is absent must be unavailable")
 	}
 }
 

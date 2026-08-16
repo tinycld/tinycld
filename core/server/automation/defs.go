@@ -79,6 +79,9 @@ type ParamDef struct {
 	Type    string   `json:"type"`
 	Label   string   `json:"label"`
 	Options []string `json:"options"`
+	// RelationTarget names the collection a typed relation param picks from.
+	// Column params leave it empty — their target resolves from the column.
+	RelationTarget string `json:"relationTarget"`
 }
 
 type ActionDef struct {

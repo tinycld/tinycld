@@ -107,6 +107,9 @@ var failureStreaks sync.Map
 
 func ResetRunStateForTest() {
 	failureStreaks = sync.Map{}
+	emailSendLedger.Lock()
+	emailSendLedger.sends = map[string][]time.Time{}
+	emailSendLedger.Unlock()
 }
 
 func recordRunResult(app core.App, rule *core.Record, fullyFailed bool) {

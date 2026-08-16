@@ -238,6 +238,16 @@ func resolveParam(app core.App, col *core.Collection, p ParamDef) catalogParam {
 		}
 	} else {
 		out.Field = catalogField{Key: p.Key, Label: out.Label, Type: p.Type, Options: p.Options}
+		// A typed relation param names its target collection directly (a
+		// column param inherits the column's instead). Resolution fails when
+		// the target's package is absent from this deployment — the empty
+		// target then flips the action unavailable in resolveAction.
+		if p.Type == "relation" && p.RelationTarget != "" {
+			if target, err := app.FindCachedCollectionByNameOrId(p.RelationTarget); err == nil {
+				out.Field.RelationTarget = target.Name
+				out.Field.DisplayField = displayFieldFor(target)
+			}
+		}
 	}
 	out.Template = out.Field.Type == "text"
 	return out
@@ -271,6 +281,22 @@ func resolveAction(app core.App, pkg string, a ActionDef) catalogAction {
 	out.Params = make([]catalogParam, 0, len(a.Params))
 	for _, p := range a.Params {
 		out.Params = append(out.Params, resolveParam(app, col, p))
+	}
+	// A relation param that resolved no target would render a picker over
+	// nothing — authorable but permanently broken. Whatever the cause (typed
+	// param whose declared target is absent from this deployment, column
+	// param whose relation points at an uninstalled package's collection, or
+	// defs that skipped generate-time validation), grey the action out. The
+	// same goes for a relation param with no registered authorizer: the
+	// engine refuses to execute it (authorizeRelationParams), so offering it
+	// in the builder would only author rules that always fail.
+	for _, cp := range out.Params {
+		if cp.Field.Type != "relation" {
+			continue
+		}
+		if cp.Field.RelationTarget == "" || !hasRelationAuthorizer(out.Ref, cp.Key) {
+			out.Available = false
+		}
 	}
 	return out
 }

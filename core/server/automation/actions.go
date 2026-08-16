@@ -32,7 +32,7 @@ func takeEngineWrite(recordID string) (engineWrite, bool) {
 	return v.(engineWrite), true
 }
 
-func substituteParams(defs ActionDef, raw map[string]any, record *core.Record, trigger TriggerDef) map[string]string {
+func substituteParams(defs ActionDef, raw map[string]any, record *core.Record, trigger TriggerDef, relationKeys map[string]bool) map[string]string {
 	out := map[string]string{}
 	for _, p := range defs.Params {
 		v, ok := raw[p.Key]
@@ -40,9 +40,106 @@ func substituteParams(defs ActionDef, raw map[string]any, record *core.Record, t
 			continue
 		}
 		s := normalize(v)
+		// A relation param carries a picker-chosen record id. Substituting
+		// {{templates}} in it would let trigger-record CONTENT choose which
+		// record the action touches — ids pass verbatim.
+		if relationKeys[p.Key] {
+			out[p.Key] = s
+			continue
+		}
 		out[p.Key] = SubstituteTemplates(s, record, trigger)
 	}
 	return out
+}
+
+// relationParamTarget classifies one param: is it relation-typed, and which
+// collection does it pick from. A typed param declares both; a column param
+// inherits the column's. An empty target with isRelation=true means the
+// declaration cannot resolve in this deployment — callers must fail closed,
+// mirroring resolveAction greying the action out in the catalog.
+func relationParamTarget(app core.App, action ActionDef, p ParamDef) (target string, isRelation bool) {
+	if p.Field == "" {
+		if p.Type != "relation" {
+			return "", false
+		}
+		if p.RelationTarget == "" {
+			return "", true
+		}
+		if col, err := app.FindCachedCollectionByNameOrId(p.RelationTarget); err == nil {
+			return col.Name, true
+		}
+		return "", true
+	}
+	col, err := app.FindCachedCollectionByNameOrId(action.Collection)
+	if err != nil {
+		return "", false
+	}
+	rel, ok := col.Fields.GetByName(p.Field).(*core.RelationField)
+	if !ok {
+		return "", false
+	}
+	if targetCol, err := app.FindCachedCollectionByNameOrId(rel.CollectionId); err == nil {
+		return targetCol.Name, true
+	}
+	return "", true
+}
+
+// authorizeRelationParams gates every caller-supplied record id before an
+// action of either kind runs. Two layers, both fail-closed:
+//
+//  1. The FLOOR, engine-owned and generic: the rule owner must pass the
+//     target collection's own view rule for the referenced record
+//     (CanAccessRecord as the owner). This is pure data — collection rules
+//     travel in migrations — so it holds in every deployment, but it only
+//     proves the owner may SEE the record. A rule whose disjuncts need
+//     request context beyond auth (e.g. cards' share-link token header)
+//     correctly evaluates those branches false: automation acts as the
+//     owner, never as an anonymous link holder.
+//  2. The package's registered RelationAuthorizer, which owns the
+//     write-level question (membership, role, ownership). Declaring a
+//     relation param without registering its authorizer is refused outright
+//     — the rollout's real bugs were all which-record bugs, and this turns
+//     that question from a review-time convention into a contract.
+func authorizeRelationParams(app core.App, ref string, action ActionDef, req ActionRequest) error {
+	var owner *core.Record
+	for _, p := range action.Params {
+		target, isRelation := relationParamTarget(app, action, p)
+		if !isRelation {
+			continue
+		}
+		id := req.Params[p.Key]
+		if id == "" {
+			continue
+		}
+		if target == "" {
+			return fmt.Errorf("relation param %q has no resolvable target collection — refusing", p.Key)
+		}
+		rec, err := app.FindRecordById(target, id)
+		if err != nil {
+			return fmt.Errorf("relation param %q: no %s record %q", p.Key, target, id)
+		}
+		if owner == nil {
+			owner, err = app.FindRecordById("users", req.OwnerID)
+			if err != nil {
+				return fmt.Errorf("relation param %q: rule owner lookup: %w", p.Key, err)
+			}
+		}
+		info := &core.RequestInfo{Auth: owner}
+		if ok, err := app.CanAccessRecord(rec, info, rec.Collection().ViewRule); err != nil || !ok {
+			return fmt.Errorf("relation param %q: rule owner may not use %s record %q", p.Key, target, id)
+		}
+		authorize, registered := relationAuthorizer(ref, p.Key)
+		if !registered {
+			return fmt.Errorf(
+				"action %q relation param %q has no registered authorizer — the owning package must RegisterRelationAuthorizer for it",
+				ref, p.Key,
+			)
+		}
+		if err := authorize(app, req, id); err != nil {
+			return fmt.Errorf("relation param %q: %w", p.Key, err)
+		}
+	}
+	return nil
 }
 
 func resolveSetValue(sv SetValue, params map[string]string, record *core.Record, ownerID string) (any, error) {
@@ -95,14 +192,28 @@ func ExecuteAction(app core.App, defs *Defs, ref string, rawParams map[string]an
 		return fmt.Errorf("unknown action %q (package uninstalled?)", ref)
 	}
 	ownerID := rule.GetString("owner")
-	params := substituteParams(action, rawParams, record, trigger)
+	relationKeys := map[string]bool{}
+	for _, p := range action.Params {
+		if _, isRelation := relationParamTarget(app, action, p); isRelation {
+			relationKeys[p.Key] = true
+		}
+	}
+	params := substituteParams(action, rawParams, record, trigger, relationKeys)
+	req := ActionRequest{Rule: rule, OwnerID: ownerID, Params: params, Record: record}
+
+	// Both kinds pass the relation-id gates: a record-op's superuser Save
+	// bypasses collection rules just as thoroughly as a native handler's
+	// superuser app does.
+	if err := authorizeRelationParams(app, ref, action, req); err != nil {
+		return err
+	}
 
 	if action.Kind == "native" {
 		h, ok := actionHandler(ref)
 		if !ok {
 			return fmt.Errorf("native action %q has no registered handler (package Go not linked?)", ref)
 		}
-		return h(app, ActionRequest{Rule: rule, OwnerID: ownerID, Params: params, Record: record})
+		return h(app, req)
 	}
 
 	if err := checkPersonalAccess(app, rule, pkg); err != nil {
