@@ -474,9 +474,20 @@ func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
 		// separating a read grant from a write one.
 		{"GET", "/api/contacts/export", ScopeContactsRead},
 		{"POST", "/api/contacts/import", ScopeContactsWrite},
+
 		// iCalendar file transfer, same reasoning as the vCard pair above.
 		{"GET", "/api/calendar/export", ScopeCalendarRead},
 		{"POST", "/api/calendar/import", ScopeCalendarWrite},
+
+		// text and calc own only their comment collections. Unclassified,
+		// these default-denied, so `tinycld text comments` could not run at
+		// all — the same hole cards:* fell into before the first live smoke
+		// test found it.
+		{"GET", "/api/collections/text_comments/records", ScopeTextRead},
+		{"POST", "/api/collections/text_comments/records", ScopeTextWrite},
+		{"GET", "/api/collections/calc_comments/records", ScopeCalcRead},
+		{"POST", "/api/collections/calc_comments/records", ScopeCalcWrite},
+
 	}
 	for _, r := range reachable {
 		if got := ScopeForRoute(r.method, r.path); !onlyScope(got, r.scope) {

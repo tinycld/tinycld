@@ -138,6 +138,18 @@ var collectionScopes = map[string]collectionAccess{
 	// had already built on, so start closed.
 	"cards_project_members": {read: scopeRule{ScopeCardsRead}},
 	"cards_share_links":     {read: scopeRule{ScopeCardsRead}},
+
+	// text and calc own ONLY their comment collections; the documents and
+	// spreadsheets they comment on are drive_items, governed by drive:*.
+	//
+	// A grant here widens which rows a token may touch not at all: both rules
+	// reach through `drive_item` and admit only the document's creator or
+	// someone it is shared with, and create additionally demands the caller be
+	// the comment's own author. So this decides whether an OAuth caller may use
+	// the collection at all, on top of the document access the rules demand —
+	// which in practice means a useful token also holds drive:read.
+	"text_comments": {read: scopeRule{ScopeTextRead}, write: scopeRule{ScopeTextWrite}},
+	"calc_comments": {read: scopeRule{ScopeCalcRead}, write: scopeRule{ScopeCalcWrite}},
 }
 
 // endpointScopes maps a bespoke Go endpoint to its required scope.

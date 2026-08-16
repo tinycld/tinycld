@@ -377,6 +377,22 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // posts from a window-level scroll listener; we fan it out to
     // onScroll(...) instead of forwarding to onUiMessage so consumers
     // can take it without writing a switch over message.type.
+    // The page measured itself. A WebView has no intrinsic height, so this is
+    // the only way the container can track its content — without it the editor
+    // is clipped to a guess (or, inside a ScrollView where flex resolves to
+    // zero, invisible).
+    const applyContentHeight = useCallback(
+        (payload: unknown) => {
+            const height = (payload as { height?: unknown } | undefined)?.height
+            if (typeof height !== 'number' || height <= 0) return
+            if (__DEV__) {
+                console.debug('[editor.mount] first-height', Date.now() - mountAtRef.current, 'ms')
+            }
+            setContentHeight(height)
+        },
+        [setContentHeight]
+    )
+
     const onWebViewMessage = useMemo(
         () => (event: WebViewMessageEvent) => {
             const data = event?.nativeEvent?.data
@@ -409,23 +425,8 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                     onScrollRef.current?.()
                     return
                 }
-                // The page measured itself. A WebView has no intrinsic
-                // height, so this is the only way the container can track
-                // its content — without it the editor is clipped to a
-                // guess (or, inside a ScrollView where flex resolves to
-                // zero, invisible).
                 if (parsed.type === 'content-height') {
-                    const height = (parsed.payload as { height?: unknown } | undefined)?.height
-                    if (typeof height === 'number' && height > 0) {
-                        if (__DEV__) {
-                            console.debug(
-                                '[editor.mount] first-height',
-                                Date.now() - mountAtRef.current,
-                                'ms'
-                            )
-                        }
-                        setContentHeight(height)
-                    }
+                    applyContentHeight(parsed.payload)
                     return
                 }
                 onUiMessageRef.current?.(parsed)
@@ -457,9 +458,10 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                 onMessageRef.current?.(parsed)
             }
         },
-        // Everything else is read through a ref; setContentHeight comes from a
-        // store created once per mount, so this list never changes in practice.
-        [setContentHeight]
+        // Everything else is read through a ref; applyContentHeight is itself
+        // memoized on a store setter created once per mount, so this list never
+        // changes in practice.
+        [applyContentHeight]
     )
 
     // The anchor host overlays measure against.

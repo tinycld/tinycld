@@ -44,6 +44,14 @@ func TestEveryRegisteredRouteIsClassified(t *testing.T) {
 		{"DELETE", "/api/drive/share-link/abc123", "drive link revoke"},
 		{"POST", "/api/drive/versions/restore", "drive versions --restore"},
 		{"POST", "/api/drive/versions/snapshot", "drive versions --snapshot"},
+		// text and calc contribute only comment commands — the documents
+		// themselves are drive_items, reached through the drive scopes above.
+		{"GET", "/api/collections/text_comments/records", "text comments list"},
+		{"POST", "/api/collections/text_comments/records", "text comments --add"},
+		{"PATCH", "/api/collections/text_comments/records/abc123", "text comments --resolve"},
+		{"GET", "/api/collections/calc_comments/records", "calc comments list"},
+		{"POST", "/api/collections/calc_comments/records", "calc comments --add"},
+		{"PATCH", "/api/collections/calc_comments/records/abc123", "calc comments --resolve"},
 	}
 	for _, r := range reachable {
 		if len(ScopeForRoute(r.method, r.path)) == 0 {

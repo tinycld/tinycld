@@ -336,13 +336,22 @@ const automation_catalog = newCollection('automation_catalog', {
     ...indexing,
 })
 
-// NOTE: the `comment_mentions` store registration was removed in the new
-// standalone-core layout because the collection is created by a feature
-// package's migration (drive's create_comment_mentions), not core's own — so
-// core can't unconditionally register it when that package isn't linked. The
-// comment-mutations factory takes the collection as a parameter, so nothing in
-// core hard-depends on a core-owned store here. Re-introducing comments as a
-// first-class core feature (with its own migration) is tracked as a follow-up.
+// The shared @mentions table. Core owns its creation now
+// (pb_migrations/1985000003 creates it whenever no package has), so this
+// registration is unconditional — the collection exists on every assembly.
+// It was previously registered by drive (which created the table), and that
+// made every OTHER package's mention notifications silently vanish on a
+// drive-less assembly: the writer looked the store up, found nothing, and
+// skipped the insert — comments posted, tokens rendered, nobody was notified.
+// Cards' CI (single-package assembly) is what finally caught it.
+//
+// Drive still registers its own richer instance (expand over drive_items);
+// package stores spread AFTER core in the map, so drive's wins when present
+// and this one serves everyone else. Write-only from the client — list/view
+// rules are null, so the eager sync holds nothing.
+const comment_mentions = newCollection('comment_mentions', {
+    omitOnInsert: ['created'],
+})
 
 const coreStores = {
     users,
@@ -361,6 +370,7 @@ const coreStores = {
     automation_catalog,
     system_settings,
     oauth_grants,
+    comment_mentions,
 }
 export type CoreStores = typeof coreStores
 

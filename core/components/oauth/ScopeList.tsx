@@ -2,7 +2,13 @@ import { Text, View } from 'react-native'
 
 // Human-readable copy for each scope. The consent screen must say what access
 // means in plain language — "mail:read" tells a user nothing.
-const SCOPE_LABELS: Record<string, string> = {
+//
+// EVERY scope in oauth.AllScopes needs an entry. A missing one is not a
+// cosmetic gap: the fallback below renders the raw scope string, so the
+// consent screen asks a person to approve "cards:write". scope-labels.test.ts
+// reads the Go constant and fails when the two drift, which is how the cards
+// scopes were found to have been unlabeled since they shipped.
+export const SCOPE_LABELS: Record<string, string> = {
     profile: 'See your name and email address',
     'mail:read': 'Read your email',
     'mail:send': 'Send email on your behalf',
@@ -12,6 +18,12 @@ const SCOPE_LABELS: Record<string, string> = {
     'contacts:write': 'Create and modify your contacts',
     'calendar:read': 'Read your calendar',
     'calendar:write': 'Create and modify calendar events',
+    'cards:read': 'Read your boards and cards',
+    'cards:write': 'Create and modify your boards and cards',
+    'text:read': 'Read comments on your documents',
+    'text:write': 'Add and resolve comments on your documents',
+    'calc:read': 'Read comments on your spreadsheets',
+    'calc:write': 'Add and resolve comments on your spreadsheets',
 }
 
 interface ScopeListProps {
