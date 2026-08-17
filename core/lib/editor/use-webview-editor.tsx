@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { View } from 'react-native'
 import type { WebViewMessageEvent } from 'react-native-webview'
 import { captureException } from '../errors'
+import { log } from '../logger'
 import { deriveToolbarState } from './derive-toolbar-state'
 import { createHeightStore, type HeightStore } from './height-store'
 import { type EditorMessage, makeMessage } from './message-bus/types'
@@ -279,18 +280,18 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // when the WebView sends a `stateUpdate`, which our custom Editor
     // only sends after init arrives — chicken-and-egg.
     const [webviewReady, setWebviewReady] = useState(false)
-    // Mount timestamp for the dev-only phase timings below. A WebView editor is
-    // an expensive thing to create — a browser cold start plus a bundle — and
-    // the three marks (page-ready, init-sent, first-height) are what tell you
-    // WHICH of those phases a slow open actually spent its time in.
+    // Mount timestamp for the phase timings below. A WebView editor is an
+    // expensive thing to create — a browser cold start plus a bundle — and the
+    // three marks (page-ready, init-sent, first-height) are what tell you WHICH
+    // of those phases a slow open actually spent its time in.
     const mountAtRef = useRef(Date.now())
     // t0. Logged once per editor so the marks below have a visible origin —
     // without it a slow open is indistinguishable from an editor that mounted
     // late for reasons upstream of this hook.
     const loggedMountRef = useRef(false)
-    if (__DEV__ && !loggedMountRef.current) {
+    if (!loggedMountRef.current) {
         loggedMountRef.current = true
-        console.debug('[editor.mount] mounted (t0)')
+        log.debug('core.editor.webview', 'mounted (t0)')
     }
 
     // Height the page reported for its own content, held in a tiny store
@@ -321,9 +322,9 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         if (!webview) return
         const message = makeMessage('app', 'init', initPayload)
         try {
-            if (__DEV__) {
-                console.debug('[editor.mount] init-sent', Date.now() - mountAtRef.current, 'ms')
-            }
+            log.debug('core.editor.webview', 'init-sent', {
+                sinceMountMs: Date.now() - mountAtRef.current,
+            })
             webview.postMessage(JSON.stringify(message))
             lastInitGenerationRef.current = incoming
         } catch (err) {
@@ -385,9 +386,9 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         (payload: unknown) => {
             const height = (payload as { height?: unknown } | undefined)?.height
             if (typeof height !== 'number' || height <= 0) return
-            if (__DEV__) {
-                console.debug('[editor.mount] first-height', Date.now() - mountAtRef.current, 'ms')
-            }
+            log.debug('core.editor.webview', 'first-height', {
+                sinceMountMs: Date.now() - mountAtRef.current,
+            })
             setContentHeight(height)
         },
         [setContentHeight]
@@ -410,13 +411,9 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             // alongside its dispatch), but it doesn't flip any
             // bridgeState flag from it.
             if (parsed.type === 'editor-ready') {
-                if (__DEV__) {
-                    console.debug(
-                        '[editor.mount] page-ready',
-                        Date.now() - mountAtRef.current,
-                        'ms'
-                    )
-                }
+                log.debug('core.editor.webview', 'page-ready', {
+                    sinceMountMs: Date.now() - mountAtRef.current,
+                })
                 setWebviewReady(true)
                 return
             }

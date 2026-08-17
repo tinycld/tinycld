@@ -1,4 +1,5 @@
 import { captureException } from '@tinycld/core/lib/errors'
+import { log } from '@tinycld/core/lib/logger'
 import {
     Component,
     type ErrorInfo,
@@ -14,15 +15,13 @@ import { nextAttempt, shouldRetryOnTimeout } from './lazy-sidebar-retry'
 // Copious logging around sidebar-mount failures: when this boundary has to
 // recover, the next person debugging CI (or a user report) needs to see exactly
 // what happened — which slug, which failure mode, which attempt — not a silent
-// retry. `pkgSlug` is threaded in so every line names the package.
+// retry. `slug` is threaded in so every line names the package.
 function logSidebar(slug: string | undefined, msg: string, extra?: Record<string, unknown>) {
-    // __DEV__-guarded per house rule (no unguarded console). CI runs the dev
-    // bundle (Development-level warnings: ON), so these lines DO surface in CI
-    // failure logs — which is exactly where a wedged sidebar gets diagnosed.
-    // Production reporting goes through captureException at the call sites.
-    if (!__DEV__) return
-    const tag = `[sidebar-boundary${slug ? `:${slug}` : ''}]`
-    console.warn(tag, msg, extra ?? '')
+    // debug, not warn: each of these lines narrates one step of a retry the
+    // boundary is designed to absorb, so on its own none is worth paging for.
+    // They ride along as breadcrumbs on whatever event does fire — the terminal
+    // "gave up" case reports separately via captureException at the call site.
+    log.debug('core.workspace.sidebar-boundary', msg, { ...extra, slug })
 }
 
 interface LazySidebarBoundaryProps {

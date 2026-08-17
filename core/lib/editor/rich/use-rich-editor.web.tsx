@@ -1,6 +1,7 @@
 import { EditorContent, ReactNodeViewRenderer, useEditor } from '@tiptap/react'
 import { useEffect, useMemo, useRef } from 'react'
 import { View } from 'react-native'
+import { log } from '../../logger'
 import { useThemeColor } from '../../use-app-theme'
 import type { EditorCommands, EditorHandle, EditorResult, EditorToolbarState } from '../types'
 import { AuthedImageView } from './AuthedImageView.web'
@@ -309,10 +310,14 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         // return a destroyed instance during a remount. Touching `.commands` in
         // that window throws, so every imperative call is gated.
         const isLive = () => !!tiptapEditor && !tiptapEditor.isDestroyed
+        // debug, not warn: this catches a developer calling the wrong API, which
+        // is a coding mistake to read in the console — not a production incident
+        // worth an event.
         const warnIfCollab = (method: string) => {
-            if (collab && __DEV__) {
-                console.warn(
-                    `[editor] ${method} is a no-op under collaboration — seed the shared document instead`
+            if (collab) {
+                log.debug(
+                    'core.editor.rich',
+                    `${method} is a no-op under collaboration — seed the shared document instead`
                 )
             }
             return !!collab
