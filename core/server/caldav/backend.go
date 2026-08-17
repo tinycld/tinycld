@@ -149,8 +149,19 @@ func (b *Backend) authorize(user *core.Record, record *core.Record, kind ruleKin
 
 	ok, err := b.app.CanAccessRecord(record, info, ruleFor(record.Collection(), kind))
 	if err != nil {
-		log.Warn("access rule evaluation failed",
-			"slug", b.src.Slug, "recordID", record.Id, "err", err)
+		// ruleList runs once per record inside ListCalendars/ListCalendarObjects'
+		// listing loops, so a single broken ListRule would otherwise emit one
+		// Sentry event per record on every PROPFIND — and DAV clients poll on a
+		// timer, turning one admin typo into sustained paging. The other kinds
+		// (view/create/update/delete) are each at most one per request, so they
+		// stay at warn.
+		if kind == ruleList {
+			log.Info("access rule evaluation failed",
+				"slug", b.src.Slug, "recordID", record.Id, "err", err)
+		} else {
+			log.Warn("access rule evaluation failed",
+				"slug", b.src.Slug, "recordID", record.Id, "err", err)
+		}
 		return errNotFound
 	}
 	if !ok {

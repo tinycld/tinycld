@@ -46,10 +46,11 @@ func SanitizeQuery(input string) string {
 // SanitizeQueryWithExclusions builds an FTS5 MATCH expression requiring every
 // include term and rejecting every exclude term.
 //
-// Both sides arrive as already-split plain terms from the client's parseQuery —
-// no operator syntax ever reaches this function, so quoteTerms stays the only
-// trust boundary. An exclude-only query returns "" rather than a bare NOT,
-// which FTS5 rejects: there is no result set to subtract from.
+// Both sides may be raw, unsplit query-string values (the /api/{slug}/search
+// route passes q.Get("q")/q.Get("not") straight through) — quoteTerms is the
+// only trust boundary and must treat the input as hostile. An exclude-only
+// query returns "" rather than a bare NOT, which FTS5 rejects: there is no
+// result set to subtract from.
 func SanitizeQueryWithExclusions(include, exclude string) string {
 	base := SanitizeQuery(include)
 	if base == "" {

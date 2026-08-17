@@ -140,7 +140,7 @@ func SyncBundledPackages(app core.App) {
 		if !bundledSlugs[slug] {
 			record.Set("status", "disabled")
 			if err := app.Save(record); err != nil {
-				srvLog.Warn("failed to disable removed bundled package", "slug", slug, "err", err)
+				srvLog.Error("failed to disable removed bundled package", "slug", slug, "err", err)
 			}
 		}
 	}

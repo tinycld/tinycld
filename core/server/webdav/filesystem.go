@@ -163,8 +163,20 @@ func (fs *FileSystem) authorize(user *core.Record, record *core.Record, kind rul
 	ok, err := fs.app.CanAccessRecord(record, info, ruleFor(record.Collection(), kind))
 	if err != nil {
 		// An unevaluable rule must not fail open.
-		davLog.Warn("access rule evaluation failed",
-			"slug", fs.src.Slug, "recordID", record.Id, "err", err)
+		//
+		// ruleList runs once per record inside a directory listing loop
+		// (filesystem.go's listing path), so a single broken ListRule would
+		// otherwise emit one Sentry event per record on every PROPFIND — and
+		// DAV clients poll on a timer, turning one admin typo into sustained
+		// paging. The other kinds (view/create/update/delete) are each at
+		// most one per request, so they stay at warn.
+		if kind == ruleList {
+			davLog.Info("access rule evaluation failed",
+				"slug", fs.src.Slug, "recordID", record.Id, "err", err)
+		} else {
+			davLog.Warn("access rule evaluation failed",
+				"slug", fs.src.Slug, "recordID", record.Id, "err", err)
+		}
 		return os.ErrPermission
 	}
 	if !ok {

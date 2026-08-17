@@ -236,7 +236,7 @@ func writeOffboardAudit(app core.App, leaverUserID, actorUserID string, mode Mod
 		"user_anonymized":    result.UserAnonymized,
 	})
 	if err := app.Save(r); err != nil {
-		log.Warn("audit write failed", "userID", leaverUserID, "err", err)
+		log.Error("audit write failed", "userID", leaverUserID, "err", err)
 	}
 }
 
