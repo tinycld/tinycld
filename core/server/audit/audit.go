@@ -10,12 +10,15 @@ package audit
 
 import (
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/logging"
 )
+
+var log = logging.ForPackage("audit")
 
 // LabelExtractor returns a human-readable label for a record.
 type LabelExtractor func(record *core.Record) string
@@ -101,7 +104,7 @@ func logCreate(app core.App, record *core.Record, re *core.RequestEvent, collect
 	setRequestInfo(auditRecord, re)
 
 	if err := app.Save(auditRecord); err != nil {
-		log.Printf("[audit] failed to save audit log for %s/%s: %v", collectionName, record.Id, err)
+		log.Error("failed to save audit log", "collection", collectionName, "recordID", record.Id, "err", err)
 	}
 }
 
@@ -120,7 +123,7 @@ func logUpdate(app core.App, record *core.Record, original *core.Record, re *cor
 	}
 
 	if err := app.Save(auditRecord); err != nil {
-		log.Printf("[audit] failed to save audit log for %s/%s: %v", collectionName, record.Id, err)
+		log.Error("failed to save audit log", "collection", collectionName, "recordID", record.Id, "err", err)
 	}
 }
 
@@ -133,14 +136,14 @@ func logDelete(app core.App, recordID string, label string, snapshot map[string]
 	setRequestInfo(auditRecord, re)
 
 	if err := app.Save(auditRecord); err != nil {
-		log.Printf("[audit] failed to save audit log for %s/%s: %v", collectionName, recordID, err)
+		log.Error("failed to save audit log", "collection", collectionName, "recordID", recordID, "err", err)
 	}
 }
 
 func newAuditRecord(app core.App, action string, resourceType string, resourceID string, label string) *core.Record {
 	auditCollection, err := app.FindCollectionByNameOrId("audit_logs")
 	if err != nil {
-		log.Printf("[audit] could not find audit_logs collection: %v", err)
+		log.Error("could not find audit_logs collection", "err", err)
 		return nil
 	}
 

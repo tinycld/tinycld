@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/logging"
 	"tinycld.org/core/push"
 )
+
+var log = logging.ForPackage("notify")
 
 // NotifyParams describes a notification to send to a user.
 type NotifyParams struct {
@@ -33,7 +35,7 @@ func NotifyUser(app core.App, params NotifyParams) {
 	// Insert into notifications collection
 	collection, err := app.FindCollectionByNameOrId("notifications")
 	if err != nil {
-		log.Printf("[notify] failed to find notifications collection: %v", err)
+		log.Error("failed to find notifications collection", "err", err)
 		return
 	}
 
@@ -49,7 +51,7 @@ func NotifyUser(app core.App, params NotifyParams) {
 	record.Set("dismissed", false)
 
 	if err := app.Save(record); err != nil {
-		log.Printf("[notify] failed to save notification: %v", err)
+		log.Error("failed to save notification", "userID", params.UserID, "err", err)
 		return
 	}
 
@@ -153,7 +155,7 @@ func sendExpoPush(app core.App, userID string, params NotifyParams) {
 
 		body, err := json.Marshal(payload)
 		if err != nil {
-			log.Printf("[notify/expo] failed to marshal payload: %v", err)
+			log.Warn("failed to marshal expo payload", "token", token, "err", err)
 			continue
 		}
 
@@ -163,7 +165,7 @@ func sendExpoPush(app core.App, userID string, params NotifyParams) {
 			bytes.NewReader(body),
 		)
 		if err != nil {
-			log.Printf("[notify/expo] send failed for token %s: %v", token, err)
+			log.Info("expo send failed for token", "token", token, "err", err)
 			continue
 		}
 
@@ -177,9 +179,9 @@ func sendExpoPush(app core.App, userID string, params NotifyParams) {
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
 			if result.Data.Details.Error == "DeviceNotRegistered" {
-				log.Printf("[notify/expo] removing stale token %s", token)
+				log.Info("removing stale expo token", "token", token)
 				if err := app.Delete(record); err != nil {
-					log.Printf("[notify/expo] failed to delete stale token %s: %v", record.Id, err)
+					log.Warn("failed to delete stale expo token", "subscriptionID", record.Id, "err", err)
 				}
 			}
 		}
