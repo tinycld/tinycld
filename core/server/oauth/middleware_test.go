@@ -488,6 +488,11 @@ func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
 		{"GET", "/api/collections/calc_comments/records", ScopeCalcRead},
 		{"POST", "/api/collections/calc_comments/records", ScopeCalcWrite},
 
+		// calendar_members carries the caller's ROLE per calendar, which
+		// `calendar list` renders. Unclassified, it default-denied and the
+		// whole command 403'd — found by the live smoke test, and invisible to
+		// calendar/cli's fake server, which has no scope layer.
+		{"GET", "/api/collections/calendar_members/records", ScopeCalendarRead},
 	}
 	for _, r := range reachable {
 		if got := ScopeForRoute(r.method, r.path); !onlyScope(got, r.scope) {
@@ -533,6 +538,16 @@ func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
 	for _, m := range []string{"POST", "PATCH", "DELETE"} {
 		if got := ScopeForRoute(m, "/api/collections/mail_domains/records/abc"); len(got) != 0 {
 			t.Errorf("domain %s must stay denied, got %v", m, got)
+		}
+	}
+
+	// calendar_members is a SHARING surface: a write adds a person to a
+	// calendar. `calendar:write` reads as "change my events" on the consent
+	// screen, not "give other people my calendar", so the read added for
+	// `calendar list` must not have opened one.
+	for _, m := range []string{"POST", "PATCH", "DELETE"} {
+		if got := ScopeForRoute(m, "/api/collections/calendar_members/records/abc"); len(got) != 0 {
+			t.Errorf("calendar membership %s must stay denied, got %v", m, got)
 		}
 	}
 }

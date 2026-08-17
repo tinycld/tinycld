@@ -139,6 +139,15 @@ var collectionScopes = map[string]collectionAccess{
 	"cards_project_members": {read: scopeRule{ScopeCardsRead}},
 	"cards_share_links":     {read: scopeRule{ScopeCardsRead}},
 
+	// calendar_members is the same shape of surface, and was simply missing —
+	// so it default-denied and took `calendar list` down with it, since the
+	// ROLE column reads membership. Read-only for the same reason as
+	// cards_project_members: a write here grants another person access to a
+	// calendar, which is not what "change my calendar events" means on the
+	// consent screen. Read is what the CLI needs — a viewer learns their role
+	// from a column rather than from a failed write.
+	"calendar_members": {read: scopeRule{ScopeCalendarRead}},
+
 	// text and calc own ONLY their comment collections; the documents and
 	// spreadsheets they comment on are drive_items, governed by drive:*.
 	//

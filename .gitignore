@@ -59,6 +59,8 @@ server/pb_test_data/
 # Per-org data dirs for the multi-org e2e stack (scripts/e2e-multi-org.ts),
 # one seeded DB per org.
 server/pb_test_data_*/
+# Throwaway DB the live CLI smoke test seeds (scripts/cli-smoke.ts).
+server/pb_smoke_data/
 # Promoted web bundle the e2e static-serve flow (scripts/e2e-serve.ts) builds.
 server/pb_test_releases/
 
