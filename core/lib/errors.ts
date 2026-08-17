@@ -1,6 +1,6 @@
 import { notify } from '@tinycld/core/lib/notify/dispatcher'
 import type { FieldValues, Path, UseFormSetError } from 'react-hook-form'
-import { captureExceptionToSentry } from './sentry'
+import { log } from './logger'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null
@@ -159,6 +159,10 @@ export function handleMutationErrorsWithForm<T extends FieldValues = FieldValues
     }
 }
 
+/**
+ * Retained for the many existing call sites; `log.error` is the same thing and
+ * is what new code should use.
+ */
 export function captureException(context: string, error: unknown, extra?: Record<string, unknown>) {
-    captureExceptionToSentry(context, error, extra)
+    log.error(context, error, extra)
 }

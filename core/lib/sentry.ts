@@ -2,7 +2,7 @@ declare const __DEV__: boolean
 
 import * as Sentry from '@sentry/react-native'
 import { Platform } from 'react-native'
-import { getCoreConfigOptional } from './core-config'
+import { getCoreConfigOptional, type LogLevel } from './core-config'
 import { scrubPII } from './sentry-scrub'
 
 let initialized = false
@@ -107,22 +107,34 @@ export function initSentry(): void {
 }
 
 /**
- * Lightweight breadcrumb-style log line that goes to Sentry as a "info" message
- * AND to the browser console. Use sparingly — for tracing intermittent prod
- * issues where you need to see a sequence of events. Remove the call sites once
- * the bug is found.
+ * Maps our LogLevel to the Sentry severity used for both breadcrumbs and
+ * captured events — shared so a `log.warn` sorts/filters/alerts the same way
+ * whichever path it took to get to Sentry.
+ */
+const SENTRY_LEVEL: Record<LogLevel, Sentry.SeverityLevel> = {
+    debug: 'debug',
+    info: 'info',
+    warn: 'warning',
+    error: 'error',
+}
+
+/**
+ * Sentry event for a non-error log call. `logger.ts` is the sole caller — its
+ * own `__DEV__`-gated `consoleLine()` owns console output, so this stays
+ * console-silent to avoid double-printing (and printing unconditionally in
+ * release, which is exactly the bug this replaced).
  */
 export function captureMessageToSentry(
     context: string,
+    level: LogLevel,
     message: string,
     extra?: Record<string, unknown>
 ): void {
-    const scrubbedExtra = extra ? scrubPII(extra) : undefined
-    console.info(`[trace:${context}] ${message}`, scrubbedExtra ?? '')
     if (!initialized) return
+    const scrubbedExtra = extra ? scrubPII(extra) : undefined
     Sentry.withScope(scope => {
         scope.setTag('context', context)
-        scope.setLevel('info')
+        scope.setLevel(SENTRY_LEVEL[level])
         if (scrubbedExtra) scope.setExtras(scrubbedExtra)
         Sentry.captureMessage(message)
     })
@@ -141,5 +153,28 @@ export function captureExceptionToSentry(
         scope.setTag('context', context)
         if (extra) scope.setExtras(scrubPII(extra))
         Sentry.captureException(error)
+    })
+}
+
+/**
+ * Record a log line as a Sentry breadcrumb. Breadcrumbs are an in-memory ring
+ * buffer — no network — and are attached automatically to whatever event fires
+ * next, which is what gives an error its preceding context.
+ *
+ * PII scrubbing is handled by the `beforeBreadcrumb` hook registered in
+ * `initSentry`; do not scrub here or the data gets filtered twice.
+ */
+export function addBreadcrumbToSentry(
+    context: string,
+    level: LogLevel,
+    message: string,
+    extra?: Record<string, unknown>
+): void {
+    if (!initialized) return
+    Sentry.addBreadcrumb({
+        category: context,
+        message,
+        level: SENTRY_LEVEL[level],
+        data: extra,
     })
 }

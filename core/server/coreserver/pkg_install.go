@@ -3,7 +3,6 @@ package coreserver
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -73,7 +72,7 @@ func RegisterPackageInstallEndpoints(app *pocketbase.PocketBase) {
 	// (requestRestart), a different path this guard never sees.
 	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		if shouldSuppressRestart(e.IsRestart) {
-			log.Println("pkg_install: suppressing watcher restart — a package operation is in progress")
+			srvLog.Info("suppressing watcher restart — a package operation is in progress")
 			return nil // short-circuit: don't run the execve handler
 		}
 		return e.Next()
@@ -462,7 +461,7 @@ func emitProgress(job *installJob, step string, progress int, message string) {
 	job.Step = step
 	job.Progress = progress
 	job.LogLines = append(job.LogLines, fmt.Sprintf("[%d%%] %s: %s", progress, step, message))
-	log.Printf("[pkg_install] [%s] [%d%%] %s: %s", job.ID, progress, step, message)
+	srvLog.Info("package install progress", "jobID", job.ID, "percent", progress, "step", step, "message", message)
 
 	evt := sseEvent{
 		Event: "progress",
@@ -508,9 +507,9 @@ func emitComplete(job *installJob, status string, errMsg string) {
 	defer job.mu.Unlock()
 
 	if errMsg != "" {
-		log.Printf("[pkg_install] [%s] COMPLETE status=%s error=%s", job.ID, status, errMsg)
+		srvLog.Info("package install complete", "jobID", job.ID, "status", status, "err", errMsg)
 	} else {
-		log.Printf("[pkg_install] [%s] COMPLETE status=%s", job.ID, status)
+		srvLog.Info("package install complete", "jobID", job.ID, "status", status)
 	}
 
 	evt := sseEvent{
@@ -533,7 +532,7 @@ func emitComplete(job *installJob, status string, errMsg string) {
 func createInstallLog(app core.App, job *installJob, action string) *core.Record {
 	collection, err := app.FindCollectionByNameOrId("pkg_install_log")
 	if err != nil {
-		log.Printf("pkg_install: failed to find pkg_install_log collection: %v", err)
+		srvLog.Error("failed to find pkg_install_log collection", "err", err)
 		return nil
 	}
 
@@ -555,7 +554,7 @@ func createInstallLog(app core.App, job *installJob, action string) *core.Record
 	record.Set("started_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
 
 	if err := app.Save(record); err != nil {
-		log.Printf("pkg_install: failed to create install log: %v", err)
+		srvLog.Error("failed to create install log", "err", err)
 		return nil
 	}
 
@@ -570,7 +569,7 @@ func updateInstallLogSlug(app core.App, record *core.Record, slug string) {
 	}
 	record.Set("pkg_slug", slug)
 	if err := app.Save(record); err != nil {
-		log.Printf("pkg_install: failed to update install log slug: %v", err)
+		srvLog.Warn("failed to update install log slug", "recordID", record.Id, "slug", slug, "err", err)
 	}
 }
 
@@ -585,10 +584,10 @@ func finalizeInstallLog(app core.App, record *core.Record, status string, errMsg
 	record.Set("completed_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
 
 	if err := app.Save(record); err != nil {
-		log.Printf("pkg_install: failed to finalize install log: %v", err)
+		srvLog.Error("failed to finalize install log", "recordID", record.Id, "status", status, "err", err)
 		return
 	}
-	log.Printf("pkg_install: finalized install log %s -> %s", record.Id, status)
+	srvLog.Info("finalized install log", "recordID", record.Id, "status", status)
 }
 
 // ---------- release staging ----------

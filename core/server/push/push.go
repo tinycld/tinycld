@@ -2,12 +2,15 @@ package push
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/logging"
 )
+
+var log = logging.ForPackage("push")
 
 // systemSetting reads a value from the system_settings collection — the
 // system-wide config store (the same one coreserver.SystemConfig loads). push
@@ -49,7 +52,7 @@ func SendToUser(app core.App, userID string, payload Payload) {
 		map[string]any{"userId": userID},
 	)
 	if err != nil {
-		log.Printf("[push] failed to query subscriptions for user %s: %v", userID, err)
+		log.Warn("failed to query subscriptions", "userID", userID, "err", err)
 		return
 	}
 
@@ -59,7 +62,7 @@ func SendToUser(app core.App, userID string, payload Payload) {
 
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("[push] failed to marshal payload: %v", err)
+		log.Warn("failed to marshal payload", "err", err)
 		return
 	}
 
@@ -82,7 +85,7 @@ func SendToUser(app core.App, userID string, payload Payload) {
 		switch v := keysRaw.(type) {
 		case string:
 			if err := json.Unmarshal([]byte(v), &keys); err != nil {
-				log.Printf("[push] invalid keys JSON for subscription %s: %v", record.Id, err)
+				log.Warn("invalid keys JSON for subscription", "subscriptionID", record.Id, "err", err)
 				continue
 			}
 		case map[string]any:
@@ -93,7 +96,7 @@ func SendToUser(app core.App, userID string, payload Payload) {
 				keys.Auth = a
 			}
 		default:
-			log.Printf("[push] unexpected keys type for subscription %s", record.Id)
+			log.Warn("unexpected keys type for subscription", "subscriptionID", record.Id)
 			continue
 		}
 
@@ -112,15 +115,15 @@ func SendToUser(app core.App, userID string, payload Payload) {
 			TTL:             86400,
 		})
 		if err != nil {
-			log.Printf("[push] send failed for subscription %s: %v", record.Id, err)
+			log.Info("send failed for subscription", "subscriptionID", record.Id, "err", err)
 			continue
 		}
 		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
-			log.Printf("[push] removing stale subscription %s (status %d)", record.Id, resp.StatusCode)
+			log.Info("removing stale subscription", "subscriptionID", record.Id, "status", resp.StatusCode)
 			if err := app.Delete(record); err != nil {
-				log.Printf("[push] failed to delete stale subscription %s: %v", record.Id, err)
+				log.Info("failed to delete stale subscription", "subscriptionID", record.Id, "err", err)
 			}
 		}
 	}

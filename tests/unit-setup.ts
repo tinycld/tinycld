@@ -4,6 +4,14 @@
 // Add vi.mock() calls here for modules that cannot be handled by resolve.alias.
 import { vi } from 'vitest'
 
+// Metro injects __DEV__ at build time; vitest runs in Node, so seed it here.
+// react-native's globals.d.ts already declares the global as `const __DEV__`, so
+// this file must not redeclare it (that is a block-scoped collision) — it only
+// needs to install the value, which the cast through globalThis does.
+// Tests exercise the production default (__DEV__ = false) unless they opt into dev
+// behavior with a per-test vi.stubGlobal override (see logger.test.ts for examples).
+;(globalThis as unknown as { __DEV__: boolean }).__DEV__ = false
+
 // Mock the generated config to empty. This is REQUIRED to break an import
 // cycle: the real tinycld.config.ts imports each package's provider, some of
 // which (calc, text) eagerly import @tinycld/core/file-viewer components that

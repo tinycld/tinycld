@@ -165,6 +165,17 @@ func TestSystemStoreFallsBackWhenKeychainRefusesWrites(t *testing.T) {
 		t.Fatalf("Get after degraded Set = %q, %v", v, err)
 	}
 
+	// Location must name the FILE, not the keychain. `auth login` prints this,
+	// and it used to say "keychain" unconditionally — directly under the
+	// warning above saying the keychain write had just failed.
+	loc := s.Location("ctx1")
+	if strings.Contains(loc, "keychain") {
+		t.Errorf("Location after a degraded write = %q, must not claim the keychain", loc)
+	}
+	if !strings.Contains(loc, dir) {
+		t.Errorf("Location = %q, want the credential file under %s", loc, dir)
+	}
+
 	// Second write must not warn again.
 	warn.Reset()
 	if err := s.Set("ctx1", `{"t":"v2"}`); err != nil {
@@ -219,8 +230,59 @@ func TestSystemStoreKeychainWriteClearsStaleFileCopy(t *testing.T) {
 	if err := s.Set("ctx1", `{"t":"new"}`); err != nil {
 		t.Fatal(err)
 	}
+
+	// A healthy write really is in the keychain, so Location must say so —
+	// otherwise reporting the truth on the degraded path would just have
+	// traded one wrong message for another.
+	if loc := s.Location("ctx1"); loc != "keychain" {
+		t.Errorf("Location after a successful keychain write = %q, want \"keychain\"", loc)
+	}
+
 	delete(kcMem, "ctx1")
 	if _, err := s.Get("ctx1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("stale file copy resurrected: err = %v", err)
+	}
+}
+
+// One context degrading must not mislabel another that succeeded — the reason
+// the flag is per-account rather than a single bool on the store.
+func TestSystemStoreLocationIsPerAccount(t *testing.T) {
+	kcMem := map[string]string{}
+	stubKeyring(t,
+		func(_, account string) (string, error) {
+			v, ok := kcMem[account]
+			if !ok {
+				return "", keyring.ErrNotFound
+			}
+			return v, nil
+		},
+		func(_, account, value string) error {
+			// Only this one context is refused.
+			if account == "refused" {
+				return errors.New("exit status 154")
+			}
+			kcMem[account] = value
+			return nil
+		},
+		func(_, account string) error {
+			delete(kcMem, account)
+			return nil
+		},
+	)
+
+	var warn bytes.Buffer
+	s := Open(t.TempDir(), &warn)
+	if err := s.Set("refused", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set("accepted", "b"); err != nil {
+		t.Fatal(err)
+	}
+
+	if loc := s.Location("accepted"); loc != "keychain" {
+		t.Errorf("accepted context Location = %q, want \"keychain\"", loc)
+	}
+	if loc := s.Location("refused"); loc == "keychain" {
+		t.Errorf("refused context Location = %q, must not claim the keychain", loc)
 	}
 }

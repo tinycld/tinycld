@@ -129,7 +129,7 @@
             },
             "suspicious": {
                 "noDebugger": "error",
-                "noConsole": "warn",
+                "noConsole": "error",
                 "noVar": "error",
                 "noExplicitAny": "error"
             },
@@ -174,16 +174,11 @@
         },
         {
             "includes": [
-                "**/core/lib/nav-perf.ts",
                 "**/core/lib/sentry.ts",
+                "**/core/lib/logger.ts",
                 "**/core/lib/debug-trace.ts",
-                "**/core/lib/editor/use-webview-editor.tsx",
                 "**/core/lib/editor/webview-bundler/build.ts",
-                "**/core/lib/editor/rich/use-rich-editor.web.tsx",
-                "**/core/components/workspace/LazySidebarBoundary.tsx",
-                "**/core/components/AppErrorBoundary.tsx",
-                "**/lib/use-server-address-gate.ts",
-                "**/lib/diagnose-regexp.ts"
+                "**/core/components/AppErrorBoundary.tsx"
             ],
             "linter": {
                 "rules": {

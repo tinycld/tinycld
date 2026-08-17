@@ -1,3 +1,4 @@
+import { log } from '@tinycld/core/lib/logger'
 import {
     DEMO_SERVER,
     getResolvedAddress,
@@ -72,7 +73,7 @@ export function useServerAddressGate(pathname: string): GateState {
                 // diagnostic UI.
                 if (cancelled) return
                 const message = err instanceof Error ? err.message : String(err)
-                console.error('[layout-gate] failed to resolve providers:', err)
+                log.error('core.layout-gate.resolve-providers', err)
                 setState({ status: 'failed', error: message })
             }
         }

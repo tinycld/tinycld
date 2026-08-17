@@ -2,7 +2,6 @@ package coreserver
 
 import (
 	"encoding/json"
-	"log"
 	"os"
 	"path/filepath"
 
@@ -29,25 +28,25 @@ type bundledPackage struct {
 func SyncBundledPackages(app core.App) {
 	jsonPath := findBundledPackagesJSON()
 	if jsonPath == "" {
-		log.Println("pkg_seed: bundled-packages.json not found, skipping sync")
+		srvLog.Info("bundled-packages.json not found, skipping sync")
 		return
 	}
 
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
-		log.Printf("pkg_seed: failed to read %s: %v", jsonPath, err)
+		srvLog.Error("failed to read bundled-packages.json", "path", jsonPath, "err", err)
 		return
 	}
 
 	var packages []bundledPackage
 	if err := json.Unmarshal(data, &packages); err != nil {
-		log.Printf("pkg_seed: failed to parse bundled-packages.json: %v", err)
+		srvLog.Error("failed to parse bundled-packages.json", "err", err)
 		return
 	}
 
 	collection, err := app.FindCollectionByNameOrId("pkg_registry")
 	if err != nil {
-		log.Printf("pkg_seed: pkg_registry collection not found: %v", err)
+		srvLog.Error("pkg_registry collection not found", "err", err)
 		return
 	}
 
@@ -90,7 +89,7 @@ func SyncBundledPackages(app core.App) {
 				record.Set("manifest_json", pkg.ManifestJSON)
 			}
 			if err := app.Save(record); err != nil {
-				log.Printf("pkg_seed: failed to create %s: %v", pkg.Slug, err)
+				srvLog.Error("failed to create bundled package registry row", "slug", pkg.Slug, "err", err)
 			}
 			continue
 		}
@@ -120,7 +119,7 @@ func SyncBundledPackages(app core.App) {
 			existing.Set("status", "bundled")
 		}
 		if err := app.Save(existing); err != nil {
-			log.Printf("pkg_seed: failed to update %s: %v", pkg.Slug, err)
+			srvLog.Error("failed to update bundled package registry row", "slug", pkg.Slug, "err", err)
 		}
 	}
 
@@ -141,12 +140,12 @@ func SyncBundledPackages(app core.App) {
 		if !bundledSlugs[slug] {
 			record.Set("status", "disabled")
 			if err := app.Save(record); err != nil {
-				log.Printf("pkg_seed: failed to disable %s: %v", slug, err)
+				srvLog.Warn("failed to disable removed bundled package", "slug", slug, "err", err)
 			}
 		}
 	}
 
-	log.Printf("pkg_seed: synced %d bundled packages", len(packages))
+	srvLog.Info("synced bundled packages", "count", len(packages))
 }
 
 func findBundledPackagesJSON() string {

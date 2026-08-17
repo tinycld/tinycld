@@ -2,7 +2,6 @@ package coreserver
 
 import (
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -28,14 +27,14 @@ import (
 // emitProgress lines in the recorded log.
 func jobLogf(job *installJob, format string, args ...any) {
 	if job == nil {
-		log.Printf("[pkg_install] "+format, args...)
+		srvLog.Info(fmt.Sprintf(format, args...))
 		return
 	}
 	msg := fmt.Sprintf(format, args...)
 	job.mu.Lock()
 	job.LogLines = append(job.LogLines, "  · "+msg)
 	job.mu.Unlock()
-	log.Printf("[pkg_install] [%s]   · %s", job.ID, msg)
+	srvLog.Info(msg, "jobID", job.ID)
 }
 
 // timeStep brackets a named step: it logs a START detail line, runs fn, then logs

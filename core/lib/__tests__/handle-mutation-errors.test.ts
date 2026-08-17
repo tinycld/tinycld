@@ -66,3 +66,19 @@ describe('handleMutationErrorsWithForm', () => {
         expect(useToastStore.getState().toasts).toHaveLength(1)
     })
 })
+
+describe('captureException', () => {
+    it('captureException delegates to log.error', async () => {
+        const spy = vi.fn()
+        vi.doMock('../logger', () => ({
+            log: { error: spy, debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
+        }))
+        vi.resetModules()
+
+        const { captureException } = await import('../errors')
+        const err = new Error('boom')
+        captureException('example.create', err, { id: '1' })
+
+        expect(spy).toHaveBeenCalledWith('example.create', err, { id: '1' })
+    })
+})

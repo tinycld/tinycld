@@ -33,13 +33,17 @@ export function AppErrorBoundary({ error, retry }: ErrorBoundaryProps) {
         if (!error.stack) return
         symbolicateStack(error.stack)
             .then(clean => {
-                // Load-bearing in ALL builds: the browser never applies
-                // sourcemaps to error.stack at runtime (only DevTools/Sentry do),
-                // so this is the ONLY place the readable, source-mapped crash
-                // stack surfaces in a production web build. sourcemaps.spec.ts
-                // asserts this line fires and names the original source. The file
-                // is exempt from noConsole in biome.json (diagnostic-modules
-                // override).
+                // Deliberately NOT routed through `log` — this is the one console
+                // call in client code that must survive a release build. The
+                // browser never applies sourcemaps to error.stack at runtime (only
+                // DevTools/Sentry do), so this is the ONLY place the readable,
+                // source-mapped crash stack surfaces in a production web build,
+                // and sourcemaps.spec.ts reads it off the console of an
+                // `expo export` bundle. `log.*` writes to the console only under
+                // __DEV__, so migrating this line would silence it exactly where
+                // it is needed. Sentry already has the error itself via the
+                // captureException above; this is the human-readable companion.
+                // The file is exempt from noConsole in biome.json.
                 console.log(`[error-boundary] ${clean}`)
             })
             .catch(() => {

@@ -1,4 +1,11 @@
 /**
+ * Severity ordering used by `@tinycld/core/lib/logger`. Everything becomes a
+ * Sentry breadcrumb; only calls at or above the configured level additionally
+ * become Sentry events.
+ */
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+/**
  * Runtime configuration that the app shell hands to `@tinycld/core` at
  * startup. Moves per-app details — branding, server
  * shortcuts, Sentry DSN, review-mode flags — out of hard-coded env reads
@@ -40,6 +47,11 @@ export interface CoreConfig {
     environment?: string
     /** Sentry release tag (maps to EXPO_PUBLIC_GIT_COMMIT). */
     release?: string
+    /**
+     * Minimum level that escalates a log call from a breadcrumb to a Sentry
+     * event. Defaults to 'warn' in release builds and 'debug' in __DEV__.
+     */
+    logLevel?: LogLevel
     /** When true, the app is an App Store review build. */
     reviewMode?: boolean
     /** Demo password auto-filled in review builds. */

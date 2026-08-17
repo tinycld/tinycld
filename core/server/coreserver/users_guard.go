@@ -1,7 +1,6 @@
 package coreserver
 
 import (
-	"log"
 	"reflect"
 
 	"github.com/pocketbase/pocketbase"
@@ -94,7 +93,7 @@ func registerUsersDemoAuditHookCore(app core.App) {
 
 		auditCol, err := e.App.FindCollectionByNameOrId("audit_logs")
 		if err != nil {
-			log.Printf("[demo-audit] missing audit_logs collection: %v", err)
+			srvLog.Error("demo-audit: missing audit_logs collection", "err", err)
 			return nil
 		}
 		auditRec := core.NewRecord(auditCol)
@@ -110,7 +109,7 @@ func registerUsersDemoAuditHookCore(app core.App) {
 			auditRec.Set("actor", e.Auth.Id)
 		}
 		if err := e.App.Save(auditRec); err != nil {
-			log.Printf("[demo-audit] failed to write audit entry: %v", err)
+			srvLog.Error("demo-audit: failed to write audit entry", "userID", e.Record.Id, "err", err)
 		}
 		return nil
 	})

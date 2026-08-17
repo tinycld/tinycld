@@ -16,14 +16,16 @@ package yjsdoc
 
 import (
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
 	ycrdt "github.com/skyterra/y-crdt"
 
+	"tinycld.org/core/logging"
 	"tinycld.org/core/realtime"
 )
+
+var log = logging.ForPackage("yjsdoc")
 
 // Doc is a Yjs document. Aliased rather than wrapped so a consumer can pass it
 // to the bridge helpers in this package without importing y-crdt, while text/
@@ -163,7 +165,7 @@ func (r *Runtime) NewDoc(roomID string) (realtime.DocHandle, error) {
 
 	if hook != nil {
 		if err := hook(roomID, doc); err != nil {
-			slog.Warn("yjsdoc: bootstrap failed; room continues with an empty document",
+			log.Warn("bootstrap failed; room continues with an empty document",
 				"roomID", roomID, "err", err)
 		}
 	}

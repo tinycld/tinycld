@@ -2,7 +2,6 @@ package coreserver
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,7 +32,7 @@ import (
 // is mid-flight on a background goroutine, no request is being served against
 // these specific writes, and the process restarts moments later anyway.
 func recoverLiveDBAfterExternalWrite(app *pocketbase.PocketBase) error {
-	log.Printf("pkg_install: reconnecting live DB after external WAL access")
+	srvLog.Info("reconnecting live DB after external WAL access")
 	if err := app.Bootstrap(); err != nil {
 		return fmt.Errorf("re-bootstrap app DB after migrate: %w", err)
 	}
@@ -50,7 +49,7 @@ func recoverLiveDBAfterExternalWrite(app *pocketbase.PocketBase) error {
 // every committed write. Best-effort: a checkpoint failure is logged, not fatal.
 func checkpointWAL(app *pocketbase.PocketBase) {
 	if _, err := app.DB().NewQuery("PRAGMA wal_checkpoint(TRUNCATE)").Execute(); err != nil {
-		log.Printf("pkg_install: WAL checkpoint before restart failed: %v", err)
+		srvLog.Error("WAL checkpoint before restart failed", "err", err)
 	}
 }
 
@@ -85,10 +84,10 @@ func armDatabaseBackup(buildID string) {
 		return
 	}
 	if err := os.WriteFile(dbArmedMarkerPath(), []byte(buildID), 0o644); err != nil {
-		log.Printf("[pkg_install] WARNING: failed to arm DB backup marker (rollback still works; SIGKILL-recovery degraded): %v", err)
+		srvLog.Warn("failed to arm DB backup marker (rollback still works; SIGKILL-recovery degraded)", "buildID", buildID, "err", err)
 		return
 	}
-	log.Printf("[pkg_install] DB backup armed for build %s (entrypoint commits on healthy boot, restores on failed probe)", buildID)
+	srvLog.Info("DB backup armed", "buildID", buildID)
 }
 
 // backupDatabase snapshots the live DB and returns a restore closure. The DB
@@ -117,7 +116,7 @@ func backupDatabase(_ string) (rollbackFn func() error, err error) {
 	if fi, statErr := os.Stat(backupPath); statErr == nil {
 		sizeNote = fmt.Sprintf(" (%.1f MB)", float64(fi.Size())/(1024*1024))
 	}
-	log.Printf("[pkg_install] database backed up to %s%s (restore-on-failure armed)", backupPath, sizeNote)
+	srvLog.Info("database backed up (restore-on-failure armed)", "path", backupPath, "sizeNote", sizeNote)
 
 	// In-process restore, used ONLY for PRE-activation failures (migrate/activate
 	// fail before the symlink swaps). It restores the live DB and disarms — both
@@ -128,7 +127,7 @@ func backupDatabase(_ string) (rollbackFn func() error, err error) {
 	// fails its post-restart health probe (the failure happens in a different
 	// process, so it can't be handled here). See entrypoint.sh's rollback branch.
 	rollbackFn = func() error {
-		log.Printf("pkg_go_build: restoring database from backup")
+		srvLog.Info("restoring database from backup")
 		// Use cp for streaming copy to avoid loading entire DB into memory
 		cmd := exec.Command("cp", backupPath, dbPath)
 		if out, err := cmd.CombinedOutput(); err != nil {

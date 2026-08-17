@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -376,8 +375,8 @@ func runConnection(broker *Broker, opts Options, ident connIdentity, conn *webso
 	if opts, lookupErr := optionsFor(kind); lookupErr == nil && opts.OnConnect != nil {
 		payload, err := opts.OnConnect(roomID, client)
 		if err != nil {
-			slog.Warn(
-				"realtime: OnConnect failed; skipping MsgServerHello",
+			log.WarnContext(ctx,
+				"OnConnect failed; skipping MsgServerHello",
 				"kind", kind, "roomID", roomID, "err", err,
 			)
 		} else {

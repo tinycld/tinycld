@@ -872,36 +872,27 @@ function exerciseCalendar(): void {
     )
 
     const json = cli(['--json', 'calendar', 'list'], OWNER_CTX)
-    const cals = parseJSON(json) as { id?: string; name?: string }[] | null
+    const cals = parseJSON(json) as { id?: string; name?: string; role?: string }[] | null
     assert(g, 'calendar list --json parses', Array.isArray(cals), firstLine(json.stderr))
 
-    // ROLE is the only warning a viewer gets before a write is refused, so it
-    // must actually be populated. Asserted against the TABLE, not --json: the
-    // role is joined in at render time and is deliberately absent from the JSON
-    // payload (see the note in the round-2 findings — the two formats disagree
-    // about which fields exist).
-    const table = cli(['calendar', 'list'], OWNER_CTX)
-    const roleColumn = table.stdout
-        .split('\n')
-        .slice(1)
-        .filter(l => l.trim())
-        .map(l => l.trim().split(/\s{2,}/)[1])
+    // ROLE decides whether a write will be accepted, so it must be readable
+    // from --json and not only from the table — otherwise a script has to
+    // parse columns to answer "which calendars may I write to", which is what
+    // this file used to do.
     assert(
         g,
-        'calendar list populates the ROLE column',
-        roleColumn.length > 0 && roleColumn.every(r => !!r && r !== '-'),
-        roleColumn.length ? `roles: ${roleColumn.join(', ')}` : 'no calendars seeded'
+        'calendar list --json carries the ROLE column',
+        !!cals?.length && cals.every(cl => !!cl.role),
+        cals?.length ? `roles: ${cals.map(cl => cl.role ?? '-').join(', ')}` : 'no calendars seeded'
     )
 
     // Write to a calendar the caller can actually write to. Read is membership
     // in ANY role, so the first row may well be one the user only views — the
     // seed's first calendar is exactly that — and picking it blindly turns a
     // correct refusal into a failure that looks like a broken `add`.
-    const writable = table.stdout
-        .split('\n')
-        .slice(1)
-        .map(l => l.trim().split(/\s{2,}/))
-        .filter(cols => cols.length >= 2 && (cols[1] === 'owner' || cols[1] === 'editor'))
+    const writable = (cals ?? [])
+        .filter(cl => cl.role === 'owner' || cl.role === 'editor')
+        .map(cl => [cl.name ?? cl.id ?? ''])
     const target = writable[0]?.[0]
     if (!target) {
         for (const name of [

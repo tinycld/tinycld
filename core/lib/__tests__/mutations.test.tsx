@@ -26,6 +26,7 @@ vi.mock('@tinycld/core/lib/notifications', () => ({
 }))
 vi.mock('@tinycld/core/lib/sentry', () => ({
     captureExceptionToSentry: vi.fn(),
+    addBreadcrumbToSentry: vi.fn(),
 }))
 
 function wrapper() {

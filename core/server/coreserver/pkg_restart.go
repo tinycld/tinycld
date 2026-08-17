@@ -1,7 +1,6 @@
 package coreserver
 
 import (
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,17 +17,17 @@ const restartExitCode = 75
 // persists across the per-build symlink swap rather than in the swapped dir.
 func requestRestart(_ string) {
 	if isDevelopment() {
-		log.Println("pkg_install: restart requested (dev mode — restart manually)")
+		srvLog.Info("restart requested (dev mode — restart manually)")
 		return
 	}
 
 	// Write a restart marker so the entrypoint knows this was intentional
 	markerPath := filepath.Join(statePbDataDir(), ".restart-requested")
 	if err := os.WriteFile(markerPath, []byte("restart"), 0o644); err != nil {
-		log.Printf("pkg_install: failed to write restart marker: %v", err)
+		srvLog.Warn("failed to write restart marker", "path", markerPath, "err", err)
 	}
 
-	log.Println("pkg_install: requesting restart via exit code 75")
+	srvLog.Info("requesting restart via exit code 75")
 	os.Exit(restartExitCode)
 }
 
