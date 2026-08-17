@@ -56,11 +56,16 @@ func handleCommentMention(app core.App, mention *core.Record) {
 	commentCollection := mention.GetString("comment_collection")
 	packageSlug, ok := allowedCommentCollections[commentCollection]
 	if !ok {
-		// Unknown comment_collection — silently drop. The allowlist
-		// is the security boundary; logging at warn level so an
-		// attacker probing the surface is visible without flooding
-		// the log on legitimate (but unknown-to-this-build) packages.
-		log.Warn("comment mention: unknown comment_collection",
+		// Unknown comment_collection — silently drop. The allowlist is the
+		// security boundary and it has already failed closed here, so there is
+		// nothing for an operator to act on.
+		//
+		// Info, not warn, precisely BECAUSE this is the probe surface:
+		// comment_collection is free text any authenticated commenter can set,
+		// so paging on it would hand every account holder a remote pager DoS.
+		// The record is kept for forensics — info still reaches stderr and
+		// _logs, which is where you go looking for a probe.
+		log.Info("comment mention: unknown comment_collection",
 			"collection", commentCollection)
 		return
 	}
