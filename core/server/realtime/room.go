@@ -3,9 +3,12 @@ package realtime
 import (
 	"bytes"
 	"fmt"
-	"log/slog"
 	"sync"
+
+	"tinycld.org/core/logging"
 )
+
+var log = logging.ForPackage("realtime")
 
 // sendBufferSize is the number of frames buffered per client. A slow
 // reader that backs up past this many frames is dropped — that is, the
@@ -55,8 +58,8 @@ func newRoom(b *Broker, key roomKey, opts RoomKindOptions) *Room {
 			// behavior: clients can still join and fan out frames
 			// among themselves; only the server-side mirror (and
 			// therefore persistence) is disabled for this room.
-			slog.Error(
-				"realtime: DocRuntime.NewDoc failed; falling back to pure relay",
+			log.Error(
+				"DocRuntime.NewDoc failed; falling back to pure relay",
 				"kind", key.kind, "roomID", key.id, "err", err,
 			)
 		} else {
@@ -88,8 +91,8 @@ func newRoom(b *Broker, key roomKey, opts RoomKindOptions) *Room {
 					return nil
 				})
 				if replayErr != nil {
-					slog.Error(
-						"realtime: journal replay failed; room continues with partial state",
+					log.Error(
+						"journal replay failed; room continues with partial state",
 						"kind", key.kind, "roomID", key.id, "err", replayErr,
 					)
 				}
@@ -133,8 +136,8 @@ func (r *Room) remove(c *Client) {
 		}
 		if r.serverDoc != nil {
 			if err := r.serverDoc.Close(); err != nil {
-				slog.Warn(
-					"realtime: DocHandle.Close failed",
+				log.Warn(
+					"DocHandle.Close failed",
 					"kind", r.key.kind, "roomID", r.key.id, "err", err,
 				)
 			}
@@ -208,7 +211,7 @@ func (r *Room) route(from *Client, frame []byte) {
 		// (not a connection close) so a benign client with a stale flag
 		// isn't disconnected.
 		if r.opts.WritePredicate != nil && !r.opts.WritePredicate(from, r.key.id) {
-			slog.Warn("realtime: dropped MsgDocUpdate from read-only connection",
+			log.Warn("dropped MsgDocUpdate from read-only connection",
 				"kind", r.key.kind, "roomID", r.key.id, "authID", from.authID)
 			return
 		}
@@ -218,8 +221,8 @@ func (r *Room) route(from *Client, frame []byte) {
 			limit = DefaultMaxUpdateBytes
 		}
 		if len(payload) > limit {
-			slog.Warn(
-				"realtime: MsgDocUpdate exceeds cap; dropping",
+			log.Warn(
+				"MsgDocUpdate exceeds cap; dropping",
 				"kind", r.key.kind, "roomID", r.key.id,
 				"size", len(payload), "cap", limit,
 			)
@@ -234,8 +237,8 @@ func (r *Room) route(from *Client, frame []byte) {
 		// the journal, the server mirror, or any peer.
 		if r.opts.UpdateContentValidator != nil {
 			if err := r.opts.UpdateContentValidator(r.key.id, payload); err != nil {
-				slog.Warn(
-					"realtime: UpdateContentValidator rejected MsgDocUpdate; dropping",
+				log.Warn(
+					"UpdateContentValidator rejected MsgDocUpdate; dropping",
 					"kind", r.key.kind, "roomID", r.key.id, "err", err,
 				)
 				return
@@ -266,8 +269,8 @@ func (r *Room) route(from *Client, frame []byte) {
 			seq := r.nextSeq
 			r.mu.Unlock()
 			if err := r.opts.Journal.Append(r.key.kind, r.key.id, seq, payload); err != nil {
-				slog.Warn(
-					"realtime: journal append failed; dropping MsgDocUpdate",
+				log.Warn(
+					"journal append failed; dropping MsgDocUpdate",
 					"kind", r.key.kind, "roomID", r.key.id, "seq", seq, "err", err,
 				)
 				// Roll back the seq so the next attempt reuses it.
@@ -286,8 +289,8 @@ func (r *Room) route(from *Client, frame []byte) {
 		// relay mode for this kind and we just forward.
 		if r.serverDoc != nil {
 			if err := r.serverDoc.ApplyUpdate(payload); err != nil {
-				slog.Warn(
-					"realtime: ApplyUpdate rejected an inbound MsgDocUpdate; dropping frame",
+				log.Warn(
+					"ApplyUpdate rejected an inbound MsgDocUpdate; dropping frame",
 					"kind", r.key.kind, "roomID", r.key.id, "err", err,
 				)
 				return
@@ -327,8 +330,8 @@ func (r *Room) route(from *Client, frame []byte) {
 		if r.serverDoc != nil {
 			state, err := r.serverDoc.EncodeStateAsUpdate()
 			if err != nil {
-				slog.Warn(
-					"realtime: EncodeStateAsUpdate failed; falling back to peer bounce",
+				log.Warn(
+					"EncodeStateAsUpdate failed; falling back to peer bounce",
 					"kind", r.key.kind, "roomID", r.key.id, "err", err,
 				)
 			} else {
@@ -673,8 +676,8 @@ func (r *Room) PublishDocUpdate(payload []byte) error {
 				r.nextSeq--
 			}
 			r.mu.Unlock()
-			slog.Warn(
-				"realtime: PublishDocUpdate journal append failed; dropping",
+			log.Warn(
+				"PublishDocUpdate journal append failed; dropping",
 				"kind", r.key.kind, "roomID", r.key.id, "seq", seq, "err", err,
 			)
 			return fmt.Errorf("realtime: PublishDocUpdate journal append failed: %w", err)
