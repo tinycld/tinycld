@@ -168,7 +168,11 @@ func newAuthLoginCmd(d *deps) *cobra.Command {
 			}
 
 			d.out.Info(cmd.OutOrStdout(), "✓ Authenticated as %s", user.Email)
-			d.out.Info(cmd.OutOrStdout(), "✓ Token saved to keychain")
+			// Report where the credential ACTUALLY landed. The keychain can
+			// pass the read probe and still refuse the write, in which case the
+			// store falls back to a file — and this line used to say "keychain"
+			// anyway, directly under the warning saying that had just failed.
+			d.out.Info(cmd.OutOrStdout(), "✓ Token saved to %s", d.store().Location(host))
 			return nil
 		},
 	}

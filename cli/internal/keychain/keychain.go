@@ -33,6 +33,16 @@ type Store interface {
 	Set(account, value string) error
 	// Delete is idempotent: removing an absent credential is not an error.
 	Delete(account string) error
+	// Location describes where the LAST Set for this account actually landed,
+	// for a caller that wants to tell the user. A store can degrade per-write
+	// (systemStore falls back to a file when the keychain refuses), so this is
+	// only meaningful after a Set — before one it reports where a write would
+	// be attempted.
+	//
+	// It exists because `auth login` used to print "Token saved to keychain"
+	// unconditionally, directly under the warning saying the keychain write had
+	// just failed. The store knew; it simply had no way to say so.
+	Location(account string) string
 }
 
 // Open returns the OS keychain when one responds, else a file store with a
@@ -57,9 +67,13 @@ func Open(configDir string, warn io.Writer) Store {
 // the keychain refuses a write. Reads consult both places, so a credential
 // keeps working regardless of where an earlier Set landed.
 type systemStore struct {
-	file   fileStore
-	warn   io.Writer
-	warned bool
+	// degraded records, per account, whether the last Set fell back to the
+	// file store. Per-account rather than a single flag because one context can
+	// degrade while another succeeds in the same process.
+	degraded map[string]bool
+	file     fileStore
+	warn     io.Writer
+	warned   bool
 }
 
 func (s *systemStore) Get(account string) (string, error) {
@@ -82,6 +96,7 @@ func (s *systemStore) Set(account, value string) error {
 		// A keychain write supersedes any stale file copy from a degraded
 		// earlier session; drop it so Get cannot resurrect old credentials.
 		s.file.Delete(account)
+		s.setDegraded(account, false)
 		return nil
 	}
 	if !s.warned {
@@ -90,7 +105,28 @@ func (s *systemStore) Set(account, value string) error {
 			"warning: OS keychain write failed (%v); storing credentials in %s (mode 0600)\n",
 			err, s.file.dir)
 	}
-	return s.file.Set(account, value)
+	if ferr := s.file.Set(account, value); ferr != nil {
+		return ferr
+	}
+	s.setDegraded(account, true)
+	return nil
+}
+
+func (s *systemStore) setDegraded(account string, degraded bool) {
+	if s.degraded == nil {
+		s.degraded = map[string]bool{}
+	}
+	s.degraded[account] = degraded
+}
+
+// Location reports the keychain unless this account's last write fell back to
+// the file store — the case the old unconditional "saved to keychain" message
+// got wrong.
+func (s *systemStore) Location(account string) string {
+	if s.degraded[account] {
+		return s.file.Location(account)
+	}
+	return "keychain"
 }
 
 func (s *systemStore) Delete(account string) error {
@@ -110,6 +146,12 @@ type fileStore struct{ dir string }
 func (f fileStore) path(account string) string {
 	// Context names carry ':' (host:port), which Windows filenames reject.
 	return filepath.Join(f.dir, url.PathEscape(account)+".json")
+}
+
+// Location names the actual file, not just the directory: a user told their
+// credential is "in a file" still has to go find it.
+func (f fileStore) Location(account string) string {
+	return f.path(account)
 }
 
 func (f fileStore) Get(account string) (string, error) {
@@ -176,6 +218,8 @@ func (s *MemStore) Delete(account string) error {
 	delete(s.m, account)
 	return nil
 }
+
+func (s *MemStore) Location(string) string { return "memory" }
 
 // GetJSON / SetJSON are conveniences for the token payloads every caller
 // stores — one JSON document per context.
