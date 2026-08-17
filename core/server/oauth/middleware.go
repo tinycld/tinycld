@@ -443,8 +443,10 @@ func enforceGrant(re *core.RequestEvent) error {
 	}
 
 	if err := TouchGrant(re.App, grant); err != nil {
-		// Non-fatal: last_used_at is cosmetic.
-		re.App.Logger().Warn("oauth: touch grant", "error", err)
+		// Debug, not warn: last_used_at is cosmetic and this runs on every
+		// OAuth-authenticated request, so a warn here would page continuously
+		// over a field nothing depends on.
+		log.DebugContext(re.Request.Context(), "touch grant failed", "grantID", grant.Id, "err", err)
 	}
 
 	// Publish the grant's scopes for handlers that must narrow their OWN

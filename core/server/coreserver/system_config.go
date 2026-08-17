@@ -1,7 +1,6 @@
 package coreserver
 
 import (
-	"log"
 	"strings"
 	"sync"
 
@@ -94,7 +93,7 @@ func (c *SystemConfig) load(app core.App) {
 	if err != nil {
 		// The collection may not exist yet on a brand-new DB whose migrations
 		// haven't run; treat as empty rather than failing the boot.
-		log.Printf("system_config: load skipped: %v", err)
+		srvLog.Info("system config load skipped", "err", err)
 		return
 	}
 	next := make(map[string]string, len(recs))

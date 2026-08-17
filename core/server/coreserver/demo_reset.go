@@ -70,11 +70,11 @@ func RegisterDemoReset(app *pocketbase.PocketBase) {
 		resetURLMu.Lock()
 		resetURL = url
 		resetURLMu.Unlock()
-		app.Logger().Info("demo reset target captured", "url", url)
+		srvLog.Info("demo reset target captured", "url", url)
 		return e.Next()
 	})
 
-	app.Logger().Info("demo reset cron registered", "schedule", schedule)
+	srvLog.Info("demo reset cron registered", "schedule", schedule)
 }
 
 func deriveResetURL(e *core.ServeEvent) string {
@@ -103,7 +103,7 @@ func demoResetEnabled() bool {
 
 func runDemoReset(app *pocketbase.PocketBase) {
 	if !resetMu.TryLock() {
-		app.Logger().Warn("demo reset skipped: previous run still in flight")
+		srvLog.Warn("demo reset skipped: previous run still in flight")
 		return
 	}
 	defer resetMu.Unlock()
@@ -116,7 +116,7 @@ func runDemoReset(app *pocketbase.PocketBase) {
 	url := resetURL
 	resetURLMu.RUnlock()
 	if url == "" {
-		app.Logger().Error("demo reset skipped: server not yet serving (resetURL empty)")
+		srvLog.Error("demo reset skipped: server not yet serving (resetURL empty)")
 		return
 	}
 
@@ -128,13 +128,13 @@ func runDemoReset(app *pocketbase.PocketBase) {
 	// (which bind 80/443 instead of 127.0.0.1:7090).
 	cmd.Env = os.Environ()
 
-	app.Logger().Info("demo reset starting", "dir", scriptDir)
+	srvLog.Info("demo reset starting", "dir", scriptDir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		app.Logger().Error("demo reset failed", "err", err, "output", string(out))
+		srvLog.Error("demo reset failed", "err", err, "output", string(out))
 		return
 	}
-	app.Logger().Info("demo reset succeeded", "output", string(out))
+	srvLog.Info("demo reset succeeded", "output", string(out))
 }
 
 // resolveAppDir returns the directory that contains scripts/, package.json,

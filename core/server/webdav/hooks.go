@@ -193,7 +193,7 @@ func (fs *FileSystem) hookFilterList(ctx context.Context, userID string, infos [
 		// A handler that returned something other than a list is a bug in the
 		// hook, not a reason to leak the unfiltered listing — but neither is it
 		// a reason to fail the request. Keep the Go answer and say so.
-		fs.app.Logger().Warn("webdav: filterList handler returned a non-list; ignoring",
+		davLog.WarnContext(ctx, "filterList handler returned a non-list; ignoring",
 			"slug", fs.src.Slug, "type", fmt.Sprintf("%T", v))
 		return infos, nil
 	}

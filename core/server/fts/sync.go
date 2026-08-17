@@ -5,7 +5,11 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/logging"
 )
+
+var log = logging.ForPackage("fts")
 
 // RegisterSync binds the FTS index-sync record hooks for one collection. On
 // every create/update it does an idempotent delete-then-insert; on delete it
@@ -35,8 +39,8 @@ func syncRecord(app *pocketbase.PocketBase, cfg Config, record *core.Record, rem
 	// Always delete first — makes create/update idempotent and handles delete.
 	if _, err := db.NewQuery("DELETE FROM " + cfg.Table + " WHERE record_id = {:id}").
 		Bind(map[string]any{"id": record.Id}).Execute(); err != nil {
-		app.Logger().Warn("fts: delete from index failed",
-			"table", cfg.Table, "id", record.Id, "error", err)
+		log.Warn("delete from index failed",
+			"table", cfg.Table, "recordID", record.Id, "err", err)
 	}
 
 	if remove {
@@ -62,7 +66,7 @@ func syncRecord(app *pocketbase.PocketBase, cfg Config, record *core.Record, rem
 	q := "INSERT INTO " + cfg.Table +
 		" (" + strings.Join(cols, ", ") + ") VALUES (" + strings.Join(placeholders, ", ") + ")"
 	if _, err := db.NewQuery(q).Bind(params).Execute(); err != nil {
-		app.Logger().Warn("fts: index insert failed",
-			"table", cfg.Table, "id", record.Id, "error", err)
+		log.Warn("index insert failed",
+			"table", cfg.Table, "recordID", record.Id, "err", err)
 	}
 }

@@ -31,7 +31,7 @@ func (e *Engine) syncSchedules() {
 		"rules", "trigger = 'core:schedule' && enabled = true", "", 0, 0,
 	)
 	if err != nil {
-		e.app.Logger().Error("automation: load schedule rules", "err", err)
+		log.Error("load schedule rules failed", "err", err)
 		return
 	}
 	for _, r := range rules {

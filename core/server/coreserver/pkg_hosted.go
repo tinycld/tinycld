@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -686,7 +685,13 @@ func copyFileOver(src, dst string) error {
 	return out.Close()
 }
 
-// jobLogfStandalone logs outside a job context (request-scoped paths).
+// jobLogfStandalone logs outside a job context (request-scoped paths). Its
+// only caller is the drop-report best-effort fallback narration — a
+// progress-narration path, not a failure path — so a fixed Info level is
+// correct here. Unlike jobLogf's job-bound sibling, this has no per-call
+// severity (a variadic Printf passthrough): if a future caller embeds a
+// "WARNING:" marker in its format string expecting it to page, it will not —
+// that marker would need a real level parameter to reach warn+.
 func jobLogfStandalone(format string, args ...any) {
-	log.Printf(format, args...)
+	srvLog.Info(fmt.Sprintf(format, args...))
 }

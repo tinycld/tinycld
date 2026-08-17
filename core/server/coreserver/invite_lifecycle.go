@@ -95,7 +95,7 @@ func send(app core.App, toName, toEmail, subject, htmlBody, textBody string) {
 		Text:    textBody,
 	}
 	if err := mailer.DefaultSender().Send(context.Background(), msg); err != nil {
-		app.Logger().Error("invite lifecycle: failed to send email",
-			"to", toEmail, "subject", subject, "error", err)
+		srvLog.Error("invite lifecycle: failed to send email",
+			"to", toEmail, "subject", subject, "err", err)
 	}
 }

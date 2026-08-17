@@ -53,7 +53,7 @@ func NewEngine(app core.App, defs *Defs) *Engine {
 // an SMTP delivery.
 func (e *Engine) Start() {
 	if e.started {
-		e.app.Logger().Warn("automation: Start called more than once, ignoring")
+		log.Warn("Start called more than once, ignoring")
 		return
 	}
 	e.started = true
@@ -73,7 +73,7 @@ func (e *Engine) Start() {
 		select {
 		case <-e.done:
 		case <-time.After(shutdownDrainWait):
-			e.app.Logger().Warn("automation: worker did not drain before terminate; abandoning in-flight dispatch")
+			log.Warn("worker did not drain before terminate; abandoning in-flight dispatch")
 		}
 		return te.Next()
 	})
@@ -149,7 +149,9 @@ func (e *Engine) reloadScheduleFor(rule *core.Record) {
 		e.enqueue(event{TriggerRef: "core:schedule", Trigger: trigger, Record: nil, RuleID: ruleID})
 	})
 	if err != nil {
-		e.app.Logger().Warn("automation: invalid schedule", "rule", rule.Id, "cron", cfg.Cron, "err", err)
+		// Info, not warn: the cron expression is user input on the rule, and the
+		// failure is already surfaced to that user through the rule_runs row below.
+		log.Info("invalid schedule", "ruleID", rule.Id, "cron", cfg.Cron, "err", err)
 		WriteRun(e.app, rule, nil, TriggerDef{}, RunOutcome{Err: "invalid schedule: " + cfg.Cron})
 	}
 }
@@ -163,7 +165,10 @@ func (e *Engine) recordHookHandler(col, op string) func(*core.RecordEvent) error
 			source = w.RuleID
 		}
 		if depth > maxChainDepth {
-			e.app.Logger().Warn("automation: chain depth exceeded", "collection", col, "record", ev.Record.Id, "sourceRule", source)
+			// Info, not warn: rules that trigger each other are a user
+			// misconfiguration, recorded to rule_runs for that user, and a loop
+			// would hit this on every write in the cycle.
+			log.Info("chain depth exceeded", "collection", col, "recordID", ev.Record.Id, "sourceRuleID", source)
 			if source != "" {
 				if rule, err := e.app.FindRecordById("rules", source); err == nil {
 					// nil record, not ev.Record: an empty TriggerDef has no
@@ -196,7 +201,7 @@ func (e *Engine) enqueue(ev event) {
 	default:
 		// A dropped dispatch is recoverable (the data is in the DB); a blocked
 		// write path is not. Log loudly and move on.
-		e.app.Logger().Error("automation: dispatch queue full, dropping event", "trigger", ev.TriggerRef)
+		log.Error("dispatch queue full, dropping event", "trigger", ev.TriggerRef)
 	}
 }
 

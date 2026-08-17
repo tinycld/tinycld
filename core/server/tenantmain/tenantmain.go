@@ -36,7 +36,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -52,11 +51,16 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/coreserver"
+	"tinycld.org/core/logging"
 	"tinycld.org/core/mailproto"
 	"tinycld.org/core/orgcookie"
 	"tinycld.org/core/quota"
 	"tinycld.org/core/tenantcfg"
 )
+
+// log is tenantmain's package-wide structured logger. No file in this
+// package imports stdlib "log" any longer, so the short identifier is free.
+var log = logging.ForPackage("tenantmain")
 
 // Options composes a tenant on top of the transport.
 type Options struct {
@@ -342,7 +346,10 @@ func run(cfg runConfig) error {
 			_ = listener.Close()
 		}
 		if err := app.ResetBootstrapState(); err != nil {
-			log.Printf("tenant: reset bootstrap state: %v", err)
+			// Leaves bootstrap state stale for the next boot to sort out —
+			// same class of "deferred to next boot" condition tenant_pkg_state
+			// pages on, so this pages too.
+			log.WarnContext(ctx, "reset bootstrap state failed", "err", err)
 		}
 		// os.Exit skips deferred functions, so flush Sentry here too.
 		sentry.Flush(2 * time.Second)

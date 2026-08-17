@@ -66,12 +66,12 @@ type SMTPOptions struct {
 // a silent fallthrough when production has no TLS.
 func StartSMTP(app core.App, certManager *autocert.Manager, opts SMTPOptions) (func(), error) {
 	if opts.EnabledEnv != "" && os.Getenv(opts.EnabledEnv) == "false" {
-		app.Logger().Info(opts.Label + " server disabled via " + opts.EnabledEnv + "=false")
+		mailLog.Info("server disabled by env", "server", opts.Label, "env", opts.EnabledEnv)
 		return func() {}, nil
 	}
 
 	if opts.ExternalTLS {
-		return startSMTPExternalTLS(app, opts)
+		return startSMTPExternalTLS(opts)
 	}
 
 	tlsConfig, err := ResolveTLSConfig(
@@ -82,7 +82,7 @@ func StartSMTP(app core.App, certManager *autocert.Manager, opts SMTPOptions) (f
 	}
 
 	if !app.IsDev() && tlsConfig != nil {
-		return startSMTPTLSOnly(app, tlsConfig, opts)
+		return startSMTPTLSOnly(tlsConfig, opts)
 	}
 
 	if !app.IsDev() && opts.ProductionTLSError != "" {
@@ -118,7 +118,7 @@ func newSMTPServerInstance(tlsConfig *tls.Config, insecureAuth bool, opts SMTPOp
 
 // startSMTPExternalTLS serves plaintext SMTP on the injected listener with the
 // TLS-terminated posture ExternalTLS documents: auth allowed, no STARTTLS.
-func startSMTPExternalTLS(app core.App, opts SMTPOptions) (func(), error) {
+func startSMTPExternalTLS(opts SMTPOptions) (func(), error) {
 	if opts.Listen == nil {
 		return nil, fmt.Errorf("%s ExternalTLS requires an injected listener (SMTPOptions.Listen)", opts.Label)
 	}
@@ -138,21 +138,19 @@ func startSMTPExternalTLS(app core.App, opts SMTPOptions) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
-	app.Logger().Info(opts.Label+" server listening (external TLS termination)", "addr", addr)
+	mailLog.Info("server listening (external TLS termination)", "server", opts.Label, "addr", addr)
 	go func() {
-		if err := server.Serve(ln); err != nil {
-			app.Logger().Error(opts.Label+" server error", "addr", addr, "error", err)
-		}
+		logServeExit(opts.Label, addr, server.Serve(ln))
 	}()
 
 	return func() {
-		app.Logger().Info("Shutting down " + opts.Label + " server")
+		mailLog.Info("shutting down server", "server", opts.Label)
 		ln.Close()
 		server.Close()
 	}, nil
 }
 
-func startSMTPTLSOnly(app core.App, tlsConfig *tls.Config, opts SMTPOptions) (func(), error) {
+func startSMTPTLSOnly(tlsConfig *tls.Config, opts SMTPOptions) (func(), error) {
 	addr := os.Getenv(opts.TLSAddrEnv)
 	if addr == "" {
 		addr = opts.DefaultTLSAddr
@@ -166,15 +164,13 @@ func startSMTPTLSOnly(app core.App, tlsConfig *tls.Config, opts SMTPOptions) (fu
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 	tlsLn := tls.NewListener(rawLn, tlsConfig)
-	app.Logger().Info(opts.Label+" server listening (implicit TLS, no plain listener)", "addr", addr)
+	mailLog.Info("server listening (implicit TLS, no plain listener)", "server", opts.Label, "addr", addr)
 	go func() {
-		if err := server.Serve(tlsLn); err != nil {
-			app.Logger().Error(opts.Label+" server error", "addr", addr, "error", err)
-		}
+		logServeExit(opts.Label, addr, server.Serve(tlsLn))
 	}()
 
 	return func() {
-		app.Logger().Info("Shutting down " + opts.Label + " server")
+		mailLog.Info("shutting down server", "server", opts.Label)
 		tlsLn.Close()
 		server.Close()
 	}, nil
@@ -197,11 +193,9 @@ func startSMTPDev(app core.App, tlsConfig *tls.Config, opts SMTPOptions) (func()
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
-	app.Logger().Info(opts.Label+" server listening", "addr", addr, "starttls", tlsConfig != nil)
+	mailLog.Info("server listening", "server", opts.Label, "addr", addr, "starttls", tlsConfig != nil)
 	go func() {
-		if err := server.Serve(plainLn); err != nil {
-			app.Logger().Error(opts.Label+" server error", "addr", addr, "error", err)
-		}
+		logServeExit(opts.Label, addr, server.Serve(plainLn))
 	}()
 
 	var tlsLn net.Listener
@@ -216,24 +210,25 @@ func startSMTPDev(app core.App, tlsConfig *tls.Config, opts SMTPOptions) (func()
 			// plain listener above is the one that matters. Closing it because
 			// an optional TLS port is already held by another local server
 			// turns a taken port into a total outage of the protocol.
-			app.Logger().Warn(
-				opts.Label+" implicit-TLS listener unavailable; continuing with plain only",
+			// Info, not warn: dev-only branch (see startSMTPTLSOnly for the
+			// production path), usually another local server on the optional port.
+			mailLog.Info(
+				"implicit-TLS listener unavailable; continuing with plain only",
+				"server", opts.Label,
 				"addr", tlsAddr,
-				"error", err,
+				"err", err,
 			)
 		} else {
 			tlsLn = tls.NewListener(rawLn, tlsConfig)
-			app.Logger().Info(opts.Label+" server listening (implicit TLS)", "addr", tlsAddr)
+			mailLog.Info("server listening (implicit TLS)", "server", opts.Label, "addr", tlsAddr)
 			go func() {
-				if err := server.Serve(tlsLn); err != nil {
-					app.Logger().Error(opts.Label+" server error", "addr", tlsAddr, "error", err)
-				}
+				logServeExit(opts.Label, tlsAddr, server.Serve(tlsLn))
 			}()
 		}
 	}
 
 	return func() {
-		app.Logger().Info("Shutting down " + opts.Label + " server")
+		mailLog.Info("shutting down server", "server", opts.Label)
 		plainLn.Close()
 		if tlsLn != nil {
 			tlsLn.Close()

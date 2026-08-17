@@ -42,7 +42,7 @@ func Register(app *pocketbase.PocketBase, sources []Source, host HostBindings) (
 			fs.SetTSHooks(RegisterTSHooks(host, src))
 		}
 		filesystems = append(filesystems, fs)
-		handlers = append(handlers, newDAVHandler(app, fs))
+		handlers = append(handlers, newDAVHandler(fs))
 	}
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
@@ -116,7 +116,7 @@ func HandlerFor(app core.App, sources []Source, host HostBindings) (http.Handler
 		}
 		filesystems = append(filesystems, fs)
 
-		handler := newDAVHandler(app, fs)
+		handler := newDAVHandler(fs)
 		serve := func(w http.ResponseWriter, r *http.Request) {
 			// See Register: refuse before spending bcrypt on an attacker.
 			if davauth.TooManyFailures(app, r) {
@@ -151,17 +151,17 @@ func HandlerFor(app core.App, sources []Source, host HostBindings) (http.Handler
 //
 // NewMemLS is load-bearing: an in-memory lock system is what advertises DAV
 // class 2, and macOS Finder mounts a class-1-only share read-only.
-func newDAVHandler(app core.App, fs *FileSystem) *webdav.Handler {
+func newDAVHandler(fs *FileSystem) *webdav.Handler {
 	return &webdav.Handler{
 		FileSystem: fs,
 		LockSystem: webdav.NewMemLS(),
 		Logger: func(r *http.Request, err error) {
 			if err != nil {
-				app.Logger().Debug("WebDAV",
+				davLog.DebugContext(r.Context(), "request failed",
 					"slug", fs.src.Slug,
 					"method", r.Method,
 					"path", r.URL.Path,
-					"error", err)
+					"err", err)
 			}
 		},
 	}

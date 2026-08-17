@@ -2,6 +2,7 @@ package mailproto
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -10,7 +11,11 @@ import (
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/pocketbase/pocketbase/core"
 	"golang.org/x/crypto/acme/autocert"
+
+	"tinycld.org/core/logging"
 )
+
+var mailLog = logging.ForPackage("mailproto")
 
 // NewIMAPSession builds the per-connection IMAP session. The session speaks the
 // feature's own schema, so the feature package supplies it; mailproto only owns
@@ -38,6 +43,21 @@ func listenWith(listen ListenFunc, addr string) (net.Listener, error) {
 		return listen(addr)
 	}
 	return net.Listen("tcp", addr)
+}
+
+// logServeExit reports why a protocol server's Serve loop returned.
+//
+// net.ErrClosed is the NORMAL shutdown path, not a fault: every shutdown func
+// here closes the listener before the server, so Accept fails with a closed
+// socket while the server still considers itself running and hands the error
+// back. Logging that at error level would page on every deploy and restart —
+// so the expected exit is info and only an unexpected one escalates.
+func logServeExit(label, addr string, err error) {
+	if err == nil || errors.Is(err, net.ErrClosed) {
+		mailLog.Info("server stopped accepting", "server", label, "addr", addr)
+		return
+	}
+	mailLog.Error("server error", "server", label, "addr", addr, "err", err)
 }
 
 // IMAPOptions configures StartIMAP beyond the app/cert wiring.
@@ -80,7 +100,7 @@ var IMAPCaps = imap.CapSet{
 // and an optional implicit TLS listener on :1993.
 func StartIMAP(app core.App, certManager *autocert.Manager, opts IMAPOptions) (func(), error) {
 	if os.Getenv("IMAP_ENABLED") == "false" {
-		app.Logger().Info("IMAP server disabled via IMAP_ENABLED=false")
+		mailLog.Info("IMAP server disabled via IMAP_ENABLED=false")
 		return func() {}, nil
 	}
 
@@ -135,15 +155,13 @@ func startIMAPExternalTLS(app core.App, opts IMAPOptions) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", imapsAddr, err)
 	}
-	app.Logger().Info("IMAP server listening (external TLS termination)", "addr", imapsAddr)
+	mailLog.Info("IMAP server listening (external TLS termination)", "addr", imapsAddr)
 	go func() {
-		if err := server.Serve(ln); err != nil {
-			app.Logger().Error("IMAP server error", "addr", imapsAddr, "error", err)
-		}
+		logServeExit("IMAP", imapsAddr, server.Serve(ln))
 	}()
 
 	return func() {
-		app.Logger().Info("Shutting down IMAP server")
+		mailLog.Info("Shutting down IMAP server")
 		ln.Close()
 		server.Close()
 	}, nil
@@ -162,15 +180,13 @@ func startIMAPTLSOnly(app core.App, tlsConfig *tls.Config, opts IMAPOptions) (fu
 		return nil, fmt.Errorf("failed to listen on %s: %w", imapsAddr, err)
 	}
 	tlsLn := tls.NewListener(rawLn, tlsConfig)
-	app.Logger().Info("IMAPS server listening (implicit TLS, no plain listener)", "addr", imapsAddr)
+	mailLog.Info("IMAPS server listening (implicit TLS, no plain listener)", "addr", imapsAddr)
 	go func() {
-		if err := server.Serve(tlsLn); err != nil {
-			app.Logger().Error("IMAPS server error", "addr", imapsAddr, "error", err)
-		}
+		logServeExit("IMAPS", imapsAddr, server.Serve(tlsLn))
 	}()
 
 	return func() {
-		app.Logger().Info("Shutting down IMAP server")
+		mailLog.Info("Shutting down IMAP server")
 		tlsLn.Close()
 		server.Close()
 	}, nil
@@ -189,11 +205,9 @@ func startIMAPDev(app core.App, tlsConfig *tls.Config, opts IMAPOptions) (func()
 	if err != nil {
 		return nil, fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
-	app.Logger().Info("IMAP server listening", "addr", addr, "starttls", tlsConfig != nil)
+	mailLog.Info("IMAP server listening", "addr", addr, "starttls", tlsConfig != nil)
 	go func() {
-		if err := server.Serve(plainLn); err != nil {
-			app.Logger().Error("IMAP server error", "addr", addr, "error", err)
-		}
+		logServeExit("IMAP", addr, server.Serve(plainLn))
 	}()
 
 	var tlsLn net.Listener
@@ -214,24 +228,25 @@ func startIMAPDev(app core.App, tlsConfig *tls.Config, opts IMAPOptions) (func()
 			//
 			// Production never reaches this branch: it returns earlier via
 			// startIMAPTLSOnly, or refuses to boot without a TLS source.
-			app.Logger().Warn(
+			// Info, not warn: this branch is dev-only (production returns via
+			// startIMAPTLSOnly or refuses to boot), and the usual cause is another
+			// local server already holding the optional port.
+			mailLog.Info(
 				"IMAPS listener unavailable; continuing with plain IMAP only",
 				"addr", imapsAddr,
-				"error", err,
+				"err", err,
 			)
 		} else {
 			tlsLn = tls.NewListener(rawLn, tlsConfig)
-			app.Logger().Info("IMAPS server listening (implicit TLS)", "addr", imapsAddr)
+			mailLog.Info("IMAPS server listening (implicit TLS)", "addr", imapsAddr)
 			go func() {
-				if err := server.Serve(tlsLn); err != nil {
-					app.Logger().Error("IMAPS server error", "addr", imapsAddr, "error", err)
-				}
+				logServeExit("IMAPS", imapsAddr, server.Serve(tlsLn))
 			}()
 		}
 	}
 
 	return func() {
-		app.Logger().Info("Shutting down IMAP server")
+		mailLog.Info("Shutting down IMAP server")
 		plainLn.Close()
 		if tlsLn != nil {
 			tlsLn.Close()

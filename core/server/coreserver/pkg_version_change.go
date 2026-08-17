@@ -3,7 +3,6 @@ package coreserver
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -143,7 +142,9 @@ func handleDropReport(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		if targetFiles, err := targetMigrationFiles(app, body.Slug, body.TargetVersion); err == nil {
 			files = subtractStrings(files, targetFiles)
 		} else {
-			log.Printf("pkg_version_change: drop-report target fetch failed (%v); reporting full set", err)
+			// Best-effort fallback already in play (reports the conservative
+			// full set); nothing pages on this.
+			srvLog.Info("drop-report target fetch failed, reporting full set", "err", err)
 		}
 	}
 

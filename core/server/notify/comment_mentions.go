@@ -56,11 +56,16 @@ func handleCommentMention(app core.App, mention *core.Record) {
 	commentCollection := mention.GetString("comment_collection")
 	packageSlug, ok := allowedCommentCollections[commentCollection]
 	if !ok {
-		// Unknown comment_collection — silently drop. The allowlist
-		// is the security boundary; logging at warn level so an
-		// attacker probing the surface is visible without flooding
-		// the log on legitimate (but unknown-to-this-build) packages.
-		app.Logger().Warn("comment_mention: unknown comment_collection",
+		// Unknown comment_collection — silently drop. The allowlist is the
+		// security boundary and it has already failed closed here, so there is
+		// nothing for an operator to act on.
+		//
+		// Info, not warn, precisely BECAUSE this is the probe surface:
+		// comment_collection is free text any authenticated commenter can set,
+		// so paging on it would hand every account holder a remote pager DoS.
+		// The record is kept for forensics — info still reaches stderr and
+		// _logs, which is where you go looking for a probe.
+		log.Info("comment mention: unknown comment_collection",
 			"collection", commentCollection)
 		return
 	}
@@ -80,10 +85,12 @@ func handleCommentMention(app core.App, mention *core.Record) {
 	// skip here too if the comment author equals the mentioned user.
 	comment, err := app.FindRecordById(commentCollection, mention.GetString("comment_record"))
 	if err != nil {
-		app.Logger().Warn("comment_mention: comment record not found",
+		// Info, not warn: the comment being gone by the time this async
+		// handler runs is a normal delete race, not an operator problem.
+		log.Info("comment mention: comment record not found",
 			"collection", commentCollection,
-			"record", mention.GetString("comment_record"),
-			"error", err)
+			"recordID", mention.GetString("comment_record"),
+			"err", err)
 		return
 	}
 	if comment.GetString("author") == mentionedUserID {

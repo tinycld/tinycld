@@ -15,8 +15,11 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/davcond"
+	"tinycld.org/core/logging"
 	"tinycld.org/core/pkgaccess"
 )
+
+var log = logging.ForPackage("caldav")
 
 // requirePkgWrite refuses the write when the caller's org_pkg_access level
 // for this source's package is not full. CalDAV bypasses the REST layer
@@ -124,8 +127,8 @@ func (b *Backend) canCreate(txApp core.App, user *core.Record, record *core.Reco
 	ok, err := txApp.CanAccessRecord(record, info, ruleFor(record.Collection(), ruleCreate))
 	if err != nil {
 		// An unevaluable rule must not fail open.
-		b.app.Logger().Warn("caldav: create rule evaluation failed",
-			"slug", b.src.Slug, "id", record.Id, "error", err)
+		log.Warn("create rule evaluation failed",
+			"slug", b.src.Slug, "recordID", record.Id, "err", err)
 		return false, nil
 	}
 	return ok, nil
@@ -146,8 +149,19 @@ func (b *Backend) authorize(user *core.Record, record *core.Record, kind ruleKin
 
 	ok, err := b.app.CanAccessRecord(record, info, ruleFor(record.Collection(), kind))
 	if err != nil {
-		b.app.Logger().Warn("caldav: access rule evaluation failed",
-			"slug", b.src.Slug, "id", record.Id, "error", err)
+		// ruleList runs once per record inside ListCalendars/ListCalendarObjects'
+		// listing loops, so a single broken ListRule would otherwise emit one
+		// Sentry event per record on every PROPFIND — and DAV clients poll on a
+		// timer, turning one admin typo into sustained paging. The other kinds
+		// (view/create/update/delete) are each at most one per request, so they
+		// stay at warn.
+		if kind == ruleList {
+			log.Info("access rule evaluation failed",
+				"slug", b.src.Slug, "recordID", record.Id, "err", err)
+		} else {
+			log.Warn("access rule evaluation failed",
+				"slug", b.src.Slug, "recordID", record.Id, "err", err)
+		}
 		return errNotFound
 	}
 	if !ok {
@@ -262,8 +276,8 @@ func (b *Backend) ListCalendarObjects(ctx context.Context, path string, _ *calda
 	for _, record := range authorized {
 		obj, err := b.toCalendarObject(record, calID)
 		if err != nil {
-			b.app.Logger().Debug("caldav: skipping unencodable event",
-				"slug", b.src.Slug, "id", record.Id, "error", err)
+			log.DebugContext(ctx, "skipping unencodable event",
+				"slug", b.src.Slug, "recordID", record.Id, "err", err)
 			continue
 		}
 		objects = append(objects, *obj)
@@ -538,8 +552,8 @@ func (b *Backend) backfillUID(record *core.Record) {
 	}
 	record.Set(b.src.Event.UID, "urn:uuid:"+uuid.NewString())
 	if err := b.app.Save(record); err != nil {
-		b.app.Logger().Warn("caldav: failed to backfill event UID",
-			"slug", b.src.Slug, "id", record.Id, "error", err)
+		log.Warn("failed to backfill event UID",
+			"slug", b.src.Slug, "recordID", record.Id, "err", err)
 	}
 }
 

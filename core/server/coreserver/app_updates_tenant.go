@@ -72,7 +72,7 @@ func (a *artifactBundles) source(app core.App) (string, []any) {
 			// Not fatal: mobile stays on its embedded bundle. Log it, because
 			// the alternative presentation is "updates mysteriously never
 			// arrive" with nothing in the logs to explain why.
-			app.Logger().Error("app-update: failed to load artifact recipe",
+			srvLog.Error("app-update: failed to load artifact recipe",
 				"artifactDir", a.artifactDir, "err", err)
 			return
 		}
@@ -84,13 +84,13 @@ func (a *artifactBundles) source(app core.App) (string, []any) {
 		}
 		raw, err := json.Marshal(recipe.Bundles)
 		if err != nil {
-			app.Logger().Error("app-update: failed to encode artifact bundles",
+			srvLog.Error("app-update: failed to encode artifact bundles",
 				"artifactDir", a.artifactDir, "err", err)
 			return
 		}
 		var decoded []any
 		if err := json.Unmarshal(raw, &decoded); err != nil {
-			app.Logger().Error("app-update: failed to decode artifact bundles",
+			srvLog.Error("app-update: failed to decode artifact bundles",
 				"artifactDir", a.artifactDir, "err", err)
 			return
 		}
