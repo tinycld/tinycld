@@ -17,14 +17,6 @@ describe('log', () => {
         captureException.mockClear()
         captureMessage.mockClear()
         addBreadcrumb.mockClear()
-        // logger.ts reads the RN global __DEV__ (console gating). Nothing
-        // defines it under vitest — stub it the same way use-saved-servers.test.ts
-        // does for debug-trace's read of the same global.
-        vi.stubGlobal('__DEV__', false)
-    })
-
-    afterEach(() => {
-        vi.unstubAllGlobals()
     })
 
     it('breadcrumbs a below-threshold call without raising an event', async () => {

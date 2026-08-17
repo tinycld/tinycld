@@ -5,10 +5,12 @@
 import { vi } from 'vitest'
 
 // Metro injects __DEV__ at build time; vitest runs in Node, so declare it here.
+// Tests exercise the production default (__DEV__ = false) unless they opt into dev
+// behavior with a per-test vi.stubGlobal override (see logger.test.ts for examples).
 declare global {
     const __DEV__: boolean
 }
-globalThis.__DEV__ = true
+globalThis.__DEV__ = false
 
 // Mock the generated config to empty. This is REQUIRED to break an import
 // cycle: the real tinycld.config.ts imports each package's provider, some of
