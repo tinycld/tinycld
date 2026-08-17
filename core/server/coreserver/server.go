@@ -15,6 +15,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 
 	"tinycld.org/core/automation"
+	"tinycld.org/core/logging"
 	"tinycld.org/core/notify"
 	"tinycld.org/core/oauth"
 	"tinycld.org/core/offboard"
@@ -120,6 +121,14 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	_ = app.RootCmd.ParseFlags(os.Args[1:])
 
 	registerSharedEarly(app)
+
+	// Install the process-wide logger before features register, so their
+	// package loggers and any boot-time logging reach every destination.
+	//
+	// app.Logger().Handler() is resolved HERE and handed to Install, never
+	// resolved inside the fan-out: app.Logger() falls back to slog.Default()
+	// pre-bootstrap, so a lazy lookup inside the default handler would recurse.
+	logging.Install(app.Logger().Handler())
 
 	// Feature packages register BEFORE jsvm, and the order is load-bearing:
 	// jsvm.Register executes the hook files synchronously (its registerHooks
