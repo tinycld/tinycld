@@ -181,8 +181,8 @@ func currentBuildBundles(app core.App) (string, []any) {
 		// writes a JSON array), but if it does we'd otherwise silently serve 204
 		// to every mobile client forever. Log it so the cause is visible rather
 		// than presenting as "updates mysteriously never arrive".
-		app.Logger().Error("app-update: failed to decode current build bundles",
-			"build_id", rec.GetString("build_id"), "err", err)
+		srvLog.Error("app-update: failed to decode current build bundles",
+			"buildID", rec.GetString("build_id"), "err", err)
 		return rec.GetString("build_id"), nil
 	}
 	return rec.GetString("build_id"), bundles
@@ -198,7 +198,7 @@ func loadBadBundles(app core.App) (ids map[string]bool, hashes map[string]bool) 
 	hashes = map[string]bool{}
 	recs, err := app.FindRecordsByFilter("pkg_bad_bundle", "1=1", "", 0, 0)
 	if err != nil {
-		app.Logger().Error("app-update: failed to load bad bundles", "err", err)
+		srvLog.Error("app-update: failed to load bad bundles", "err", err)
 		return ids, hashes
 	}
 	for _, r := range recs {
@@ -310,7 +310,7 @@ func registerAppUpdateEndpoints(app core.App, src appUpdateSources) {
 			// `docker logs` (and lets the install e2e assert on the decision). Kept at
 			// Info so it's visible without enabling debug-level logging.
 			buildID, bundles := src.bundles(app)
-			app.Logger().Info("app-update: request",
+			srvLog.InfoContext(re.Request.Context(), "app-update: request",
 				"method", re.Request.Method,
 				"path", re.Request.URL.RequestURI(),
 				"remoteAddr", re.Request.RemoteAddr,
@@ -326,25 +326,25 @@ func registerAppUpdateEndpoints(app core.App, src appUpdateSources) {
 			)
 
 			if platform == "" || runtime == "" {
-				app.Logger().Info("app-update: response 400 (missing platform/runtimeVersion)",
+				srvLog.InfoContext(re.Request.Context(), "app-update: response 400 (missing platform/runtimeVersion)",
 					"q.platform", platform, "q.runtimeVersion", runtime)
 				return re.BadRequestError("platform and runtimeVersion are required", nil)
 			}
 			if buildID == "" {
-				app.Logger().Info("app-update: response 204 (no current build / no bundles)")
+				srvLog.InfoContext(re.Request.Context(), "app-update: response 204 (no current build / no bundles)")
 				return re.NoContent(204)
 			}
 			badIDs, badHashes := loadBadBundles(app)
 			m, status := resolveManifest(bundles, platform, runtime, currentID, currentHash, badIDs, badHashes)
 			if status != manifestNew {
-				app.Logger().Info("app-update: response 204 (no new bundle)",
+				srvLog.InfoContext(re.Request.Context(), "app-update: response 204 (no new bundle)",
 					"status", manifestStatusName(status),
 					"q.platform", platform, "q.runtimeVersion", runtime,
 					"q.currentId", currentID, "q.currentHash", currentHash)
 				return re.NoContent(204)
 			}
 			fillManifestURLs(&m, buildID, platform)
-			app.Logger().Info("app-update: response 200 (update available)",
+			srvLog.InfoContext(re.Request.Context(), "app-update: response 200 (update available)",
 				"manifest.id", m.ID,
 				"manifest.runtimeVersion", m.RuntimeVersion,
 				"manifest.bundleHash", m.BundleHash,
@@ -367,13 +367,13 @@ func registerAppUpdateEndpoints(app core.App, src appUpdateSources) {
 			}
 			count, err := recordBadBundle(app, body)
 			if err != nil {
-				app.Logger().Error("app-update: failed to record bad bundle",
-					"bundle_id", body.ID, "platform", body.Platform, "err", err)
+				srvLog.ErrorContext(re.Request.Context(), "app-update: failed to record bad bundle",
+					"bundleID", body.ID, "platform", body.Platform, "err", err)
 				return re.InternalServerError("failed to record report", err)
 			}
-			app.Logger().Warn("app-update: bundle reported bad",
-				"bundle_id", body.ID, "platform", body.Platform,
-				"reports", count, "error", body.Error)
+			srvLog.WarnContext(re.Request.Context(), "app-update: bundle reported bad",
+				"bundleID", body.ID, "platform", body.Platform,
+				"reports", count, "err", body.Error)
 			return re.JSON(http.StatusOK, map[string]any{"ok": true, "reports": count})
 		})
 
@@ -395,6 +395,12 @@ func registerAppUpdateEndpoints(app core.App, src appUpdateSources) {
 			if body.ID == "" {
 				return re.BadRequestError("id is required", nil)
 			}
+			// Deliberately NOT migrated to srvLog. The OTA e2e harness
+			// (scripts/ota-e2e/boot-beacon-poller.ts) polls _logs with an exact
+			// filter message='app-boot: rendered' and reads data.q.bundleId, so
+			// this record's shape is release-verification infrastructure. The
+			// fan-out would very likely preserve it, but "very likely" is not a
+			// basis for risking a silent break in release verification.
 			app.Logger().Info("app-boot: rendered",
 				"q.bundleId", body.ID,
 				"q.platform", body.Platform,

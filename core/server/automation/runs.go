@@ -59,7 +59,9 @@ func triggerSummary(record *core.Record, trigger TriggerDef) map[string]any {
 func WriteRun(app core.App, rule *core.Record, record *core.Record, trigger TriggerDef, outcome RunOutcome) {
 	col, err := app.FindCollectionByNameOrId("rule_runs")
 	if err != nil {
-		app.Logger().Error("automation: rule_runs collection missing", "err", err)
+		// Warn, not error: WriteRun is called for every rule evaluation, so a
+		// missing collection would otherwise page on every record write.
+		log.Warn("rule_runs collection missing", "err", err)
 		return
 	}
 	run := core.NewRecord(col)
@@ -74,7 +76,7 @@ func WriteRun(app core.App, rule *core.Record, record *core.Record, trigger Trig
 	run.Set("error", outcome.Err)
 	run.Set("duration_ms", outcome.Duration.Milliseconds())
 	if err := app.Save(run); err != nil {
-		app.Logger().Error("automation: write rule_run", "rule", rule.Id, "err", err)
+		log.Warn("write rule_run failed", "ruleID", rule.Id, "err", err)
 		return
 	}
 	pruneRuns(app, rule.Id)
@@ -91,7 +93,9 @@ func pruneRuns(app core.App, ruleID string) {
 		}
 		for _, r := range extra {
 			if err := app.Delete(r); err != nil {
-				app.Logger().Error("automation: prune rule_run", "err", err)
+				// Warn, not error: losing a retention pass costs disk, not correctness,
+				// and it runs after every rule evaluation.
+				log.Warn("prune rule_run failed", "ruleID", ruleID, "err", err)
 				return
 			}
 		}
@@ -129,7 +133,7 @@ func recordRunResult(app core.App, rule *core.Record, fullyFailed bool) {
 	rule.Set("enabled", false)
 	markEngineWrite(rule.Id, rule.Id, 0)
 	if err := app.Save(rule); err != nil {
-		app.Logger().Error("automation: auto-disable", "rule", rule.Id, "err", err)
+		log.Error("auto-disable failed", "ruleID", rule.Id, "err", err)
 		return
 	}
 	go func() {

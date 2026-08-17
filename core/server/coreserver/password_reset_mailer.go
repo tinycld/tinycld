@@ -34,7 +34,7 @@ func registerPasswordResetMailerCore(app core.App) {
 		if token == "" {
 			// Without a token we can't build a working link; let PB send its
 			// default email rather than a broken one.
-			app.Logger().Warn("password reset: missing token in mailer event; deferring to PB")
+			srvLog.Warn("password reset: missing token in mailer event; deferring to PB")
 			return e.Next()
 		}
 

@@ -9,7 +9,11 @@ import (
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/logging"
 )
+
+var log = logging.ForPackage("offboard")
 
 // Mode chooses what happens to the offboarded user's owned content.
 type Mode string
@@ -232,7 +236,7 @@ func writeOffboardAudit(app core.App, leaverUserID, actorUserID string, mode Mod
 		"user_anonymized":    result.UserAnonymized,
 	})
 	if err := app.Save(r); err != nil {
-		app.Logger().Warn("offboard: audit write failed", "user", leaverUserID, "error", err)
+		log.Warn("audit write failed", "userID", leaverUserID, "err", err)
 	}
 }
 

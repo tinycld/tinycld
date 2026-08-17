@@ -5,8 +5,11 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 
+	"tinycld.org/core/logging"
 	"tinycld.org/core/notify"
 )
+
+var log = logging.ForPackage("automation")
 
 type Options struct {
 	DefsPath string
@@ -18,11 +21,11 @@ type Options struct {
 func Register(app *pocketbase.PocketBase, opts Options) {
 	defs, err := LoadDefs(opts.DefsPath)
 	if err != nil {
-		app.Logger().Error("automation: defs unreadable, engine disabled", "err", err)
+		log.Error("defs unreadable, engine disabled", "err", err)
 		return
 	}
 	if len(defs.Packages) == 0 {
-		app.Logger().Info("automation: no definitions, engine inert")
+		log.Info("no definitions, engine inert")
 		return
 	}
 

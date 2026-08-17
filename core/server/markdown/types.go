@@ -38,9 +38,9 @@ const (
 	// TypeScript md-to-pm in text/ flattens header cells to tableCell; that
 	// flattening is NOT copied here, because a doc seeded with plain cells
 	// loses its header row the first time it round-trips.
-	NodeTableHeader    = "tableHeader"
-	NodeImage = "image"
-	NodeText  = "text"
+	NodeTableHeader = "tableHeader"
+	NodeImage       = "image"
+	NodeText        = "text"
 	// NodeMention is an @mention. It is an ATOM carrying only a user id — the
 	// name a reader sees is resolved at render time from the board roster, so
 	// the node has no children and no text of its own. That is why it needs an

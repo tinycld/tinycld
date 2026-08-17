@@ -4,7 +4,11 @@ import (
 	"net/http"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/logging"
 )
+
+var log = logging.ForPackage("oauth")
 
 // handleRevoke implements RFC 7009 token revocation.
 //
@@ -25,7 +29,7 @@ func handleRevoke(app core.App, re *core.RequestEvent) error {
 	if jti := grantIDFromToken(token); jti != "" {
 		if grant, err := FindGrantByJTI(app, jti); err == nil {
 			if err := RevokeGrant(app, grant.Id); err != nil {
-				re.App.Logger().Warn("oauth: revoke by jti", "error", err)
+				log.WarnContext(re.Request.Context(), "revoke by jti failed", "grantID", grant.Id, "err", err)
 			}
 		}
 		return re.JSON(http.StatusOK, map[string]string{"status": "ok"})
@@ -37,7 +41,7 @@ func handleRevoke(app core.App, re *core.RequestEvent) error {
 	)
 	if err == nil && grant != nil {
 		if err := RevokeGrant(app, grant.Id); err != nil {
-			re.App.Logger().Warn("oauth: revoke by refresh token", "error", err)
+			log.WarnContext(re.Request.Context(), "revoke by refresh token failed", "grantID", grant.Id, "err", err)
 		}
 	}
 	return re.JSON(http.StatusOK, map[string]string{"status": "ok"})

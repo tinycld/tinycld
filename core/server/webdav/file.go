@@ -189,8 +189,8 @@ func (f *davFile) persistWrite() error {
 			// Archiving the outgoing blob is best-effort: losing a version
 			// snapshot must not fail the write the user actually asked for.
 			if err := hooks.BeforeOverwrite(fs.app, f.user.Id, f.existing); err != nil {
-				fs.app.Logger().Warn("webdav: BeforeOverwrite failed",
-					"slug", fs.src.Slug, "id", f.existing.Id, "error", err)
+				davLog.Warn("BeforeOverwrite failed",
+					"slug", fs.src.Slug, "recordID", f.existing.Id, "err", err)
 			}
 		}
 

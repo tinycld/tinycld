@@ -8,7 +8,11 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"golang.org/x/net/webdav"
+
+	"tinycld.org/core/logging"
 )
+
+var davLog = logging.ForPackage("webdav")
 
 type contextKey string
 
@@ -159,8 +163,8 @@ func (fs *FileSystem) authorize(user *core.Record, record *core.Record, kind rul
 	ok, err := fs.app.CanAccessRecord(record, info, ruleFor(record.Collection(), kind))
 	if err != nil {
 		// An unevaluable rule must not fail open.
-		fs.app.Logger().Warn("webdav: access rule evaluation failed",
-			"slug", fs.src.Slug, "id", record.Id, "error", err)
+		davLog.Warn("access rule evaluation failed",
+			"slug", fs.src.Slug, "recordID", record.Id, "err", err)
 		return os.ErrPermission
 	}
 	if !ok {
@@ -250,8 +254,8 @@ func (fs *FileSystem) saveAuthorizedCreate(user *core.Record, record *core.Recor
 		ok, err := txApp.CanAccessRecord(record, info, ruleFor(record.Collection(), ruleCreate))
 		if err != nil {
 			// An unevaluable rule must not fail open.
-			fs.app.Logger().Warn("webdav: create rule evaluation failed",
-				"slug", fs.src.Slug, "id", record.Id, "error", err)
+			davLog.Warn("create rule evaluation failed",
+				"slug", fs.src.Slug, "recordID", record.Id, "err", err)
 			return denied
 		}
 		if !ok {

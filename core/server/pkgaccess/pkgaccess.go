@@ -29,7 +29,11 @@ import (
 
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/logging"
 )
+
+var log = logging.ForPackage("pkgaccess")
 
 const (
 	LevelFull     = "full"
@@ -140,8 +144,8 @@ func ownerSlug(app core.App, collection string) string {
 	pkgs, err := app.FindRecordsByFilter("pkg_registry",
 		"status = 'installed' || status = 'bundled'", "", 0, 0)
 	if err != nil {
-		app.Logger().Warn("pkgaccess: cannot read pkg_registry; skipping package-access check",
-			"collection", collection, "error", err)
+		log.Warn("cannot read pkg_registry; skipping package-access check",
+			"collection", collection, "err", err)
 		return ""
 	}
 

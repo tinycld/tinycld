@@ -337,7 +337,7 @@ type catalogRow struct {
 func (e *Engine) syncCatalog() {
 	col, err := e.app.FindCollectionByNameOrId("automation_catalog")
 	if err != nil {
-		e.app.Logger().Error("automation: automation_catalog collection missing", "err", err)
+		log.Error("automation_catalog collection missing", "err", err)
 		return
 	}
 	res := e.buildCatalog(e.app)
@@ -352,7 +352,7 @@ func (e *Engine) syncCatalog() {
 
 	existing, err := e.app.FindRecordsByFilter("automation_catalog", "", "", 0, 0)
 	if err != nil {
-		e.app.Logger().Error("automation: load catalog rows", "err", err)
+		log.Error("load catalog rows failed", "err", err)
 		return
 	}
 	byRef := map[string]*core.Record{}
@@ -363,7 +363,7 @@ func (e *Engine) syncCatalog() {
 	for ref, row := range desired {
 		defJSON, err := json.Marshal(row.Def)
 		if err != nil {
-			e.app.Logger().Error("automation: marshal catalog definition", "ref", ref, "err", err)
+			log.Error("marshal catalog definition failed", "ref", ref, "err", err)
 			continue
 		}
 		rec, ok := byRef[ref]
@@ -377,7 +377,7 @@ func (e *Engine) syncCatalog() {
 		rec.Set("definition", json.RawMessage(defJSON))
 		rec.Set("available", row.Available)
 		if err := e.app.Save(rec); err != nil {
-			e.app.Logger().Error("automation: save catalog row", "ref", ref, "err", err)
+			log.Error("save catalog row failed", "ref", ref, "err", err)
 		}
 	}
 
@@ -386,7 +386,7 @@ func (e *Engine) syncCatalog() {
 			continue
 		}
 		if err := e.app.Delete(rec); err != nil {
-			e.app.Logger().Error("automation: delete stale catalog row", "ref", ref, "err", err)
+			log.Error("delete stale catalog row failed", "ref", ref, "err", err)
 		}
 	}
 }

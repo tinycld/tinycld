@@ -172,7 +172,7 @@ func (b *Backend) hookFilterList(userID, calendarID string, records []*core.Reco
 		// A handler that returned something other than a list is a bug in the
 		// hook, not a reason to leak the unfiltered listing — but neither is it
 		// a reason to fail the request. Keep the Go answer and say so.
-		b.app.Logger().Warn("caldav: filterList handler returned a non-list; ignoring",
+		log.Warn("filterList handler returned a non-list; ignoring",
 			"slug", b.src.Slug, "type", fmt.Sprintf("%T", v))
 		return records, nil
 	}

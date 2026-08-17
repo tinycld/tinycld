@@ -18,8 +18,11 @@ import (
 
 	"tinycld.org/core/davauth"
 	"tinycld.org/core/davcond"
+	"tinycld.org/core/logging"
 	"tinycld.org/core/pkgaccess"
 )
+
+var log = logging.ForPackage("carddav")
 
 // requirePkgWrite refuses the write when the caller's org_pkg_access level
 // for this source's package is not full. CardDAV bypasses the REST layer
@@ -281,8 +284,8 @@ func (b *Backend) saveAuthorized(user *core.Record, record *core.Record, kind ru
 		}, rule)
 		if err != nil {
 			// An unevaluable rule must not fail open.
-			b.app.Logger().Warn("carddav: rule evaluation failed",
-				"id", record.Id, "error", err)
+			log.Warn("rule evaluation failed",
+				"recordID", record.Id, "err", err)
 			return errDenied
 		}
 		if !ok {

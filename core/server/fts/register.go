@@ -55,8 +55,8 @@ func registerSearchRoute(app *pocketbase.PocketBase, e *core.ServeEvent, cfg Con
 
 		results, total, err := Search(app, cfg, re.Auth.Id, opts)
 		if err != nil {
-			app.Logger().Warn("fts: search query failed",
-				"slug", cfg.Slug, "error", err)
+			log.WarnContext(re.Request.Context(), "search query failed",
+				"pkgSlug", cfg.Slug, "err", err)
 			return re.JSON(http.StatusOK, empty)
 		}
 

@@ -6,7 +6,11 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/logging"
 )
+
+var log = logging.ForPackage("search")
 
 // sourceTimeout bounds one package's search. The whole request is only as slow
 // as its slowest source, so a package wedged on a lock or a pathological query
@@ -119,7 +123,7 @@ func Aggregate(ctx context.Context, app core.App, userID string, q Query, source
 		if o.err != nil {
 			// A failure must never read as an empty result set — that swallow
 			// is what let a renamed column present as a silent zero before.
-			app.Logger().Warn("search: source failed", "package", o.slug, "error", o.err)
+			log.WarnContext(ctx, "source failed", "pkgSlug", o.slug, "err", o.err)
 			resp.Partial = append(resp.Partial, o.slug)
 			continue
 		}
