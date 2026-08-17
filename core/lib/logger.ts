@@ -42,7 +42,7 @@ function emit(
     consoleLine(level, context, message, extra)
     addBreadcrumbToSentry(context, level, message, extra)
     if (SEVERITY[level] < SEVERITY[resolveLogLevel()]) return
-    captureMessageToSentry(context, message, extra)
+    captureMessageToSentry(context, level, message, extra)
 }
 
 /**
@@ -67,12 +67,15 @@ export const log = {
     },
     /**
      * Errors always route through captureException so Sentry gets the real
-     * stack, never a stringified message.
+     * stack, never a stringified message. Deliberately skips
+     * addBreadcrumbToSentry: unlike debug/info/warn, an error call always
+     * produces its own Sentry event, so breadcrumbing it too would just
+     * restate the event as its own trailing context and evict one slot of
+     * actually-preceding history from the ring buffer.
      */
     error(context: string, error: unknown, extra?: Record<string, unknown>): void {
         const message = error instanceof Error ? error.message : String(error)
         consoleLine('error', context, message, extra)
-        addBreadcrumbToSentry(context, 'error', message, extra)
         captureExceptionToSentry(context, error, extra)
     },
 }

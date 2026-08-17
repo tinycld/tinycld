@@ -8,12 +8,16 @@ import (
 // Destination levels. Independent by design: stderr and the DB-backed _logs
 // table are for operators reading history, while Sentry is for paging someone.
 //
-// _logs sits at Info deliberately. It is a database table, and routing all of
-// the codebase's slog calls there at Debug would write far more than the
-// app.Logger() calls it receives today.
+// _logs has no level constant here — pbHandler (app.Logger().Handler(), the
+// caller-supplied destination below) already gates itself on PocketBase's own
+// admin-configurable Settings.Logs.MinLevel (Info by default). Wrapping it in
+// a second, hardcoded filter would either duplicate that gate or silently
+// override an admin who lowered MinLevel to Debug to troubleshoot — and
+// _logs must keep receiving records unconditionally: the OTA e2e harness
+// polls it for an "app-boot: rendered" beacon to confirm a promoted bundle
+// booted on a device.
 const (
 	StderrLevel = slog.LevelInfo
-	LogsLevel   = slog.LevelInfo
 	SentryLevel = slog.LevelWarn
 )
 

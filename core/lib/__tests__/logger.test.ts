@@ -32,19 +32,22 @@ describe('log', () => {
         expect(captureException).not.toHaveBeenCalled()
     })
 
-    it('breadcrumbs AND raises an event at the threshold', async () => {
+    it('breadcrumbs AND raises an event at the threshold, tagged with the call level', async () => {
         configureCore({ brandName: 'T', serverShortcuts: {}, logLevel: 'warn' })
         const { log } = await import('../logger')
 
         log.warn('mail.imap', 'reconnect attempt', { attempt: 2 })
 
         expect(addBreadcrumb).toHaveBeenCalledTimes(1)
-        expect(captureMessage).toHaveBeenCalledWith('mail.imap', 'reconnect attempt', {
+        expect(addBreadcrumb).toHaveBeenCalledWith('mail.imap', 'warn', 'reconnect attempt', {
+            attempt: 2,
+        })
+        expect(captureMessage).toHaveBeenCalledWith('mail.imap', 'warn', 'reconnect attempt', {
             attempt: 2,
         })
     })
 
-    it('routes log.error through captureException', async () => {
+    it('routes log.error through captureException without also breadcrumbing itself', async () => {
         configureCore({ brandName: 'T', serverShortcuts: {}, logLevel: 'warn' })
         const { log } = await import('../logger')
         const err = new Error('boom')
@@ -52,6 +55,7 @@ describe('log', () => {
         log.error('mail.send', err, { messageId: 'm1' })
 
         expect(captureException).toHaveBeenCalledWith('mail.send', err, { messageId: 'm1' })
+        expect(addBreadcrumb).not.toHaveBeenCalled()
     })
 
     it('treats an above-threshold info call as an event when level is debug', async () => {
@@ -60,6 +64,6 @@ describe('log', () => {
 
         log.info('app.boot', 'ready')
 
-        expect(captureMessage).toHaveBeenCalledWith('app.boot', 'ready', undefined)
+        expect(captureMessage).toHaveBeenCalledWith('app.boot', 'info', 'ready', undefined)
     })
 })
