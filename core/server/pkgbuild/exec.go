@@ -3,12 +3,17 @@ package pkgbuild
 import (
 	"bufio"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"tinycld.org/core/logging"
 )
+
+// log is pkgbuild's package-wide structured logger. No file in this package
+// imports stdlib "log" any longer, so the short identifier is free to use.
+var log = logging.ForPackage("pkgbuild")
 
 // CmdRunner runs a command in dir and returns its combined output. It is the
 // sandbox seam for buffered steps: coreserver binds it to RunCmd (in-process
@@ -24,12 +29,6 @@ type StreamingRunner func(onLine func(line string), dir, name string, args ...st
 // cross-compiles). Signature matches RunCmdEnv.
 type CmdEnvRunner func(dir string, extraEnv []string, name string, args ...string) (string, error)
 
-// LogPrefix tags every command echo in the process log. The default keeps the
-// single-tenant server's historical "[pkg_install]" prefix so operator `docker
-// logs` greps keep working; the multi-org builder sets its own at startup
-// (write-once, before jobs run — it is not synchronized).
-var LogPrefix = "[pkg_install]"
-
 // RunCmd runs a command, capturing its combined output to return to the
 // caller (which surfaces it via its ProgressSink / install log) AND echoing
 // the command line and its output to the process log so `docker logs` shows
@@ -44,7 +43,7 @@ func RunCmd(dir string, name string, args ...string) (string, error) {
 // NOT logged (only the command + args are), so a value like a Sentry auth token
 // never lands in the build log — unlike threading it through args.
 func RunCmdEnv(dir string, extraEnv []string, name string, args ...string) (string, error) {
-	log.Printf("%s $ (cd %s && %s %s)", LogPrefix, dir, name, strings.Join(args, " "))
+	log.Debug("$ command", "dir", dir, "cmd", name, "args", strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	if len(extraEnv) > 0 {
@@ -52,10 +51,13 @@ func RunCmdEnv(dir string, extraEnv []string, name string, args ...string) (stri
 	}
 	out, err := cmd.CombinedOutput()
 	if s := strings.TrimRight(string(out), "\n"); s != "" {
-		log.Printf("%s output of %s:\n%s", LogPrefix, name, s)
+		log.Debug("command output", "cmd", name, "output", s)
 	}
 	if err != nil {
-		log.Printf("%s %s FAILED: %v", LogPrefix, name, err)
+		// The caller's own step-level handling (e.g. coreserver's timeStep)
+		// is what decides whether this failure escalates; logging it warn+
+		// here would double-page the same error.
+		log.Info("command failed", "cmd", name, "err", err)
 	}
 	return string(out), err
 }
@@ -67,21 +69,22 @@ func RunCmdEnv(dir string, extraEnv []string, name string, args ...string) (stri
 // every version listing into a decode error whenever npm had anything to
 // warn about (the hosted e2e's router cwd sat under a workspace .npmrc).
 func RunCmdStdout(dir string, name string, args ...string) (string, error) {
-	log.Printf("%s $ (cd %s && %s %s)", LogPrefix, dir, name, strings.Join(args, " "))
+	log.Debug("$ command", "dir", dir, "cmd", name, "args", strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if s := strings.TrimRight(string(out), "\n"); s != "" {
-		log.Printf("%s output of %s:\n%s", LogPrefix, name, s)
+		log.Debug("command output", "cmd", name, "output", s)
 	}
 	if s := strings.TrimSpace(stderr.String()); s != "" {
-		log.Printf("%s stderr of %s:\n%s", LogPrefix, name, s)
+		log.Debug("command stderr", "cmd", name, "stderr", s)
 	}
 	if err != nil {
-		log.Printf("%s %s FAILED: %v", LogPrefix, name, err)
-		// The caller surfaces the error; stderr carries npm's actual reason.
+		// The caller surfaces the error (stderr carries npm's actual reason);
+		// its own step-level handling decides whether this escalates.
+		log.Info("command failed", "cmd", name, "err", err)
 		return string(out), ErrFromCmd(name, stderr.String(), err)
 	}
 	return string(out), nil
@@ -93,7 +96,7 @@ func RunCmdStdout(dir string, name string, args ...string) (string, error) {
 // sit frozen for minutes. It still buffers + returns the full output and error
 // so the buffered-RunCmd contract is preserved.
 func RunCmdStreaming(onLine func(line string), dir, name string, args ...string) (string, error) {
-	log.Printf("%s $ (cd %s && %s %s)", LogPrefix, dir, name, strings.Join(args, " "))
+	log.Debug("$ command", "dir", dir, "cmd", name, "args", strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 
@@ -128,10 +131,12 @@ func RunCmdStreaming(onLine func(line string), dir, name string, args ...string)
 
 	out := buf.String()
 	if s := strings.TrimRight(out, "\n"); s != "" {
-		log.Printf("%s output of %s:\n%s", LogPrefix, name, s)
+		log.Debug("command output", "cmd", name, "output", s)
 	}
 	if err != nil {
-		log.Printf("%s %s FAILED: %v", LogPrefix, name, err)
+		// See RunCmdEnv: the caller's step-level handling is the escalation
+		// point, so this stays below warn to avoid double-paging.
+		log.Info("command failed", "cmd", name, "err", err)
 	}
 	return out, err
 }

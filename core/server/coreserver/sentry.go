@@ -44,6 +44,12 @@ func initSentryFromConfig(cfg *SystemConfig) {
 		TracesSampleRate: 0.2,
 		AttachStacktrace: true,
 	}); err != nil {
+		// Deliberately stdlib log, not srvLog: this reports that Sentry
+		// itself failed to initialize, and srvLog's warn+ path publishes to
+		// Sentry. Routing this failure through that path is circular — if
+		// Sentry is broken, the report that Sentry is broken can never
+		// arrive. Mirrors the console.* exemption in the client's sentry.ts
+		// for the same reason.
 		log.Printf("Sentry initialization failed: %v", err)
 	}
 }
