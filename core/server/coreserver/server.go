@@ -122,14 +122,6 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 
 	registerSharedEarly(app)
 
-	// Install the process-wide logger before features register, so their
-	// package loggers and any boot-time logging reach every destination.
-	//
-	// app.Logger().Handler() is resolved HERE and handed to Install, never
-	// resolved inside the fan-out: app.Logger() falls back to slog.Default()
-	// pre-bootstrap, so a lazy lookup inside the default handler would recurse.
-	logging.Install(app.Logger().Handler())
-
 	// Feature packages register BEFORE jsvm, and the order is load-bearing:
 	// jsvm.Register executes the hook files synchronously (its registerHooks
 	// call, not deferred to OnBootstrap), so any `$`-binding or loader binding
@@ -245,6 +237,28 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 // multi-org/docs/FINDING-tenant-composition-gap.md for what silent divergence
 // cost.
 func registerSharedEarly(app *pocketbase.PocketBase) {
+	// Install the process-wide logger once PocketBase has bootstrapped, not
+	// here in Register/RegisterTenant. app.Logger() falls back to
+	// slog.Default() until PocketBase's own initLogger() runs during
+	// bootstrap (pocketbase/core/base.go), so resolving it any earlier would
+	// hand Install the fan-out's own future default handler — wiring the
+	// fan-out to itself and recursing on the first log call. Waiting for
+	// e.Next() to complete first is also why the DB write works: the PB
+	// handler batches records into the _logs table, and there is no usable
+	// DB before bootstrap finishes.
+	//
+	// Anything logged between Register/RegisterTenant and this point (e.g.
+	// registerFlags, jsvm/migratecmd setup) falls through to Go's default
+	// slog handler (stderr) instead of the fan-out. That's deliberate, not a
+	// gap: those calls have no _logs table to reach yet regardless.
+	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
+		if err := e.Next(); err != nil {
+			return err
+		}
+		logging.Install(app.Logger().Handler())
+		return nil
+	})
+
 	// Sentry must register first so its router middleware sees every route.
 	// Middleware bound after a route is added does not apply retroactively.
 	// The client only initializes when a DSN exists in system_settings, so in
