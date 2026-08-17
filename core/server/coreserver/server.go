@@ -26,6 +26,13 @@ import (
 	"tinycld.org/core/sharelink"
 )
 
+// srvLog is the package-wide structured logger for coreserver. Named srvLog
+// rather than the usual "log" because coreserver is one package spanning many
+// files, several of which (this one included, for the log.Fatalf below) still
+// import stdlib "log" — a package-level "log" identifier would shadow/collide
+// with that import everywhere in the package, not just here.
+var srvLog = logging.ForPackage("coreserver")
+
 // Options configure the core server's registered plugins, flags, and wiring.
 // A runnable `main` package builds this struct and calls Register(app, opts).
 type Options struct {

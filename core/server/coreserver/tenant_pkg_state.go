@@ -3,7 +3,6 @@ package coreserver
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"sync"
 	"time"
@@ -46,7 +45,7 @@ func reconcileTenantPackageState(app core.App, orgDir, artifactDir string) {
 	defer tenantPkgStateMu.Unlock()
 	uninstalledSlug := reconcileDeployResult(app, orgDir)
 	if err := reconcileRegistryFromArtifact(app, artifactDir, uninstalledSlug); err != nil {
-		log.Printf("tenant_pkg_state: registry reconcile failed: %v", err)
+		srvLog.Error("tenant registry reconcile failed", "err", err)
 	}
 }
 
@@ -79,7 +78,7 @@ func consumePendingDeployResult(app core.App, orgDir, artifactDir string) {
 func reconcileDeployResult(app core.App, orgDir string) (uninstalledSlug string) {
 	res, ok, err := tenantcfg.LoadDeployResult(orgDir)
 	if err != nil {
-		log.Printf("tenant_pkg_state: unreadable deploy result (leaving for next boot): %v", err)
+		srvLog.Warn("unreadable deploy result, leaving for next boot", "err", err)
 		return ""
 	}
 	if !ok {
@@ -102,7 +101,7 @@ func reconcileDeployResult(app core.App, orgDir string) (uninstalledSlug string)
 			errMsg = "deploy reverted: the proposed build failed to become ready"
 		}
 	default:
-		log.Printf("tenant_pkg_state: deploy result has unknown status %q (consuming)", res.Status)
+		srvLog.Warn("deploy result has unknown status, consuming", "status", res.Status)
 		consumeDeployResult(orgDir)
 		return ""
 	}
@@ -124,11 +123,10 @@ func reconcileDeployResult(app core.App, orgDir string) (uninstalledSlug string)
 		row.Set("error", errMsg)
 		row.Set("completed_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
 		if err := app.Save(row); err != nil {
-			log.Printf("tenant_pkg_state: could not finalize install-log %s (retrying next boot): %v", row.Id, err)
+			srvLog.Warn("could not finalize install-log, retrying next boot", "recordID", row.Id, "err", err)
 			return ""
 		}
-		log.Printf("tenant_pkg_state: finalized install-log %s (pkg=%s) -> %s",
-			row.Id, row.GetString("pkg_slug"), status)
+		srvLog.Info("finalized install-log", "recordID", row.Id, "pkgSlug", row.GetString("pkg_slug"), "status", status)
 	}
 
 	consumeDeployResult(orgDir)
@@ -140,7 +138,7 @@ func reconcileDeployResult(app core.App, orgDir string) (uninstalledSlug string)
 
 func consumeDeployResult(orgDir string) {
 	if err := tenantcfg.ConsumeDeployResult(orgDir); err != nil {
-		log.Printf("tenant_pkg_state: WARNING: could not consume deploy result: %v", err)
+		srvLog.Warn("could not consume deploy result", "err", err)
 	}
 }
 
@@ -192,7 +190,7 @@ func reconcileRegistryFromArtifact(app core.App, artifactDir, uninstalledSlug st
 			if err := app.Delete(r); err != nil {
 				return err
 			}
-			log.Printf("tenant_pkg_state: registry: %s -> deleted (uninstalled)", slug)
+			srvLog.Info("registry entry deleted (uninstalled)", "slug", slug)
 			continue
 		}
 		if s := r.GetString("status"); s != "disabled" {
@@ -200,7 +198,7 @@ func reconcileRegistryFromArtifact(app core.App, artifactDir, uninstalledSlug st
 			if err := app.Save(r); err != nil {
 				return err
 			}
-			log.Printf("tenant_pkg_state: registry: %s -> disabled (absent from artifact)", slug)
+			srvLog.Info("registry entry disabled (absent from artifact)", "slug", slug)
 		}
 	}
 	return nil

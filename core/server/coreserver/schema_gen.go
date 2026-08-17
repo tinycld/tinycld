@@ -2,7 +2,6 @@ package coreserver
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,7 +17,7 @@ import (
 func GenerateSchemas(app core.App, typesDir string) {
 	collections, err := app.FindAllCollections()
 	if err != nil {
-		log.Printf("Schema generation: failed to find collections: %v", err)
+		srvLog.Error("schema generation: failed to find collections", "err", err)
 		return
 	}
 
@@ -37,7 +36,7 @@ func GenerateSchemas(app core.App, typesDir string) {
 	zodSchema := generateZodSchema(filtered)
 
 	if err := os.MkdirAll(typesDir, 0o755); err != nil {
-		log.Printf("Schema generation: failed to create types dir: %v", err)
+		srvLog.Error("schema generation: failed to create types dir", "typesDir", typesDir, "err", err)
 		return
 	}
 
@@ -45,15 +44,15 @@ func GenerateSchemas(app core.App, typesDir string) {
 	zodPath := filepath.Join(typesDir, "pbZodSchema.ts")
 
 	if err := os.WriteFile(tsPath, []byte(tsSchema), 0o644); err != nil {
-		log.Printf("Schema generation: failed to write %s: %v", tsPath, err)
+		srvLog.Error("schema generation: failed to write file", "path", tsPath, "err", err)
 	} else {
-		log.Printf("Schema generation: wrote %s", tsPath)
+		srvLog.Info("schema generation: wrote file", "path", tsPath)
 	}
 
 	if err := os.WriteFile(zodPath, []byte(zodSchema), 0o644); err != nil {
-		log.Printf("Schema generation: failed to write %s: %v", zodPath, err)
+		srvLog.Error("schema generation: failed to write file", "path", zodPath, "err", err)
 	} else {
-		log.Printf("Schema generation: wrote %s", zodPath)
+		srvLog.Info("schema generation: wrote file", "path", zodPath)
 	}
 }
 

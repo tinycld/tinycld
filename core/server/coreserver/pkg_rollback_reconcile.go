@@ -1,7 +1,6 @@
 package coreserver
 
 import (
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,7 +56,7 @@ func ReconcileRolledBackInstall(app core.App) {
 	live := currentJob != nil
 	installMu.Unlock()
 	if live {
-		log.Printf("pkg_rollback: .rollback-pending present but a job is in-flight; deferring reconcile")
+		srvLog.Info("rollback-pending marker present but a job is in-flight; deferring reconcile")
 		return
 	}
 
@@ -76,7 +75,7 @@ func ReconcileRolledBackInstall(app core.App) {
 		0,
 	)
 	if fErr != nil {
-		log.Printf("pkg_rollback: query stranded running row failed: %v", fErr)
+		srvLog.Warn("query for stranded running install-log row failed, retrying next boot", "err", fErr)
 		return // keep the marker; retry next boot rather than lose the signal
 	}
 	if len(rows) == 0 {
@@ -96,15 +95,14 @@ func ReconcileRolledBackInstall(app core.App) {
 	row.Set("error", msg)
 	row.Set("completed_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
 	if sErr := app.Save(row); sErr != nil {
-		log.Printf("pkg_rollback: failed to mark install-log %s rolled_back: %v", row.Id, sErr)
+		srvLog.Warn("failed to mark install-log rolled_back, retrying next boot", "recordID", row.Id, "err", sErr)
 		return // keep the marker; retry next boot
 	}
-	log.Printf("pkg_rollback: marked install-log %s (pkg=%s) rolled_back",
-		row.Id, row.GetString("pkg_slug"))
+	srvLog.Info("marked install-log rolled_back", "recordID", row.Id, "pkgSlug", row.GetString("pkg_slug"))
 
 	// Consume the breadcrumb only after a successful write so a transient failure
 	// retries on the next boot.
 	if rmErr := os.Remove(markerPath); rmErr != nil && !os.IsNotExist(rmErr) {
-		log.Printf("pkg_rollback: WARNING: failed to clear %s: %v", markerPath, rmErr)
+		srvLog.Warn("failed to clear rollback-pending marker", "path", markerPath, "err", rmErr)
 	}
 }

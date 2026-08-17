@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -28,7 +27,7 @@ func RegisterSetupBootstrap(app *pocketbase.PocketBase) {
 		if publicURL := strings.TrimRight(os.Getenv("TINYCLD_PUBLIC_URL"), "/"); publicURL != "" {
 			app.Settings().Meta.AppURL = publicURL
 			if err := app.Save(app.Settings()); err != nil {
-				log.Printf("setup bootstrap: failed to persist AppURL from TINYCLD_PUBLIC_URL: %v", err)
+				srvLog.Error("setup bootstrap: failed to persist AppURL from TINYCLD_PUBLIC_URL", "err", err)
 			}
 		}
 
@@ -164,7 +163,7 @@ func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	}
 	if req.AppName != "" || req.AppURL != "" {
 		if err := app.Save(app.Settings()); err != nil {
-			log.Printf("Setup bootstrap: failed to save settings: %v", err)
+			srvLog.Warn("setup bootstrap: failed to save settings", "err", err)
 		}
 	}
 

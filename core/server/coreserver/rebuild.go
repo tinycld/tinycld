@@ -3,7 +3,6 @@ package coreserver
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,7 +201,7 @@ func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
 func restore(d rebuildDeps) {
 	if d.restoreDB != nil {
 		if err := d.restoreDB(); err != nil {
-			log.Printf("rebuild: DB restore failed: %v", err)
+			srvLog.Error("rebuild: DB restore failed", "err", err)
 			return
 		}
 		// The restore overwrote data.db (and cleared its WAL) underneath the still-
@@ -213,7 +212,7 @@ func restore(d rebuildDeps) {
 		// the entrypoint instead (different process), so this only matters here.
 		if d.recoverDB != nil {
 			if err := d.recoverDB(); err != nil {
-				log.Printf("rebuild: DB reconnect after restore failed: %v", err)
+				srvLog.Error("rebuild: DB reconnect after restore failed", "err", err)
 			}
 		}
 	}
@@ -495,7 +494,7 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir, uninstalledSlug s
 				if err := app.Delete(r); err != nil {
 					return err
 				}
-				log.Printf("[pkg_install] registry: %s -> deleted (uninstalled)", slug)
+				srvLog.Info("registry entry deleted (uninstalled)", "slug", slug)
 				continue
 			}
 			// Absent for another reason (reverted past, etc.) — disable, don't delete.
@@ -504,7 +503,7 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir, uninstalledSlug s
 				if err := app.Save(r); err != nil {
 					return err
 				}
-				log.Printf("[pkg_install] registry: %s -> disabled (absent from build)", slug)
+				srvLog.Info("registry entry disabled (absent from build)", "slug", slug)
 			}
 			continue
 		}
@@ -537,8 +536,7 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir, uninstalledSlug s
 			if err := app.Save(r); err != nil {
 				return err
 			}
-			log.Printf("[pkg_install] registry: %s -> version=%s status=%s",
-				slug, r.GetString("version"), r.GetString("status"))
+			srvLog.Info("registry entry updated", "slug", slug, "version", r.GetString("version"), "status", r.GetString("status"))
 		}
 	}
 	// Create rows for freshly-installed members (no existing row). Parse each
@@ -550,7 +548,7 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir, uninstalledSlug s
 		if err := createRegistryRowFromBuild(app, buildDir, ms); err != nil {
 			return fmt.Errorf("create registry row for %s: %w", ms.Slug, err)
 		}
-		log.Printf("[pkg_install] registry: created %s (newly installed)", regSlug)
+		srvLog.Info("registry entry created", "slug", regSlug)
 	}
 	return nil
 }

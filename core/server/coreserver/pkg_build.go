@@ -3,7 +3,6 @@ package coreserver
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,16 +173,16 @@ func SeedBaseBuild(app core.App) {
 	// append-only, so a base revert promotes correctly without re-archiving them).
 	arch := buildArchiveFor(appDir, baseBuildID)
 	if err := os.MkdirAll(arch.root, 0o755); err != nil {
-		log.Printf("pkg_build: base seed — mkdir failed: %v", err)
+		srvLog.Error("base build seed: mkdir failed", "err", err)
 		return
 	}
 	if _, err := runCmd(".", "cp", "-a", binPath, arch.binary); err != nil {
-		log.Printf("pkg_build: base seed — archive binary failed: %v", err)
+		srvLog.Error("base build seed: archive binary failed", "err", err)
 		os.RemoveAll(arch.root)
 		return
 	}
 	if err := copyDir(currentRelease, arch.release); err != nil {
-		log.Printf("pkg_build: base seed — archive release failed: %v", err)
+		srvLog.Error("base build seed: archive release failed", "err", err)
 		os.RemoveAll(arch.root)
 		return
 	}
@@ -191,11 +190,11 @@ func SeedBaseBuild(app core.App) {
 	os.WriteFile(filepath.Join(arch.root, "build.json"), metaJSON, 0o644)
 
 	if _, err := recordBuild(app, fields); err != nil {
-		log.Printf("pkg_build: base seed — record failed: %v", err)
+		srvLog.Error("base build seed: record failed", "err", err)
 		os.RemoveAll(arch.root)
 		return
 	}
-	log.Printf("pkg_build: seeded base build %s (release %s)", baseBuildID, releaseID)
+	srvLog.Info("seeded base build", "buildID", baseBuildID, "releaseID", releaseID)
 }
 
 // readReleaseID reads a release dir's release-id.txt, returning "" if absent.

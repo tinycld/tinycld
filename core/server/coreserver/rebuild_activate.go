@@ -1,7 +1,6 @@
 package coreserver
 
 import (
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -37,8 +36,7 @@ func activateBuild(buildID string) error {
 	}
 	// Durable (docker logs) record of the atomic swap + the rollback target the
 	// entrypoint would flip back to on a failed post-restart health probe.
-	log.Printf("[pkg_install] activate: current %s -> %s (rollback target: %s)",
-		orNone(prev), buildID, orNone(prev))
+	srvLog.Info("activate: symlink swapped", "from", orNone(prev), "to", buildID, "rollbackTarget", orNone(prev))
 	return nil
 }
 
@@ -97,8 +95,7 @@ func pruneBuilds(keep int) error {
 		}
 	}
 	if len(pruned) > 0 {
-		log.Printf("[pkg_install] prune: removed %d old build(s): %s (kept current=%s + newest %d)",
-			len(pruned), strings.Join(pruned, ", "), orNone(cur), keep)
+		srvLog.Info("prune: removed old builds", "count", len(pruned), "removed", strings.Join(pruned, ", "), "kept", orNone(cur), "keepCount", keep)
 	}
 	return nil
 }
