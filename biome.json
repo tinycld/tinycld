@@ -176,6 +176,7 @@
             "includes": [
                 "**/core/lib/nav-perf.ts",
                 "**/core/lib/sentry.ts",
+                "**/core/lib/logger.ts",
                 "**/core/lib/debug-trace.ts",
                 "**/core/lib/editor/use-webview-editor.tsx",
                 "**/core/lib/editor/webview-bundler/build.ts",

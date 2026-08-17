@@ -143,3 +143,33 @@ export function captureExceptionToSentry(
         Sentry.captureException(error)
     })
 }
+
+const SENTRY_BREADCRUMB_LEVEL: Record<string, Sentry.SeverityLevel> = {
+    debug: 'debug',
+    info: 'info',
+    warn: 'warning',
+    error: 'error',
+}
+
+/**
+ * Record a log line as a Sentry breadcrumb. Breadcrumbs are an in-memory ring
+ * buffer — no network — and are attached automatically to whatever event fires
+ * next, which is what gives an error its preceding context.
+ *
+ * PII scrubbing is handled by the `beforeBreadcrumb` hook registered in
+ * `initSentry`; do not scrub here or the data gets filtered twice.
+ */
+export function addBreadcrumbToSentry(
+    context: string,
+    level: string,
+    message: string,
+    extra?: Record<string, unknown>
+): void {
+    if (!initialized) return
+    Sentry.addBreadcrumb({
+        category: context,
+        message,
+        level: SENTRY_BREADCRUMB_LEVEL[level] ?? 'info',
+        data: extra,
+    })
+}
