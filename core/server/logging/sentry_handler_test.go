@@ -65,7 +65,7 @@ func TestSentryHandlerCapturesWithoutAHubOnContext(t *testing.T) {
 	logger.Warn("no ctx here")
 }
 
-func TestSentryHandlerAttachesAttrsAsExtra(t *testing.T) {
+func TestSentryHandlerAttachesAttrsAsContext(t *testing.T) {
 	hub, tr := newTestHub(t)
 	ctx := sentry.SetHubOnContext(context.Background(), hub)
 
@@ -75,11 +75,14 @@ func TestSentryHandlerAttachesAttrsAsExtra(t *testing.T) {
 	if len(tr.events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(tr.events))
 	}
-	extra := tr.events[0].Extra
-	if extra["pkg"] != "cards" {
-		t.Errorf("expected pkg=cards in extra, got %v", extra["pkg"])
+	logCtx, ok := tr.events[0].Contexts["log"]
+	if !ok {
+		t.Fatalf("expected a %q context on the event, got %v", "log", tr.events[0].Contexts)
 	}
-	if extra["boardID"] != "b1" {
-		t.Errorf("expected boardID=b1 in extra, got %v", extra["boardID"])
+	if logCtx["pkg"] != "cards" {
+		t.Errorf("expected pkg=cards in log context, got %v", logCtx["pkg"])
+	}
+	if logCtx["boardID"] != "b1" {
+		t.Errorf("expected boardID=b1 in log context, got %v", logCtx["boardID"])
 	}
 }

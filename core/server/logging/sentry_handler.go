@@ -54,7 +54,11 @@ func (h *sentryHandler) Handle(ctx context.Context, r slog.Record) error {
 
 	hub.WithScope(func(scope *sentry.Scope) {
 		scope.SetLevel(sentryLevel[r.Level])
-		scope.SetExtras(extra)
+		// SetContext (not the deprecated SetExtras/SetAttributes) so the
+		// record's attrs attach to the event itself — SetAttributes is
+		// documented to be dropped for error events, and this handler exists
+		// specifically to capture events.
+		scope.SetContext("log", extra)
 		hub.CaptureMessage(r.Message)
 	})
 	return nil
