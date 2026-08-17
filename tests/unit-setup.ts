@@ -4,6 +4,12 @@
 // Add vi.mock() calls here for modules that cannot be handled by resolve.alias.
 import { vi } from 'vitest'
 
+// Metro injects __DEV__ at build time; vitest runs in Node, so declare it here.
+declare global {
+    const __DEV__: boolean
+}
+globalThis.__DEV__ = true
+
 // Mock the generated config to empty. This is REQUIRED to break an import
 // cycle: the real tinycld.config.ts imports each package's provider, some of
 // which (calc, text) eagerly import @tinycld/core/file-viewer components that
