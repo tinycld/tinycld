@@ -60,4 +60,20 @@ describe('core-config', () => {
         configureCore({ brandName: 'Second', serverShortcuts: {} })
         expect(getCoreConfigOptional()?.brandName).toBe('Second')
     })
+
+    it('accepts a logLevel and returns it verbatim', async () => {
+        const { configureCore, getCoreConfig } = await importFresh()
+        configureCore({
+            brandName: 'TinyCld',
+            serverShortcuts: {},
+            logLevel: 'info',
+        })
+        expect(getCoreConfig().logLevel).toBe('info')
+    })
+
+    it('leaves logLevel undefined when not supplied', async () => {
+        const { configureCore, getCoreConfig } = await importFresh()
+        configureCore({ brandName: 'TinyCld', serverShortcuts: {} })
+        expect(getCoreConfig().logLevel).toBeUndefined()
+    })
 })
