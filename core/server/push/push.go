@@ -123,7 +123,7 @@ func SendToUser(app core.App, userID string, payload Payload) {
 		if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
 			log.Info("removing stale subscription", "subscriptionID", record.Id, "status", resp.StatusCode)
 			if err := app.Delete(record); err != nil {
-				log.Warn("failed to delete stale subscription", "subscriptionID", record.Id, "err", err)
+				log.Info("failed to delete stale subscription", "subscriptionID", record.Id, "err", err)
 			}
 		}
 	}

@@ -181,7 +181,7 @@ func sendExpoPush(app core.App, userID string, params NotifyParams) {
 			if result.Data.Details.Error == "DeviceNotRegistered" {
 				log.Info("removing stale expo token", "token", token)
 				if err := app.Delete(record); err != nil {
-					log.Warn("failed to delete stale expo token", "subscriptionID", record.Id, "err", err)
+					log.Info("failed to delete stale expo token", "tokenID", record.Id, "err", err)
 				}
 			}
 		}
