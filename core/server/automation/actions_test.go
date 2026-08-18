@@ -13,6 +13,21 @@ import (
 	"tinycld.org/core/rlstest"
 )
 
+// allowAuthedWrites gives a fixture collection the update/delete rules a real
+// feature collection always declares in its migration. The trigger-record
+// authorization floor evaluates them as the rule owner, and treats a nil rule
+// (PB's superuser-only) as a refusal — so a fixture with no rules at all would
+// test a configuration no deployment ships.
+func allowAuthedWrites(t *testing.T, app core.App, col *core.Collection) {
+	t.Helper()
+	authed := "@request.auth.id != ''"
+	col.UpdateRule = &authed
+	col.DeleteRule = &authed
+	if err := app.Save(col); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // actionApp builds: users (fixture), label_assignments-like target collection,
 // a source collection, one user, one source record, and a personal rule record
 // shape (plain base collection standing in for `rules` — executor only reads
@@ -33,6 +48,7 @@ func actionApp(t *testing.T) (*tests.TestApp, *core.Record, *core.Record, *Defs)
 	if err := app.Save(src); err != nil {
 		t.Fatal(err)
 	}
+	allowAuthedWrites(t, app, src)
 	tgt := core.NewBaseCollection("thing_labels")
 	tgt.Fields.Add(&core.TextField{Name: "label"})
 	tgt.Fields.Add(&core.TextField{Name: "record_id"})
@@ -131,6 +147,96 @@ func TestRecordOpUpdateTriggerRecord(t *testing.T) {
 	if !ok || w.Depth != 1 || w.RuleID != rule.Id {
 		t.Fatalf("provenance: %+v %v", w, ok)
 	}
+}
+
+// TestTriggerRecordWriteAuthorization is the B3 regression. A record-op on the
+// trigger record runs as superuser, so before the fix a rule owner who could
+// merely SEE a record could mutate or delete it through automation even where
+// the collection's own rules refuse that same edit — the cards case being a
+// viewer moving a card. The floor is the collection's update/delete rule
+// evaluated as the rule owner.
+func TestTriggerRecordWriteAuthorization(t *testing.T) {
+	t.Run("owner who fails the update rule is refused", func(t *testing.T) {
+		app, rec, rule, defs := actionApp(t)
+
+		// Stand in for "viewer, not editor": a rule only the record's own
+		// creator satisfies, which this rule's owner is not.
+		col, _ := app.FindCollectionByNameOrId("things")
+		onlySomeoneElse := "@request.auth.id = 'nonexistent_user_id'"
+		col.UpdateRule = &onlySomeoneElse
+		if err := app.Save(col); err != nil {
+			t.Fatal(err)
+		}
+		rec, _ = app.FindRecordById("things", rec.Id)
+
+		err := ExecuteAction(app, defs, "things:set-status", map[string]any{"status": "filed"}, rule, openTrigger, rec, 0)
+		if err == nil {
+			t.Fatal("a rule owner who fails the collection's update rule must not move the trigger record")
+		}
+		fresh, _ := app.FindRecordById("things", rec.Id)
+		if fresh.GetString("status") == "filed" {
+			t.Fatal("the refused update must not have been written")
+		}
+		if _, ok := takeEngineWrite(rec.Id); ok {
+			t.Fatal("a refused write must not strand a provenance sentinel")
+		}
+	})
+
+	t.Run("superuser-only collection is refused", func(t *testing.T) {
+		app, rec, rule, defs := actionApp(t)
+
+		// nil rule = superuser-only in PocketBase. Acting as the rule owner
+		// here would be a straight privilege escalation, so it fails closed.
+		col, _ := app.FindCollectionByNameOrId("things")
+		col.UpdateRule = nil
+		if err := app.Save(col); err != nil {
+			t.Fatal(err)
+		}
+		rec, _ = app.FindRecordById("things", rec.Id)
+
+		if err := ExecuteAction(app, defs, "things:set-status", map[string]any{"status": "filed"}, rule, openTrigger, rec, 0); err == nil {
+			t.Fatal("a superuser-only collection must refuse a trigger-record write")
+		}
+	})
+
+	t.Run("registered authorizer can refuse what the floor allows", func(t *testing.T) {
+		app, rec, rule, defs := actionApp(t)
+		RegisterTriggerRecordAuthorizer("things:set-status",
+			func(_ core.App, _ ActionRequest, r *core.Record) error {
+				return fmt.Errorf("package says no for %s", r.Id)
+			})
+
+		err := ExecuteAction(app, defs, "things:set-status", map[string]any{"status": "filed"}, rule, openTrigger, rec, 0)
+		if err == nil {
+			t.Fatal("a registered trigger-record authorizer must be able to refuse")
+		}
+		if !strings.Contains(err.Error(), "package says no") {
+			t.Fatalf("the authorizer's reason must surface: %v", err)
+		}
+	})
+
+	t.Run("delete is gated by the delete rule", func(t *testing.T) {
+		app, rec, rule, defs := actionApp(t)
+		defs.Packages[1].Actions = append(defs.Packages[1].Actions, ActionDef{
+			ID: "drop", Kind: "record-op", Collection: "things",
+			Op: RecordOp{Type: "delete", Target: "trigger-record"},
+		})
+
+		col, _ := app.FindCollectionByNameOrId("things")
+		onlySomeoneElse := "@request.auth.id = 'nonexistent_user_id'"
+		col.DeleteRule = &onlySomeoneElse
+		if err := app.Save(col); err != nil {
+			t.Fatal(err)
+		}
+		rec, _ = app.FindRecordById("things", rec.Id)
+
+		if err := ExecuteAction(app, defs, "things:drop", nil, rule, openTrigger, rec, 0); err == nil {
+			t.Fatal("a rule owner who fails the delete rule must not delete the trigger record")
+		}
+		if _, err := app.FindRecordById("things", rec.Id); err != nil {
+			t.Fatal("the record must still exist after a refused delete")
+		}
+	})
 }
 
 // TestFailedSaveLeavesNoSentinel proves the mark-before-write ordering
@@ -235,6 +341,7 @@ func pkgaccessApp(t *testing.T) (*tests.TestApp, *core.Record, *core.Record, *co
 	if err := app.Save(src); err != nil {
 		t.Fatal(err)
 	}
+	allowAuthedWrites(t, app, src)
 
 	registry, err := app.FindCollectionByNameOrId("pkg_registry")
 	if err != nil {
@@ -406,6 +513,7 @@ func relationGateApp(t *testing.T) (app *tests.TestApp, u1, u2, rule, crate, box
 	if err := app.Save(crates); err != nil {
 		t.Fatal(err)
 	}
+	allowAuthedWrites(t, app, crates)
 	rulesCol := core.NewBaseCollection("fake_rules")
 	rulesCol.Fields.Add(&core.TextField{Name: "scope"})
 	rulesCol.Fields.Add(&core.TextField{Name: "owner"})
