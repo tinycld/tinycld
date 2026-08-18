@@ -26,17 +26,30 @@ type NotifyParams struct {
 
 // NotifyUser persists a notification record and dispatches push notifications
 // to all registered devices for the user.
+// NotifyUser delivers a notification, logging and swallowing any failure.
+// Callers that need to REPORT the outcome (an automation action recording a
+// run result, say) should use DeliverToUser instead.
 func NotifyUser(app core.App, params NotifyParams) {
+	_ = DeliverToUser(app, params)
+}
+
+// DeliverToUser is NotifyUser with the outcome returned rather than swallowed.
+//
+// "Delivered" means the notifications row was written — that is the durable
+// part a user can still see later. The push dispatches below are genuinely
+// best-effort (an unreachable device is not a rule failure), so they stay
+// non-fatal. A muted type is a success: the user asked not to be told.
+func DeliverToUser(app core.App, params NotifyParams) error {
 	// Check user preferences — skip if this notification type is muted
 	if isNotificationMuted(app, params.UserID, params.Type) {
-		return
+		return nil
 	}
 
 	// Insert into notifications collection
 	collection, err := app.FindCollectionByNameOrId("notifications")
 	if err != nil {
 		log.Error("failed to find notifications collection", "err", err)
-		return
+		return fmt.Errorf("notifications collection unavailable: %w", err)
 	}
 
 	record := core.NewRecord(collection)
@@ -52,7 +65,7 @@ func NotifyUser(app core.App, params NotifyParams) {
 
 	if err := app.Save(record); err != nil {
 		log.Error("failed to save notification", "userID", params.UserID, "err", err)
-		return
+		return fmt.Errorf("saving notification: %w", err)
 	}
 
 	// Dispatch web push
@@ -65,6 +78,7 @@ func NotifyUser(app core.App, params NotifyParams) {
 
 	// Dispatch Expo push
 	sendExpoPush(app, params.UserID, params)
+	return nil
 }
 
 // isNotificationMuted checks user_preferences for a muted notification type.

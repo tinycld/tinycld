@@ -2,6 +2,7 @@
 package automation
 
 import (
+	"fmt"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 
@@ -60,29 +61,30 @@ func registerCoreNativeActions() {
 		return nil
 	})
 
-	// core:notify is fire-and-forget: the handler returns nil immediately and
-	// the actual push happens on a detached goroutine. The engine records this
-	// action's ActionResult as "ok" the instant the handler returns, before
-	// notifyUser has run (or even before its liveness check) — a delivery
-	// failure inside the goroutine is invisible to rule_runs.results.
+	// Runs SYNCHRONOUSLY so the action's run result reflects what happened.
+	// It used to hand the work to a detached goroutine and return nil at once,
+	// which recorded "ok" before delivery had even been attempted — a rule
+	// whose notification never landed looked healthy in run history, and
+	// auto-disable could never see it failing.
+	//
+	// The write itself is cheap (one row); DeliverToUser keeps the PUSH
+	// dispatch best-effort internally, so an unreachable device still is not a
+	// rule failure. The engine's per-action timeout bounds this either way.
+	//
+	// deliverNotification is runs.go's package-level seam — tests intercept it
+	// to assert on the notification without racing real push I/O against app
+	// teardown (same rationale as the auto-disable notification's seam).
 	RegisterAction("core:notify", func(a core.App, req ActionRequest) error {
-		go func() {
-			if !appIsLive(a) {
-				return
-			}
-			// notifyUser is runs.go's package-level seam over notify.NotifyUser —
-			// tests intercept it to assert on the notification without racing the
-			// real push I/O against app teardown (same rationale as the
-			// auto-disable notification's use of the seam).
-			notifyUser(a, notify.NotifyParams{
-				UserID:  req.OwnerID,
-				Type:    "automation",
-				Package: "core",
-				Title:   req.Params["title"],
-				Body:    req.Params["body"],
-				URL:     req.Params["url"],
-			})
-		}()
-		return nil
+		if !appIsLive(a) {
+			return fmt.Errorf("core:notify: server is shutting down")
+		}
+		return deliverNotification(a, notify.NotifyParams{
+			UserID:  req.OwnerID,
+			Type:    "automation",
+			Package: "core",
+			Title:   req.Params["title"],
+			Body:    req.Params["body"],
+			URL:     req.Params["url"],
+		})
 	})
 }
