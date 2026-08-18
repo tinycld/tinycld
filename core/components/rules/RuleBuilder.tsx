@@ -16,7 +16,7 @@ import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { Switch } from '@tinycld/core/ui/switch'
 import { X } from 'lucide-react-native'
 import { useEffect, useRef } from 'react'
-import { ActivityIndicator, ScrollView, Text, View } from 'react-native'
+import { ActivityIndicator, ScrollView, Text, type TextInput, View } from 'react-native'
 import { ActionsCard } from './ActionsCard'
 import { ConditionsCard } from './ConditionsCard'
 import { DryRunPanel } from './DryRunPanel'
@@ -177,6 +177,26 @@ function RuleBuilderForm({
     onSave,
 }: RuleBuilderFormProps) {
     const { draft, patch, errors, validate } = useRuleDraft(initial)
+    const nameRef = useRef<TextInput>(null)
+
+    // Naming the rule is the first thing every new rule needs, so start there
+    // rather than making the user click in.
+    //
+    // Only for a NEW rule on the modal: opening an existing rule is usually to
+    // change a condition or an action, so grabbing focus (and on touch, raising
+    // the keyboard over the sheet whose height is measured from its content)
+    // would fight what the user came to do.
+    const shouldFocusName = !isLocked && !isMobile
+
+    // `autoFocus` alone is not enough — GlueStack's overlay installs a focus
+    // trap after mount and ModalContent enters with a ZoomIn animation, which
+    // between them clobber it. Focus on the next frame instead, once the trap
+    // has settled and the content has painted (same fix as PromptDialog).
+    useEffect(() => {
+        if (!shouldFocusName) return
+        const raf = requestAnimationFrame(() => nameRef.current?.focus())
+        return () => cancelAnimationFrame(raf)
+    }, [shouldFocusName])
 
     const handleSave = () => {
         if (!validate(catalog)) return
@@ -190,9 +210,12 @@ function RuleBuilderForm({
             <ScrollView className={scrollRegionClass(isMobile)}>
                 <View className="gap-4 pb-2">
                     <PlainInput
+                        ref={nameRef}
                         value={draft.name}
                         onChangeText={name => patch({ name })}
                         placeholder="Rule name"
+                        autoFocus={shouldFocusName}
+                        accessibilityLabel="Rule name"
                         className="text-base font-semibold px-3 py-2 border rounded-lg text-foreground bg-background border-border"
                     />
 

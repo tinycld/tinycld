@@ -178,6 +178,50 @@ test.describe('Rules', () => {
         })
     })
 
+    // Naming is the first thing a new rule needs, and `autoFocus` alone does
+    // not survive GlueStack's focus trap plus ModalContent's enter animation —
+    // so this asserts the field is really focused, not merely that the prop is
+    // set. Typing without clicking is the behavior users feel.
+    test('the name field is focused when a new rule opens', async ({ page }) => {
+        await login(page)
+        await navigateToRulesSettings(page)
+
+        await page.getByText('New rule', { exact: true }).first().click()
+        await expect(page.getByText('New rule', { exact: true }).last()).toBeVisible()
+
+        const nameInput = page.getByPlaceholder('Rule name')
+        await expect(nameInput).toBeFocused()
+        await page.keyboard.type('typed without clicking')
+        await expect(nameInput).toHaveValue('typed without clicking')
+    })
+
+    test('editing an existing rule does not steal focus', async ({ page }) => {
+        await login(page)
+        await navigateToRulesSettings(page)
+
+        const ruleName = `E2E focus rule ${Date.now()}`
+
+        await page.getByText('New rule', { exact: true }).first().click()
+        await page.getByPlaceholder('Rule name').fill(ruleName)
+        await selectFromMenu(
+            page,
+            page.getByText('Select a trigger…', { exact: true }),
+            'Run manually'
+        )
+        await page.getByText('add action', { exact: true }).click()
+        await page.getByText('Send me a notification', { exact: true }).click()
+        await page.getByText('Title').locator('..').getByRole('textbox').first().fill('t')
+        await page.getByText('Save', { exact: true }).click()
+        await expect(page.getByText(ruleName, { exact: true })).toBeVisible()
+
+        // Reopening is usually to change a condition or action, so grabbing the
+        // name field would fight what the user came in to do.
+        await openOverflowMenu(page, ruleName)
+        await page.getByText('Edit', { exact: true }).click()
+        await expect(page.getByText('Edit rule', { exact: true })).toBeVisible()
+        await expect(page.getByPlaceholder('Rule name')).not.toBeFocused()
+    })
+
     // The builder's Save/Cancel used to be CLIPPED off-screen: ModalContent is
     // `overflow-hidden` with no height of its own, so header + scroll region +
     // error list + footer could exceed the viewport and the excess simply
