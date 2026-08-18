@@ -1,7 +1,8 @@
 name: 'Configure tinycld test environment'
 description: >-
   Shared e2e prep every tinycld package's e2e job needs, in one place: install
-  the Playwright browser and pre-build the static web bundle (`expo export`
+  the Playwright browser (cached on its version) and pre-build the static web
+  bundle (`expo export`
   with external sourcemaps). The e2e webServer (scripts/e2e-serve.ts) then
   reuses that bundle via TINYCLD_E2E_SKIP_EXPORT instead of rebuilding it, so
   the (multi-minute) export happens exactly once per job as a visible,
@@ -17,11 +18,43 @@ runs:
     # (ws/tinycld/.github/actions/configure-test-env → ../../.. = ws/tinycld).
     # A composite action's steps do NOT inherit the calling job's
     # working-directory, so resolve it explicitly from $GITHUB_ACTION_PATH.
-    - name: Install Playwright browser (chromium)
+    # Cache key is the RESOLVED Playwright version, not a lockfile hash: the
+    # browser build is pinned to the Playwright release, so two lockfiles that
+    # resolve to the same version want the same cache entry — and a lockfile
+    # change that does not move Playwright must not evict it.
+    - name: Resolve Playwright version
+      id: pw
       shell: bash
       run: |
         cd "$GITHUB_ACTION_PATH/../../.."
-        pnpm exec playwright install --with-deps chromium
+        echo "version=$(pnpm exec playwright --version | tr -d '\n' | awk '{print $NF}')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Playwright browsers
+      id: pw-cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
+    # Split deliberately. The browser BINARY is cacheable; the apt packages
+    # --with-deps installs are not (they land in system paths the cache does not
+    # cover), and on the Ubuntu runner image nearly all of them already report
+    # "already the newest version" — so that step is mostly apt confirming there
+    # is nothing to do. Running install-deps only on a cache miss would be
+    # wrong: the cache restores ~/.cache/ms-playwright but never the system
+    # libraries, so a hit still needs them present.
+    - name: Install Playwright system dependencies
+      shell: bash
+      run: |
+        cd "$GITHUB_ACTION_PATH/../../.."
+        pnpm exec playwright install-deps chromium
+
+    - name: Install Playwright browser (chromium)
+      if: steps.pw-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        cd "$GITHUB_ACTION_PATH/../../.."
+        pnpm exec playwright install chromium
 
     # Pre-build the static web bundle once. e2e-serve.ts runs with
     # TINYCLD_E2E_SKIP_EXPORT=1 (set on the E2E job step) and reuses this dist/.
