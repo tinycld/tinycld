@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -112,15 +113,30 @@ func recordsPath(collection string) string {
 	return "/api/collections/" + url.PathEscape(collection) + "/records"
 }
 
+var filterPlaceholder = regexp.MustCompile(`\{:(\w+)\}`)
+
 // Filter substitutes each {:name} placeholder in expr with the quoted value,
 // using the same quoting as PocketBase's own pb.filter helper (and the web
 // client's inline quote()): strings get `\` and `"` escaped and are wrapped
 // in double quotes; numbers and bools render bare.
+//
+// One pass over the expression, not one ReplaceAll per param: a substituted
+// VALUE containing "{:something}" must never itself be treated as a
+// placeholder. With map iteration that was both order-dependent (so the same
+// inputs could produce different filters run to run) and a way for
+// user-supplied text to reach the filter as syntax.
+//
+// An unknown placeholder is left verbatim — the server rejects it, which is a
+// better failure than silently querying with a hole in the expression.
 func Filter(expr string, params map[string]any) string {
-	for name, v := range params {
-		expr = strings.ReplaceAll(expr, "{:"+name+"}", filterValue(v))
-	}
-	return expr
+	return filterPlaceholder.ReplaceAllStringFunc(expr, func(match string) string {
+		name := match[2 : len(match)-1]
+		v, ok := params[name]
+		if !ok {
+			return match
+		}
+		return filterValue(v)
+	})
 }
 
 func filterValue(v any) string {

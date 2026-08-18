@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"tinycld.org/cli/output"
@@ -17,7 +18,7 @@ import (
 // WaitEnter pauses until the user presses Enter. Skipped (returning
 // immediately) under --yes or when stdin is not a terminal.
 func WaitEnter(o output.Options, yes bool, stdin io.Reader, stdout io.Writer, msg string) {
-	if yes || !o.TTY {
+	if yes || !o.Interactive {
 		return
 	}
 	fmt.Fprint(stdout, msg)
@@ -31,7 +32,7 @@ func Confirm(o output.Options, yes bool, stdin io.Reader, stdout io.Writer, msg 
 	if yes {
 		return true, nil
 	}
-	if !o.TTY {
+	if !o.Interactive {
 		return false, errors.New("refusing to prompt without a terminal — pass --yes to proceed")
 	}
 	fmt.Fprintf(stdout, "%s [y/N] ", msg)
@@ -41,4 +42,30 @@ func Confirm(o output.Options, yes bool, stdin io.Reader, stdout io.Writer, msg 
 	}
 	answer = strings.ToLower(strings.TrimSpace(answer))
 	return answer == "y" || answer == "yes", nil
+}
+
+// ConfirmOverwrite asks before a download clobbers an existing local file.
+//
+// One helper rather than the check open-coded per command: `drive get`,
+// `drive export`, `mail download` and the contacts/calendar `--out` writers all
+// stream onto a caller-named path, and a silent overwrite of the wrong file is
+// not recoverable from the CLI.
+//
+// Returns nil when the path is free, when the user agrees, or under --yes.
+// A refusal (or a non-TTY run without --yes) comes back as an error the caller
+// can return unchanged — the download simply does not happen.
+func ConfirmOverwrite(o output.Options, yes bool, stdin io.Reader, stdout io.Writer, path string) error {
+	if _, err := os.Stat(path); err != nil {
+		// Not there (or unreadable — the write itself will report that
+		// properly): nothing to overwrite, so nothing to ask about.
+		return nil
+	}
+	ok, err := Confirm(o, yes, stdin, stdout, fmt.Sprintf("%s already exists. Overwrite?", path))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%s: not overwritten", path)
+	}
+	return nil
 }

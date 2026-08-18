@@ -197,3 +197,39 @@ func TestUserIDMemoizesUserinfo(t *testing.T) {
 		t.Fatalf("userinfo calls = %d, want 1 (memoized)", calls)
 	}
 }
+
+// A substituted VALUE must never be rescanned for placeholders. The old
+// per-param ReplaceAll loop did exactly that, so a filename or search term
+// containing "{:something}" could reach the filter as syntax — and which params
+// won depended on Go's randomized map iteration order.
+func TestFilterDoesNotRescanSubstitutedValues(t *testing.T) {
+	// The value of :name itself looks like the :secret placeholder.
+	got := Filter(`name = {:name} && owner = {:secret}`, map[string]any{
+		"name":   `{:secret}`,
+		"secret": "rec_private",
+	})
+	want := `name = "{:secret}" && owner = "rec_private"`
+	if got != want {
+		t.Errorf("Filter() = %q, want %q", got, want)
+	}
+
+	// Stable across runs regardless of map iteration order.
+	for range 50 {
+		if again := Filter(`name = {:name} && owner = {:secret}`, map[string]any{
+			"name":   `{:secret}`,
+			"secret": "rec_private",
+		}); again != want {
+			t.Fatalf("Filter() is order-dependent: got %q, want %q", again, want)
+		}
+	}
+}
+
+// An unknown placeholder stays verbatim so the server rejects the filter,
+// rather than being dropped and silently widening the query.
+func TestFilterLeavesUnknownPlaceholders(t *testing.T) {
+	got := Filter(`a = {:known} && b = {:missing}`, map[string]any{"known": 1})
+	want := `a = 1 && b = {:missing}`
+	if got != want {
+		t.Errorf("Filter() = %q, want %q", got, want)
+	}
+}
