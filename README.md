@@ -102,6 +102,8 @@ pnpm run ssl:generate
   `replace tinycld.org/core => ../core/server`.
 - **`server/pb_migrations/`, `server/pb_hooks/`** — landing dirs for symlinks the generator
   populates from core's `server/` plus each linked feature package.
+- **`cli/`** — the user-facing `tinycld` command line tool (Go, module `tinycld.org/cli`).
+  A Cobra CLI the server cross-compiles for its own installed package set.
 - **`Dockerfile`, `docker-compose.yml`, `eas.json`** — deployment.
 
 ## Adding / removing feature packages
@@ -129,6 +131,55 @@ the workspace-root `pnpm-workspace.yaml` before installing.
 
 Remove one by deleting its sibling clone and re-running `pnpm install`. The set of
 linked packages = the set of installed workspace members.
+
+## Command line tool
+
+`cli/` builds the user-facing `tinycld` binary — the end-user tool for scripting Drive,
+Mail, Cards, Contacts, Calendar and document/spreadsheet comments from a terminal. Each
+server cross-compiles its own copy containing exactly the command groups for the packages
+it has installed; users download it from Settings → Personal → About in the app.
+Authentication is an OAuth 2.1 device grant, revocable from Settings → Personal →
+Connected apps.
+
+**This `tinycld` binary is not `tinycld-pkg`** — `tinycld-pkg` (`@tinycld/package-scripts`,
+nested at `package-scripts/`) is the per-member *developer* tool that runs biome + tsc +
+vitest, described under [Working in this repo](#working-in-this-repo). They are unrelated
+programs.
+
+Build it locally:
+
+```sh
+pnpm run packages:generate   # from tinycld/
+cd cli && go build .
+```
+
+A feature package contributes a command group with a `cli` manifest block (`package`,
+`module`, `scopes`) plus a Go module exposing
+`Register(root *cobra.Command, c *client.Client)`. The generator emits
+`cli/cli_extensions.go`, `cli/go.work`, and `cli/search_slugs.go` (all gitignored). The CLI
+module deliberately does **not** import `tinycld.org/core`.
+
+Docs: <https://tinycld.org/docs/command-line-tool> and
+<https://tinycld.org/docs/reference/cli-reference>.
+
+## Automation rules
+
+The workflow-rules engine lives in `core/server/automation/` (Go). It binds PocketBase
+record hooks, evaluates each user's rules, executes actions, and logs every run. A rule is
+When (trigger) / If (optional conditions) / Then (ordered actions), stored in PocketBase and
+evaluated server-side — so rules fire whether or not the app is open.
+
+Packages declare their triggers and actions as pure data via an
+`automation: { definitions: 'automation' }` manifest block; the generator validates every
+definition and merges them into `server/automation_defs.json`, failing the build on a
+violation.
+
+Users manage rules at Settings → Rules; some packages (mail) also offer a filtered
+per-package view.
+
+Package-author guide: [docs/automation.md](docs/automation.md) and
+<https://tinycld.org/docs/anatomy/automation>. User docs:
+<https://tinycld.org/docs/automation-rules>.
 
 ## Working in this repo
 
