@@ -20,6 +20,10 @@ const (
 // notification without racing the real push I/O against app teardown.
 var notifyUser = notify.NotifyUser
 
+// deliverNotification is the reporting variant, for core:notify — an action
+// whose run result must reflect whether the notification actually landed.
+var deliverNotification = notify.DeliverToUser
+
 // appIsLive reports whether app still has a usable DB connection pool. The
 // auto-disable notification fires from a background goroutine that can
 // outlive the request/test that triggered it; checking this before touching

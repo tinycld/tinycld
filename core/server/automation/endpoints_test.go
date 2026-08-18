@@ -2,8 +2,10 @@
 package automation
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 
@@ -76,6 +78,49 @@ func TestDryRunScoping(t *testing.T) {
 	}
 }
 
+// TestDryRunZeroMatchesMarshalsToEmptyArray pins the wire shape, not just the
+// Go value: the client maps over `matches`, so a nil slice serializing to
+// `null` crashes the dry-run panel on the ordinary "nothing matches yet" case.
+func TestDryRunZeroMatchesMarshalsToEmptyArray(t *testing.T) {
+	app, eng, u := engineApp(t)
+	col, _ := app.FindCollectionByNameOrId("tickets")
+	r := core.NewRecord(col)
+	r.Set("title", "routine")
+	r.Set("user", u.Id)
+	if err := app.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	ast := ConditionsAST{Match: "all", Groups: []ConditionGroup{{
+		Match:      "any",
+		Conditions: []Condition{{Field: "title", Op: "contains", Value: "matches-nothing"}},
+	}}}
+
+	res, err := eng.dryRun(u, "tickets:ticket-created", ast)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Matches) != 0 {
+		t.Fatalf("expected no matches, got %d", len(res.Matches))
+	}
+	b, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"matches":[]`) {
+		t.Fatalf("zero matches must marshal to [], got %s", b)
+	}
+
+	// An error return must not emit `null` either — the client parses the body
+	// on the failure path too.
+	bad, err := eng.dryRun(u, "tickets:no-such-trigger", ast)
+	if err == nil {
+		t.Fatal("unknown trigger must error")
+	}
+	if b, _ := json.Marshal(bad); !strings.Contains(string(b), `"matches":[]`) {
+		t.Fatalf("error result must still marshal matches as [], got %s", b)
+	}
+}
+
 // TestDryRunUnscopedRequiresAdmin covers the "collection has no resolvable
 // owner field" branch: ownerFilterFor returns ok=false for "broadcasts" (no
 // user/owner/author relation), so dry-run can't scope results to the caller.
@@ -116,18 +161,20 @@ func TestDryRunUnscopedRequiresAdmin(t *testing.T) {
 // TestCoreNotifyHandler exercises the real core:notify handler as Register
 // installs it — not a test-local stub (actions_test.go's
 // TestNativeDispatchAndMissingHandler registers its own) — and asserts it
-// goes through the notifyUser seam rather than calling notify.NotifyUser
-// directly, so a test can observe it without racing real push I/O.
+// goes through the deliverNotification seam rather than calling
+// notify.DeliverToUser directly, so a test can observe it without racing real
+// push I/O.
 func TestCoreNotifyHandler(t *testing.T) {
 	t.Cleanup(ResetRegistriesForTest)
 	registerCoreNativeActions()
 
 	captured := make(chan notify.NotifyParams, 1)
-	original := notifyUser
-	notifyUser = func(app core.App, params notify.NotifyParams) {
+	original := deliverNotification
+	deliverNotification = func(app core.App, params notify.NotifyParams) error {
 		captured <- params
+		return nil
 	}
-	t.Cleanup(func() { notifyUser = original })
+	t.Cleanup(func() { deliverNotification = original })
 
 	app, rule := runsApp(t)
 	defs := &Defs{Packages: []PackageDefs{{
@@ -147,6 +194,9 @@ func TestCoreNotifyHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Synchronous: the handler has returned, so the notification is already
+	// delivered. It used to run on a detached goroutine, which is why the
+	// action recorded "ok" before delivery had even been attempted.
 	select {
 	case params := <-captured:
 		if params.Type != "automation" || params.Package != "core" {
@@ -158,7 +208,39 @@ func TestCoreNotifyHandler(t *testing.T) {
 		if params.UserID != rule.GetString("owner") {
 			t.Fatalf("UserID must be the rule owner: got %q want %q", params.UserID, rule.GetString("owner"))
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for the async core:notify handler")
+	default:
+		t.Fatal("core:notify must deliver before returning, so its run result reflects the outcome")
+	}
+}
+
+// A failed delivery must surface as a failed action, not a cheerful "ok".
+// Before the handler ran synchronously, a notification that never landed left
+// run history looking healthy — and auto-disable could never see it failing.
+func TestCoreNotifyReportsDeliveryFailure(t *testing.T) {
+	t.Cleanup(ResetRegistriesForTest)
+	registerCoreNativeActions()
+
+	original := deliverNotification
+	deliverNotification = func(core.App, notify.NotifyParams) error {
+		return fmt.Errorf("notifications collection unavailable")
+	}
+	t.Cleanup(func() { deliverNotification = original })
+
+	app, rule := runsApp(t)
+	defs := &Defs{Packages: []PackageDefs{{
+		Slug: "core",
+		Actions: []ActionDef{{
+			ID: "notify", Kind: "native",
+			Params: []ParamDef{{Key: "title"}},
+		}},
+	}}}
+
+	err := ExecuteAction(app, defs, "core:notify",
+		map[string]any{"title": "x"}, rule, TriggerDef{}, nil, 0)
+	if err == nil {
+		t.Fatal("a failed notification must fail the action")
+	}
+	if !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("the reason must reach run history: %v", err)
 	}
 }

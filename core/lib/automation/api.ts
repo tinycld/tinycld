@@ -54,12 +54,25 @@ export interface DryRunRequest {
     conditions: ConditionsAst
 }
 
+export interface DryRunMatch {
+    id: string
+    summary: Record<string, unknown>
+}
+
+// `matches` is nullable on the wire: Go marshals an empty slice as `null`
+// unless it was explicitly initialized, and an older server on the other side
+// of an upgrade still does. Typed honestly so the compiler forces the guard —
+// consumers should read the normalized result from dryRun() rather than
+// touching this shape directly.
 export interface DryRunResponse {
     total: number
-    matches: Array<{
-        id: string
-        summary: Record<string, unknown>
-    }>
+    matches: DryRunMatch[] | null
+}
+
+// DryRunResult is what callers actually get: matches is guaranteed present.
+export interface DryRunResult {
+    total: number
+    matches: DryRunMatch[]
 }
 
 export interface RunResponse {

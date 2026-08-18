@@ -44,6 +44,7 @@ export function ConditionsCard({ draft, catalog, onChange }: ConditionsCardProps
                     key={group.uid}
                     draft={draft}
                     fields={trigger?.fields ?? []}
+                    group={group}
                     groupIndex={groupIndex}
                     onChange={onChange}
                 />

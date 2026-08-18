@@ -1,4 +1,4 @@
-import type { CatalogResponse, DryRunResponse } from '@tinycld/core/lib/automation/api'
+import type { CatalogResponse, DryRunMatch, DryRunResult } from '@tinycld/core/lib/automation/api'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
 import { conditionsAstSchema } from '@tinycld/core/lib/automation/schemas'
 import { useRuleMutations } from '@tinycld/core/lib/automation/use-rule-mutations'
@@ -15,7 +15,7 @@ export interface DryRunPanelProps {
 
 const MAX_MATCH_ROWS = 10
 
-function matchSummaryText(match: DryRunResponse['matches'][number], fieldKeys: string[]): string {
+function matchSummaryText(match: DryRunMatch, fieldKeys: string[]): string {
     const parts = fieldKeys
         .map(key => match.summary[key])
         .filter(v => v !== undefined && v !== null)
@@ -23,17 +23,11 @@ function matchSummaryText(match: DryRunResponse['matches'][number], fieldKeys: s
     return parts.length > 0 ? parts.join(' · ') : match.id
 }
 
-function MatchRow({
-    match,
-    fieldKeys,
-}: {
-    match: DryRunResponse['matches'][number]
-    fieldKeys: string[]
-}) {
+function MatchRow({ match, fieldKeys }: { match: DryRunMatch; fieldKeys: string[] }) {
     return <Text className="text-sm text-foreground">{matchSummaryText(match, fieldKeys)}</Text>
 }
 
-function ResultSummary({ result, fieldKeys }: { result: DryRunResponse; fieldKeys: string[] }) {
+function ResultSummary({ result, fieldKeys }: { result: DryRunResult; fieldKeys: string[] }) {
     return (
         <View className="gap-1.5">
             <Text className="text-sm text-foreground">
@@ -79,12 +73,18 @@ export function DryRunPanel({ draft, catalog, isVisible }: DryRunPanelProps) {
     const trigger = catalog.triggers.find(t => t.ref === draft.trigger)
     if (!trigger || trigger.synthetic) return null
 
-    // Keying on trigger + a stringified snapshot of conditions remounts the
-    // content below whenever either changes — the simplest way to drop a
-    // stale dry-run result/error without an effect: useMutation's data/error
-    // live in that mount's local state, so a fresh key means a fresh
-    // (empty) mutation state, same as if the user had never pressed Test.
-    const conditionsKey = JSON.stringify(draft.conditions)
+    // Keying on trigger + a digest of the conditions remounts the content
+    // below whenever either changes — the simplest way to drop a stale dry-run
+    // result/error without an effect: useMutation's data/error live in that
+    // mount's local state, so a fresh key means a fresh (empty) mutation
+    // state, same as if the user had never pressed Test.
+    //
+    // The digest deliberately excludes the builder-local `uid`s that
+    // JSON.stringify(draft.conditions) would carry: those are fresh React keys
+    // regenerated as groups and rows are added, so including them remounted the
+    // panel — discarding an in-flight request and its result — on edits that
+    // did not change what would be matched at all.
+    const conditionsKey = conditionsDigest(draft.conditions)
 
     return (
         <DryRunPanelContent
@@ -93,6 +93,19 @@ export function DryRunPanel({ draft, catalog, isVisible }: DryRunPanelProps) {
             trigger={trigger}
         />
     )
+}
+
+// conditionsDigest reduces an AST to what a dry run actually depends on: the
+// match modes and each condition's field/op/value, in order. Two ASTs that
+// would query identically produce the same digest.
+function conditionsDigest(conditions: RuleDraft['conditions']): string {
+    return JSON.stringify([
+        conditions.match,
+        conditions.groups.map(group => [
+            group.match,
+            group.conditions.map(c => [c.field, c.op, c.value ?? null]),
+        ]),
+    ])
 }
 
 function DryRunPanelContent({

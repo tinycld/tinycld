@@ -4,6 +4,8 @@ package automation
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"runtime/debug"
 	"sort"
 	"time"
 
@@ -215,9 +217,24 @@ func (e *Engine) worker(ctx context.Context) {
 			if !appIsLive(e.app) {
 				return
 			}
-			e.dispatch(ev)
+			e.dispatchSafely(ev)
 		}
 	}
+}
+
+// dispatchSafely contains a panic to the one event that caused it. The worker
+// is the only consumer of the queue, so an unwinding panic here would take the
+// process down and leave every later trigger unserved — a single malformed rule
+// must not become a crash loop.
+func (e *Engine) dispatchSafely(ev event) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("dispatch panicked, dropping event",
+				"trigger", ev.TriggerRef, "rule", ev.RuleID, "panic", r,
+				"stack", string(debug.Stack()))
+		}
+	}()
+	e.dispatch(ev)
 }
 
 // DispatchForTest runs one event synchronously.
@@ -283,13 +300,22 @@ func (e *Engine) dispatch(ev event) {
 		ownerSet[id] = true
 	}
 
+	// An org rule's stop halts everything downstream; a personal rule's stop
+	// halts only that owner's later rules. A shared-audience trigger (a team
+	// mailbox, a board everyone watches) dispatches one event to every member's
+	// personal rules, so a global stop would let whoever happens to sort first
+	// silently switch off everybody else's automation.
 	stopped := false
+	stoppedOwners := map[string]bool{}
 	for _, rule := range rules {
 		if stopped {
 			break
 		}
 		if rule.Id == ev.SourceRule {
 			continue // a rule never re-fires on its own write
+		}
+		if stoppedOwners[rule.GetString("owner")] {
+			continue
 		}
 		// No record → no owner to resolve (ResolveOwners returns nil); the
 		// rule firing IS the owner's context (e.g. a scheduled rule), so the
@@ -332,7 +358,10 @@ func (e *Engine) dispatch(ev event) {
 			if rule.GetString("scope") == "org" {
 				stopped = true // org stop halts everything downstream
 			} else {
-				stopped = true // personal stop halts later personal rules — org already ran (org-first ordering)
+				// Personal stop: only this owner's later rules. Org rules have
+				// already run (org-first ordering), so nothing of theirs is
+				// skipped by stopping here.
+				stoppedOwners[rule.GetString("owner")] = true
 			}
 		}
 	}
@@ -353,6 +382,17 @@ func (timeoutErr) Error() string { return "action timed out" }
 func (e *Engine) runActionWithTimeout(a storedAction, rule *core.Record, ev event) error {
 	done := make(chan error, 1)
 	go func() {
+		// A handler panic must surface as a failed action on this rule's run,
+		// not as a dead process: this goroutine is separate from the worker's,
+		// so the worker's recover cannot see it.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("action panicked",
+					"action", a.Ref, "rule", rule.Id, "panic", r,
+					"stack", string(debug.Stack()))
+				done <- fmt.Errorf("action %s panicked: %v", a.Ref, r)
+			}
+		}()
 		done <- ExecuteAction(e.app, e.defs, a.Ref, a.Params, rule, ev.Trigger, ev.Record, ev.Depth)
 	}()
 	select {

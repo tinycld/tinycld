@@ -142,3 +142,32 @@ func TestDirEnvOverride(t *testing.T) {
 		t.Fatalf("Dir() = %q", got)
 	}
 }
+
+// A plain-http origin to a non-loopback host sends the bearer token in
+// cleartext. NormalizeOrigin only picks a scheme for a BARE host, so an
+// explicit http:// URL reaches the config verbatim — that is what this flags.
+func TestIsInsecureOrigin(t *testing.T) {
+	insecure := []string{
+		"http://mail.example.com",
+		"http://mail.example.com:8080",
+		"http://192.168.1.10:7110",
+	}
+	for _, o := range insecure {
+		if !IsInsecureOrigin(o) {
+			t.Errorf("IsInsecureOrigin(%q) = false, want true", o)
+		}
+	}
+
+	secure := []string{
+		"https://mail.example.com",
+		"http://localhost:7110",
+		"http://127.0.0.1:7110",
+		"http://[::1]:7110",
+		"https://localhost",
+	}
+	for _, o := range secure {
+		if IsInsecureOrigin(o) {
+			t.Errorf("IsInsecureOrigin(%q) = true, want false", o)
+		}
+	}
+}

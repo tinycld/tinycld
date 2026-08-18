@@ -3,6 +3,7 @@ package keychain
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -72,6 +73,57 @@ func TestFileStoreEscapesAccountNames(t *testing.T) {
 	}
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 files inside the store dir, got %d", len(entries))
+	}
+}
+
+// The fallback store must produce filenames Windows can actually create.
+// url.PathEscape leaves ':' alone (it is legal in a URL path), so the default
+// context name `localhost:7110` produced a filename Windows rejects outright —
+// stranding a credential the user had already authenticated for. The assertion
+// is on the NAME, so it holds when the suite runs on Linux or macOS too.
+func TestFileStorePathIsLegalOnWindows(t *testing.T) {
+	fs := fileStore{dir: t.TempDir()}
+	for _, account := range []string{
+		"localhost:7110",
+		"example.com:443",
+		`weird*name?with"reserved<chars>|here`,
+		"weird/../name",
+	} {
+		name := filepath.Base(fs.path(account))
+		if strings.ContainsAny(name, `<>:"/\|?*`) {
+			t.Errorf("path(%q) = %q contains a character Windows rejects", account, name)
+		}
+		// Still inside the store dir.
+		if dir := filepath.Dir(fs.path(account)); dir != fs.dir {
+			t.Errorf("path(%q) escaped the store dir: %q", account, dir)
+		}
+	}
+}
+
+// Distinct accounts must never collide on one file, or two contexts would
+// share (and overwrite) a single credential.
+func TestFileStoreEscapingIsUnambiguous(t *testing.T) {
+	fs := fileStore{dir: t.TempDir()}
+	accounts := []string{"localhost:7110", "localhost%3A7110", "localhost7110"}
+	seen := map[string]string{}
+	for _, a := range accounts {
+		p := fs.path(a)
+		if prev, dup := seen[p]; dup {
+			t.Fatalf("accounts %q and %q both map to %q", prev, a, p)
+		}
+		seen[p] = a
+	}
+	// And each round-trips to its own value.
+	for i, a := range accounts {
+		if err := fs.Set(a, fmt.Sprintf("v%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, a := range accounts {
+		v, err := fs.Get(a)
+		if err != nil || v != fmt.Sprintf("v%d", i) {
+			t.Errorf("get %q = %q, %v", a, v, err)
+		}
 	}
 }
 

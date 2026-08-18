@@ -2,6 +2,7 @@
 package automation
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -53,6 +54,7 @@ func engineApp(t *testing.T) (core.App, *Engine, *core.Record) {
 	if err := app.Save(col); err != nil {
 		t.Fatal(err)
 	}
+	allowAuthedWrites(t, app, col)
 
 	// broadcasts: no user/owner/author relation at all — exercises the
 	// unscoped dry-run path (TestDryRunUnscopedRequiresAdmin), which
@@ -86,6 +88,10 @@ func engineApp(t *testing.T) (core.App, *Engine, *core.Record) {
 				"title": {Literal: "clone"},
 				"user":  {Context: "owner"},
 			}},
+		}, {
+			// boom's handler panics, so a test can assert the engine records a
+			// failed run rather than taking the process down with it.
+			ID: "boom", Label: "boom", Kind: "native",
 		}},
 	}}}
 	eng := NewEngine(app, defs)
@@ -270,6 +276,101 @@ func TestStopProcessingAndOrdering(t *testing.T) {
 	}
 }
 
+// TestPersonalStopIsScopedToItsOwner is the N5 regression. A shared-audience
+// trigger (a team mailbox, a board everyone watches) dispatches ONE event to
+// every member's personal rules. A personal stop_processing must therefore halt
+// only its own owner's later rules — before the fix it set a global flag, so
+// whoever sorted first silently switched off everybody else's automation.
+func TestPersonalStopIsScopedToItsOwner(t *testing.T) {
+	app, _, u := engineApp(t)
+
+	users, _ := app.FindCollectionByNameOrId("users")
+	other := core.NewRecord(users)
+	other.Set("email", "other@example.com")
+	other.Set("username", "otheruser")
+	other.Set("name", "Other")
+	other.Set("role", "member")
+	other.SetPassword("0123456789")
+	if err := app.Save(other); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both users are in the audience for every ticket — the shared-mailbox
+	// shape, where one record legitimately belongs to several people.
+	RegisterOwnerResolver("tickets:ticket-created", func(core.App, *core.Record) []string {
+		return []string{u.Id, other.Id}
+	})
+
+	// u's rule stops processing; it sorts first, so before the fix it halted
+	// the loop outright and other's rule never ran.
+	stopper := makeRule(t, app, u.Id, "personal", nil,
+		[]any{map[string]any{"ref": "tickets:set-status", "params": map[string]any{"status": "from-u"}}}, 0, true)
+	uLater := makeRule(t, app, u.Id, "personal", nil,
+		[]any{map[string]any{"ref": "tickets:set-status", "params": map[string]any{"status": "u-later"}}}, 1, false)
+	otherRule := makeRule(t, app, other.Id, "personal", nil,
+		[]any{map[string]any{"ref": "tickets:set-status", "params": map[string]any{"status": "from-other"}}}, 2, false)
+
+	col, _ := app.FindCollectionByNameOrId("tickets")
+	rec := core.NewRecord(col)
+	rec.Set("title", "shared")
+	rec.Set("user", u.Id)
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForRuns(t, app, stopper.Id, 1)
+	waitForRuns(t, app, otherRule.Id, 1)
+
+	// u's own later rule is still skipped — that is what stop_processing means.
+	time.Sleep(200 * time.Millisecond)
+	runs, _ := app.FindRecordsByFilter("rule_runs", "rule = {:id}", "", 0, 0,
+		map[string]any{"id": uLater.Id})
+	if len(runs) != 0 {
+		t.Fatalf("a personal stop must still skip its OWN owner's later rules, got %d runs", len(runs))
+	}
+}
+
+// An org rule's stop is deliberately global: it speaks for the deployment, not
+// for one person, so it halts every owner's personal rules downstream.
+func TestOrgStopHaltsEveryOwner(t *testing.T) {
+	app, _, u := engineApp(t)
+
+	users, _ := app.FindCollectionByNameOrId("users")
+	other := core.NewRecord(users)
+	other.Set("email", "other2@example.com")
+	other.Set("username", "otheruser2")
+	other.Set("name", "Other Two")
+	other.Set("role", "member")
+	other.SetPassword("0123456789")
+	if err := app.Save(other); err != nil {
+		t.Fatal(err)
+	}
+	RegisterOwnerResolver("tickets:ticket-created", func(core.App, *core.Record) []string {
+		return []string{u.Id, other.Id}
+	})
+
+	orgStop := makeRule(t, app, u.Id, "org", nil,
+		[]any{map[string]any{"ref": "tickets:set-status", "params": map[string]any{"status": "org"}}}, 0, true)
+	personal := makeRule(t, app, other.Id, "personal", nil,
+		[]any{map[string]any{"ref": "tickets:set-status", "params": map[string]any{"status": "personal"}}}, 1, false)
+
+	col, _ := app.FindCollectionByNameOrId("tickets")
+	rec := core.NewRecord(col)
+	rec.Set("title", "t")
+	rec.Set("user", u.Id)
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	waitForRuns(t, app, orgStop.Id, 1)
+	time.Sleep(200 * time.Millisecond)
+	runs, _ := app.FindRecordsByFilter("rule_runs", "rule = {:id}", "", 0, 0,
+		map[string]any{"id": personal.Id})
+	if len(runs) != 0 {
+		t.Fatalf("an org stop must halt other owners' rules too, got %d runs", len(runs))
+	}
+}
+
 func TestStartIsIdempotent(t *testing.T) {
 	app, eng, _ := engineApp(t)
 
@@ -364,6 +465,129 @@ func TestChainDepthExceededRunRow(t *testing.T) {
 	if len(summary) != 0 {
 		t.Fatalf("chain-depth-exceeded row must have an empty trigger_summary, got %+v", summary)
 	}
+}
+
+// TestNativeWriteProvenanceStopsChain is the B2 regression: a native handler
+// that creates a record in the collection its own trigger watches must stamp
+// provenance via MarkEngineWrite so the chain terminates at maxChainDepth.
+// Without the stamp every generation looks like a fresh user write (depth 0)
+// and the handler recurses until the process dies.
+func TestNativeWriteProvenanceStopsChain(t *testing.T) {
+	app, _, u := engineApp(t)
+	col, _ := app.FindCollectionByNameOrId("tickets")
+
+	var created int
+	RegisterAction("tickets:boom", func(app core.App, req ActionRequest) error {
+		created++
+		if created > 50 {
+			return nil // safety valve: without the fix this never terminates
+		}
+		made := core.NewRecord(col)
+		made.Set("id", core.GenerateDefaultRandomId())
+		made.Set("title", "native clone")
+		made.Set("user", u.Id)
+		return MarkEngineWrite(req, made.Id, func() error { return app.Save(made) })
+	})
+	makeRule(t, app, u.Id, "org", nil,
+		[]any{map[string]any{"ref": "tickets:boom"}}, 0, false)
+
+	seed := core.NewRecord(col)
+	seed.Set("title", "seed")
+	seed.Set("user", u.Id)
+	if err := app.Save(seed); err != nil {
+		t.Fatal(err)
+	}
+
+	// The chain must go quiet on its own. Poll until the handler stops being
+	// invoked, then assert it stopped because of the depth cap rather than the
+	// safety valve.
+	stable, last := 0, -1
+	for range 100 {
+		if created == last {
+			if stable++; stable >= 5 {
+				break
+			}
+		} else {
+			stable, last = 0, created
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if created == 0 {
+		t.Fatal("the native action never ran")
+	}
+	if created > maxChainDepth+1 {
+		t.Fatalf("native writes must stop at the depth cap, handler ran %d times", created)
+	}
+}
+
+// TestActionPanicRecordsFailedRun proves a panicking native handler becomes a
+// failed action result instead of a dead process. The handler runs on its own
+// goroutine, so only its own recover can contain it.
+func TestActionPanicRecordsFailedRun(t *testing.T) {
+	app, _, u := engineApp(t)
+	RegisterAction("tickets:boom", func(core.App, ActionRequest) error {
+		panic("handler exploded")
+	})
+	rule := makeRule(t, app, u.Id, "org", nil,
+		[]any{map[string]any{"ref": "tickets:boom"}}, 0, false)
+
+	col, _ := app.FindCollectionByNameOrId("tickets")
+	rec := core.NewRecord(col)
+	rec.Set("title", "t")
+	rec.Set("user", u.Id)
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	runs := waitForRuns(t, app, rule.Id, 1)
+	if !runs[0].GetBool("matched") {
+		t.Fatal("the rule matched, so the run row must say so")
+	}
+	var results []ActionResult
+	if err := json.Unmarshal([]byte(runs[0].GetString("results")), &results); err != nil {
+		t.Fatalf("decode results: %v", err)
+	}
+	if len(results) != 1 || results[0].Status != "error" {
+		t.Fatalf("panicking action must record an error result, got %+v", results)
+	}
+	if !strings.Contains(results[0].Message, "panicked") {
+		t.Fatalf("result message should name the panic, got %q", results[0].Message)
+	}
+}
+
+// TestDispatchPanicDoesNotKillWorker proves the worker survives a panic raised
+// in dispatch itself (outside the action goroutine) and keeps serving later
+// events. Before the recover, one such panic unwound the only queue consumer
+// and every subsequent trigger went unserved.
+func TestDispatchPanicDoesNotKillWorker(t *testing.T) {
+	app, eng, u := engineApp(t)
+
+	// An owner resolver runs inside dispatch, on the worker's goroutine.
+	panicOnce := true
+	RegisterOwnerResolver("tickets:ticket-created", func(core.App, *core.Record) []string {
+		if panicOnce {
+			panicOnce = false
+			panic("resolver exploded")
+		}
+		return []string{u.Id}
+	})
+
+	trigger, _, _ := eng.defs.Trigger("tickets:ticket-created")
+	rule := makeRule(t, app, u.Id, "org", nil,
+		[]any{map[string]any{"ref": "tickets:set-status", "params": map[string]any{"status": "after-panic"}}}, 0, false)
+
+	col, _ := app.FindCollectionByNameOrId("tickets")
+	rec := core.NewRecord(col)
+	rec.Set("title", "t")
+	rec.Set("user", u.Id)
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	// The Save above enqueued the panicking dispatch. If the worker died, this
+	// second event is never served and waitForRuns times out.
+	eng.enqueue(event{TriggerRef: "tickets:ticket-created", Trigger: trigger, Record: rec})
+	waitForRuns(t, app, rule.Id, 1)
 }
 
 // TestManualRunOfDisabledRuleStillExecutes proves the manual-run endpoint's

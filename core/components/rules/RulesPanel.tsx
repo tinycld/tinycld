@@ -107,6 +107,11 @@ function sortByOrder(rules: Rules[]): Rules[] {
 // order 0) can't cause display/execution divergence — max is taken over the
 // FULL rule set, not the pkgFilter-narrowed `rules` list, so a mail-scoped
 // "New rule" still lands after every org/personal rule regardless of package.
+//
+// This is only the draft's initial value, shown while the builder is open. The
+// AUTHORITATIVE order is recomputed against the live collection at insert time
+// (see useRuleMutations), because this one is captured when the builder opens
+// and goes stale if rules change in another tab meanwhile.
 function nextOrderFor(allRules: Rules[]): number {
     if (allRules.length === 0) return 0
     return Math.max(...allRules.map(r => r.order)) + 1

@@ -180,12 +180,12 @@ func evalCondition(c Condition, record *core.Record) bool {
 	return false
 }
 
-func evalGroup(g ConditionGroup, record *core.Record, exposed map[string]bool, gate bool) bool {
+func evalGroup(g ConditionGroup, record *core.Record, exposed map[string]bool) bool {
 	if len(g.Conditions) == 0 {
 		return true
 	}
 	for _, c := range g.Conditions {
-		hit := (!gate || exposed[c.Field]) && evalCondition(c, record)
+		hit := exposed[c.Field] && evalCondition(c, record)
 		if g.Match == "any" && hit {
 			return true
 		}
@@ -205,21 +205,21 @@ func evalGroup(g ConditionGroup, record *core.Record, exposed map[string]bool, g
 // caller probe curated-away/hidden columns via match/no-match (e.g.
 // starts_with as a binary-search oracle over a hidden field's value).
 //
-// record == nil (scheduled trigger): unchanged from pre-fix behavior — there
-// is no record whose fields could leak, so the exposure gate doesn't apply;
-// an empty AST still matches, a non-empty AST falls through to evalCondition
-// exactly as before this fix.
+// record == nil (scheduled and manual "run now" dispatch): there is no record
+// to test, so a non-empty AST cannot be satisfied and evaluates to a non-match.
+// Every evalCondition branch reads the record, so this guard is what keeps
+// those paths from dereferencing nil — a rule saved with conditions still
+// reaches here on both. An empty AST matches, as it does everywhere else.
 func EvaluateConditions(ast ConditionsAST, record *core.Record, trigger TriggerDef) bool {
 	if len(ast.Groups) == 0 {
 		return true
 	}
-	gate := record != nil
-	var exposed map[string]bool
-	if gate {
-		exposed = exposedFields(record, trigger)
+	if record == nil {
+		return false
 	}
+	exposed := exposedFields(record, trigger)
 	for _, g := range ast.Groups {
-		hit := evalGroup(g, record, exposed, gate)
+		hit := evalGroup(g, record, exposed)
 		if ast.Match == "any" && hit {
 			return true
 		}

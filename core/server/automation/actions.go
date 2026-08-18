@@ -32,6 +32,35 @@ func takeEngineWrite(recordID string) (engineWrite, bool) {
 	return v.(engineWrite), true
 }
 
+// MarkEngineWrite stamps provenance on a write a native action handler performs
+// itself, then runs it. Record-ops get this for free inside ExecuteAction;
+// a native handler holds its own app and calls Save directly, so without this
+// its output looks like an ordinary user write to the record hook — a handler
+// that writes to a collection its own trigger watches re-fires that trigger
+// with depth 0 forever, never reaching maxChainDepth.
+//
+// Call it around the Save/Delete, passing the ActionRequest so the rule id and
+// depth come from the firing that invoked the handler:
+//
+//	return automation.MarkEngineWrite(req, record.Id, func() error {
+//	    return app.Save(record)
+//	})
+//
+// The record id must be known before the write (native handlers set an explicit
+// id on create). The stamp is removed again if the write fails, so a failed
+// attempt doesn't suppress the next genuine user edit of that record.
+func MarkEngineWrite(req ActionRequest, recordID string, write func() error) error {
+	if req.Rule == nil || recordID == "" {
+		return write()
+	}
+	markEngineWrite(recordID, req.Rule.Id, req.Depth)
+	if err := write(); err != nil {
+		takeEngineWrite(recordID)
+		return err
+	}
+	return nil
+}
+
 func substituteParams(defs ActionDef, raw map[string]any, record *core.Record, trigger TriggerDef, relationKeys map[string]bool) map[string]string {
 	out := map[string]string{}
 	for _, p := range defs.Params {
@@ -142,6 +171,51 @@ func authorizeRelationParams(app core.App, ref string, action ActionDef, req Act
 	return nil
 }
 
+// authorizeTriggerRecordWrite gates a record-op that mutates or deletes the
+// trigger record itself. It is the write-side mirror of the relation-param
+// floor in authorizeRelationParams, and exists for the same reason: the op
+// runs as superuser, so nothing below it consults the collection's own rules.
+//
+// checkPersonalAccess is not a substitute — it asks whether the owner may
+// write to the PACKAGE, never whether they may write THIS record. A trigger
+// fires for a whole audience (an org rule, a shared mailbox, a team board), so
+// without this a rule owner who can merely see a record could move or delete
+// it through automation while the same edit through the UI is refused.
+//
+// The floor is the collection's own updateRule/deleteRule evaluated as the
+// owner, so it travels in migrations and holds in every deployment. A nil rule
+// means superuser-only in PocketBase, so it is refused rather than waved
+// through. Packages needing a stricter check register a TriggerRecordAuthorizer.
+func authorizeTriggerRecordWrite(app core.App, ref string, op string, record *core.Record, req ActionRequest) error {
+	owner, err := app.FindRecordById("users", req.OwnerID)
+	if err != nil {
+		return fmt.Errorf("trigger-record %s: rule owner lookup: %w", op, err)
+	}
+
+	collectionRule := record.Collection().UpdateRule
+	if op == "delete" {
+		collectionRule = record.Collection().DeleteRule
+	}
+	if collectionRule == nil {
+		return fmt.Errorf(
+			"trigger-record %s: %s is superuser-only (no %s rule) — refusing to act as the rule owner",
+			op, record.Collection().Name, op,
+		)
+	}
+	info := &core.RequestInfo{Auth: owner}
+	if ok, err := app.CanAccessRecord(record, info, collectionRule); err != nil || !ok {
+		return fmt.Errorf("trigger-record %s: rule owner may not %s %s record %q",
+			op, op, record.Collection().Name, record.Id)
+	}
+
+	if authorize, registered := triggerRecordAuthorizer(ref); registered {
+		if err := authorize(app, req, record); err != nil {
+			return fmt.Errorf("trigger-record %s: %w", op, err)
+		}
+	}
+	return nil
+}
+
 func resolveSetValue(sv SetValue, params map[string]string, record *core.Record, ownerID string) (any, error) {
 	switch {
 	case sv.Param != "":
@@ -199,7 +273,7 @@ func ExecuteAction(app core.App, defs *Defs, ref string, rawParams map[string]an
 		}
 	}
 	params := substituteParams(action, rawParams, record, trigger, relationKeys)
-	req := ActionRequest{Rule: rule, OwnerID: ownerID, Params: params, Record: record}
+	req := ActionRequest{Rule: rule, OwnerID: ownerID, Params: params, Record: record, Depth: depth}
 
 	// Both kinds pass the relation-id gates: a record-op's superuser Save
 	// bypasses collection rules just as thoroughly as a native handler's
@@ -255,6 +329,9 @@ func ExecuteAction(app core.App, defs *Defs, ref string, rawParams map[string]an
 		}
 		if record.Collection().Name != action.Collection {
 			return fmt.Errorf("record-op %q: trigger record is %q, action declares %q", ref, record.Collection().Name, action.Collection)
+		}
+		if err := authorizeTriggerRecordWrite(app, ref, action.Op.Type, record, req); err != nil {
+			return err
 		}
 		if action.Op.Type == "delete" {
 			marked := defsHaveTrigger(defs, action.Collection, "delete")

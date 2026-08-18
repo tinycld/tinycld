@@ -6,11 +6,36 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestLocalFileName pins the sanitizer every download path relies on to keep a
+// server-supplied name from steering a write out of the user's chosen directory.
+func TestLocalFileName(t *testing.T) {
+	cases := map[string]string{
+		"report.pdf":                 "report.pdf",
+		"../../escaped.txt":          "escaped.txt",
+		"/etc/passwd":                "passwd",
+		"..":                         "download",
+		".":                          "download",
+		"/":                          "download",
+		"":                           "download",
+		"a/b/c.txt":                  "c.txt",
+		`..\..\windows\evil.txt`:     "evil.txt",
+		"trailing/":                  "trailing",
+		"weird name (1).tar.gz":      "weird name (1).tar.gz",
+		"....//....//still-escaping": "still-escaping",
+	}
+	for in, want := range cases {
+		if got := LocalFileName(in); got != want {
+			t.Errorf("LocalFileName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
 
 func TestDownloadToFile(t *testing.T) {
 	content := strings.Repeat("x", 4096)
@@ -125,5 +150,39 @@ func TestStreamingOutlivesClientTimeout(t *testing.T) {
 	got, _ := os.ReadFile(dest)
 	if string(got) != strings.Repeat("chunk", 6) {
 		t.Fatalf("content = %q", got)
+	}
+}
+
+// A download is ordinary user data, not a credential. os.CreateTemp hardcodes
+// 0600, so downloads used to land owner-only regardless of umask — a file the
+// user could not share with their own group, unlike curl or scp.
+func TestDownloadRespectsUmask(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no umask on Windows")
+	}
+	// dataFileMode samples the umask once per process, so this asserts against
+	// whatever it actually sampled rather than re-setting it here — the point
+	// is that the mode is umask-derived data, not the hardcoded 0600.
+	want := dataFileMode().Perm()
+	if want == 0o600 {
+		t.Skip("umask makes the expected mode indistinguishable from the old hardcoded 0600")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("payload"))
+	}))
+	t.Cleanup(srv.Close)
+
+	dest := filepath.Join(t.TempDir(), "report.csv")
+	if err := DownloadPublic(t.Context(), srv.Client(), srv.URL, dest, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Errorf("downloaded file mode = %04o, want %04o (0666 minus the umask)", got, want)
 	}
 }

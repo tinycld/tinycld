@@ -374,3 +374,26 @@ func TestSearchRejectsUnknownPackage(t *testing.T) {
 		t.Error("should not have reached the server")
 	}
 }
+
+// --not is a list of terms to exclude. Anything else it parses into — a `pkg:`
+// chip, a nested `-term` — has no meaning there, and was silently dropped:
+// `--not "pkg:mail"` looked like it worked and filtered nothing.
+func TestSearchNotRejectsNonTerms(t *testing.T) {
+	srv := newSearchServer(t)
+	d := searchDeps(t, srv)
+
+	for _, tc := range []struct{ name, not, wantMsg string }{
+		{"a package chip", "mail:", "--pkg"},
+		{"a nested negation", "-spam", "nested negation"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := runCLI(t, d, "search", "invoice", "--not", tc.not)
+			if err == nil {
+				t.Fatalf("--not %q must be refused, not silently dropped", tc.not)
+			}
+			if !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("error should mention %q, got %q", tc.wantMsg, err)
+			}
+		})
+	}
+}

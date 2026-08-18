@@ -74,7 +74,10 @@ func (e *Engine) ownerFilterFor(trigger TriggerDef) (string, bool) {
 }
 
 func (e *Engine) dryRun(caller *core.Record, triggerRef string, ast ConditionsAST) (dryRunResult, error) {
-	var out dryRunResult
+	// Non-nil so zero matches marshals to [] rather than null: the client maps
+	// over this array, and a null crashes the dry-run panel on the very common
+	// "conditions match nothing yet" case.
+	out := dryRunResult{Matches: []dryRunMatch{}}
 	trigger, _, ok := e.defs.Trigger(triggerRef)
 	if !ok || trigger.Synthetic != "" {
 		return out, fmt.Errorf("unknown or synthetic trigger %q", triggerRef)

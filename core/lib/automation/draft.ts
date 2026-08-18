@@ -8,6 +8,7 @@ import type { ActionItem } from './condition-helpers'
 import { ensureActionUids, ensureUids } from './condition-helpers'
 import { OPERATORS_BY_TYPE } from './helpers'
 import { conditionsAstSchema, ruleActionsSchema } from './schemas'
+import type { ConditionOp } from './types'
 
 export interface RuleDraft {
     id?: string
@@ -169,9 +170,27 @@ function validateConditionsAgainstTrigger(
                     `Operator '${condition.op}' is not valid for field '${field.label}' (${field.type})`
                 )
             }
+            if (NUMERIC_OPS.has(condition.op as ConditionOp) && !isFiniteValue(condition.value)) {
+                // The engine's numeric operators fail closed on a value they
+                // can't read as a number, so saving one is saving a rule that
+                // silently never matches. Caught here rather than at the input.
+                errors.push(`Condition on '${field.label}' needs a number`)
+            }
         }
     }
     return errors
+}
+
+// The operators evalCondition reads with toFloat: eq/neq/gt/lt over a number
+// field, plus within_last_days, whose value is a day count on a date field.
+const NUMERIC_OPS: ReadonlySet<ConditionOp> = new Set(['eq', 'neq', 'gt', 'lt', 'within_last_days'])
+
+function isFiniteValue(value: unknown): boolean {
+    if (typeof value === 'number') return Number.isFinite(value)
+    // A stored string is tolerated only if it actually reads as a number: rules
+    // written by an older build (or by hand) may carry "5" rather than 5.
+    if (typeof value === 'string' && value.trim() !== '') return Number.isFinite(Number(value))
+    return false
 }
 
 function validateTrigger(draft: RuleDraft, catalog: CatalogResponse): string[] {

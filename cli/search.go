@@ -66,7 +66,23 @@ func newSearchCmd(d *deps) *cobra.Command {
 			// The same grammar the palette uses, so a query copied from the app
 			// behaves identically here (see parse_query.go).
 			parsed := parseQuery(args[0], slugs)
-			parsed.Exclude = append(parsed.Exclude, parseQuery(not, slugs).Include...)
+			// --not is a list of terms to exclude, so only its plain terms are
+			// meaningful. Anything else it parses into — a `pkg:` chip, or a
+			// nested `-term` (excluding an exclusion) — has no sensible reading
+			// here, and silently dropping it made `--not "pkg:mail"` look like
+			// it worked. Refuse instead of guessing.
+			negated := parseQuery(not, slugs)
+			if len(negated.Chips) > 0 {
+				return fmt.Errorf(
+					"--not takes terms to exclude, not a package filter; use --pkg %s",
+					strings.Join(negated.Chips, ","))
+			}
+			if len(negated.Exclude) > 0 {
+				return fmt.Errorf(
+					"--not %q contains a nested negation (%s); list the terms to exclude plainly",
+					not, strings.Join(negated.Exclude, ", "))
+			}
+			parsed.Exclude = append(parsed.Exclude, negated.Include...)
 
 			// An exclude-only query has no meaning: FTS5 cannot subtract from
 			// nothing, and the server would return an empty set with no

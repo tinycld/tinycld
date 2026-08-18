@@ -207,3 +207,57 @@ func TestAuthLogoutSurvivesRevokeFailure(t *testing.T) {
 		t.Fatal("credential should be cleared even when revocation fails")
 	}
 }
+
+// The credential is stored before the identity is known, so a userinfo failure
+// past that point must still leave a context naming it. Otherwise the token
+// sits in the keychain with nothing referencing it: invisible to `context
+// list` and unreachable by `auth logout`.
+func TestAuthLoginLeavesNoOrphanedCredential(t *testing.T) {
+	counts := &struct{ tokenPolls int }{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /oauth/device", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"device_code": "dev-code", "user_code": "WDJB-MJHT",
+			"verification_uri":          "http://x/p/oauth/authorize",
+			"verification_uri_complete": "http://x/p/oauth/authorize?user_code=WDJB-MJHT",
+			"expires_in":                900, "interval": 5,
+		})
+	})
+	mux.HandleFunc("POST /oauth/token", func(w http.ResponseWriter, _ *http.Request) {
+		counts.tokenPolls++
+		json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "access-1", "token_type": "Bearer",
+			"expires_in": 3600, "refresh_token": "refresh-1", "scope": "profile",
+		})
+	})
+	// The grant is live, but identity cannot be read (a transient 500, a
+	// revoked scope, a proxy hiccup).
+	mux.HandleFunc("GET /oauth/userinfo", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	d, store := loginDeps(t, srv)
+	host := hostOf(srv)
+
+	if _, _, err := runCLI(t, d, "auth", "login", host); err == nil {
+		t.Fatal("a failed userinfo must surface as an error")
+	}
+
+	// The token was saved, so a context must name it.
+	if _, err := store.Get(host); err != nil {
+		t.Fatalf("the credential should still be stored: %v", err)
+	}
+	cfg, err := config.Load(d.configDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, ok := cfg.Contexts[host]
+	if !ok {
+		t.Fatal("a stored credential with no context is orphaned — unreachable by logout")
+	}
+	if ctx.Origin != "http://"+host {
+		t.Errorf("context origin = %q", ctx.Origin)
+	}
+}

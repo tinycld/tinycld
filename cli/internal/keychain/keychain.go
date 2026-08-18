@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zalando/go-keyring"
 )
@@ -95,7 +96,17 @@ func (s *systemStore) Set(account, value string) error {
 	if err == nil {
 		// A keychain write supersedes any stale file copy from a degraded
 		// earlier session; drop it so Get cannot resurrect old credentials.
-		s.file.Delete(account)
+		//
+		// Reported, not swallowed: Get consults the file store when the
+		// keychain misses, so a file that outlives its replacement can hand
+		// back a SUPERSEDED credential — a silently stale token is exactly the
+		// failure a user cannot diagnose. The Set itself still succeeded, so
+		// this warns rather than erroring.
+		if derr := s.file.Delete(account); derr != nil {
+			fmt.Fprintf(s.warn,
+				"warning: saved to the keychain, but the older copy at %s could not be removed (%v); delete it by hand\n",
+				s.file.Location(account), derr)
+		}
 		s.setDegraded(account, false)
 		return nil
 	}
@@ -144,8 +155,35 @@ func (s *systemStore) Delete(account string) error {
 type fileStore struct{ dir string }
 
 func (f fileStore) path(account string) string {
-	// Context names carry ':' (host:port), which Windows filenames reject.
-	return filepath.Join(f.dir, url.PathEscape(account)+".json")
+	return filepath.Join(f.dir, escapeAccount(account)+".json")
+}
+
+// escapeAccount turns an account name into a filename that is legal on every
+// platform we ship to.
+//
+// url.PathEscape alone is not enough: it deliberately leaves ':' (and a few
+// other Windows-reserved characters) unescaped because they are legal in a URL
+// path. Windows rejects them in filenames, so `localhost:7110.json` cannot be
+// created at all — the fallback store silently fails to persist a credential
+// the user has already authenticated for.
+//
+// PathEscape still runs first, since it handles the separators that would let
+// an account name escape the store directory; this pass then covers what it
+// leaves behind.
+func escapeAccount(account string) string {
+	escaped := url.PathEscape(account)
+	var b strings.Builder
+	b.Grow(len(escaped))
+	for _, r := range escaped {
+		// The Windows-reserved set that survives PathEscape. '%' is already the
+		// escape character, so these encode unambiguously.
+		if strings.ContainsRune(`:*?"<>|`, r) {
+			fmt.Fprintf(&b, "%%%02X", r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // Location names the actual file, not just the directory: a user told their

@@ -162,3 +162,20 @@ func isLoopback(host string) bool {
 	}
 	return false
 }
+
+// IsInsecureOrigin reports whether origin sends credentials in cleartext: plain
+// http to a host that is not loopback.
+//
+// NormalizeOrigin only picks the scheme for a BARE host (loopback → http, else
+// https); an explicit "http://mail.example.com" is honored verbatim, which is
+// the case worth warning about. Every request carries a bearer token, so this
+// is a credential on the wire, not merely unencrypted content. It stays a
+// warning rather than an error: an internal deployment behind a VPN, or a
+// staging box on a private network, is a legitimate reason to accept it.
+func IsInsecureOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	return !isLoopback(u.Hostname()) && !isLoopback(u.Host)
+}

@@ -182,8 +182,12 @@ Native-action caveats:
   unavailable and the UI greys it out ("needs <pkg>") —
   declared-but-unregistered is a supported state, not an error.
 - **Handlers self-enforce access** — see **Record-level authorization**
-  below for what the engine gates for you (relation params) and what stays
-  your job (everything else).
+  below for what the engine gates for you (relation params, trigger-record
+  writes) and what stays your job (everything else).
+- **A write to a trigger-bound collection must go through
+  `MarkEngineWrite`** or your handler's own output re-fires the trigger that
+  invoked it, with no depth to terminate on. See **Record-level
+  authorization** below.
 - Returning an error records the action as failed in `rule_runs` and
   continues to the rule's later actions (mail-filter semantics).
 
@@ -195,8 +199,12 @@ PocketBase collection rules therefore do NOT protect anything on this path —
 whatever check a write needs has to happen in engine or package Go. The
 division of labor:
 
-**The engine gates relation params — and only relation params.** A relation
-param's value is a caller-supplied record id (the rule JSON is
+**The engine gates two things: relation params, and writes to the trigger
+record.** Everything else is the handler's job.
+
+### Relation params
+
+A relation param's value is a caller-supplied record id (the rule JSON is
 client-authored; the picker is a convenience, not a boundary). Before an
 action of either kind runs, every non-empty relation param passes two
 fail-closed layers:
@@ -226,6 +234,60 @@ fail-closed layers:
    core's `apply-label` authorizer returns nil with a comment saying why
    (labels are org-wide by design). The point is that the decision is
    written down where review can see it.
+
+### Trigger-record writes
+
+A record-op with `target: 'trigger-record'` mutates or deletes the record the
+trigger fired on. The record wasn't chosen by the rule author, but the write is
+still a superuser one, so the engine applies its own floor: **the rule owner
+must pass the collection's `updateRule` (or `deleteRule`) for that record.** A
+nil rule means superuser-only in PocketBase and is refused rather than waved
+through.
+
+This is what stops a rule owner who can merely *see* a record from moving or
+deleting it through automation when the same edit through the UI is refused —
+a trigger fires for a whole audience (an org rule, a shared mailbox, a team
+board), so "the owner may write this package" is not the same question.
+`checkPersonalAccess` does not cover it: that is a package-level `pkgaccess`
+floor, never a per-record one.
+
+Register a `TriggerRecordAuthorizer` when the collection's own rules are looser
+than its write semantics — it runs after the floor:
+
+```go
+automation.RegisterTriggerRecordAuthorizer("cards:move-card",
+    func(app core.App, req automation.ActionRequest, record *core.Record) error {
+        return cardMovableBy(app, req.OwnerID, record)
+    })
+```
+
+Unlike a relation param's authorizer this one is optional: the floor is
+meaningful on its own here, because the record came from the trigger rather
+than from client-authored rule JSON.
+
+### Native handlers that write trigger-bound collections
+
+A record-op's writes are stamped with provenance automatically, which is how a
+rule's own output stops re-firing the rule that produced it (`maxChainDepth`).
+The engine cannot do that for a native handler — it hands you an `app` and
+never sees your `Save` — so an unstamped write reads as an ordinary user edit
+and re-fires the trigger with depth 0, forever.
+
+**If your handler writes to a collection any installed trigger watches, perform
+that write through `MarkEngineWrite`:**
+
+```go
+record.Set("id", core.GenerateDefaultRandomId()) // the sentinel is keyed by id
+return automation.MarkEngineWrite(req, record.Id, func() error {
+    return app.Save(record)
+})
+```
+
+It stamps `req`'s rule id and depth, runs the write, and removes the stamp
+again if the write fails (so a failed attempt can't suppress the next genuine
+user edit of that record). `calendar/server/automation.go`'s
+`actionCreateEvent` is the reference: `calendar:event-added` watches
+`calendar_events`, the very collection it creates into.
 
 **Everything else stays the handler's job.** The floor+authorizer pair
 covers ids the *engine* hands you; records your handler looks up itself,

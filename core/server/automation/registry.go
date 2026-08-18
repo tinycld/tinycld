@@ -29,11 +29,22 @@ type ActionRequest struct {
 	OwnerID string
 	Params  map[string]string
 	Record  *core.Record
+	// Depth is how many engine writes deep this firing already is. A handler
+	// that writes to a trigger-bound collection must pass the request to
+	// MarkEngineWrite so its output carries this provenance forward and the
+	// chain terminates at maxChainDepth.
+	Depth int
 }
 
 // ActionHandler is the function shape RegisterAction installs. See
 // ActionRequest's doc for the access-control implication: nothing upstream of
 // the handler enforces pkgaccess for native actions.
+//
+// A handler that writes to a collection any installed trigger watches MUST
+// perform that write through MarkEngineWrite. The engine cannot stamp
+// provenance for you here — it hands the handler an app and never sees the
+// Save — so an unstamped write reads as a user edit and re-fires the trigger
+// that invoked the handler, with no depth to terminate on.
 type ActionHandler func(app core.App, req ActionRequest) error
 
 // OwnerResolver maps a trigger record to the user ids the event belongs to,
@@ -58,6 +69,16 @@ type TriggerFilter func(app core.App, record *core.Record) bool
 // to allow; a returned error fails the action and lands in run history.
 type RelationAuthorizer func(app core.App, req ActionRequest, recordID string) error
 
+// TriggerRecordAuthorizer answers the may-this-rule-write-THIS-record question
+// for a record-op whose target is the trigger record. Unlike a relation param,
+// this one is optional: the engine's floor (the rule owner passes the
+// collection's own update/delete rule) is meaningful on its own here, because
+// the record was chosen by the trigger rather than supplied by the rule author.
+// Register one when a collection's rules are looser than its write semantics —
+// e.g. a board a member may view and a card they may not move. Return nil to
+// allow; an error fails the action and lands in run history.
+type TriggerRecordAuthorizer func(app core.App, req ActionRequest, record *core.Record) error
+
 var (
 	registryMu     sync.RWMutex
 	actionHandlers = map[string]ActionHandler{}
@@ -65,6 +86,8 @@ var (
 	triggerFilters = map[string]TriggerFilter{}
 	// actionRef -> paramKey -> authorizer
 	relationAuthorizers = map[string]map[string]RelationAuthorizer{}
+	// actionRef -> authorizer
+	triggerRecordAuthorizers = map[string]TriggerRecordAuthorizer{}
 )
 
 // RegisterAction installs the Go handler for a native action ref. Packages
@@ -114,6 +137,22 @@ func hasRelationAuthorizer(actionRef, paramKey string) bool {
 	return ok
 }
 
+// RegisterTriggerRecordAuthorizer installs the package's write-level check for
+// a record-op that targets the trigger record. Optional — see
+// TriggerRecordAuthorizer for when the engine's floor alone is not enough.
+func RegisterTriggerRecordAuthorizer(actionRef string, a TriggerRecordAuthorizer) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	triggerRecordAuthorizers[actionRef] = a
+}
+
+func triggerRecordAuthorizer(actionRef string) (TriggerRecordAuthorizer, bool) {
+	registryMu.RLock()
+	defer registryMu.RUnlock()
+	a, ok := triggerRecordAuthorizers[actionRef]
+	return a, ok
+}
+
 // RegisterOwnerResolver overrides owner auto-detection for one trigger ref.
 func RegisterOwnerResolver(triggerRef string, r OwnerResolver) {
 	registryMu.Lock()
@@ -149,6 +188,7 @@ func ResetRegistriesForTest() {
 	ownerResolvers = map[string]OwnerResolver{}
 	triggerFilters = map[string]TriggerFilter{}
 	relationAuthorizers = map[string]map[string]RelationAuthorizer{}
+	triggerRecordAuthorizers = map[string]TriggerRecordAuthorizer{}
 }
 
 var autoOwnerFields = []string{"user", "owner", "author"}

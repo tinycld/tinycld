@@ -7,7 +7,27 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// LocalFileName reduces a server-supplied name to a single path segment safe to
+// join onto a local directory. Remote names are data, never paths: an item or
+// attachment named "../../.ssh/authorized_keys" must land in the directory the
+// user chose, not wherever its name points.
+//
+// filepath.Base collapses any traversal and strips separators; the fallbacks
+// cover names that are entirely separators or dots ("..", "/", ""), where Base
+// still yields something unusable as a filename.
+func LocalFileName(name string) string {
+	// Treat both separators as such regardless of host OS: a name authored on
+	// one platform must not become a path component on the other.
+	name = strings.ReplaceAll(name, "\\", "/")
+	base := filepath.Base(filepath.FromSlash(name))
+	if base == "." || base == ".." || base == string(filepath.Separator) {
+		return "download"
+	}
+	return base
+}
 
 // DownloadToFile streams an authenticated GET of path (origin-relative) into
 // dest, writing through a temp file in dest's directory and renaming into
@@ -50,6 +70,15 @@ func writeStream(src io.Reader, total int64, dest string, progress ProgressFunc)
 	dir := filepath.Dir(dest)
 	tmp, err := os.CreateTemp(dir, ".tinycld-download-*")
 	if err != nil {
+		return err
+	}
+	// os.CreateTemp always makes 0600 files. That is right for a credential but
+	// wrong for a download: this is ordinary user data (a spreadsheet, an
+	// attachment), and landing it 0600 regardless of umask means a file the
+	// user cannot share with their own group — unlike curl, scp, or a browser.
+	// 0666 &^ umask is the conventional "new data file" mode.
+	if err := tmp.Chmod(dataFileMode()); err != nil {
+		tmp.Close()
 		return err
 	}
 	defer func() {

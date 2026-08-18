@@ -150,6 +150,41 @@ func TestConditionsFailClosedOnNonExposedFields(t *testing.T) {
 	}
 }
 
+// TestConditionsWithoutRecordFailClosed covers the scheduled and manual
+// "run now" dispatch paths, which both fire with Record == nil. A rule saved
+// with conditions still reaches EvaluateConditions on those paths, so every
+// operator must fail closed instead of dereferencing the nil record.
+func TestConditionsWithoutRecordFailClosed(t *testing.T) {
+	if !EvaluateConditions(ConditionsAST{}, nil, openEvalTrigger) {
+		t.Fatal("empty AST must still match without a record")
+	}
+
+	// One case per branch of evalCondition's operator switch: each of these
+	// reads the record, so a missing nil guard panics rather than not-matching.
+	for _, c := range []Condition{
+		cond("subject", "contains", "invoice"),
+		cond("subject", "not_contains", "invoice"),
+		cond("subject", "equals", "invoice"),
+		cond("subject", "starts_with", "invoice"),
+		cond("size", "eq", 1500),
+		cond("size", "neq", 1500),
+		cond("size", "gt", 1),
+		cond("size", "lt", 9999),
+		cond("flagged", "is_true", nil),
+		cond("flagged", "is_false", nil),
+		cond("happened", "before", "2030-01-01"),
+		cond("happened", "after", "2000-01-01"),
+		cond("happened", "within_last_days", 7),
+		cond("tags", "is", "a"),
+		cond("tags", "is_not", "a"),
+		cond("subject", "is_empty", nil),
+	} {
+		if EvaluateConditions(one(c), nil, openEvalTrigger) {
+			t.Fatalf("op %q must fail closed without a record, got a match", c.Op)
+		}
+	}
+}
+
 func TestWatchChanged(t *testing.T) {
 	app, r := evalRecord(t)
 	r.Set("subject", "Changed subject")

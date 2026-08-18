@@ -1,7 +1,7 @@
 import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import type { CatalogResponse, CatalogTrigger } from '@tinycld/core/lib/automation/api'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
-import { parseRef } from '@tinycld/core/lib/automation/helpers'
+import { parseRefSafe } from '@tinycld/core/lib/automation/helpers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
@@ -94,7 +94,7 @@ function LockedTriggerLabel({
     catalog: CatalogResponse
 }) {
     const trigger = catalog.triggers.find(t => t.ref === triggerRef)
-    const { pkg } = parseRef(triggerRef)
+    const { pkg } = parseRefSafe(triggerRef)
     return (
         <Text className="text-sm text-foreground">
             {trigger?.label ?? triggerRef}
@@ -182,6 +182,11 @@ export function TriggerCard({ draft, catalog, onChange, isLocked, presetPkg }: T
     const triggers = triggersForPreset(catalog, presetPkg)
 
     const handleSelectTrigger = (trigger: CatalogTrigger) => {
+        // Re-picking the trigger already selected is a no-op, not a reset:
+        // the menu shows the current choice, so clicking it is the natural way
+        // to close the menu — and it used to silently discard every condition
+        // and action the user had built.
+        if (trigger.ref === draft.trigger) return
         // Switching triggers invalidates conditions (built against the old
         // trigger's field set) and actions (may target the old trigger's
         // collection) — both reset rather than silently carrying over.
