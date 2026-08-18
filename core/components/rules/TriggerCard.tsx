@@ -8,6 +8,7 @@ import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ChevronDown } from 'lucide-react-native'
 import { Fragment } from 'react'
 import { Pressable, Text, View } from 'react-native'
+import { RuleCard } from './RuleCard'
 
 export interface TriggerCardProps {
     draft: RuleDraft
@@ -190,6 +191,11 @@ export function TriggerCard({ draft, catalog, onChange, isLocked, presetPkg }: T
         // Switching triggers invalidates conditions (built against the old
         // trigger's field set) and actions (may target the old trigger's
         // collection) — both reset rather than silently carrying over.
+        //
+        // Resetting to zero groups is also what re-arms ConditionsCard's ready
+        // first row against the NEW trigger's fields (see its SyntheticFirstGroup).
+        // The literal deliberately skips ensureUids, which is safe only because
+        // the array is empty — anything seeded here would need uids to key on.
         onChange({
             trigger: trigger.ref,
             conditions: { match: 'all', groups: [] },
@@ -198,8 +204,7 @@ export function TriggerCard({ draft, catalog, onChange, isLocked, presetPkg }: T
     }
 
     return (
-        <View className="rounded-xl border p-4 bg-surface-secondary border-border gap-3">
-            <Text className="text-sm font-semibold text-foreground">WHEN</Text>
+        <RuleCard title="WHEN">
             {isLocked ? (
                 <LockedTriggerLabel catalog={catalog} triggerRef={draft.trigger} />
             ) : (
@@ -210,6 +215,6 @@ export function TriggerCard({ draft, catalog, onChange, isLocked, presetPkg }: T
                 />
             )}
             {isSchedule ? <ScheduleRow draft={draft} onChange={onChange} /> : null}
-        </View>
+        </RuleCard>
     )
 }

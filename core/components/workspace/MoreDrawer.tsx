@@ -84,9 +84,13 @@ export function MoreDrawer() {
                     </Text>
                 </Pressable>
 
+                {/* The settings HUB, not the personal page. MobileTabBar has no
+                    settings entry, so this row is the ONLY way into settings on a
+                    phone — pointing it at a single section left Rules, Members and
+                    every other page unreachable there. */}
                 <Pressable
                     className="flex-row items-center gap-3.5 px-4 py-3.5 rounded-lg"
-                    onPress={() => handleNav(() => router.push(orgHref('settings/personal')))}
+                    onPress={() => handleNav(() => router.push(orgHref('settings')))}
                 >
                     <Settings size={20} color={textColor} />
                     <Text className="text-base font-medium" style={{ color: textColor }}>

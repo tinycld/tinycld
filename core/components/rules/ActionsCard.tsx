@@ -18,6 +18,7 @@ import { ArrowDown, ArrowUp, Braces, Plus, Trash2 } from 'lucide-react-native'
 import { newRecordId } from 'pbtsdb/core'
 import { Fragment } from 'react'
 import { Pressable, Text, View } from 'react-native'
+import { RuleCard } from './RuleCard'
 import { ValueInput } from './ValueInput'
 
 export interface ActionsCardProps {
@@ -280,9 +281,7 @@ export function ActionsCard({ draft, catalog, onChange }: ActionsCardProps) {
     }
 
     return (
-        <View className="rounded-xl border p-4 bg-surface-secondary border-border gap-3">
-            <Text className="text-sm font-semibold text-foreground">THEN</Text>
-
+        <RuleCard title="THEN" isDisabled={!trigger} disabledHint="Choose a trigger first">
             {draft.actions.map((draftAction, index) => (
                 <ActionEntry
                     // Keyed on the builder-local uid (condition-helpers.ts's
@@ -306,6 +305,6 @@ export function ActionsCard({ draft, catalog, onChange }: ActionsCardProps) {
             ))}
 
             <AddActionMenu catalog={catalog} trigger={trigger} onSelect={handleSelectAction} />
-        </View>
+        </RuleCard>
     )
 }

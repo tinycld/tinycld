@@ -54,7 +54,7 @@ export function RunHistory({ ruleId, onClose }: RunHistoryProps) {
         return (
             <BottomDrawer isOpen={isOpen} onClose={onClose}>
                 <View className="px-4 pb-4">
-                    <RunHistoryContent ruleId={ruleId} onClose={onClose} />
+                    <RunHistoryContent ruleId={ruleId} onClose={onClose} isMobile />
                 </View>
             </BottomDrawer>
         )
@@ -63,21 +63,28 @@ export function RunHistory({ ruleId, onClose }: RunHistoryProps) {
     return (
         <Modal isOpen={isOpen} onClose={onClose}>
             <ModalBackdrop />
-            <ModalContent>
-                <RunHistoryContent ruleId={ruleId} onClose={onClose} />
+            {/* Caps the shell so the run list scrolls inside it rather than
+                overflowing ModalContent's `overflow-hidden` and being clipped.
+                Same rationale as RuleBuilder — see the note there. */}
+            <ModalContent className="max-h-[85vh]">
+                <RunHistoryContent ruleId={ruleId} onClose={onClose} isMobile={false} />
             </ModalContent>
         </Modal>
     )
 }
 
-function RunHistoryContent({ ruleId, onClose }: RunHistoryProps) {
+function RunHistoryContent({ ruleId, onClose, isMobile }: RunHistoryProps & { isMobile: boolean }) {
     const { data: rawRuns, isReady } = useRuleRuns(ruleId)
     const runs = sortRunsDesc(rawRuns)
 
     return (
-        <View className="gap-3">
+        <View className={isMobile ? 'gap-3' : 'gap-3 flex-1 min-h-0'}>
             <RunHistoryHeader onClose={onClose} />
-            <ScrollView className="max-h-[70vh]">
+            {/* Sizing splits by shell for the same reason as RuleBuilder's
+                scrollRegionClass: the modal caps the shell and lets this flex,
+                while the drawer measures its own height from content and would
+                collapse a flex-1 child to nothing. */}
+            <ScrollView className={isMobile ? 'max-h-[70vh]' : 'flex-1 min-h-0'}>
                 <RunHistoryBody isReady={isReady} runs={runs} />
             </ScrollView>
         </View>

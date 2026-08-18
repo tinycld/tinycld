@@ -114,6 +114,38 @@ export function addGroup(ast: ConditionsAst): ConditionsAst {
     }
 }
 
+/**
+ * The AST that the first edit to an empty condition set produces: one group
+ * holding one condition carrying the user's field pick.
+ *
+ * ConditionsCard renders a ready-to-fill first row against `groups: []` WITHOUT
+ * putting it in the draft, and calls this only once the user actually picks a
+ * field. Keeping the blank row out of the draft is what lets an untouched
+ * builder still save a rule with no conditions (which matches everything) — and
+ * it is load-bearing, not just tidy: `conditionSchema.field` is `min(1)` and
+ * `conditionGroupSchema.conditions` is `min(1)`, so a blank condition or an
+ * empty group reaching `conditionsAstSchema.parse` in draftToRecord THROWS on
+ * save.
+ *
+ * A patch that names no field is ignored for the same reason. That is currently
+ * unreachable — ConditionRow's operator menu lists nothing until a field is
+ * chosen — but the invariant lives in a different component, so this guards it
+ * here rather than trusting a sibling's render logic to hold forever.
+ */
+export function seedFirstCondition(ast: ConditionsAst, patch: Partial<Condition>): ConditionsAst {
+    if (!patch.field) return ast
+    return {
+        ...ast,
+        groups: [
+            {
+                ...EMPTY_GROUP,
+                uid: newRecordId(),
+                conditions: [{ ...EMPTY_CONDITION, ...patch, uid: newRecordId() }],
+            },
+        ],
+    }
+}
+
 /** Removes the group at `groupIndex`. */
 export function removeGroup(ast: ConditionsAst, groupIndex: number): ConditionsAst {
     return { ...ast, groups: ast.groups.filter((_, i) => i !== groupIndex) }
