@@ -18,6 +18,8 @@ const catalog: CatalogResponse = {
             fields: [
                 { key: 'subject', label: 'Subject', type: 'text' },
                 { key: 'has_attachments', label: 'Has attachments', type: 'boolean' },
+                { key: 'size', label: 'Size', type: 'number' },
+                { key: 'due', label: 'Due', type: 'date' },
                 {
                     key: 'status',
                     label: 'Status',
@@ -415,6 +417,76 @@ describe('validateDraft', () => {
         })
         const errors = validateDraft(draft, catalog)
         expect(errors.some(e => /not-a-field/.test(e))).toBe(true)
+    })
+
+    // A numeric operator whose value isn't a number fails closed in the engine
+    // (toFloat can't read it), so the rule would silently never match. The
+    // motivating case is a half-typed "" or "-" left in the value input.
+    function numericDraft(value: unknown) {
+        return validDraft({
+            conditions: {
+                match: 'all',
+                groups: [
+                    {
+                        match: 'all',
+                        conditions: [
+                            { field: 'size', op: 'gt', value: value as string | number | boolean },
+                        ],
+                    },
+                ],
+            },
+        })
+    }
+
+    it.each([
+        ['an empty string', ''],
+        ['a lone minus sign', '-'],
+        ['undefined', undefined],
+        ['a non-numeric string', 'abc'],
+        ['NaN', Number.NaN],
+        ['Infinity', Number.POSITIVE_INFINITY],
+    ])('rejects a numeric condition whose value is %s', (_label, value) => {
+        const errors = validateDraft(numericDraft(value), catalog)
+        expect(errors.some(e => /needs a number/i.test(e))).toBe(true)
+    })
+
+    it.each([
+        ['a number', 5],
+        ['zero', 0],
+        ['a negative number', -3],
+        ['a numeric string from an older build', '42'],
+    ])('accepts a numeric condition whose value is %s', (_label, value) => {
+        expect(validateDraft(numericDraft(value), catalog)).toEqual([])
+    })
+
+    it('applies the numeric check to within_last_days on a date field', () => {
+        const draft = validDraft({
+            conditions: {
+                match: 'all',
+                groups: [
+                    {
+                        match: 'all',
+                        conditions: [{ field: 'due', op: 'within_last_days', value: '' }],
+                    },
+                ],
+            },
+        })
+        expect(validateDraft(draft, catalog).some(e => /needs a number/i.test(e))).toBe(true)
+    })
+
+    it('leaves value-less operators alone', () => {
+        const draft = validDraft({
+            conditions: {
+                match: 'all',
+                groups: [
+                    {
+                        match: 'all',
+                        conditions: [{ field: 'folder', op: 'is_empty' }],
+                    },
+                ],
+            },
+        })
+        expect(validateDraft(draft, catalog)).toEqual([])
     })
 
     it('rejects an operator illegal for the field type', () => {

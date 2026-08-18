@@ -4,6 +4,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ChevronDown } from 'lucide-react-native'
+import { useState } from 'react'
 import { Pressable, Text } from 'react-native'
 import { RelationRecordPicker } from './RelationRecordPicker'
 
@@ -11,7 +12,10 @@ export interface ValueInputProps {
     field: CatalogField
     op: string
     value: unknown
-    onChange: (v: string | number | boolean) => void
+    // `undefined` means "no usable value right now" — a numeric field mid-edit
+    // ("" or "-") reports it rather than storing a non-numeric string that
+    // would make the condition fail closed forever.
+    onChange: (v: string | number | boolean | undefined) => void
 }
 
 // `within_last_days` is a numeric "N days ago" value regardless of the
@@ -46,21 +50,31 @@ function NumberValueInput({
     onChange: ValueInputProps['onChange']
 }) {
     const placeholderColor = useThemeColor('field-placeholder')
+    // While typing, "" and "-" are legitimate intermediate states that are not
+    // numbers. They stay local: propagating them would store a non-numeric
+    // value in the condition, and the engine's numeric operators fail closed on
+    // anything toFloat can't read — so the rule would silently never match
+    // again, even after the user typed a real number elsewhere.
+    const [draft, setDraft] = useState<string | null>(null)
 
     const handleChangeText = (text: string) => {
         if (text === '' || text === '-') {
-            onChange(text)
+            setDraft(text)
+            onChange(undefined)
             return
         }
         const digitsOnly = text.replace(/[^0-9-]/g, '')
         if (digitsOnly !== text) return
         const numValue = Number.parseInt(digitsOnly, 10)
-        if (!Number.isNaN(numValue)) onChange(numValue)
+        if (Number.isFinite(numValue)) {
+            setDraft(null)
+            onChange(numValue)
+        }
     }
 
     return (
         <PlainInput
-            value={value === '' || value === '-' ? value : String(value ?? '')}
+            value={draft ?? (typeof value === 'number' ? String(value) : '')}
             onChangeText={handleChangeText}
             keyboardType="numeric"
             placeholderTextColor={placeholderColor}

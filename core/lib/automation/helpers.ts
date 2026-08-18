@@ -29,3 +29,19 @@ export function parseRef(ref: string): { pkg: string; id: string } {
     }
     return { pkg: ref.slice(0, idx), id: ref.slice(idx + 1) }
 }
+
+/**
+ * parseRef for RENDER paths, where throwing is the wrong failure.
+ *
+ * A rule's stored ref comes from the database — an older build, a hand-edited
+ * row, or a package removed since it was written. Throwing during render blanks
+ * the whole builder, so the user cannot even open the offending rule to fix or
+ * delete it. Falling back to the raw ref shows something identifiable instead.
+ */
+export function parseRefSafe(ref: string): { pkg: string; id: string } {
+    try {
+        return parseRef(ref)
+    } catch {
+        return { pkg: '', id: ref }
+    }
+}

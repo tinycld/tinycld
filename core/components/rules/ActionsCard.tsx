@@ -11,7 +11,7 @@ import {
     moveAction,
 } from '@tinycld/core/lib/automation/condition-helpers'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
-import { parseRef } from '@tinycld/core/lib/automation/helpers'
+import { parseRefSafe } from '@tinycld/core/lib/automation/helpers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { ArrowDown, ArrowUp, Braces, Plus, Trash2 } from 'lucide-react-native'
@@ -153,7 +153,7 @@ function ActionParamRow({
     param: CatalogParam
     trigger: CatalogTrigger | undefined
     value: string | number | boolean | undefined
-    onChange: (v: string | number | boolean) => void
+    onChange: (v: string | number | boolean | undefined) => void
 }) {
     const isTemplateText = param.template && param.field.type === 'text'
     const textValue = typeof value === 'string' ? value : ''
@@ -195,10 +195,19 @@ function ActionEntry({
 }) {
     const mutedColor = useThemeColor('muted-foreground')
     const action = catalog.actions.find(a => a.ref === draftAction.ref)
-    const { pkg, id } = parseRef(draftAction.ref)
+    const { pkg, id } = parseRefSafe(draftAction.ref)
 
-    const handleParamChange = (key: string, value: string | number | boolean) => {
-        onChangeParams({ ...draftAction.params, [key]: value })
+    // undefined = the input has no usable value right now (a numeric field
+    // mid-edit). Drop the key rather than storing undefined, so the saved
+    // params carry only values the action can actually use.
+    const handleParamChange = (key: string, value: string | number | boolean | undefined) => {
+        const params = { ...draftAction.params }
+        if (value === undefined) {
+            delete params[key]
+        } else {
+            params[key] = value
+        }
+        onChangeParams(params)
     }
 
     return (
