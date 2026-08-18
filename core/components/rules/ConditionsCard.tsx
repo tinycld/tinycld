@@ -1,6 +1,7 @@
 import type { CatalogField, CatalogResponse } from '@tinycld/core/lib/automation/api'
 import type { Condition } from '@tinycld/core/lib/automation/condition-helpers'
 import {
+    addCondition,
     addGroup,
     seedFirstCondition,
     setTopMatch,
@@ -67,6 +68,18 @@ export function ConditionsCard({ draft, catalog, onChange }: ConditionsCardProps
     const handleSeed = (patch: Partial<Condition>) =>
         onChange({ conditions: seedFirstCondition(draft.conditions, patch) })
 
+    // Adding the FIRST group has to carry a condition row with it. The offered
+    // row above is render-only and disappears the moment a real group exists,
+    // so appending an empty group would make the row the user was looking at
+    // vanish and be replaced by a group with nothing in it — the work they were
+    // about to do, silently discarded. Later groups start empty as before.
+    const handleAddGroup = () =>
+        onChange({
+            conditions: hasGroups
+                ? addGroup(draft.conditions)
+                : addCondition(addGroup(draft.conditions), 0),
+        })
+
     const matchPills = (
         <View className="flex-row items-center gap-2">
             <Text className="text-xs text-muted-foreground">Match</Text>
@@ -109,7 +122,7 @@ export function ConditionsCard({ draft, catalog, onChange }: ConditionsCardProps
                 whole OR group is the rarer, more advanced move, and leading with
                 it is what made the first condition hard to find. */}
             <Pressable
-                onPress={() => onChange({ conditions: addGroup(draft.conditions) })}
+                onPress={handleAddGroup}
                 className="self-start flex-row items-center gap-1 py-1 opacity-70"
             >
                 <Plus size={12} color={mutedColor} />

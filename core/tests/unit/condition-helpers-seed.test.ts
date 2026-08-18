@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ConditionsAst } from '../../lib/automation/condition-helpers'
-import { seedFirstCondition } from '../../lib/automation/condition-helpers'
+import { addCondition, addGroup, seedFirstCondition } from '../../lib/automation/condition-helpers'
 import { conditionsAstSchema } from '../../lib/automation/schemas'
 
 const EMPTY: ConditionsAst = { match: 'all', groups: [] }
@@ -47,6 +47,16 @@ describe('seedFirstCondition', () => {
             { field: 'subject', op: 'contains' }
         )
         expect(ast.match).toBe('any')
+    })
+
+    // ConditionsCard's handleAddGroup composes these two for the FIRST group.
+    // The offered row is render-only and unmounts as soon as a real group
+    // exists, so appending an EMPTY first group would make the row the user was
+    // looking at disappear and leave a group with nothing in it behind.
+    it('composes with addGroup so a first group is never empty', () => {
+        const ast = addCondition(addGroup(EMPTY), 0)
+        expect(ast.groups).toHaveLength(1)
+        expect(ast.groups[0].conditions).toHaveLength(1)
     })
 
     it('produces an AST the persistence schema accepts once a value is set', () => {
