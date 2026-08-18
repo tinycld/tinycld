@@ -16,13 +16,24 @@ import { MatchPillPair } from './MatchPillPair'
 export interface ConditionGroupBoxProps {
     draft: RuleDraft
     fields: CatalogField[]
+    // The group to RENDER, passed rather than re-derived from groupIndex: the
+    // parent keys these on the builder-local uid, so a re-derive by index reads
+    // a different group than the one React reconciled this element to whenever
+    // groups are added or removed above it.
+    group: RuleDraft['conditions']['groups'][number]
+    // The group's position, which is how the mutation helpers address it.
     groupIndex: number
     onChange: (patch: Partial<RuleDraft>) => void
 }
 
-export function ConditionGroupBox({ draft, fields, groupIndex, onChange }: ConditionGroupBoxProps) {
+export function ConditionGroupBox({
+    draft,
+    fields,
+    group,
+    groupIndex,
+    onChange,
+}: ConditionGroupBoxProps) {
     const mutedColor = useThemeColor('muted-foreground')
-    const group = draft.conditions.groups[groupIndex]
 
     return (
         <View className="rounded-lg border p-3 gap-2.5 border-border">
