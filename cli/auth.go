@@ -116,6 +116,11 @@ func newAuthLoginCmd(d *deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if config.IsInsecureOrigin(origin) {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"warning: %s is plain http — your access token will cross the network in cleartext\n",
+					origin)
+			}
 			flow := &deviceflow.Flow{
 				Origin:   origin,
 				ClientID: client.DefaultClientID,
@@ -151,18 +156,30 @@ func newAuthLoginCmd(d *deps) *cobra.Command {
 				return fmt.Errorf("saving credentials: %w", err)
 			}
 
-			var user userinfoResponse
-			c := client.New(origin, store, d.httpClient)
-			if err := c.GetJSON(cmd.Context(), "/oauth/userinfo", &user); err != nil {
-				return fmt.Errorf("fetching identity: %w", err)
-			}
-
+			// Write the context BEFORE the userinfo fetch. The credential is
+			// already stored, so a failure past this point must still leave
+			// something that names it — otherwise the token sits in the
+			// keychain with no context referencing it, invisible to `context
+			// list` and unreachable by `auth logout`. The email is filled in
+			// below once known.
 			cfg, err := d.loadConfig()
 			if err != nil {
 				return err
 			}
-			cfg.Contexts[host] = config.Context{Origin: origin, User: user.Email}
+			cfg.Contexts[host] = config.Context{Origin: origin}
 			cfg.Current = host
+			if err := cfg.Save(d.configDir); err != nil {
+				return err
+			}
+
+			var user userinfoResponse
+			c := client.New(origin, store, d.httpClient)
+			if err := c.GetJSON(cmd.Context(), "/oauth/userinfo", &user); err != nil {
+				return fmt.Errorf("fetching identity (you are logged in to %s; `tinycld auth logout` to undo): %w",
+					host, err)
+			}
+
+			cfg.Contexts[host] = config.Context{Origin: origin, User: user.Email}
 			if err := cfg.Save(d.configDir); err != nil {
 				return err
 			}

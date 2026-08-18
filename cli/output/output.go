@@ -37,7 +37,15 @@ type Options struct {
 	Format  Format
 	Quiet   bool
 	NoColor bool
-	TTY     bool
+	// TTY reports whether STDOUT is a terminal — the right question for
+	// colour and progress rendering, which write there.
+	TTY bool
+	// Interactive reports whether STDIN is a terminal, which is the question a
+	// PROMPT has to ask: it reads from stdin, so `tinycld ... | less` (stdout
+	// piped, stdin still the keyboard) can prompt perfectly well. Deciding that
+	// from TTY refused to prompt whenever output was piped, and would equally
+	// have hung on a prompt whose input came from a pipe.
+	Interactive bool
 }
 
 var headerStyle = lipgloss.NewStyle().Bold(true).Faint(true)
@@ -106,9 +114,10 @@ func FromCommand(cmd *cobra.Command) (Options, bool, error) {
 	yes, _ := cmd.Flags().GetBool("yes")
 	tty := term.IsTerminal(int(os.Stdout.Fd()))
 	return Options{
-		Format:  format,
-		Quiet:   quiet,
-		NoColor: noColor || !tty,
-		TTY:     tty,
+		Format:      format,
+		Quiet:       quiet,
+		NoColor:     noColor || !tty,
+		TTY:         tty,
+		Interactive: term.IsTerminal(int(os.Stdin.Fd())),
 	}, yes, nil
 }

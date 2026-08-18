@@ -23,6 +23,9 @@ type deps struct {
 	stderr     io.Writer
 	httpClient *http.Client
 	isTTY      bool
+	// isInteractive tracks STDIN separately from isTTY (stdout): a prompt reads
+	// stdin, so piping output must not disable prompting.
+	isInteractive bool
 
 	openStore func(configDir string, warn io.Writer) keychain.Store
 	// sleep is nil in production (real time.Sleep); tests inject a no-op so
@@ -44,12 +47,13 @@ type deps struct {
 
 func defaultDeps() *deps {
 	return &deps{
-		configDir:  config.Dir(),
-		stdout:     os.Stdout,
-		stderr:     os.Stderr,
-		httpClient: &http.Client{Timeout: 30 * time.Second},
-		isTTY:      term.IsTerminal(int(os.Stdout.Fd())),
-		openStore:  keychain.Open,
+		configDir:     config.Dir(),
+		stdout:        os.Stdout,
+		stderr:        os.Stderr,
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		isTTY:         term.IsTerminal(int(os.Stdout.Fd())),
+		isInteractive: term.IsTerminal(int(os.Stdin.Fd())),
+		openStore:     keychain.Open,
 	}
 }
 
@@ -106,10 +110,11 @@ func newRootCmd(d *deps) *cobra.Command {
 		quiet, _ := cmd.Flags().GetBool("quiet")
 		noColor, _ := cmd.Flags().GetBool("no-color")
 		d.out = output.Options{
-			Format:  format,
-			Quiet:   quiet,
-			NoColor: noColor || !d.isTTY,
-			TTY:     d.isTTY,
+			Format:      format,
+			Quiet:       quiet,
+			NoColor:     noColor || !d.isTTY,
+			TTY:         d.isTTY,
+			Interactive: d.isInteractive,
 		}
 		return nil
 	}

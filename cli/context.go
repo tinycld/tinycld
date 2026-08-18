@@ -105,6 +105,11 @@ func newContextAddCmd(d *deps) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if config.IsInsecureOrigin(origin) {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"warning: %s is plain http — your access token will cross the network in cleartext\n",
+					origin)
+			}
 			cfg.Contexts[name] = config.Context{Origin: origin}
 			if cfg.Current == "" {
 				cfg.Current = name

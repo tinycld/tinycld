@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -136,6 +137,29 @@ func TestQuietSuppressesInfo(t *testing.T) {
 	}
 	if stdout != "" {
 		t.Fatalf("quiet stdout = %q", stdout)
+	}
+}
+
+// --output csv used to fall through to the human-readable line, so a scripted
+// caller asking for CSV got prose no parser accepts.
+func TestVersionCSV(t *testing.T) {
+	d, _ := testDeps(t)
+	stdout, _, err := runCLI(t, d, "version", "--output", "csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	records, err := csv.NewReader(strings.NewReader(stdout)).ReadAll()
+	if err != nil {
+		t.Fatalf("version --output csv did not emit parseable CSV: %v\n%s", err, stdout)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected a header and one row, got %d records:\n%s", len(records), stdout)
+	}
+	if records[0][0] != "VERSION" {
+		t.Errorf("header = %v", records[0])
+	}
+	if records[1][0] != "dev" {
+		t.Errorf("row = %v", records[1])
 	}
 }
 

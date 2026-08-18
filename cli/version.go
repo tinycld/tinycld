@@ -26,8 +26,15 @@ func newVersionCmd(d *deps) *cobra.Command {
 				Arch    string `json:"arch"`
 			}
 			v := info{Version: version, Go: runtime.Version(), OS: runtime.GOOS, Arch: runtime.GOARCH}
-			if d.out.Format == output.JSON {
-				return d.out.Write(cmd.OutOrStdout(), nil, nil, v)
+			// Only the human format is hand-written. --output csv used to fall
+			// through to it, so a caller asking for CSV got a prose line that
+			// no parser accepts; routing both machine formats through Write
+			// keeps them in step with every other command.
+			if d.out.Format != output.Table {
+				return d.out.Write(cmd.OutOrStdout(),
+					[]string{"VERSION", "GO", "OS", "ARCH"},
+					[][]string{{v.Version, v.Go, v.OS, v.Arch}},
+					v)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "tinycld %s (%s %s/%s)\n", v.Version, v.Go, v.OS, v.Arch)
 			return nil
