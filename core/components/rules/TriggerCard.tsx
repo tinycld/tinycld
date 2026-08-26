@@ -1,8 +1,10 @@
 import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import type { CatalogResponse, CatalogTrigger } from '@tinycld/core/lib/automation/api'
+import { orderGroupsByUserPreference } from '@tinycld/core/lib/automation/condition-helpers'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
 import { parseRefSafe } from '@tinycld/core/lib/automation/helpers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { Menu } from '@tinycld/core/ui/menu'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ChevronDown } from 'lucide-react-native'
@@ -52,7 +54,13 @@ function TriggerMenu({
 }) {
     const mutedColor = useThemeColor('muted-foreground')
     const selected = catalog.triggers.find(t => t.ref === selectedRef)
-    const groups = groupTriggersByPackage(catalog.triggers)
+    // Same order the user dragged their apps into, so the menu reads like the
+    // sidebar. core's package-neutral triggers always lead.
+    const orderedSlugs = useSortedPackages().map(p => p.slug)
+    const groups = orderGroupsByUserPreference(
+        groupTriggersByPackage(catalog.triggers),
+        orderedSlugs
+    )
 
     return (
         <Menu>
@@ -67,7 +75,7 @@ function TriggerMenu({
             <Menu.Portal>
                 <Menu.Overlay />
                 <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {[...groups.entries()].map(([pkg, triggers]) => (
+                    {groups.map(([pkg, triggers]) => (
                         <Fragment key={pkg}>
                             <Menu.Label>{pkg}</Menu.Label>
                             {triggers.map(trigger => (

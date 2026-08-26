@@ -9,10 +9,12 @@ import {
     appendPlaceholder,
     compatibleActions,
     moveAction,
+    orderGroupsByUserPreference,
 } from '@tinycld/core/lib/automation/condition-helpers'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
 import { parseRefSafe } from '@tinycld/core/lib/automation/helpers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { Menu } from '@tinycld/core/ui/menu'
 import { ArrowDown, ArrowUp, Braces, Plus, Trash2 } from 'lucide-react-native'
 import { newRecordId } from 'pbtsdb/core'
@@ -77,7 +79,10 @@ function AddActionMenu({
 }) {
     const mutedColor = useThemeColor('muted-foreground')
     const options = trigger ? compatibleActions(catalog, trigger) : []
-    const groups = groupActionsByPackage(options)
+    // Ordered like the trigger menu (and the sidebar): the user's own app
+    // order, with core's package-neutral actions leading.
+    const orderedSlugs = useSortedPackages().map(p => p.slug)
+    const groups = orderGroupsByUserPreference(groupActionsByPackage(options), orderedSlugs)
     const ambiguous = ambiguousLabels(options)
 
     return (
@@ -91,7 +96,7 @@ function AddActionMenu({
             <Menu.Portal>
                 <Menu.Overlay />
                 <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {[...groups.entries()].map(([pkg, actions]) => (
+                    {groups.map(([pkg, actions]) => (
                         <Fragment key={pkg}>
                             <Menu.Label>{pkg}</Menu.Label>
                             {actions.map(action => (

@@ -258,6 +258,38 @@ export function moveAction<T>(list: T[], from: number, to: number): T[] {
     return next
 }
 
+/**
+ * Orders the builder's package groups to match the order the user dragged their
+ * apps into (Settings → Personal → Navigation), so the trigger and action menus
+ * read the same way as the sidebar and tab bar rather than alphabetically.
+ *
+ * Two kinds of slug are deliberately NOT in `orderedSlugs`:
+ *
+ *   • `core`, which has no manifest and so never appears in the nav order at
+ *     all. Its synthetic triggers (run manually / on a schedule) are the
+ *     package-neutral starting points every rule can use, so they lead.
+ *   • packages with no nav entry (settings-only contributors), which the nav
+ *     order filters out. They still contribute automation, so they follow the
+ *     ordered ones alphabetically instead of being dropped.
+ */
+export function orderGroupsByUserPreference<T>(
+    groups: Map<string, T>,
+    orderedSlugs: string[]
+): [string, T][] {
+    const rank = new Map(orderedSlugs.map((slug, i) => [slug, i]))
+    const weight = (pkg: string) => {
+        if (pkg === 'core') return -1
+        return rank.get(pkg) ?? Number.MAX_SAFE_INTEGER
+    }
+    return [...groups.entries()].sort(([a], [b]) => {
+        const delta = weight(a) - weight(b)
+        // Equal weight means both are unranked; alphabetical keeps them stable
+        // rather than leaving it to Map insertion order, which varies with the
+        // catalog's own row order.
+        return delta !== 0 ? delta : a.localeCompare(b)
+    })
+}
+
 /** Appends a `{{key}}` template placeholder to a param's current text value. */
 export function appendPlaceholder(value: string, key: string): string {
     return `${value}{{${key}}}`

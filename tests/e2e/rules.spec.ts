@@ -178,6 +178,39 @@ test.describe('Rules', () => {
         })
     })
 
+    // The trigger menu groups by package. It used to come out alphabetically by
+    // slug — a stability hack in use-automation-catalog that matched nothing
+    // else in the app — and now follows the user's own app order, with core's
+    // package-neutral triggers leading.
+    test('the trigger menu groups packages in the sidebar order, core first', async ({ page }) => {
+        await login(page)
+        await navigateToRulesSettings(page)
+
+        await page.getByText('New rule', { exact: true }).first().click()
+        await page.getByText('Select a trigger…', { exact: true }).click()
+        // Gate on a known option so the assertions read a painted menu.
+        await expect(page.getByTestId('trigger-option-core:manual')).toBeVisible()
+
+        // Menu.Label renders the bare package slug (uppercased in CSS only).
+        const groupOrder = await page.evaluate(() => {
+            const slugs = ['core', 'mail', 'drive', 'calendar', 'contacts', 'cards', 'calc', 'text']
+            const seen: string[] = []
+            const walk = (node: Element) => {
+                const text = (node.textContent ?? '').trim().toLowerCase()
+                if (node.children.length === 0 && slugs.includes(text)) seen.push(text)
+                for (const child of Array.from(node.children)) walk(child)
+            }
+            walk(document.body)
+            return seen
+        })
+
+        expect(groupOrder.length).toBeGreaterThan(1)
+        expect(groupOrder[0]).toBe('core')
+        // Not the old alphabetical order — that would have put calc/calendar
+        // ahead of core and is exactly what this replaced.
+        expect(groupOrder).not.toEqual([...groupOrder].sort())
+    })
+
     // Naming is the first thing a new rule needs, and `autoFocus` alone does
     // not survive GlueStack's focus trap plus ModalContent's enter animation —
     // so this asserts the field is really focused, not merely that the prop is
