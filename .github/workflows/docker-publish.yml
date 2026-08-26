@@ -36,6 +36,9 @@ jobs:
   build:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
+    # Without an explicit cap a hung job rides GitHub's 6-hour default,
+    # blocking the PR and burning a runner the whole time.
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -201,6 +204,9 @@ jobs:
     name: Merge multi-arch manifest
     needs: build
     runs-on: ubuntu-latest
+    # Without an explicit cap a hung job rides GitHub's 6-hour default,
+    # blocking the PR and burning a runner the whole time.
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
