@@ -4,6 +4,7 @@ import { Awareness } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import { PB_SERVER_ADDR } from '../config'
 import { captureException } from '../errors'
+import { log } from '../logger'
 import { pb } from '../pocketbase'
 import { RealtimeClient } from './client'
 
@@ -53,6 +54,26 @@ export interface UseRealtimeRoomOptions {
     // the room kind's AuthorizeShare. When unset, the PB auth token is
     // used as before.
     shareSession?: string
+
+    // docEpochOf reads this room kind's document epoch out of the server
+    // hello, or returns null when the payload carries none.
+    //
+    // A server may DISCARD an idle document and rebuild it from storage —
+    // cards' janitor evicts a quiet board, and the next joiner's connect
+    // re-seeds the fragments from the cards table. The rebuilt document is a
+    // different incarnation: y-crdt mints a fresh clientID for it, so the
+    // inserts our surviving Y.Doc still holds are, to the CRDT, edits nobody
+    // has seen rather than the same text arriving twice.
+    //
+    // Merging across that boundary therefore CONVERGES on both copies. That is
+    // the CRDT working correctly — there is no merge that could recover the
+    // intent, because the two insert sets are genuinely independent — so the
+    // only correct move is to throw our state away and resync from scratch.
+    // Supplying this opts a room kind into that, and the doc is rebuilt
+    // whenever the epoch changes from the one we synced under.
+    //
+    // Rooms that leave it undefined keep the previous behavior exactly.
+    docEpochOf?: (serverHello: unknown) => number | null
 }
 
 export interface RealtimeRoomHandle {
@@ -98,10 +119,30 @@ export function useRealtimeRoom({
     onFirstJoinerBootstrap,
     isEmpty = defaultIsEmpty,
     shareSession,
+    docEpochOf,
 }: UseRealtimeRoomOptions): RealtimeRoomHandle | null {
     const [isReady, setIsReady] = useState(false)
     const [isConnected, setIsConnected] = useState(false)
     const [serverHello, setServerHello] = useState<unknown>(null)
+    // How many times the server's document has been REPLACED under us.
+    //
+    // The effect below keys on this rather than on the epoch value, because
+    // learning the epoch for the first time must not rebuild anything: a fresh
+    // doc has no stale state to discard, and tearing it down would drop the
+    // sync that is already in flight. Only a change from one known epoch to a
+    // different one is a discard, and each one bumps this by exactly 1.
+    const [docGeneration, setDocGeneration] = useState(0)
+    // The epoch the live doc was built against, held in a ref so the hello
+    // handler can compare without the connection effect depending on it.
+    // Written from the handler rather than through state for the same reason:
+    // the comparison must see the value the CURRENT doc was created under, not
+    // one a pending render has yet to commit.
+    const docEpochRef = useRef<number | null>(null)
+    // Read through a ref for the same reason the other callbacks are: the
+    // caller passes an inline closure, and depending on its identity would
+    // reopen the socket on every render.
+    const docEpochOfRef = useRef(docEpochOf)
+    docEpochOfRef.current = docEpochOf
     const [serverSlot, setServerSlot] = useState<unknown>(null)
     const handleRef = useRef<{ doc: Y.Doc; awareness: Awareness; client: RealtimeClient } | null>(
         null
@@ -145,6 +186,30 @@ export function useRealtimeRoom({
                     const text = new TextDecoder().decode(payload)
                     const parsed = text.length > 0 ? JSON.parse(text) : null
                     setServerHello(parsed)
+
+                    // The epoch check runs BEFORE the sync handshake can fold
+                    // remote state into this doc, because the hello frame
+                    // precedes the sync reply. That ordering is what makes
+                    // discarding cheap: we drop a doc that has not yet been
+                    // contaminated, rather than trying to unpick a merge.
+                    const epoch = docEpochOfRef.current?.(parsed) ?? null
+                    if (epoch != null) {
+                        const previous = docEpochRef.current
+                        docEpochRef.current = epoch
+                        // Learning the epoch for the first time is not a
+                        // discard — this doc has nothing stale in it yet.
+                        // Reconnecting to the SAME incarnation is not one
+                        // either, or every network blip would throw away
+                        // unsynced edits. Only a genuine replacement rebuilds.
+                        if (previous != null && previous !== epoch) {
+                            log.warn(
+                                'realtime.docEpoch',
+                                'server document was rebuilt; discarding local state',
+                                { roomKind, roomID, previous, epoch }
+                            )
+                            setDocGeneration(n => n + 1)
+                        }
+                    }
                 } catch (err) {
                     captureException('realtime.serverHello.parse', err, {
                         roomKind,
@@ -215,12 +280,21 @@ export function useRealtimeRoom({
             awareness.destroy()
             doc.destroy()
             handleRef.current = null
+            // The next doc is a NEW one, so it has no epoch until its own hello
+            // names one. Leaving the old value here would make that first hello
+            // read as a second replacement and rebuild again, forever.
+            docEpochRef.current = null
             setIsReady(false)
             setIsConnected(false)
             setServerHello(null)
             setServerSlot(null)
         }
-    }, [roomKind, roomID])
+        // `docGeneration` belongs here: it increments only when the server
+        // reports it replaced its document, and this effect's teardown/setup is
+        // exactly the discard — the old Y.Doc is destroyed and a fresh one
+        // resyncs from scratch. It never moves in an ordinary session, so the
+        // common path still opens one socket.
+    }, [roomKind, roomID, docGeneration])
 
     // Publish a clean leave whenever this screen stops being visible, and
     // republish on the way back.

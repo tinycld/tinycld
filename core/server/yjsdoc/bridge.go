@@ -108,6 +108,18 @@ func SeedFragmentFromPMJSON(doc *Doc, fragment string, pmJSON []byte) error {
 		return fmt.Errorf("yjsdoc: GetXmlFragment did not return *YXmlFragment")
 	}
 
+	// Seeding APPENDS, so a fragment that already holds content would end up
+	// with the prose twice — and the doc comment above promises the fragment
+	// holds a faithful representation of pmJSON, not a concatenation.
+	//
+	// A populated fragment means this document has already been seeded or
+	// edited, so the stored text this call carries is not newer than what is
+	// here. Refusing is therefore the safe direction: the live content wins,
+	// and no caller has to remember whether its document is fresh.
+	if len(frag.ToArray()) > 0 {
+		return nil
+	}
+
 	for _, child := range root.Content {
 		if err := seedChildIntoFragment(frag, child); err != nil {
 			return err
