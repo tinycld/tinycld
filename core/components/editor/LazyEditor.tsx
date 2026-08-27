@@ -17,6 +17,36 @@ import type { SurfaceId } from '../../lib/editor/warm/warm-editor-store'
 import { captureException } from '../../lib/errors'
 import { isNoOpEdit, shouldCommitOnBlur } from './commit-policy'
 
+/** The coordinate fields a React Native press event carries. */
+export interface PressPoint {
+    pageX?: number
+    pageY?: number
+}
+
+/**
+ * The viewport point a press landed on, or undefined when there is none.
+ *
+ * `pageX/pageY` are viewport-relative on RN-Web — the same space
+ * `posAtCoords` reads — so they can be handed to the editor unchanged.
+ *
+ * Everything here is optional on purpose. A press does not always arrive with
+ * coordinates, or even with an event: an accessibility activation, a synthetic
+ * `onPress()` from a test, and a keyboard-triggered press all reach this with
+ * nothing to read. Each of those means "put the caret at the end", which is the
+ * behavior this whole path replaced for real pointer presses only.
+ *
+ * Exported because a surface whose swap is decided by a PARENT has to capture
+ * the point itself: the editor is not mounted when the press happens, so the
+ * press target below never sees it. Cards' comment list is the case.
+ */
+export function pressPoint(event?: {
+    nativeEvent?: PressPoint
+}): { x: number; y: number } | undefined {
+    const { pageX, pageY } = event?.nativeEvent ?? {}
+    if (typeof pageX !== 'number' || typeof pageY !== 'number') return undefined
+    return { x: pageX, y: pageY }
+}
+
 export interface LazyEditorSlots {
     EditorComponent: ComponentType
     commands: EditorCommands
@@ -53,8 +83,15 @@ export interface LazyEditorHandle {
      * a session that is already open reclaims the editor without resetting the
      * revert baseline, so a repeated press cannot turn half-typed text into the
      * thing Escape reverts to.
+     *
+     * `at` is the viewport point the user pressed. The read view and the
+     * editing surface occupy the same box, so that point is where the caret
+     * belongs — without it, clicking into the middle of a paragraph dropped the
+     * caret at the very end and the reader had to click a second time. Omitted
+     * by callers with no press to speak of (a Reply button, a shortcut), which
+     * still get the caret at the end.
      */
-    edit: () => void
+    edit: (at?: { x: number; y: number }) => void
     /** Commit through the ordinary path, guards and all. */
     submit: () => void
     /** Discard and end the session, as Escape does. */
@@ -145,6 +182,16 @@ export interface LazyEditorProps {
      */
     startOpen?: boolean
     /**
+     * Viewport point to put the caret at when a `startOpen` session opens.
+     *
+     * The press-target branch below captures this itself, but a surface whose
+     * swap is decided by a PARENT never renders that branch: it is mounted
+     * already editing, after the press it should honour. Cards' inline comment
+     * edit is the case — without this the caret went to the end of the comment
+     * however far up someone clicked.
+     */
+    openAt?: { x: number; y: number }
+    /**
      * Keep the session open after a commit, clearing the editor instead.
      *
      * A composer sends and stays — the next comment goes in the same box, and
@@ -226,6 +273,7 @@ export function useLazyEditor({
     onRelease,
     isDialogOpen: dialogOpenProp,
     startOpen = false,
+    openAt,
     stayOpenOnCommit = false,
     renderEditor,
     renderHeader,
@@ -262,6 +310,12 @@ export function useLazyEditor({
         initialContent: value,
         onFocus: () => {
             hasFocusedRef.current = true
+            // The editor has genuinely landed and taken the caret, so the swap
+            // is over and blur handling comes back on. Keyed on the real focus
+            // event rather than on the effect that requests focus: the request
+            // can be made against an instance tiptap is about to replace, and
+            // only the event says one actually holds it.
+            isSwappingRef.current = false
             editorOptions.onFocus?.()
         },
         onBlur: () => {
@@ -300,6 +354,9 @@ export function useLazyEditor({
         baselineRef.current = value
         hasFocusedRef.current = false
         settledRef.current = false
+        // Set BEFORE the acquire, which is what moves the DOM node and so what
+        // raises the blur this suppresses.
+        isSwappingRef.current = true
         lease.acquire()
         setIsEditing(true)
     }, [lease, value])
@@ -307,6 +364,7 @@ export function useLazyEditor({
     // Take the instance back without disturbing a session in progress. Focus
     // follows from the generation effect below, which fires on every acquire.
     const reclaim = useCallback(() => {
+        isSwappingRef.current = true
         lease.acquire()
     }, [lease])
 
@@ -328,7 +386,9 @@ export function useLazyEditor({
     // reclaiming on idle would rip it out of the surface the user just clicked.
     const acquire = lease.acquire
     useEffect(() => {
-        if (startOpen) acquire()
+        if (!startOpen) return
+        isSwappingRef.current = true
+        acquire()
     }, [startOpen, acquire])
 
     // The warm instance parks with autofocus off — focusing a parked editor
@@ -339,18 +399,97 @@ export function useLazyEditor({
     //
     // Keyed on the generation rather than isEditing so a handover refocuses the
     // incoming surface too.
-    const focusedGenerationRef = useRef<number | null>(null)
-    if (isEditing && lease.result != null) {
-        if (focusedGenerationRef.current !== lease.generation) {
-            focusedGenerationRef.current = lease.generation
-            // Deferred: the editor is reconfigured during this commit, and
-            // focusing before it has applied the new content moves the caret in
-            // the outgoing surface's document.
-            queueMicrotask(() => lease.result?.editor.focus('end'))
+    // Where the press that opened this session landed, consumed by the focus
+    // effect below. A ref rather than state because it must not cause a render:
+    // it is read once, when the caret is taken, and is meaningless after that.
+    //
+    // Seeded from `openAt` for a parent-owned surface, which is mounted after
+    // the press it should honour and so never runs the press target that would
+    // otherwise fill this in.
+    const pendingFocusPointRef = useRef<{ x: number; y: number } | null>(openAt ?? null)
+    const leaseResult = lease.result
+
+    // True from the moment a swap is requested until the editor has landed in
+    // this surface and been focused.
+    //
+    // Taking the shared editor MOVES its DOM node (@tiptap/react's EditorContent
+    // `append`s the live ProseMirror element into its new parent and parks it in
+    // a detached div on the way out), and removing a focused element from the
+    // document blurs it. That blur is MACHINERY, not the user leaving — but the
+    // handler below cannot tell the difference, and for a surface with no
+    // blur-commit it means `endSession`, which releases the editor and closes
+    // the session that was just opened. Clicking a description therefore swapped
+    // the editor in and immediately threw it away again, leaving no caret.
+    //
+    // Losing focus mid-move is fine; the focus effect re-takes it once the node
+    // has landed. This flag is what keeps the blur in between from being read as
+    // intent.
+    const isSwappingRef = useRef(false)
+    // In an EFFECT, and then again after the next frame.
+    //
+    // Two things defeat a single synchronous focus here:
+    //
+    //  - A microtask (what this used to be) runs BEFORE React commits, so the
+    //    ProseMirror node is not in the document yet and the call does nothing.
+    //  - Acquiring the shared editor MOVES its DOM node: the provider renders it
+    //    in the parked viewport while nobody holds it and the surface renders it
+    //    once someone does, so React unmounts one and mounts the other. Removing
+    //    a focused element blurs it, and that removal happens right after this
+    //    effect — the caret appeared and vanished in the same frame.
+    //
+    // Focus is therefore taken HERE, after the commit — which is what makes a
+    // click place the caret at all, and what gives `posAtCoords` a laid-out view
+    // to resolve the click point against.
+    //
+    // Keyed on the EDITOR HANDLE, not on the generation. One acquire produces
+    // several handles: tiptap tears its instance down and rebuilds it, and each
+    // rebuild is a NEW ProseMirror node — the one focused a moment ago is
+    // discarded, still holding the caret nobody can see. Keying on the
+    // generation meant focusing the first of those and skipping every later one
+    // (the guard read "already focused this generation"), so the caret reliably
+    // landed on a node that was about to be thrown away.
+    //
+    // Re-focusing per handle is safe because it is not per RENDER: the handle
+    // only changes when tiptap actually replaced the instance, and the identity
+    // check below stops a repeat for one we have already focused.
+    //
+    // The blur each rebuild raises is ignored while the swap is in flight — see
+    // isSwappingRef, which clears on the real focus event. Losing focus mid-swap
+    // does not matter; landing it on the node that survives does.
+    const focusedEditorRef = useRef<EditorHandle | null>(null)
+    useEffect(() => {
+        if (!isEditing || leaseResult == null) {
+            // Cleared whenever this surface does not HOLD an editor, not merely
+            // when its session closes.
+            //
+            // There is one editor app-wide, so re-acquiring hands back the very
+            // same object — and the identity check below would then read it as
+            // "already focused" and skip the caret. A surface whose session
+            // outlives its holding hits exactly that: a composer and an inline
+            // comment edit are parent-owned (`startOpen`), so releasing the
+            // editor leaves `isEditing` true, and every re-acquire after the
+            // first silently declined to focus. Descriptions were unaffected
+            // only because their session closes with the holding.
+            focusedEditorRef.current = null
+            if (!isEditing) {
+                pendingFocusPointRef.current = null
+                // No session, so nothing is in flight. Clearing here is what
+                // stops a swap that never completed (an acquire this surface
+                // lost to another) from leaving blur-handling disabled for good
+                // — which would silently stop committing an inline edit.
+                isSwappingRef.current = false
+            }
+            return
         }
-    } else if (!isEditing) {
-        focusedGenerationRef.current = null
-    }
+        const editor = leaseResult.editor
+        if (focusedEditorRef.current === editor) return
+        focusedEditorRef.current = editor
+        // Kept until the caret is placed, NOT cleared per attempt: the point
+        // describes the press that opened the session, and a rebuild an instant
+        // later still wants the caret where the user pressed.
+        const at = pendingFocusPointRef.current
+        editor.focus(at ?? 'end')
+    }, [isEditing, leaseResult])
 
     const readContent = useCallback(
         async (editor: EditorHandle): Promise<string> =>
@@ -515,11 +654,16 @@ export function useLazyEditor({
     // into a stale render's state. The object identity below therefore stays
     // fixed while its behavior stays current, which is what lets a caller put it
     // in a dependency array without re-running on every keystroke.
+    const setPendingFocusPoint = useCallback((at: { x: number; y: number } | null) => {
+        pendingFocusPointRef.current = at
+    }, [])
+
     const handleFnsRef = useRef({
         openSession,
         reclaim,
         submit,
         cancel,
+        setPendingFocusPoint,
         isEditing: false,
         isSessionOpen: false,
     })
@@ -528,6 +672,7 @@ export function useLazyEditor({
         reclaim,
         submit,
         cancel,
+        setPendingFocusPoint,
         // What a CALLER means by "is it editing": holding a usable editor. A
         // displaced surface whose session is still open has nothing to type
         // into, so it reads false.
@@ -540,8 +685,11 @@ export function useLazyEditor({
 
     const handle = useMemo<LazyEditorHandle>(
         () => ({
-            edit: () => {
+            edit: (at?: { x: number; y: number }) => {
                 const fns = handleFnsRef.current
+                // Recorded before either branch, because both end in an acquire
+                // and it is the acquire's focus that consumes this.
+                fns.setPendingFocusPoint(at ?? null)
                 // A session already open — INCLUDING one displaced by a steal,
                 // which is the case this exists for — only takes the instance
                 // back. Re-opening would snapshot the user's half-typed text as
@@ -559,6 +707,10 @@ export function useLazyEditor({
 
     submitRef.current = submit
     blurRef.current = () => {
+        // A blur raised by the node being re-attached is not the user leaving —
+        // see isSwappingRef. Acting on it would commit or end a session that has
+        // only just started.
+        if (isSwappingRef.current) return
         if (
             shouldCommitOnBlur({
                 commitOnBlur,
@@ -609,7 +761,12 @@ export function useLazyEditor({
                     // renders this branch too, and it must reclaim the instance
                     // rather than re-open — otherwise tapping back into a
                     // composer would make its half-typed draft the revert target.
-                    onPress={handle.edit}
+                    //
+                    // The press point rides along so the caret lands where the
+                    // reader pressed. `pageX/pageY` are viewport coordinates on
+                    // RN-Web, which is what posAtCoords wants; a native press
+                    // has them too and simply falls back to 'end' there.
+                    onPress={event => handle.edit(pressPoint(event))}
                     accessibilityRole="button"
                     accessibilityLabel={accessibilityLabel}
                 >

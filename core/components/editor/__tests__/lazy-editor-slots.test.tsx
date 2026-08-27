@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 // A held lease. There is one editor app-wide, and a surface that does not hold
 // it renders its read view — so a test about the EDITING slots has to be the
 // holder, or there is nothing to render.
+const focusSpy = vi.fn()
+
 vi.mock('../../../lib/editor/warm', () => ({
     useWarmEditor: () => ({
         isWarm: true,
@@ -19,7 +21,7 @@ vi.mock('../../../lib/editor/warm', () => ({
                 getText: vi.fn(async () => 'x'),
                 getMarkdown: vi.fn(async () => 'typed'),
                 setContent: vi.fn(),
-                focus: vi.fn(),
+                focus: focusSpy,
                 clear: vi.fn(),
                 getSelection: vi.fn(async () => null),
             },
@@ -47,7 +49,7 @@ const { useLazyEditor } = await import('../LazyEditor')
  * is never bound to a DOM event and a click cannot reach it. The Probe hands its
  * press handler out here instead, which is what lets a test open a session.
  */
-let startEditing: (() => void) | null = null
+let startEditing: ((event?: unknown) => void) | null = null
 
 function Probe({ canEdit = true }: { canEdit?: boolean }) {
     const slots = useLazyEditor({
@@ -65,8 +67,9 @@ function Probe({ canEdit = true }: { canEdit?: boolean }) {
     // The read view's press target is the Pressable in the body slot; its
     // onPress is what the swap hangs off.
     startEditing =
-        (isValidElement<{ onPress?: () => void }>(slots.body) ? slots.body.props.onPress : null) ??
-        null
+        (isValidElement<{ onPress?: (event?: unknown) => void }>(slots.body)
+            ? slots.body.props.onPress
+            : null) ?? null
 
     return (
         <View>
@@ -104,5 +107,39 @@ describe('useLazyEditor slots', () => {
         const { queryByTestId, getByText } = render(<Probe canEdit={false} />)
         expect(queryByTestId('probe-press')).toBeNull()
         expect(getByText('read view')).toBeTruthy()
+    })
+
+    /**
+     * The read view and the editing surface occupy the same box, so the point
+     * someone pressed on the prose is where the caret belongs. Without this the
+     * caret landed at the very end of the document and a reader who clicked
+     * into the middle of a paragraph had to click again to get there.
+     */
+    it('puts the caret where the read view was pressed', async () => {
+        focusSpy.mockClear()
+        render(<Probe />)
+        act(() => startEditing?.({ nativeEvent: { pageX: 120, pageY: 240 } }))
+        // The focus is deferred to a microtask: the editor is reconfigured
+        // during the same commit, and focusing before it has applied the new
+        // content moves the caret in the OUTGOING surface's document.
+        await act(async () => {})
+        expect(focusSpy).toHaveBeenCalledWith({ x: 120, y: 240 })
+    })
+
+    /**
+     * A press does not always carry coordinates — an accessibility activation
+     * and a keyboard-triggered press both arrive without them, and RN calls
+     * onPress with no event at all in some paths. Each must still open a
+     * session, with the caret at the end.
+     */
+    it.each([
+        ['no event at all', undefined],
+        ['an event with no coordinates', { nativeEvent: {} }],
+    ])('falls back to the end of the document given %s', async (_label, event) => {
+        focusSpy.mockClear()
+        render(<Probe />)
+        act(() => startEditing?.(event))
+        await act(async () => {})
+        expect(focusSpy).toHaveBeenCalledWith('end')
     })
 })

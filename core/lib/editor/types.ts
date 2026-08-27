@@ -13,7 +13,20 @@ export interface EditorHandle {
     // where the shared document is the source of truth.
     setMarkdown?(markdown: string): void
     setContent(html: string): void
-    focus(position?: 'start' | 'end'): void
+    /**
+     * Put the caret in the editor.
+     *
+     * `'start'` / `'end'` are the document ends. A `{ x, y }` is a point in
+     * VIEWPORT coordinates — the place the user actually pressed — which the
+     * editor resolves to the nearest text position. That is what makes tapping
+     * into the middle of a paragraph land the caret there rather than at the
+     * end: the read view and the editing surface occupy the same box, so the
+     * point the reader pressed on the prose is the point the caret belongs at.
+     *
+     * A point that resolves to nothing (a press in the padding, an editor not
+     * yet laid out) falls back to `'end'`, which is the old behavior.
+     */
+    focus(position?: 'start' | 'end' | { x: number; y: number }): void
     clear(): void
     // Returns the editor's current selection range in ProseMirror
     // coordinate space, or null if there's no selection or the editor
