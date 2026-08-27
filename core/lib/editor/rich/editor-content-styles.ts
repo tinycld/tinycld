@@ -41,19 +41,83 @@ export function scopeEditorStyles(css: string, scopeClass = EDITOR_SCOPE_CLASS):
     return css.replace(/(^|,)(\s*)\.ProseMirror\b/gm, `$1$2.${scopeClass} .ProseMirror`)
 }
 
+/**
+ * React Native Web's default `Text` font stack, as the read view resolves it.
+ *
+ * Kept beside the sheet that uses it rather than imported, because the sheet is
+ * a plain string shared with the native WebView page — which has no access to
+ * RN's runtime and must be handed the same list literally.
+ */
+const RN_WEB_FONT_STACK =
+    '-apple-system, "system-ui", "Segoe UI", Roboto, Helvetica, Arial, sans-serif, ' +
+    '"Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"'
+
 export const EDITOR_CONTENT_STYLES = `
 .ProseMirror {
     padding: 0;
     caret-color: var(--editor-accent-color, currentColor);
+    /* The type scale the whole surface is built on.
+     *
+     * Every heading below is sized in \`em\`, so this ONE value decides how the
+     * editor reads — and the read view that swaps places with it derives its
+     * own sizes from the same number (components/help/markdown-purpose.ts).
+     * Stating it here is what keeps the two identical rather than merely
+     * similar: on web the editor previously set no size at all and inherited
+     * the app's 16px body, so tapping to edit grew every line and every
+     * heading, and the prose visibly reflowed under the caret.
+     *
+     * A variable rather than a literal because the surfaces differ: a card
+     * description is 14px, a comment 15px. The host sets it per surface and
+     * the fallback is the description's base. */
+    font-size: var(--editor-base-font-size, 14px);
+    line-height: var(--editor-base-line-height, 1.5);
+    /* The SAME stack React Native Web resolves its default Text to.
+     *
+     * Stated rather than inherited: on web this sheet lands in a page whose
+     * body font is Tailwind's "ui-sans-serif, system-ui, ...", so the editor
+     * rendered in a different face from the markdown it replaces. Same size,
+     * same line-height, different glyph widths — which shows up as the prose
+     * re-wrapping the instant someone taps to edit (a three-line comment
+     * became four), and reads as though the line spacing had changed. */
+    font-family: ${RN_WEB_FONT_STACK};
+    /* Ligatures back ON, matching the rendered markdown.
+     *
+     * Something in the page CSS (uniwind/Tailwind's preflight) disables them
+     * on the editing surface. Disabled ligatures set text measurably WIDER —
+     * the same 174 characters fitted 411px in the read view and only 398px
+     * here — so a comment that rendered in three lines re-wrapped to four the
+     * moment it was tapped, which reads as the line spacing having changed. */
+    font-variant-ligatures: normal;
+    font-feature-settings: normal;
 }
 .ProseMirror:focus {
     outline: none;
 }
-.ProseMirror > * + * {
-    margin-top: 0.6em;
-}
+/* The block rhythm. A variable because the surfaces differ: a description is a
+   document and spaces on the editor's own 0.6em, while a comment is a message
+   in a thread and spaces far more tightly. The read view derives the same
+   number from markdownScale(), which is what keeps the swap from reflowing. */
 .ProseMirror p {
-    margin: 0;
+    /* Reset the browser's default paragraph margins WITHOUT touching the top
+       one, which the block-rhythm rule below owns.
+    
+       A blanket "margin: 0" here always beat that rule: scoping prefixes both
+       selectors with the wrapper class, and this one carries an extra element
+       token, so it wins on specificity no matter which is declared first. The
+       result was that consecutive paragraphs got no gap at all in the editor
+       while the rendered markdown gave them one — a multi-paragraph comment
+       re-spaced itself the instant it was tapped. */
+    margin-right: 0;
+    margin-bottom: 0;
+    margin-left: 0;
+}
+.ProseMirror > * + * {
+    margin-top: var(--editor-block-spacing, 0.6em);
+}
+/* The FIRST block has nothing above it to be spaced from. Stated separately
+   because the reset above no longer covers margin-top. */
+.ProseMirror > :first-child {
+    margin-top: 0;
 }
 /* Placeholder is a decoration on the first empty node, not real text — it must
    not be selectable or it lands in copied content. */
@@ -64,11 +128,42 @@ export const EDITOR_CONTENT_STYLES = `
     height: 0;
     pointer-events: none;
 }
-.ProseMirror h1 { font-size: 1.6em; font-weight: 700; }
-.ProseMirror h2 { font-size: 1.35em; font-weight: 700; }
-.ProseMirror h3 { font-size: 1.15em; font-weight: 600; }
+/* ProseMirror appends an empty paragraph after a document that ends in a
+   BLOCK node — a list, a table, a code block — so the caret has somewhere to go
+   to escape it. It is a caret affordance and nothing else: it is never typed,
+   never saved (the stored markdown has no trailing blank), and it is recreated
+   on load, so it cannot be removed from the document without taking that escape
+   route away.
+
+   Collapsing it is what keeps it from costing height. A comment ending in a
+   list opened 25px taller than the text it replaced — one line plus its gap —
+   which pushed every comment below it down on focus and back up on blur. The
+   node still exists and still accepts the caret; it simply reserves no space
+   until it does.
+
+   :focus-within so the escape route reappears the moment someone is actually in
+   the editor and might need it. */
+.ProseMirror > p:last-child:empty,
+.ProseMirror > p.is-empty:last-child:not(:first-child) {
+    height: 0;
+    margin-top: 0;
+    overflow: hidden;
+}
+.ProseMirror:focus-within > p:last-child:empty,
+.ProseMirror:focus-within > p.is-empty:last-child:not(:first-child) {
+    height: auto;
+    margin-top: var(--editor-block-spacing, 0.6em);
+    overflow: visible;
+}
+/* Heading sizes are variables for the same reason as the rhythm above. A
+   description SCALES them (a heading is a document heading); a comment CAPS
+   them near body size, because an "# H1" in a chat message is someone reaching
+   for emphasis, not declaring a title. The fallbacks are the description's. */
+.ProseMirror h1 { font-size: var(--editor-h1-size, 1.6em); font-weight: 700; }
+.ProseMirror h2 { font-size: var(--editor-h2-size, 1.35em); font-weight: 700; }
+.ProseMirror h3 { font-size: var(--editor-h3-size, 1.15em); font-weight: 600; }
 .ProseMirror h4, .ProseMirror h5, .ProseMirror h6 {
-    font-size: 1em;
+    font-size: var(--editor-h4-size, 1em);
     font-weight: 600;
 }
 .ProseMirror blockquote {
@@ -80,8 +175,12 @@ export const EDITOR_CONTENT_STYLES = `
     color: var(--editor-primary-color, #2563eb);
     text-decoration: underline;
 }
+/* Indent in \`em\`, not \`rem\`: a rem is the APP's root size, which has nothing
+   to do with this surface's type scale, so a 14px description and a 15px
+   comment both indented by the same 24px while their markers scaled with the
+   text. The read view derives its indent from the same multiple. */
 .ProseMirror ul, .ProseMirror ol {
-    padding-left: 1.5rem;
+    padding-left: 1.5em;
     margin: 0;
 }
 .ProseMirror ul { list-style: disc; }

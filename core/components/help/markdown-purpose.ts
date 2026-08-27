@@ -31,6 +31,15 @@ export interface MarkdownScale {
     /** A rule under h1/h2 suits a long document and nothing shorter. */
     headingRule: boolean
     listSpacing: number
+    /**
+     * How far a list's text sits from the margin, in px.
+     *
+     * Ported from `.ProseMirror ul, .ProseMirror ol { padding-left: 1.5em }`.
+     * The renderer indents nothing by default, so a rendered bullet list hung
+     * at the margin while the editor's sat 1.5em in — and the markers landed on
+     * a different x the moment anyone tapped to edit.
+     */
+    listIndent: number
 }
 
 interface HeadingScale {
@@ -50,6 +59,12 @@ const EDITOR_BASE_PX = 14
 
 /** `.ProseMirror > * + * { margin-top: 0.6em }` — the editor's block rhythm. */
 const EDITOR_BLOCK_SPACING = Math.round(EDITOR_BASE_PX * 0.6)
+
+/**
+ * `.ProseMirror ul, .ProseMirror ol { padding-left: 1.5em }` — the editor's
+ * list indent, as a multiple of the surface's own base size.
+ */
+export const EDITOR_LIST_INDENT_EM = 1.5
 
 /**
  * Ported from `.ProseMirror h1/h2/h3` in editor-content-styles.ts.
@@ -93,6 +108,7 @@ const DESCRIPTION_SCALE: MarkdownScale = {
     // The editor draws no rule under a heading, so neither may this.
     headingRule: false,
     listSpacing: EDITOR_BLOCK_SPACING,
+    listIndent: Math.round(EDITOR_BASE_PX * EDITOR_LIST_INDENT_EM),
 }
 
 /**
@@ -113,6 +129,7 @@ const DOCUMENTATION_SCALE: MarkdownScale = {
     h6: { size: 13, weight: '600', marginTop: 8, marginBottom: 2 },
     headingRule: true,
     listSpacing: 6,
+    listIndent: Math.round(15 * EDITOR_LIST_INDENT_EM),
 }
 
 /**
@@ -122,19 +139,29 @@ const DOCUMENTATION_SCALE: MarkdownScale = {
  * someone reaching for emphasis, not declaring a document title, so the
  * loudest it gets is a little above body text. Spacing is tight for the same
  * reason: five short lines should read as five short lines, not fill a screen.
+ *
+ * Top margins only, as in DESCRIPTION_SCALE: RN margins do not collapse, and a
+ * bottom margin here would be ADDED to the next block's top one. The 2px bottom
+ * these headings used to carry is what made a rendered comment space nearly
+ * twice as far apart as the editor that replaces it.
  */
 const COMPACT_SCALE: MarkdownScale = {
     bodySize: 15,
     bodyLineHeight: 21,
     paragraphSpacing: 4,
-    h1: { size: 17, weight: '700', marginTop: 8, marginBottom: 2 },
-    h2: { size: 16, weight: '700', marginTop: 8, marginBottom: 2 },
-    h3: { size: 15, weight: '600', marginTop: 6, marginBottom: 2 },
-    h4: { size: 15, weight: '600', marginTop: 6, marginBottom: 2 },
-    h5: { size: 15, weight: '600', marginTop: 6, marginBottom: 2 },
-    h6: { size: 15, weight: '600', marginTop: 6, marginBottom: 2 },
+    // marginTop is COMPACT_BLOCK_SPACING for every level, because the editor
+    // spaces all blocks with one `* + *` rule and a heading is not special to
+    // it. Giving headings a larger gap here made a rendered comment's headings
+    // sit twice as far from the text above them as the editor's did.
+    h1: { size: 17, weight: '700', marginTop: 4, marginBottom: 0 },
+    h2: { size: 16, weight: '700', marginTop: 4, marginBottom: 0 },
+    h3: { size: 15, weight: '600', marginTop: 4, marginBottom: 0 },
+    h4: { size: 15, weight: '600', marginTop: 4, marginBottom: 0 },
+    h5: { size: 15, weight: '600', marginTop: 4, marginBottom: 0 },
+    h6: { size: 15, weight: '600', marginTop: 4, marginBottom: 0 },
     headingRule: false,
     listSpacing: 4,
+    listIndent: Math.round(15 * EDITOR_LIST_INDENT_EM),
 }
 
 const SCALES: Record<MarkdownPurpose, MarkdownScale> = {

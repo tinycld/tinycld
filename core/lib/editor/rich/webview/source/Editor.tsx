@@ -176,10 +176,10 @@ function EditorMounted({ init }: { init: RichEditorInitPayload }) {
     useEffect(() => {
         const style = document.createElement('style')
         style.id = 'tinycld-rich-editor-styles'
-        style.textContent = buildEditorCSS(init.colors)
+        style.textContent = buildEditorCSS(init.colors, init.scale)
         document.head.appendChild(style)
         return () => style.remove()
-    }, [init.colors])
+    }, [init.colors, init.scale])
 
     // Seed the credential store before the editor's first paint, so images
     // present in the initial document don't flash a broken frame while the

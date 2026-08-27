@@ -9,7 +9,7 @@
  * This file names the types carried on the 'markdown' and 'app' namespaces and
  * types their payloads.
  */
-import type { EditorContentFormat } from '../../options'
+import type { EditorContentFormat, EditorTypeScale } from '../../options'
 import type { SerializableTriggerConfig, TriggerItem } from '../../triggers'
 
 /** host → WebView. Replaces the document. */
@@ -173,6 +173,13 @@ export interface RichEditorInitPayload {
     editable: boolean
     /** Hard ceiling; typing stops here rather than failing on save. */
     characterLimit?: number
+    /**
+     * The surface's type scale, in px. Must match what the host renders the
+     * read view at, or tapping to edit reflows the prose — both sides derive
+     * from `markdownScale(purpose)` via `editorScaleFor()`. Absent keeps the
+     * page's own description-shaped defaults.
+     */
+    scale?: EditorTypeScale
     /** Theme colors resolved on the native side, applied as CSS in-page. */
     colors: RichEditorColors
     autofocus: boolean

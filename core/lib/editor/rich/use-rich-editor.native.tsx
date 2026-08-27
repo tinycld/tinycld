@@ -60,6 +60,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         autofocus,
         editable = true,
         characterLimit,
+        scale,
         minHeight,
         onSubmitShortcut,
         onEscape,
@@ -186,6 +187,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             placeholder,
             editable,
             characterLimit,
+            scale,
             autofocus: autofocus ?? false,
             colors: {
                 bg: theme?.backgroundColor ?? bgColor,
@@ -241,6 +243,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         placeholder,
         editable,
         characterLimit,
+        scale,
         autofocus,
         theme?.backgroundColor,
         bgColor,
