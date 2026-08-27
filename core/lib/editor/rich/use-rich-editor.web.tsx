@@ -10,6 +10,7 @@ import {
     EDITOR_SCOPE_CLASS,
     scopeEditorStyles,
 } from './editor-content-styles'
+import { editorScaleVars } from './editor-scale'
 import { buildRichEditorExtensions } from './extensions'
 import { extractImageFilesFromDrop, extractImageFilesFromPaste } from './extract-image-files'
 import { repairMarkdown } from './markdown-repair'
@@ -81,6 +82,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         onImageDrop,
         collab,
         triggers,
+        scale,
     } = options
 
     const placeholderColor = useThemeColor('field-placeholder')
@@ -184,10 +186,18 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     // identity of the configuration, never the caller's objects.
     const collabDoc = collab?.document ?? null
     const collabField = collab?.field ?? null
-    const collabAwareness = collab?.awareness ?? null
-    const collabUserId = collab?.user?.id ?? null
-    const collabUserName = collab?.user?.name ?? null
-    const collabUserColor = collab?.user?.color ?? null
+    // Read through a ref, and NOT in the deps below.
+    //
+    // Only the Yjs binding — the document and its field — genuinely needs a
+    // rebuild; the caret identity is read once when the extension is
+    // configured. Both of these arrive ASYNCHRONOUSLY though (awareness with
+    // the room, the user with the auth query), so depending on them destroyed
+    // and recreated the editor a beat after it mounted. That takes the
+    // ProseMirror node out of the document, which blurs it — the caret someone
+    // had just placed by clicking a description vanished a few hundred
+    // milliseconds later.
+    const collabIdentityRef = useRef({ awareness: collab?.awareness, user: collab?.user })
+    collabIdentityRef.current = { awareness: collab?.awareness, user: collab?.user }
 
     // Only WHETHER a submit handler exists belongs in the deps below — the ref
     // carries the value, and depending on the caller's inline closure would
@@ -209,30 +219,15 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                         ? {
                               document: collabDoc,
                               field: collabField,
-                              awareness: collabAwareness ?? undefined,
-                              user:
-                                  collabUserId && collabUserName && collabUserColor
-                                      ? {
-                                            id: collabUserId,
-                                            name: collabUserName,
-                                            color: collabUserColor,
-                                        }
-                                      : undefined,
+                              // The LIVE values at configure time, rather than
+                              // the ones captured when this memo last ran — see
+                              // the ref's note above for why they are not deps.
+                              awareness: collabIdentityRef.current.awareness,
+                              user: collabIdentityRef.current.user,
                           }
                         : undefined,
             }),
-        [
-            placeholder,
-            characterLimit,
-            stableTriggers,
-            hasSubmitShortcut,
-            collabDoc,
-            collabField,
-            collabAwareness,
-            collabUserId,
-            collabUserName,
-            collabUserColor,
-        ]
+        [placeholder, characterLimit, stableTriggers, hasSubmitShortcut, collabDoc, collabField]
     )
 
     const tiptapEditor = useEditor(
@@ -302,8 +297,22 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         // and caret would leak into the next one — the native page has always
         // done this by keying its mount on the same value (webview/source/
         // Editor.tsx, `key={init.generation}`).
-        [extensions, editable, generation]
+        //
+        // `editable` is deliberately NOT here. A dep change DESTROYS the editor,
+        // which takes its DOM node out of the document and blurs it — and this
+        // value resolves asynchronously (a card's write gate waits on the room's
+        // serverHello, which is null again after every disconnect). Rebuilding on
+        // it meant the editor was torn down a beat after someone clicked into it,
+        // losing the caret they had just placed. It is applied as a command
+        // below, which is what tiptap provides setEditable for.
+        [extensions, generation]
     )
+
+    // Applied rather than rebuilt — see the dep note above.
+    useEffect(() => {
+        if (!tiptapEditor || tiptapEditor.isDestroyed) return
+        if (tiptapEditor.isEditable !== editable) tiptapEditor.setEditable(editable)
+    }, [tiptapEditor, editable])
 
     const editor: EditorHandle = useMemo(() => {
         // tiptap nulls commandManager on destroy, and useEditor can briefly
@@ -337,10 +346,38 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                 if (!isLive() || warnIfCollab('setMarkdown')) return
                 tiptapEditor?.commands.setContent(markdown, { contentType: 'markdown' })
             },
-            focus: (position?: 'start' | 'end') => {
-                if (!isLive()) return
+            focus: (position?: 'start' | 'end' | { x: number; y: number }) => {
+                if (!isLive() || !tiptapEditor) return
+                if (position && typeof position === 'object') {
+                    // ProseMirror resolves a viewport point to a document
+                    // position itself, which is more accurate than anything
+                    // derived from the read view's text nodes — it knows the
+                    // editor's own layout, including nodes with no text.
+                    const at = tiptapEditor.view.posAtCoords({
+                        left: position.x,
+                        top: position.y,
+                    })?.pos
+                    // A press that lands outside any text (the padding below a
+                    // short description) resolves to nothing. Falling through
+                    // to 'end' puts the caret where a reader who clicked past
+                    // the prose would expect it.
+                    if (at != null) {
+                        // The DOM node first. Tiptap's `.focus()` chain command
+                        // schedules its own focus and does NOT reliably take DOM
+                        // focus when the view has just been mounted — the chain
+                        // reports success while `document.activeElement` stays
+                        // on <body>, which is the state that left a clicked
+                        // description showing an editor with no caret.
+                        tiptapEditor.view.dom.focus({ preventScroll: true })
+                        tiptapEditor.chain().focus().setTextSelection(at).run()
+                        return
+                    }
+                }
+                // Same reason as above: take DOM focus explicitly, then let the
+                // chain place the selection.
+                tiptapEditor.view.dom.focus({ preventScroll: true })
                 tiptapEditor
-                    ?.chain()
+                    .chain()
                     .focus(position === 'start' ? 'start' : 'end')
                     .run()
             },
@@ -430,13 +467,18 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                             // @ts-expect-error CSS custom properties for web
                             '--editor-placeholder-color': placeholderColor,
                             '--editor-primary-color': primaryColor,
+                            // The surface's type scale. Spread rather than set
+                            // one by one so an absent scale leaves the sheet's
+                            // own fallbacks in place — writing "undefined" into
+                            // a custom property breaks the cascade.
+                            ...editorScaleVars(scale),
                         }}
                     >
                         <EditorContent editor={tiptapEditor} />
                     </View>
                 )
             },
-        [tiptapEditor, placeholderColor, primaryColor, containerClassName]
+        [tiptapEditor, placeholderColor, primaryColor, containerClassName, scale]
     )
 
     return { editor, EditorComponent, commands, toolbarState, isReady: !!live }
