@@ -1,6 +1,10 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { expect, type Locator, type Page } from '@playwright/test'
+// Route shapes come from the app's own helper so the specs can't drift from it.
+// org-routes has no runtime dependency (its only import is `import type`), so
+// it is safe to pull into Playwright's plain-Node context.
+import { APP_PREFIX, appHref } from '@tinycld/core/lib/org-routes'
 
 export const TEST_USER_EMAIL = process.env.TEST_USER_LOGIN || 'user@tinycld.org'
 
@@ -382,7 +386,11 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     // The short wait only applies on the bare root, where that redirect is the
     // thing possibly in flight; anywhere else nothing is auto-heading here, so
     // a miss costs nothing and we click the rail.
-    const redirectMayBeInFlight = new URL(page.url()).pathname === '/'
+    // The app root is APP_PREFIX ('/a'), and '/' is the pre-auth landing that
+    // redirects into it — either can be the transient spot the post-login
+    // redirect is passing through.
+    const landingPathname = new URL(page.url()).pathname
+    const redirectMayBeInFlight = landingPathname === '/' || landingPathname === APP_PREFIX
     const alreadyThere = await onTarget
         .waitFor({ state: 'visible', timeout: redirectMayBeInFlight ? 2000 : 1 })
         .then(
@@ -393,8 +401,9 @@ export async function navigateToPackage(page: Page, pkg: string, options?: { wai
     if (!alreadyThere) {
         // Match by URL prefix rather than exact href: some packages (calc,
         // text, …) rewrite their rail link to deep-link the user's last visited
-        // file (e.g. /calc/<id>), so the anchor no longer matches bare /<pkg>.
-        const railLink = page.locator(`a[href^="/${pkg}"]`).first()
+        // file (e.g. /a/calc/<id>), so the anchor no longer matches the bare
+        // package root.
+        const railLink = page.locator(`a[href^="${appHref(pkg)}"]`).first()
         await railLink.waitFor({ state: 'visible' })
         await railLink.click()
         await onTarget.waitFor({ state: 'visible' })
