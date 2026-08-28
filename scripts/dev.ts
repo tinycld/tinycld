@@ -588,6 +588,32 @@ function isPbPath(url: string): boolean {
     return PB_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
 }
 
+// First path segments that were app routes before they moved under /a.
+// Mirrors legacyAppSegments in core/server/coreserver/static.go.
+const LEGACY_APP_SEGMENTS = [
+    'accept-invite',
+    'reset-password',
+    'connect',
+    'pick-org',
+    'setup',
+    'settings',
+    'help',
+]
+
+// The dev proxy has to redirect legacy paths itself. In production the Go
+// static handler owns the SPA fallback and does this (legacyAppRedirect), but
+// here a non-PB path goes straight to Expo, which no longer has a route for
+// the unprefixed form — so a hard load of /setup renders the fallback shell
+// instead of the setup screen. Keeping the two in step is what makes a dev or
+// CI run agree with production.
+function legacyAppRedirect(url: string): string | null {
+    const [pathname, query] = url.split('?', 2)
+    if (pathname === '/a' || pathname.startsWith('/a/')) return null
+    const segment = pathname.split('/').filter(Boolean)[0]
+    if (!segment || !LEGACY_APP_SEGMENTS.includes(segment)) return null
+    return `/a${pathname}${query ? `?${query}` : ''}`
+}
+
 function startProxy(opts: {
     proxyPort: number
     pbPort: number
@@ -598,7 +624,18 @@ function startProxy(opts: {
     const log = withPrefix('proxy', '\x1b[33m') // yellow
 
     const handler: http.RequestListener = (req, res) => {
-        const target = isPbPath(req.url ?? '/') ? opts.pbPort : opts.expoPort
+        const requestUrl = req.url ?? '/'
+
+        if (!isPbPath(requestUrl)) {
+            const redirect = legacyAppRedirect(requestUrl)
+            if (redirect) {
+                res.writeHead(302, { Location: redirect })
+                res.end()
+                return
+            }
+        }
+
+        const target = isPbPath(requestUrl) ? opts.pbPort : opts.expoPort
 
         // Browsers and Playwright cancel in-flight requests aggressively.
         // Once the client socket goes away, any further write to req/res
