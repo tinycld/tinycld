@@ -114,6 +114,38 @@ export function addGroup(ast: ConditionsAst): ConditionsAst {
     }
 }
 
+/**
+ * The AST that the first edit to an empty condition set produces: one group
+ * holding one condition carrying the user's field pick.
+ *
+ * ConditionsCard renders a ready-to-fill first row against `groups: []` WITHOUT
+ * putting it in the draft, and calls this only once the user actually picks a
+ * field. Keeping the blank row out of the draft is what lets an untouched
+ * builder still save a rule with no conditions (which matches everything) — and
+ * it is load-bearing, not just tidy: `conditionSchema.field` is `min(1)` and
+ * `conditionGroupSchema.conditions` is `min(1)`, so a blank condition or an
+ * empty group reaching `conditionsAstSchema.parse` in draftToRecord THROWS on
+ * save.
+ *
+ * A patch that names no field is ignored for the same reason. That is currently
+ * unreachable — ConditionRow's operator menu lists nothing until a field is
+ * chosen — but the invariant lives in a different component, so this guards it
+ * here rather than trusting a sibling's render logic to hold forever.
+ */
+export function seedFirstCondition(ast: ConditionsAst, patch: Partial<Condition>): ConditionsAst {
+    if (!patch.field) return ast
+    return {
+        ...ast,
+        groups: [
+            {
+                ...EMPTY_GROUP,
+                uid: newRecordId(),
+                conditions: [{ ...EMPTY_CONDITION, ...patch, uid: newRecordId() }],
+            },
+        ],
+    }
+}
+
 /** Removes the group at `groupIndex`. */
 export function removeGroup(ast: ConditionsAst, groupIndex: number): ConditionsAst {
     return { ...ast, groups: ast.groups.filter((_, i) => i !== groupIndex) }
@@ -224,6 +256,38 @@ export function moveAction<T>(list: T[], from: number, to: number): T[] {
     const [item] = next.splice(from, 1)
     next.splice(to, 0, item)
     return next
+}
+
+/**
+ * Orders the builder's package groups to match the order the user dragged their
+ * apps into (Settings → Personal → Navigation), so the trigger and action menus
+ * read the same way as the sidebar and tab bar rather than alphabetically.
+ *
+ * Two kinds of slug are deliberately NOT in `orderedSlugs`:
+ *
+ *   • `core`, which has no manifest and so never appears in the nav order at
+ *     all. Its synthetic triggers (run manually / on a schedule) are the
+ *     package-neutral starting points every rule can use, so they lead.
+ *   • packages with no nav entry (settings-only contributors), which the nav
+ *     order filters out. They still contribute automation, so they follow the
+ *     ordered ones alphabetically instead of being dropped.
+ */
+export function orderGroupsByUserPreference<T>(
+    groups: Map<string, T>,
+    orderedSlugs: string[]
+): [string, T][] {
+    const rank = new Map(orderedSlugs.map((slug, i) => [slug, i]))
+    const weight = (pkg: string) => {
+        if (pkg === 'core') return -1
+        return rank.get(pkg) ?? Number.MAX_SAFE_INTEGER
+    }
+    return [...groups.entries()].sort(([a], [b]) => {
+        const delta = weight(a) - weight(b)
+        // Equal weight means both are unranked; alphabetical keeps them stable
+        // rather than leaving it to Map insertion order, which varies with the
+        // catalog's own row order.
+        return delta !== 0 ? delta : a.localeCompare(b)
+    })
 }
 
 /** Appends a `{{key}}` template placeholder to a param's current text value. */

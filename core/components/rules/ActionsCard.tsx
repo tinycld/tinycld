@@ -9,15 +9,18 @@ import {
     appendPlaceholder,
     compatibleActions,
     moveAction,
+    orderGroupsByUserPreference,
 } from '@tinycld/core/lib/automation/condition-helpers'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
 import { parseRefSafe } from '@tinycld/core/lib/automation/helpers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { Menu } from '@tinycld/core/ui/menu'
 import { ArrowDown, ArrowUp, Braces, Plus, Trash2 } from 'lucide-react-native'
 import { newRecordId } from 'pbtsdb/core'
 import { Fragment } from 'react'
 import { Pressable, Text, View } from 'react-native'
+import { RuleCard } from './RuleCard'
 import { ValueInput } from './ValueInput'
 
 export interface ActionsCardProps {
@@ -76,7 +79,10 @@ function AddActionMenu({
 }) {
     const mutedColor = useThemeColor('muted-foreground')
     const options = trigger ? compatibleActions(catalog, trigger) : []
-    const groups = groupActionsByPackage(options)
+    // Ordered like the trigger menu (and the sidebar): the user's own app
+    // order, with core's package-neutral actions leading.
+    const orderedSlugs = useSortedPackages().map(p => p.slug)
+    const groups = orderGroupsByUserPreference(groupActionsByPackage(options), orderedSlugs)
     const ambiguous = ambiguousLabels(options)
 
     return (
@@ -90,7 +96,7 @@ function AddActionMenu({
             <Menu.Portal>
                 <Menu.Overlay />
                 <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {[...groups.entries()].map(([pkg, actions]) => (
+                    {groups.map(([pkg, actions]) => (
                         <Fragment key={pkg}>
                             <Menu.Label>{pkg}</Menu.Label>
                             {actions.map(action => (
@@ -280,9 +286,7 @@ export function ActionsCard({ draft, catalog, onChange }: ActionsCardProps) {
     }
 
     return (
-        <View className="rounded-xl border p-4 bg-surface-secondary border-border gap-3">
-            <Text className="text-sm font-semibold text-foreground">THEN</Text>
-
+        <RuleCard title="THEN" isDisabled={!trigger} disabledHint="Choose a trigger first">
             {draft.actions.map((draftAction, index) => (
                 <ActionEntry
                     // Keyed on the builder-local uid (condition-helpers.ts's
@@ -306,6 +310,6 @@ export function ActionsCard({ draft, catalog, onChange }: ActionsCardProps) {
             ))}
 
             <AddActionMenu catalog={catalog} trigger={trigger} onSelect={handleSelectAction} />
-        </View>
+        </RuleCard>
     )
 }

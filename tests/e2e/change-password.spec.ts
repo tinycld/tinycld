@@ -26,9 +26,14 @@ test.describe('change password', () => {
     })
 
     // Open Settings → Personal via the user menu (SPA nav, not page.goto).
+    // The menu's generic "Settings" lands on the settings HUB — a section list —
+    // so this clicks through to Personal from there. It used to jump straight to
+    // the personal page, which is exactly what left Rules (and every other
+    // section) unreachable wherever that menu is the only Settings affordance.
     async function openPersonalSettings(page: Page) {
         await page.getByLabel('User menu').click()
         await page.getByText('Settings', { exact: true }).click()
+        await page.getByText('Personal', { exact: true }).first().click()
         // Gate on the control the callers use, not the URL: the route changes
         // as soon as the router accepts the push, while the screen is still
         // mounting, so a URL wait can return before 'Change password' exists.

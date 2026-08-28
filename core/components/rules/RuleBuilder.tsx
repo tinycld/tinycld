@@ -16,7 +16,7 @@ import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { Switch } from '@tinycld/core/ui/switch'
 import { X } from 'lucide-react-native'
 import { useEffect, useRef } from 'react'
-import { ActivityIndicator, ScrollView, Text, View } from 'react-native'
+import { ActivityIndicator, ScrollView, Text, type TextInput, View } from 'react-native'
 import { ActionsCard } from './ActionsCard'
 import { ConditionsCard } from './ConditionsCard'
 import { DryRunPanel } from './DryRunPanel'
@@ -68,7 +68,8 @@ function BuilderContent({
     presetPkg,
     nextOrder = 0,
     sessionKey,
-}: Omit<RuleBuilderProps, 'isOpen'> & { sessionKey: number }) {
+    isMobile,
+}: Omit<RuleBuilderProps, 'isOpen'> & { sessionKey: number; isMobile: boolean }) {
     const { record, isReady: recordReady } = useEditingRecord(ruleId)
     const { catalog, isReady: catalogReady } = useAutomationCatalog()
     const { save } = useRuleMutations()
@@ -108,6 +109,7 @@ function BuilderContent({
             catalog={catalog}
             isLocked={Boolean(ruleId)}
             isSaving={save.isPending}
+            isMobile={isMobile}
             onSave={draft => save.mutate(draft, { onSuccess: onClose })}
         />
     )
@@ -142,7 +144,26 @@ interface RuleBuilderFormProps {
     catalog: NonNullable<ReturnType<typeof useAutomationCatalog>['catalog']>
     isLocked: boolean
     isSaving: boolean
+    isMobile: boolean
     onSave: (draft: RuleDraft) => void
+}
+
+// The scroll region's sizing differs by shell, because the two shells bound
+// their content differently.
+//
+// Modal: ModalContent is `overflow-hidden` with no height of its own, so the
+// form caps it (max-h-[85vh] below) and the middle band takes whatever is left
+// via flex — `min-h-0` is required, since RN's `min-height: auto` default
+// otherwise refuses to shrink a flex child below its content and the cap is
+// ignored, clipping the footer off-screen.
+//
+// BottomDrawer: the sheet measures its own height from its content (onLayout)
+// and caps at 85% of the screen. A `flex-1` child inside an intrinsically-sized
+// parent has no definite height to flex against and can collapse to zero, so
+// the drawer path keeps an explicit cap instead. 70vh sits under the sheet's
+// own 85% so the header and footer stay inside the sheet.
+function scrollRegionClass(isMobile: boolean): string {
+    return isMobile ? 'max-h-[70vh]' : 'flex-1 min-h-0'
 }
 
 function RuleBuilderForm({
@@ -152,9 +173,30 @@ function RuleBuilderForm({
     catalog,
     isLocked,
     isSaving,
+    isMobile,
     onSave,
 }: RuleBuilderFormProps) {
     const { draft, patch, errors, validate } = useRuleDraft(initial)
+    const nameRef = useRef<TextInput>(null)
+
+    // Naming the rule is the first thing every new rule needs, so start there
+    // rather than making the user click in.
+    //
+    // Only for a NEW rule on the modal: opening an existing rule is usually to
+    // change a condition or an action, so grabbing focus (and on touch, raising
+    // the keyboard over the sheet whose height is measured from its content)
+    // would fight what the user came to do.
+    const shouldFocusName = !isLocked && !isMobile
+
+    // `autoFocus` alone is not enough — GlueStack's overlay installs a focus
+    // trap after mount and ModalContent enters with a ZoomIn animation, which
+    // between them clobber it. Focus on the next frame instead, once the trap
+    // has settled and the content has painted (same fix as PromptDialog).
+    useEffect(() => {
+        if (!shouldFocusName) return
+        const raf = requestAnimationFrame(() => nameRef.current?.focus())
+        return () => cancelAnimationFrame(raf)
+    }, [shouldFocusName])
 
     const handleSave = () => {
         if (!validate(catalog)) return
@@ -162,15 +204,18 @@ function RuleBuilderForm({
     }
 
     return (
-        <View className="gap-4">
+        <View className={isMobile ? 'gap-4' : 'gap-4 flex-1 min-h-0'}>
             <BuilderHeader isLocked={isLocked} onClose={onClose} />
 
-            <ScrollView className="max-h-[70vh]">
+            <ScrollView className={scrollRegionClass(isMobile)}>
                 <View className="gap-4 pb-2">
                     <PlainInput
+                        ref={nameRef}
                         value={draft.name}
                         onChangeText={name => patch({ name })}
                         placeholder="Rule name"
+                        autoFocus={shouldFocusName}
+                        accessibilityLabel="Rule name"
                         className="text-base font-semibold px-3 py-2 border rounded-lg text-foreground bg-background border-border"
                     />
 
@@ -226,11 +271,19 @@ function BuilderErrors({ errors }: { errors: string[] | null }) {
             <Text className="text-sm font-semibold text-danger mb-2">
                 Please fix the following errors:
             </Text>
-            {errors.map(error => (
-                <Text key={error} className="text-xs text-danger mb-1">
-                    {error}
-                </Text>
-            ))}
+            {/* Capped and scrollable: validateDraft emits one error per invalid
+                condition AND per missing action param, so a badly-filled rule can
+                produce a list tall enough to squeeze the scroll region above it to
+                nothing. max-h is intrinsic-until-cap, so the common one- or
+                two-error case still renders at natural height. The heading stays
+                outside so it is never scrolled out of view. */}
+            <ScrollView className="max-h-[20vh]">
+                {errors.map(error => (
+                    <Text key={error} className="text-xs text-danger mb-1">
+                        {error}
+                    </Text>
+                ))}
+            </ScrollView>
         </View>
     )
 }
@@ -314,6 +367,7 @@ export function RuleBuilder({
                         presetPkg={presetPkg}
                         nextOrder={nextOrder}
                         sessionKey={session.current.count}
+                        isMobile
                     />
                 </View>
             </BottomDrawer>
@@ -323,7 +377,13 @@ export function RuleBuilder({
     return (
         <Modal isOpen={isOpen} onClose={onClose} size="lg">
             <ModalBackdrop />
-            <ModalContent>
+            {/* ModalContent is `overflow-hidden` with no height of its own, so
+                without this cap the form's header + scroll region + errors +
+                footer can exceed the viewport and the excess is CLIPPED — and
+                because modalStyle centers the content, what gets clipped is the
+                footer, stranding Save and Cancel off-screen. 85vh matches
+                BottomDrawer's own 85% cap. */}
+            <ModalContent className="max-h-[85vh]">
                 <BuilderContent
                     onClose={onClose}
                     scope={scope}
@@ -331,6 +391,7 @@ export function RuleBuilder({
                     presetPkg={presetPkg}
                     nextOrder={nextOrder}
                     sessionKey={session.current.count}
+                    isMobile={false}
                 />
             </ModalContent>
         </Modal>

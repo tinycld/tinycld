@@ -20,7 +20,9 @@ export interface ConditionRowProps {
     condition: ConditionRowCondition
     fields: CatalogField[]
     onChange: (patch: Partial<ConditionRowCondition>) => void
-    onRemove: () => void
+    /** Omitted by the ready-to-fill first row, which isn't in the draft yet and
+     * so has nothing to remove — a trash icon there would be dead. */
+    onRemove?: () => void
 }
 
 function FieldMenu({
@@ -103,7 +105,6 @@ function OperatorMenu({
 }
 
 export function ConditionRow({ condition, fields, onChange, onRemove }: ConditionRowProps) {
-    const mutedColor = useThemeColor('muted-foreground')
     const selectedField = fields.find(f => f.key === condition.field)
     const showValue = condition.op && !NO_VALUE_OPS.has(condition.op as ConditionOp)
 
@@ -137,9 +138,17 @@ export function ConditionRow({ condition, fields, onChange, onRemove }: Conditio
                     onChange={v => onChange({ value: v })}
                 />
             ) : null}
-            <Pressable onPress={onRemove} className="p-1.5" hitSlop={8}>
-                <Trash2 size={14} color={mutedColor} />
-            </Pressable>
+            <RemoveButton onRemove={onRemove} />
         </View>
+    )
+}
+
+function RemoveButton({ onRemove }: { onRemove: (() => void) | undefined }) {
+    const mutedColor = useThemeColor('muted-foreground')
+    if (!onRemove) return null
+    return (
+        <Pressable onPress={onRemove} className="p-1.5" hitSlop={8}>
+            <Trash2 size={14} color={mutedColor} />
+        </Pressable>
     )
 }

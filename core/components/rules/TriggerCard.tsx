@@ -1,13 +1,16 @@
 import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import type { CatalogResponse, CatalogTrigger } from '@tinycld/core/lib/automation/api'
+import { orderGroupsByUserPreference } from '@tinycld/core/lib/automation/condition-helpers'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
 import { parseRefSafe } from '@tinycld/core/lib/automation/helpers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { Menu } from '@tinycld/core/ui/menu'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ChevronDown } from 'lucide-react-native'
 import { Fragment } from 'react'
 import { Pressable, Text, View } from 'react-native'
+import { RuleCard } from './RuleCard'
 
 export interface TriggerCardProps {
     draft: RuleDraft
@@ -51,7 +54,13 @@ function TriggerMenu({
 }) {
     const mutedColor = useThemeColor('muted-foreground')
     const selected = catalog.triggers.find(t => t.ref === selectedRef)
-    const groups = groupTriggersByPackage(catalog.triggers)
+    // Same order the user dragged their apps into, so the menu reads like the
+    // sidebar. core's package-neutral triggers always lead.
+    const orderedSlugs = useSortedPackages().map(p => p.slug)
+    const groups = orderGroupsByUserPreference(
+        groupTriggersByPackage(catalog.triggers),
+        orderedSlugs
+    )
 
     return (
         <Menu>
@@ -66,7 +75,7 @@ function TriggerMenu({
             <Menu.Portal>
                 <Menu.Overlay />
                 <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {[...groups.entries()].map(([pkg, triggers]) => (
+                    {groups.map(([pkg, triggers]) => (
                         <Fragment key={pkg}>
                             <Menu.Label>{pkg}</Menu.Label>
                             {triggers.map(trigger => (
@@ -190,6 +199,11 @@ export function TriggerCard({ draft, catalog, onChange, isLocked, presetPkg }: T
         // Switching triggers invalidates conditions (built against the old
         // trigger's field set) and actions (may target the old trigger's
         // collection) — both reset rather than silently carrying over.
+        //
+        // Resetting to zero groups is also what re-arms ConditionsCard's ready
+        // first row against the NEW trigger's fields (see its SyntheticFirstGroup).
+        // The literal deliberately skips ensureUids, which is safe only because
+        // the array is empty — anything seeded here would need uids to key on.
         onChange({
             trigger: trigger.ref,
             conditions: { match: 'all', groups: [] },
@@ -198,8 +212,7 @@ export function TriggerCard({ draft, catalog, onChange, isLocked, presetPkg }: T
     }
 
     return (
-        <View className="rounded-xl border p-4 bg-surface-secondary border-border gap-3">
-            <Text className="text-sm font-semibold text-foreground">WHEN</Text>
+        <RuleCard title="WHEN">
             {isLocked ? (
                 <LockedTriggerLabel catalog={catalog} triggerRef={draft.trigger} />
             ) : (
@@ -210,6 +223,6 @@ export function TriggerCard({ draft, catalog, onChange, isLocked, presetPkg }: T
                 />
             )}
             {isSchedule ? <ScheduleRow draft={draft} onChange={onChange} /> : null}
-        </View>
+        </RuleCard>
     )
 }

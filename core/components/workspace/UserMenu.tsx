@@ -42,10 +42,15 @@ export function UserMenu() {
 
                     <Separator />
 
+                    {/* The settings HUB, not the personal page: a generic
+                        "Settings" label must reach every section. Rules, Members
+                        and the rest are only listed on the hub, and on a tablet
+                        (>=768dp, see the note below) this menu is the sole
+                        Settings affordance — MoreDrawer never mounts. */}
                     <MenuActionItem
                         label="Settings"
                         icon={Settings}
-                        onPress={() => router.push(orgHref('settings/personal'))}
+                        onPress={() => router.push(orgHref('settings'))}
                     />
 
                     <OrganizationsSection orgs={orgs} />
