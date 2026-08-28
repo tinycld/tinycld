@@ -172,7 +172,11 @@ func legacyAppRedirect(path string) string {
 	if path == "" || strings.HasPrefix(path, approutes.Prefix+"/") || path == approutes.Prefix {
 		return ""
 	}
+	// Split on either separator: callers pass the bare path (the query is
+	// re-appended by redirectLegacyAppPath), but a caller handing over a
+	// path?query should still resolve to the same segment.
 	seg, _, _ := strings.Cut(path, "/")
+	seg, _, _ = strings.Cut(seg, "?")
 	if !legacyAppSegments[seg] {
 		return ""
 	}
