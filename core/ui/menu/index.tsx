@@ -705,9 +705,18 @@ const ItemTitle = forwardRef<
 
 // ── Label ──
 
-function Label({ children, className }: { children: React.ReactNode; className?: string }) {
+function Label({
+    children,
+    className,
+    testID,
+}: {
+    children: React.ReactNode
+    className?: string
+    testID?: string
+}) {
     return (
         <Text
+            testID={testID}
             className={`uppercase px-3 py-1 text-muted-foreground ${className ?? ''}`}
             style={{
                 fontSize: 11,

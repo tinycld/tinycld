@@ -191,24 +191,27 @@ test.describe('Rules', () => {
         // Gate on a known option so the assertions read a painted menu.
         await expect(page.getByTestId('trigger-option-core:manual')).toBeVisible()
 
-        // Menu.Label renders the bare package slug (uppercased in CSS only).
-        const groupOrder = await page.evaluate(() => {
-            const slugs = ['core', 'mail', 'drive', 'calendar', 'contacts', 'cards', 'calc', 'text']
-            const seen: string[] = []
-            const walk = (node: Element) => {
-                const text = (node.textContent ?? '').trim().toLowerCase()
-                if (node.children.length === 0 && slugs.includes(text)) seen.push(text)
-                for (const child of Array.from(node.children)) walk(child)
-            }
-            walk(document.body)
-            return seen
-        })
+        // Read the groups structurally, by testID — never against a list of
+        // real slugs. CI assembles the lean shell (app+core, no `--with`
+        // features), so any assertion naming mail/drive/... passes locally and
+        // fails there. Menu.Label renders the bare slug, uppercased in CSS only.
+        const groupOrder = await page
+            .locator('[data-testid^="trigger-group-"]')
+            .evaluateAll(nodes =>
+                nodes.map(n => (n.getAttribute('data-testid') ?? '').replace('trigger-group-', ''))
+            )
 
-        expect(groupOrder.length).toBeGreaterThan(1)
+        // core always contributes package-neutral triggers, so it leads whatever
+        // else is installed. In a lean shell it is the only group.
         expect(groupOrder[0]).toBe('core')
-        // Not the old alphabetical order — that would have put calc/calendar
-        // ahead of core and is exactly what this replaced.
-        expect(groupOrder).not.toEqual([...groupOrder].sort())
+
+        // Ordering only has meaning once a feature package joins core. Where one
+        // is installed, assert the sidebar order actually differs from the
+        // alphabetical order this replaced — which would have put calc/calendar
+        // ahead of core.
+        if (groupOrder.length > 1) {
+            expect(groupOrder).not.toEqual([...groupOrder].sort())
+        }
     })
 
     // Naming is the first thing a new rule needs, and `autoFocus` alone does

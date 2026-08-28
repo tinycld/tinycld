@@ -77,7 +77,7 @@ function TriggerMenu({
                 <Menu.Content presentation="popover" placement="bottom" align="start">
                     {groups.map(([pkg, triggers]) => (
                         <Fragment key={pkg}>
-                            <Menu.Label>{pkg}</Menu.Label>
+                            <Menu.Label testID={`trigger-group-${pkg}`}>{pkg}</Menu.Label>
                             {triggers.map(trigger => (
                                 <MenuActionItem
                                     key={trigger.ref}
