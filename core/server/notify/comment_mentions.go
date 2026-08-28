@@ -2,37 +2,44 @@ package notify
 
 import (
 	"fmt"
-
 	"strings"
+
 	"tinycld.org/core/approutes"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
 
-// allowedCommentCollections is the set of comment-table names the
-// notify hook will dispatch for. Inserts referencing any other name
-// are silently dropped — protecting against an attacker who manages
-// to slip a bogus `comment_collection` value through the createRule.
-// Each entry maps the comment table to its owning package's URL slug
-// (e.g. `text_comments` → `text`), used to build the deep-link.
-var allowedCommentCollections = map[string]string{
-	"text_comments":  "text",
-	"calc_comments":  "calc",
-	"cards_comments": "cards",
+// commentCollectionSuffix is the naming convention every comment table
+// follows: `<slug>_comments`. The owning package's URL slug is the prefix.
+const commentCollectionSuffix = "_comments"
+
+// packageSlugForCommentCollection derives the owning package's slug from a
+// comment table name, or "" when the name does not follow the convention.
+//
+// Core deliberately keeps NO list of which packages may have comments. A
+// third-party package must be able to add commenting without core shipping a
+// release to permit it, and an allowlist here would be a list of first-party
+// packages baked into core — the coupling the lean-shell guarantee forbids.
+//
+// This is not the authorization boundary and never was. `comment_mentions`
+// rows are gated by the collection's createRule (core migration 1985000003
+// creates it as superuser-only; each package appends a branch that resolves
+// the caller's access through the target record). A row reaching this hook has
+// already passed that check; all this decides is which URL to point at.
+func packageSlugForCommentCollection(commentCollection string) string {
+	if !strings.HasSuffix(commentCollection, commentCollectionSuffix) {
+		return ""
+	}
+	return strings.TrimSuffix(commentCollection, commentCollectionSuffix)
 }
 
-// documentPackages are the packages whose content is stored as a drive
-// item, and whose deep-link is therefore `/p/<slug>/<driveItemId>`.
-// A package absent from this set links through linkForTarget instead.
-//
-// This set exists because `comment_mentions` is no longer drive-only.
-// Core migration 1985000002 generalized it with `target_collection` /
-// `target_record`, so a mention can now hang off any package's record —
-// cards is the first — and those packages have their own URL shapes.
-var documentPackages = map[string]bool{
-	"text": true,
-	"calc": true,
+// isDocumentTarget reports whether the mention hangs off a drive item — the
+// storage shape document packages use. Read from the row's target_collection
+// rather than a list of package slugs, so a third-party document package gets
+// the same treatment without core naming it.
+func isDocumentTarget(targetCollection string) bool {
+	return targetCollection == "drive_items"
 }
 
 // RegisterCommentMentionHooks wires the OnRecordAfterCreateSuccess hook
@@ -56,18 +63,16 @@ func registerCommentMentionHooksCore(app core.App) {
 
 func handleCommentMention(app core.App, mention *core.Record) {
 	commentCollection := mention.GetString("comment_collection")
-	packageSlug, ok := allowedCommentCollections[commentCollection]
-	if !ok {
-		// Unknown comment_collection — silently drop. The allowlist is the
-		// security boundary and it has already failed closed here, so there is
-		// nothing for an operator to act on.
+	packageSlug := packageSlugForCommentCollection(commentCollection)
+	if packageSlug == "" {
+		// Not a `<slug>_comments` name, so there is no slug to build a link
+		// from. Authorization already happened at the collection's createRule;
+		// this is a naming mismatch, not a rejection.
 		//
-		// Info, not warn, precisely BECAUSE this is the probe surface:
-		// comment_collection is free text any authenticated commenter can set,
-		// so paging on it would hand every account holder a remote pager DoS.
-		// The record is kept for forensics — info still reaches stderr and
-		// _logs, which is where you go looking for a probe.
-		log.Info("comment mention: unknown comment_collection",
+		// Info, not warn: comment_collection is free text any authenticated
+		// commenter can set, so paging on it would hand every account holder a
+		// remote pager DoS. Info still reaches stderr and _logs.
+		log.Info("comment mention: comment_collection does not follow <slug>_comments",
 			"collection", commentCollection)
 		return
 	}
@@ -117,7 +122,7 @@ func handleCommentMention(app core.App, mention *core.Record) {
 
 	threadID := commentThreadID(comment)
 	suggestionID := comment.GetString("suggestion_id")
-	url := linkForTarget(app, packageSlug, targetRecord, threadID, suggestionID)
+	url := linkForTarget(app, packageSlug, targetCollection, targetRecord, threadID, suggestionID)
 
 	authorName := comment.GetString("author_name")
 	if authorName == "" {
@@ -129,7 +134,7 @@ func handleCommentMention(app core.App, mention *core.Record) {
 
 	NotifyUser(app, NotifyParams{
 		UserID:  mentionedUserID,
-		Type:    mentionTypeFor(packageSlug),
+		Type:    mentionTypeFor(packageSlug, targetCollection),
 		Package: packageSlug,
 		Title:   title,
 		Body:    body,
@@ -162,8 +167,8 @@ func handleCommentMention(app core.App, mention *core.Record) {
 // one switch: cards' description mentions come from its own flush hook
 // (cards/server/description_mentions.go) and already send `cards_mention`, so a
 // comment mention must too, or muting cards would silence only half of them.
-func mentionTypeFor(packageSlug string) string {
-	if documentPackages[packageSlug] {
+func mentionTypeFor(packageSlug, targetCollection string) string {
+	if isDocumentTarget(targetCollection) {
 		return "comment_mention"
 	}
 	return packageSlug + "_mention"
@@ -171,8 +176,8 @@ func mentionTypeFor(packageSlug string) string {
 
 // linkForTarget builds the deep-link back to the mentioned content.
 //
-// Document packages (text, calc) store content as a drive item and route it
-// at `/p/<slug>/<driveItemId>`. For an anchored comment the `?thread=<id>`
+// A drive-item target routes at `/p/<slug>/<driveItemId>` — the public document
+// tree, shared by any package that stores content as a drive item. For an anchored comment the `?thread=<id>`
 // param is read by the document screen's useCommentsLifecycle hook to open the
 // drawer focused on the mentioned thread; a suggestion-reply mention (non-empty
 // `suggestion_id`) uses `?focusSuggestion=<id>` instead, so the review drawer
@@ -187,10 +192,13 @@ func mentionTypeFor(packageSlug string) string {
 // stale.
 //
 // Routes are slug-scoped — single-org, so no org slug in the path.
-func linkForTarget(app core.App, packageSlug, targetRecord, threadID, suggestionID string) string {
+func linkForTarget(
+	app core.App,
+	packageSlug, targetCollection, targetRecord, threadID, suggestionID string,
+) string {
 	appURL := strings.TrimRight(app.Settings().Meta.AppURL, "/")
 
-	if documentPackages[packageSlug] {
+	if isDocumentTarget(targetCollection) {
 		if suggestionID != "" {
 			return fmt.Sprintf("%s/p/%s/%s?focusSuggestion=%s",
 				appURL, packageSlug, targetRecord, suggestionID)
@@ -199,14 +207,12 @@ func linkForTarget(app core.App, packageSlug, targetRecord, threadID, suggestion
 			appURL, packageSlug, targetRecord, threadID)
 	}
 
-	if packageSlug == "cards" {
-		return fmt.Sprintf("%s%s?focused=%s", appURL, approutes.Href("cards"), targetRecord)
-	}
-
-	// A package in the allowlist but with no link shape declared. Better a
-	// notification that lands in the bell with a bare package link than one
-	// that is dropped entirely.
-	return appURL + approutes.Href(packageSlug)
+	// Everything else: the package root with ?focused=<record>. A convention a
+	// package opts into (cards' usePeekUrl is the reference implementation) and
+	// may ignore, in which case the reader still lands somewhere useful.
+	// Stated as a convention because the previous shape switched on the slug,
+	// so a third-party package could not get a deep link without core naming it.
+	return fmt.Sprintf("%s%s?focused=%s", appURL, approutes.Href(packageSlug), targetRecord)
 }
 
 // commentThreadID returns the root comment id for the thread. For

@@ -1,6 +1,6 @@
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { packageSystemSettings } from '@tinycld/core/lib/packages/derive-components'
-import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
+import { usePackage } from '@tinycld/core/lib/packages/use-packages'
 import { pb as appPb } from '@tinycld/core/lib/pocketbase'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import {
@@ -307,9 +307,12 @@ const mailSchema = z.object({
 
 function MailSettings() {
     const { byKey, upsert } = useSystemSettings()
-    // Build-time registry (same source that decides whether mail's Provider
-    // panel renders), so the two panels' key ownership stays consistent.
-    const mailPackageInstalled = packageRegistry.some(p => p.slug === 'mail')
+    // Runtime registry, so a DB-installed mail package suppresses these fields
+    // just as a bundled one does. Core owns the `mail.*` keys either way (the
+    // transactional mailer reads them); this only decides whether the mail
+    // package's own Provider panel is the editor for provider + token, so that
+    // one key never has two editors.
+    const mailPackageInstalled = usePackage('mail') !== null
 
     const provider = byKey.get('mail.provider')
     const serverToken = byKey.get('mail.postmark_server_token')
