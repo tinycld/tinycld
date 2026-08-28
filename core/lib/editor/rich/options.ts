@@ -3,6 +3,23 @@ import type { TriggerConfig } from './triggers'
 
 export type { RichEditorCollabOptions }
 
+/**
+ * The type scale one editing surface renders at, in px.
+ *
+ * Built by `editorScaleFor()` from the same `markdownScale(purpose)` entry the
+ * read view uses, so the two cannot drift.
+ */
+export interface EditorTypeScale {
+    bodySize: number
+    bodyLineHeight: number
+    blockSpacing: number
+    h1: number
+    h2: number
+    h3: number
+    /** h4-h6 share one size in both the editor and the renderer. */
+    h4: number
+}
+
 /** How `initialContent` is interpreted and what `setContent` accepts. */
 export type EditorContentFormat = 'html' | 'markdown'
 
@@ -35,6 +52,21 @@ export interface UseRichEditorOptions {
     minHeight?: number
     /** Hard character ceiling; typing stops here rather than failing on save. */
     characterLimit?: number
+    /**
+     * The surface's type scale, in px.
+     *
+     * The editor and the read view swap places on a tap, so ANY difference
+     * between them reflows the prose under the caret at the moment someone
+     * starts editing. Both sides therefore derive from one source: pass
+     * `editorScaleFor(purpose)`, whose numbers come from the same
+     * `markdownScale(purpose)` the renderer uses.
+     *
+     * Headings and block spacing are included, not just the base, because the
+     * surfaces genuinely differ in more than size — a comment CAPS its headings
+     * near body text and spaces tightly, while a description scales them like a
+     * document. Omitted entirely, the sheet keeps the description's values.
+     */
+    scale?: EditorTypeScale
     /** ⌘/Ctrl+Enter handler. See SubmitShortcut for why this is not a DOM listener. */
     onSubmitShortcut?: () => void
     /**

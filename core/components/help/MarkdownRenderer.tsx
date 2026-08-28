@@ -14,7 +14,7 @@ import {
 import Markdown, { type MarkedStyles, Renderer } from 'react-native-marked'
 import { openHelp } from '../../lib/help/open-help'
 import { parseHelpTopicId } from '../../lib/help/types'
-import { type MarkdownPurpose, markdownScale } from './markdown-purpose'
+import { type MarkdownPurpose, type MarkdownScale, markdownScale } from './markdown-purpose'
 
 interface Props {
     body: string
@@ -110,12 +110,53 @@ function handleLinkPress(href: string, onLinkPress?: LinkPressHandler) {
     Linking.openURL(href).catch(() => {})
 }
 
+/**
+ * A heading's line height: the SURFACE's own body ratio, applied to the
+ * heading's own size.
+ *
+ * That is what the editor does — it sets no per-heading line-height, so each
+ * heading takes the page's unitless ratio — and the ratio differs per surface:
+ * a description is 21/14 (1.5) but a comment is 21/15 (1.4). Hard-coding 1.5
+ * therefore matched descriptions by luck and made every rendered comment
+ * heading 2px taller than the editor's, so a comment with headings re-spaced
+ * itself when tapped.
+ */
+function headingLineHeight(scale: MarkdownScale, size: number): number {
+    return Math.round(size * (scale.bodyLineHeight / scale.bodySize))
+}
+
+/**
+ * Trailing space below the last block of rendered markdown.
+ *
+ * EXPORTED because a surface that swaps an editor in where this was must
+ * reserve the same amount, or everything below it shifts by the difference the
+ * moment someone taps. Cards' inline comment edit is the case, and it used to
+ * carry a hand-measured constant that silently went stale whenever this moved.
+ */
+export const MARKDOWN_TRAILING_SPACE = 8
+
+/**
+ * Width of a bullet/number marker box, mirroring @jsamr/react-native-li's own
+ * `maxNumOfCodepoints * fontSize * 0.6`.
+ *
+ * A disc marker is two codepoints (the glyph and its trailing space), which is
+ * what the library measures for an unordered list. Derived rather than measured
+ * at runtime because it feeds a style computed during render.
+ */
+function markerBoxWidth(fontSize: number): number {
+    return fontSize * 1.2
+}
+
 interface RendererOptions {
     translateKeys: boolean
     shortcutTables: boolean
     onLinkPress?: LinkPressHandler
     transformImageUri?: ImageUriTransform
     imageMaxHeight?: number
+    /** How far a whole list is indented — see HelpRenderer.list. */
+    listIndent: number
+    /** Body size, used to reserve the marker box inside that indent. */
+    bodySize: number
 }
 
 /**
@@ -166,9 +207,13 @@ class HelpRenderer extends Renderer {
     private readonly onLinkPress?: LinkPressHandler
     private readonly transformImageUri?: ImageUriTransform
     private readonly imageMaxHeight?: number
+    private readonly listIndent: number
+    private readonly bodySize: number
 
     constructor(options: RendererOptions) {
         super()
+        this.listIndent = options.listIndent
+        this.bodySize = options.bodySize
         this.translateKeys = options.translateKeys
         this.shortcutTables = options.shortcutTables
         this.onLinkPress = options.onLinkPress
@@ -185,6 +230,39 @@ class HelpRenderer extends Renderer {
     // box and applies the passed style only to the inner image — so a
     // maxHeight there letterboxes the pixels while the layout box stays
     // full-bleed. A capped surface therefore renders its own image.
+    /**
+     * A whole list, indented as one block.
+     *
+     * The indent goes on a WRAPPER rather than on the item, because none of the
+     * per-item style objects is just the row: `list` is the marker box, and `li`
+     * reaches the marker's text style as well as the row's content. Putting a
+     * margin on either separated the bullet from its words — the marker stayed
+     * at the margin while the text moved right — and knocked the marker off its
+     * own baseline. Wrapping moves marker and text together, which is what
+     * `padding-left` on `ul` does in the editor.
+     */
+    override list(
+        ordered: boolean,
+        li: ReactNode[],
+        listStyle?: ViewStyle,
+        textStyle?: TextStyle,
+        startIndex?: number
+    ): ReactNode {
+        // The marker box is part of the indent, not additional to it.
+        //
+        // In the editor `ul { padding-left }` reserves the space and the bullet
+        // is drawn INSIDE it, so the text starts at the indent. Here the marker
+        // is a sibling box laid out before the text, so wrapping at the full
+        // indent put the text a marker-width further right than the editor's.
+        // Reserving it keeps the TEXT on the same x in both.
+        const inset = Math.max(0, this.listIndent - markerBoxWidth(this.bodySize))
+        return (
+            <View key={this.getKey()} style={{ marginLeft: inset }}>
+                {super.list(ordered, li, listStyle, textStyle, startIndex)}
+            </View>
+        )
+    }
+
     override image(uri: string, alt?: string, style?: ImageStyle, title?: string): ReactNode {
         const resolved = this.transformImageUri ? this.transformImageUri(uri) : uri
         if (this.imageMaxHeight) {
@@ -337,7 +415,9 @@ const rendererCache = new Map<string, HelpRenderer>()
 function rendererFor(options: RendererOptions): HelpRenderer {
     // Per-consumer functions can't be stringified, so each gets an identity
     // tag: same function object → same cache slot.
-    const key = `${options.translateKeys}|${options.shortcutTables}|${functionTag(options.onLinkPress)}|${functionTag(options.transformImageUri)}|${options.imageMaxHeight ?? 'none'}`
+    // The indent is part of the key: it varies per PURPOSE, and a renderer
+    // cached without it would serve a comment the description's indent.
+    const key = `${options.translateKeys}|${options.shortcutTables}|${functionTag(options.onLinkPress)}|${functionTag(options.transformImageUri)}|${options.imageMaxHeight ?? 'none'}|${options.listIndent}|${options.bodySize}`
     const cached = rendererCache.get(key)
     if (cached) return cached
     const renderer = new HelpRenderer(options)
@@ -387,7 +467,32 @@ export function MarkdownRenderer({
     const styles = useMemo<MarkedStyles>(
         () => ({
             text: { color: foreground, fontSize: scale.bodySize, lineHeight: scale.bodyLineHeight },
-            paragraph: { marginVertical: scale.paragraphSpacing },
+            // A TOP margin only, never marginVertical.
+            //
+            // CSS collapses adjoining margins and React Native does not, so
+            // `marginVertical` puts the gap in twice between any two blocks —
+            // which is why a comment rendered with roughly double the rhythm of
+            // the editor that replaces it, and read as airy where the editor
+            // read as tight. The editor states the same thing once, as
+            // `.ProseMirror > * + * { margin-top }`, and the headings here
+            // already follow this rule (marginBottom: 0).
+            // paddingVertical: 0 is load-bearing. The library defaults a
+            // paragraph to `paddingVertical: 8` and our styles MERGE onto that
+            // rather than replace it, so every paragraph carried 16px of
+            // padding no other block had — the editor has none, so a rendered
+            // description read looser than the editor it swaps with even once
+            // the margins matched. Same trap as the h1/h2 border below.
+            // The gap BETWEEN blocks, stated once as a top margin (RN margins
+            // do not collapse). The leading one it also puts on the first block
+            // is cancelled by the consumer's wrapper — see MarkdownText.
+            //
+            // paddingVertical: 0 is load-bearing. The library defaults a
+            // paragraph to `paddingVertical: 8` and our styles MERGE onto that
+            // rather than replace it, so every paragraph carried 16px of
+            // padding no other block had — the editor has none, so a rendered
+            // description read looser than the editor it swaps with even once
+            // the margins matched. Same trap as the h1/h2 border below.
+            paragraph: { marginTop: scale.paragraphSpacing, paddingVertical: 0 },
             em: { fontStyle: 'italic' },
             strong: { fontWeight: '600' },
             link: { color: link, textDecorationLine: 'underline' },
@@ -399,6 +504,12 @@ export function MarkdownRenderer({
             h1: {
                 color: foreground,
                 fontSize: scale.h1.size,
+                // Stated, not inherited: the library defaults a heading to a
+                // much looser line than the editor's, which made every rendered
+                // heading taller than the one it swaps with. The editor sets no
+                // per-heading line-height, so a heading there takes the page's
+                // ratio — matched here against the heading's OWN size.
+                lineHeight: headingLineHeight(scale, scale.h1.size),
                 fontWeight: scale.h1.weight,
                 marginTop: scale.h1.marginTop,
                 marginBottom: scale.h1.marginBottom,
@@ -407,6 +518,12 @@ export function MarkdownRenderer({
             h2: {
                 color: foreground,
                 fontSize: scale.h2.size,
+                // Stated, not inherited: the library defaults a heading to a
+                // much looser line than the editor's, which made every rendered
+                // heading taller than the one it swaps with. The editor sets no
+                // per-heading line-height, so a heading there takes the page's
+                // ratio — matched here against the heading's OWN size.
+                lineHeight: headingLineHeight(scale, scale.h2.size),
                 fontWeight: scale.h2.weight,
                 marginTop: scale.h2.marginTop,
                 marginBottom: scale.h2.marginBottom,
@@ -415,6 +532,12 @@ export function MarkdownRenderer({
             h3: {
                 color: foreground,
                 fontSize: scale.h3.size,
+                // Stated, not inherited: the library defaults a heading to a
+                // much looser line than the editor's, which made every rendered
+                // heading taller than the one it swaps with. The editor sets no
+                // per-heading line-height, so a heading there takes the page's
+                // ratio — matched here against the heading's OWN size.
+                lineHeight: headingLineHeight(scale, scale.h3.size),
                 fontWeight: scale.h3.weight,
                 marginTop: scale.h3.marginTop,
                 marginBottom: scale.h3.marginBottom,
@@ -422,6 +545,12 @@ export function MarkdownRenderer({
             h4: {
                 color: foreground,
                 fontSize: scale.h4.size,
+                // Stated, not inherited: the library defaults a heading to a
+                // much looser line than the editor's, which made every rendered
+                // heading taller than the one it swaps with. The editor sets no
+                // per-heading line-height, so a heading there takes the page's
+                // ratio — matched here against the heading's OWN size.
+                lineHeight: headingLineHeight(scale, scale.h4.size),
                 fontWeight: scale.h4.weight,
                 marginTop: scale.h4.marginTop,
                 marginBottom: scale.h4.marginBottom,
@@ -433,6 +562,12 @@ export function MarkdownRenderer({
             h5: {
                 color: purpose === 'documentation' ? muted : foreground,
                 fontSize: scale.h5.size,
+                // Stated, not inherited: the library defaults a heading to a
+                // much looser line than the editor's, which made every rendered
+                // heading taller than the one it swaps with. The editor sets no
+                // per-heading line-height, so a heading there takes the page's
+                // ratio — matched here against the heading's OWN size.
+                lineHeight: headingLineHeight(scale, scale.h5.size),
                 fontWeight: scale.h5.weight,
                 marginTop: scale.h5.marginTop,
                 marginBottom: scale.h5.marginBottom,
@@ -440,6 +575,12 @@ export function MarkdownRenderer({
             h6: {
                 color: purpose === 'documentation' ? muted : foreground,
                 fontSize: scale.h6.size,
+                // Stated, not inherited: the library defaults a heading to a
+                // much looser line than the editor's, which made every rendered
+                // heading taller than the one it swaps with. The editor sets no
+                // per-heading line-height, so a heading there takes the page's
+                // ratio — matched here against the heading's OWN size.
+                lineHeight: headingLineHeight(scale, scale.h6.size),
                 fontWeight: scale.h6.weight,
                 marginTop: scale.h6.marginTop,
                 marginBottom: scale.h6.marginBottom,
@@ -470,7 +611,22 @@ export function MarkdownRenderer({
                 marginVertical: 8,
             },
             hr: { borderBottomColor: border, borderBottomWidth: 1, marginVertical: 12 },
-            list: { marginVertical: scale.listSpacing },
+            // NOT a list box. react-native-marked hands this straight to
+            // @jsamr/react-native-li as `markerBoxStyle`, which applies it to
+            // each BULLET GLYPH — so a margin here shifts the markers away from
+            // their own text rather than indenting the list. Everything the list
+            // needs therefore lives on `li` below, which IS the item row.
+            // Neither of these may carry GEOMETRY, and that is not obvious from
+            // the names. react-native-marked hands `list` to the marker box and
+            // `li` to three places at once — the item's text, the item's row,
+            // AND the marker's own text style — so a margin on either lands on
+            // the bullet as well as the row. That is what indented the text a
+            // second time (bullet at one x, words 38px further right) and
+            // dropped every marker 8px below its own line.
+            //
+            // Typography only here; the row's indent and rhythm are applied in
+            // HelpRenderer.listItem, which is the one place that IS just the row.
+            list: {},
             li: {
                 color: foreground,
                 fontSize: scale.bodySize,
@@ -492,6 +648,8 @@ export function MarkdownRenderer({
     const renderer = rendererFor({
         translateKeys: shouldTranslateKeys && !isMacLike(),
         shortcutTables: shortcutTableHeuristic,
+        listIndent: scale.listIndent,
+        bodySize: scale.bodySize,
         onLinkPress,
         transformImageUri,
         imageMaxHeight,
@@ -505,7 +663,7 @@ export function MarkdownRenderer({
             flatListProps={{
                 initialNumToRender: 8,
                 scrollEnabled: false,
-                contentContainerStyle: { paddingBottom: 8 },
+                contentContainerStyle: { paddingBottom: MARKDOWN_TRAILING_SPACE },
                 // Override the library's hardcoded #fff/#000 scheme background
                 // (its own style loses to flatListProps). An OPAQUE box here
                 // paints over anything a caller's negative margin pulls it

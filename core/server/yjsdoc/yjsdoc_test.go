@@ -283,3 +283,36 @@ func TestJanitorSpareLiveRooms(t *testing.T) {
 		t.Error("janitor kept an idle document with no room")
 	}
 }
+
+// Seeding APPENDS into the fragment, so a second seed of an already-populated
+// one would leave the card's prose in the document twice. Cards hits this when
+// a board's document is rebuilt: the bootstrap hook re-seeds every card from
+// storage, and any fragment that already carries content must be left alone.
+func TestSeedingSkipsAPopulatedFragment(t *testing.T) {
+	doc := ycrdt.NewDoc("board", false, nil, nil, false)
+	InstallPatcher(doc)
+
+	if err := SeedFragmentFromPMJSON(doc, "card:aaa", pmDoc(t, "the live text")); err != nil {
+		t.Fatalf("first seed: %v", err)
+	}
+	// A second seed carrying DIFFERENT text, so the assertion distinguishes
+	// "skipped" from "overwrote" rather than passing either way.
+	if err := SeedFragmentFromPMJSON(doc, "card:aaa", pmDoc(t, "stale storage")); err != nil {
+		t.Fatalf("second seed: %v", err)
+	}
+
+	got, err := PMJSONFromFragment(doc, "card:aaa")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var parsed markdown.PMNode
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(parsed.Content) != 1 {
+		t.Fatalf("fragment holds %d blocks, want 1 — the seed appended", len(parsed.Content))
+	}
+	if text := firstParagraphText(t, got); text != "the live text" {
+		t.Errorf("fragment = %q, want the live content to win", text)
+	}
+}

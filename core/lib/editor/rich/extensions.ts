@@ -77,6 +77,21 @@ export function buildRichEditorExtensions(
             // Yjs owns history under collaboration; StarterKit's would undo
             // other people's edits.
             undoRedo: collab ? false : undefined,
+            // No phantom paragraph after a trailing list or table.
+            //
+            // TrailingNode INSERTS a real paragraph into the document whenever
+            // the last node is not one — `tr.insert(endPosition, type.create())`
+            // — so it is not a rendering artifact that could be styled away. It
+            // cost a full line plus its gap (25px) on every surface whose body
+            // ends in a list, which is height the rendered markdown does not
+            // have: opening such a comment for editing pushed everything below
+            // it down, and closing it pulled them back up.
+            //
+            // Its purpose is to leave the caret somewhere to go after a trailing
+            // block. Gapcursor, also in StarterKit and left enabled, already
+            // does that — it puts a real cursor position after the last node —
+            // so nothing is lost by not also materialising a paragraph.
+            trailingNode: false,
         }),
         TaskList,
         TaskItem.configure({ nested: true }),
