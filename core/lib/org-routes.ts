@@ -29,6 +29,44 @@ export const CONNECT_HREF = appHref('connect')
 export const PICK_ORG_HREF = appHref('pick-org')
 
 /**
+ * First path segments that were app routes before the move under APP_PREFIX.
+ * Mirrors legacyAppSegments in core/server/coreserver/static.go and the set in
+ * app/+native-intent.ts; keep the three in step.
+ */
+const LEGACY_APP_SEGMENTS = new Set([
+    'accept-invite',
+    'reset-password',
+    'connect',
+    'pick-org',
+    'setup',
+    'settings',
+    'help',
+])
+
+/**
+ * Normalize an inbound app path to the current prefix.
+ *
+ * For links minted BEFORE app routes moved under APP_PREFIX and still arriving
+ * from outside the app — universal/deep links opened on a phone, notably the
+ * emailed invite and password-reset links, which keep landing for days. The
+ * web-side counterpart is legacyAppRedirect in core/server/coreserver/static.go.
+ *
+ * Anything not a recognizably legacy app path (already prefixed, public `/p/…`,
+ * an absolute URL, a protocol mount) is returned untouched: this normalizes,
+ * it does not rewrite arbitrary input.
+ *
+ * Not used for stored data — notification `url` rows are rewritten once by
+ * pb_migrations/2010000000_prefix_notification_urls.js instead.
+ */
+export function normalizeLegacyAppPath(path: string): string {
+    if (!path.startsWith('/') || path === APP_PREFIX || path.startsWith(`${APP_PREFIX}/`)) {
+        return path
+    }
+    const segment = path.slice(1).split(/[/?]/, 1)[0]
+    return LEGACY_APP_SEGMENTS.has(segment) ? `${APP_PREFIX}${path}` : path
+}
+
+/**
  * The active package slug for a pathname, or null outside a package.
  *
  * Segment 1 is always APP_PREFIX, so the slug is segment 2. Derived from

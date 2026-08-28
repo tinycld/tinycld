@@ -3,6 +3,7 @@ import {
     activeSlugFromPathname,
     appHref,
     CONNECT_HREF,
+    normalizeLegacyAppPath,
     PICK_ORG_HREF,
     useOrgHref,
 } from '@tinycld/core/lib/org-routes'
@@ -46,6 +47,33 @@ describe('useOrgHref', () => {
             pathname: '/a/mail/[id]',
             params: { id: '123' },
         })
+    })
+})
+
+describe('normalizeLegacyAppPath', () => {
+    it('prefixes a legacy app path, preserving the query', () => {
+        expect(normalizeLegacyAppPath('/accept-invite/tok')).toBe('/a/accept-invite/tok')
+        expect(normalizeLegacyAppPath('/settings/personal')).toBe('/a/settings/personal')
+        expect(normalizeLegacyAppPath('/settings?tab=account')).toBe('/a/settings?tab=account')
+    })
+
+    it('is idempotent for already-prefixed paths', () => {
+        expect(normalizeLegacyAppPath('/a/settings')).toBe('/a/settings')
+        expect(normalizeLegacyAppPath('/a')).toBe('/a')
+    })
+
+    it('leaves non-app paths untouched', () => {
+        // A deep link can legitimately point outside the app tree.
+        expect(normalizeLegacyAppPath('/p/drive/share/tok')).toBe('/p/drive/share/tok')
+        expect(normalizeLegacyAppPath('/api/health')).toBe('/api/health')
+        expect(normalizeLegacyAppPath('/dav/drive/')).toBe('/dav/drive/')
+        expect(normalizeLegacyAppPath('https://example.com/settings')).toBe(
+            'https://example.com/settings'
+        )
+    })
+
+    it('matches whole segments only', () => {
+        expect(normalizeLegacyAppPath('/settingsomething')).toBe('/settingsomething')
     })
 })
 

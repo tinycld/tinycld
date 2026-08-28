@@ -1,18 +1,4 @@
-import { APP_PREFIX } from '@tinycld/core/lib/org-routes'
-
-/**
- * First path segments that were app routes before the move under APP_PREFIX.
- * Mirrors legacyAppSegments in core/server/coreserver/static.go.
- */
-const LEGACY_APP_SEGMENTS = new Set([
-    'accept-invite',
-    'reset-password',
-    'connect',
-    'pick-org',
-    'setup',
-    'settings',
-    'help',
-])
+import { normalizeLegacyAppPath } from '@tinycld/core/lib/org-routes'
 
 // Maps incoming deep-link / universal-link paths to in-app routes before
 // expo-router resolves them. The public web contract is `tinycld.org/demo`
@@ -46,11 +32,7 @@ export function redirectSystemPath({ path }: { path: string; initial: boolean })
     // App routes moved under APP_PREFIX. Universal links minted before the move
     // — notably emailed invite and reset links opened on a phone — still arrive
     // unprefixed, so rewrite them rather than dropping the user on +not-found.
-    // Mirrors legacyAppRedirect in core/server/coreserver/static.go; keep the
-    // two segment lists in step.
-    const seg = pathname.split('/').filter(Boolean)[0]
-    if (seg && LEGACY_APP_SEGMENTS.has(seg)) {
-        return `${APP_PREFIX}${pathname}${search}`
-    }
-    return `${pathname}${search}`
+    // The web-side counterpart is legacyAppRedirect in
+    // core/server/coreserver/static.go.
+    return `${normalizeLegacyAppPath(pathname)}${search}`
 }
