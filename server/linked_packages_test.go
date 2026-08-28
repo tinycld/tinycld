@@ -50,12 +50,12 @@ func TestLeanShellLinksOnlyCoreAndStubs(t *testing.T) {
 	}
 
 	var unexpected []string
-	var sawStub bool
+	var sawCore bool
 	for _, pkg := range packages {
 		switch {
 		case pkg.Slug == "core":
+			sawCore = true
 		case slices.Contains(stubSlugs, pkg.Slug):
-			sawStub = true
 		default:
 			unexpected = append(unexpected, pkg.Slug)
 		}
@@ -69,8 +69,10 @@ func TestLeanShellLinksOnlyCoreAndStubs(t *testing.T) {
 	}
 
 	// Guards the parse: a moved file or changed shape would otherwise yield an
-	// empty list and pass vacuously.
-	if !sawStub {
-		t.Errorf("no stub package found in %s (parsed %d entries) -- the check would pass vacuously", path, len(packages))
+	// empty list and pass vacuously. Core is the one package present in EVERY
+	// assembly -- the stubs are not, since only the E2E job scaffolds them and
+	// this test also runs in the Go job, whose set is core alone.
+	if !sawCore {
+		t.Errorf("core not found in %s (parsed %d entries) -- the check would pass vacuously", path, len(packages))
 	}
 }
