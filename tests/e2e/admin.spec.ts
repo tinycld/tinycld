@@ -13,7 +13,7 @@ import { expect, test } from '@playwright/test'
 // anonymous case below falls through to the superuser login form.
 test.describe('Setup / bootstrap route', () => {
     test('/setup resolves to the superuser bootstrap console', async ({ page }) => {
-        await page.goto('/setup')
+        await page.goto('/a/setup')
 
         // DocumentTitle title="Setup" includeOrg={false} → brand + leaf, no org.
         await expect(page).toHaveTitle('TinyCld: Setup')
