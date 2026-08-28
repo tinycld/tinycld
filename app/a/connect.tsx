@@ -3,6 +3,7 @@ import { PreAuthScreen } from '@tinycld/core/components/connect/PreAuthScreen'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { ApexServerError } from '@tinycld/core/lib/apex'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
+import { PICK_ORG_HREF } from '@tinycld/core/lib/org-routes'
 import { isReloadAvailable, ReloadUnavailableError } from '@tinycld/core/lib/reload-js-context'
 import { normalizeAddress, probeServer, setResolvedAddress } from '@tinycld/core/lib/server-address'
 import { setActiveServer } from '@tinycld/core/lib/servers'
@@ -100,7 +101,7 @@ export default function Connect() {
         } catch (err) {
             if (err instanceof ApexServerError) {
                 router.replace({
-                    pathname: '/pick-org',
+                    pathname: PICK_ORG_HREF,
                     params: { apex: err.apexOrigin },
                 })
                 return

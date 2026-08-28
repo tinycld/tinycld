@@ -1,4 +1,5 @@
 import { log } from '@tinycld/core/lib/logger'
+import { CONNECT_HREF, PICK_ORG_HREF } from '@tinycld/core/lib/org-routes'
 import {
     DEMO_SERVER,
     getResolvedAddress,
@@ -99,9 +100,10 @@ export function useServerAddressGate(pathname: string): GateState {
         // two); /p/demo pins the public demo server (see app/p/demo.tsx), so a
         // universal-link demo open on a fresh install (no cached address) must
         // reach it instead of being sent to /connect.
-        if (pathname === '/connect' || pathname === '/pick-org' || pathname === '/p/demo') return
+        if (pathname === CONNECT_HREF || pathname === PICK_ORG_HREF || pathname === '/p/demo')
+            return
         const backTo = encodeURIComponent(pathname || '/')
-        router.replace(`/connect?backTo=${backTo}`)
+        router.replace(`${CONNECT_HREF}?backTo=${backTo}`)
     }, [state.status, pathname])
 
     return state

@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+
 	"net/http"
 	"strings"
 	"time"
+	"tinycld.org/core/approutes"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -219,7 +221,7 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 
 func buildInviteURL(app core.App, token string) string {
 	base := strings.TrimRight(app.Settings().Meta.AppURL, "/")
-	return fmt.Sprintf("%s/accept-invite/%s", base, token)
+	return fmt.Sprintf("%s%s/%s", base, approutes.Href("accept-invite"), token)
 }
 
 func randomPassword(length int) (string, error) {

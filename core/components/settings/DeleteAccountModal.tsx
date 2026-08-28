@@ -2,6 +2,7 @@ import { deleteMyAccount, type OffboardPlan } from '@tinycld/core/lib/account'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { errorToString } from '@tinycld/core/lib/errors'
 import { useMutation } from '@tinycld/core/lib/mutations'
+import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { router } from 'expo-router'
 import { useState } from 'react'
@@ -31,7 +32,7 @@ export function useDeleteAccountForm(onClose: () => void) {
         },
         onSuccess: () => {
             logout()
-            router.replace('/connect')
+            router.replace(CONNECT_HREF)
         },
         onError: err => setError(errorToString(err)),
     })

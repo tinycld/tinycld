@@ -1,3 +1,4 @@
+import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import { disconnectServer } from '@tinycld/core/lib/pocketbase'
 import { getResolvedAddress, probe } from '@tinycld/core/lib/server-address'
 import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
@@ -111,7 +112,7 @@ function ChangeServerButton() {
         // tries to auto-reconnect, and reconnecting after the address is
         // cleared throws "PB_SERVER_ADDR accessed before resolved".
         await disconnectServer()
-        router.replace('/connect?backTo=/')
+        router.replace(`${CONNECT_HREF}?backTo=/`)
     }
     return (
         <Pressable onPress={onPress} accessibilityRole="button" className="mt-2">

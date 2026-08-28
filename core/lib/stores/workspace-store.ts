@@ -1,3 +1,4 @@
+import { APP_PREFIX } from '@tinycld/core/lib/org-routes'
 import { asyncStorage, create, persist } from '@tinycld/core/lib/store'
 
 /**
@@ -12,6 +13,28 @@ import { asyncStorage, create, persist } from '@tinycld/core/lib/store'
 const EDGE_SWIPE_RESUME_GRACE_MS = 400
 
 let edgeSwipeResumeTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * v0 → v1: prefix stored `lastPackageHref` values with APP_PREFIX.
+ *
+ * v0 stored them unprefixed ('/mail?folder=sent') — the shape before app routes
+ * moved under APP_PREFIX. PackageRail and MobileTabBar push these strings
+ * verbatim (they bypass useOrgHref to keep query state), so a stale v0 value
+ * lands a returning user on +not-found. Rewriting beats dropping: this is the
+ * "return to where you were" state, and the forms differ by exactly one prefix.
+ */
+export function migrateWorkspaceStore(persisted: unknown, version: number) {
+    const state = (persisted ?? {}) as Partial<WorkspaceStoreState>
+    if (version >= 1 || !state.lastPackageHref) return state
+    const migrated: Record<string, string> = {}
+    for (const [slug, href] of Object.entries(state.lastPackageHref)) {
+        if (typeof href !== 'string' || !href.startsWith('/')) continue
+        // Idempotent, so a re-run can't double-prefix.
+        migrated[slug] =
+            href === APP_PREFIX || href.startsWith(`${APP_PREFIX}/`) ? href : `${APP_PREFIX}${href}`
+    }
+    return { ...state, lastPackageHref: migrated }
+}
 
 interface WorkspaceStoreState {
     isSidebarOpen: boolean
@@ -95,6 +118,8 @@ export const useWorkspaceStore = create<WorkspaceStoreState>()(
             // drop isn't worth it. Left as-is intentionally.
             name: 'tinycld_sidebar_open',
             storage: asyncStorage,
+            version: 1,
+            migrate: migrateWorkspaceStore,
             partialize: s => ({
                 isSidebarOpen: s.isSidebarOpen,
                 lastPackageHref: s.lastPackageHref,

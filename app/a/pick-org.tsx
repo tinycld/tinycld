@@ -2,6 +2,7 @@ import { PreAuthScreen } from '@tinycld/core/components/connect/PreAuthScreen'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { hostnameOf, isOrgUnderApex, orgUrlUnderApex, slugUnderApex } from '@tinycld/core/lib/apex'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
+import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import { ReloadUnavailableError } from '@tinycld/core/lib/reload-js-context'
 import { normalizeAddress, probeServer, setResolvedAddress } from '@tinycld/core/lib/server-address'
 import { readServers, setActiveServer } from '@tinycld/core/lib/servers'
@@ -201,7 +202,7 @@ export default function PickOrg() {
             {/* A self-hoster who tapped the hosted default must not be stranded
                     here — /connect is the surface that takes an arbitrary address. */}
             <Pressable
-                onPress={() => router.replace('/connect')}
+                onPress={() => router.replace(CONNECT_HREF)}
                 disabled={busy}
                 className={`mt-8 rounded-xl border border-border bg-surface flex-row items-center gap-3 px-4 py-3.5 ${busy ? 'opacity-50' : 'opacity-100'}`}
             >

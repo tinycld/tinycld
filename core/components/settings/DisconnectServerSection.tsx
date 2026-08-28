@@ -1,4 +1,5 @@
 import { captureException } from '@tinycld/core/lib/errors'
+import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import { disconnectServer } from '@tinycld/core/lib/pocketbase'
 import { forgetServer } from '@tinycld/core/lib/remove-server'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
@@ -17,7 +18,7 @@ export function DisconnectServerSection() {
         if (active && isSavedServersSupported()) {
             try {
                 const outcome = await forgetServer(active)
-                if (outcome.status === 'disconnected') router.replace('/connect')
+                if (outcome.status === 'disconnected') router.replace(CONNECT_HREF)
                 return
             } catch (err) {
                 // A refused JS-context restart leaves this server removed but the
@@ -28,7 +29,7 @@ export function DisconnectServerSection() {
         }
 
         await disconnectServer()
-        router.replace('/connect')
+        router.replace(CONNECT_HREF)
     }
 
     return (

@@ -23,9 +23,24 @@ describe('redirectSystemPath', () => {
         )
     })
 
-    it('passes other in-app paths through unchanged', () => {
-        expect(redirectSystemPath({ path: '/connect', initial: false })).toBe('/connect')
-        expect(redirectSystemPath({ path: '/mail', initial: false })).toBe('/mail')
+    it('rewrites legacy unprefixed app links to the current prefix', () => {
+        // Links minted before app routes moved under /a — notably emailed
+        // invite and reset links opened on a phone — must still resolve.
+        expect(redirectSystemPath({ path: '/connect', initial: false })).toBe('/a/connect')
+        expect(
+            redirectSystemPath({ path: 'https://tinycld.org/accept-invite/tok', initial: true })
+        ).toBe('/a/accept-invite/tok')
+    })
+
+    it('preserves the query string when rewriting a universal link', () => {
+        expect(
+            redirectSystemPath({ path: 'https://tinycld.org/settings?tab=account', initial: true })
+        ).toBe('/a/settings?tab=account')
+    })
+
+    it('leaves already-prefixed and non-app paths alone', () => {
+        expect(redirectSystemPath({ path: '/a/mail', initial: false })).toBe('/a/mail')
+        expect(redirectSystemPath({ path: '/p/demo', initial: false })).toBe('/p/demo')
     })
 
     it('normalizes a universal-link root to /', () => {

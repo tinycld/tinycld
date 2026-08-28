@@ -28,11 +28,12 @@ describe('generator paths', () => {
     it('GENERATED_DIR is app/lib/generated', () => {
         expect(GENERATED_DIR).toBe(path.join(APP_DIR, 'lib', 'generated'))
     })
-    // Single-org: the route tree collapsed from app/a/[orgSlug] to the
-    // bare app/(app) group. The router owns org multiplexing now, so no
-    // org segment appears in an authenticated path.
-    it('ROUTES_BASE is app/app/(app)', () => {
-        expect(ROUTES_BASE).toBe(path.join(APP_DIR, 'app', '(app)'))
+    // App routes live under the constant /a segment. It is NOT an org slug —
+    // the router owns org multiplexing by host, so no org segment appears in
+    // an authenticated path. (app) stays a group so only the workspace subtree
+    // gets the auth-gated layout; pre-auth screens sit beside it under app/a/.
+    it('ROUTES_BASE is app/app/a/(app)', () => {
+        expect(ROUTES_BASE).toBe(path.join(APP_DIR, 'app', 'a', '(app)'))
     })
     it('PUBLIC_ROUTES_BASE is app/app/p', () => {
         expect(PUBLIC_ROUTES_BASE).toBe(path.join(APP_DIR, 'app', 'p'))

@@ -172,7 +172,9 @@ export function MoreDrawer() {
                                     key={pkg.slug}
                                     testID={`nav-${pkg.slug}`}
                                     className="flex-row items-center gap-3.5 px-4 py-3.5 rounded-lg"
-                                    onPress={() => handleNav(() => router.push(`/${pkg.slug}`))}
+                                    onPress={() =>
+                                        handleNav(() => router.push(orgHref(pkg.slug as never)))
+                                    }
                                 >
                                     <Icon size={20} color={color} />
                                     <Text className="text-base font-medium" style={{ color }}>

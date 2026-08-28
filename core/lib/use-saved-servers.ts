@@ -1,3 +1,4 @@
+import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import { router } from 'expo-router'
 import { useCallback, useEffect, useState } from 'react'
 import { captureException } from './errors'
@@ -97,7 +98,7 @@ export function useSavedServers(): SavedServersState {
     const add = useCallback(() => {
         // ?mode=add tells the connect screen to switch rather than replace, so
         // the server the user is currently signed into keeps its session.
-        router.push('/connect?mode=add')
+        router.push(`${CONNECT_HREF}?mode=add`)
     }, [])
 
     const switchTo = useCallback(async (origin: string) => {
@@ -136,7 +137,7 @@ export function useSavedServers(): SavedServersState {
         try {
             const outcome = await forgetServer(origin)
             if (outcome.status === 'disconnected') {
-                router.replace('/connect')
+                router.replace(CONNECT_HREF)
                 return
             }
             // 'switched' restarts the JS context, so only 'removed' returns here

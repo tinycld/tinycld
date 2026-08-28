@@ -552,9 +552,11 @@ function spawnExpo(expoPort: number, onReady: () => void): ChildProcess {
 //
 // /dav is RESERVED for protocol mounts and must never be a package slug.
 // WebDAV used to mount at bare /drive, which collided with the in-app /drive
-// route once the single-org migration dropped the /a/<orgSlug> segment: a
-// literal route beats Expo's catch-all, so a hard load of /drive reached
-// Basic-Auth WebDAV and the SPA was unreachable.
+// route back when app routes sat at the root: a literal route beats Expo's
+// catch-all, so a hard load of /drive reached Basic-Auth WebDAV and the SPA
+// was unreachable. App routes now live under /a, so that particular overlap
+// is gone — but /dav stays reserved so protocol mounts never share a
+// namespace with package slugs, and so this can't regress if /a ever moves.
 const PB_PREFIXES = [
     '/api',
     '/_',
