@@ -1,4 +1,5 @@
 import { useAuth } from '@tinycld/core/lib/auth'
+import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import { router } from 'expo-router'
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
@@ -42,7 +43,7 @@ export function DisableAccountSection() {
                     // already dead — clear it locally rather than leaving a
                     // stale token in storage.
                     logout()
-                    router.replace('/connect')
+                    router.replace(CONNECT_HREF)
                 }}
                 email={user.email}
             />

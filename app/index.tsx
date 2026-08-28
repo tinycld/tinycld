@@ -3,7 +3,7 @@ import { SkeletonLayout } from '@tinycld/core/components/workspace/SkeletonLayou
 import { isApexAddress } from '@tinycld/core/lib/apex'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { trace } from '@tinycld/core/lib/debug-trace'
-import { useOrgHref } from '@tinycld/core/lib/org-routes'
+import { CONNECT_HREF, PICK_ORG_HREF, useOrgHref } from '@tinycld/core/lib/org-routes'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
 import { useSortedPackagesResult } from '@tinycld/core/lib/use-sorted-packages'
 import { Redirect, router } from 'expo-router'
@@ -39,7 +39,7 @@ export default function Index() {
         isApexAddress(address).then(atApex => {
             if (cancelled || !atApex) return
             trace('Index replace /pick-org', { address })
-            router.replace('/pick-org')
+            router.replace(PICK_ORG_HREF)
         })
         return () => {
             cancelled = true
@@ -54,7 +54,7 @@ export default function Index() {
         // and drove React Navigation into an infinite setState loop (React #185).
         if (!auth.isLoggedIn && !auth.isInitializing && !hasServer) {
             trace('Index replace /connect')
-            router.replace('/connect')
+            router.replace(CONNECT_HREF)
         }
     }, [auth.isLoggedIn, hasServer, auth.isInitializing])
 

@@ -1,3 +1,5 @@
+import { normalizeLegacyAppPath } from '@tinycld/core/lib/org-routes'
+
 // Maps incoming deep-link / universal-link paths to in-app routes before
 // expo-router resolves them. The public web contract is `tinycld.org/demo`
 // (what the AASA/assetlinks claim and the marketing button links to), but the
@@ -13,9 +15,12 @@ export function redirectSystemPath({ path }: { path: string; initial: boolean })
     // its pathname so the root launch resolves to `/` (→ app/index.tsx).
     const isSchemeUrl = /^[a-z][a-z0-9+.-]*:\/\//i.test(path)
     let pathname = path
+    let search = ''
     if (isSchemeUrl) {
         try {
-            pathname = new URL(path).pathname || '/'
+            const url = new URL(path)
+            pathname = url.pathname || '/'
+            search = url.search
         } catch {
             // Malformed URL — fall through with the original string.
             return path
@@ -24,5 +29,10 @@ export function redirectSystemPath({ path }: { path: string; initial: boolean })
     if (pathname === '/demo' || pathname.startsWith('/demo/')) {
         return '/p/demo'
     }
-    return pathname
+    // App routes moved under APP_PREFIX. Universal links minted before the move
+    // — notably emailed invite and reset links opened on a phone — still arrive
+    // unprefixed, so rewrite them rather than dropping the user on +not-found.
+    // The web-side counterpart is legacyAppRedirect in
+    // core/server/coreserver/static.go.
+    return `${normalizeLegacyAppPath(pathname)}${search}`
 }

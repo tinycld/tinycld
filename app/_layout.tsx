@@ -14,6 +14,7 @@ import { NewVersionToast } from '@tinycld/core/components/NewVersionToast'
 import { BundleSentinel } from '@tinycld/core/lib/bundle-sentinel'
 import { EditorSingletonProvider } from '@tinycld/core/lib/editor/warm'
 import { installFatalRollbackHandler } from '@tinycld/core/lib/install-fatal-rollback'
+import { CONNECT_HREF, PICK_ORG_HREF } from '@tinycld/core/lib/org-routes'
 import { initSentry } from '@tinycld/core/lib/sentry'
 import { useAppUpdates } from '@tinycld/core/lib/use-app-updates'
 import { useChunkLoadRecovery } from '@tinycld/core/lib/use-chunk-load-recovery'
@@ -50,7 +51,7 @@ export default function Layout() {
         // org's. Must stay in step with the gate's redirect exemptions
         // (use-server-address-gate.ts) — a route exempt there but blanked here
         // shows nothing at all.
-        const resolvesAddress = pathname === '/connect' || pathname === '/pick-org'
+        const resolvesAddress = pathname === CONNECT_HREF || pathname === PICK_ORG_HREF
         return resolvesAddress ? <ConnectSlot /> : <BlankScreen />
     }
 

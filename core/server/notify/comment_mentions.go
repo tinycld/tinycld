@@ -2,7 +2,9 @@ package notify
 
 import (
 	"fmt"
+
 	"strings"
+	"tinycld.org/core/approutes"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -198,13 +200,13 @@ func linkForTarget(app core.App, packageSlug, targetRecord, threadID, suggestion
 	}
 
 	if packageSlug == "cards" {
-		return fmt.Sprintf("%s/cards?focused=%s", appURL, targetRecord)
+		return fmt.Sprintf("%s%s?focused=%s", appURL, approutes.Href("cards"), targetRecord)
 	}
 
 	// A package in the allowlist but with no link shape declared. Better a
 	// notification that lands in the bell with a bare package link than one
 	// that is dropped entirely.
-	return fmt.Sprintf("%s/%s", appURL, packageSlug)
+	return appURL + approutes.Href(packageSlug)
 }
 
 // commentThreadID returns the root comment id for the thread. For

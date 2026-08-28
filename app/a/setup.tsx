@@ -1,6 +1,7 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { SetupPage } from '@tinycld/core/components/setup/SetupPage'
 import { useAuth } from '@tinycld/core/lib/auth'
+import { appHref } from '@tinycld/core/lib/org-routes'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { Redirect, useLocalSearchParams } from 'expo-router'
 
@@ -18,7 +19,7 @@ export default function Setup() {
 
     // Only redirect once auth has settled and there's no first-run token to honor.
     if (!token && !auth.isInitializing && isAdmin && auth.isLoggedIn) {
-        return <Redirect href="/settings" />
+        return <Redirect href={appHref('settings')} />
     }
 
     return (

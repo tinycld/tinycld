@@ -13,13 +13,13 @@ func TestBuildPasswordResetMessage_LinkPointsAtAppResetScreen(t *testing.T) {
 		"tok-123",
 	)
 
-	wantLink := "https://app.example.com/reset-password/tok-123"
+	wantLink := "https://app.example.com/a/reset-password/tok-123"
 
 	if subject != "Reset your password" {
 		t.Errorf("subject = %q, want %q", subject, "Reset your password")
 	}
 	// Trailing slash on AppURL must be trimmed (no double slash before /reset-password).
-	if strings.Contains(html, "//reset-password") {
+	if strings.Contains(html, "//a/reset-password") {
 		t.Errorf("html link has double slash: %q", html)
 	}
 	if !strings.Contains(html, wantLink) {

@@ -1,4 +1,5 @@
 import { notify } from '@tinycld/core/lib/notify'
+import { appHref } from '@tinycld/core/lib/org-routes'
 import { useTakeoutImportStore } from '@tinycld/core/lib/stores/takeout-import-store'
 import { useEffect, useRef } from 'react'
 
@@ -31,7 +32,7 @@ export function ImportNotifier() {
                 event: 'import.complete',
                 title: 'Google Takeout import complete',
                 body: `${parts.join(', ')}.`,
-                url: '/settings/personal',
+                url: appHref('settings/personal'),
                 data: { source: 'google-takeout', count: totals.imported },
             })
         }
@@ -42,7 +43,7 @@ export function ImportNotifier() {
                 event: 'import.failed',
                 title: 'Google Takeout import failed',
                 body,
-                url: '/settings/personal',
+                url: appHref('settings/personal'),
                 data: { source: 'google-takeout', error: body },
             })
         }

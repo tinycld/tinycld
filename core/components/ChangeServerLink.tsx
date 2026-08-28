@@ -1,3 +1,4 @@
+import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import { disconnectServer } from '@tinycld/core/lib/pocketbase'
 import { router } from 'expo-router'
 import { Platform, Pressable, Text } from 'react-native'
@@ -8,7 +9,7 @@ export function ChangeServerLink() {
 
     async function onPress() {
         await disconnectServer()
-        router.replace('/connect?backTo=/')
+        router.replace(`${CONNECT_HREF}?backTo=/`)
     }
 
     return (

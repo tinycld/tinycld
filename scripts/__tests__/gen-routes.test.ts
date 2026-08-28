@@ -14,7 +14,7 @@ describe('emitRoutes', () => {
         fs.mkdirSync(path.join(pkgDir, 'tinycld', 'contacts', 'screens'), { recursive: true })
         fs.writeFileSync(path.join(pkgDir, 'tinycld', 'contacts', 'screens', 'index.tsx'), '')
         fs.writeFileSync(path.join(pkgDir, 'tinycld', 'contacts', 'screens', '[id].tsx'), '')
-        routesBase = path.join(tmp, 'app', 'a', '[orgSlug]')
+        routesBase = path.join(tmp, 'app', 'a', '(app)')
     })
     afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }))
 

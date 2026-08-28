@@ -75,7 +75,7 @@ test.describe('password reset', () => {
     })
 
     test('garbage token shows an invalid/expired error', async ({ page }) => {
-        await page.goto('/reset-password/not-a-real-token')
+        await page.goto('/a/reset-password/not-a-real-token')
         await page.getByPlaceholder('At least 8 characters').fill('brandnewpassword')
         await page.getByPlaceholder('Re-enter password').fill('brandnewpassword')
         await page.getByTestId('reset-confirm-submit').click()

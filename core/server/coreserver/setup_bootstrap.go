@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+
 	"sync"
+	"tinycld.org/core/approutes"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -51,7 +53,7 @@ func RegisterSetupBootstrap(app *pocketbase.PocketBase) {
 			if publicURL == "" {
 				publicURL = strings.TrimRight(baseURL, "/")
 			}
-			setupURL := fmt.Sprintf("%s/setup?token=%s", publicURL, token)
+			setupURL := fmt.Sprintf("%s%s?token=%s", publicURL, approutes.Href("setup"), token)
 			printBoxed("First run setup, visit below URL to configure tinycld:", setupURL)
 			return nil
 		}

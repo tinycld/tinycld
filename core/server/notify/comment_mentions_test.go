@@ -454,8 +454,8 @@ func TestCommentMention_CardsTargetNotifiesWithoutDriveItem(t *testing.T) {
 	if got := n.GetString("package"); got != "cards" {
 		t.Errorf("package = %q, want cards", got)
 	}
-	// Cards routes its board at /cards and opens a card via ?focused=.
-	wantURL := "https://app.test.local/cards?focused=" + cardID
+	// Cards routes its board at /a/cards and opens a card via ?focused=.
+	wantURL := "https://app.test.local/a/cards?focused=" + cardID
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q", got, wantURL)
 	}

@@ -13,6 +13,7 @@ import { useAuth } from '@tinycld/core/lib/auth'
 import { trace } from '@tinycld/core/lib/debug-trace'
 import { useHelpSearchShortcut } from '@tinycld/core/lib/help/use-help-search-shortcut'
 import { markNavMilestone } from '@tinycld/core/lib/nav-perf'
+import { activeSlugFromPathname } from '@tinycld/core/lib/org-routes'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { OrgSlugProvider } from '@tinycld/core/lib/use-org-slug'
@@ -74,8 +75,7 @@ function ActivePkgSync() {
     const href = useUnstableGlobalHref()
 
     useEffect(() => {
-        const match = pathname.match(/^\/([^/?]+)/)
-        const slug = match?.[1] ?? null
+        const slug = activeSlugFromPathname(pathname)
         // settings/help are chrome, not a "current package" — they leave the
         // active-package highlight where it was.
         const nextSlug = slug === 'settings' || slug === 'help' ? null : slug

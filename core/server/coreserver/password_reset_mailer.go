@@ -2,7 +2,9 @@ package coreserver
 
 import (
 	"fmt"
+
 	"strings"
+	"tinycld.org/core/approutes"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -57,7 +59,7 @@ func registerPasswordResetMailerCore(app core.App) {
 // app's own reset screen.
 func buildPasswordResetMessage(appURL, appName, toName, token string) (subject, html, text string) {
 	base := strings.TrimRight(appURL, "/")
-	link := fmt.Sprintf("%s/reset-password/%s", base, token)
+	link := fmt.Sprintf("%s%s/%s", base, approutes.Href("reset-password"), token)
 
 	eyebrow := "Password reset"
 	if appName != "" {

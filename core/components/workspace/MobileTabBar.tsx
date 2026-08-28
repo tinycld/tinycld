@@ -1,4 +1,5 @@
 import { markNavMilestone, markNavPress } from '@tinycld/core/lib/nav-perf'
+import { APP_PREFIX, appHref } from '@tinycld/core/lib/org-routes'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
@@ -79,8 +80,13 @@ export function MobileTabBar() {
                                 // switcher is a Tabs navigator, so this is a
                                 // JUMP_TO to the package's existing frozen screen
                                 // — one instance per route, no remount.
-                                const target = lastPackageHref[pkg.slug] ?? `/${pkg.slug}`
-                                router.navigate(target)
+                                // Only trust a stored href carrying the current
+                                // prefix — see the matching guard in PackageRail.
+                                const saved = lastPackageHref[pkg.slug]
+                                const target = saved?.startsWith(`${APP_PREFIX}/`)
+                                    ? saved
+                                    : appHref(pkg.slug)
+                                router.navigate(target as never)
                             })
                         }}
                         accessibilityLabel={pkg.nav?.label}

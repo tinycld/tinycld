@@ -1,5 +1,6 @@
 import { ChangeServerLink } from '@tinycld/core/components/ChangeServerLink'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
+import { appHref } from '@tinycld/core/lib/org-routes'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useSuperUserPB } from '@tinycld/core/lib/use-superuser-pb'
 import { Redirect } from 'expo-router'
@@ -62,7 +63,7 @@ export function SetupPage({ token }: SetupPageProps) {
     // now only the pre-auth bootstrap door (first-run wizard + raw-superuser
     // recovery) for cases where no app session exists.
     if (isAdmin) {
-        return <Redirect href="/settings" />
+        return <Redirect href={appHref('settings')} />
     }
 
     // Fallback for anyone without an owner/admin app session (e.g. a raw PB

@@ -1,7 +1,7 @@
 import { NotificationBell } from '@tinycld/core/components/NotificationBell'
 import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { ImportIndicator } from '@tinycld/core/components/workspace/ImportIndicator'
-import { useOrgHref } from '@tinycld/core/lib/org-routes'
+import { APP_PREFIX, useOrgHref } from '@tinycld/core/lib/org-routes'
 import { usePackage } from '@tinycld/core/lib/packages/use-packages'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -213,7 +213,13 @@ function PackageRailItem({
     // cast through Href. orgHref(slug as never) handles the same gap on
     // the fallback path — slug is a string at compile time, the typed
     // Href union expects a literal route, hence `as never`.
-    const href: Href = lastHref ? (lastHref as Href) : orgHref(slug as never)
+    // Only trust a stored href that carries the current prefix: it is persisted
+    // state, so a pre-/a value (or one written by an older build) would
+    // navigate to a dead route. Falling back to the package root degrades to
+    // "lands on the list" instead of "lands on +not-found".
+    const href: Href = lastHref?.startsWith(`${APP_PREFIX}/`)
+        ? (lastHref as Href)
+        : orgHref(slug as never)
 
     return (
         <View className="relative w-11 h-11 items-center justify-center">

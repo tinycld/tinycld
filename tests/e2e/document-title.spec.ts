@@ -17,13 +17,13 @@ const ORG_NAME = 'Test Organization'
 
 test.describe('Document title', () => {
     test('pre-auth /connect shows brand + leaf only, no org segment', async ({ page }) => {
-        await page.goto('/connect')
+        await page.goto('/a/connect')
         await expect(page).toHaveTitle('TinyCld: Connect')
     })
 
     test('settings layout fallback wins on bare /settings', async ({ page }) => {
         await login(page)
-        await page.goto('/settings')
+        await page.goto('/a/settings')
         // The settings index.tsx doesn't mount its own DocumentTitle, so
         // only the layout's <DocumentTitle pkg="Settings" /> is active.
         await expect(page).toHaveTitle(`TinyCld: ${ORG_NAME} — Settings`)
@@ -31,7 +31,7 @@ test.describe('Document title', () => {
 
     test('settings child overrides the layout fallback', async ({ page }) => {
         await login(page)
-        await page.goto('/settings/personal')
+        await page.goto('/a/settings/personal')
         // Both the layout (pkg="Settings") and the child
         // (pkg="Settings" title="Personal") mount; child wins per
         // react-helmet-async ordering, producing the more-specific title.
@@ -40,7 +40,7 @@ test.describe('Document title', () => {
 
     test('help hub uses pkg without a leaf', async ({ page }) => {
         await login(page)
-        await page.goto('/help')
+        await page.goto('/a/help')
         await expect(page).toHaveTitle(`TinyCld: ${ORG_NAME} — Help`)
     })
 })

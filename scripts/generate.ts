@@ -60,7 +60,7 @@ function resolveExportDir(packageDir: string, subpath: string): string | null {
 // against the canonical config's dir (<ws-root>/tinycld/) so it means the same
 // thing from the workspace root. `**`-anchored globs (`**/*.ts`, `!**/server`)
 // already match at any depth and are left as-is; only bare relative segments
-// (`!lib/generated`, `!app/a/[orgSlug]/mail`, `!server`) need the appDir prefix
+// (`!lib/generated`, `!app/a/(app)/mail`, `!server`) need the appDir prefix
 // so they keep pointing into the app shell rather than the workspace root.
 function rerootGlob(glob: string, appDirName: string): string {
     const negated = glob.startsWith('!')
@@ -194,7 +194,7 @@ function cleanDir(dir: string) {
 
 type Feature = { name: string; dir: string; manifest: PackageManifest }
 
-// --- 3. routes: re-export each package's screens into app/a/[orgSlug]/<slug> -
+// --- 3. routes: re-export each package's screens into app/a/(app)/<slug> ---
 // We still don't cleanDir(ROUTES_BASE) before emitting — app-owned files and
 // dirs live here (_layout.tsx, index.tsx, help/, settings/**) and a
 // full wipe would take them out. Instead, each present package re-creates its

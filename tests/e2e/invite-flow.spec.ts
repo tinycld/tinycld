@@ -108,7 +108,7 @@ test.describe('Invite flow', () => {
         const inviteePage = await page.context().browser()!.newContext()
         const invitee = await inviteePage.newPage()
 
-        await invitee.goto(`/accept-invite/${token}`)
+        await invitee.goto(`/a/accept-invite/${token}`)
         await expect(invitee.getByText("You're invited", { exact: true })).toBeVisible({
             timeout: 10_000,
         })

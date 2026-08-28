@@ -552,9 +552,11 @@ function spawnExpo(expoPort: number, onReady: () => void): ChildProcess {
 //
 // /dav is RESERVED for protocol mounts and must never be a package slug.
 // WebDAV used to mount at bare /drive, which collided with the in-app /drive
-// route once the single-org migration dropped the /a/<orgSlug> segment: a
-// literal route beats Expo's catch-all, so a hard load of /drive reached
-// Basic-Auth WebDAV and the SPA was unreachable.
+// route back when app routes sat at the root: a literal route beats Expo's
+// catch-all, so a hard load of /drive reached Basic-Auth WebDAV and the SPA
+// was unreachable. App routes now live under /a, so that particular overlap
+// is gone — but /dav stays reserved so protocol mounts never share a
+// namespace with package slugs, and so this can't regress if /a ever moves.
 const PB_PREFIXES = [
     '/api',
     '/_',
@@ -586,6 +588,32 @@ function isPbPath(url: string): boolean {
     return PB_PREFIXES.some(prefix => pathname === prefix || pathname.startsWith(`${prefix}/`))
 }
 
+// First path segments that were app routes before they moved under /a.
+// Mirrors legacyAppSegments in core/server/coreserver/static.go.
+const LEGACY_APP_SEGMENTS = [
+    'accept-invite',
+    'reset-password',
+    'connect',
+    'pick-org',
+    'setup',
+    'settings',
+    'help',
+]
+
+// The dev proxy has to redirect legacy paths itself. In production the Go
+// static handler owns the SPA fallback and does this (legacyAppRedirect), but
+// here a non-PB path goes straight to Expo, which no longer has a route for
+// the unprefixed form — so a hard load of /setup renders the fallback shell
+// instead of the setup screen. Keeping the two in step is what makes a dev or
+// CI run agree with production.
+function legacyAppRedirect(url: string): string | null {
+    const [pathname, query] = url.split('?', 2)
+    if (pathname === '/a' || pathname.startsWith('/a/')) return null
+    const segment = pathname.split('/').filter(Boolean)[0]
+    if (!segment || !LEGACY_APP_SEGMENTS.includes(segment)) return null
+    return `/a${pathname}${query ? `?${query}` : ''}`
+}
+
 function startProxy(opts: {
     proxyPort: number
     pbPort: number
@@ -596,7 +624,18 @@ function startProxy(opts: {
     const log = withPrefix('proxy', '\x1b[33m') // yellow
 
     const handler: http.RequestListener = (req, res) => {
-        const target = isPbPath(req.url ?? '/') ? opts.pbPort : opts.expoPort
+        const requestUrl = req.url ?? '/'
+
+        if (!isPbPath(requestUrl)) {
+            const redirect = legacyAppRedirect(requestUrl)
+            if (redirect) {
+                res.writeHead(302, { Location: redirect })
+                res.end()
+                return
+            }
+        }
+
+        const target = isPbPath(requestUrl) ? opts.pbPort : opts.expoPort
 
         // Browsers and Playwright cancel in-flight requests aggressively.
         // Once the client socket goes away, any further write to req/res

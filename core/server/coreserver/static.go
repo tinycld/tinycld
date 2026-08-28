@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"tinycld.org/core/approutes"
+
 	"github.com/pocketbase/pocketbase/core"
 )
 
@@ -141,6 +143,59 @@ func DefaultTypesDir() string {
 	return filepath.Join(dir, "core", "types")
 }
 
+// legacyAppSegments are the first path segments that used to be app routes
+// before everything moved under approutes.Prefix.
+//
+// An explicit allowlist, not a catch-all rewrite: a blanket "prepend /a to any
+// miss" would also rewrite asset 404s, /.well-known probes and future marketing
+// paths, and would fight the website lookup in StaticWithDynamicFallback.
+var legacyAppSegments = map[string]bool{
+	// Pre-auth. These are the ones that actually matter: invite and reset links
+	// are EMAILED, so URLs minted before the move keep arriving from inboxes
+	// for days. A 404 there is a dead invite.
+	"accept-invite":  true,
+	"reset-password": true,
+	"connect":        true,
+	"pick-org":       true,
+	"setup":          true,
+	// Workspace areas a user may have bookmarked.
+	"settings": true,
+	"help":     true,
+}
+
+// legacyAppRedirect maps a pre-prefix app URL to its current location, or ""
+// when the path is not a legacy app route.
+//
+// Public (/p/...), protocol (/dav, /caldav, /carddav) and API paths are NOT app
+// routes and must never be rewritten.
+func legacyAppRedirect(path string) string {
+	if path == "" || strings.HasPrefix(path, approutes.Prefix+"/") || path == approutes.Prefix {
+		return ""
+	}
+	seg, _, _ := strings.Cut(path, "/")
+	if !legacyAppSegments[seg] {
+		return ""
+	}
+	return approutes.Prefix + "/" + path
+}
+
+// redirectLegacyAppPath issues a 302 to the prefixed location when path is a
+// legacy app route. Reports whether it handled the request.
+//
+// 302, not 301: a permanent redirect is cached indefinitely by browsers and
+// cannot be walked back if an entry here turns out to shadow a real path.
+func redirectLegacyAppPath(e *core.RequestEvent, path string) bool {
+	target := legacyAppRedirect(path)
+	if target == "" {
+		return false
+	}
+	if q := e.Request.URL.RawQuery; q != "" {
+		target += "?" + q
+	}
+	e.Redirect(http.StatusFound, target)
+	return true
+}
+
 // StaticWithFallback serves static files from dir, falling back to
 // fallbackFile for missing paths (so SPA routing works).
 func StaticWithFallback(dir string, fallbackFile string) func(*core.RequestEvent) error {
@@ -178,6 +233,10 @@ func StaticWithFallback(dir string, fallbackFile string) func(*core.RequestEvent
 		// "<!DOCTYPE …" with a 200, which a JSON parse then chokes on
 		// ("Unexpected token '<'"). A JSON 404 lets clients see "not ready" and
 		// retry instead of mis-parsing HTML as JSON.
+		if redirectLegacyAppPath(e, path) {
+			return nil
+		}
+
 		if fallbackFile != "" && !strings.HasPrefix("/"+path, "/api/") {
 			return e.FileFS(fs, fallbackFile)
 		}
@@ -280,6 +339,10 @@ func StaticWithDynamicFallback(publicDir, websiteDir, releasesDir string) func(*
 		// retry instead of mis-parsing HTML as JSON.
 		if strings.HasPrefix("/"+path, "/api/") {
 			return e.NotFoundError("", nil)
+		}
+
+		if redirectLegacyAppPath(e, path) {
+			return nil
 		}
 
 		// SPA fallback: the active release's shell. writeAppShell revalidates
