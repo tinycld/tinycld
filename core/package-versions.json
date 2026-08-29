@@ -27,5 +27,5 @@
     "@tanstack/react-db": "0.3.5",
     "@tanstack/query-db-collection": "1.2.10",
     "@tanstack/react-query": "5.101.0",
-    "react-native-drax": "github:nathanstitt/react-native-drax#b863d89a70c73454d7f3495bf79e382586495fa4"
+    "react-native-drax": "github:nathanstitt/react-native-drax#bc83061aceb7eae462cecc4756b3a4c81dcd1d30"
 }
