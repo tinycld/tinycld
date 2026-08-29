@@ -17,6 +17,14 @@ import (
 // lower-frequency milestones are not throttled.
 const pnpmProgressInterval = 10 * time.Second
 
+// ServerRebuildEnv marks a pnpm install run by the server build pipeline.
+// The workspace root-writer (tinycld/scripts/write-workspace-root.ts) skips
+// re-deriving pnpm-workspace.yaml and package-versions.json when it is set,
+// keeping the version pins frozen at the ACTIVE build's versions (the ones
+// matching the embedded native binary) instead of following an upgraded
+// tinycld member's newer core table.
+const ServerRebuildEnv = "TINYCLD_SERVER_REBUILD=1"
+
 // Pipeline turns an assembled build dir into a runnable one: install
 // dependencies (the workspace postinstall runs the generator + link-members),
 // compile the server binary, export + stage the web bundle, and export the
@@ -35,7 +43,7 @@ type Pipeline struct {
 	// cross-compiles' GOOS/GOARCH/CGO_ENABLED). Default RunCmdEnv.
 	RunEnv CmdEnvRunner
 	// PnpmStream executes the pnpm install with line streaming. Default
-	// RunCmdStreaming.
+	// RunCmdStreamingEnv with ServerRebuildEnv set (see runPnpmInstall).
 	PnpmStream StreamingRunner
 	// ExpoStream executes the expo exports (web + native) with line streaming,
 	// so Metro's per-module bundling progress reaches the bar instead of the
@@ -81,13 +89,6 @@ func (p Pipeline) runEnv() CmdEnvRunner {
 		return p.RunEnv
 	}
 	return RunCmdEnv
-}
-
-func (p Pipeline) pnpmStream() StreamingRunner {
-	if p.PnpmStream != nil {
-		return p.PnpmStream
-	}
-	return RunCmdStreaming
 }
 
 func (p Pipeline) expoStream() StreamingRunner {
@@ -294,10 +295,16 @@ func StageRelease(appDir string) (string, error) {
 // their output streams here too.
 func (p Pipeline) runPnpmInstall(sink ProgressSink, buildDir string) error {
 	throttle := newPnpmProgressThrottle()
-	out, err := p.pnpmStream()(
-		func(line string) { p.reportPnpmProgress(sink, line, throttle) },
-		buildDir, "pnpm", "install", "--no-frozen-lockfile",
-	)
+	onLine := func(line string) { p.reportPnpmProgress(sink, line, throttle) }
+	var out string
+	var err error
+	if p.PnpmStream != nil {
+		// Injected stream (tests) — the fake never runs the generator, so
+		// the guard env is irrelevant there.
+		out, err = p.PnpmStream(onLine, buildDir, "pnpm", "install", "--no-frozen-lockfile")
+	} else {
+		out, err = RunCmdStreamingEnv(onLine, buildDir, []string{ServerRebuildEnv}, "pnpm", "install", "--no-frozen-lockfile")
+	}
 	if err != nil {
 		// The failing output must ride the error itself: in the multi-org
 		// builder this runs inside a re-exec'd job child whose structured

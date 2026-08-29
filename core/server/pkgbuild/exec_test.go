@@ -53,6 +53,21 @@ func TestRunCmdStreaming_DeliversLinesAndBuffers(t *testing.T) {
 	}
 }
 
+func TestRunCmdStreamingEnv_PassesExtraEnv(t *testing.T) {
+	var lines []string
+	out, err := RunCmdStreamingEnv(
+		func(line string) { lines = append(lines, line) },
+		t.TempDir(), []string{"TINYCLD_TEST_FLAG=frozen"},
+		"sh", "-c", `printf '%s\n' "$TINYCLD_TEST_FLAG"`,
+	)
+	if err != nil {
+		t.Fatalf("RunCmdStreamingEnv: %v", err)
+	}
+	if !strings.Contains(out, "frozen") {
+		t.Fatalf("extra env not visible to child; out=%q", out)
+	}
+}
+
 func TestCopyDir_CopiesContentsAndSymlinks(t *testing.T) {
 	src := t.TempDir()
 	dst := t.TempDir()
