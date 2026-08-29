@@ -70,6 +70,13 @@ export function readCoreVersions(appDir: string): Record<string, string> {
     if (Object.keys(pins).length === 0) {
         throw new Error(`[workspace-root] ${file} has no version pins`)
     }
+    for (const [key, value] of Object.entries(pins)) {
+        if (typeof value !== 'string') {
+            throw new Error(
+                `[workspace-root] ${file}: pin "${key}" must be a string, got ${typeof value}`
+            )
+        }
+    }
     return pins
 }
 

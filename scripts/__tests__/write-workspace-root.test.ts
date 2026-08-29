@@ -67,6 +67,19 @@ describe('readCoreVersions', () => {
         )
         expect(() => readCoreVersions(appDir)).toThrow(/no version pins/)
     })
+    it.each([
+        ['a number', { expo: 55 }],
+        ['a boolean', { expo: true }],
+        ['null', { expo: null }],
+        ['an object', { expo: { version: '55.0.26' } }],
+    ])('hard-errors naming the key when a pin value is %s', (_desc, badPins) => {
+        const { appDir } = makeFixtureRoot()
+        fs.writeFileSync(
+            path.join(appDir, 'core', 'package-versions.json'),
+            JSON.stringify({ '//': 'doc', ...badPins })
+        )
+        expect(() => readCoreVersions(appDir)).toThrow(/expo/)
+    })
 })
 
 describe('writeWorkspaceRoot', () => {
