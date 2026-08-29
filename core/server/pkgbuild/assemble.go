@@ -34,11 +34,11 @@ const postinstallScript = "tsx scripts/link-members.ts && cd tinycld && pnpm run
 var scaffoldExtras = []string{".npmrc", "tinycld.packages.ts", "scripts", "tests", OverridesFile}
 
 // OverridesFile is the workspace-root data file holding the framework/native/
-// styling version pins. writePnpmWorkspaceYAML transcribes it into the pnpm
-// `overrides:` key so a `pnpm install --no-frozen-lockfile` (the OTA rebuild's
-// install) can't drift these deps off the embedded native binary. It is copied
-// verbatim from srcRoot into each new build (via scaffoldExtras), the same
-// single source bootstrap's assemble-workspace.ts reads on a dev machine.
+// styling version pins. It is a DERIVED copy of tinycld/core/package-versions.json
+// (the source of truth, committed with core), written on dev machines by
+// tinycld/scripts/write-workspace-root.ts and copied verbatim from srcRoot into
+// each new build (via scaffoldExtras) so OTA pins stay frozen at the active
+// build's versions — see ServerRebuildEnv in pipeline.go.
 const OverridesFile = "package-versions.json"
 
 // ScaffoldOptions carries the host-specific knobs of the workspace scaffold.

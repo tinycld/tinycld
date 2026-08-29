@@ -96,9 +96,19 @@ func RunCmdStdout(dir string, name string, args ...string) (string, error) {
 // sit frozen for minutes. It still buffers + returns the full output and error
 // so the buffered-RunCmd contract is preserved.
 func RunCmdStreaming(onLine func(line string), dir, name string, args ...string) (string, error) {
+	return RunCmdStreamingEnv(onLine, dir, nil, name, args...)
+}
+
+// RunCmdStreamingEnv is RunCmdStreaming with extra environment entries
+// ("KEY=VALUE") appended to the inherited env — the streaming mirror of
+// RunCmdEnv.
+func RunCmdStreamingEnv(onLine func(line string), dir string, extraEnv []string, name string, args ...string) (string, error) {
 	log.Debug("$ command", "dir", dir, "cmd", name, "args", strings.Join(args, " "))
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 
 	pr, pw := io.Pipe()
 	cmd.Stdout = pw

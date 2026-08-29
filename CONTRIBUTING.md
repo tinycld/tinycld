@@ -253,7 +253,7 @@ signals it ran.
 
 ## Assembling & installing a workspace
 
-A workspace root is assembled per-developer by `@tinycld/bootstrap` — it is not a git repo of its own, just a directory holding the chosen members plus a few bootstrap-written root files. Assemble and boot it like this:
+A workspace root is assembled per-developer by `@tinycld/bootstrap` — it is not a git repo of its own, just a directory holding the chosen members plus a handful of root coordination files. Assemble and boot it like this:
 
 ```sh
 mkdir ~/code/tinycld && cd ~/code/tinycld
@@ -273,6 +273,16 @@ That default is the right one for a developer and the wrong one for cross-repo w
 So each feature repo's `ci.yml` resolves sibling refs before assembling: prefer a branch matching the PR's HEAD, fall back to the default branch when none exists. Ordinary single-repo PRs are unaffected — they assemble against released siblings, which is what you want. `text` and `calc` pin `drive` the same way, since they clone it too.
 
 If you are ever debugging a feature repo that is red in CI but green locally, check this first: the assembly is the most common difference between the two.
+
+### Vendor version pins
+
+`core/package-versions.json` is the source of truth for the ecosystem's pinned vendor versions: the shared framework/native/styling stack (`react`, `react-native`, `expo`, `expo-router`, `uniwind`, `@tanstack/db`, …) plus **every native module compiled into the EAS binary**, even ones only one feature uses (`@shopify/flash-list`, the `react-native-drax` fork). Feature-specific pure-JS libraries don't belong here — a feature declares those itself in its own `peerDependencies`.
+
+`scripts/write-workspace-root.ts` is the single writer of every workspace-root coordination file — `package.json`, `pnpm-workspace.yaml` (including its pnpm `overrides:` block), a root `package-versions.json` copy, `biome.json`, `.watchmanconfig`, and `.npmrc` — derived from that table. It runs twice in the lifecycle: once from `@tinycld/bootstrap` right after cloning (bare `node`, before any install exists), and again on every `pnpm install` at the workspace root (the postinstall calls it, so `git pull` + `pnpm install` self-heals root files without re-running bootstrap). Bootstrap itself carries no version pins or root-file formats — it just clones and delegates.
+
+**To bump a pin:** edit `core/package-versions.json` (and core's own `peerDependencies` if the compatible range moved), then commit — one commit in this repo. Every developer picks it up with `git pull` + `pnpm install`; if the script detects the pins changed since the last write it warns to run `pnpm install` again so the new `overrides:` block actually reaches `node_modules`. The bump then rides the next `@tinycld/core` release and the next EAS build.
+
+Server-triggered OTA rebuilds set `TINYCLD_SERVER_REBUILD=1` (`ServerRebuildEnv` in `core/server/pkgbuild/pipeline.go`) on their `pnpm install`. Under that flag the root-writer leaves the pin files alone — a rebuild must keep the versions the active build's embedded native binary actually shipped with, not whatever `core/package-versions.json` says today.
 
 **Run `pnpm install` only at the workspace root, never inside a member.** The root install does two things in order, and the order matters:
 
