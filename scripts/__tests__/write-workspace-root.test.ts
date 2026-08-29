@@ -29,8 +29,16 @@ afterEach(() => {
 
 describe('renderOverridesBlock', () => {
     it('matches the Go renderer byte-for-byte: sorted, scoped names quoted, plain bare', () => {
-        const block = renderOverridesBlock({ expo: '55.0.26', '@tanstack/db': '0.8.5', uniwind: '1.8.0' })
-        expect(block).toBe(['overrides:', "  '@tanstack/db': 0.8.5", '  expo: 55.0.26', '  uniwind: 1.8.0'].join('\n'))
+        const block = renderOverridesBlock({
+            expo: '55.0.26',
+            '@tanstack/db': '0.8.5',
+            uniwind: '1.8.0',
+        })
+        expect(block).toBe(
+            ['overrides:', "  '@tanstack/db': 0.8.5", '  expo: 55.0.26', '  uniwind: 1.8.0'].join(
+                '\n'
+            )
+        )
     })
 })
 
@@ -53,7 +61,10 @@ describe('readCoreVersions', () => {
     })
     it('hard-errors when the table has no pins beyond the doc key', () => {
         const { appDir } = makeFixtureRoot()
-        fs.writeFileSync(path.join(appDir, 'core', 'package-versions.json'), JSON.stringify({ '//': 'doc' }))
+        fs.writeFileSync(
+            path.join(appDir, 'core', 'package-versions.json'),
+            JSON.stringify({ '//': 'doc' })
+        )
         expect(() => readCoreVersions(appDir)).toThrow(/no version pins/)
     })
 })
@@ -71,7 +82,9 @@ describe('writeWorkspaceRoot', () => {
     it('writes the root package-versions.json as a derived copy of the core table', () => {
         const { wsRoot, appDir } = makeFixtureRoot()
         writeWorkspaceRoot(wsRoot, appDir)
-        const derived = JSON.parse(fs.readFileSync(path.join(wsRoot, 'package-versions.json'), 'utf8'))
+        const derived = JSON.parse(
+            fs.readFileSync(path.join(wsRoot, 'package-versions.json'), 'utf8')
+        )
         expect(derived.expo).toBe('55.0.26')
         expect(derived['//']).toMatch(/derived/i)
     })
@@ -79,7 +92,11 @@ describe('writeWorkspaceRoot', () => {
         const { wsRoot, appDir } = makeFixtureRoot()
         fs.writeFileSync(
             path.join(wsRoot, 'package.json'),
-            JSON.stringify({ name: '@tinycld/workspace', scripts: { 'docker:ssl': 'x' }, license: 'AGPL-3.0-only' })
+            JSON.stringify({
+                name: '@tinycld/workspace',
+                scripts: { 'docker:ssl': 'x' },
+                license: 'AGPL-3.0-only',
+            })
         )
         writeWorkspaceRoot(wsRoot, appDir)
         const pkg = JSON.parse(fs.readFileSync(path.join(wsRoot, 'package.json'), 'utf8'))
@@ -99,7 +116,9 @@ describe('writeWorkspaceRoot', () => {
     it('warns to reinstall when pins changed from the previous derived copy', () => {
         const { wsRoot, appDir } = makeFixtureRoot()
         writeWorkspaceRoot(wsRoot, appDir)
-        const table = JSON.parse(fs.readFileSync(path.join(appDir, 'core', 'package-versions.json'), 'utf8'))
+        const table = JSON.parse(
+            fs.readFileSync(path.join(appDir, 'core', 'package-versions.json'), 'utf8')
+        )
         table.expo = '56.0.0'
         fs.writeFileSync(path.join(appDir, 'core', 'package-versions.json'), JSON.stringify(table))
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -113,8 +132,12 @@ describe('writeWorkspaceRoot', () => {
         fs.writeFileSync(path.join(wsRoot, 'package-versions.json'), '{"expo":"55.0.0"}')
         vi.stubEnv('TINYCLD_SERVER_REBUILD', '1')
         writeWorkspaceRoot(wsRoot, appDir)
-        expect(fs.readFileSync(path.join(wsRoot, 'pnpm-workspace.yaml'), 'utf8')).toBe('storeDir: /baked\n')
-        expect(fs.readFileSync(path.join(wsRoot, 'package-versions.json'), 'utf8')).toBe('{"expo":"55.0.0"}')
+        expect(fs.readFileSync(path.join(wsRoot, 'pnpm-workspace.yaml'), 'utf8')).toBe(
+            'storeDir: /baked\n'
+        )
+        expect(fs.readFileSync(path.join(wsRoot, 'package-versions.json'), 'utf8')).toBe(
+            '{"expo":"55.0.0"}'
+        )
         expect(fs.existsSync(path.join(wsRoot, 'biome.json'))).toBe(true)
         expect(fs.existsSync(path.join(wsRoot, 'package.json'))).toBe(false)
     })

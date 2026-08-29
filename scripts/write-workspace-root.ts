@@ -30,7 +30,15 @@ import { pathToFileURL } from 'node:url'
 // pnpm-workspace.yaml is Go-written and carries a storeDir: this script must
 // not touch either. Under the flag only the root biome.json is written.
 
-const ALL_FEATURES = ['contacts', 'mail', 'calendar', 'drive', 'calc', 'text', 'google-takeout-import']
+const ALL_FEATURES = [
+    'contacts',
+    'mail',
+    'calendar',
+    'drive',
+    'calc',
+    'text',
+    'google-takeout-import',
+]
 const ALL_MEMBERS = ['tinycld', 'tinycld/core', 'tinycld/package-scripts', ...ALL_FEATURES]
 const NON_MEMBER_DIRS = ['bootstrap', 'utils', 'web']
 
@@ -89,7 +97,7 @@ function discoverPresentMembers(wsRoot: string): string[] {
     } catch {
         return []
     }
-    return entries.filter((name) => {
+    return entries.filter(name => {
         if (name === 'node_modules' || name.startsWith('.')) return false
         const dir = path.join(wsRoot, name)
         try {
@@ -97,7 +105,9 @@ function discoverPresentMembers(wsRoot: string): string[] {
         } catch {
             return false
         }
-        const hasManifest = fs.existsSync(path.join(dir, 'manifest.ts')) || fs.existsSync(path.join(dir, 'manifest.js'))
+        const hasManifest =
+            fs.existsSync(path.join(dir, 'manifest.ts')) ||
+            fs.existsSync(path.join(dir, 'manifest.js'))
         return fs.existsSync(path.join(dir, 'package.json')) && hasManifest
     })
 }
@@ -108,7 +118,7 @@ function memberUnion(wsRoot: string): string[] {
 
 function pnpmWorkspaceYaml(wsRoot: string, pins: Record<string, string>): string {
     const members = memberUnion(wsRoot)
-        .map((m) => `  - ${m}`)
+        .map(m => `  - ${m}`)
         .join('\n')
     return [
         'nodeLinker: hoisted',
@@ -151,9 +161,15 @@ function pnpmWorkspaceYaml(wsRoot: string, pins: Record<string, string>): string
 // node_modules ARE ignored (near-empty under hoisting, pure crawl cost).
 function watchmanConfig(wsRoot: string): string {
     const members = memberUnion(wsRoot)
-    const memberDirs = members.flatMap((m) => [`${m}/node_modules`, `${m}/.git`])
-    const testResultDirs = members.filter((m) => !m.startsWith('tinycld')).map((m) => `${m}/test-results`)
-    const nonMemberDirs = NON_MEMBER_DIRS.flatMap((d) => [`${d}/node_modules`, `${d}/.git`, `${d}/dist`])
+    const memberDirs = members.flatMap(m => [`${m}/node_modules`, `${m}/.git`])
+    const testResultDirs = members
+        .filter(m => !m.startsWith('tinycld'))
+        .map(m => `${m}/test-results`)
+    const nonMemberDirs = NON_MEMBER_DIRS.flatMap(d => [
+        `${d}/node_modules`,
+        `${d}/.git`,
+        `${d}/dist`,
+    ])
     const ignoreDirs = [
         '.git',
         'node_modules/.cache',
@@ -250,7 +266,7 @@ function rerootPluginPath(p: string, appDirName: string): string {
 type PluginEntry = string | { path: string; includes?: string[] }
 
 function rerootPlugins(plugins: PluginEntry[], appDirName: string): PluginEntry[] {
-    return plugins.map((entry) =>
+    return plugins.map(entry =>
         typeof entry === 'string'
             ? rerootPluginPath(entry, appDirName)
             : { ...entry, path: rerootPluginPath(entry.path, appDirName) }
@@ -263,7 +279,9 @@ function writeRootBiomeConfig(wsRoot: string, appDir: string): void {
     // A runtime rebuild's build tree may not carry the canonical config (it
     // never lints) — skip rather than abort the whole run.
     if (!fs.existsSync(canonicalPath)) {
-        console.warn(`[workspace-root] ${canonicalPath} absent — skipping ws-root biome.json (lint-only)`)
+        console.warn(
+            `[workspace-root] ${canonicalPath} absent — skipping ws-root biome.json (lint-only)`
+        )
         return
     }
     const canonical = JSON.parse(fs.readFileSync(canonicalPath, 'utf8'))
@@ -294,7 +312,10 @@ function warnIfPinsChanged(wsRoot: string, pins: Record<string, string>): void {
         return
     }
     const { '//': _doc, ...prevPins } = previous
-    if (JSON.stringify(prevPins, Object.keys(prevPins).sort()) === JSON.stringify(pins, Object.keys(pins).sort()))
+    if (
+        JSON.stringify(prevPins, Object.keys(prevPins).sort()) ===
+        JSON.stringify(pins, Object.keys(pins).sort())
+    )
         return
     console.warn(
         '[workspace-root] version pins changed — run pnpm install again to apply the new overrides to node_modules'
@@ -310,7 +331,9 @@ export function writeWorkspaceRoot(
         // Server (OTA) build: pins must stay frozen at the active build's
         // versions and the Go-written pnpm-workspace.yaml (with storeDir)
         // must not be clobbered. biome.json above is the only safe output.
-        console.log('[workspace-root] TINYCLD_SERVER_REBUILD set — leaving pin files and pnpm-workspace.yaml frozen')
+        console.log(
+            '[workspace-root] TINYCLD_SERVER_REBUILD set — leaving pin files and pnpm-workspace.yaml frozen'
+        )
         return
     }
     const pins = readCoreVersions(appDir)
@@ -324,12 +347,16 @@ export function writeWorkspaceRoot(
     fs.writeFileSync(path.join(wsRoot, '.watchmanconfig'), watchmanConfig(wsRoot))
     const npmrcPath = path.join(wsRoot, '.npmrc')
     if (!fs.existsSync(npmrcPath)) {
-        fs.writeFileSync(npmrcPath, '# pnpm settings live in pnpm-workspace.yaml (pnpm 10+ reads them there).\n')
+        fs.writeFileSync(
+            npmrcPath,
+            '# pnpm settings live in pnpm-workspace.yaml (pnpm 10+ reads them there).\n'
+        )
     }
 }
 
 const invokedAsScript =
-    process.argv[1] !== undefined && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+    process.argv[1] !== undefined &&
+    import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
 if (invokedAsScript) {
     writeWorkspaceRoot()
     console.log('[workspace-root] workspace root files written')
