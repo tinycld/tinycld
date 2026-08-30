@@ -6,15 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { UseRichEditorOptions } from '../../../lib/editor/rich/options'
 
 /**
- * A blur while a dialog the editor opened holds the focus must NOT end the
- * session — the editor has to survive until the picked image or link lands in
- * it.
+ * Blur does not END a session — whatever took the focus.
  *
- * There are two ways for a caller to say a dialog is open. `slots.setDialogOpen`
- * suits chrome that learns about it while rendering; the `isDialogOpen` prop
- * suits a caller that already owns the state, which otherwise has to push it
- * back up through a useEffect — the useState+useEffect pairing the style guide
- * names as the signal to switch primitives.
+ * A dialog the editor opened is the motivating case: the editor has to survive
+ * until the picked image or link lands in it. It used to need telling, through
+ * a `setDialogOpen` slot and an `isDialogOpen` prop; now nothing does, because
+ * losing focus no longer closes anything.
+ *
+ * Whether a blur WRITES is a separate question, and the surface opts into that
+ * with `saveOnBlur` — see lazy-editor-save-on-blur.test.tsx. These cases all
+ * run without it, so they assert the lifecycle alone.
  */
 
 // Captures the options LazyEditor hands the editor, so the test can fire the

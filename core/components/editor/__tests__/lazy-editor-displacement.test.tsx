@@ -114,6 +114,28 @@ describe('displacement', () => {
         expect(onCommit).toHaveBeenCalledWith('edited text')
     })
 
+    /**
+     * The unmount path must stash too, not only commit.
+     *
+     * A parent-owned surface is UNMOUNTED by the same commit that hands the
+     * editor on, so it never renders again to notice the displacement — and for
+     * a surface that stashes rather than commits, doing nothing on unmount
+     * loses the revision outright. The surface is gone, and with it the only
+     * copy of what was typed. Cards' inline comment edit is the case.
+     */
+    it('stashes an unfinished edit when a non-committing surface goes away', async () => {
+        const onCommit = vi.fn()
+        const onRelease = vi.fn()
+        const { unmount } = render(<Probe onCommit={onCommit} onRelease={onRelease} />)
+
+        await act(async () => {
+            unmount()
+        })
+
+        expect(onRelease).toHaveBeenCalledWith('edited text')
+        expect(onCommit).not.toHaveBeenCalled()
+    })
+
     it('stashes instead, for a surface that does not commit', async () => {
         const onCommit = vi.fn()
         const onRelease = vi.fn()
