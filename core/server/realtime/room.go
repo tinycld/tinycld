@@ -128,8 +128,21 @@ func (r *Room) remove(c *Client) {
 	r.mu.Lock()
 	delete(r.members, c)
 	empty := len(r.members) == 0
-	r.mu.Unlock()
+	// Closed while STILL HOLDING r.mu, together with the delete above.
+	//
+	// A sender only ever reaches a client it found in r.members, and it
+	// finds that under this same lock — so closing here makes "removed
+	// from the room" and "channel closed" one atomic step, and no sender
+	// can be holding a reference that is about to go stale. Closing after
+	// the unlock left a window that fanOut walked straight into: it
+	// snapshots its peers under the lock and releases it before
+	// delivering, so a client removed in between had its channel closed
+	// under a send already in flight, panicking the whole process with
+	// "send on closed channel". deliver's select/default does not help —
+	// that guards a FULL channel; a send to a CLOSED one panics either
+	// way.
 	close(c.send)
+	r.mu.Unlock()
 	if empty {
 		if r.opts.OnEmpty != nil {
 			r.opts.OnEmpty(r.key.id)
@@ -340,10 +353,11 @@ func (r *Room) route(from *Client, frame []byte) {
 			}
 		}
 		// Fall back to the legacy pure-relay path: forward to one
-		// current peer (longest-connected).
-		peer := r.pickSyncPeer(from)
-		if peer != nil {
-			deliver(peer, frame)
+		// current peer (longest-connected). Picked and delivered in ONE
+		// locked step: a peer chosen under the lock and written to after
+		// releasing it may have been removed (and its channel closed) in
+		// between, which panics the process.
+		if r.deliverToSyncPeer(from, frame) {
 			return
 		}
 		// No peer: the requester is alone. Send back an empty reply so
@@ -372,23 +386,31 @@ func (r *Room) route(from *Client, frame []byte) {
 }
 
 // fanOut writes frame to every member of the room except `from`.
+//
+// Delivery happens UNDER r.mu rather than to a snapshot taken under it.
+// The lock is what makes a member's send channel safe to use: remove()
+// deletes from r.members and closes that channel as one locked step, so a
+// client reached from inside this loop is guaranteed not to be mid-close.
+// Snapshotting and then delivering unlocked reintroduces exactly the race
+// this pairing exists to close — a peer removed between the two panics the
+// process on "send on closed channel". deliver never blocks (it drops on a
+// full buffer), so holding the lock across the loop costs a few buffered
+// writes, not a wait on any client.
 func (r *Room) fanOut(from *Client, frame []byte) {
 	r.mu.Lock()
-	peers := make([]*Client, 0, len(r.members))
+	defer r.mu.Unlock()
 	for c := range r.members {
 		if c != from {
-			peers = append(peers, c)
+			deliver(c, frame)
 		}
-	}
-	r.mu.Unlock()
-	for _, c := range peers {
-		deliver(c, frame)
 	}
 }
 
-// pickSyncPeer chooses the longest-connected peer that isn't the requester.
-// Returns nil if no peer exists.
-func (r *Room) pickSyncPeer(from *Client) *Client {
+// deliverToSyncPeer sends frame to the longest-connected peer that isn't
+// the requester, and reports whether such a peer existed. Choosing and
+// sending are one locked step by design — see fanOut for why a peer picked
+// under r.mu must not be written to after releasing it.
+func (r *Room) deliverToSyncPeer(from *Client, frame []byte) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var best *Client
@@ -400,7 +422,11 @@ func (r *Room) pickSyncPeer(from *Client) *Client {
 			best = c
 		}
 	}
-	return best
+	if best == nil {
+		return false
+	}
+	deliver(best, frame)
+	return true
 }
 
 // deliverByID sends frame to the room member whose id matches target.

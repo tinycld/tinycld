@@ -4,6 +4,7 @@ package automation
 import (
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -476,10 +477,11 @@ func TestNativeWriteProvenanceStopsChain(t *testing.T) {
 	app, _, u := engineApp(t)
 	col, _ := app.FindCollectionByNameOrId("tickets")
 
-	var created int
+	// Atomic: the handler runs on the engine's goroutine while the poll loop
+	// below reads from the test's, so a plain int is a data race.
+	var created atomic.Int64
 	RegisterAction("tickets:boom", func(app core.App, req ActionRequest) error {
-		created++
-		if created > 50 {
+		if created.Add(1) > 50 {
 			return nil // safety valve: without the fix this never terminates
 		}
 		made := core.NewRecord(col)
@@ -501,22 +503,23 @@ func TestNativeWriteProvenanceStopsChain(t *testing.T) {
 	// The chain must go quiet on its own. Poll until the handler stops being
 	// invoked, then assert it stopped because of the depth cap rather than the
 	// safety valve.
-	stable, last := 0, -1
+	stable, last := 0, int64(-1)
 	for range 100 {
-		if created == last {
+		if now := created.Load(); now == last {
 			if stable++; stable >= 5 {
 				break
 			}
 		} else {
-			stable, last = 0, created
+			stable, last = 0, now
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if created == 0 {
+	total := created.Load()
+	if total == 0 {
 		t.Fatal("the native action never ran")
 	}
-	if created > maxChainDepth+1 {
-		t.Fatalf("native writes must stop at the depth cap, handler ran %d times", created)
+	if total > int64(maxChainDepth+1) {
+		t.Fatalf("native writes must stop at the depth cap, handler ran %d times", total)
 	}
 }
 

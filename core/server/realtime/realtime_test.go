@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -964,4 +965,77 @@ func TestUpdateContentValidatorRejectsUpdate(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 		t.Fatalf("accepted update was not fanned out to peer")
 	}
+}
+
+// TestFanOutRacesClientRemoval pins the fix for a crash that took the whole
+// process down, not just one connection.
+//
+// fanOut used to snapshot the room's members under r.mu, RELEASE the lock,
+// then deliver to the snapshot. remove() closed the departing client's send
+// channel outside the lock too. A client that left in between was therefore
+// written to after its channel had been closed — and a send on a closed
+// channel is an unrecoverable panic, so one unlucky disconnect during a
+// broadcast killed the server. It reproduced as an entire e2e suite failing
+// with ERR_CONNECTION_REFUSED from whichever test happened to be running.
+//
+// deliver's select/default is not a guard against this: that handles a FULL
+// buffer. A closed channel panics down both arms.
+//
+// Run under -race, this hammers the exact interleaving: constant fan-out
+// against constant joins and leaves. Before the fix it panics within a few
+// iterations; the test is meaningless unless it has been seen to do so.
+func TestFanOutRacesClientRemoval(t *testing.T) {
+	broker := NewBroker()
+	resetRegistry()
+	RegisterRoomKindWith("racekind", RoomKindOptions{Authorize: allowAllAuth})
+
+	// A resident keeps the room alive, so churning members never trips the
+	// last-one-out teardown and every iteration exercises fanOut with a
+	// live audience.
+	resident := NewClientForTest("resident")
+	room := broker.JoinForTest("racekind", "raceroom", resident)
+	if room == nil {
+		t.Fatal("JoinForTest returned no room")
+	}
+	// Drain the resident so its buffer never fills and starts dropping,
+	// which would mask the race by short-circuiting deliver.
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-resident.send:
+			case <-done:
+				return
+			}
+		}
+	}()
+	defer close(done)
+
+	frame := make([]byte, frameOverhead)
+	frame[clientIDLen] = byte(MsgAwarenessUpdate)
+
+	var wg sync.WaitGroup
+	// Broadcasters: the aggressor side of the race.
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 500 {
+				room.fanOut(resident, frame)
+			}
+		}()
+	}
+	// Churn: clients joining and leaving underneath those broadcasts.
+	for i := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range 500 {
+				c := NewClientForTest(fmt.Sprintf("churn-%d-%d", i, j))
+				room.add(c)
+				room.remove(c)
+			}
+		}()
+	}
+	wg.Wait()
 }
