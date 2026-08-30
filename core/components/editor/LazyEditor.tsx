@@ -15,7 +15,7 @@ import type { EditorCommands, EditorHandle, EditorToolbarState } from '../../lib
 import { useWarmEditor } from '../../lib/editor/warm'
 import type { SurfaceId } from '../../lib/editor/warm/warm-editor-store'
 import { captureException } from '../../lib/errors'
-import { isNoOpEdit, shouldCommitOnBlur } from './commit-policy'
+import { isNoOpEdit } from './commit-policy'
 
 /** The coordinate fields a React Native press event carries. */
 export interface PressPoint {
@@ -53,8 +53,6 @@ export interface LazyEditorSlots {
     toolbarState: EditorToolbarState
     submit: () => void
     cancel: () => void
-    /** Tell the swap a dialog holds the focus, so a blur is not the session ending. */
-    setDialogOpen: (open: boolean) => void
 }
 
 export interface LazyEditorHeaderState {
@@ -132,8 +130,21 @@ export interface LazyEditorProps {
     editorOptions: UseRichEditorOptions
     surfaceId: SurfaceId
     canEdit: boolean
-    /** True for an edit of existing content; false for a composer. */
-    commitOnBlur?: boolean
+    /**
+     * Write when ANOTHER surface takes the shared editor.
+     *
+     * There is one editor app-wide, so clicking a second surface hands it over
+     * unconditionally — the first surface keeps its session but loses the
+     * instance. This decides what happens to what it was holding: an edit of
+     * existing content commits (the reader clicked away from a finished edit),
+     * while a composer keeps its text as a stashed draft via `onRelease`.
+     *
+     * Being displaced is unambiguous — someone else is editing now — which is
+     * why the session hangs off it rather than off focus. Losing focus happens
+     * for reasons that have nothing to do with finishing: a toolbar's overflow
+     * menu, a link dialog, a click on the panel behind.
+     */
+    commitOnDisplace?: boolean
     onCommit: (content: string) => void
     /** Absent when there is nothing to revert (a collaborative description). */
     onCancel?: () => void
@@ -149,19 +160,6 @@ export interface LazyEditorProps {
      * Not called on a commit — `onCommit` already carries the content.
      */
     onRelease?: (content: string) => void
-    /**
-     * True while a dialog the editor opened holds the focus, so a blur is not
-     * the session ending — the editor must survive until the picked image or
-     * link lands in it.
-     *
-     * Two ways to say this, and a caller should pick one. `slots.setDialogOpen`
-     * suits a caller that learns about the dialog from inside the rendered
-     * chrome. This prop suits one that already knows: a card description owns
-     * both dialogs' open state itself, and pushing it back up through an effect
-     * only to receive it again is the useState+useEffect pairing the style
-     * guide names as the signal to switch primitives. When supplied, this wins.
-     */
-    isDialogOpen?: boolean
     /**
      * Open the session on mount instead of waiting for a press.
      *
@@ -267,11 +265,10 @@ export function useLazyEditor({
     editorOptions,
     surfaceId,
     canEdit,
-    commitOnBlur = false,
+    commitOnDisplace = false,
     onCommit,
     onCancel,
     onRelease,
-    isDialogOpen: dialogOpenProp,
     startOpen = false,
     openAt,
     stayOpenOnCommit = false,
@@ -281,35 +278,26 @@ export function useLazyEditor({
     accessibilityLabel = 'Edit',
 }: LazyEditorProps): LazyEditorRenderSlots {
     const [isEditing, setIsEditing] = useState(startOpen)
-    const [dialogOpenState, setIsDialogOpen] = useState(false)
-    // The prop wins when given, so a caller that already owns the dialog state
-    // does not have to echo it back through setDialogOpen.
-    const isDialogOpen = dialogOpenProp ?? dialogOpenState
     // The revert/no-op baseline, snapshotted when the session opens so a
     // realtime update mid-edit cannot become the comparison target.
     const baselineRef = useRef(value)
-    const hasFocusedRef = useRef(false)
     const settledRef = useRef(false)
 
     const submitRef = useRef<() => void>(() => {})
-    const blurRef = useRef<() => void>(() => {})
 
     // The consumer's own focus handlers are CHAINED rather than replaced: a
     // caller uses them to drive its chrome (a card description swaps its section
     // label for a formatting toolbar on focus), and silently dropping them
     // leaves that chrome permanently in its idle state.
     //
-    // These wrappers carry the entire commit policy — hasFocusedRef gates
-    // shouldCommitOnBlur, blurRef fires the blur-commit, submitRef answers ⌘↵ —
-    // so BOTH the warm instance and the cold fallback must receive them. Giving
-    // them only to `own` left the policy inert on the warm path, which is the
-    // only path native ever takes: blur never committed and ⌘↵ never submitted.
+    // `submitRef` answers ⌘↵ through here, so BOTH the warm instance and the
+    // cold fallback must receive these. Giving them only to `own` left the
+    // policy inert on the warm path, which is the only path native ever takes.
     const chainedOptions: UseRichEditorOptions = {
         ...editorOptions,
         contentFormat,
         initialContent: value,
         onFocus: () => {
-            hasFocusedRef.current = true
             // The editor has genuinely landed and taken the caret, so the swap
             // is over and blur handling comes back on. Keyed on the real focus
             // event rather than on the effect that requests focus: the request
@@ -318,10 +306,15 @@ export function useLazyEditor({
             isSwappingRef.current = false
             editorOptions.onFocus?.()
         },
-        onBlur: () => {
-            editorOptions.onBlur?.()
-            blurRef.current()
-        },
+        // Chained, but no longer a session event.
+        //
+        // Losing focus used to END the session — and for an edit of existing
+        // content, WRITE it. That made every focusable control a hazard: a
+        // toolbar's overflow menu, a dialog, anything portalled. A session now
+        // ends only when another surface takes the editor, on Escape, or when
+        // the caller closes it. The consumer's own handler still fires, because
+        // it drives chrome that legitimately follows focus.
+        onBlur: () => editorOptions.onBlur?.(),
         onSubmitShortcut: () => {
             editorOptions.onSubmitShortcut?.()
             submitRef.current()
@@ -341,6 +334,22 @@ export function useLazyEditor({
     // captured `active` there would test a holding this surface no longer has.
     const activeRef = useRef(active)
     activeRef.current = active
+    // The last editor this surface actually held.
+    //
+    // `activeRef` goes null the moment another surface takes over, but a
+    // DISPLACED surface still has to read its own uncommitted text out of the
+    // instance it was using — that read is the only copy. Blur got away with
+    // reading `activeRef` because it fired during the DOM move, while the
+    // holding was still ours; an effect runs after the store has already moved
+    // on. Held separately so it survives that.
+    const lastHeldRef = useRef<typeof active>(null)
+    const lastHeldGenerationRef = useRef<number | null>(null)
+    /** Which holding's text has already been stashed — see endSession. */
+    const stashedGenerationRef = useRef<number | null>(null)
+    if (active != null) {
+        lastHeldRef.current = active
+        lastHeldGenerationRef.current = lease.generation
+    }
 
     // Opening a session and RECLAIMING the instance for one already open are
     // different things, and only the first may touch the guards.
@@ -351,8 +360,9 @@ export function useLazyEditor({
     // and a later Escape would "revert" to that rather than to what was
     // persisted — so the reclaim path leaves all three alone.
     const openSession = useCallback(() => {
+        // A fresh session has not held the editor yet, whatever the last one did.
+        hasHeldRef.current = false
         baselineRef.current = value
-        hasFocusedRef.current = false
         settledRef.current = false
         // Set BEFORE the acquire, which is what moves the DOM node and so what
         // raises the blur this suppresses.
@@ -515,8 +525,20 @@ export function useLazyEditor({
             // the ONLY copy of an uncommitted draft — the composer's text used
             // to survive because its own editor stayed mounted, and it no
             // longer does.
-            const held = activeRef.current
-            if (stash && onRelease && held) {
+            // Falls back to the last instance this surface held: a displaced
+            // surface no longer holds one, and its text would otherwise be
+            // unreadable — see lastHeldRef.
+            const held = activeRef.current ?? lastHeldRef.current
+            // Stash ONCE per holding.
+            //
+            // A parent-owned surface re-arms `settledRef` after a handover so it
+            // can send again, which makes that flag useless as a guard here —
+            // and every later pass reads an editor that now belongs to someone
+            // else, so it reads EMPTY and `stash` treats empty as a clear. The
+            // first pass saved the draft; the second and third deleted it.
+            const alreadyStashed = stashedGenerationRef.current === lastHeldGenerationRef.current
+            if (stash && onRelease && held && !alreadyStashed) {
+                stashedGenerationRef.current = lastHeldGenerationRef.current
                 const editor = held.editor
                 // The generation at the moment this surface still held the
                 // instance. A blur caused BY a steal runs after the editor has
@@ -524,11 +546,23 @@ export function useLazyEditor({
                 // it now returns THEIR text — the composer would stash the
                 // comment someone just clicked into and redisplay it as its own
                 // draft. Discard the read if the instance moved.
-                const generationAtStash = lease.generation
+                // The generation the text we are about to read belongs to.
+                //
+                // Snapshotted when this surface HELD the editor, not when it
+                // noticed it had lost it: a displacement is observed after the
+                // store has already moved on, so comparing against the live
+                // `lease.generation` discards every displaced read as stale —
+                // which is precisely the text this exists to save.
+                const generationAtStash = lastHeldGenerationRef.current ?? lease.generation
                 void (async () => {
                     try {
                         const content = await readContent(editor)
-                        if (lease.generation !== generationAtStash) return
+                        // Was the instance still ours when the read started? A
+                        // handover REBUILDS the editor, so a generation past the
+                        // one our text belonged to means these bytes are the
+                        // incoming surface's — the composer would otherwise
+                        // stash the comment someone just clicked into.
+                        if (lease.generation > generationAtStash + 1) return
                         onRelease(content)
                     } catch (err) {
                         // The session still ends — a broken read is not a
@@ -538,7 +572,7 @@ export function useLazyEditor({
                         // with the baseline restores what was last persisted
                         // instead of silently showing an empty composer.
                         captureException('editor.lazy.readOnRelease', err, { surfaceId })
-                        if (lease.generation === generationAtStash) {
+                        if (lease.generation <= generationAtStash + 1) {
                             onRelease(baselineRef.current)
                         }
                     }
@@ -647,6 +681,77 @@ export function useLazyEditor({
         onCancel?.()
     }, [endSession, onCancel])
 
+    // Another surface took the editor.
+    //
+    // This is what "clicking a second comment finishes the first" actually is.
+    // It used to happen only as a SIDE EFFECT of blur: handing the instance over
+    // moves its DOM node, the move blurs it, and the blur handler committed or
+    // stashed. That made every stray focus loss — a toolbar menu, a dialog —
+    // indistinguishable from a genuine handover, which is the bug this whole
+    // change exists to fix. Said directly here instead.
+    //
+    // A NULL holder is not a steal. The editor is unheld between a release and
+    // the next acquire, and before this surface's own `startOpen` acquire lands;
+    // treating that as a handover would commit an edit nobody left, including
+    // during the boot.
+    // Whether this surface has actually held the editor during this session.
+    //
+    // Being displaced means LOSING something, so a surface that never had it
+    // cannot be displaced. Without this the effect fires on the render where a
+    // surface has just acquired but the store's holder has not propagated yet —
+    // it reads someone else's id and commits the session that was opening,
+    // settling it before a caret ever landed.
+    // Held means it actually had an EDITOR, not merely that the store named it.
+    //
+    // `holder` is set the instant a surface acquires, but `result` stays null
+    // until the singleton has booted — so a surface can be the holder with
+    // nothing to type into. Arming on `holder` alone let a displacement land on
+    // a session that had never rendered an editor, which ended it before the
+    // boot could hand one over. It only showed up under load, where the boot is
+    // slow enough to lose the race.
+    const hasHeldRef = useRef(false)
+    if (lease.holder === surfaceId && lease.result != null) hasHeldRef.current = true
+
+    const holder = lease.holder
+    useEffect(() => {
+        if (!isEditing || settledRef.current) return
+        if (!hasHeldRef.current) return
+        if (holder == null || holder === surfaceId) return
+        if (commitOnDisplace) {
+            submitRef.current()
+            return
+        }
+        endSession({ stash: true })
+        // A parent-owned session outlives the handover — the caller that mounted
+        // it decides when editing is over — so the guards `endSession` just set
+        // have to come back with it. Without this the composer's NEXT send is
+        // refused as already-settled and silently does nothing.
+        if (startOpen) settledRef.current = false
+    }, [isEditing, holder, surfaceId, commitOnDisplace, endSession, startOpen])
+
+    // The surface is going away with an unfinished edit.
+    //
+    // The displacement effect above cannot see this case. A surface whose
+    // session is owned by a PARENT — cards mounts one inline comment editor, for
+    // whichever id is being edited — is UNMOUNTED by the same commit that hands
+    // the editor on, so it never renders again to notice it was displaced.
+    // Clicking a second comment is exactly that: `setEditingCommentId(B)` tears
+    // down A, and A's edit would be lost.
+    //
+    // Blur happened to cover it, because the DOM move fires synchronously before
+    // React unmounts anything. That is the accident this replaces.
+    //
+    // Empty deps and read through a ref, matching `useWarmEditor`'s own release:
+    // this must fire on unmount and nothing else. Depending on the values would
+    // re-run the cleanup on every handover and commit a live session.
+    const commitOnUnmountRef = useRef<() => void>(() => {})
+    commitOnUnmountRef.current = () => {
+        if (!commitOnDisplace || settledRef.current || !isEditing) return
+        if (!hasHeldRef.current) return
+        submitRef.current()
+    }
+    useEffect(() => () => commitOnUnmountRef.current(), [])
+
     // Everything the handle calls, read at call time rather than captured.
     //
     // A handle is HELD across renders — a keyboard shortcut registered once, a
@@ -706,39 +811,6 @@ export function useLazyEditor({
     )
 
     submitRef.current = submit
-    blurRef.current = () => {
-        // A blur raised by the node being re-attached is not the user leaving —
-        // see isSwappingRef. Acting on it would commit or end a session that has
-        // only just started.
-        if (isSwappingRef.current) return
-        if (
-            shouldCommitOnBlur({
-                commitOnBlur,
-                hasFocused: hasFocusedRef.current,
-                isSettled: settledRef.current,
-                isDialogOpen,
-            })
-        ) {
-            submit()
-            return
-        }
-        // A surface with no blur-commit still ends its session on blur — and
-        // this is the one exit that leaves uncommitted text, so it is the one
-        // that stashes.
-        if (!commitOnBlur && hasFocusedRef.current && !isDialogOpen) {
-            endSession({ stash: true })
-            // A parent-owned session survived that call, so the guards it just
-            // set have to come back with it: `settled` would otherwise refuse
-            // the next send, and `hasFocused` must re-arm so a LATER blur can
-            // stash again. Re-focusing the composer resets the latter anyway;
-            // clearing it here keeps a blurred-but-open surface from stashing
-            // twice off one focus.
-            if (startOpen) {
-                settledRef.current = false
-                hasFocusedRef.current = false
-            }
-        }
-    }
 
     // The whole rule, in one condition. Wanting to edit is not enough — this
     // surface must actually HOLD a usable editor, because there is only one and
@@ -787,7 +859,6 @@ export function useLazyEditor({
         toolbarState: active.toolbarState,
         submit,
         cancel,
-        setDialogOpen: setIsDialogOpen,
     }
 
     return {

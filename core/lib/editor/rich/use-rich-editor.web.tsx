@@ -73,6 +73,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         autofocus,
         editable = true,
         containerClassName,
+        minHeight,
         characterLimit,
         generation = 0,
         onSubmitShortcut,
@@ -467,6 +468,14 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                             // @ts-expect-error CSS custom properties for web
                             '--editor-placeholder-color': placeholderColor,
                             '--editor-primary-color': primaryColor,
+                            // The floor, honoured on BOTH platforms as this
+                            // option's contract promises. Web used to ignore it
+                            // and callers duplicated the number as a
+                            // `min-h-[72px]` class — which is a second source of
+                            // truth, and silently produces no rule at all if
+                            // written as a template literal, since Tailwind
+                            // compiles by scanning source text.
+                            ...(minHeight == null ? {} : { minHeight }),
                             // The surface's type scale. Spread rather than set
                             // one by one so an absent scale leaves the sheet's
                             // own fallbacks in place — writing "undefined" into
@@ -478,7 +487,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                     </View>
                 )
             },
-        [tiptapEditor, placeholderColor, primaryColor, containerClassName, scale]
+        [tiptapEditor, placeholderColor, primaryColor, containerClassName, minHeight, scale]
     )
 
     return { editor, EditorComponent, commands, toolbarState, isReady: !!live }

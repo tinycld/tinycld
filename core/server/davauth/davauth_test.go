@@ -216,20 +216,43 @@ func TestWithRequestCache_CachesFailuresToo(t *testing.T) {
 	app := newAuthApp(t)
 	newAuthUser(t, app, "alice@example.com", "Password123!", false)
 
-	req := WithRequestCache(basicAuthRequest(t, "alice@example.com", "wrong-password"))
+	const calls = 8
 
+	// Measured as a RATIO against the same calls uncached, never as an
+	// absolute duration. bcrypt's cost is a property of the build, not of
+	// this code: under -race a single verification runs several times
+	// slower and blows through any fixed millisecond bound, failing a
+	// cache that is working perfectly. Dividing by an uncached baseline
+	// measured on the same machine cancels that out, and it is what the
+	// success-path test above already does.
+	req := WithRequestCache(basicAuthRequest(t, "alice@example.com", "wrong-password"))
 	start := time.Now()
-	for i := 0; i < 8; i++ {
+	for i := range calls {
 		if _, err := Authenticate(app, req); !errors.Is(err, ErrUnauthorized) {
-			t.Fatalf("call %d: err = %v, want ErrUnauthorized", i, err)
+			t.Fatalf("cached call %d: err = %v, want ErrUnauthorized", i, err)
 		}
 	}
-	elapsed := time.Since(start)
+	cached := time.Since(start)
 
-	// One bcrypt verification is tens of milliseconds; eight would be
-	// hundreds. Generous bound so this is not a speed benchmark.
-	if elapsed > 300*time.Millisecond {
-		t.Fatalf("8 failed cached calls took %v: failures are not being cached", elapsed)
+	// A fresh request per call, so each one must pay its own verification.
+	start = time.Now()
+	for i := range calls {
+		fresh := WithRequestCache(basicAuthRequest(t, "alice@example.com", "wrong-password"))
+		if _, err := Authenticate(app, fresh); !errors.Is(err, ErrUnauthorized) {
+			t.Fatalf("uncached call %d: err = %v, want ErrUnauthorized", i, err)
+		}
+	}
+	uncached := time.Since(start)
+
+	if cached <= 0 || uncached <= 0 {
+		t.Skip("timer resolution too coarse to measure")
+	}
+	// N cached calls should cost about ONE verification, not N. Half the
+	// ideal ratio leaves room for scheduling noise while still failing
+	// decisively if every call is paying its own bcrypt.
+	if ratio := float64(uncached) / float64(cached); ratio < float64(calls)/2 {
+		t.Fatalf("%d failed cached calls cost %v vs %v uncached (%.1fx): "+
+			"failures are not being cached", calls, cached, uncached, ratio)
 	}
 }
 

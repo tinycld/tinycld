@@ -54,10 +54,9 @@ vi.mock('../../../lib/editor/warm', () => ({
 const { useLazyEditor } = await import('../LazyEditor')
 
 let startEditing: (() => void) | null = null
-let setDialogOpen: ((open: boolean) => void) | null = null
 let isEditing = false
 
-function Probe({ isDialogOpen }: { isDialogOpen?: boolean }) {
+function Probe() {
     const slots = useLazyEditor({
         readView: <Text>read view</Text>,
         value: 'persisted',
@@ -65,12 +64,8 @@ function Probe({ isDialogOpen }: { isDialogOpen?: boolean }) {
         editorOptions: {},
         surfaceId: 'description:card1',
         canEdit: true,
-        isDialogOpen,
         onCommit: () => {},
-        renderEditor: s => {
-            setDialogOpen = s.setDialogOpen
-            return <Text>editing surface</Text>
-        },
+        renderEditor: () => <Text>editing surface</Text>,
         renderHeader: state => {
             isEditing = state.isEditing
             return null
@@ -92,49 +87,44 @@ function focusThenBlur() {
 beforeEach(() => {
     captured = null
     startEditing = null
-    setDialogOpen = null
     isEditing = false
     vi.clearAllMocks()
 })
 
 afterEach(cleanup)
 
-describe('LazyEditor dialog handling', () => {
-    it('ends the session on blur when no dialog is open', () => {
+describe('LazyEditor blur handling', () => {
+    /**
+     * Blur is not an exit.
+     *
+     * It used to end the session — and for an edit of existing content, WRITE
+     * it — which made every focusable control a hazard: a toolbar's overflow
+     * menu, a dialog, anything portalled took focus and finished the edit
+     * behind the user's back. A session now ends only when another surface
+     * takes the editor, on Escape, or when the caller closes it.
+     *
+     * The three dialog cases that used to live here are gone with the
+     * behaviour: `isDialogOpen` existed to stop a dialog's focus grab ending a
+     * session, and nothing needs stopping any more.
+     */
+    it('keeps the session open when the editor loses focus', () => {
         render(<Probe />)
         act(() => startEditing?.())
         expect(isEditing).toBe(true)
 
         focusThenBlur()
 
-        expect(isEditing).toBe(false)
-    })
-
-    it('keeps the session alive on blur while the isDialogOpen prop is true', () => {
-        render(<Probe isDialogOpen />)
-        act(() => startEditing?.())
-
-        focusThenBlur()
-
         expect(isEditing).toBe(true)
     })
 
-    it('keeps the session alive on blur after slots.setDialogOpen(true)', () => {
+    /**
+     * Including under a dialog. `isDialogOpen` used to exist for exactly this —
+     * an image picker or link prompt takes focus, and that blur would have
+     * ended the session under it. Nothing needs telling any more.
+     */
+    it('keeps it open when a dialog takes the focus', () => {
         render(<Probe />)
         act(() => startEditing?.())
-        act(() => setDialogOpen?.(true))
-
-        focusThenBlur()
-
-        expect(isEditing).toBe(true)
-    })
-
-    // The prop is authoritative when supplied, so a caller that owns the state
-    // cannot be contradicted by a stale setDialogOpen call.
-    it('lets the prop win over setDialogOpen', () => {
-        render(<Probe isDialogOpen />)
-        act(() => startEditing?.())
-        act(() => setDialogOpen?.(false))
 
         focusThenBlur()
 
