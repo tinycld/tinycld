@@ -396,12 +396,76 @@ func (r *Room) route(from *Client, frame []byte) {
 // process on "send on closed channel". deliver never blocks (it drops on a
 // full buffer), so holding the lock across the loop costs a few buffered
 // writes, not a wait on any client.
+//
+// Peers that could NOT take the frame are collected and repaired afterwards,
+// outside the lock — see resyncStarved, which re-checks membership under it
+// before writing to any of them, for the same reason the loop above holds it.
 func (r *Room) fanOut(from *Client, frame []byte) {
+	var starved []*Client
+	r.mu.Lock()
+	for c := range r.members {
+		if c == from {
+			continue
+		}
+		if !deliver(c, frame) {
+			starved = append(starved, c)
+		}
+	}
+	r.mu.Unlock()
+
+	if len(starved) > 0 {
+		r.resyncStarved(starved, frame)
+	}
+}
+
+// resyncStarved repairs peers whose send buffer was full when a frame was
+// fanned out to them.
+//
+// A dropped frame is not merely a late frame. Yjs emits each change as a delta
+// exactly once and nothing retransmits it, so a peer that misses one is
+// permanently short of that edit — it keeps editing and rendering a document
+// that silently disagrees with everyone else's, and the divergence is invisible
+// until someone reads the record back. Sending the mirror's whole state closes
+// that: a CRDT merging state it already holds is a no-op, so this is safe to
+// send to a peer that was only briefly behind.
+//
+// Runs with r.mu RELEASED. EncodeStateAsUpdate takes the document's own lock,
+// and the flush path already takes that lock before touching the room, so
+// calling it under r.mu would invert the order.
+//
+// Only document updates are repairable this way. A dropped awareness frame is
+// ephemeral — the next publish supersedes it — so those keep the old behavior.
+func (r *Room) resyncStarved(starved []*Client, frame []byte) {
+	if r.serverDoc == nil || len(frame) < frameOverhead {
+		return
+	}
+	if MessageType(frame[clientIDLen]) != MsgDocUpdate {
+		return
+	}
+	state, err := r.serverDoc.EncodeStateAsUpdate()
+	if err != nil {
+		log.Error(
+			"EncodeStateAsUpdate failed; a peer is left missing an update",
+			"kind", r.key.kind, "roomID", r.key.id, "err", err,
+		)
+		return
+	}
+	catchUp := makeServerSyncReply(state)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for c := range r.members {
-		if c != from {
-			deliver(c, frame)
+	for _, c := range starved {
+		// Re-check membership: the client may have left while the lock was
+		// released, and its send channel is closed under this same lock.
+		if _, ok := r.members[c]; !ok {
+			continue
+		}
+		if !deliver(c, catchUp) {
+			// Still full. The transport's liveness checks will close this
+			// connection, and its reconnect resyncs from scratch.
+			log.Warn(
+				"peer too far behind to catch up; leaving it to the transport",
+				"kind", r.key.kind, "roomID", r.key.id,
+			)
 		}
 	}
 }
@@ -528,15 +592,23 @@ func readVarUint(b []byte) (uint64, bool) {
 	return 0, false
 }
 
-// deliver pushes a frame to a client's send buffer. If the buffer is
-// full, the frame is dropped — the read loop in register.go is expected
-// to detect a stuck client via separate liveness checks.
-func deliver(c *Client, frame []byte) {
+// deliver pushes a frame to a client's send buffer, reporting whether it
+// was accepted. If the buffer is full the frame is dropped — the read loop
+// in register.go is expected to detect a stuck client via separate liveness
+// checks.
+//
+// Callers must not treat a false as merely a slow client. For a document
+// update it means that peer has permanently missed a change: Yjs emits each
+// delta once, so nothing will resend it and the peer's document silently
+// diverges from everyone else's. fanOut repairs that rather than ignoring it.
+func deliver(c *Client, frame []byte) bool {
 	select {
 	case c.send <- frame:
+		return true
 	default:
 		// Buffer overflow: drop. A persistently slow client will be
 		// disconnected by the transport's idle/keepalive logic.
+		return false
 	}
 }
 
