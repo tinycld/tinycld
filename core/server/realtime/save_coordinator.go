@@ -259,10 +259,11 @@ func (c *SaveCoordinator) OnDocUpdate(driveItemID string) {
 	})
 }
 
-// OnRoomEmpty is the realtime.RoomKindOptions.OnEmpty hook. Fires
-// the final synchronous save and waits up to teardownTimeout for it
-// to complete. Returns when (a) the save finished or (b) the timeout
-// elapsed; in both cases the broker is free to close the DocHandle.
+// OnRoomEmpty is the realtime.RoomKindOptions.OnEmpty hook. Waits out
+// any in-flight timer-driven save, then fires the final synchronous
+// save if the room is (still) dirty. Returns when (a) the save
+// finished or (b) teardownTimeout elapsed — measured across both waits
+// — and in both cases the broker is free to close the DocHandle.
 func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 	c.mu.Lock()
 	rs := c.rooms[driveItemID]
@@ -274,7 +275,34 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 		return
 	}
 
+	deadline := time.Now().Add(c.teardownTimeout)
+
+	// Wait out any in-flight timer-driven save BEFORE reading dirty.
+	// triggerSave clears dirty before running its flush unlocked, so a
+	// bare read here mistakes "being saved right now" for "already
+	// saved" — and the caller tears the room down on our return, closing
+	// the DocHandle under the running flush. Worse, that flush may FAIL
+	// and re-mark dirty, which only a post-wait read can observe; the
+	// retry it schedules will find the room already deregistered and
+	// silently do nothing, so this final flush is the edit's last chance
+	// to reach durable storage.
 	rs.mu.Lock()
+	for rs.saveInFlight {
+		rs.mu.Unlock()
+		if time.Now().After(deadline) {
+			c.logger.Error("realtime: teardown timed out waiting for an in-flight save",
+				"driveItemID", driveItemID, "timeout", c.teardownTimeout)
+			rs.mu.Lock()
+			rs.closed = true
+			rs.mu.Unlock()
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+		rs.mu.Lock()
+	}
+	// Still holding rs.mu from the loop's final check: the in-flight
+	// save (if any) has fully finished — including arming any retry
+	// timer — so stopping timers and reading dirty here races nothing.
 	if rs.debounceTimer != nil {
 		rs.debounceTimer.Stop()
 		rs.debounceTimer = nil
@@ -317,7 +345,10 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 			// truncated, so this was the common path, not the edge.
 			c.truncateJournal(driveItemID, snapshotSeq)
 		}
-	case <-time.After(c.teardownTimeout):
+	case <-time.After(time.Until(deadline)):
+		// The deadline is shared with the in-flight wait above, so a
+		// teardown never stalls the broker longer than teardownTimeout
+		// in total.
 		c.logger.Error("realtime: teardown save timed out", "driveItemID", driveItemID, "timeout", c.teardownTimeout)
 	}
 

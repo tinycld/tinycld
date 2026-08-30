@@ -32,6 +32,16 @@ type Room struct {
 	serverDoc DocHandle
 
 	mu sync.Mutex
+	// draining flips true — under mu, atomically with the membership
+	// delete that emptied the room — the moment teardown is committed.
+	// From then on add refuses new members, because everything that
+	// follows (OnEmpty's final flush, per-kind state teardown, closing
+	// serverDoc, removeRoom) assumes nobody is inside. A client admitted
+	// in that window would land in a half-torn-down room: its persistence
+	// hooks already deregistered, its server doc about to close — every
+	// edit silently unpersisted and sync served from nothing. Broker.join
+	// retries until removeRoom frees the key, then builds a fresh room.
+	draining bool
 	// nextSeq is the per-room monotonic seq counter for journal
 	// Append calls. After construction it is mutated only by route
 	// while holding r.mu. During newRoom it is written without the
@@ -105,12 +115,19 @@ func newRoom(b *Broker, key roomKey, opts RoomKindOptions) *Room {
 	return r
 }
 
-func (r *Room) add(c *Client) {
+// add admits a client, reporting whether the room accepted it. A false
+// means the room's last member just left and teardown is in progress;
+// the caller must wait for the key to free and join a fresh room.
+func (r *Room) add(c *Client) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.draining {
+		return false
+	}
 	c.room = r
 	c.send = make(chan []byte, sendBufferSize)
-	r.mu.Lock()
 	r.members[c] = struct{}{}
-	r.mu.Unlock()
+	return true
 }
 
 // remove drops a client from the room and releases the empty room back
@@ -121,13 +138,23 @@ func (r *Room) add(c *Client) {
 // When this drops the last member, the room invokes its OnEmpty
 // callback (synchronously) before closing the server-side DocHandle.
 // OnEmpty is allowed to take time (e.g. a final persistence flush);
-// the broker's removeRoom call is what frees the room key, and that
-// is intentionally deferred until OnEmpty returns so a quick rejoin
-// of the same room observes a fresh slate.
+// the broker's removeRoom call is what frees the room key. Until then
+// the draining flag keeps a quick rejoin out of this room — join spins
+// until the key frees and then constructs a fresh room, whose bootstrap
+// re-reads exactly the state the final flush wrote.
 func (r *Room) remove(c *Client) {
 	r.mu.Lock()
 	delete(r.members, c)
 	empty := len(r.members) == 0
+	if empty {
+		// Committing to teardown and refusing further joins is ONE
+		// locked step. Without it, `empty` goes stale the moment the
+		// lock drops: a rejoin (a page reload reconnects while OnEmpty's
+		// final flush is still writing) would land in this room, and the
+		// teardown below would then rip the doc and the persistence
+		// hooks out from under a live member.
+		r.draining = true
+	}
 	// Closed while STILL HOLDING r.mu, together with the delete above.
 	//
 	// A sender only ever reaches a client it found in r.members, and it
