@@ -27,6 +27,7 @@ package realtime
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -121,22 +122,36 @@ func NewBroker() *Broker {
 // registered via the legacy RegisterRoomKind has no DocRuntime and no
 // hooks, so the room behaves as a pure relay (the prior behavior).
 func (b *Broker) join(kind, id string, c *Client) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	key := roomKey{kind, id}
-	room, ok := b.rooms[key]
-	if !ok {
-		// optionsFor returning ErrUnknownRoomKind is normally
-		// impossible here because handleConnect already authorized
-		// against the same registry. If it does happen (e.g. the
-		// kind was unregistered between authorize and join), we
-		// fall back to a zero-options room — no server doc, no
-		// hooks — which is the safest behavior.
-		opts, _ := optionsFor(kind)
-		room = newRoom(b, key, opts)
-		b.rooms[key] = room
+	for {
+		b.mu.Lock()
+		room, ok := b.rooms[key]
+		if !ok {
+			// optionsFor returning ErrUnknownRoomKind is normally
+			// impossible here because handleConnect already authorized
+			// against the same registry. If it does happen (e.g. the
+			// kind was unregistered between authorize and join), we
+			// fall back to a zero-options room — no server doc, no
+			// hooks — which is the safest behavior.
+			opts, _ := optionsFor(kind)
+			room = newRoom(b, key, opts)
+			b.rooms[key] = room
+		}
+		admitted := room.add(c)
+		b.mu.Unlock()
+		if admitted {
+			return
+		}
+		// The room's last member just left and its teardown — the final
+		// persistence flush included — is still running. Joining it would
+		// put this client in a room whose save hooks are already
+		// deregistered and whose server doc is about to close, silently
+		// discarding every edit. Wait for removeRoom to free the key,
+		// then construct a fresh room that bootstraps from the state the
+		// flush wrote. b.mu is NOT held while waiting: removeRoom needs
+		// it to make progress.
+		time.Sleep(2 * time.Millisecond)
 	}
-	room.add(c)
 }
 
 // removeRoom is called by a Room when its last client leaves. It clears
@@ -195,14 +210,23 @@ type Client struct {
 	// resolving a drive_shares row (which an anon doesn't have).
 	shareRole string
 
-	// readOnly caches the connection's write authorization, resolved once
-	// by the room kind's OnConnect handler (which has DB access) rather
-	// than re-querying on every inbound frame. The broker's WritePredicate
-	// reads this in the hot route path, so it must be a pure field access.
+	// readOnly caches the connection's write authorization, resolved by the
+	// room kind's OnConnect handler (which has DB access) rather than by
+	// re-querying on every inbound frame. The broker's WritePredicate reads
+	// it in the hot route path, so it must stay a cheap non-blocking read.
 	// Defaults false; OnConnect calls SetReadOnly to set the real value
 	// before the first MsgDocUpdate can arrive (OnConnect runs during the
 	// connection handshake, before the read loop processes frames).
-	readOnly bool
+	//
+	// Atomic because it is no longer written only during the handshake. A
+	// kind whose permission data is written by a MULTI-STATEMENT flow can
+	// resolve read-only for a connection that merely arrived early, and it
+	// must be able to correct that later — cards' board creation writes the
+	// project row and the owner's membership row separately, and a socket
+	// opened in between would otherwise drop that owner's every edit for the
+	// life of the connection. A later SetReadOnly therefore races the reads
+	// in HasWriter / HasOtherWriter, which run on OTHER clients' goroutines.
+	readOnly atomic.Bool
 
 	// send buffers frames the broker has decided this client should
 	// receive. The transport reader pulls from this channel and writes
@@ -264,12 +288,14 @@ func (c *Client) IsAnonymous() bool { return c.displayName != "" }
 // as resolved by the room kind's OnConnect handler. The broker's
 // WritePredicate consults this on every inbound MsgDocUpdate; it is a
 // pure field read (no DB) so the hot path stays cheap.
-func (c *Client) ReadOnly() bool { return c.readOnly }
+func (c *Client) ReadOnly() bool { return c.readOnly.Load() }
 
-// SetReadOnly records the connection's write authorization. Intended to
-// be called once from a room kind's OnConnect (ServerHelloFn) handler,
-// which runs during the handshake before any frame is routed.
-func (c *Client) SetReadOnly(ro bool) { c.readOnly = ro }
+// SetReadOnly records the connection's write authorization. Normally called
+// from a room kind's OnConnect (ServerHelloFn) handler, which runs during the
+// handshake before any frame is routed — but a kind may also call it later to
+// CORRECT a conservative answer (see the field's note), so it is safe to call
+// from a WritePredicate while other goroutines are reading.
+func (c *Client) SetReadOnly(ro bool) { c.readOnly.Store(ro) }
 
 // NewClientForTest constructs a Client suitable for passing to a
 // ServerHelloFn or similar callback in consumer-package tests. Only

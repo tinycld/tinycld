@@ -32,6 +32,16 @@ type Room struct {
 	serverDoc DocHandle
 
 	mu sync.Mutex
+	// draining flips true — under mu, atomically with the membership
+	// delete that emptied the room — the moment teardown is committed.
+	// From then on add refuses new members, because everything that
+	// follows (OnEmpty's final flush, per-kind state teardown, closing
+	// serverDoc, removeRoom) assumes nobody is inside. A client admitted
+	// in that window would land in a half-torn-down room: its persistence
+	// hooks already deregistered, its server doc about to close — every
+	// edit silently unpersisted and sync served from nothing. Broker.join
+	// retries until removeRoom frees the key, then builds a fresh room.
+	draining bool
 	// nextSeq is the per-room monotonic seq counter for journal
 	// Append calls. After construction it is mutated only by route
 	// while holding r.mu. During newRoom it is written without the
@@ -105,12 +115,19 @@ func newRoom(b *Broker, key roomKey, opts RoomKindOptions) *Room {
 	return r
 }
 
-func (r *Room) add(c *Client) {
+// add admits a client, reporting whether the room accepted it. A false
+// means the room's last member just left and teardown is in progress;
+// the caller must wait for the key to free and join a fresh room.
+func (r *Room) add(c *Client) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.draining {
+		return false
+	}
 	c.room = r
 	c.send = make(chan []byte, sendBufferSize)
-	r.mu.Lock()
 	r.members[c] = struct{}{}
-	r.mu.Unlock()
+	return true
 }
 
 // remove drops a client from the room and releases the empty room back
@@ -121,13 +138,23 @@ func (r *Room) add(c *Client) {
 // When this drops the last member, the room invokes its OnEmpty
 // callback (synchronously) before closing the server-side DocHandle.
 // OnEmpty is allowed to take time (e.g. a final persistence flush);
-// the broker's removeRoom call is what frees the room key, and that
-// is intentionally deferred until OnEmpty returns so a quick rejoin
-// of the same room observes a fresh slate.
+// the broker's removeRoom call is what frees the room key. Until then
+// the draining flag keeps a quick rejoin out of this room — join spins
+// until the key frees and then constructs a fresh room, whose bootstrap
+// re-reads exactly the state the final flush wrote.
 func (r *Room) remove(c *Client) {
 	r.mu.Lock()
 	delete(r.members, c)
 	empty := len(r.members) == 0
+	if empty {
+		// Committing to teardown and refusing further joins is ONE
+		// locked step. Without it, `empty` goes stale the moment the
+		// lock drops: a rejoin (a page reload reconnects while OnEmpty's
+		// final flush is still writing) would land in this room, and the
+		// teardown below would then rip the doc and the persistence
+		// hooks out from under a live member.
+		r.draining = true
+	}
 	// Closed while STILL HOLDING r.mu, together with the delete above.
 	//
 	// A sender only ever reaches a client it found in r.members, and it
@@ -396,12 +423,76 @@ func (r *Room) route(from *Client, frame []byte) {
 // process on "send on closed channel". deliver never blocks (it drops on a
 // full buffer), so holding the lock across the loop costs a few buffered
 // writes, not a wait on any client.
+//
+// Peers that could NOT take the frame are collected and repaired afterwards,
+// outside the lock — see resyncStarved, which re-checks membership under it
+// before writing to any of them, for the same reason the loop above holds it.
 func (r *Room) fanOut(from *Client, frame []byte) {
+	var starved []*Client
+	r.mu.Lock()
+	for c := range r.members {
+		if c == from {
+			continue
+		}
+		if !deliver(c, frame) {
+			starved = append(starved, c)
+		}
+	}
+	r.mu.Unlock()
+
+	if len(starved) > 0 {
+		r.resyncStarved(starved, frame)
+	}
+}
+
+// resyncStarved repairs peers whose send buffer was full when a frame was
+// fanned out to them.
+//
+// A dropped frame is not merely a late frame. Yjs emits each change as a delta
+// exactly once and nothing retransmits it, so a peer that misses one is
+// permanently short of that edit — it keeps editing and rendering a document
+// that silently disagrees with everyone else's, and the divergence is invisible
+// until someone reads the record back. Sending the mirror's whole state closes
+// that: a CRDT merging state it already holds is a no-op, so this is safe to
+// send to a peer that was only briefly behind.
+//
+// Runs with r.mu RELEASED. EncodeStateAsUpdate takes the document's own lock,
+// and the flush path already takes that lock before touching the room, so
+// calling it under r.mu would invert the order.
+//
+// Only document updates are repairable this way. A dropped awareness frame is
+// ephemeral — the next publish supersedes it — so those keep the old behavior.
+func (r *Room) resyncStarved(starved []*Client, frame []byte) {
+	if r.serverDoc == nil || len(frame) < frameOverhead {
+		return
+	}
+	if MessageType(frame[clientIDLen]) != MsgDocUpdate {
+		return
+	}
+	state, err := r.serverDoc.EncodeStateAsUpdate()
+	if err != nil {
+		log.Error(
+			"EncodeStateAsUpdate failed; a peer is left missing an update",
+			"kind", r.key.kind, "roomID", r.key.id, "err", err,
+		)
+		return
+	}
+	catchUp := makeServerSyncReply(state)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for c := range r.members {
-		if c != from {
-			deliver(c, frame)
+	for _, c := range starved {
+		// Re-check membership: the client may have left while the lock was
+		// released, and its send channel is closed under this same lock.
+		if _, ok := r.members[c]; !ok {
+			continue
+		}
+		if !deliver(c, catchUp) {
+			// Still full. The transport's liveness checks will close this
+			// connection, and its reconnect resyncs from scratch.
+			log.Warn(
+				"peer too far behind to catch up; leaving it to the transport",
+				"kind", r.key.kind, "roomID", r.key.id,
+			)
 		}
 	}
 }
@@ -528,15 +619,23 @@ func readVarUint(b []byte) (uint64, bool) {
 	return 0, false
 }
 
-// deliver pushes a frame to a client's send buffer. If the buffer is
-// full, the frame is dropped — the read loop in register.go is expected
-// to detect a stuck client via separate liveness checks.
-func deliver(c *Client, frame []byte) {
+// deliver pushes a frame to a client's send buffer, reporting whether it
+// was accepted. If the buffer is full the frame is dropped — the read loop
+// in register.go is expected to detect a stuck client via separate liveness
+// checks.
+//
+// Callers must not treat a false as merely a slow client. For a document
+// update it means that peer has permanently missed a change: Yjs emits each
+// delta once, so nothing will resend it and the peer's document silently
+// diverges from everyone else's. fanOut repairs that rather than ignoring it.
+func deliver(c *Client, frame []byte) bool {
 	select {
 	case c.send <- frame:
+		return true
 	default:
 		// Buffer overflow: drop. A persistently slow client will be
 		// disconnected by the transport's idle/keepalive logic.
+		return false
 	}
 }
 
