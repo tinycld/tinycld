@@ -746,9 +746,18 @@ export function useLazyEditor({
     // re-run the cleanup on every handover and commit a live session.
     const commitOnUnmountRef = useRef<() => void>(() => {})
     commitOnUnmountRef.current = () => {
-        if (!commitOnDisplace || settledRef.current || !isEditing) return
+        if (settledRef.current || !isEditing) return
         if (!hasHeldRef.current) return
-        submitRef.current()
+        // Whichever way this surface finishes, it must not finish SILENTLY. A
+        // committing surface writes; one that only stashes hands its text to
+        // the draft store, exactly as it would on an ordinary displacement.
+        // Doing nothing here is what loses a revision outright: the surface is
+        // gone, and with it the only copy of what was typed.
+        if (commitOnDisplace) {
+            submitRef.current()
+            return
+        }
+        endSession({ stash: true })
     }
     useEffect(() => () => commitOnUnmountRef.current(), [])
 
