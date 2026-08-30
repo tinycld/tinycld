@@ -30,6 +30,7 @@
 
 import { deriveUsername } from '@tinycld/core/lib/derive-username'
 import { loadEnv } from '@tinycld/core/lib/load-env'
+import type { SeedContext, SeedUser } from '@tinycld/core/lib/packages/config-types'
 import { deriveSeeds } from '@tinycld/core/lib/packages/derive-seeds'
 import PocketBase from 'pocketbase'
 import { tinycldSeeds } from '../tinycld.seeds'
@@ -121,6 +122,23 @@ const COLLABORATOR_DEFAULTS = {
     email: process.env.TEST_COLLABORATOR_LOGIN || 'collaborator@tinycld.org',
     username: process.env.TEST_COLLABORATOR_USERNAME || 'collaborator',
     name: 'Collaborator Tester',
+}
+
+// Demo mode's equivalent of the collaborator. The demo tour shows off shared
+// boards, shared calendars and shared files, all of which need a second person
+// to point at. Before this existed the seeds resolved that person by querying
+// `users` for `id != demo`, which meant they wrote mailboxes, memberships and
+// shares owned by whoever else happened to exist — rows the nightly reset
+// (scoped to the demo user) could never reclaim.
+//
+// Seeding a dedicated companion instead makes the demo's data set exactly two
+// users wide, so reset-demo.ts can wipe both and return the workspace to a
+// known state. is_demo is set so the account is recognizably part of the demo
+// singleton and never mistaken for a real signup.
+export const DEMO_COMPANION_DEFAULTS = {
+    email: 'demo-teammate@tinycld.org',
+    username: 'demo-teammate',
+    name: 'Sam Rivera',
 }
 
 // These mirror the singleton constants in
@@ -264,8 +282,9 @@ function isNotFoundError(err: unknown): boolean {
 
 /**
  * Find-or-create the target user (single-org: the `role` enum lives on the user
- * record; the orgs/user_org collections are gone), then run all linked package
- * seeds against it.
+ * record; the orgs/user_org collections are gone) plus the companion that owns
+ * the other half of the shared fixtures, then run all linked package seeds
+ * against both.
  *
  * Exported so reset-demo.ts can re-seed without shelling out.
  */
@@ -356,13 +375,20 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
         user = await pb.collection('users').update(user.id, { role: 'owner' })
     }
 
-    const seedContext = {
+    // Created here rather than in main() so BOTH entry points get a companion —
+    // reset-demo.ts calls seedForUser directly, and a demo re-seeded without one
+    // would fall back to resolving teammates from real accounts, reintroducing
+    // exactly the unreclaimable rows this refactor removes.
+    const companion = await ensureCompanionUser(pb, config, companionPassword(config))
+
+    const seedContext: SeedContext = {
         user: {
             id: user.id,
             username: config.userUsername,
             email: config.userEmail,
             name: config.userName,
         },
+        companion,
     }
     const orderedSeeds = deriveSeeds(tinycldSeeds)
     log(`Running ${orderedSeeds.length} package seed(s)...`)
@@ -433,14 +459,19 @@ async function ensureAdminAppUser(pb: PocketBase, config: SeedConfig): Promise<v
 }
 
 /**
- * The collaborator's password, resolved the same way the fixture user's is.
+ * The companion's password, resolved the same way the fixture user's is.
  *
  * TEST_COLLABORATOR_PW wins so CI can set it; otherwise the collaborator shares
  * the fixture user's password. Falling back to the SAME literal the e2e helper
  * hardcodes is what makes a clean checkout work at all — playwright.config.ts
  * never loads .env, so seed and helper can only meet at a shared constant.
+ *
+ * The demo companion is never signed into (it exists only to own the other half
+ * of the shared fixtures), so it gets a fresh random password each reset rather
+ * than a predictable literal on a public deployment.
  */
-function collaboratorPassword(config: SeedConfig): string {
+function companionPassword(config: SeedConfig): string {
+    if (config.isDemo) return generatePassword()
     return (
         process.env.TEST_COLLABORATOR_PW ||
         (config.userPasswordExplicit ? config.userPassword : TEST_USER_DEFAULT_PASSWORD)
@@ -448,55 +479,69 @@ function collaboratorPassword(config: SeedConfig): string {
 }
 
 /**
- * Find-or-create the seeded collaborator (see COLLABORATOR_DEFAULTS).
+ * Find-or-create the seeded companion — the collaborator in test mode, the demo
+ * teammate in demo mode (see COLLABORATOR_DEFAULTS / DEMO_COMPANION_DEFAULTS).
  *
- * Runs BEFORE seedForUser so package seeds that look for a "teammate" (cards'
- * seed resolves its `teammate` rows from the other users in the deployment)
- * find a real one, rather than collapsing those rows onto the seeded owner.
+ * Runs BEFORE seedForUser and its record is passed through as
+ * SeedContext.companion, so package seeds that need a second person (cards'
+ * teammate-owned board, calendar's shared calendars, drive's share targets)
+ * resolve to THIS user rather than querying for any other account. That is what
+ * bounds the seeded data to two users and makes the demo reset able to reclaim
+ * all of it.
  *
  * Idempotent in the same shape as ensureAdminAppUser: an existing row keeps its
  * id but has its password reset to the known fixture value, because a
  * re-seeded DB must be signable-into with the credential the e2e helper
  * hardcodes — a row left with an unknown password would fail every
  * signInAsCollaborator() with no clue why.
+ *
+ * role is 'member', deliberately NOT 'owner': a second owner would silently
+ * weaken every last-owner and role-gate assertion that relies on the fixture
+ * owner being the only one.
  */
-async function ensureCollaboratorUser(pb: PocketBase, password: string): Promise<void> {
+async function ensureCompanionUser(
+    pb: PocketBase,
+    config: SeedConfig,
+    password: string
+): Promise<SeedUser> {
+    const defaults = config.isDemo ? DEMO_COMPANION_DEFAULTS : COLLABORATOR_DEFAULTS
+    const fields = {
+        email: defaults.email,
+        name: defaults.name,
+        password,
+        passwordConfirm: password,
+        role: 'member',
+        // The demo companion carries is_demo so it is recognizable as part of
+        // the demo singleton rather than a real signup, and so reset-demo.ts can
+        // find it the same way it finds the demo user.
+        ...(config.isDemo ? { is_demo: true } : {}),
+    }
+
     let existing: { id: string } | null = null
     try {
         existing = await pb
             .collection('users')
-            .getFirstListItem(`username = "${COLLABORATOR_DEFAULTS.username}"`)
+            .getFirstListItem(`username = "${defaults.username}"`)
     } catch (err) {
         if (!isNotFoundError(err)) throw err
     }
 
     if (existing) {
-        log('Found existing collaborator user:', COLLABORATOR_DEFAULTS.username)
-        await pb.collection('users').update(existing.id, {
-            email: COLLABORATOR_DEFAULTS.email,
-            name: COLLABORATOR_DEFAULTS.name,
-            password,
-            passwordConfirm: password,
-            role: 'member',
-        })
-        return
+        log('Found existing companion user:', defaults.username)
+        await pb.collection('users').update(existing.id, fields)
+        return { id: existing.id, ...defaults }
     }
 
-    log('Creating collaborator user:', COLLABORATOR_DEFAULTS.username)
-    await pb.collection('users').create({
-        username: COLLABORATOR_DEFAULTS.username,
-        email: COLLABORATOR_DEFAULTS.email,
-        password,
-        passwordConfirm: password,
-        name: COLLABORATOR_DEFAULTS.name,
-        // The share dialog searches people by email; a collaborator whose email
+    log('Creating companion user:', defaults.username)
+    const created = await pb.collection('users').create({
+        username: defaults.username,
+        ...fields,
+        // The share dialog searches people by email; a companion whose email
         // is hidden cannot be found and added through the real UI.
         emailVisibility: true,
         verified: true,
-        // `role` is required (1940000000_backfill_and_require_users_role) and
-        // must be set on the create itself.
-        role: 'member',
     })
+    return { id: created.id, ...defaults }
 }
 
 export async function authSuperuser(config: {
@@ -569,13 +614,8 @@ async function main() {
     const pb = await authSuperuser(config)
     await seedAppName(pb)
     await ensureAdminAppUser(pb, config)
-    // Before seedForUser: package seeds resolve their "teammate" rows from the
-    // other users present, so the collaborator has to exist by then.
-    // Demo mode is a single-visitor tour — a second signed-in member there
-    // would show up in rosters and pickers as a stranger.
-    if (!config.isDemo) {
-        await ensureCollaboratorUser(pb, collaboratorPassword(config))
-    }
+    // The companion is created inside seedForUser (both entry points need it),
+    // so there is nothing to provision here.
     const login = await seedForUser(pb, config)
     log('Seeding complete!')
     printLoginSummary(config, login)
