@@ -647,6 +647,16 @@ const Item = forwardRef<View, ItemProps>(function Item(
                 tabIndex={isDisabled ? -1 : 0}
                 aria-disabled={isDisabled || undefined}
                 onClick={() => handlePress()}
+                // Reachable by Tab, but never STOLEN by a click.
+                //
+                // The tabIndex above is what makes this keyboard-operable, and
+                // it also makes a mousedown move focus here. When the menu acts
+                // on a text editor — a toolbar's overflow, a format picker —
+                // that blur collapses the editor's selection before the item
+                // runs, so the action applies to nothing. Preventing the
+                // default stops the pointer taking focus without touching the
+                // keyboard path, which never fires mousedown.
+                onMouseDown={e => e.preventDefault()}
                 onKeyDown={e => {
                     // Space as well as Enter: both activate a menuitem per ARIA,
                     // and Space would otherwise scroll the popover instead.

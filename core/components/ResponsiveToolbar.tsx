@@ -37,6 +37,22 @@ interface ResponsiveToolbarProps {
     height?: number
 }
 
+/**
+ * Keep DOM focus where it is when this control is pressed.
+ *
+ * A toolbar acts on something else — usually a text editor — and on web the
+ * browser blurs whatever holds focus on mousedown, collapsing that editor's
+ * selection before the press is even handled. Preventing the default keeps the
+ * selection, so an action still has something to apply to.
+ *
+ * Web-only: native has no DOM focus model, and `Platform.select` here would
+ * hand React Native an unknown prop.
+ */
+const FOCUS_GUARD =
+    Platform.OS === 'web'
+        ? { onMouseDown: (e: { preventDefault: () => void }) => e.preventDefault() }
+        : {}
+
 // ── Native: simple flex-row, no overflow logic ──
 
 function NativeToolbar({ items, rightItems, height = 44 }: ResponsiveToolbarProps) {
@@ -240,7 +256,23 @@ function OverflowMenu({ items }: { items: ToolbarItem[] }) {
     return (
         <Menu>
             <Menu.Trigger>
-                <Pressable className="p-2 rounded-full" accessibilityLabel="More actions">
+                <Pressable
+                    className="p-2 rounded-full"
+                    accessibilityLabel="More actions"
+                    // The same guard every toolbar button carries, and for the
+                    // same reason: on web a press moves DOM focus off whatever
+                    // held it, and when that is a rich-text editor the browser
+                    // collapses its selection first. An action chosen from this
+                    // menu would then apply to nothing — pick Bold with a word
+                    // selected and the word is no longer selected by the time
+                    // the command runs.
+                    //
+                    // It matters MORE here than on the buttons it replaces: at
+                    // narrow widths every format button folds into this menu, so
+                    // without it the whole toolbar stops working exactly where
+                    // there is least room to notice.
+                    {...FOCUS_GUARD}
+                >
                     <EllipsisVertical size={18} color={mutedColor} />
                 </Pressable>
             </Menu.Trigger>

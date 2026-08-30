@@ -10,7 +10,7 @@
  * unreachable from CI.
  */
 
-export { createDraftStore, type DraftStore } from './draft-store'
+export { createDraftStore, type DraftStore, dropSurfaceDraft, useDraft } from './draft-store'
 export {
     EditorSingletonProvider,
     type EditorSingletonValue,

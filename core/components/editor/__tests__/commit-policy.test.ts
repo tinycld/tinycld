@@ -1,53 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { isNoOpEdit, shouldCommitOnBlur } from '../commit-policy'
+import { isNoOpEdit } from '../commit-policy'
 
 /**
- * Each of these rules was found on a device, and each protects a write. They
- * live in core so a second consumer inherits the fixes rather than
- * rediscovering them.
+ * The blur-commit rules that used to live here are gone with the behaviour: a
+ * session no longer ends on focus loss, so there is nothing left for them to
+ * decide. What a submitted value MEANS is still policy, and still shared.
  */
-describe('commit on blur', () => {
-    const base = { commitOnBlur: true, hasFocused: true, isSettled: false, isDialogOpen: false }
-
-    it('commits when a focused session loses focus', () => {
-        expect(shouldCommitOnBlur(base)).toBe(true)
-    })
-
-    /**
-     * The composer has no blur-commit: leaving it must not post a comment.
-     */
-    it('never commits a surface that does not commit on blur', () => {
-        expect(shouldCommitOnBlur({ ...base, commitOnBlur: false })).toBe(false)
-    })
-
-    /**
-     * The editor opens with autofocus at a placeholder height, and until the
-     * page reports its real content height the caret can land outside the
-     * visible box and blur immediately. Since a blur COMMITS, that saved a
-     * comment nobody had touched.
-     */
-    it('never commits before the session has held focus', () => {
-        expect(shouldCommitOnBlur({ ...base, hasFocused: false })).toBe(false)
-    })
-
-    /**
-     * Save and the blur-commit race each other: pressing Save blurs the editor.
-     * Both writing would submit twice.
-     */
-    it('does not commit again once the session has settled', () => {
-        expect(shouldCommitOnBlur({ ...base, isSettled: true })).toBe(false)
-    })
-
-    /**
-     * The image picker and link prompt both steal focus. Treating that as the
-     * end of the session unmounts the surface the picked image is about to be
-     * inserted into.
-     */
-    it('does not commit while a dialog holds the focus', () => {
-        expect(shouldCommitOnBlur({ ...base, isDialogOpen: true })).toBe(false)
-    })
-})
-
 describe('no-op edits', () => {
     it('treats an unchanged value as nothing to write', () => {
         expect(isNoOpEdit('same text', 'same text')).toBe(true)
