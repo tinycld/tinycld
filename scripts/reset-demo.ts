@@ -2,14 +2,23 @@
 /**
  * Demo Reset Script
  *
- * Wipes all data owned by the singleton demo user and re-seeds it. Designed
- * to run nightly (see coreserver/demo_reset.go) so the demo workspace is
- * always pristine for the next unauthenticated visitor that hits
+ * Wipes the data owned by the demo user and its companion, then re-seeds both.
+ * Designed to run nightly (see coreserver/demo_reset.go) so the demo workspace
+ * is always pristine for the next unauthenticated visitor that hits
  * /api/demo/start.
  *
- * The demo *user* (`demo@tinycld.org`, is_demo=true) is preserved across
- * resets — only the records they own are wiped, then every linked package's
- * seed() re-creates them.
+ * The demo *users* (`demo@tinycld.org` and `demo-teammate@tinycld.org`, both
+ * is_demo=true) are preserved across resets — only the records they own are
+ * wiped, then every linked package's seed() re-creates them.
+ *
+ * TWO users, not one: the demo shows off shared boards, shared calendars and
+ * shared files, which need a second person to point at. The seeds used to
+ * resolve that person by querying `users` for `id != demo`, so on a deployment
+ * with real accounts they wrote mailboxes, memberships and shares owned by
+ * strangers — rows a demo-scoped reset could never reclaim, accumulating on
+ * every nightly run. Seeding a dedicated companion makes the demo data set
+ * exactly two users wide, so this script's blast radius equals what the seeds
+ * actually created. See SeedContext.companion in core/lib/packages/config-types.ts.
  *
  * Single-org: there is no `orgs` row to delete and no cascade to ride. Data
  * is reached through each collection's ownership FK, which now points at
@@ -27,7 +36,7 @@
 
 import { loadEnv } from '@tinycld/core/lib/load-env'
 import type PocketBase from 'pocketbase'
-import { authSuperuser, seedForUser } from './seed-db'
+import { authSuperuser, DEMO_COMPANION_DEFAULTS, seedForUser } from './seed-db'
 
 function log(...args: unknown[]) {
     process.stdout.write(`[reset-demo] ${args.join(' ')}\n`)
@@ -47,6 +56,13 @@ const DEMO_USER_EMAIL = process.env.REVIEW_DEMO_EMAIL || 'demo@tinycld.org'
 const DEMO_USER_USERNAME = 'demo'
 const DEMO_USER_NAME = 'Demo Tour'
 
+// The companion that owns the other half of the shared fixtures. Imported from
+// seed-db (which creates it) rather than re-declared here, so the identity this
+// script wipes cannot drift from the one that gets seeded — a mismatch would
+// silently orphan the companion's data forever.
+const DEMO_COMPANION_USERNAME = DEMO_COMPANION_DEFAULTS.username
+const DEMO_COMPANION_NAME = DEMO_COMPANION_DEFAULTS.name
+
 // Collections holding demo-owned data, paired with the FK naming the owner.
 // Order matters: children before parents, so a cascade or a required-relation
 // guard never blocks a delete.
@@ -57,18 +73,34 @@ const DEMO_USER_NAME = 'Demo Tour'
 // removal of the `orgs` collection into a silent no-op that reported success
 // while wiping nothing, nightly. Any other failure must be loud.
 const OWNED_COLLECTIONS: Array<{ collection: string; ownerField: string }> = [
+    // label_assignments is polymorphic: `record_id` is a plain text id with no
+    // FK, so NOTHING cascades into it. Mail creates one per labeled thread
+    // (mail/seed.ts), and before this entry existed they survived every reset
+    // and accumulated nightly, forever. Must run first — once the thread state
+    // it points at is gone, the row is unreachable garbage.
+    { collection: 'label_assignments', ownerField: 'user' },
     // Comments and mentions reference drive_items + users; clear them first.
     { collection: 'comment_mentions', ownerField: 'mentioned_user' },
     { collection: 'text_comments', ownerField: 'author' },
     { collection: 'calc_comments', ownerField: 'author' },
     { collection: 'drive_share_links', ownerField: 'created_by' },
     { collection: 'drive_item_versions', ownerField: 'created_by' },
-    { collection: 'drive_shares', ownerField: 'user' },
+    // created_by, NOT user: the seed sets `user` to the share RECIPIENT and
+    // `created_by` to the sharer (drive/seed.ts). Keying on `user` missed every
+    // share the demo user granted — they were reclaimed only when the recipient
+    // happened to be wiped too.
+    { collection: 'drive_shares', ownerField: 'created_by' },
+    { collection: 'drive_item_state', ownerField: 'user' },
     { collection: 'drive_items', ownerField: 'created_by' },
     { collection: 'contacts', ownerField: 'owner' },
+    // Only labels with an owner. Mail seeds its labels with NO `user` — they are
+    // deliberately shared, visible to everyone (mail/seed.ts) — so this filter
+    // skips them and the shared set survives the reset. That is the intended
+    // outcome; the seed find-or-creates them by name, so a surviving row is
+    // reused rather than duplicated. Contacts' labels DO set `user` and are
+    // reclaimed here.
     { collection: 'labels', ownerField: 'user' },
     { collection: 'calendar_events', ownerField: 'created_by' },
-    { collection: 'calendar_calendars', ownerField: 'created_by' },
     { collection: 'notifications', ownerField: 'user' },
 ]
 
@@ -80,6 +112,26 @@ const OWNED_COLLECTIONS: Array<{ collection: string; ownerField: string }> = [
 // ownerField entry cannot express this (mail_messages has no user column at
 // all, and mail_mailboxes has no user column either).
 const MAIL_MEMBERSHIP = { junction: 'mail_mailbox_members', mailboxes: 'mail_mailboxes' }
+
+// Cards and calendar hang off a root record that has no usable owner FK, so a
+// flat OWNED_COLLECTIONS entry cannot express them — and until now neither
+// package was wiped by this script AT ALL. Their demo data survived every reset.
+//
+// - calendar_calendars has NO owner column whatsoever; ownership lives only in
+//   the calendar_members junction. (This script used to list it with
+//   ownerField: 'created_by', a field that does not exist — a silent no-op.)
+// - cards_projects HAS created_by, but the seed deliberately points it at the
+//   teammate for the "Team retrospective" board, so filtering on created_by
+//   alone leaves a whole board behind.
+//
+// Both roots cascade cleanly: deleting the project/calendar row removes every
+// list, card, checklist item, comment, attachment, share link, member and event
+// beneath it (verified against each package's create migration). So resolving
+// the root ids through membership and deleting those is sufficient and complete.
+const MEMBERSHIP_ROOTS: Array<{ junction: string; rootField: string; roots: string }> = [
+    { junction: 'cards_project_members', rootField: 'project', roots: 'cards_projects' },
+    { junction: 'calendar_members', rootField: 'calendar', roots: 'calendar_calendars' },
+]
 
 function parseArgs() {
     const args = process.argv.slice(2)
@@ -139,9 +191,12 @@ async function hasCollection(pb: PocketBase, name: string): Promise<boolean> {
     }
 }
 
-async function findDemoUser(pb: PocketBase): Promise<{ id: string } | null> {
+async function findUserByUsername(
+    pb: PocketBase,
+    username: string
+): Promise<{ id: string } | null> {
     try {
-        return await pb.collection('users').getFirstListItem(`username = "${DEMO_USER_USERNAME}"`)
+        return await pb.collection('users').getFirstListItem(`username = "${username}"`)
     } catch (err) {
         if (isNotFound(err)) return null
         throw err
@@ -176,9 +231,81 @@ async function wipeOwnedData(pb: PocketBase, userId: string): Promise<number> {
         }
     }
 
+    deleted += await wipeMembershipRoots(pb, userId)
     deleted += await wipeMailboxes(pb, userId)
-    deleted += await wipeOrphanedRealtimeJournal(pb)
     return deleted
+}
+
+// wipeMembershipRoots deletes the cards boards and calendars the user belongs
+// to, letting each package's cascade clear everything beneath. See
+// MEMBERSHIP_ROOTS for why these can't be expressed as a flat owner filter.
+//
+// Membership (not created_by) is the key deliberately: it catches the
+// teammate-owned board and the calendars the user is only an editor/viewer of,
+// which an ownership filter misses. That is safe HERE — and only here —
+// because the demo workspace's users are seed-created and every board or
+// calendar they belong to is seed data by construction. This script must never
+// be pointed at a deployment with real accounts.
+async function wipeMembershipRoots(pb: PocketBase, userId: string): Promise<number> {
+    let deleted = 0
+    for (const { junction, rootField, roots } of MEMBERSHIP_ROOTS) {
+        if (!(await hasCollection(pb, junction))) continue
+        if (!(await hasCollection(pb, roots))) continue
+
+        const memberships = await pb
+            .collection(junction)
+            .getFullList({ filter: `user = "${userId}"`, fields: `id,${rootField}` })
+        const rootIds = [...new Set(memberships.map(m => m[rootField] as string).filter(Boolean))]
+        if (rootIds.length === 0) continue
+
+        log(`Wiping ${rootIds.length} ${roots} record(s) (contents cascade)`)
+        for (const id of rootIds) {
+            try {
+                await pb.collection(roots).delete(id)
+                deleted++
+            } catch (err) {
+                if (!isNotFound(err)) throw err
+            }
+        }
+    }
+    return deleted
+}
+
+// restorePersonalCalendar re-creates the calendar that calendar's lifecycle
+// hook provisions on user-create (calendar/server/lifecycle.go).
+//
+// That hook fires ONLY on create. The demo users are preserved across resets by
+// design, so the hook never re-fires — and wipeMembershipRoots deletes the
+// personal calendar along with the seeded ones, since the user owns it. Without
+// this the demo user ends up with no default calendar, and every subsequent
+// reset leaves them worse off.
+//
+// Mirrors the hook's shape exactly: calendar + owner membership, name from the
+// user's display name. Idempotent — an existing owned calendar is left alone.
+async function restorePersonalCalendar(
+    pb: PocketBase,
+    userId: string,
+    userName: string
+): Promise<void> {
+    if (!(await hasCollection(pb, 'calendar_calendars'))) return
+    if (!(await hasCollection(pb, 'calendar_members'))) return
+
+    const owned = await pb
+        .collection('calendar_members')
+        .getFullList({ filter: `user = "${userId}" && role = "owner"`, fields: 'id' })
+    if (owned.length > 0) return
+
+    const calendar = await pb.collection('calendar_calendars').create({
+        name: userName,
+        description: '',
+        color: 'blue',
+    })
+    await pb.collection('calendar_members').create({
+        calendar: calendar.id,
+        user: userId,
+        role: 'owner',
+    })
+    log(`Restored personal calendar for ${userId}`)
 }
 
 // wipeMailboxes clears the demo user's mail by deleting the mailboxes they
@@ -241,7 +368,6 @@ async function wipeOrphanedRealtimeJournal(pb: PocketBase): Promise<number> {
             if (!isNotFound(err)) throw err
         }
     }
-    if (deleted > 0) log(`Wiping ${deleted} orphaned realtime_doc_updates record(s)`)
     return deleted
 }
 
@@ -249,13 +375,34 @@ async function main() {
     const config = parseArgs()
     const pb = await authSuperuser(config)
 
-    const demoUser = await findDemoUser(pb)
-    if (demoUser) {
-        const deleted = await wipeOwnedData(pb, demoUser.id)
-        log(`Wiped ${deleted} record(s) owned by demo user ${demoUser.id}`)
-    } else {
-        log('No existing demo user found — nothing to wipe, will create fresh')
+    // Wipe the companion BEFORE the demo user. Shared fixtures (boards,
+    // calendars, mailboxes) are reachable from either member, and clearing the
+    // companion first means the demo user's pass finds a smaller, already
+    // partly-cascaded set rather than re-walking the same roots.
+    for (const username of [DEMO_COMPANION_USERNAME, DEMO_USER_USERNAME]) {
+        const target = await findUserByUsername(pb, username)
+        if (!target) {
+            log(`No existing "${username}" user found — nothing to wipe`)
+            continue
+        }
+        const deleted = await wipeOwnedData(pb, target.id)
+        log(`Wiped ${deleted} record(s) owned by "${username}" (${target.id})`)
+        // Before the seeds run: calendar's seed guard counts events, not
+        // calendars, so it will happily seed into a user with no calendar at
+        // all — leaving them without the default one the lifecycle hook would
+        // have given a freshly-created account.
+        await restorePersonalCalendar(
+            pb,
+            target.id,
+            username === DEMO_USER_USERNAME ? DEMO_USER_NAME : DEMO_COMPANION_NAME
+        )
     }
+
+    // After BOTH users' drive_items are gone, so every room deleted in either
+    // pass reads as orphaned. Running it inside wipeOwnedData would leave the
+    // companion's journal rows behind whenever their items outlived the pass.
+    const journalRows = await wipeOrphanedRealtimeJournal(pb)
+    if (journalRows > 0) log(`Wiped ${journalRows} orphaned realtime_doc_updates record(s)`)
 
     // seedForUser handles the find-or-create dance for the user and runs every
     // linked package's seed() against the demo workspace.

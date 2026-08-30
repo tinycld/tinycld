@@ -48,13 +48,36 @@ export interface PackageEventSource {
     order: number
     load: () => Promise<unknown>
 }
+export interface SeedUser {
+    id: string
+    username: string
+    email: string
+    name: string
+}
+
 export interface SeedContext {
     // Single-org: package seeds own data by the user id directly (the former
     // org/userOrg junction is gone; the `role` enum lives on the user record).
     // `username` is what mail derives mailbox addresses from — the server
     // provisions from username, never the email local-part, so seeds must too
     // or seeded users get a different address than the server would create.
-    user: { id: string; username: string; email: string; name: string }
+    user: SeedUser
+
+    // The seeded collaborator, for fixtures that need a second person: a
+    // teammate-owned board, a shared calendar, a share recipient.
+    //
+    // Seeds MUST resolve "the other person" to this user rather than querying
+    // `users` for `id != user.id`. That query returns real accounts, and a seed
+    // that writes rows owned by them (a mailbox, a membership, a share) creates
+    // data no user-scoped reset can ever reclaim — the nightly demo reset wipes
+    // the demo user, and the litter attributed to everyone else accumulates
+    // forever. Scoping every seeded row to {user, companion} is what makes the
+    // reset's blast radius equal to what the seed actually created.
+    //
+    // Optional: a deployment seeded without a collaborator (or a package seeded
+    // standalone) still works — seeds fall back to skipping the multi-user
+    // fixtures rather than reaching for a stranger.
+    companion?: SeedUser
 }
 
 // pbtsdb's collection factory, typed over the broadest schema. Each package's
