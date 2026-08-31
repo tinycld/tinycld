@@ -122,7 +122,7 @@ export interface PackageManifest {
     }
 
     /**
-     * `mailListeners`: this package serves mail protocols, so the multi-org
+     * `mailListeners`: this package serves mail protocols, so the hosting
      * ROUTER creates per-org mail sockets for orgs whose set includes it; the
      * package's single Register discovers them via coreserver's TenantContext
      * (host mode binds its own ports instead).
@@ -146,9 +146,9 @@ export interface PackageManifest {
 
     /**
      * Protocol capabilities. Core serves these; a package contributes only the
-     * config, so a multi-org tenant (which links no feature Go) still gets the
+     * config, so a hosting tenant (which links no feature Go) still gets the
      * protocol. The host materializes these blocks into the tenant's runtime
-     * config — see multi-org's controlplane/capabilities.go, which mirrors
+     * config — see hosting's controlplane/capabilities.go, which mirrors
      * every shape here.
      */
     carddav?: {

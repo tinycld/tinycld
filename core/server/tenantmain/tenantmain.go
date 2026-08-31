@@ -1,6 +1,6 @@
 // Package tenantmain is the tenant-mode entry point: it runs ONE
 // organization's PocketBase app in its own OS process, serving on a unix
-// socket handed down by a multi-org router.
+// socket handed down by a hosting router.
 //
 // This is the tenant side of per-process isolation. The process is confined
 // by its parent (per-tenant uid, mount and PID namespaces, cgroups on Linux)

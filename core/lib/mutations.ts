@@ -116,7 +116,7 @@ export function mutation<TData = void, TVariables = void>(
 // The default onError for mutations that don't supply one. Without it a
 // failed mutation is an optimistic update that silently reverts — a toggle or
 // rename that just no-ops with no feedback and nothing in Sentry (the
-// pre-multi-org review counted ~36 such call sites). Mirrors the two halves
+// pre-hosting review counted ~36 such call sites). Mirrors the two halves
 // that already exist elsewhere: the toast is what handleMutationErrorsWithForm
 // does for non-validation errors, the capture is what the global QueryCache
 // onError does for reads.

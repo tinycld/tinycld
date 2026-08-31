@@ -178,7 +178,7 @@ describe('server-address', () => {
         // The regression this whole change exists for: a status-only check
         // admitted the apex, and the app then rendered a sign-in panel against
         // a host with no PocketBase behind it.
-        it('rejects the multi-org apex despite its HTTP 200', async () => {
+        it('rejects the hosting apex despite its HTTP 200', async () => {
             vi.stubGlobal(
                 'fetch',
                 vi

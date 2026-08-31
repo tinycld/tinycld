@@ -9,7 +9,7 @@ import (
 )
 
 // RecipeHash is the single definition of the build-cache key
-// (multi-org/docs/DESIGN-org-package-agency.md, D4/D5): two orgs whose
+// (hosting/docs/DESIGN-org-package-agency.md, D4/D5): two orgs whose
 // resolved package sets, version pins, and toolchains match hit the same
 // artifact by construction, on whichever host computes the hash.
 //
@@ -36,7 +36,7 @@ import (
 //	member <name>@<version> <integrity>   (sorted; third-party undistinguished)
 //
 // Changing the canonical form REQUIRES bumping recipeFormatVersion and
-// regenerating BOTH golden tests (pkgbuild/recipehash_test.go and multi-org's
+// regenerating BOTH golden tests (pkgbuild/recipehash_test.go and hosting's
 // internal/recipeparity) together.
 const recipeFormatVersion = "tinycld-recipe/v1"
 

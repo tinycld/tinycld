@@ -15,7 +15,7 @@ const (
 // single-org deployment's source of truth. The collection has no access rules,
 // so only a superuser can change them.
 //
-// Under multi-org the ORG ceiling must NOT come from here: each tenant has its
+// Under hosting the ORG ceiling must NOT come from here: each tenant has its
 // own superusers, so an org could raise the plan limit you sold it. The router
 // supplies that value instead; see FixedLimits.
 func SettingsLimits(app core.App) Limits {

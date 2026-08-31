@@ -213,12 +213,12 @@ signals it ran.
 - There's no first-run `…/setup?token=…` link locally: `db:reset` creates the superuser up front (so it can seed), so PocketBase isn't on its first run. That token flow is only for an empty self-hosted instance. The `/setup` link `db:reset` prints goes to the superuser login → dashboard instead.
 
 ## Users & Roles
-- **Single-org deployment: the process IS one org.** There is no `orgs` collection and no `user_org` junction — a user's role lives directly on their `users` auth record. (The multi-org router hosts many deployments, each its own process and DB; none of that is visible from inside the app.)
+- **Single-org deployment: the process IS one org.** There is no `orgs` collection and no `user_org` junction — a user's role lives directly on their `users` auth record. (The hosting router hosts many deployments, each its own process and DB; none of that is visible from inside the app.)
 - Roles are `owner` / `admin` / `member` / `guest` (`users.role`). Read the current user's role with `useCurrentRole()` from `@tinycld/core/lib/use-current-role` — it returns `{ role, isOwner, isAdmin, isMember, isGuest, canManageOrg, canManageMembers }` (`isAdmin` includes owners).
 - `useOrgInfo()`, `useOrgSlug()`, `useCurrentUserOrg()` and `navigateToOrg()` survive only as shims so old call sites compile — `useOrgInfo()` returns `org: null` (org branding has no source yet) and `useCurrentUserOrg()?.id` is just the current user's id. Don't reach for them in new code: use `useAuth()` for the user and `useCurrentRole()` for the role.
 
 ## Routing & Navigation
-- **Routes are bare** — the org never appears in the URL: `/contacts`, `/mail`, `/settings/profile`. Org identity comes from the deployment (subdomain), which the multi-org router resolves before a request reaches this app.
+- **Routes are bare** — the org never appears in the URL: `/contacts`, `/mail`, `/settings/profile`. Org identity comes from the deployment (subdomain), which the hosting router resolves before a request reaches this app.
 - Use `useOrgHref()` from `@tinycld/core/lib/org-routes` for navigation. Paths are app-root-relative; the hook is retained (rather than raw strings) so the ~200 call sites keep one shape:
   ```tsx
   const orgHref = useOrgHref()
@@ -266,9 +266,9 @@ Add a feature later with `npx @tinycld/bootstrap@latest --assemble-only --with <
 
 ### Pinning members to a branch or tag (and why CI does)
 
-`--with <name>@<ref>` pins that member's clone to a branch or tag; `tinycld` itself accepts the same form (`--with tinycld@multi-org`). Without a ref, every member is cloned at its **default branch**.
+`--with <name>@<ref>` pins that member's clone to a branch or tag; `tinycld` itself accepts the same form (`--with tinycld@hosting`). Without a ref, every member is cloned at its **default branch**.
 
-That default is the right one for a developer and the wrong one for cross-repo work, which is worth understanding before it costs you an afternoon. **Coordinated changes span repos on the same branch name** — the single-org migration lived on `multi-org` in nine repos at once. A feature repo whose CI assembles `tinycld` from `main` then typechecks the branch's code against a core that predates it: the APIs the branch depends on are simply absent, and the errors look like defects in the PR (`Property 'userId' does not exist on type 'OrgScope'`) rather than a mismatched workspace. It reads as "this PR is broken" when nothing is.
+That default is the right one for a developer and the wrong one for cross-repo work, which is worth understanding before it costs you an afternoon. **Coordinated changes span repos on the same branch name** — the single-org migration lived on `hosting` in nine repos at once. A feature repo whose CI assembles `tinycld` from `main` then typechecks the branch's code against a core that predates it: the APIs the branch depends on are simply absent, and the errors look like defects in the PR (`Property 'userId' does not exist on type 'OrgScope'`) rather than a mismatched workspace. It reads as "this PR is broken" when nothing is.
 
 So each feature repo's `ci.yml` resolves sibling refs before assembling: prefer a branch matching the PR's HEAD, fall back to the default branch when none exists. Ordinary single-repo PRs are unaffected — they assemble against released siblings, which is what you want. `text` and `calc` pin `drive` the same way, since they clone it too.
 

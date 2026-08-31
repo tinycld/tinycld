@@ -10,7 +10,7 @@ import { normalizeAddress, readCached, writeCached } from './server-address'
 //
 // A "server" here is just an origin. That is deliberately the same object for
 // both deployment shapes: a self-hosted box is one origin, and each org on the
-// hosted multi-org router is its own subdomain — hence its own origin, its own
+// hosted hosting router is its own subdomain — hence its own origin, its own
 // process, its own DB. serverKeyFor normalizes to scheme+host+port, so two orgs
 // on the router get distinct keys exactly as two self-hosted boxes do, and
 // nothing below needs to know which shape it is looking at.

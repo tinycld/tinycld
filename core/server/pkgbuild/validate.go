@@ -136,7 +136,7 @@ try {
 }
 
 // DecodeManifestJSON decodes an ALREADY-EVALUATED manifest (the JSON a
-// manifest evaluator emitted — this file's node script, the multi-org
+// manifest evaluator emitted — this file's node script, the hosting
 // manifesteval subprocess, or an artifact's staged manifests/<slug>/
 // manifest.json) into a ParsedManifest, populating the derived fields
 // (RawJSON, HasServer) exactly like ParseManifestViaNode. It runs no code:

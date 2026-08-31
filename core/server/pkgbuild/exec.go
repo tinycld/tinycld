@@ -17,7 +17,7 @@ var log = logging.ForPackage("pkgbuild")
 
 // CmdRunner runs a command in dir and returns its combined output. It is the
 // sandbox seam for buffered steps: coreserver binds it to RunCmd (in-process
-// exec); the multi-org builder wraps it in per-job confinement.
+// exec); the hosting builder wraps it in per-job confinement.
 type CmdRunner func(dir, name string, args ...string) (string, error)
 
 // StreamingRunner is CmdRunner for long steps whose output should reach the

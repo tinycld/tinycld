@@ -110,7 +110,7 @@ func emailRecipient(to string) (string, error) {
 //
 // A new process starts with an empty ledger. That is acceptable because the
 // processes involved do not recycle mid-loop: a single-tenant server restarts
-// when an operator says so, and a multi-org tenant is evicted only after 30
+// when an operator says so, and a hosting tenant is evicted only after 30
 // idle minutes with zero connections — a state an active mail loop never
 // reaches.
 var emailSendLedger = struct {

@@ -117,7 +117,7 @@ test.describe('first-run install', () => {
     })
 
     // The "superuser can create an organization" test was removed with the
-    // single-org migration: tenant provisioning belongs to the multi-org
+    // single-org migration: tenant provisioning belongs to the hosting
     // router, so there is no create form left to drive. The router owns that
     // flow and tests it in its own suite (internal/controlplane).
 

@@ -21,7 +21,7 @@ export default function Index() {
         hasServer,
     })
 
-    // A device that connected to the multi-org apex before this was caught at
+    // A device that connected to the hosting apex before this was caught at
     // admission has the apex cached as its server, where signing in can never
     // succeed. Recover by sending it to the picker.
     //

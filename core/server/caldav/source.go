@@ -5,7 +5,7 @@
 // materialized from each package's manifest `caldav` block).
 //
 // Why it lives in core, not per-feature: a protocol server has to be reachable
-// on a port, and the multi-org router owns every listening socket — a tenant
+// on a port, and the hosting router owns every listening socket — a tenant
 // serves on a unix socket handed down to it. Anything that must be *bound*
 // therefore belongs to core, where the router can open it. The rule is about
 // ports, not about Go: performance-sensitive work belongs in Go, and this
@@ -29,7 +29,7 @@
 // tenant must enforce has to be expressible as data, and a rule is a string
 // that travels in the schema.
 //
-// Where it runs: in the single-tenant app, in-process. Under multi-org's
+// Where it runs: in the single-tenant app, in-process. Under hosting's
 // per-process tenant isolation, inside each org's own process — the router
 // materializes the Sources and reverse-proxies to that process.
 package caldav

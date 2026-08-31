@@ -18,7 +18,7 @@ import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
 // Storage usage + per-user limit for this deployment. Org branding (name /
-// slug / logo) is owned by the deployment (the multi-org router) and is not
+// slug / logo) is owned by the deployment (the hosting router) and is not
 // editable in-app, so storage is what this screen manages — the route, title,
 // and nav label all say so rather than promising organization management.
 

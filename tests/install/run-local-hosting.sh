@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Dev convenience (NOT a test): boot a local multi-org router with two orgs
+# Dev convenience (NOT a test): boot a local hosting router with two orgs
 # and a shared app user, then keep serving until Ctrl-C.
 #
 # What it does:
 #   1. starts the fixture npm registry (hosted-npm-registry.mjs) over the base
 #      sibling + every feature sibling present, so org lockfiles resolve from
 #      the working tree;
-#   2. boots serve-multi (plain HTTP, base domain `localhost`, unconfined
+#   2. boots serve-router (plain HTTP, base domain `localhost`, unconfined
 #      control sockets so the in-app Packages UI works on macOS);
 #   3. creates the orgs (default: acme + globex) from a base+features
 #      lockfile — the first org pays the real artifact build (minutes warm),
@@ -41,7 +41,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 WS_ROOT="$(cd "${APP_DIR}/.." && pwd)"
-MULTIORG_DIR="${WS_ROOT}/multi-org"
+HOSTING_DIR="${WS_ROOT}/hosting"
 
 # Pull credentials from the workspace .env unless already exported.
 if [ -f "${WS_ROOT}/.env" ]; then
@@ -70,15 +70,15 @@ ORGS="${ORGS:-acme globex}"
 SUPERUSER_EMAIL="local-router@example.com"
 SUPERUSER_PASSWORD="LocalRouter1234!"
 
-LOG_DIR="${SCRIPT_DIR}/local-multiorg-logs"
-SERVER_LOG="${LOG_DIR}/serve-multi.log"
+LOG_DIR="${SCRIPT_DIR}/local-hosting-logs"
+SERVER_LOG="${LOG_DIR}/serve-router.log"
 REGISTRY_LOG="${LOG_DIR}/npm-registry.log"
 mkdir -p "${LOG_DIR}" "${MT_ROOT_DIR}"
 : >"${SERVER_LOG}"
 : >"${REGISTRY_LOG}"
 
-if [ ! -d "${MULTIORG_DIR}" ]; then
-    echo "multi-org repo not found at ${MULTIORG_DIR}" >&2
+if [ ! -d "${HOSTING_DIR}" ]; then
+    echo "hosting repo not found at ${HOSTING_DIR}" >&2
     exit 1
 fi
 
@@ -88,7 +88,7 @@ if [ -z "${FEATURES+x}" ]; then
     FEATURES=""
     for d in "${WS_ROOT}"/*/; do
         name="$(basename "$d")"
-        case "$name" in tinycld | bootstrap | multi-org | web | utils | node_modules) continue ;; esac
+        case "$name" in tinycld | bootstrap | hosting | web | utils | node_modules) continue ;; esac
         if [ -f "$d/manifest.ts" ] && [ -f "$d/package.json" ]; then
             FEATURES="${FEATURES} ${name}"
         fi
@@ -136,8 +136,8 @@ console.log(JSON.stringify(lock))
 echo "[local] org lockfile: ${LOCKFILE_JSON}"
 
 # ---- 2. the router ----
-echo "[local] building serve-multi"
-(cd "${MULTIORG_DIR}" && go build -o "${MT_ROOT_DIR}/serve-multi" ./cmd/serve-multi)
+echo "[local] building serve-router"
+(cd "${HOSTING_DIR}" && go build -o "${MT_ROOT_DIR}/serve-router" ./cmd/serve-router)
 
 echo "[local] starting router on 127.0.0.1:${PORT} (root ${MT_ROOT_DIR})"
 env \
@@ -151,7 +151,7 @@ env \
     MT_ALLOW_UNCONFINED_CONTROL=true \
     MT_SUPERUSER_EMAIL="${SUPERUSER_EMAIL}" \
     MT_SUPERUSER_PASSWORD="${SUPERUSER_PASSWORD}" \
-    "${MT_ROOT_DIR}/serve-multi" >>"${SERVER_LOG}" 2>&1 &
+    "${MT_ROOT_DIR}/serve-router" >>"${SERVER_LOG}" 2>&1 &
 SERVER_PID=$!
 
 admin_api() {

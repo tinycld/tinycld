@@ -6,14 +6,14 @@ import {
 
 // Two stacks can serve these specs, and they establish their user differently:
 //
-//  - the local launcher (scripts/e2e-multi-org.ts) seeds both orgs with
+//  - the local launcher (scripts/e2e-hosting.ts) seeds both orgs with
 //    reset-dev-db.ts, so the ordinary fixture user exists;
-//  - multi-org's TestHostedBrowserE2E provisions real orgs and creates a
+//  - hosting's TestHostedBrowserE2E provisions real orgs and creates a
 //    superuser in each tenant's own DB, passing those credentials in.
 //
 // Env wins when present, so the same specs cover both without branching.
-const LOGIN_EMAIL = process.env.E2E_MULTI_ORG_EMAIL || SEEDED_EMAIL
-const LOGIN_PASSWORD = process.env.E2E_MULTI_ORG_PASSWORD || SEEDED_PASSWORD
+const LOGIN_EMAIL = process.env.E2E_HOSTING_EMAIL || SEEDED_EMAIL
+const LOGIN_PASSWORD = process.env.E2E_HOSTING_PASSWORD || SEEDED_PASSWORD
 
 // The saved-server switcher across TWO orgs — the case no single-origin stack
 // can produce.
@@ -27,7 +27,7 @@ const LOGIN_PASSWORD = process.env.E2E_MULTI_ORG_PASSWORD || SEEDED_PASSWORD
 // appearing in the list, the active one being identified correctly among
 // several, and a switch really landing on the other origin.
 
-const PORT = Number(process.env.E2E_MULTI_ORG_PORT ?? 7300)
+const PORT = Number(process.env.E2E_HOSTING_PORT ?? 7300)
 const ACME = `http://acme.localhost:${PORT}`
 const GLOBEX = `http://globex.localhost:${PORT}`
 

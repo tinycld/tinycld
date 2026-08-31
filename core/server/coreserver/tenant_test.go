@@ -15,7 +15,7 @@ import (
 // tenant_test.go asserts core's authorization THE WAY A HOSTED TENANT SEES IT:
 // an app composed by RegisterTenant, requests served through the real router
 // mux, no host-only registration bound. This is the permanent coverage for
-// multi-org/docs/FINDING-tenant-composition-gap.md — the two proven holes
+// hosting/docs/FINDING-tenant-composition-gap.md — the two proven holes
 // (member self-promotion to owner, disabled users keeping REST access) existed
 // precisely because no test ran the tenant configuration.
 //

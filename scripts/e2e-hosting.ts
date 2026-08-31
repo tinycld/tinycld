@@ -14,13 +14,13 @@
 //      server/pb_test_releases — both orgs serve the SAME bundle, which is the
 //      honest shape for this test: the app is identical, only the origin differs.
 //   3. Launch one PB per org on its own private port.
-//   4. Launch multi-org's cmd/e2e-router in front, dispatching
+//   4. Launch hosting's cmd/e2e-router in front, dispatching
 //      acme.localhost / globex.localhost to those backends.
 //
 // Chrome resolves *.localhost to loopback natively, so no DNS or TLS setup and
 // no /etc/hosts entries are needed.
 //
-// Used as the webServer of playwright.multi-org.config.ts.
+// Used as the webServer of playwright.hosting.config.ts.
 
 import { type ChildProcess, spawn } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -28,12 +28,12 @@ import * as net from 'node:net'
 import * as path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
-const MULTI_ORG_DIR = path.resolve(ROOT, '..', 'multi-org')
+const HOSTING_DIR = path.resolve(ROOT, '..', 'hosting')
 const PB_BINARY = path.join(ROOT, 'server', 'app')
 const RELEASES_DIR = path.join(ROOT, 'server', 'pb_test_releases')
 
-// Kept in sync with playwright.multi-org.config.ts.
-const ROUTER_PORT = Number(process.env.E2E_MULTI_ORG_PORT ?? 7300)
+// Kept in sync with playwright.hosting.config.ts.
+const ROUTER_PORT = Number(process.env.E2E_HOSTING_PORT ?? 7300)
 const ORGS = [
     { slug: 'acme', port: 7301, seedPort: 7391 },
     { slug: 'globex', port: 7302, seedPort: 7392 },
@@ -42,7 +42,7 @@ const ORGS = [
 const children: ChildProcess[] = []
 
 function log(msg: string) {
-    console.log(`[e2e-multi-org] ${msg}`)
+    console.log(`[e2e-hosting] ${msg}`)
 }
 
 function run(cmd: string, args: string[], cwd = ROOT): Promise<void> {
@@ -123,7 +123,7 @@ function serveRouter(): ChildProcess {
     const child = spawn(
         'go',
         ['run', './cmd/e2e-router', '--addr', `127.0.0.1:${ROUTER_PORT}`, ...orgArgs],
-        { cwd: MULTI_ORG_DIR, stdio: 'inherit', env: process.env }
+        { cwd: HOSTING_DIR, stdio: 'inherit', env: process.env }
     )
     children.push(child)
     return child
@@ -160,7 +160,7 @@ async function main() {
         const { exportWeb } = await import('./export-web')
         const { promoteRelease } = await import('./promote-release')
         exportWeb()
-        promoteRelease(path.join(ROOT, 'dist'), RELEASES_DIR, `multi-org-${Date.now()}`, log)
+        promoteRelease(path.join(ROOT, 'dist'), RELEASES_DIR, `hosting-${Date.now()}`, log)
     }
 
     process.on('SIGINT', () => {

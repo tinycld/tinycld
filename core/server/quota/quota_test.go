@@ -369,7 +369,7 @@ func setSetting(t *testing.T, app *tests.TestApp, key string, value int64) {
 	}
 }
 
-// THE multi-org security property: the org ceiling must come from the value the
+// THE hosting security property: the org ceiling must come from the value the
 // router injected, NOT from the org's own settings. Each tenant has its own
 // superusers, so a limit read from the tenant DB could be raised by the tenant.
 func TestFixedLimitsIgnoresTenantSettingsForOrgCeiling(t *testing.T) {

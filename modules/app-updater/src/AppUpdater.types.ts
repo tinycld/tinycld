@@ -17,7 +17,7 @@ export interface AppUpdaterModuleType {
      * server's bundle state. `serverKey` is a hex SHA-256 of the server's
      * normalized origin (see serverKeyFor).
      *
-     * Bundles are per-server because each org in a multi-org deployment runs a
+     * Bundles are per-server because each org in a hosting deployment runs a
      * different build with a different package set. Call this as soon as an
      * address resolves: the native loader runs before the JS bridge exists, so
      * it can only learn the active server from what was persisted earlier.

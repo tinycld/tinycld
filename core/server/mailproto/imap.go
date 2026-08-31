@@ -24,17 +24,17 @@ type NewIMAPSession func(app core.App, conn *imapserver.Conn) imapserver.Session
 
 // ListenFunc opens the socket a mail service serves on, given the address the
 // service would otherwise bind. mailproto's default is a plain TCP bind of
-// that address; a multi-org host injects its own function returning a
+// that address; a hosting host injects its own function returning a
 // listener the ROUTER opened (or handed down over an inherited fd), so a
 // tenant process never binds a port — the prerequisite for IMAP/SMTP
-// following CardDAV into per-org tenant processes (multi-org HANDOFF §6).
+// following CardDAV into per-org tenant processes (hosting HANDOFF §6).
 //
 // The returned listener carries raw (pre-TLS) connections: by default TLS
 // wrapping stays in mailproto, so injection changes where the socket comes
 // from, never the TLS policy around it. The one deliberate exception is
 // ExternalTLS (on IMAPOptions/SMTPOptions), where the HOST terminates TLS
 // before connections reach the injected listener — that mode exists so a
-// multi-org tenant never holds the wildcard private key.
+// hosting tenant never holds the wildcard private key.
 type ListenFunc func(addr string) (net.Listener, error)
 
 // listenWith resolves the injected listener or falls back to a TCP bind.
@@ -70,7 +70,7 @@ type IMAPOptions struct {
 	Listen ListenFunc
 
 	// ExternalTLS declares that the host terminates TLS BEFORE connections
-	// reach the injected listener — the multi-org tenant shape: the router
+	// reach the injected listener — the hosting tenant shape: the router
 	// holds the wildcard cert, handshakes on :993 to read SNI, and forwards
 	// plaintext over a private per-org unix socket, so the tenant process
 	// never sees the private key. mailproto then resolves no cert material

@@ -1,6 +1,6 @@
-// Telling a multi-org APEX apart from an org you can actually sign into.
+// Telling a hosting APEX apart from an org you can actually sign into.
 //
-// On a multi-org router the apex (tinycld.org) hosts no org: it answers every
+// On a hosting router the apex (tinycld.org) hosts no org: it answers every
 // path with the org-finder page, so there is no PocketBase behind it and
 // nothing to authenticate against. Each org lives one label down
 // (acme.tinycld.org) as its own process and DB.
@@ -20,7 +20,7 @@
 
 import { orgUrlForSlug } from './org-cookie'
 
-// Thrown when an address answers, but as a multi-org apex rather than a server.
+// Thrown when an address answers, but as a hosting apex rather than a server.
 // A distinct type (not a generic "couldn't reach") because the recovery is
 // completely different: the host is fine and the user simply has to say WHICH
 // org they want, so callers route to the picker instead of showing a network
@@ -38,16 +38,16 @@ export class ApexServerError extends Error {
 }
 
 // The router's machine-readable "this host is an apex" marker, sent as
-// data.kind on an /api/* response. Must match ApexMarker in the multi-org repo
+// data.kind on an /api/* response. Must match ApexMarker in the hosting repo
 // (internal/webpage) — the two are coupled by this string.
-const APEX_MARKER = 'multi_org_apex'
+const APEX_MARKER = 'hosting_apex'
 
-/** True when a response says the host is a multi-org apex rather than a server.
+/** True when a response says the host is a hosting apex rather than a server.
  *
  *  Two signals, because both eras of router have to work:
  *
  *  1. The explicit marker. A current router answers /api/* with a 404 carrying
- *     `data.kind: "multi_org_apex"`, which distinguishes an apex from a host
+ *     `data.kind: "hosting_apex"`, which distinguishes an apex from a host
  *     that is merely wrong or down — a bare 404 cannot.
  *  2. An HTML body. Routers deployed before that fix answered the org-finder
  *     page with 200 for EVERY path, so the shape of the body is the only
@@ -99,7 +99,7 @@ export function isOrgUnderApex(origin: string, apexHostname: string): boolean {
     return label.length > 0 && !label.includes('.')
 }
 
-/** Whether a cached address turns out to be a multi-org apex rather than a
+/** Whether a cached address turns out to be a hosting apex rather than a
  *  server, for the recovery path: a device that connected before this was
  *  caught at admission still has the apex saved as its server.
  *

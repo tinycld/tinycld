@@ -4,7 +4,7 @@
 // each package's manifest `carddav` block).
 //
 // Why it lives in core, not per-feature: CardDAV is a protocol server, and a
-// protocol server has to be reachable on a port. The multi-org router owns
+// protocol server has to be reachable on a port. The hosting router owns
 // every listening socket — a tenant serves on a unix socket handed down to it —
 // so anything that must be *bound* belongs to core, where the router can open
 // it. That is the rule; it is about ports, not about Go being unwelcome.
@@ -17,7 +17,7 @@
 // Go here — performance-sensitive work belongs in Go — and only the field map
 // is data.
 //
-// Where it runs: in the single-tenant app, in-process. Under multi-org's
+// Where it runs: in the single-tenant app, in-process. Under hosting's
 // per-process tenant isolation, inside each org's own process — the router
 // materializes the Sources and reverse-proxies to that process, and never holds
 // a tenant app object itself.

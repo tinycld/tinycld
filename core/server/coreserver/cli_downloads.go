@@ -40,7 +40,7 @@ func RegisterCliDownloadEndpoints(app *pocketbase.PocketBase) {
 }
 
 // RegisterTenantCliDownloadEndpoints serves a tenant's CLI binaries from its
-// build artifact (the multi-org builder stages cli-dist into the artifact).
+// build artifact (the hosting builder stages cli-dist into the artifact).
 func RegisterTenantCliDownloadEndpoints(app core.App, artifactDir string) {
 	registerCliDownloadEndpoints(app, func() string {
 		return filepath.Join(artifactDir, pkgbuild.CLIDistDirName)

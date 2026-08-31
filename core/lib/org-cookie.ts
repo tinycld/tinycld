@@ -3,7 +3,7 @@
 // (Domain=.<MT_BASE_DOMAIN>), so the browser accumulates the orgs this user
 // has actually signed into. It is a NAVIGATION HINT, not an authorization
 // claim — it is client-writable, and every target org still authenticates the
-// user itself. The server-side writer is serve-org (multi-org repo,
+// user itself. The server-side writer is serve-org (hosting repo,
 // internal/orgcookie); the two must agree on this shape.
 //
 // Entries deliberately carry NO URL. The cookie is writable by JS on any

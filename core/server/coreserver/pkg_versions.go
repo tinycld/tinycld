@@ -10,7 +10,7 @@ import (
 
 // Package version discovery. The mechanics (spec classification, npm/git
 // listing, the discovery cache, semver sorting) moved to pkgbuild/versions.go so
-// the multi-org router can serve the same discovery over the per-org control
+// the hosting router can serve the same discovery over the per-org control
 // socket; this file keeps only the DB-backed endpoint.
 
 // versionInfo is the per-package discovery result returned to the UI.

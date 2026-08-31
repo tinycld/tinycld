@@ -14,7 +14,7 @@ import { Building2, ChevronRight, Server } from 'lucide-react-native'
 import { useEffect, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-// The native counterpart to the router's apex org-finder page (multi-org,
+// The native counterpart to the router's apex org-finder page (hosting,
 // internal/webpage). Reaching the apex means the user is at an address that
 // HOSTS organizations rather than being one — there is no PocketBase behind it,
 // so a sign-in panel here could never succeed. This screen asks the one question

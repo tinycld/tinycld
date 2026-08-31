@@ -8,7 +8,7 @@ import (
 
 // The single-Register package contract: a feature package exports ONE
 // composition entry point, `Register(app *pocketbase.PocketBase)`, and it runs
-// unchanged in the single-org app and in a multi-org tenant. The rare package
+// unchanged in the single-org app and in a hosting tenant. The rare package
 // that must behave differently hosted (mail: the host binds real ports, a
 // tenant serves router-injected sockets) DETECTS tenancy from the app instead
 // of exporting a second function: RegisterTenant stamps a TenantContext into
@@ -33,7 +33,7 @@ type MailListeners struct {
 }
 
 // TenantContext is what a feature package may learn about the tenant process
-// it is registering into. Present (GetTenantContext ok) only in multi-org
+// it is registering into. Present (GetTenantContext ok) only in hosting
 // tenant mode; a single-org app has none.
 type TenantContext struct {
 	// Slug is the org's slug (identification and logging only).
@@ -58,14 +58,14 @@ func setTenantContext(app core.App, tc TenantContext) {
 }
 
 // GetTenantContext reports the tenant context, and whether this app is a
-// multi-org tenant at all.
+// hosting tenant at all.
 func GetTenantContext(app core.App) (TenantContext, bool) {
 	v := app.Store().Get(tenantContextKey)
 	tc, ok := v.(TenantContext)
 	return tc, ok
 }
 
-// IsTenant reports whether app is composed as a multi-org tenant. Feature
+// IsTenant reports whether app is composed as a hosting tenant. Feature
 // packages use it to skip behavior a tenant must not have — binding a port is
 // the canonical example (the router owns every listening socket).
 func IsTenant(app core.App) bool {

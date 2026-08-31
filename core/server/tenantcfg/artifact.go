@@ -11,7 +11,7 @@ import (
 )
 
 // The build-artifact provenance ABI (DESIGN-org-package-agency D4/D6). The
-// multi-org builder writes these files into every committed artifact
+// hosting builder writes these files into every committed artifact
 // (builds/<hash>/); an artifact-booted tenant reads them from its own
 // binary's directory to learn its built-in package set — the source for the
 // pkg_registry reconciliation and the current-set half of a deploy proposal.

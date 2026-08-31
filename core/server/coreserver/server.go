@@ -89,7 +89,7 @@ type Options struct {
 
 	// QuotaLimits resolves the ceilings. Defaults to quota.SettingsLimits,
 	// which reads the `settings` collection — correct for a single-org
-	// deployment. A multi-org tenant passes a resolver whose org ceiling comes
+	// deployment. A hosting tenant passes a resolver whose org ceiling comes
 	// from the router's runtime config instead, so the org cannot raise the
 	// plan limit it was sold.
 	QuotaLimits quota.LimitsFunc
@@ -183,14 +183,14 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	registerSharedCore(app)
 
 	// ---- Host-only registrations ----
-	// Everything below runs ONLY in the single-org app, never in a multi-org
+	// Everything below runs ONLY in the single-org app, never in a hosting
 	// tenant. Each entry needs a reason a tenant must not have it, and a
 	// matching entry in the hostOnlyHookDiff allowlist in
 	// composition_parity_test.go — the parity test fails on an unexplained
 	// divergence between the two compositions.
 
 	// Package install/upgrade swaps the running binary and invokes the Go
-	// toolchain. In multi-org the ROUTER owns deploys (re-materialize + evict);
+	// toolchain. In hosting the ROUTER owns deploys (re-materialize + evict);
 	// a tenant that could rebuild or restart itself would escape the router's
 	// supervision.
 	RegisterPackageInstallEndpoints(app)
@@ -237,11 +237,11 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 //
 // SHARED COMPOSITION CONTRACT: this function and registerSharedCore are the
 // single source of truth for what the single-org app (Register) and a
-// multi-org tenant process (RegisterTenant) both run. A new registration goes
+// hosting tenant process (RegisterTenant) both run. A new registration goes
 // in one of them unless it genuinely must not run in a tenant — in which case
 // it goes in Register's host-only tail WITH a reason comment and an entry in
 // composition_parity_test.go's allowlist. See
-// multi-org/docs/FINDING-tenant-composition-gap.md for what silent divergence
+// hosting/docs/FINDING-tenant-composition-gap.md for what silent divergence
 // cost.
 func registerSharedEarly(app *pocketbase.PocketBase) {
 	// Install the process-wide logger once PocketBase has bootstrapped, not
@@ -281,7 +281,7 @@ func registerSharedEarly(app *pocketbase.PocketBase) {
 }
 
 // registerSharedCore is the bulk of the shared composition: everything both
-// the single-org app and a multi-org tenant register after their respective
+// the single-org app and a hosting tenant register after their respective
 // engine plugins (quota, jsvm) are in place. See the contract note on
 // registerSharedEarly. Order within this list is preserved from the original
 // single-org composition; the users hooks in particular bind in
@@ -323,7 +323,7 @@ func registerSharedCore(app *pocketbase.PocketBase) {
 
 	// OAuth 2.1 authorization server: the device grant the tinycld CLI logs in
 	// with, and authorization-code + PKCE for third-party integrations. Shared
-	// (not host-only) because a multi-org tenant must be able to authorize a
+	// (not host-only) because a hosting tenant must be able to authorize a
 	// CLI or an integration exactly like a self-hosted deployment.
 	oauth.Register(app)
 

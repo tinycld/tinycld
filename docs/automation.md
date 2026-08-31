@@ -175,8 +175,8 @@ automation.RegisterAction("mail:send-message", func(app core.App, req automation
 Native-action caveats:
 
 - **Available wherever your package's Go is linked.** Every deployment
-  shape links feature Go — a multi-org router builds a per-org artifact
-  from exactly that org's package set (`multi-org/README.md`), so your
+  shape links feature Go — a hosting router builds a per-org artifact
+  from exactly that org's package set (`hosting/README.md`), so your
   handler exists wherever your package is installed. The catalog marks an
   action whose handler is absent (package removed / not installed)
   unavailable and the UI greys it out ("needs <pkg>") —

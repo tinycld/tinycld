@@ -19,7 +19,7 @@ const generatedPasswordBytes = 24
 
 // GenerateOwnerPassword returns a URL-safe random password. Exported so a
 // caller that must know the password before invoking this command (the
-// multi-org router returns it to the operator) generates it the same way.
+// hosting router returns it to the operator) generates it the same way.
 func GenerateOwnerPassword() (string, error) {
 	b := make([]byte, generatedPasswordBytes)
 	if _, err := rand.Read(b); err != nil {
@@ -33,7 +33,7 @@ func GenerateOwnerPassword() (string, error) {
 //
 // WHY THIS EXISTS. A single-tenant deployment gets its first accounts from the
 // setup wizard, whose routes RegisterSetupBootstrap binds — in the HOST
-// composition only. A hosted org has no wizard: the multi-org router
+// composition only. A hosted org has no wizard: the hosting router
 // provisions it by building an artifact and booting a tenant, and the tenant
 // composition never binds those routes. So a freshly provisioned org served
 // fine but had zero users and nobody could log in.

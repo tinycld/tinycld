@@ -92,7 +92,7 @@ export default function Connect() {
     })
 
     async function connectTo(addr: string) {
-        // probeServer, not probe: a multi-org apex is alive and answers 200, so a
+        // probeServer, not probe: a hosting apex is alive and answers 200, so a
         // liveness check admits it and the app then renders a sign-in panel
         // against a host with no PocketBase. ApexServerError means "this address
         // hosts orgs" — the recovery is to ask which one, not to report an error.

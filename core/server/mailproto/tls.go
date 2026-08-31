@@ -10,7 +10,7 @@
 // reimplementing that model as configuration.
 //
 // Two hosts drive this: the single-tenant app (via the mail package's
-// Register) and, once per-org process isolation lands, the multi-org router.
+// Register) and, once per-org process isolation lands, the hosting router.
 // Because everything here takes core.App, neither needs a concrete
 // *pocketbase.PocketBase.
 

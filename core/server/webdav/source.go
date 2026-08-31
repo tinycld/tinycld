@@ -4,7 +4,7 @@
 // Source, materialized from each package's manifest `webdav` block).
 //
 // Why it lives in core, not per-feature: a protocol server has to be reachable
-// on a port, and the multi-org router owns every listening socket — a tenant
+// on a port, and the hosting router owns every listening socket — a tenant
 // serves on a unix socket handed down to it. Anything that must be *bound*
 // therefore belongs to core, where the router can open it. The rule is about
 // ports, not about Go: performance-sensitive work belongs in Go, and this
@@ -25,7 +25,7 @@
 //   - Opt-in TS hook points, for behaviour an org wants to customize without
 //     writing Go. See hooks.go; the fast path never touches a JS VM.
 //
-// Where it runs: in the single-tenant app, in-process. Under multi-org's
+// Where it runs: in the single-tenant app, in-process. Under hosting's
 // per-process tenant isolation, inside each org's own process — the router
 // materializes the Sources and reverse-proxies to that process.
 package webdav
@@ -125,7 +125,7 @@ type FieldMap struct {
 // there is exactly one place a tree's permissions are defined — the migration —
 // and the DAV path cannot drift from what the REST API and the web UI enforce.
 //
-// It also has to be that way for multi-org. A rule is a string and travels in
+// It also has to be that way for hosting. A rule is a string and travels in
 // the schema; a Go closure cannot cross a process boundary. Were authorization
 // a hook, a tenant process (which links no feature package) would serve the tree with
 // no per-record checks at all.

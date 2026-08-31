@@ -72,7 +72,7 @@ export function normalizeAddress(input: string): string {
 // It is polled on a timer by OfflineOverlay and the native connectivity
 // detector, so it stays the cheapest possible request and deliberately does not
 // inspect the body. Use probeServer() to ADMIT a new address — liveness is the
-// wrong question there, because a multi-org apex is perfectly alive.
+// wrong question there, because a hosting apex is perfectly alive.
 export async function probe(address: string, timeoutMs = 5000): Promise<void> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -91,7 +91,7 @@ export async function probe(address: string, timeoutMs = 5000): Promise<void> {
 //
 // It asks /api/org-info (unauthenticated, registered unconditionally in
 // coreserver.Setup, returns {name}) and requires a JSON object back. A
-// multi-org apex answers 200 with the org-finder HTML for every path including
+// hosting apex answers 200 with the org-finder HTML for every path including
 // this one, so a status-only check admits it and the app then renders a sign-in
 // panel against a host with no PocketBase. Throws ApexServerError for that case
 // so the caller can offer the org picker instead of a network error.

@@ -67,7 +67,7 @@ func Register(app *pocketbase.PocketBase, sources []Source) {
 }
 
 // HandlerFor builds a standalone CardDAV http.Handler for ONE org, backed by that
-// org's app, using singleOrgScope (the whole DB is the org — the multi-org tenant
+// org's app, using singleOrgScope (the whole DB is the org — the hosting tenant
 // model). The returned handler covers /carddav, /carddav/*, and
 // /.well-known/carddav, applying the Basic-Auth challenge itself. Returns nil
 // when no sources are given (nothing to serve).
@@ -77,8 +77,8 @@ func Register(app *pocketbase.PocketBase, sources []Source) {
 // drive it without holding a concrete *pocketbase.PocketBase.
 //
 // Under per-process tenant isolation this runs INSIDE the org's own process
-// (multi-org's cmd/serve-org), which mounts these routes on its own router from
-// the source list the router materialized. The multi-org host has no tenant app
+// (hosting's cmd/serve-org), which mounts these routes on its own router from
+// the source list the router materialized. The hosting host has no tenant app
 // object to compose against — it only reverse-proxies to the tenant socket.
 func HandlerFor(app core.App, sources []Source) http.Handler {
 	if len(sources) == 0 {

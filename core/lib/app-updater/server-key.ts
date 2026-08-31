@@ -1,7 +1,7 @@
 // serverKeyFor derives the stable, filesystem-safe key the native app-updater
 // stores a server's bundle state under.
 //
-// Why a key at all: each org in a multi-org deployment runs its OWN build with
+// Why a key at all: each org in a hosting deployment runs its OWN build with
 // its own package set, so "the current bundle" is a property of the server the
 // app is connected to. One shared slot made switching orgs re-download the
 // other org's bundle on every foreground — a thrash loop, with a full JS reload

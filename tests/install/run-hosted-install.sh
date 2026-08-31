@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Local runner for the HOSTED (multi-org) browser-level install suite — the
+# Local runner for the HOSTED (hosting) browser-level install suite — the
 # finish line of DESIGN-org-package-agency goal 2 ("same UX"): the same
 # todo-install.spec.ts phases the single-tenant runner drives, run against an
-# ORG SUBDOMAIN of a real serve-multi router. Everything the org admin does
+# ORG SUBDOMAIN of a real serve-router router. Everything the org admin does
 # happens in the browser through the org's own SPA (served by the tenant from
 # its artifact's pb_public); every install-class operation rides the hosted
 # pipeline — router-side build, in-tenant downs, deploy proposal, evict +
@@ -32,7 +32,7 @@
 #
 # Env knobs:
 #   MT_PORT                  Router port (default 7092 — 7090 is the todo
-#                            container, 7091 the old multiorg runner, 7200 e2e).
+#                            container, 7091 the old hosting runner, 7200 e2e).
 #   TODO_REPO                Todo fixture repo URL or local path
 #                            (default https://github.com/tinycld/todo).
 #   MT_SUPERUSER_EMAIL/_PASSWORD    Control-plane superuser (defaults below).
@@ -48,7 +48,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 WS_ROOT="$(cd "${APP_DIR}/.." && pwd)"
-MULTIORG_DIR="${WS_ROOT}/multi-org"
+HOSTING_DIR="${WS_ROOT}/hosting"
 
 PORT="${MT_PORT:-7092}"
 BASE_DOMAIN="localhost"
@@ -61,14 +61,14 @@ TENANT_ADMIN_PASSWORD="${TENANT_ADMIN_PASSWORD:-HostedAdmin1234!}"
 TODO_REPO="${TODO_REPO:-https://github.com/tinycld/todo}"
 
 LOG_DIR="${SCRIPT_DIR}/hosted-install-logs"
-SERVER_LOG="${LOG_DIR}/serve-multi.log"
+SERVER_LOG="${LOG_DIR}/serve-router.log"
 REGISTRY_LOG="${LOG_DIR}/npm-registry.log"
 mkdir -p "${LOG_DIR}"
 : >"${SERVER_LOG}"
 : >"${REGISTRY_LOG}"
 
-if [ ! -d "${MULTIORG_DIR}" ]; then
-    echo "multi-org repo not found at ${MULTIORG_DIR} — assemble it as a workspace sibling first" >&2
+if [ ! -d "${HOSTING_DIR}" ]; then
+    echo "hosting repo not found at ${HOSTING_DIR} — assemble it as a workspace sibling first" >&2
     exit 1
 fi
 
@@ -142,8 +142,8 @@ BASE_VERSION="$(node -p "require('${WS_ROOT}/tinycld/package.json').version")"
 echo "   base version: tinycld@${BASE_VERSION}"
 
 # ---- 2. build + boot the router ----
-echo "== Building serve-multi from ${MULTIORG_DIR}"
-(cd "${MULTIORG_DIR}" && go build -o "${BIN_DIR}/serve-multi" ./cmd/serve-multi)
+echo "== Building serve-router from ${HOSTING_DIR}"
+(cd "${HOSTING_DIR}" && go build -o "${BIN_DIR}/serve-router" ./cmd/serve-router)
 
 PNPM_STORE="${PNPM_STORE:-$(cd "${WS_ROOT}" && pnpm store path 2>/dev/null || true)}"
 [ -n "${PNPM_STORE}" ] && echo "   builder pnpm store: ${PNPM_STORE}"
@@ -160,7 +160,7 @@ env \
     MT_BUILDER_PNPM_STORE="${PNPM_STORE}" \
     MT_SUPERUSER_EMAIL="${SUPERUSER_EMAIL}" \
     MT_SUPERUSER_PASSWORD="${SUPERUSER_PASSWORD}" \
-    "${BIN_DIR}/serve-multi" >>"${SERVER_LOG}" 2>&1 &
+    "${BIN_DIR}/serve-router" >>"${SERVER_LOG}" 2>&1 &
 SERVER_PID=$!
 
 # admin_api <method> <path> [curl args...] — control-plane call via the Host
@@ -179,7 +179,7 @@ echo "== Waiting for the control plane to answer /api/health"
 HEALTH_DEADLINE=$((SECONDS + 60))
 until curl -sf -H "Host: admin.${BASE_DOMAIN}:${PORT}" "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; do
     if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-        echo "serve-multi exited during startup" >&2
+        echo "serve-router exited during startup" >&2
         dump_server_log
         exit 1
     fi

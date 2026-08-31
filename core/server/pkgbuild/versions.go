@@ -12,7 +12,7 @@ import (
 )
 
 // Package version discovery (moved from coreserver/pkg_versions.go so the
-// multi-org router can serve the same discovery over the per-org control
+// hosting router can serve the same discovery over the per-org control
 // socket — D5's one-shared-implementation rule; the confined tenant has no
 // npm/git of its own).
 //

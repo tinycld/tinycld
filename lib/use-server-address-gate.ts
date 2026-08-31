@@ -94,7 +94,7 @@ export function useServerAddressGate(pathname: string): GateState {
         if (state.status !== 'unresolved') return
         // Routes that resolve the server address themselves must be exempt from the
         // →/connect redirect, or they get bounced before they can set it. /connect
-        // is the server picker; /pick-org is the org picker a multi-org apex sends
+        // is the server picker; /pick-org is the org picker a hosting apex sends
         // users to (it resolves an org's address the same way /connect resolves a
         // server's, so bouncing it would strand the user in a loop between the
         // two); /p/demo pins the public demo server (see app/p/demo.tsx), so a

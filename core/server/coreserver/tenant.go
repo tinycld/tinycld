@@ -14,7 +14,7 @@ import (
 )
 
 // TenantOptions configure RegisterTenant. Everything here is materialized or
-// resolved by the multi-org router and handed to the tenant process — a
+// resolved by the hosting router and handed to the tenant process — a
 // tenant never reads deployment-wide flags or env for these.
 type TenantOptions struct {
 	// Slug is the org's slug (identification and logging only; surfaced to
@@ -83,7 +83,7 @@ type TenantOptions struct {
 	QuotaLimits  quota.LimitsFunc
 }
 
-// RegisterTenant configures a multi-org TENANT process with the same core
+// RegisterTenant configures a hosting TENANT process with the same core
 // server behavior as the single-org app, minus what is genuinely host-only.
 //
 // This is the tenant-shaped counterpart of Register, and the two must be read
@@ -94,7 +94,7 @@ type TenantOptions struct {
 // because the previous arrangement (serve-org hand-rolling a subset) silently
 // dropped every guard core added, including the users field guard whose
 // absence let any member promote themselves to owner; see
-// multi-org/docs/FINDING-tenant-composition-gap.md.
+// hosting/docs/FINDING-tenant-composition-gap.md.
 //
 // Differences from Register, all deliberate:
 //   - No CLI flags, no migratecmd: the router owns deploys and the tenant is

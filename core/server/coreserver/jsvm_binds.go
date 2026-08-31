@@ -9,11 +9,11 @@ import (
 
 // The core→TS binding seam.
 //
-// The multi-org PocketBase fork calls jsvm.Config.OnInit on every JS VM (both
+// The hosting PocketBase fork calls jsvm.Config.OnInit on every JS VM (both
 // the hook loader and the executor/callback pools). We use it to install a
 // small, stable set of native `$`-bindings that package `.pb.ts` hooks can call
 // — the ONE auditable surface untrusted tenant TS is allowed to reach. Keeping
-// this surface minimal is a deliberate security goal (see the multi-org
+// this surface minimal is a deliberate security goal (see the hosting
 // HANDOFF): powerful Go capabilities (raw SQL, protocol codecs, filesystem)
 // stay host-side and are exposed only through these enumerable bindings, never
 // as an open-ended $app surface.

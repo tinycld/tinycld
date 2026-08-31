@@ -34,7 +34,7 @@ const ServerRebuildEnv = "TINYCLD_SERVER_REBUILD=1"
 // with the default binary name. Fields exist so hosts can inject their
 // sandbox (runners), their staging, and their configuration — and so tests
 // stub steps per-instance instead of mutating package state (a Pipeline value
-// is safe to use concurrently with others, which the multi-org builder's
+// is safe to use concurrently with others, which the hosting builder's
 // parallel jobs require).
 type Pipeline struct {
 	// Run executes buffered commands (go build). Default RunCmd.
@@ -145,7 +145,7 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// This step runs the installed members' own build scripts (and, via the
 	// generator postinstall, evaluates their manifest.ts). Installing a package is
 	// therefore equivalent to running its author's code on the host; single-tenant
-	// gates this to the org owner at the install endpoint, and the multi-org
+	// gates this to the org owner at the install endpoint, and the hosting
 	// builder confines the whole job. Do not "harden" this by sandboxing the
 	// build alone — member Go gets compiled into the server below and runs as the
 	// server at runtime regardless, so a build sandbox would buy no real isolation.
@@ -163,7 +163,7 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	if err := TimeStep(sink, "go build (server binary)", func() error {
 		out, e := p.run()(goDir, "go", "build", "-o", filepath.Join(appDir, p.binaryName()), ".")
 		if e != nil {
-			// Same rationale as runPnpmInstall: in the multi-org builder the
+			// Same rationale as runPnpmInstall: in the hosting builder the
 			// error string is all that leaves the job child, so the compile
 			// errors must ride it.
 			return ErrFromCmd("go build", lastLines(out, 30), e)
@@ -306,7 +306,7 @@ func (p Pipeline) runPnpmInstall(sink ProgressSink, buildDir string) error {
 		out, err = RunCmdStreamingEnv(onLine, buildDir, []string{ServerRebuildEnv}, "pnpm", "install", "--no-frozen-lockfile")
 	}
 	if err != nil {
-		// The failing output must ride the error itself: in the multi-org
+		// The failing output must ride the error itself: in the hosting
 		// builder this runs inside a re-exec'd job child whose structured
 		// failure line is all the router keeps — a bare "exit status 1" left
 		// the actual pnpm/generator error unreachable anywhere.

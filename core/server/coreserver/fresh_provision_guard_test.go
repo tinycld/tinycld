@@ -16,7 +16,7 @@ import (
 // fresh_provision_guard_test.go proves the fresh-provisioning decision is
 // ENFORCED, not just documented.
 //
-// The multi-org transition dropped the org-scoped schema (`orgs`, `user_org`)
+// The hosting transition dropped the org-scoped schema (`orgs`, `user_org`)
 // by editing already-shipped migrations in place, with no data-conversion
 // migration. That is coherent only because every database is provisioned
 // fresh: PocketBase never re-runs an applied migration, so a legacy database
@@ -53,7 +53,7 @@ func TestFreshProvisionGuard_RefusesLegacyDatabase(t *testing.T) {
 			t.Cleanup(func() { app.Cleanup() })
 
 			// Plant a bare legacy collection, as any database created by a
-			// pre-multi-org build would carry.
+			// pre-hosting build would carry.
 			if err := app.Save(core.NewBaseCollection(legacy)); err != nil {
 				t.Fatalf("plant legacy collection %s: %v", legacy, err)
 			}
@@ -62,8 +62,8 @@ func TestFreshProvisionGuard_RefusesLegacyDatabase(t *testing.T) {
 			if err == nil {
 				t.Fatalf("core migrations applied cleanly against a database containing legacy collection %q; expected the fresh-provisioning guard to refuse", legacy)
 			}
-			if !strings.Contains(err.Error(), legacy) || !strings.Contains(err.Error(), "pre-multi-org") {
-				t.Fatalf("guard refusal should name the legacy collection %q and say the database is pre-multi-org; got: %v", legacy, err)
+			if !strings.Contains(err.Error(), legacy) || !strings.Contains(err.Error(), "pre-hosting") {
+				t.Fatalf("guard refusal should name the legacy collection %q and say the database is pre-hosting; got: %v", legacy, err)
 			}
 		})
 	}

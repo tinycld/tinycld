@@ -7,7 +7,7 @@ Status: design only, and **the motivating premise turned out to be false** — r
 
 The plan justified TS search sources with "hosted tenants run no feature Go, so a
 hosted org can only search core's sources." **That is not true.** A tenant on the
-multi-org router runs the *same* generated registrar the self-hosted composition
+hosting router runs the *same* generated registrar the self-hosted composition
 does — `tenantmain.Options.RegisterExtras` is documented as "the tenant's feature
 Go … the SAME generated registrar the host composition uses (single-Register
 contract): a per-org build links exactly its package set." So a hosted org whose

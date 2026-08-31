@@ -15,7 +15,7 @@
         "db:reset:demo": "tsx scripts/reset-demo.ts",
         "db:seed": "tsx scripts/seed-db.ts",
         "e2e:serve": "tsx scripts/e2e-serve.ts --port ${E2E_PORT:-7200} --data-dir server/pb_test_data --releases-dir server/pb_test_releases",
-        "e2e:multi-org": "playwright test --config playwright.multi-org.config.ts",
+        "e2e:hosting": "playwright test --config playwright.hosting.config.ts",
         "typecheck": "tinycld-pkg typecheck",
         "lint": "tsx scripts/lint.ts",
         "lint:fix": "tsx scripts/lint.ts --write",

@@ -15,7 +15,7 @@ import (
 )
 
 // The external-TLS contract these tests pin: when the host declares it
-// terminates TLS itself (the multi-org router holds the wildcard cert and
+// terminates TLS itself (the hosting router holds the wildcard cert and
 // hands the tenant plaintext over a private unix socket), mailproto must
 //   - start with NO cert material configured, even in production mode,
 //   - serve exactly the injected listener,

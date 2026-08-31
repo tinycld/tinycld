@@ -41,7 +41,7 @@ describe('apex', () => {
         it('reports a current apex (JSON 404 + marker) as an apex', async () => {
             mockFetch(
                 'application/json',
-                JSON.stringify({ code: 404, data: { kind: 'multi_org_apex' } })
+                JSON.stringify({ code: 404, data: { kind: 'hosting_apex' } })
             )
             await expect(isApexAddress('https://tinycld.org')).resolves.toBe(true)
         })
@@ -74,7 +74,7 @@ describe('apex', () => {
             const body = JSON.stringify({
                 code: 404,
                 message: 'this host serves organizations, not an API',
-                data: { kind: 'multi_org_apex' },
+                data: { kind: 'hosting_apex' },
             })
             expect(looksLikeApexResponse('application/json', body)).toBe(true)
         })

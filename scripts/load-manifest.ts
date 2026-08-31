@@ -27,7 +27,7 @@ export interface PackageManifest {
     seed?: { script: string }
     tests?: { directory: string }
     build?: { script: string }
-    // mailListeners: this package serves mail protocols, so the multi-org
+    // mailListeners: this package serves mail protocols, so the hosting
     // ROUTER creates per-org mail sockets for orgs whose set includes it; the
     // package's single Register discovers them via coreserver's TenantContext
     // (host mode binds its own ports instead).
@@ -38,9 +38,9 @@ export interface PackageManifest {
     // TS imports the types as @tinycld/app-generated/<slug>-api.
     payloads?: { package: string }
     // Protocol capabilities. Core serves these; a package contributes only the
-    // config, so a multi-org tenant (which links no feature Go) still gets the
+    // config, so a hosting tenant (which links no feature Go) still gets the
     // protocol. The host materializes these blocks into the tenant's runtime
-    // config — see multi-org's controlplane/capabilities.go.
+    // config — see hosting's controlplane/capabilities.go.
     carddav?: {
         collection: string
         listFilter: string

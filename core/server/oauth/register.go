@@ -8,7 +8,7 @@ import (
 // Register wires the OAuth authorization server into an app.
 //
 // Called from coreserver.registerSharedCore, so a single-org deployment and a
-// multi-org tenant get exactly the same endpoints — an org hosted on the
+// hosting tenant get exactly the same endpoints — an org hosted on the
 // router must be able to authorize a CLI or a Zapier connection just like a
 // self-hosted box.
 func Register(app *pocketbase.PocketBase) {

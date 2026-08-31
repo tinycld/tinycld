@@ -15,8 +15,8 @@ describe('classifyBundleId', () => {
         expect(classifyBundleId('build-1718200000000-ios')).toBe('server')
         expect(classifyBundleId('build-1718200000000-android')).toBe('server')
     })
-    it('recognizes a multi-org content-addressed build id', () => {
-        // The multi-org builder mints recipe-<hash12>-<platform>, so two orgs
+    it('recognizes a hosting content-addressed build id', () => {
+        // The hosting builder mints recipe-<hash12>-<platform>, so two orgs
         // with the same package set advertise the SAME bundle. Without this the
         // hosted OTA harness classifies every real id as 'unknown' and fails at
         // precheck.

@@ -16,7 +16,7 @@ changes, no Maestro/Detox.
 2. Prechecks `GET /api/app/update` — the server must already offer a newer iOS
    bundle. Fails loudly if not (status 204). Two id shapes count as a server
    bundle: `build-<ts>-ios` from the single-tenant installer, and
-   `recipe-<hash12>-ios` from the multi-org builder (content-addressed, so two
+   `recipe-<hash12>-ios` from the hosting builder (content-addressed, so two
    orgs with the same package set share one bundle).
 3. Builds + boots a Release sim via `scripts/ios-simulator.sh --prod`. The app
    resolves its server from its own cached value (established by the manual

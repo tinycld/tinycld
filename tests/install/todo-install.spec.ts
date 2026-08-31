@@ -751,7 +751,7 @@ async function waitForExpoUpdate(
 const SKIP_OTA = process.env.PW_SKIP_OTA === '1'
 
 // A bundle id is `<buildId>-<platform>`. The single-tenant installer mints a
-// timestamped build id; the multi-org builder mints a content-addressed one
+// timestamped build id; the hosting builder mints a content-addressed one
 // (recipe-<hash12>), so a hosted org's bundles are shared by every org that
 // resolves to the same package set. Accept either shape.
 function bundleIdPattern(platform: 'ios' | 'android'): RegExp {
@@ -1140,7 +1140,7 @@ test.describe('todo version change', () => {
         //
         //    Single-org: this used to create an org + owner through the
         //    Organizations console. That console is now a static empty state
-        //    (the multi-org router owns provisioning), so the user is created
+        //    (the hosting router owns provisioning), so the user is created
         //    through the superuser REST API instead. The user is only a
         //    fixture — everything this spec actually asserts (registry
         //    version, schema, the todo UI) still runs through the UI.

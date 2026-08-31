@@ -13,7 +13,7 @@ import (
 )
 
 // This test is the tripwire for the tenant composition gap
-// (multi-org/docs/FINDING-tenant-composition-gap.md): serve-org once
+// (hosting/docs/FINDING-tenant-composition-gap.md): serve-org once
 // hand-rolled a subset of Register (jsvm + quota only), so every guard core
 // added after the copy silently never reached a tenant — including the users
 // field guard, whose absence let any member PATCH their own role to owner.

@@ -17,7 +17,7 @@ import (
 // The injection seam these tests pin: a host that supplies opts.Listen owns
 // the socket, and mailproto must serve on exactly that listener and never
 // fall back to binding the configured address. That is what lets a tenant
-// process run IMAP/SMTP without binding a port (multi-org HANDOFF §6). Each
+// process run IMAP/SMTP without binding a port (hosting HANDOFF §6). Each
 // test configures an address that CANNOT be bound — so any regression back to
 // the internal bind fails loudly instead of quietly binding a port.
 

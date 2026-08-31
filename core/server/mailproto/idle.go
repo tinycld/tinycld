@@ -9,7 +9,7 @@ import (
 // IDLE ends; record hooks publish notifications.
 //
 // Exposed as a type rather than a package global so each host owns its own
-// instance — a multi-org host running several tenants must not let one tenant's
+// instance — a hosting host running several tenants must not let one tenant's
 // notifications reach another's IDLE sessions.
 type IdleNotifier struct {
 	mu          sync.Mutex

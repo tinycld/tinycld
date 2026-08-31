@@ -17,7 +17,7 @@ import (
 // the per-hook difference equals its recorded host-only set — so a
 // registration added to one composition without deciding whether the other
 // gets it fails with the offending hook name, instead of silently drifting
-// the way the tenant once did (multi-org/docs/FINDING-tenant-composition-gap.md).
+// the way the tenant once did (hosting/docs/FINDING-tenant-composition-gap.md).
 // coreserver/composition_parity_test.go is the original of this pattern.
 //
 // app is any value exposing PocketBase's On* accessors — pass the

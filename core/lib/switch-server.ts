@@ -56,7 +56,7 @@ async function clearPerServerState(): Promise<void> {
 // (PB_SERVER_ADDR is a live Proxy the SDK re-reads per call), but the pbtsdb
 // collections, the QueryClient and PBTSDBProvider are module-eval singletons
 // bound to the old server, and clearStores() is terminal — nothing re-creates
-// them. Only a fresh module graph rebinds them. On the hosted multi-org router
+// them. Only a fresh module graph rebinds them. On the hosted hosting router
 // this is doubly required: each org runs a different build with a different
 // package set, so continuing on the previous bundle would be wrong regardless.
 //

@@ -69,7 +69,7 @@ the package does, passing a config for its own collection:
 
 | Package | What |
 |---|---|
-| `tinycld.org/core/carddav` | CardDAV/RFC-6352 protocol server + vCard codec for any collection. `Register(app, []Source)` mounts `/carddav` on serve (single-tenant); `HandlerFor(app, []Source)` returns a standalone `http.Handler` for one org (the multi-org host). A `Source` is the record↔vCard field map. |
+| `tinycld.org/core/carddav` | CardDAV/RFC-6352 protocol server + vCard codec for any collection. `Register(app, []Source)` mounts `/carddav` on serve (single-tenant); `HandlerFor(app, []Source)` returns a standalone `http.Handler` for one org (the hosting host). A `Source` is the record↔vCard field map. |
 | `tinycld.org/core/caldav` | CalDAV/RFC-4791 protocol server + iCalendar codec over a calendars+events collection pair. Same `Register` / `HandlerFor` split. A `Source` carries the two collection names, the field maps, `Defaults` for schema-required fields iCalendar may omit, and an optional `OnError` reporter. Authorization is NOT a config field: core evaluates the collections' own PocketBase rules via `app.CanAccessRecord`. Exposes four TS hook points (below). |
 | `tinycld.org/core/fts` | SQLite FTS5 index sync + search for any collection. `Register(app, []Config)` binds index-sync record hooks + a `GET /api/{slug}/search` route; `Search(app, cfg, userID, opts)` runs an owner-scoped query. The FTS5 virtual table is created by the package's pb-migration. |
 | `tinycld.org/core/audit` | `RegisterCollection(app, name, *CollectionConfig)` — binds create/update/delete audit hooks writing to `audit_logs`, with field diffs, delete snapshots, redaction, and a customizable label extractor. |
@@ -78,7 +78,7 @@ the package does, passing a config for its own collection:
 These are **libraries, not boot-time wiring**: a package contributes the config
 (a `carddav.Source`, an `fts.Config`, an audit label extractor) from its own Go so
 there is exactly one copy of the heavy protocol/index code, shared by every
-consumer — the single-tenant app (via each package's `Register`) and the multi-org
+consumer — the single-tenant app (via each package's `Register`) and the hosting
 host (which imports `carddav.HandlerFor` directly to serve tenants, which link
 no feature package of their own). See `contacts/server/register.go` for the
 reference: it builds a `carddav.Source` + `fts.Config` and calls these.

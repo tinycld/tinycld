@@ -40,7 +40,7 @@ export default function ConnectWeb() {
 
     async function connectTo(addr: string) {
         // probeServer, not probe: an address that merely answers is not
-        // necessarily a server. A multi-org apex returns 200 for every path, so
+        // necessarily a server. A hosting apex returns 200 for every path, so
         // liveness alone would admit it. Web has no picker route — the router
         // serves its own org-finder page at the apex — so the apex case surfaces
         // here as an ordinary (accurate) error rather than a redirect.

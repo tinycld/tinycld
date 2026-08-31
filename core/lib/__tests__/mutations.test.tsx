@@ -133,7 +133,7 @@ describe('useMutation generator detection', () => {
 })
 
 // A mutation without an explicit onError used to fail as an optimistic update
-// that silently reverted — the pre-multi-org review found ~36 call sites where
+// that silently reverted — the pre-hosting review found ~36 call sites where
 // a toggle or rename just no-opped with no feedback and nothing in Sentry.
 // The wrapper now installs a default onError (toast + captureException) so a
 // failure is always surfaced somewhere; an explicit onError replaces it.

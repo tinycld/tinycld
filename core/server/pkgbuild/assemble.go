@@ -13,7 +13,7 @@ import (
 // DefaultPnpmStoreDir is the fixed content-addressable store baked into the
 // single-tenant runtime image. Reusing it makes a per-build `pnpm install`
 // hardlink-fast instead of re-downloading the ~2GB dependency graph. See the
-// Dockerfile store comment. Hosts with a different layout (the multi-org
+// Dockerfile store comment. Hosts with a different layout (the hosting
 // builder) override it via ScaffoldOptions.
 const DefaultPnpmStoreDir = "/workspace/.pnpm-store"
 
@@ -59,7 +59,7 @@ func (o ScaffoldOptions) storeDir() string {
 // MemberSource materializes workspace members into a build dir. It is the
 // host seam the design doc names: the single-tenant host fetches changed
 // members and copies unchanged ones from its currently-active build; the
-// multi-org builder always fetches (it has no "current build").
+// hosting builder always fetches (it has no "current build").
 //
 // Both methods report the member's tarball integrity ("sha256:<hex>" of the
 // exact bytes it was materialized from) — the fact RecipeHash keys the build
@@ -339,7 +339,7 @@ func writePnpmWorkspaceYAML(buildDir string, members []string, storeDir string) 
 
 // ReadOverrides loads the version pins from package-versions.json under root —
 // the overrides input of RecipeHash. Exported for hosts that must compute the
-// recipe hash from the scaffold source BEFORE a build dir exists (the multi-org
+// recipe hash from the scaffold source BEFORE a build dir exists (the hosting
 // builder's cache-hit check); RecipeHashForBuild covers the post-assemble case.
 func ReadOverrides(root string) (map[string]string, error) {
 	return readOverrides(root)

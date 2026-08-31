@@ -29,7 +29,7 @@ func main() {
 	coreserver.LoadEnvFile()
 
 	// Tenant mode (the dual-mode binary of DESIGN-org-package-agency D5): a
-	// multi-org router spawned this binary to serve ONE org on a unix socket.
+	// hosting router spawned this binary to serve ONE org on a unix socket.
 	// The flag contract is exactly serve-org's, so a per-org build artifact is
 	// a drop-in replacement for the shared tenant binary — --org-dir is the
 	// discriminator, since no host-mode invocation uses that flag. The SAME
@@ -84,7 +84,7 @@ func main() {
 	app.RootCmd.AddCommand(coreserver.NewExportTypesCommand(app, coreserver.DefaultTypesDir(), ""))
 
 	// `create-owner` mints the first app account against an existing pb_data.
-	// The multi-org router runs it on this binary when provisioning an org:
+	// The hosting router runs it on this binary when provisioning an org:
 	// a hosted tenant never binds the setup wizard's routes, so without it a
 	// new org serves correctly but has no user who can log in.
 	app.RootCmd.AddCommand(coreserver.NewCreateOwnerCommand(app))

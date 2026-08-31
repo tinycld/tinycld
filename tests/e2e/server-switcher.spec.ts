@@ -8,7 +8,7 @@ import { appShell, login } from './helpers'
 // states one origin can produce — the section renders, the current server is
 // listed and marked active, and the drawer's other rows survive alongside it.
 // It CANNOT exercise an actual cross-origin switch, because that needs two
-// servers on two hostnames. That case belongs to the multi-org harness.
+// servers on two hostnames. That case belongs to the hosting harness.
 //
 // Web is deliberately the platform under test here rather than a stand-in for
 // native: on web a row navigates to the target origin (localStorage is

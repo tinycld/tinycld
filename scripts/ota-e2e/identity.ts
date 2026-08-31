@@ -3,7 +3,7 @@
 // class to the other is an unambiguous "the app reloaded into a new bundle".
 //   embedded-<appVersion>      — baked into the binary (plugins/with-app-updater.cjs)
 //   build-<unixMilli>-<plat>   — minted by the single-tenant installer
-//   recipe-<hash12>-<plat>     — minted by the multi-org builder, content-addressed
+//   recipe-<hash12>-<plat>     — minted by the hosting builder, content-addressed
 //                                on the recipe hash, so two orgs with the same
 //                                package set advertise the SAME bundle id
 
