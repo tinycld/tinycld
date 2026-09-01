@@ -44,6 +44,17 @@ type TenantContext struct {
 	// ControlSocket is the router-bound deploy-proposal socket path (empty =
 	// no deploy channel).
 	ControlSocket string
+	// LimitsConfig is the path the router materialized the org's limits.json
+	// to (empty = none). This package does not read it; it is carried so a
+	// composition layered on top can, without re-parsing the command line.
+	LimitsConfig string
+	// ConfigSocket is the socket the router pushes live runtime-config updates
+	// on (empty = no push channel).
+	ConfigSocket string
+	// QuotaConfig is the path the router materialized the org's quota.json to
+	// (empty = none). It carries the storage-bearing source list, which a
+	// composition layered on top needs to report current usage.
+	QuotaConfig string
 }
 
 // tenantContextKey namespaces the store entry; the app store is shared with

@@ -49,6 +49,22 @@ type TenantOptions struct {
 	// posture).
 	ControlSocket string
 
+	// LimitsConfig is the path the router materialized the org's limits.json
+	// to (empty = none). RegisterTenant does not read it — it is carried
+	// straight onto TenantContext so a composition layered on top can, without
+	// re-parsing the command line.
+	LimitsConfig string
+
+	// ConfigSocket is the socket the router pushes live runtime-config updates
+	// on (empty = no push channel). Carried onto TenantContext unread, same as
+	// LimitsConfig.
+	ConfigSocket string
+
+	// QuotaConfig is the path the router materialized the org's quota.json to
+	// (empty = none). Carried onto TenantContext unread; a composition layered
+	// on top needs it to report current usage from the same source list.
+	QuotaConfig string
+
 	// RegisterExtras is the tenant's seam for FEATURE package Go — the
 	// counterpart of Options.RegisterExtras in the single-org composition.
 	// The dual-mode binary passes its generated registerPackageExtensions —
@@ -122,6 +138,9 @@ func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
 		Slug:          opts.Slug,
 		Mail:          opts.MailListeners,
 		ControlSocket: opts.ControlSocket,
+		LimitsConfig:  opts.LimitsConfig,
+		ConfigSocket:  opts.ConfigSocket,
+		QuotaConfig:   opts.QuotaConfig,
 	})
 
 	registerSharedEarly(app)
