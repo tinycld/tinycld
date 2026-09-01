@@ -91,7 +91,7 @@ type Options struct {
 	// which reads the `settings` collection — correct for a single-org
 	// deployment. A hosting tenant passes a resolver whose org ceiling comes
 	// from the router's runtime config instead, so the org cannot raise the
-	// plan limit it was sold.
+	// ceiling set for it.
 	QuotaLimits quota.LimitsFunc
 }
 
@@ -210,7 +210,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// the router-materialized .runtime/app.json.
 	RegisterSetupBootstrap(app)
 	// Marketing-site demo machinery (shared demo user, nightly reset cron).
-	// Demos run on the single-org deployment, never inside a customer org.
+	// Demos run on the single-org deployment, never inside a hosted org.
 	RegisterDemoStart(app)
 	RegisterDemoLead(app)
 	RegisterDemoReset(app)

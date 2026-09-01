@@ -381,7 +381,7 @@ func TestFixedLimitsIgnoresTenantSettingsForOrgCeiling(t *testing.T) {
 	// The router said 50 MB. That is what must hold.
 	limits := FixedLimits(50 << 20)(app)
 	if limits.PerOrg != 50<<20 {
-		t.Fatalf("PerOrg = %d, want the router's %d — a tenant must not be able to raise its own plan limit",
+		t.Fatalf("PerOrg = %d, want the router's %d — a tenant must not be able to raise its own ceiling",
 			limits.PerOrg, int64(50<<20))
 	}
 }

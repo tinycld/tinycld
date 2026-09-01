@@ -77,7 +77,7 @@ type TenantOptions struct {
 	// router's materialized quota.json. QuotaLimits must resolve the org
 	// ceiling from the ROUTER's runtime config (quota.FixedLimits), never
 	// from the org's own settings — its superusers must not be able to raise
-	// the plan they were sold. Empty sources or a nil LimitsFunc disable
+	// the ceiling set for them. Empty sources or a nil LimitsFunc disable
 	// enforcement, same as the single-org app.
 	QuotaSources []quota.Source
 	QuotaLimits  quota.LimitsFunc
