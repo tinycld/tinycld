@@ -57,7 +57,7 @@ type Limits struct {
 
 	// PerOrg caps the whole deployment's bytes across every source.
 	//
-	// Under hosting this is the plan limit the ROUTER assigns, delivered in
+	// Under hosting this is the ceiling the ROUTER assigns, delivered in
 	// the org's runtime config — deliberately not something the org's own
 	// superuser can raise by editing a settings row.
 	PerOrg int64

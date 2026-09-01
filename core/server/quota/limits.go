@@ -16,7 +16,7 @@ const (
 // so only a superuser can change them.
 //
 // Under hosting the ORG ceiling must NOT come from here: each tenant has its
-// own superusers, so an org could raise the plan limit you sold it. The router
+// own superusers, so an org could raise the ceiling set for it. The router
 // supplies that value instead; see FixedLimits.
 func SettingsLimits(app core.App) Limits {
 	return Limits{

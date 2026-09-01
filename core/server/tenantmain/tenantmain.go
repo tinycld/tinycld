@@ -74,6 +74,72 @@ type Options struct {
 	// and per-org facts (slug, mail listeners, control socket) reach feature
 	// packages through coreserver's TenantContext, stamped before this runs.
 	RegisterExtras func(app *pocketbase.PocketBase)
+
+	// QuotaLimits overrides how the tenant resolves its storage ceilings.
+	// Nil (the default) derives them from .runtime/quota.json, read once at
+	// boot. A composition that must reflect limit changes WITHOUT a respawn
+	// supplies its own resolver here; it is called per write, so it must be
+	// cheap (a cached struct read, not a query).
+	QuotaLimits quota.LimitsFunc
+
+	// QuotaSources overrides the storage-bearing collections the ceiling is
+	// computed over. Nil derives them from .runtime/quota.json, which is
+	// correct for every router-spawned tenant.
+	QuotaSources []quota.Source
+
+	// RegisterRuntime lets a composition register behavior that needs BOTH the
+	// app and the runtime-config paths this package parsed from the command
+	// line. Neither is available to the caller before Run: the app does not
+	// exist yet, and re-parsing os.Args to recover the paths would duplicate
+	// this flagset and drift from it.
+	//
+	// Distinct from RegisterExtras, which registers feature Go inside
+	// RegisterTenant and cannot fail; this runs earlier, receives the parsed
+	// runtime paths, and may abort the boot. The two are independent — a
+	// composition may set either, both, or neither.
+	//
+	// It runs after the app is constructed and before coreserver.RegisterTenant,
+	// which is the only window that works. Registering later would miss the
+	// composition; the returned LimitsFunc has to exist by then because
+	// quota.Register binds NO hooks at all when its LimitsFunc is nil, so a
+	// resolver supplied afterwards would leave enforcement silently off.
+	//
+	// A non-nil returned LimitsFunc takes precedence over Options.QuotaLimits;
+	// returning nil leaves that field's resolution untouched. An error aborts
+	// the boot and is reported on --ready-fd, so a composition whose limits
+	// failed to register never comes up claiming to be healthy.
+	//
+	// It is called on the goroutine that runs Run, before any socket this
+	// package binds, so an implementation may use process-wide state such as
+	// syscall.Umask without racing core's own binds.
+	RegisterRuntime func(app *pocketbase.PocketBase, cfg RuntimeConfig) (quota.LimitsFunc, error)
+}
+
+// RuntimeConfig carries the router-materialized runtime paths that this package
+// parses but does not itself consume, so a composition layered on top can reach
+// them without re-parsing the command line.
+type RuntimeConfig struct {
+	// OrgDir is the org's data directory (--org-dir).
+	OrgDir string
+
+	// LimitsConfig is the path the router materialized the org's limits.json to
+	// (--limits-config). Empty means no router materialized one, which a
+	// consumer should treat as "unconstrained", not as an error — a standalone
+	// boot has no hosting runtime behind it.
+	LimitsConfig string
+
+	// ConfigSocket is the unix socket the router pushes live runtime-config
+	// updates on (--cfg-socket). Empty means no push channel: whatever the
+	// files carried at spawn stands until the next spawn.
+	ConfigSocket string
+
+	// QuotaConfig is the path the router materialized the org's quota.json to
+	// (--quota-config). This package already loads it for its own enforcement
+	// (quotaCfg in run()); it is handed here too so a composition layered on
+	// top — e.g. one that reports current usage — can read the same source
+	// list via tenantcfg.LoadQuota + tenantcfg.DecodeQuota without re-parsing
+	// the command line. Empty means no router materialized one.
+	QuotaConfig string
 }
 
 // Run parses tenant flags, composes the org's app, and serves until
@@ -94,12 +160,14 @@ func Run(opts Options) error {
 		webdavConfig = fs.String("webdav-config", "", "path to the org's materialized webdav.json")
 		caldavConfig = fs.String("caldav-config", "", "path to the org's materialized caldav.json")
 		quotaConfig  = fs.String("quota-config", "", "path to the org's materialized quota.json")
+		limitsConfig = fs.String("limits-config", "", "path to the org's materialized limits.json")
 		appConfig    = fs.String("app-config", "", "path to the org's materialized app.json (public URL + proxy trust)")
 		davConfig    = fs.String("carddav-config", "", "path to the CardDAV source JSON")
 		imapSocket   = fs.String("imap-socket", "", "unix socket to serve IMAP on (router-managed; empty = no IMAP)")
 		smtpSocket   = fs.String("smtp-socket", "", "unix socket to serve SMTP submission on (router-managed; empty = no submission)")
 		mxSocket     = fs.String("mx-socket", "", "unix socket to serve inbound MX SMTP on (router-managed; empty = no inbound)")
 		ctlSocket    = fs.String("control-socket", "", "router-bound unix socket for deploy proposals (empty = no deploy channel)")
+		cfgSocket    = fs.String("cfg-socket", "", "unix socket to serve the router's live config pushes on (empty = no push channel)")
 		drain        = fs.Duration("drain", 10*time.Second, "graceful shutdown budget")
 		confinePkg   = fs.String("confine-packages", "", "remount this dir read-only in our mount namespace")
 	)
@@ -129,14 +197,19 @@ func Run(opts Options) error {
 			caldav:  *caldavConfig,
 			webdav:  *webdavConfig,
 			quota:   *quotaConfig,
+			limits:  *limitsConfig,
 			app:     *appConfig,
 		},
-		confinePkg: *confinePkg,
-		mailSocks:  mailSocketPaths{imap: *imapSocket, smtp: *smtpSocket, mx: *mxSocket},
-		ctlSocket:  *ctlSocket,
-		drain:      *drain,
-		ready:      ready,
-		extras:     opts.RegisterExtras,
+		confinePkg:   *confinePkg,
+		mailSocks:    mailSocketPaths{imap: *imapSocket, smtp: *smtpSocket, mx: *mxSocket},
+		ctlSocket:    *ctlSocket,
+		cfgSocket:    *cfgSocket,
+		drain:        *drain,
+		ready:        ready,
+		extras:       opts.RegisterExtras,
+		quotaLimits:  opts.QuotaLimits,
+		quotaSources: opts.QuotaSources,
+		runtime:      opts.RegisterRuntime,
 	}
 	if err := run(cfg); err != nil {
 		reportNotReady(ready, err)
@@ -153,6 +226,12 @@ type mailSocketPaths struct {
 
 type configPaths struct {
 	carddav, caldav, webdav, quota, app string
+	// limits is the path to the org's materialized limits.json. This package
+	// does not interpret it — the values it carries are the operator's, and
+	// core has no opinion on them — it only hands the path to
+	// Options.RegisterRuntime so the composition that DOES understand it can
+	// read it without re-parsing the command line.
+	limits string
 }
 
 type runConfig struct {
@@ -162,9 +241,17 @@ type runConfig struct {
 	confinePkg               string
 	mailSocks                mailSocketPaths
 	ctlSocket                string
-	drain                    time.Duration
-	ready                    *os.File
-	extras                   func(app *pocketbase.PocketBase)
+	// cfgSocket is where the tenant serves the router's live config pushes —
+	// the mirror of ctlSocket, which the tenant DIALS. The composition that
+	// binds it lives outside this module, same as configs.limits, and reaches it
+	// through Options.RegisterRuntime.
+	cfgSocket    string
+	drain        time.Duration
+	ready        *os.File
+	extras       func(app *pocketbase.PocketBase)
+	quotaLimits  quota.LimitsFunc
+	quotaSources []quota.Source
+	runtime      func(app *pocketbase.PocketBase, cfg RuntimeConfig) (quota.LimitsFunc, error)
 }
 
 func run(cfg runConfig) error {
@@ -207,12 +294,33 @@ func run(cfg runConfig) error {
 		DBConnect: core.NoAttachDBConnect,
 	})
 
+	// The layered composition's window: the app exists, and nothing this
+	// package binds has been bound yet, so a hook here may touch process-wide
+	// state (umask) without racing our socket binds. Its limits resolver must
+	// be in hand BEFORE RegisterTenant, because quota.Register binds no hooks
+	// at all against a nil LimitsFunc.
+	quotaLimits := cfg.quotaLimits
+	if cfg.runtime != nil {
+		limits, err := cfg.runtime(app, RuntimeConfig{
+			OrgDir:       cfg.orgDir,
+			LimitsConfig: cfg.configs.limits,
+			ConfigSocket: cfg.cfgSocket,
+			QuotaConfig:  cfg.configs.quota,
+		})
+		if err != nil {
+			return fmt.Errorf("register runtime: %w", err)
+		}
+		if limits != nil {
+			quotaLimits = limits
+		}
+	}
+
 	// The full shared core composition: guards, invites, account lifecycle,
 	// notify, realtime, audit, quota, sandboxed jsvm with the `$`-binding and
 	// hook-point seams, and the DAV protocol servers from the materialized
 	// source lists. The org storage ceiling comes from the router's runtime
 	// config (FixedLimits), NOT this org's settings — its superusers must not
-	// be able to raise the plan they were sold.
+	// be able to raise a ceiling the operator set for them.
 	if err := coreserver.RegisterTenant(app, coreserver.TenantOptions{
 		Slug:           cfg.slug,
 		HooksDir:       filepath.Join(cfg.orgDir, "pb_hooks"),
@@ -223,8 +331,8 @@ func run(cfg runConfig) error {
 		ControlSocket:  cfg.ctlSocket,
 		RegisterExtras: cfg.extras,
 		MailListeners:  tenantMailListeners(cfg.mailSocks),
-		QuotaSources:   tenantcfg.DecodeQuota(quotaCfg.Sources),
-		QuotaLimits:    quota.FixedLimits(quotaCfg.StorageLimitBytes),
+		QuotaSources:   resolveQuotaSources(cfg.quotaSources, quotaCfg.Sources),
+		QuotaLimits:    resolveQuotaLimits(quotaLimits, quotaCfg.StorageLimitBytes),
 	}); err != nil {
 		return fmt.Errorf("register tenant: %w", err)
 	}
@@ -446,4 +554,23 @@ func reportNotReady(f *os.File, cause error) {
 	body, _ := json.Marshal(map[string]any{"ok": false, "pid": os.Getpid(), "error": cause.Error()})
 	_, _ = f.Write(append(body, '\n'))
 	_ = f.Close()
+}
+
+// resolveQuotaLimits picks the caller's limits resolver when supplied,
+// otherwise the boot-time constant from quota.json. Split out so the choice is
+// testable without booting a tenant.
+func resolveQuotaLimits(override quota.LimitsFunc, bootPerOrg int64) quota.LimitsFunc {
+	if override != nil {
+		return override
+	}
+	return quota.FixedLimits(bootPerOrg)
+}
+
+// resolveQuotaSources prefers the caller's source list, falling back to the
+// one the router materialized into quota.json.
+func resolveQuotaSources(override []quota.Source, fromFile []tenantcfg.QuotaSource) []quota.Source {
+	if override != nil {
+		return override
+	}
+	return tenantcfg.DecodeQuota(fromFile)
 }
