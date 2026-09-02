@@ -3,10 +3,9 @@
 //
 // This is the standalone binary the workspace build uses (via
 // app/scripts/export-types.ts → invoked by `pnpm install`'s postinstall).
-// Pure Go, no CGO, imports only core/coreserver — so it builds quickly
-// inside the lean web-builder Docker stage without dragging in the
-// feature-server CGO dependency chain (goheif, …) that the full
-// `tinycld` binary needs.
+// Imports only core/coreserver — so it builds quickly inside the lean
+// web-builder Docker stage without dragging in the feature-server
+// dependency chain that the full `tinycld` binary needs.
 //
 // The full `tinycld` binary exposes the same operation as a
 // `tinycld export-types` subcommand for ad-hoc dev use. Both code paths

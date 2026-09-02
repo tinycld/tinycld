@@ -73,14 +73,15 @@ export DEBIAN_FRONTEND=noninteractive
 # TinyCld self-rebuilds: its in-app package installer runs pnpm install + go build
 # + expo export on the HOST, so the host needs the full toolchain, not just a
 # runtime. This is the Dockerfile runtime-stage apt list + Node + Go.
-#   cgo: gcc/g++ (goheif/libde265, the one remaining CGo dependency)
+#   No C compiler: the build is CGo-free (omnidoc decodes HEIF in pure Go), so
+#   both the release binary and installer-built server packages use CGO_ENABLED=0
 #   sqlite3 CLI: the installer's DB backup step; gosu: privilege drop in entrypoint
 # ------------------------------------------------------------------------------
 log "installing apt packages"
 apt-get update -qq
 apt-get install -y --no-install-recommends \
     ca-certificates libffi8 libcap2-bin curl git \
-    build-essential gcc g++ sqlite3 gnupg gosu rsync
+    sqlite3 gnupg gosu rsync
 
 if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -c2- | cut -d. -f1)" != "$NODE_MAJOR" ]; then
     log "installing Node ${NODE_MAJOR}.x"
@@ -175,6 +176,10 @@ Environment=PRIMARY_DOMAIN=${DOMAIN}
 Environment=ADDITIONAL_DOMAINS=${ADDITIONAL_DOMAINS}
 Environment=AUTOCERT_ENABLED=true
 Environment=PUBLIC_SCHEME=https
+# The in-app package installer runs `go build` for a package's server module.
+# The host has no C compiler (the build is CGo-free), so pin cgo off for those
+# builds rather than relying on Go's default, which would look for gcc.
+Environment=CGO_ENABLED=0
 EnvironmentFile=${ENV_FILE}
 ExecStart=/opt/tinycld-entrypoint.sh
 Restart=always

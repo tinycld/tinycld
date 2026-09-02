@@ -449,12 +449,20 @@ provision_base_remote() {
         # and metro maps the app-updater specifier to modules); assets/lib/public/
         # global.css/babel/tsconfig/uniwind -> metro resolution failures;
         # third_party -> the generator hard-fails on the missing vendored
-        # PocketBase fork (core go.mod replaces ../../third_party/pocketbase).
+        # PocketBase fork (core go.mod replaces ../../third_party/pocketbase);
+        # cli -> the generator emitCliWiring writes cli/cli_extensions.go and
+        # dies with ENOENT when the directory is absent, so every base rebuild
+        # fails before go build; index.js -> package.json main points at it (the
+        # bundle entry installing the crypto polyfill before any route module),
+        # so expo export cannot resolve an entry without it. Verified against
+        # the runtime image, which bakes index.js and exports fine WITHOUT
+        # app.config.ts or react-native-web.d.ts, so neither is needed here.
         # NOTE: this comment lives inside a single-quoted sh -lc body, so NO
         # apostrophes here (one would close the quote and break the parse).
-        for d in app assets babel.config.cjs core expo-env.d.ts global.css lib \
-                 metro.config.cjs modules package-scripts plugins public scripts \
-                 server third_party tsconfig.json uniwind-types.d.ts app.json package.json; do
+        for d in app assets babel.config.cjs cli core expo-env.d.ts global.css \
+                 index.js lib metro.config.cjs modules package-scripts plugins \
+                 public scripts server third_party tsconfig.json \
+                 uniwind-types.d.ts app.json package.json; do
             [ -e "/workspace/current/$d" ] && cp -a "/workspace/current/$d" .
         done
         git add -A && git commit -qm "base v'"${CORE_CUR}"'"
@@ -509,14 +517,14 @@ MIG
 provision_base_remote
 
 # Phase C1 — upgrade core to v-next via the base row's version picker.
-run_phase 'upgrade core to v0.0.5' 'upgrade core'
+run_phase "upgrade core to v${CORE_NEXT}" 'upgrade core'
 await_restart "post-core-upgrade"
 
 # Phase C2 — verify the upgrade: registry version advanced + base_probe exists.
 run_phase 'core upgrade landed' 'verify core upgrade'
 
 # Phase C3 — downgrade core back to the baked version (runs base_probe DOWN).
-run_phase 'downgrade core to v0.0.4' 'downgrade core'
+run_phase "downgrade core to v${CORE_CUR}" 'downgrade core'
 await_restart "post-core-downgrade"
 
 # Phase C4 — verify the downgrade: version reverted + base_probe dropped.
