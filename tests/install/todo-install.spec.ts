@@ -103,10 +103,17 @@ const SUPERUSER_PASSWORD = process.env.ADMIN_USER_PW || 'TodoSmoke1234!'
 // `<git-spec>#<safe-ref>` and `npm pack` clones the repo at that tag.
 //
 // PW_TODO_SPEC_V1 overrides the default git spec: the HOSTED runner
-// (run-hosted-install.sh) passes an npm spec (`@tinycld/todo@1.0.0`, resolved
-// against its fixture registry) because hosted installs refuse git specs — a
-// flat {name: version} org lockfile has nowhere to carry git provenance
-// (coreserver/pkg_hosted.go's recorded limitation).
+// (hosting/tests/install/run-hosted-install.sh, in the sibling repo) passes an
+// npm spec (`@tinycld/todo@1.0.0`, resolved against its fixture registry)
+// because hosted installs refuse git specs — a flat {name: version} org
+// lockfile has nowhere to carry git provenance (coreserver/pkg_hosted.go's
+// recorded limitation).
+//
+// This and PW_PROGRESS_MIN_PCT below are the CROSS-REPO CONTRACT between this
+// spec and that runner: this file is the single source of truth for the phases
+// (duplicating 1,400 lines into hosting would drift), and the two env vars are
+// the only places the hosted pipeline differs. Changing either name breaks a
+// runner in another repo, so treat them as public API.
 const TODO_SPEC_V1 = process.env.PW_TODO_SPEC_V1 || 'github:tinycld/todo#v1.0.0'
 
 // Buggy fixture tags (see FIXTURE CONTRACT above). server + migration roll back
@@ -971,7 +978,8 @@ test.describe('todo version change', () => {
         // live stream without coupling to a specific percentage. (A frozen 0% bar
         // here is the signature of the events-endpoint 403 regression.)
         //
-        // PW_PROGRESS_MIN_PCT overrides the threshold: the HOSTED pipeline's
+        // PW_PROGRESS_MIN_PCT overrides the threshold (cross-repo contract —
+        // see the PW_TODO_SPEC_V1 note above): the HOSTED pipeline's
         // stages sit at 10% ("Building artifact") for the whole router-side
         // build — the org keeps serving while the builder works, and the ctl
         // build call streams no intermediate progress — so the hosted runner
