@@ -509,14 +509,14 @@ MIG
 provision_base_remote
 
 # Phase C1 — upgrade core to v-next via the base row's version picker.
-run_phase 'upgrade core to v0.0.5' 'upgrade core'
+run_phase "upgrade core to v${CORE_NEXT}" 'upgrade core'
 await_restart "post-core-upgrade"
 
 # Phase C2 — verify the upgrade: registry version advanced + base_probe exists.
 run_phase 'core upgrade landed' 'verify core upgrade'
 
 # Phase C3 — downgrade core back to the baked version (runs base_probe DOWN).
-run_phase 'downgrade core to v0.0.4' 'downgrade core'
+run_phase "downgrade core to v${CORE_CUR}" 'downgrade core'
 await_restart "post-core-downgrade"
 
 # Phase C4 — verify the downgrade: version reverted + base_probe dropped.
