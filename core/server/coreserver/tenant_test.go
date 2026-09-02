@@ -189,3 +189,36 @@ func TestTenantDisabledUserRefusedAuth(t *testing.T) {
 		t.Fatalf("disabled auth refresh: want 403, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// A package's Register receives only the app, so router-supplied paths reach it
+// through the tenant context — the same channel ControlSocket already uses.
+func TestTenantContext_CarriesTheRuntimePaths(t *testing.T) {
+	app := pocketbase.NewWithConfig(pocketbase.Config{
+		DefaultDataDir:  t.TempDir(),
+		HideStartBanner: true,
+	})
+	if err := RegisterTenant(app, TenantOptions{
+		HooksDir:      t.TempDir(),
+		MigrationsDir: t.TempDir(),
+		HooksPoolSize: 1,
+		LimitsConfig:  "/materialized/limits.json",
+		ConfigSocket:  "/materialized/cfg.sock",
+		QuotaConfig:   "/materialized/quota.json",
+	}); err != nil {
+		t.Fatalf("RegisterTenant: %v", err)
+	}
+
+	tc, ok := GetTenantContext(app)
+	if !ok {
+		t.Fatalf("GetTenantContext: want ok, got not-a-tenant")
+	}
+	if tc.LimitsConfig != "/materialized/limits.json" {
+		t.Errorf("LimitsConfig: want %q, got %q", "/materialized/limits.json", tc.LimitsConfig)
+	}
+	if tc.ConfigSocket != "/materialized/cfg.sock" {
+		t.Errorf("ConfigSocket: want %q, got %q", "/materialized/cfg.sock", tc.ConfigSocket)
+	}
+	if tc.QuotaConfig != "/materialized/quota.json" {
+		t.Errorf("QuotaConfig: want %q, got %q", "/materialized/quota.json", tc.QuotaConfig)
+	}
+}

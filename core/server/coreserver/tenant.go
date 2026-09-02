@@ -49,6 +49,22 @@ type TenantOptions struct {
 	// posture).
 	ControlSocket string
 
+	// LimitsConfig is the path the router materialized the org's limits.json
+	// to (empty = none). RegisterTenant does not read it — it is carried
+	// straight onto TenantContext so a composition layered on top can, without
+	// re-parsing the command line.
+	LimitsConfig string
+
+	// ConfigSocket is the socket the router pushes live runtime-config updates
+	// on (empty = no push channel). Carried onto TenantContext unread, same as
+	// LimitsConfig.
+	ConfigSocket string
+
+	// QuotaConfig is the path the router materialized the org's quota.json to
+	// (empty = none). Carried onto TenantContext unread; a composition layered
+	// on top needs it to report current usage from the same source list.
+	QuotaConfig string
+
 	// RegisterExtras is the tenant's seam for FEATURE package Go — the
 	// counterpart of Options.RegisterExtras in the single-org composition.
 	// The dual-mode binary passes its generated registerPackageExtensions —
@@ -79,6 +95,11 @@ type TenantOptions struct {
 	// from the org's own settings — its superusers must not be able to raise
 	// the ceiling set for them. Empty sources or a nil LimitsFunc disable
 	// enforcement, same as the single-org app.
+	//
+	// QuotaLimits is resolved before the app exists, so it can only carry a
+	// boot-time ceiling. A package that must reflect a ceiling change WITHOUT
+	// a respawn calls SetStorageLimitsResolver from its Register instead, and
+	// that resolver takes precedence over this field.
 	QuotaSources []quota.Source
 	QuotaLimits  quota.LimitsFunc
 }
@@ -122,6 +143,9 @@ func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
 		Slug:          opts.Slug,
 		Mail:          opts.MailListeners,
 		ControlSocket: opts.ControlSocket,
+		LimitsConfig:  opts.LimitsConfig,
+		ConfigSocket:  opts.ConfigSocket,
+		QuotaConfig:   opts.QuotaConfig,
 	})
 
 	registerSharedEarly(app)
@@ -140,7 +164,17 @@ func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
 
 	// Storage ceilings. Bound by core so every write path in the tenant is
 	// covered even though no feature package need be linked here.
-	if err := quota.Register(app, opts.QuotaSources, opts.QuotaLimits); err != nil {
+	//
+	// A resolver a package left during RegisterExtras wins over
+	// opts.QuotaLimits: opts.QuotaLimits is fixed before the app exists and so
+	// can only ever be a boot-time value, while a package holding a live
+	// source for the ceiling can reflect a change without a respawn. See
+	// storage_limits_resolver.go.
+	quotaLimits := opts.QuotaLimits
+	if registered, ok := StorageLimitsResolver(app); ok {
+		quotaLimits = registered
+	}
+	if err := quota.Register(app, opts.QuotaSources, quotaLimits); err != nil {
 		return fmt.Errorf("quota register: %w", err)
 	}
 
