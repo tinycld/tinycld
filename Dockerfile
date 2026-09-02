@@ -520,9 +520,12 @@ COPY --from=web-builder --chown=tinycld:tinycld /ws/calc /opt/tinycld-baked/calc
 COPY --from=web-builder --chown=tinycld:tinycld /ws/text /opt/tinycld-baked/text
 COPY --from=web-builder --chown=tinycld:tinycld /ws/google-takeout-import /opt/tinycld-baked/google-takeout-import
 
-# The merged member's sub-trees the runtime + in-app installer need (everything
-# inside tinycld/ EXCEPT the binary and release-staging, which were placed above
-# and are NOT part of the source member). Copied per-subpath from the go-builder
+# The merged member's sub-trees the runtime + in-app installer need. This is an
+# EXPLICIT ALLOW-LIST, not "everything except the binary and release-staging":
+# a subtree absent here simply does not exist at runtime. When the generator
+# gains a new output directory, add it — a missing one surfaces only as an
+# install-time ENOENT on a built image, which no unit test covers.
+# Copied per-subpath from the go-builder
 # stage — which has the full member from web-builder PLUS the compiled Go
 # artifacts — so the regenerated Go wiring (server/go.work, package_extensions.go,
 # go.mod/go.sum, the materialized pb_migrations/pb_hooks), nested core (core/, the
@@ -540,6 +543,12 @@ COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/server/ ./server/
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/core/ ./core/
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/package-scripts/ ./package-scripts/
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/scripts/ ./scripts/
+# cli/ is a real Go module (cli/go.mod) AND a generator output target: every
+# install re-runs emitCliWiring, which writes cli/cli_extensions.go, cli/go.work
+# and cli/search_slugs.go. Without the directory the in-app installer's
+# postinstall dies with `ENOENT: open .../tinycld/cli/cli_extensions.go` before
+# it ever reaches `go build`, so no package can be installed on a built image.
+COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/cli/ ./cli/
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/lib/ ./lib/
 COPY --from=go-builder --chown=tinycld:tinycld /ws/tinycld/app/ ./app/
 # plugins/ and modules/ are needed by the in-app installer's `expo export`:
