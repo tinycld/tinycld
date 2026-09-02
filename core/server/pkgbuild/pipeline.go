@@ -185,9 +185,17 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// bundle visibly advances instead of parking at one value.
 	sink.Progress("Exporting web bundle", ProgGoBuild, "expo export --platform web")
 	if err := TimeStep(sink, "expo export (web bundle)", func() error {
-		_, e := p.runExportWithProgress(sink, ProgGoBuild, ProgExpoWeb,
+		out, e := p.runExportWithProgress(sink, ProgGoBuild, ProgExpoWeb,
 			"Exporting web bundle", appDir, "--platform", "web")
-		return e
+		if e != nil {
+			// Same rationale as runPnpmInstall and go build above: in the
+			// hosting builder the error STRING is all that leaves the job
+			// child, so a bare "exit status 1" is unactionable — the Metro
+			// resolution error that actually explains the failure has to ride
+			// it. This step was the one build step that discarded its output.
+			return ErrFromCmd("expo export", lastLines(out, 30), e)
+		}
+		return nil
 	}); err != nil {
 		return BuildOutput{}, wrapStep("expo export", err)
 	}
