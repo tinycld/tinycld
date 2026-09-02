@@ -187,6 +187,14 @@ RUN printf 'fetchTimeout: 60000\nfetchRetries: 2\nfetchRetryMaxtimeout: 30000\n'
 # defeat the whole reuse mechanism. Instead we cache-mount pnpm's separate
 # metadata/network cache (~/.cache/pnpm), which speeds the verify/metadata fetch
 # across rebuilds while leaving the real store intact for the runtime COPY.
+# CI=true for every pnpm invocation in this stage. Later steps mutate the tree
+# after install (the pb_migrations/pb_hooks symlink materialization below), so
+# pnpm's dep-status check considers the workspace stale and `pnpm exec` auto-runs
+# `install`; without a TTY that aborts on the node_modules-purge confirmation
+# (ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY) and fails the export. This is the
+# same reason the in-app installer runs pnpm with CI=true (docs/live-install.md).
+ENV CI=true
+
 RUN --mount=type=cache,target=/root/.cache/pnpm,sharing=locked \
     corepack enable && pnpm install --frozen-lockfile
 
