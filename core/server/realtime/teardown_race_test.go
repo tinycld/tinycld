@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -95,7 +96,7 @@ func TestOnRoomEmptyWaitsOutAnInFlightSaveAndFlushesItsFailure(t *testing.T) {
 	var calls atomic.Int32
 	flushEntered := make(chan struct{})
 	releaseFlush := make(chan struct{})
-	c := NewSaveCoordinator(func(string, DocHandle) error {
+	c := NewSaveCoordinator(func(context.Context, string, DocHandle) error {
 		if calls.Add(1) == 1 {
 			close(flushEntered)
 			<-releaseFlush

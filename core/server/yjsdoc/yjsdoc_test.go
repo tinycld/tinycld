@@ -1,6 +1,7 @@
 package yjsdoc
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -151,7 +152,7 @@ func TestRuntimeRejectsDuplicateRoom(t *testing.T) {
 func TestRuntimeBootstrapRunsBeforeTheHandleIsUsable(t *testing.T) {
 	rt := NewRuntime()
 	defer rt.Stop()
-	rt.SetBootstrap(func(roomID string, doc *Doc) error {
+	rt.SetBootstrap(func(_ context.Context, roomID string, doc *Doc) error {
 		return SeedFragmentFromPMJSON(doc, "card:seeded", pmDoc(t, "from bootstrap"))
 	})
 
@@ -189,7 +190,7 @@ func TestBootstrapFailureStillYieldsAUsableRoom(t *testing.T) {
 	// empty document at least lets people connect and type.
 	rt := NewRuntime()
 	defer rt.Stop()
-	rt.SetBootstrap(func(string, *Doc) error { return errBoom })
+	rt.SetBootstrap(func(context.Context, string, *Doc) error { return errBoom })
 
 	handle, err := rt.NewDoc("room")
 	if err != nil {

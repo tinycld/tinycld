@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -68,10 +69,16 @@ func RetryBackoff(attempt int) time.Duration {
 // an error triggers an exponential-backoff retry; returning nil ends
 // the dirty cycle (until the next OnDocUpdate flips it again).
 //
+// The ctx bounds the flush itself: document parsers honour it, so a
+// pathological workbook is abandoned rather than wedging the saver.
+// The teardown path passes a ctx carrying teardownTimeout; the other
+// paths pass a background ctx, since a timer-driven save has no
+// deadline of its own.
+//
 // Implementations must be safe to call concurrently with other
 // methods on the same coordinator (the coordinator never invokes
 // FlushFn for the same room twice in parallel — see saveInFlight).
-type FlushFn func(driveItemID string, handle DocHandle) error
+type FlushFn func(ctx context.Context, driveItemID string, handle DocHandle) error
 
 // SaveCoordinator owns the per-room debounce/ceiling/teardown state
 // machine that drives persistence in package consumers. One instance
@@ -326,8 +333,10 @@ func (c *SaveCoordinator) OnRoomEmpty(driveItemID string) {
 	}
 
 	done := make(chan error, 1)
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), c.teardownTimeout)
+	defer cancelFlush()
 	go func() {
-		done <- c.flush(driveItemID, handle)
+		done <- c.flush(flushCtx, driveItemID, handle)
 	}()
 	select {
 	case err := <-done:
@@ -421,7 +430,7 @@ func (c *SaveCoordinator) triggerSave(driveItemID, reason string) {
 	handle := rs.handle
 	rs.mu.Unlock()
 
-	err := c.flush(driveItemID, handle)
+	err := c.flush(context.Background(), driveItemID, handle)
 
 	rs.mu.Lock()
 	rs.saveInFlight = false
@@ -542,7 +551,7 @@ func (c *SaveCoordinator) FlushNow(driveItemID string) error {
 		snapshotSeq := rs.lastSeq
 		rs.mu.Unlock()
 
-		err := c.flush(driveItemID, handle)
+		err := c.flush(context.Background(), driveItemID, handle)
 
 		rs.mu.Lock()
 		rs.saveInFlight = false

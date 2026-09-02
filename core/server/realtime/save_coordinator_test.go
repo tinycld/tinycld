@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -58,7 +59,7 @@ func newFastCoord(t *testing.T) *fastCoord {
 	mu := sync.Mutex{}
 	failOnce := atomic.Bool{}
 	gate := make(chan struct{}, 1024) // pre-buffered; tests opt in by reading
-	flush := func(driveItemID string, _ DocHandle) error {
+	flush := func(_ context.Context, driveItemID string, _ DocHandle) error {
 		// Block on gate if a test wants to control flush timing.
 		// The default uses an unbuffered receive only when the
 		// test explicitly drains; otherwise we proceed immediately
@@ -166,7 +167,7 @@ func TestSaveCoordinatorInFlightCoalescing(t *testing.T) {
 	mu := sync.Mutex{}
 	releaseFlush := make(chan struct{})
 	doneFirst := make(chan struct{})
-	flush := func(driveItemID string, _ DocHandle) error {
+	flush := func(_ context.Context, driveItemID string, _ DocHandle) error {
 		mu.Lock()
 		first := len(calls) == 0
 		calls = append(calls, driveItemID)
@@ -212,7 +213,7 @@ func TestSaveCoordinatorFailureRetries(t *testing.T) {
 	var calls atomic.Int32
 	var failNext atomic.Bool
 	failNext.Store(true)
-	flush := func(driveItemID string, _ DocHandle) error {
+	flush := func(_ context.Context, driveItemID string, _ DocHandle) error {
 		calls.Add(1)
 		if failNext.CompareAndSwap(true, false) {
 			return errors.New("synthetic")
@@ -245,7 +246,7 @@ func TestSaveCoordinatorFailureRetries(t *testing.T) {
 // injected hook with the full detail, and does not keep looping.
 func TestSaveCoordinatorGivesUpAfterMaxAttempts(t *testing.T) {
 	var calls atomic.Int32
-	flush := func(_ string, _ DocHandle) error {
+	flush := func(_ context.Context, _ string, _ DocHandle) error {
 		calls.Add(1)
 		return errors.New("always fails")
 	}
@@ -318,7 +319,7 @@ func TestSaveCoordinatorRetryRecoversBeforeGivingUp(t *testing.T) {
 	var calls atomic.Int32
 	var failNext atomic.Bool
 	failNext.Store(true)
-	flush := func(_ string, _ DocHandle) error {
+	flush := func(_ context.Context, _ string, _ DocHandle) error {
 		calls.Add(1)
 		if failNext.CompareAndSwap(true, false) {
 			return errors.New("transient")
@@ -359,7 +360,7 @@ func TestSaveCoordinatorRetryRecoversBeforeGivingUp(t *testing.T) {
 func TestSaveCoordinatorTeardownFinalSave(t *testing.T) {
 	var calls atomic.Int32
 	doneSignal := make(chan struct{})
-	flush := func(driveItemID string, _ DocHandle) error {
+	flush := func(_ context.Context, driveItemID string, _ DocHandle) error {
 		calls.Add(1)
 		// Slow flush: 100ms.
 		time.Sleep(100 * time.Millisecond)
@@ -395,7 +396,7 @@ func TestSaveCoordinatorTeardownFinalSave(t *testing.T) {
 // never received an update should NOT call flush.
 func TestSaveCoordinatorTeardownNoOpsCleanRoom(t *testing.T) {
 	var calls atomic.Int32
-	flush := func(string, DocHandle) error {
+	flush := func(context.Context, string, DocHandle) error {
 		calls.Add(1)
 		return nil
 	}
@@ -413,7 +414,7 @@ func TestSaveCoordinatorTeardownNoOpsCleanRoom(t *testing.T) {
 // the broker fell back to pure relay). Must not panic.
 func TestSaveCoordinatorIgnoresUpdateForUnknownRoom(t *testing.T) {
 	var calls atomic.Int32
-	flush := func(string, DocHandle) error {
+	flush := func(context.Context, string, DocHandle) error {
 		calls.Add(1)
 		return nil
 	}
@@ -452,7 +453,7 @@ func (j *recordingJournalForCoord) Truncate(kind, id string, throughSeq int64) e
 func TestSaveCoordinatorTruncatesAfterSuccessfulFlush(t *testing.T) {
 	j := &recordingJournalForCoord{}
 	flushed := make(chan struct{}, 1)
-	fc := newFastCoordWithFlush(t, func(string, DocHandle) error {
+	fc := newFastCoordWithFlush(t, func(context.Context, string, DocHandle) error {
 		flushed <- struct{}{}
 		return nil
 	})
@@ -480,7 +481,7 @@ func TestSaveCoordinatorTruncatesAfterSuccessfulFlush(t *testing.T) {
 
 func TestSaveCoordinatorNoTruncateOnFailedFlush(t *testing.T) {
 	j := &recordingJournalForCoord{}
-	fc := newFastCoordWithFlush(t, func(string, DocHandle) error {
+	fc := newFastCoordWithFlush(t, func(context.Context, string, DocHandle) error {
 		return errors.New("flush boom")
 	})
 	fc.c.SetJournal("test-kind", j)
@@ -499,7 +500,7 @@ func TestSaveCoordinatorNoTruncateOnFailedFlush(t *testing.T) {
 func TestSaveCoordinatorTruncateErrorIsLoggedAndIgnored(t *testing.T) {
 	j := &recordingJournalForCoord{truncateFail: errors.New("truncate boom")}
 	flushed := make(chan struct{}, 1)
-	fc := newFastCoordWithFlush(t, func(string, DocHandle) error {
+	fc := newFastCoordWithFlush(t, func(context.Context, string, DocHandle) error {
 		flushed <- struct{}{}
 		return nil
 	})
@@ -532,7 +533,7 @@ func TestSaveCoordinatorTruncateErrorIsLoggedAndIgnored(t *testing.T) {
 // doubling the entire document (caught by cards' toolbar e2e reload case).
 func TestSaveCoordinatorTeardownTruncates(t *testing.T) {
 	j := &recordingJournalForCoord{}
-	c := NewSaveCoordinator(func(string, DocHandle) error { return nil })
+	c := NewSaveCoordinator(func(context.Context, string, DocHandle) error { return nil })
 	c.debounceEvery = 5 * time.Second // long; only the teardown flush runs
 	c.ceilingEvery = 5 * time.Second
 	c.teardownTimeout = 2 * time.Second
@@ -559,7 +560,7 @@ func TestSaveCoordinatorTeardownTruncates(t *testing.T) {
 // untruncated rows are the only durable copy of the edits.
 func TestSaveCoordinatorTeardownNoTruncateOnFailedFlush(t *testing.T) {
 	j := &recordingJournalForCoord{}
-	c := NewSaveCoordinator(func(string, DocHandle) error { return errors.New("boom") })
+	c := NewSaveCoordinator(func(context.Context, string, DocHandle) error { return errors.New("boom") })
 	c.debounceEvery = 5 * time.Second
 	c.ceilingEvery = 5 * time.Second
 	c.teardownTimeout = 2 * time.Second
@@ -584,7 +585,7 @@ func TestSaveCoordinatorTeardownNoTruncateOnFailedFlush(t *testing.T) {
 // revisits a clean room, so the rows sit until a teardown that may fail.
 func TestSaveCoordinatorFlushNowTruncates(t *testing.T) {
 	j := &recordingJournalForCoord{}
-	c := NewSaveCoordinator(func(string, DocHandle) error { return nil })
+	c := NewSaveCoordinator(func(context.Context, string, DocHandle) error { return nil })
 	c.debounceEvery = 5 * time.Second
 	c.ceilingEvery = 5 * time.Second
 	c.teardownTimeout = 2 * time.Second
@@ -636,7 +637,7 @@ func TestFlushNowRunsFlush(t *testing.T) {
 // TestFlushNowPropagatesError: a failing flush surfaces its error to the
 // FlushNow caller and leaves the room dirty for the normal retry path.
 func TestFlushNowPropagatesError(t *testing.T) {
-	flush := func(_ string, _ DocHandle) error {
+	flush := func(_ context.Context, _ string, _ DocHandle) error {
 		return errors.New("synthetic flush failure")
 	}
 	c := NewSaveCoordinator(flush)

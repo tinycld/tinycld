@@ -125,7 +125,7 @@ mv "release-staging/${RID}/index.html" "release-staging/${RID}/app.html"
 
 echo "[build] go build server binary"
 cd server
-CGO_ENABLED=1 GOOS=linux go build -o ../tinycld .
+CGO_ENABLED=0 GOOS=linux go build -o ../tinycld .
 if [ -f go.work ]; then go work sync; fi
 cd ..
 

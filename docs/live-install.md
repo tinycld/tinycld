@@ -476,9 +476,9 @@ to. The runtime image (`app/Dockerfile`) provides:
 - **Tools on `PATH`:** `git` (git-spec `npm pack`), `node`/`npm`/`npx`,
   `pnpm` (pre-activated into a shared `COREPACK_HOME=/opt/corepack` so the
   unprivileged user finds it without a network fetch/prompt), the Go toolchain
-  plus `gcc` **and** `g++` (the server's remaining cgo is goheif/libde265 for
-  HEIC thumbnails; document rendering is pure-Go doctaculous), `sqlite3` (the
-  DB-backup `VACUUM INTO`), and `tar`/`cp`.
+  (no C compiler: the build is CGo-free — omnidoc decodes HEIF in pure Go,
+  retiring the goheif/libde265 dependency — and package builds run with
+  `CGO_ENABLED=0`), `sqlite3` (the DB-backup `VACUUM INTO`), and `tar`/`cp`.
 - **A writable workspace:** the whole tree lives under `/workspace`, owned by
   the `tinycld` runtime user, so the installer can create `/workspace/<slug>`
   and rewrite the workspace manifests. (The workspace is *not* at the

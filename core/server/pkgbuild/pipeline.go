@@ -241,9 +241,12 @@ func wrapStep(step string, err error) error {
 	return fmt.Errorf("%s: %w", step, err)
 }
 
-// CheckBuildPrereqs verifies that Go and gcc are available on PATH.
+// CheckBuildPrereqs verifies that Go is available on PATH. A C compiler is
+// deliberately NOT required: every build here is CGo-free (CGO_ENABLED=0), and
+// the runtime image ships no gcc — gating on one would reject every server
+// package on a stock deployment.
 func CheckBuildPrereqs() error {
-	for _, tool := range []string{"go", "gcc"} {
+	for _, tool := range []string{"go"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			return fmt.Errorf("%s not found on PATH: %w", tool, err)
 		}

@@ -15,6 +15,7 @@
 package yjsdoc
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
@@ -53,7 +54,11 @@ var now = time.Now
 // BootstrapFn seeds a freshly created document. It runs synchronously inside
 // NewDoc, before the broker can serve a SyncReply, so the first joiner already
 // sees populated content.
-type BootstrapFn func(roomID string, doc *Doc) error
+//
+// The ctx bounds the seeding work: document parsers honour it, so a
+// pathological source file is abandoned rather than stalling the first
+// joiner. NewDoc has no deadline of its own, so it passes a background ctx.
+type BootstrapFn func(ctx context.Context, roomID string, doc *Doc) error
 
 // Runtime is a process-wide registry of server-side Y.Docs, one per active
 // room. It satisfies realtime.DocRuntime.
@@ -164,7 +169,7 @@ func (r *Runtime) NewDoc(roomID string) (realtime.DocHandle, error) {
 	r.mu.Unlock()
 
 	if hook != nil {
-		if err := hook(roomID, doc); err != nil {
+		if err := hook(context.Background(), roomID, doc); err != nil {
 			log.Warn("bootstrap failed; room continues with an empty document",
 				"roomID", roomID, "err", err)
 		}

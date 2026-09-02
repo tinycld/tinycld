@@ -61,9 +61,9 @@
 # workspace postinstall (see tinycld/scripts/export-types.ts). The binary
 # regenerates core/types/pbSchema.ts + pbZodSchema.ts from migrations so the
 # subsequent `expo export` can typecheck every package's collections.ts /
-# types.ts. It imports only core/coreserver — pure Go, no CGO, no feature-
-# server dependency chain (goheif, dav1d), so we don't drag a C
-# toolchain into the lean web-builder Node stage just to write two TS files.
+# types.ts. It imports only core/coreserver — pure Go, like every other binary
+# built here, so we don't drag a C toolchain into the lean web-builder Node
+# stage just to write two TS files.
 #
 # Sources copied: tinycld/core/server plus the vendored PocketBase fork it
 # `replace`s to. core/server/go.mod carries
@@ -75,7 +75,7 @@
 # whole tinycld/ member; this stage copies a narrow subset, so it needs the
 # fork explicitly.
 #
-# The go-builder stage below builds the real CGO_ENABLED Linux runtime binary
+# The go-builder stage below builds the real Linux runtime binary
 # from the full workspace; this stage is throwaway, ~50 lines of Go work.
 FROM golang:1.26-trixie AS types-binary-builder
 WORKDIR /src
@@ -271,9 +271,8 @@ RUN set -eu \
 # Build stage for Go server.
 FROM golang:1.26-trixie AS go-builder
 
-# The only remaining CGo dependency is goheif (HEIC thumbnails), which needs
-# gcc/g++ — both already ship in the golang:trixie base via build-essential,
-# so no extra apt packages are required here.
+# The build is fully CGo-free: omnidoc decodes HEIF in pure Go, which retired
+# the last cgo dependency (goheif/libde265). No C toolchain is required here.
 
 WORKDIR /ws
 
@@ -327,10 +326,10 @@ RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
 
 # Build the server binary. Mount both the module cache (read) and the compiled-
 # object build cache (/root/.cache/go-build) so an unchanged-source rebuild is a
-# near-instant cache hit instead of a full CGO recompile.
+# near-instant cache hit instead of a full recompile.
 RUN --mount=type=cache,target=/root/go/pkg/mod,sharing=locked \
     --mount=type=cache,target=/root/.cache/go-build,sharing=locked \
-    CGO_ENABLED=1 GOOS=linux go build -o tinycld .
+    CGO_ENABLED=0 GOOS=linux go build -o tinycld .
 
 
 # Final runtime stage
@@ -371,15 +370,12 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 # manually re-apply the cap to a freshly-rebuilt binary. git is required by the
 # in-app package installer: `npm pack <git-spec>` (e.g. github:owner/repo) clones
 # the repo via git, so without it git-spec installs fail with `spawn git ENOENT`.
-# gcc AND g++ are required to install a package that ships a Go server: the
-# installer's checkGoBuildPrereqs() gate needs `go` (from the copied toolchain)
-# plus a C compiler, and the server is built with CGO_ENABLED=1. The cgo set
-# needs BOTH compilers for goheif/libde265 (HEIF decode, which shells out to
-# g++) — the one remaining CGo dependency. The build-stage go-builder gets both
-# from the golang:trixie base (build-essential); the slim runtime base has
-# neither, so add them explicitly. Without gcc, server packages are rejected at
-# manifest validation ("requires Phase 3 support"); without g++, the runtime
-# `go build` fails with `exec: "g++": executable file not found`.
+# No C compiler is installed: the build is CGo-free (omnidoc decodes HEIF in
+# pure Go, retiring the goheif/libde265 dependency that needed gcc AND g++), and
+# the in-app package installer builds server packages with CGO_ENABLED=0 too.
+# If a future dependency reintroduces cgo, both compilers must come back here —
+# the slim runtime base ships neither, and the installer's build would fail with
+# `exec: \"gcc\": executable file not found`.
 #
 # sqlite3 (the CLI) is needed by the installer's database-backup step, which runs
 # `sqlite3 <db> "VACUUM INTO '<backup>'"` for a consistent snapshot before
@@ -396,7 +392,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libffi8 libcap2-bin curl git gcc g++ sqlite3 gnupg gosu \
+    && apt-get install -y --no-install-recommends ca-certificates libffi8 libcap2-bin curl git sqlite3 gnupg gosu \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get autoremove -y
@@ -427,6 +423,10 @@ RUN corepack enable \
 # runtime Go-package rebuilds).
 COPY --from=go-builder /usr/local/go /usr/local/go
 ENV PATH="/usr/local/go/bin:${PATH}"
+# The in-app package installer shells out to `go build` for a package's server
+# module. The image ships no C compiler (the build is CGo-free), so pin cgo off
+# for those builds rather than relying on Go's default, which would look for gcc.
+ENV CGO_ENABLED=0
 
 # Non-root runtime user. UID/GID 1000 matches the typical first non-root host
 # user on Linux distros, so host-side pb_data/ files on a bind-mount are owned

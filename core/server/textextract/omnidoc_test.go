@@ -8,30 +8,30 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/nathanstitt/doctaculous/pkg/doctaculous"
+	"github.com/nathanstitt/omnidoc/pkg/omnidoc"
 )
 
-const fixtureMarkdown = "# Fixture Heading\n\nHello doctaculous world.\n"
+const fixtureMarkdown = "# Fixture Heading\n\nHello omnidoc world.\n"
 
-const fixtureCSV = "Name,Score\nHello doctaculous world,42\n"
+const fixtureCSV = "Name,Score\nHello omnidoc world,42\n"
 
 // buildFixture converts a small Markdown (or CSV, for XLSX) source into the
-// requested format via doctaculous's own writers, so no binary fixtures need
+// requested format via omnidoc's own writers, so no binary fixtures need
 // checking in.
-func buildFixture(t *testing.T, to doctaculous.Format) []byte {
+func buildFixture(t *testing.T, to omnidoc.Format) []byte {
 	t.Helper()
 
-	src, from := fixtureMarkdown, doctaculous.FormatMarkdown
-	if to == doctaculous.FormatXLSX {
-		src, from = fixtureCSV, doctaculous.FormatCSV
+	src, from := fixtureMarkdown, omnidoc.FormatMarkdown
+	if to == omnidoc.FormatXLSX {
+		src, from = fixtureCSV, omnidoc.FormatCSV
 	}
 
-	doc, err := doctaculous.OpenBytesAs(from, []byte(src))
+	doc, err := omnidoc.OpenBytesAs(from, []byte(src))
 	if err != nil {
 		t.Fatalf("open fixture source: %v", err)
 	}
 	var buf bytes.Buffer
-	if err := doc.Write(context.Background(), &buf, to, doctaculous.ConvertOptions{}); err != nil {
+	if err := doc.Write(context.Background(), &buf, to, omnidoc.ConvertOptions{}); err != nil {
 		t.Fatalf("write %s fixture: %v", to, err)
 	}
 	return buf.Bytes()
@@ -40,13 +40,13 @@ func buildFixture(t *testing.T, to doctaculous.Format) []byte {
 func TestExtractDocumentFormats(t *testing.T) {
 	cases := []struct {
 		mime   string
-		format doctaculous.Format
+		format omnidoc.Format
 	}{
-		{"application/pdf", doctaculous.FormatPDF},
-		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", doctaculous.FormatDOCX},
-		{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", doctaculous.FormatXLSX},
-		{"application/vnd.openxmlformats-officedocument.presentationml.presentation", doctaculous.FormatPPTX},
-		{"application/epub+zip", doctaculous.FormatEPUB},
+		{"application/pdf", omnidoc.FormatPDF},
+		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", omnidoc.FormatDOCX},
+		{"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", omnidoc.FormatXLSX},
+		{"application/vnd.openxmlformats-officedocument.presentationml.presentation", omnidoc.FormatPPTX},
+		{"application/epub+zip", omnidoc.FormatEPUB},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.format), func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestExtractDocumentFormats(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Extract: %v", err)
 			}
-			if !strings.Contains(result, "Hello doctaculous world") {
+			if !strings.Contains(result, "Hello omnidoc world") {
 				t.Errorf("expected fixture text in extraction, got %q", result)
 			}
 		})
@@ -63,7 +63,7 @@ func TestExtractDocumentFormats(t *testing.T) {
 }
 
 func TestExtractLegacyOfficeUnsupported(t *testing.T) {
-	// Legacy binary Office is deliberately unsupported since the doctaculous
+	// Legacy binary Office is deliberately unsupported since the omnidoc
 	// migration: no extraction, no error.
 	for _, mime := range []string{
 		"application/msword",
@@ -104,12 +104,12 @@ func TestExtractCorruptDocument(t *testing.T) {
 
 func TestExtractMaxBytesTruncationIsValidUTF8(t *testing.T) {
 	long := "# Heading\n\n" + strings.Repeat("héllo wörld ", 500)
-	doc, err := doctaculous.OpenBytesAs(doctaculous.FormatMarkdown, []byte(long))
+	doc, err := omnidoc.OpenBytesAs(omnidoc.FormatMarkdown, []byte(long))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
-	if err := doc.Write(context.Background(), &buf, doctaculous.FormatDOCX, doctaculous.ConvertOptions{}); err != nil {
+	if err := doc.Write(context.Background(), &buf, omnidoc.FormatDOCX, omnidoc.ConvertOptions{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -133,13 +133,13 @@ func (e *fakeExtractor) Extract(r io.Reader, limit int) (string, error) {
 }
 
 // TestRegistryPrecedence proves a Register()ed extractor wins over the
-// built-in doctaculous handling for the same MIME type — the hook packages
+// built-in omnidoc handling for the same MIME type — the hook packages
 // use to support custom formats.
 func TestRegistryPrecedence(t *testing.T) {
 	Register("application/pdf", &fakeExtractor{out: "custom extractor output"})
 	defer delete(registry, "application/pdf")
 
-	fixture := buildFixture(t, doctaculous.FormatPDF)
+	fixture := buildFixture(t, omnidoc.FormatPDF)
 	result, err := Extract(bytes.NewReader(fixture), "application/pdf", MaxOutputBytes)
 	if err != nil {
 		t.Fatal(err)
