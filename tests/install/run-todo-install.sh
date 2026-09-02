@@ -452,12 +452,17 @@ provision_base_remote() {
         # PocketBase fork (core go.mod replaces ../../third_party/pocketbase);
         # cli -> the generator emitCliWiring writes cli/cli_extensions.go and
         # dies with ENOENT when the directory is absent, so every base rebuild
-        # fails before go build.
+        # fails before go build; index.js -> package.json main points at it (the
+        # bundle entry installing the crypto polyfill before any route module),
+        # so expo export cannot resolve an entry without it. Verified against
+        # the runtime image, which bakes index.js and exports fine WITHOUT
+        # app.config.ts or react-native-web.d.ts, so neither is needed here.
         # NOTE: this comment lives inside a single-quoted sh -lc body, so NO
         # apostrophes here (one would close the quote and break the parse).
-        for d in app assets babel.config.cjs cli core expo-env.d.ts global.css lib \
-                 metro.config.cjs modules package-scripts plugins public scripts \
-                 server third_party tsconfig.json uniwind-types.d.ts app.json package.json; do
+        for d in app assets babel.config.cjs cli core expo-env.d.ts global.css \
+                 index.js lib metro.config.cjs modules package-scripts plugins \
+                 public scripts server third_party tsconfig.json \
+                 uniwind-types.d.ts app.json package.json; do
             [ -e "/workspace/current/$d" ] && cp -a "/workspace/current/$d" .
         done
         git add -A && git commit -qm "base v'"${CORE_CUR}"'"
