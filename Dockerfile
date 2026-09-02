@@ -198,16 +198,6 @@ ENV CI=true
 RUN --mount=type=cache,target=/root/.cache/pnpm,sharing=locked \
     corepack enable && pnpm install --frozen-lockfile
 
-# Resolve the migration/hook symlinks the generator wrote under
-# tinycld/server/{pb_migrations,pb_hooks} into real files. They point at member
-# source via node_modules symlinks here, which is fine for this stage, but the
-# go-builder and runtime COPY steps need real content (a COPY of a symlink that
-# escapes its tree breaks), so materialize them in place.
-RUN for d in tinycld/server/pb_migrations tinycld/server/pb_hooks; do \
-        [ -d "$d" ] || continue; \
-        find "$d" -type l -exec sh -c 'target=$(readlink -f "$1") && rm "$1" && cp "$target" "$1"' _ {} \; ; \
-    done
-
 # Stage a tree containing only Go module manifests (go.mod / go.sum / go.work),
 # directory structure preserved. The go-builder stage copies just this tree to
 # warm its module cache, so `go mod download` only re-runs when one of these
@@ -274,6 +264,24 @@ RUN set -eu \
         rm -f .release-manifest; \
     fi \
     && mv "/ws/tinycld/release-staging/$rid/index.html" "/ws/tinycld/release-staging/$rid/app.html"
+
+# Resolve the migration/hook symlinks the generator wrote under
+# tinycld/server/{pb_migrations,pb_hooks} into real files. They point at member
+# source via node_modules symlinks here, which is fine for this stage, but the
+# go-builder and runtime COPY steps need real content (a COPY of a symlink that
+# escapes its tree breaks), so materialize them in place.
+#
+# MUST run AFTER the expo export above, not before it: `pnpm exec` re-runs the
+# workspace install (see the CI=true note above), whose postinstall re-runs the
+# generator and RE-CREATES these as symlinks. Materializing earlier leaves the
+# runtime image with links into /ws — a build-stage path that does not exist
+# there — and the server panics at registerMigrations on first boot.
+WORKDIR /ws
+RUN for d in tinycld/server/pb_migrations tinycld/server/pb_hooks; do \
+        [ -d "$d" ] || continue; \
+        find "$d" -type l -exec sh -c 'target=$(readlink -f "$1") && rm "$1" && cp "$target" "$1"' _ {} \; ; \
+    done
+WORKDIR /ws/tinycld
 
 
 # Build stage for Go server.
