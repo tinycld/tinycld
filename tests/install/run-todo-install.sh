@@ -449,10 +449,13 @@ provision_base_remote() {
         # and metro maps the app-updater specifier to modules); assets/lib/public/
         # global.css/babel/tsconfig/uniwind -> metro resolution failures;
         # third_party -> the generator hard-fails on the missing vendored
-        # PocketBase fork (core go.mod replaces ../../third_party/pocketbase).
+        # PocketBase fork (core go.mod replaces ../../third_party/pocketbase);
+        # cli -> the generator emitCliWiring writes cli/cli_extensions.go and
+        # dies with ENOENT when the directory is absent, so every base rebuild
+        # fails before go build.
         # NOTE: this comment lives inside a single-quoted sh -lc body, so NO
         # apostrophes here (one would close the quote and break the parse).
-        for d in app assets babel.config.cjs core expo-env.d.ts global.css lib \
+        for d in app assets babel.config.cjs cli core expo-env.d.ts global.css lib \
                  metro.config.cjs modules package-scripts plugins public scripts \
                  server third_party tsconfig.json uniwind-types.d.ts app.json package.json; do
             [ -e "/workspace/current/$d" ] && cp -a "/workspace/current/$d" .
