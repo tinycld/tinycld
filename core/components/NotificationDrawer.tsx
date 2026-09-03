@@ -8,7 +8,7 @@ import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import type { Notifications } from '@tinycld/core/types/pbSchema'
 import { BottomDrawer } from '@tinycld/core/ui/bottom-drawer'
 import { useRouter } from 'expo-router'
-import { Bell, Calendar, Check, File, Mail, Shield, X } from 'lucide-react-native'
+import { Bell, Calendar, Check, File, Mail, Shield, SquareKanban, X } from 'lucide-react-native'
 import { useEffect, useMemo, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { railWidth } from './workspace/PackageRail'
@@ -19,6 +19,7 @@ const PACKAGE_ICONS: Record<string, typeof Bell> = {
     calendar: Calendar,
     mail: Mail,
     drive: File,
+    cards: SquareKanban,
     core: Shield,
 }
 
