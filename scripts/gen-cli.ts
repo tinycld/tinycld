@@ -61,7 +61,7 @@ export function buildCliExtensionsSource(pkgs: CliPkg[]): string {
 // source, so `tinycld search "mail: budget"` can tell a `pkg:` chip from a
 // literal word without asking the server first.
 //
-// Deliberately NOT derived from the cli package list: cards and contacts
+// Deliberately NOT derived from the cli package list: boards and contacts
 // contribute a search source but ship no CLI commands, and a package can ship
 // commands without being searchable. Two different sets, generated from the
 // two different manifest fields.

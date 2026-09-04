@@ -42,8 +42,8 @@ const (
 	ScopeContactsWrite = "contacts:write"
 	ScopeCalendarRead  = "calendar:read"
 	ScopeCalendarWrite = "calendar:write"
-	ScopeCardsRead     = "cards:read"
-	ScopeCardsWrite    = "cards:write"
+	ScopeBoardsRead    = "boards:read"
+	ScopeBoardsWrite   = "boards:write"
 	// text and calc own only their comment collections — the documents and
 	// spreadsheets themselves are drive_items, governed by drive:*. So these
 	// scopes are narrower than they look, and a token that can do anything
@@ -63,7 +63,7 @@ var AllScopes = []string{
 	ScopeDriveRead, ScopeDriveWrite,
 	ScopeContactsRead, ScopeContactsWrite,
 	ScopeCalendarRead, ScopeCalendarWrite,
-	ScopeCardsRead, ScopeCardsWrite,
+	ScopeBoardsRead, ScopeBoardsWrite,
 	ScopeTextRead, ScopeTextWrite,
 	ScopeCalcRead, ScopeCalcWrite,
 }

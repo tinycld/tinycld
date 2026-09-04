@@ -231,7 +231,7 @@ export interface RichEditorInitCollab {
      * The host doc's clientID, for correlation only — the page does NOT adopt
      * it.
      *
-     * Adopting it was the original plan (TODO(cards M9): "the WebView reuses
+     * Adopting it was the original plan (TODO(boards M9): "the WebView reuses
      * the native client's clientID so the local user does not appear twice").
      * Yjs forbids it: two docs sharing a clientID would collide on item
      * identity, and it defends itself — assigning the id and then applying the
@@ -262,7 +262,7 @@ export interface RichEditorInitCollab {
      * when nobody else is in the room.
      *
      * Awareness frames are only fanned out as they are sent, so a joining client
-     * is told nothing about who is already present — the same gap cards' presence
+     * is told nothing about who is already present — the same gap boards' presence
      * hook closes by republishing when someone arrives. Without this seed a phone
      * would see no carets until a peer happened to move.
      */

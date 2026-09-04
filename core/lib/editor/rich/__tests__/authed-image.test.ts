@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { isProtectedFileSrc, resolveProtectedFileSrc } from '../authed-image'
 
 const BASE = 'https://org.example.com'
-const SRC = '/api/files/cards_attachments/rec123/photo_abc123.png'
+const SRC = '/api/files/boards_attachments/rec123/photo_abc123.png'
 
 describe('isProtectedFileSrc', () => {
     it('matches a root-relative PocketBase file path', () => {

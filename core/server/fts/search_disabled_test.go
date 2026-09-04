@@ -14,7 +14,7 @@ import (
 //
 // It does not attempt an end-to-end proof against a real FTS-backed collection
 // with rows and a membership table — that harness (tests.NewTestApp() plus a
-// seeded collection, à la drive's search_disabled_test.go) belongs to the cards
+// seeded collection, à la drive's search_disabled_test.go) belongs to the boards
 // package task that actually owns such a collection. Here we only have the
 // "users" collection PocketBase ships in every test app.
 

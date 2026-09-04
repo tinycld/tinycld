@@ -44,7 +44,7 @@ import { fileURLToPath } from 'node:url'
 export const STUB_SLUG = 'shortcut-stub'
 // Must not collide with any real package's nav.shortcut, or `t <letter>`
 // becomes ambiguous and the chord test fails on whichever registration the
-// matcher happens to reach first. This previously read 'k', which cards later
+// matcher happens to reach first. This previously read 'k', which boards later
 // claimed. Real letters in use: c d k m o s t — 'z' is deliberately far from
 // anything a feature would want.
 export const STUB_NAV_SHORTCUT = 'z'

@@ -4,7 +4,7 @@ import { login, navigateToPackage } from './helpers'
 /**
  * The palette's e2e runs against two stub packages (search-alpha, search-beta)
  * scaffolded by tests/scripts/scaffold-search-stubs.ts, NOT against real
- * features. App-shell CI assembles app+core only, so asserting on cards/drive/
+ * features. App-shell CI assembles app+core only, so asserting on boards/drive/
  * mail seed rows made every test here fail on packages that were never
  * installed — and made app's CI hostage to another repo's seed fixtures.
  *
@@ -95,7 +95,7 @@ test.describe('Search palette', () => {
         //
         // Rows are located by their stub SUBTITLE, not their title. A developer
         // running with real features installed gets rows whose titles collide
-        // with the stubs' (cards seeds "Onboarding checklist for new members",
+        // with the stubs' (boards seeds "Onboarding checklist for new members",
         // mail seeds a thread with the same subject as beta-1), and `hasText` is
         // a substring match, so a title locator resolves to several rows and
         // fails strict mode. The subtitles are stub-only, so these locators mean

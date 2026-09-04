@@ -12,7 +12,7 @@ import type { PickedFile } from './picked-file'
  *
  * Bypassing the SDK for file BYTES is the sanctioned exception to the
  * never-bypass-pbtsdb rule; every other read and write stays on pbtsdb. Drive
- * established the exception, and cards and mail now share this implementation
+ * established the exception, and boards and mail now share this implementation
  * rather than each keeping a copy.
  */
 export function uploadFormDataWithProgress(params: {
@@ -76,7 +76,7 @@ export function uploadFormDataWithProgress(params: {
 }
 
 export interface UploadRecordParams {
-    /** Collection name, e.g. 'cards_attachments'. */
+    /** Collection name, e.g. 'boards_attachments'. */
     collection: string
     /**
      * Scalar fields for the record. Pre-generate the id with `newRecordId()`

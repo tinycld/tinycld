@@ -39,11 +39,11 @@ export default defineConfig({
     // That default is not a CI special case, whatever the folklore says — see
     // resolveWorkers in playwright's common/config.js, which reads
     // `os.cpus().length` and takes the percentage. A standard 2-core GitHub
-    // runner therefore resolves to ONE worker, and the cards e2e log said so
+    // runner therefore resolves to ONE worker, and the boards e2e log said so
     // exactly: "Running 140 tests using 1 worker", 16.7 minutes for a suite
     // that takes 4.7 locally in parallel.
     //
-    // Measured on cards before generalizing here: two workers on the same
+    // Measured on boards before generalizing here: two workers on the same
     // 2-core runner ran the same 140 tests in 11.9 minutes (139 passed, 1
     // skipped — the same split as the serial run), a ~29% saving with no new
     // failures.

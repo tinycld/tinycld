@@ -206,7 +206,7 @@ export const TEST_COLLABORATOR_PASSWORD =
  * createInvitedUser's ~5.8s: that helper drives the entire invite arc through
  * the UI (two full app boots) and leaves the owner's page stranded on Settings,
  * forcing every caller into a second login() just to get back to their board.
- * That setup cost — not the assertions — is what made seven cards specs carry
+ * That setup cost — not the assertions — is what made seven boards specs carry
  * test.slow() and then time out on CI.
  *
  * Reach for createInvitedUser instead ONLY when the invite flow itself is under

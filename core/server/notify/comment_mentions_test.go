@@ -386,12 +386,12 @@ func TestCommentMention_HookIsRegisteredAndFiresAsync(t *testing.T) {
 // target_record so a mention can hang off any package's record. These tests
 // cover the cards path (no drive item at all) and the legacy fallback.
 
-// addCardsComments extends the fixture app with the cards_comments table the
+// addCardsComments extends the fixture app with the boards_comments table the
 // cards path resolves its author through. Mirrors the real collection's
 // shape only as far as this hook reads it.
 func addCardsComments(t *testing.T, app core.App, usersID string) *core.Collection {
 	t.Helper()
-	c := core.NewBaseCollection("cards_comments")
+	c := core.NewBaseCollection("boards_comments")
 	c.Fields.Add(&core.TextField{Name: "card"})
 	c.Fields.Add(&core.TextField{Name: "project"})
 	c.Fields.Add(&core.TextField{Name: "body"})
@@ -425,9 +425,9 @@ func seedCardsMention(t *testing.T, f *mentionFixture, cardID string) *core.Reco
 
 	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
 	mention := core.NewRecord(cmCol)
-	mention.Set("comment_collection", "cards_comments")
+	mention.Set("comment_collection", "boards_comments")
 	mention.Set("comment_record", comment.Id)
-	mention.Set("target_collection", "cards_cards")
+	mention.Set("target_collection", "boards_cards")
 	mention.Set("target_record", cardID)
 	mention.Set("mentioned_user", f.mentionUser.Id)
 	// drive_item intentionally NOT set.
@@ -451,11 +451,11 @@ func TestCommentMention_CardsTargetNotifiesWithoutDriveItem(t *testing.T) {
 	if n == nil {
 		t.Fatal("expected a notification for a cards mention, got none")
 	}
-	if got := n.GetString("package"); got != "cards" {
+	if got := n.GetString("package"); got != "boards" {
 		t.Errorf("package = %q, want cards", got)
 	}
-	// Cards routes its board at /a/cards and opens a card via ?focused=.
-	wantURL := "https://app.test.local/a/cards?focused=" + cardID
+	// Boards routes its board at /a/boards and opens a card via ?focused=.
+	wantURL := "https://app.test.local/a/boards?focused=" + cardID
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q", got, wantURL)
 	}
@@ -481,9 +481,9 @@ func TestCommentMention_CardsSkipsSelfMention(t *testing.T) {
 
 	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
 	mention := core.NewRecord(cmCol)
-	mention.Set("comment_collection", "cards_comments")
+	mention.Set("comment_collection", "boards_comments")
 	mention.Set("comment_record", comment.Id)
-	mention.Set("target_collection", "cards_cards")
+	mention.Set("target_collection", "boards_cards")
 	mention.Set("target_record", "card0000000000")
 	mention.Set("mentioned_user", f.mentionUser.Id)
 	if err := f.app.Save(mention); err != nil {
@@ -533,9 +533,9 @@ func relaxFixtureDriveItem(t *testing.T, app core.App) {
 }
 
 // The notification TYPE is what the per-user mute preference is keyed on, so a
-// package's two mention sources must agree. Cards' DESCRIPTION mentions come
-// from its own flush hook and send "cards_mention"; a cards COMMENT mention
-// must send the same, or muting cards would silence only half of them.
+// package's two mention sources must agree. Boards' DESCRIPTION mentions come
+// from its own flush hook and send "boards_mention"; a cards COMMENT mention
+// must send the same, or muting boards would silence only half of them.
 func TestCommentMention_CardsUsesPackageScopedType(t *testing.T) {
 	f := seedMentionFixture(t)
 	relaxFixtureDriveItem(t, f.app)
@@ -547,8 +547,8 @@ func TestCommentMention_CardsUsesPackageScopedType(t *testing.T) {
 	if n == nil {
 		t.Fatal("expected a notification, got none")
 	}
-	if got := n.GetString("type"); got != "cards_mention" {
-		t.Errorf("type = %q, want cards_mention (must match the description "+
+	if got := n.GetString("type"); got != "boards_mention" {
+		t.Errorf("type = %q, want boards_mention (must match the description "+
 			"hook's type, or one mute switch cannot cover both)", got)
 	}
 }
@@ -623,13 +623,13 @@ func TestCommentMention_MutedTypeIsNotDelivered(t *testing.T) {
 // switches at all.
 func TestCommentMention_MutingCardsLeavesDocumentMentions(t *testing.T) {
 	f := seedMentionFixture(t)
-	mutePreference(t, f.app, f.mentionUser.Id, map[string]any{"cards_mention": false})
+	mutePreference(t, f.app, f.mentionUser.Id, map[string]any{"boards_mention": false})
 
 	mention := mkMention(t, f.app, f, "text_comments")
 	runHookSync(t, f.app, mention)
 
 	if got := findLatestNotification(t, f.app, f.mentionUser.Id); got == nil {
-		t.Error("muting cards_mention also silenced a document mention")
+		t.Error("muting boards_mention also silenced a document mention")
 	}
 }
 

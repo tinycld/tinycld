@@ -7,11 +7,11 @@ import {
 } from '../mention-node'
 
 // The mention node shows a NAME while storing an ID. Both halves matter: the
-// name is what makes a description readable, and the id is what cards' Go flush
+// name is what makes a description readable, and the id is what boards' Go flush
 // hook parses to notify someone. A bug in either direction is silent — a
 // mention that renders correctly but serializes wrong notifies nobody.
 
-const TRIGGER = 'cards-mention'
+const TRIGGER = 'boards-mention'
 
 describe('mention labels', () => {
     beforeEach(() => {
@@ -36,7 +36,7 @@ describe('mention labels', () => {
 
     // The editor serializes through markdown, where `[` is syntax, so a stored
     // token round-trips escaped. Matching only the bare spelling is what left
-    // raw tokens on screen before — the same trap cards' own regex documents.
+    // raw tokens on screen before — the same trap boards' own regex documents.
     it('matches the backslash-escaped spelling markdown produces', () => {
         expect(mentionTokensToHtml('hi \\[\\[@u1\\]\\]', TRIGGER)).toContain('@Ada Lovelace')
     })

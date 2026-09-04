@@ -1,10 +1,10 @@
 /// <reference path="../pb_data/types.d.ts" />
 // Add the cards scopes to the seeded tinycld-cli client.
 //
-// The cards CLI (`tinycld cards …`) shipped with its collections classified in
+// The cards CLI (`tinycld boards …`) shipped with its collections classified in
 // oauth's scope table, but the CLI client row still carried the original
 // scope list. That row is a hard ceiling — ValidateClientScopes rejects any
-// scope it does not name — so `tinycld cards board list` 403'd for every
+// scope it does not name — so `tinycld boards list` 403'd for every
 // caller, on every deployment, no matter how they logged in.
 //
 // Appended rather than folded into 1985000001 because PocketBase never re-runs
@@ -17,7 +17,7 @@
 const CLI_SCOPES =
     'profile mail:read mail:send drive:read drive:write ' +
     'contacts:read contacts:write calendar:read calendar:write ' +
-    'cards:read cards:write'
+    'boards:read boards:write'
 
 const CLI_SCOPES_BEFORE =
     'profile mail:read mail:send drive:read drive:write ' +

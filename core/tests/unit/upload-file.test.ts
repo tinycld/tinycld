@@ -236,7 +236,7 @@ describe('uploadFormDataWithProgress', () => {
 describe('uploadRecordWithFile', () => {
     it('posts scalar fields and the file to the collection records endpoint', async () => {
         const promise = uploadRecordWithFile({
-            collection: 'cards_attachments',
+            collection: 'boards_attachments',
             fields: { id: 'rec1', card: 'card1', size: '2048' },
             file: pickedFile(),
         })
@@ -244,7 +244,7 @@ describe('uploadRecordWithFile', () => {
         await promise
 
         expect(FakeXHR.last?.url).toBe(
-            'https://example.test/api/collections/cards_attachments/records'
+            'https://example.test/api/collections/boards_attachments/records'
         )
 
         const body = FakeXHR.last?.body as FormData

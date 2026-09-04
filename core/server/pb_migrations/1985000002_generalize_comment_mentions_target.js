@@ -1,6 +1,6 @@
 /// <reference path="../pb_data/types.d.ts" />
 // Generalize `comment_mentions` from a drive-only table to a polymorphic one,
-// so packages that don't store their content as drive items (cards is the
+// so packages that don't store their content as drive items (boards is the
 // first) can use the same mentions → notify pipeline.
 //
 // The table is created by @tinycld/drive
@@ -23,7 +23,7 @@
 // where only one branch is absent (the validator does not short-circuit).
 // Because migrations are symlinked into a single flat directory from the
 // INSTALLED packages only (tinycld/scripts/generate.ts), a core migration
-// naming `cards_cards` would hard-fail at boot in every workspace that has no
+// naming `boards_cards` would hard-fail at boot in every workspace that has no
 // cards — breaking the lean-shell guarantee.
 //
 // So the work is split at the only seam that holds:

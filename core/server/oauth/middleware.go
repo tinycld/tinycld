@@ -109,48 +109,48 @@ var collectionScopes = map[string]collectionAccess{
 
 	"drive_item_versions": {read: scopeRule{ScopeDriveRead}, write: scopeRule{ScopeDriveWrite}},
 
-	// Cards' board content. Every one of these carries a `project` relation
+	// Boards' board content. Every one of these carries a `project` relation
 	// (denormalized onto the content rows precisely so a rule can reach it),
-	// and the access rules resolve membership through cards_project_members —
+	// and the access rules resolve membership through boards_project_members —
 	// so a grant here widens WHICH ROWS a token may touch not at all. It only
 	// decides whether an OAuth caller may use the collection at all, on top of
 	// the membership the rules already demand.
-	"cards_projects":        {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
-	"cards_lists":           {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
-	"cards_cards":           {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
-	"cards_labels":          {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
-	"cards_checklist_items": {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
-	"cards_comments":        {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
-	"cards_attachments":     {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+	"boards_projects":        {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
+	"boards_lists":           {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
+	"boards_cards":           {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
+	"boards_labels":          {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
+	"boards_checklist_items": {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
+	"boards_comments":        {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
+	"boards_attachments":     {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
 
 	// The junction collections, same reasoning as the content rows above:
 	// each one's access rules resolve membership before any of this is
 	// reached, so the grant decides whether an OAuth caller may use the
 	// collection at all — not which rows.
 	//
-	// cards_card_links is worth one moment of thought, being the only cards
+	// boards_card_links is worth one moment of thought, being the only cards
 	// collection that spans two boards. Its create rule already demands write
 	// on the source board and membership on the target, so a token cannot
 	// link boards its holder could not link through the app. Reading one
 	// discloses the far card's id and nothing else — the far card stays
-	// governed by cards_cards' own rule.
-	"cards_card_links":        {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
-	"cards_comment_reactions": {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
-	"cards_card_watchers":     {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+	// governed by boards_cards' own rule.
+	"boards_card_links":        {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
+	"boards_comment_reactions": {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
+	"boards_card_watchers":     {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
 
 	// READ-ONLY, and unlike the sharing surface below this is not a policy
-	// choice — it is the schema. cards_activity is server-written history:
+	// choice — it is the schema. boards_activity is server-written history:
 	// its create, update and delete rules are all nil (pb-migrations
 	// 1980000008), so no client of any kind writes it. Granting write here
 	// would name a capability that does not exist and cannot be exercised.
-	"cards_activity": {read: scopeRule{ScopeCardsRead}},
+	"boards_activity": {read: scopeRule{ScopeBoardsRead}},
 
 	// READ-ONLY for OAuth callers, deliberately, and NOT because the rules are
 	// weak — they already confine both to owners. These two are the SHARING
-	// surface: a write to cards_project_members adds a person to a board, and a
-	// write to cards_share_links mints a URL that opens the board to anyone
+	// surface: a write to boards_project_members adds a person to a board, and a
+	// write to boards_share_links mints a URL that opens the board to anyone
 	// holding it. That is a categorically larger grant than editing cards, and
-	// `cards:write` reads to a user consenting on the OAuth screen as "change my
+	// `boards:write` reads to a user consenting on the OAuth screen as "change my
 	// cards" — not "give other people my boards".
 	//
 	// So a leaked or over-broad CLI token cannot reshare a board or publish a
@@ -158,13 +158,13 @@ var collectionScopes = map[string]collectionAccess{
 	// who gains access. Relaxing this later is one line and is backward
 	// compatible; the reverse would silently revoke a capability integrations
 	// had already built on, so start closed.
-	"cards_project_members": {read: scopeRule{ScopeCardsRead}},
-	"cards_share_links":     {read: scopeRule{ScopeCardsRead}},
+	"boards_project_members": {read: scopeRule{ScopeBoardsRead}},
+	"boards_share_links":     {read: scopeRule{ScopeBoardsRead}},
 
 	// calendar_members is the same shape of surface, and was simply missing —
 	// so it default-denied and took `calendar list` down with it, since the
 	// ROLE column reads membership. Read-only for the same reason as
-	// cards_project_members: a write here grants another person access to a
+	// boards_project_members: a write here grants another person access to a
 	// calendar, which is not what "change my calendar events" means on the
 	// consent screen. Read is what the CLI needs — a viewer learns their role
 	// from a column rather than from a failed write.
@@ -202,7 +202,7 @@ var endpointScopes = map[string]scopeRule{
 	"POST /api/contacts/import":         {ScopeContactsWrite},
 	"GET /api/calendar/export":          {ScopeCalendarRead},
 	"POST /api/calendar/import":         {ScopeCalendarWrite},
-	"GET /api/cards/search":             {ScopeCardsRead},
+	"GET /api/boards/search":            {ScopeBoardsRead},
 
 	// The federated search narrows itself: it drops the sources a caller's
 	// grant does not cover and returns the rest. So ANY read scope admits the
@@ -210,7 +210,7 @@ var endpointScopes = map[string]scopeRule{
 	// outright instead of handing it the contacts results it may see.
 	"GET /api/search": {
 		ScopeMailRead, ScopeDriveRead, ScopeContactsRead,
-		ScopeCalendarRead, ScopeCardsRead,
+		ScopeCalendarRead, ScopeBoardsRead,
 	},
 
 	// Advertised in the discovery document as userinfo_endpoint, so an

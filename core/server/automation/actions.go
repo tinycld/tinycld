@@ -121,7 +121,7 @@ func relationParamTarget(app core.App, action ActionDef, p ParamDef) (target str
 //     (CanAccessRecord as the owner). This is pure data — collection rules
 //     travel in migrations — so it holds in every deployment, but it only
 //     proves the owner may SEE the record. A rule whose disjuncts need
-//     request context beyond auth (e.g. cards' share-link token header)
+//     request context beyond auth (e.g. boards' share-link token header)
 //     correctly evaluates those branches false: automation acts as the
 //     owner, never as an anonymous link holder.
 //  2. The package's registered RelationAuthorizer, which owns the

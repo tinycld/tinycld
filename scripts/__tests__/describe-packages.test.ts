@@ -185,7 +185,7 @@ describe('validateSidebarContributions', () => {
 describe('validateEventSources', () => {
     const source = (overrides: Partial<{ target: string; id: string }> = {}) => ({
         target: 'calendar',
-        id: 'cards-due',
+        id: 'boards-due',
         label: 'Card due dates',
         module: 'calendar-source',
         ...overrides,
@@ -209,11 +209,11 @@ describe('validateEventSources', () => {
     })
 
     it('maps eventSources onto ConfigPkg, defaulting order to 0', () => {
-        const cp = contributor('cards')
+        const cp = contributor('boards')
         expect(cp.eventSources).toEqual([
             {
                 target: 'calendar',
-                id: 'cards-due',
+                id: 'boards-due',
                 label: 'Card due dates',
                 module: 'calendar-source',
                 order: 0,
@@ -224,13 +224,13 @@ describe('validateEventSources', () => {
     })
 
     it('accepts a source targeting a present host', () => {
-        expect(() => validateEventSources([host, contributor('cards')])).not.toThrow()
+        expect(() => validateEventSources([host, contributor('boards')])).not.toThrow()
     })
 
     it('tolerates a source targeting an absent host (partial checkout)', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
         try {
-            expect(() => validateEventSources([contributor('cards')])).not.toThrow()
+            expect(() => validateEventSources([contributor('boards')])).not.toThrow()
             expect(warn).toHaveBeenCalledWith(
                 expect.stringMatching(/not installed in this workspace/)
             )
@@ -246,21 +246,21 @@ describe('validateEventSources', () => {
             version: '0.1.0',
             description: 'd',
         })
-        expect(() => validateEventSources([nonHost, contributor('cards')])).toThrow(
+        expect(() => validateEventSources([nonHost, contributor('boards')])).toThrow(
             /does not declare eventSourceHost/
         )
     })
 
     it('rejects an id outside [a-z0-9-]', () => {
         expect(() =>
-            validateEventSources([host, contributor('cards', [source({ id: 'Cards:Due' })])])
+            validateEventSources([host, contributor('boards', [source({ id: 'Cards:Due' })])])
         ).toThrow(/must match \[a-z0-9-\]\+/)
     })
 
     it('rejects a duplicate (target, id) across contributors', () => {
         expect(() =>
-            validateEventSources([host, contributor('cards'), contributor('tasks')])
-        ).toThrow(/declared by both 'cards' and 'tasks'/)
+            validateEventSources([host, contributor('boards'), contributor('tasks')])
+        ).toThrow(/declared by both 'boards' and 'tasks'/)
     })
 })
 
@@ -276,14 +276,14 @@ describe('validateNavShortcuts', () => {
 
     it('accepts distinct letters', () => {
         expect(() =>
-            validateNavShortcuts([withShortcut('mail', 'm'), withShortcut('cards', 'k')])
+            validateNavShortcuts([withShortcut('mail', 'm'), withShortcut('boards', 'k')])
         ).not.toThrow()
     })
 
     it('rejects two packages claiming the same letter', () => {
         expect(() =>
-            validateNavShortcuts([withShortcut('cards', 'k'), withShortcut('kanban', 'k')])
-        ).toThrow(/'k' is claimed by both 'cards' and 'kanban'/)
+            validateNavShortcuts([withShortcut('boards', 'k'), withShortcut('kanban', 'k')])
+        ).toThrow(/'k' is claimed by both 'boards' and 'kanban'/)
     })
 
     it('ignores packages that declare no shortcut', () => {

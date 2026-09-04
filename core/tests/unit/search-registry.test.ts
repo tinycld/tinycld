@@ -31,10 +31,10 @@ describe('deriveSearchPackages', () => {
 
     it('sorts by nav.order', () => {
         const packages = deriveSearchPackages([
-            entry('cards', 'Cards', 'square-kanban', 25, { endpoint: '/api/cards/search' }),
+            entry('boards', 'Boards', 'square-kanban', 25, { endpoint: '/api/boards/search' }),
             entry('mail', 'Mail', 'mail', 5, { endpoint: '/api/mail/search' }),
         ])
-        expect(packages.map(p => p.slug)).toEqual(['mail', 'cards'])
+        expect(packages.map(p => p.slug)).toEqual(['mail', 'boards'])
     })
 
     it('defaults the label to nav.label', () => {

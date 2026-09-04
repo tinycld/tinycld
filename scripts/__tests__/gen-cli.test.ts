@@ -73,11 +73,11 @@ describe('buildCliGoWork', () => {
 
 describe('buildSearchSlugsSource', () => {
     it('emits the slugs of packages declaring search, sorted', () => {
-        const go = buildSearchSlugsSource(['mail', 'cards', 'drive'])
-        expect(go).toContain('var searchSlugs = []string{"cards", "drive", "mail"}')
+        const go = buildSearchSlugsSource(['mail', 'boards', 'drive'])
+        expect(go).toContain('var searchSlugs = []string{"boards", "drive", "mail"}')
     })
 
-    // The search set is NOT the cli set: cards and contacts contribute a search
+    // The search set is NOT the cli set: boards and contacts contribute a search
     // source but ship no CLI commands, so deriving one list from the other
     // would make `cards:` parse as a literal word in the terminal.
     it('emits an empty slice when no package declares search', () => {

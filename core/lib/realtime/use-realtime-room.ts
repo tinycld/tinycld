@@ -59,7 +59,7 @@ export interface UseRealtimeRoomOptions {
     // hello, or returns null when the payload carries none.
     //
     // A server may DISCARD an idle document and rebuild it from storage —
-    // cards' janitor evicts a quiet board, and the next joiner's connect
+    // boards' janitor evicts a quiet board, and the next joiner's connect
     // re-seeds the fragments from the cards table. The rebuilt document is a
     // different incarnation: y-crdt mints a fresh clientID for it, so the
     // inserts our surviving Y.Doc still holds are, to the CRDT, edits nobody
@@ -306,7 +306,7 @@ export function useRealtimeRoom({
     // leaves a departed screen mounted-but-frozen so returning to it is
     // instant. Its socket therefore stays open and its awareness slot stays
     // populated, so remote peers kept showing an avatar for someone who had
-    // left the package — the bug cards/tests/e2e/board-presence.spec.ts
+    // left the package — the bug boards/tests/e2e/board-presence.spec.ts
     // catches. core/lib/shortcuts/scopes.ts solves the same freeze the same
     // way, for the same reason.
     //
@@ -334,7 +334,7 @@ export function useRealtimeRoom({
 // deletes the local state outright, so without stashing it first a
 // refocus would restore an empty slot and the user would be invisible
 // to peers until something else happened to republish. Consumers that
-// keep their own publish effect (cards' useBoardPresence) would recover
+// keep their own publish effect (boards' useBoardPresence) would recover
 // eventually; ones that publish only via `initialAwareness` would not,
 // since that is captured on the room's first effect run only.
 function useLeaveOnBlur(

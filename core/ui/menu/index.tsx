@@ -370,7 +370,7 @@ function Trigger({ children, disableClick }: TriggerProps) {
         // catches hover — but the child is ALSO cloned with an onPress.
         //
         // Not cosmetic: a trigger child may branch on `onPress` to decide
-        // whether it is interactive at all (cards' assignee/label/due values
+        // whether it is interactive at all (boards' assignee/label/due values
         // render bare, unpressable text when it is absent, which is how a
         // read-only card is drawn). Passing children straight through left
         // that prop undefined on web only, so an OWNER'S card properties

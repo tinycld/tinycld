@@ -130,7 +130,7 @@ function headingLineHeight(scale: MarkdownScale, size: number): number {
  *
  * EXPORTED because a surface that swaps an editor in where this was must
  * reserve the same amount, or everything below it shifts by the difference the
- * moment someone taps. Cards' inline comment edit is the case, and it used to
+ * moment someone taps. Boards' inline comment edit is the case, and it used to
  * carry a hand-measured constant that silently went stale whenever this moved.
  */
 export const MARKDOWN_TRAILING_SPACE = 8
@@ -667,7 +667,7 @@ export function MarkdownRenderer({
                 // Override the library's hardcoded #fff/#000 scheme background
                 // (its own style loses to flatListProps). An OPAQUE box here
                 // paints over anything a caller's negative margin pulls it
-                // across — cards' comment rows lost the bottom of their
+                // across — boards' comment rows lost the bottom of their
                 // author line to exactly that — and a raw hex never matches
                 // the themed surface it sits on anyway.
                 style: { backgroundColor: 'transparent' },

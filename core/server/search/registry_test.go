@@ -72,7 +72,7 @@ func TestRegisterSourcesRejectsUnusableSources(t *testing.T) {
 	RegisterSources(Source{Slug: "", Search: func(core.App, string, Query) (Result, error) {
 		return Result{}, nil
 	}})
-	RegisterSources(Source{Slug: "cards"}) // no Search
+	RegisterSources(Source{Slug: "boards"}) // no Search
 	if got := len(RegisteredSources()); got != 0 {
 		t.Fatalf("registered %d unusable sources, want 0", got)
 	}
@@ -84,19 +84,19 @@ func TestRegisteredSourcesOrdersByOrderThenSlug(t *testing.T) {
 	ResetSources()
 	t.Cleanup(ResetSources)
 
-	RegisterSources(fakeSource("cards", 25), fakeSource("mail", 5), fakeSource("drive", 12))
+	RegisterSources(fakeSource("boards", 25), fakeSource("mail", 5), fakeSource("drive", 12))
 	RegisterSources(fakeSource("contacts", 5)) // ties with mail on order
 
-	want := []string{"contacts", "mail", "drive", "cards"}
+	want := []string{"contacts", "mail", "drive", "boards"}
 	if got := slugsOf(RegisteredSources()); !equalSlugs(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
 	}
 }
 
 func TestSelectSourcesFiltersByRequestedSlugs(t *testing.T) {
-	all := []Source{fakeSource("mail", 5), fakeSource("drive", 12), fakeSource("cards", 25)}
+	all := []Source{fakeSource("mail", 5), fakeSource("drive", 12), fakeSource("boards", 25)}
 
-	if got := slugsOf(selectSources(all, nil, nil)); !equalSlugs(got, []string{"mail", "drive", "cards"}) {
+	if got := slugsOf(selectSources(all, nil, nil)); !equalSlugs(got, []string{"mail", "drive", "boards"}) {
 		t.Errorf("no slugs should search everything, got %v", got)
 	}
 	if got := slugsOf(selectSources(all, []string{"drive"}, nil)); !equalSlugs(got, []string{"drive"}) {
@@ -114,7 +114,7 @@ func TestSelectSourcesFiltersByGrantedScopes(t *testing.T) {
 	all := []Source{
 		fakeSource("mail", 5, "mail:read"),
 		fakeSource("drive", 12, "drive:read"),
-		fakeSource("cards", 25, "cards:read"),
+		fakeSource("boards", 25, "boards:read"),
 	}
 
 	got := slugsOf(selectSources(all, nil, []string{"mail:read"}))

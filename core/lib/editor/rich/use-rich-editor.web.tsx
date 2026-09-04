@@ -59,7 +59,7 @@ if (typeof document !== 'undefined' && !document.getElementById(EDITOR_STYLE_TAG
 
 /**
  * The shared rich-text editor: one schema, one set of commands, used by mail
- * (HTML in and out), cards comments (markdown, single author) and cards
+ * (HTML in and out), boards comments (markdown, single author) and cards
  * descriptions (markdown, collaborative).
  *
  * Returns the same `EditorResult` contract every editor in the app implements,

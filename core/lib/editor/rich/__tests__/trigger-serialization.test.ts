@@ -26,7 +26,7 @@ describe('SerializableTriggerConfig', () => {
         // required field missing from SERIALIZABLE_FIELDS, and the runtime
         // assertion below catches an optional one.
         const complete: Required<SerializableTriggerConfig> = {
-            id: 'cards-mention',
+            id: 'boards-mention',
             char: '@',
             allItems: [],
             limit: 6,

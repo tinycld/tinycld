@@ -37,7 +37,7 @@ export interface PressPoint {
  *
  * Exported because a surface whose swap is decided by a PARENT has to capture
  * the point itself: the editor is not mounted when the press happens, so the
- * press target below never sees it. Cards' comment list is the case.
+ * press target below never sees it. Boards' comment list is the case.
  */
 export function pressPoint(event?: {
     nativeEvent?: PressPoint
@@ -184,7 +184,7 @@ export interface LazyEditorProps {
      *
      * The press-target branch below captures this itself, but a surface whose
      * swap is decided by a PARENT never renders that branch: it is mounted
-     * already editing, after the press it should honour. Cards' inline comment
+     * already editing, after the press it should honour. Boards' inline comment
      * edit is the case — without this the caret went to the end of the comment
      * however far up someone clicked.
      */
@@ -239,7 +239,7 @@ export interface LazyEditorProps {
  *
  * Deliberately NOT format-aware. `readView` is the consumer's, content crosses
  * as an opaque string, and `contentFormat` only selects which channel to read
- * back through — so mail's HTML surfaces use this exactly as cards' markdown
+ * back through — so mail's HTML surfaces use this exactly as boards' markdown
  * ones do.
  */
 export const LazyEditor = forwardRef<LazyEditorHandle, LazyEditorProps>(
@@ -732,7 +732,7 @@ export function useLazyEditor({
     // The surface is going away with an unfinished edit.
     //
     // The displacement effect above cannot see this case. A surface whose
-    // session is owned by a PARENT — cards mounts one inline comment editor, for
+    // session is owned by a PARENT — boards mounts one inline comment editor, for
     // whichever id is being edited — is UNMOUNTED by the same commit that hands
     // the editor on, so it never renders again to notice it was displaced.
     // Clicking a second comment is exactly that: `setEditingCommentId(B)` tears

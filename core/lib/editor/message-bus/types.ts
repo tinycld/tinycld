@@ -50,7 +50,7 @@
 //   The host keeps the single existing room socket and relays across these
 //   channels. The WebView must NOT open its own connection: a second one ships
 //   a credential into the page and gives the local user a second awareness
-//   identity, so one human shows up as two peers. Both cards and text ride the
+//   identity, so one human shows up as two peers. Both boards and text ride the
 //   relay for exactly that reason.
 //
 //   The awareness relay is deliberately asymmetric — the page sends its cursor

@@ -43,9 +43,9 @@ func Install(pbHandler slog.Handler) {
 }
 
 // ForPackage returns a logger stamped with a pkg attribute, replacing the old
-// hand-written "cards: " message prefixes with a queryable structured field.
+// hand-written "boards: " message prefixes with a queryable structured field.
 //
-//	log := logging.ForPackage("cards")
+//	log := logging.ForPackage("boards")
 //	log.WarnContext(ctx, "refusing to flush a card from another board", "cardID", id)
 func ForPackage(name string) *slog.Logger {
 	return slog.Default().With("pkg", name)

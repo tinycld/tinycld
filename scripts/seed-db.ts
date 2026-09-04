@@ -104,7 +104,7 @@ const TEST_DEFAULTS = {
 // /accept-invite → set password → wait for the shell. Measured, that is ~4.4s
 // on a fast dev machine, and it strands the owner's page on Settings so every
 // caller then pays another ~1.4s login() to get back. ~5.8s of setup before a
-// single assertion — which is why seven cards specs carried test.slow(), and
+// single assertion — which is why seven boards specs carried test.slow(), and
 // why all of them timed out on CI once the slower, contended runner multiplied
 // that baseline. The marker was the symptom; this fixture is the cause.
 //
@@ -483,7 +483,7 @@ function companionPassword(config: SeedConfig): string {
  * teammate in demo mode (see COLLABORATOR_DEFAULTS / DEMO_COMPANION_DEFAULTS).
  *
  * Runs BEFORE seedForUser and its record is passed through as
- * SeedContext.companion, so package seeds that need a second person (cards'
+ * SeedContext.companion, so package seeds that need a second person (boards'
  * teammate-owned board, calendar's shared calendars, drive's share targets)
  * resolve to THIS user rather than querying for any other account. That is what
  * bounds the seeded data to two users and makes the demo reset able to reclaim

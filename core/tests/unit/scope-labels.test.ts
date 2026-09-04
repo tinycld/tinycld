@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { SCOPE_LABELS } from '../../components/oauth/ScopeList'
 
 // The consent screen renders SCOPE_LABELS[scope] ?? scope, so a scope with no
-// label asks a person to approve the raw string — "cards:write" instead of
+// label asks a person to approve the raw string — "boards:write" instead of
 // "Create and modify your boards and cards". That is exactly what shipped: the
 // cards scopes went out unlabeled and nothing caught it, because the label map
 // and the scope catalog live in different languages.

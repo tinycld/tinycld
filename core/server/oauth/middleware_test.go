@@ -481,7 +481,7 @@ func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
 
 		// text and calc own only their comment collections. Unclassified,
 		// these default-denied, so `tinycld text comments` could not run at
-		// all — the same hole cards:* fell into before the first live smoke
+		// all — the same hole boards:* fell into before the first live smoke
 		// test found it.
 		{"GET", "/api/collections/text_comments/records", ScopeTextRead},
 		{"POST", "/api/collections/text_comments/records", ScopeTextWrite},

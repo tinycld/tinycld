@@ -8,7 +8,7 @@
  * renders a native Modal at the right screen coordinates.
  *
  * Promoted from the text package, which proved the approach on its slash menu.
- * It moved here when cards' @-mentions became the second consumer: siblings
+ * It moved here when boards' @-mentions became the second consumer: siblings
  * cannot import each other, so the alternative was a second copy of a
  * non-trivial state machine and its geometry.
  */

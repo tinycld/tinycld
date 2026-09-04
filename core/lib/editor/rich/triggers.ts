@@ -5,7 +5,7 @@ import Suggestion, { type SuggestionOptions } from '@tiptap/suggestion'
 // Character-triggered autocomplete for the shared rich editor.
 //
 // A "trigger" is a character (`@`, `:`, `#`) that opens a picker mid-typing and
-// inserts something when an entry is chosen. Cards' @mentions are the first
+// inserts something when an entry is chosen. Boards' @mentions are the first
 // consumer; the shape is deliberately generic because emoji and issue-links
 // want exactly this and should not each grow their own plugin.
 //

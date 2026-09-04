@@ -3,12 +3,12 @@ import { createTriggerBridgeRender } from '@tinycld/core/lib/editor/rich/webview
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The wire format between the WebView page and the native host. Nothing on this
-// path can be e2e'd — cards' Playwright suite runs on web, where none of this
+// path can be e2e'd — boards' Playwright suite runs on web, where none of this
 // code executes — so these assertions are the only automated proof the two
 // sides agree.
 
 const CONFIG: SerializableTriggerConfig = {
-    id: 'cards-mention',
+    id: 'boards-mention',
     char: '@',
     allItems: [],
     insertTemplate: '[[@{id}]] ',
@@ -91,9 +91,9 @@ describe('show-popover', () => {
         expect(posted[0]).toMatchObject({
             namespace: 'ui',
             type: 'show-popover',
-            requestId: 'cards-mention-req1',
+            requestId: 'boards-mention-req1',
             payload: {
-                kind: 'trigger:cards-mention',
+                kind: 'trigger:boards-mention',
                 rect: { top: 100, left: 40, width: 2, height: 18 },
                 payload: { items: ITEMS, query: '', selectedIndex: 0 },
                 editorInstanceId: 'rich-1',
@@ -118,7 +118,7 @@ describe('popover-update', () => {
 
         expect(posted[1]).toMatchObject({
             type: 'popover-update',
-            requestId: 'cards-mention-req1',
+            requestId: 'boards-mention-req1',
             payload: { payload: { items: [ITEMS[0]], query: 'ada', selectedIndex: 0 } },
         })
     })
@@ -152,7 +152,7 @@ describe('popover-result', () => {
         deliver({
             namespace: 'ui',
             type: 'popover-result',
-            requestId: 'cards-mention-req1',
+            requestId: 'boards-mention-req1',
             payload: { action: 'select', payload: { itemId: 'u2' } },
         })
         expect(command).toHaveBeenCalledWith(ITEMS[1])
@@ -176,7 +176,7 @@ describe('popover-result', () => {
         deliver({
             namespace: 'ui',
             type: 'popover-result',
-            requestId: 'cards-mention-req1',
+            requestId: 'boards-mention-req1',
             payload: { action: 'select', payload: { itemId: 'ghost' } },
         })
         expect(command).not.toHaveBeenCalled()
@@ -188,7 +188,7 @@ describe('popover-result', () => {
         deliver({
             namespace: 'ui',
             type: 'popover-result',
-            requestId: 'cards-mention-req1',
+            requestId: 'boards-mention-req1',
             payload: { action: 'dismiss' },
         })
         expect(exit).toHaveBeenCalled()
@@ -200,7 +200,7 @@ describe('popover-result', () => {
         deliver({
             namespace: 'markdown',
             type: 'popover-result',
-            requestId: 'cards-mention-req1',
+            requestId: 'boards-mention-req1',
             payload: { action: 'select', payload: { itemId: 'u2' } },
         })
         expect(command).not.toHaveBeenCalled()
@@ -221,7 +221,7 @@ describe('onExit', () => {
 
         expect(posted.at(-1)).toMatchObject({
             type: 'popover-exited',
-            requestId: 'cards-mention-req1',
+            requestId: 'boards-mention-req1',
             payload: { editorInstanceId: 'rich-1' },
         })
 
@@ -229,7 +229,7 @@ describe('onExit', () => {
         deliver({
             namespace: 'ui',
             type: 'popover-result',
-            requestId: 'cards-mention-req1',
+            requestId: 'boards-mention-req1',
             payload: { action: 'select', payload: { itemId: 'u2' } },
         })
         expect(command).not.toHaveBeenCalled()

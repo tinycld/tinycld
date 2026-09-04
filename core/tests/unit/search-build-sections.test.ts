@@ -6,8 +6,8 @@ const PACKAGES: SearchPackage[] = [
     { slug: 'mail', label: 'Mail', icon: 'mail', order: 5 },
     { slug: 'drive', label: 'Drive', icon: 'hard-drive', order: 12 },
     {
-        slug: 'cards',
-        label: 'Cards',
+        slug: 'boards',
+        label: 'Boards',
         icon: 'square-kanban',
         order: 25,
     },
@@ -45,26 +45,26 @@ describe('buildSections', () => {
     })
 
     it('groups by package ordered by nav.order when 2+ chips are set', () => {
-        const cards = row('cards', 'c1', 'budget')
+        const boards = row('boards', 'c1', 'budget')
         const mail = row('mail', 'm1', 'budget')
         const sections = buildSections(
-            { cards: [cards], mail: [mail] },
+            { boards: [boards], mail: [mail] },
             PACKAGES,
-            ['cards', 'mail'],
-            // Server order puts cards first here; the grouped branch lays
+            ['boards', 'mail'],
+            // Server order puts boards first here; the grouped branch lays
             // sections out by nav.order regardless, which is the point.
-            [cards, mail]
+            [boards, mail]
         )
-        expect(sections.map(s => s.title)).toEqual(['Mail', 'Cards'])
+        expect(sections.map(s => s.title)).toEqual(['Mail', 'Boards'])
         expect(sections.map(s => s.icon)).toEqual(['mail', 'square-kanban'])
     })
 
     it('omits a package that returned no rows', () => {
         const mail = row('mail', 'm1', 'budget')
         const sections = buildSections(
-            { cards: [], mail: [mail] },
+            { boards: [], mail: [mail] },
             PACKAGES,
-            ['cards', 'mail'],
+            ['boards', 'mail'],
             [mail]
         )
         expect(sections.map(s => s.title)).toEqual(['Mail'])

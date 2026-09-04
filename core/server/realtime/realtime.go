@@ -221,7 +221,7 @@ type Client struct {
 	// Atomic because it is no longer written only during the handshake. A
 	// kind whose permission data is written by a MULTI-STATEMENT flow can
 	// resolve read-only for a connection that merely arrived early, and it
-	// must be able to correct that later — cards' board creation writes the
+	// must be able to correct that later — boards' board creation writes the
 	// project row and the owner's membership row separately, and a socket
 	// opened in between would otherwise drop that owner's every edit for the
 	// life of the connection. A later SetReadOnly therefore races the reads

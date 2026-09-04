@@ -18,12 +18,12 @@
 const CLI_SCOPES =
     'profile mail:read mail:send drive:read drive:write ' +
     'contacts:read contacts:write calendar:read calendar:write ' +
-    'cards:read cards:write text:read text:write calc:read calc:write'
+    'boards:read boards:write text:read text:write calc:read calc:write'
 
 const CLI_SCOPES_BEFORE =
     'profile mail:read mail:send drive:read drive:write ' +
     'contacts:read contacts:write calendar:read calendar:write ' +
-    'cards:read cards:write'
+    'boards:read boards:write'
 
 migrate(
     app => {

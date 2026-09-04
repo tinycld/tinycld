@@ -582,7 +582,7 @@ function buildCLI(): void {
 /** Which groups this binary actually registered, so absent ones are skipped honestly. */
 function registeredGroups(): Set<string> {
     const help = spawnSync(CLI_BIN, ['--help'], { encoding: 'utf-8' }).stdout ?? ''
-    const known = ['search', 'drive', 'mail', 'cards', 'contacts', 'calendar', 'text', 'calc']
+    const known = ['search', 'drive', 'mail', 'boards', 'contacts', 'calendar', 'text', 'calc']
     return new Set(known.filter(g => new RegExp(`^\\s+${g}\\s`, 'm').test(help)))
 }
 
@@ -622,7 +622,7 @@ function exerciseGlobal(): void {
     for (const scope of [
         'drive:read',
         'mail:read',
-        'cards:read',
+        'boards:read',
         'contacts:read',
         'calendar:read',
     ]) {
@@ -720,17 +720,17 @@ function exerciseMail(): void {
     )
 }
 
-function exerciseCards(): void {
-    section('cards')
-    const g = 'cards'
-    const list = report(g, 'cards board list', ['cards', 'board', 'list'], OWNER_CTX)
+function exerciseBoards(): void {
+    section('boards')
+    const g = 'boards'
+    const list = report(g, 'boards list', ['boards', 'board', 'list'], OWNER_CTX)
 
-    const json = cli(['--json', 'cards', 'board', 'list'], OWNER_CTX)
+    const json = cli(['--json', 'boards', 'board', 'list'], OWNER_CTX)
     // The KEY column is `slug` renamed at render time — the JSON carries no
     // `key` field. Reading `key` here silently yielded undefined and skipped the
     // check below as "no boards seeded" while three boards sat in the list.
     const boards = parseJSON(json) as { slug?: string; name?: string; id?: string }[] | null
-    assert(g, 'cards board list --json parses', Array.isArray(boards), firstLine(json.stderr))
+    assert(g, 'boards list --json parses', Array.isArray(boards), firstLine(json.stderr))
 
     // A board must be resolvable by the KEY its own output prints — that
     // round-trip was broken once (resolveProject matched ids and names only)
@@ -738,12 +738,12 @@ function exerciseCards(): void {
     // a slug.
     const key = boards?.[0]?.slug
     if (key) {
-        const view = cli(['cards', 'board', 'view', key], OWNER_CTX)
+        const view = cli(['boards', 'board', 'view', key], OWNER_CTX)
         assert(g, `cards board view by printed KEY (${key})`, view.ok, firstLine(view.stderr))
     } else {
         skip(
             g,
-            'cards board view by printed KEY',
+            'boards view by printed KEY',
             list.ok ? 'boards listed but none carried a slug' : 'board list failed'
         )
     }
@@ -1305,7 +1305,7 @@ async function main(): Promise<void> {
         if (wanted('search')) exerciseSearch()
         if (wanted('drive')) exerciseDrive()
         if (wanted('mail')) exerciseMail()
-        if (wanted('cards')) exerciseCards()
+        if (wanted('boards')) exerciseBoards()
         if (wanted('contacts')) exerciseContacts()
         if (wanted('calendar')) exerciseCalendar()
         if (wanted('text')) exerciseComments('text')

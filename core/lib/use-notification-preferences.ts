@@ -25,20 +25,20 @@ export interface NotificationPreferences {
      * `comment_mention`, because the two are different enough in cadence to
      * want muting separately: a board is chattier than a document, and someone
      * who wants card noise off usually still wants a doc mention. Sent by
-     * cards' description flush hook (server/description_mentions.go) and by
-     * the comment path for `cards_comments`.
+     * boards' description flush hook (server/description_mentions.go) and by
+     * the comment path for `boards_comments`.
      */
-    cards_mention: boolean
+    boards_mention: boolean
     /** A card was assigned to you (server/notifications.go in cards). */
-    cards_assigned: boolean
+    boards_assigned: boolean
     /** Someone replied to your comment on a card. */
-    cards_reply: boolean
+    boards_reply: boolean
     /** Someone reacted to your comment on a card. */
-    cards_reaction: boolean
+    boards_reaction: boolean
     /** A card you watch gained a comment, moved, was completed or archived. */
-    cards_watched: boolean
+    boards_watched: boolean
     /** A card you watch or are assigned is due soon or overdue. */
-    cards_due: boolean
+    boards_due: boolean
 }
 
 const DEFAULT_PREFS: NotificationPreferences = {
@@ -50,12 +50,12 @@ const DEFAULT_PREFS: NotificationPreferences = {
     org_invite: true,
     system_error: true,
     comment_mention: true,
-    cards_mention: true,
-    cards_assigned: true,
-    cards_reply: true,
-    cards_reaction: true,
-    cards_watched: true,
-    cards_due: true,
+    boards_mention: true,
+    boards_assigned: true,
+    boards_reply: true,
+    boards_reaction: true,
+    boards_watched: true,
+    boards_due: true,
 }
 
 export type MailNotifyMode = 'batched' | 'important_only'

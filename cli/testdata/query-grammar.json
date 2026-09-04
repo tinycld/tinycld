@@ -1,6 +1,6 @@
 {
     "comment": "Golden cases for the palette query grammar, shared by the TypeScript parser (core/lib/search/parse-query.ts) and the Go port (cli/parse_query.go). Both read THIS file, so a change to the grammar that lands in only one of them fails the other's test. The web parser also returns a `remainder` used to render the chip input box; that field is web-only and asserted in the TS suite alone.",
-    "slugs": ["mail", "drive", "cards", "contacts"],
+    "slugs": ["mail", "drive", "boards", "contacts"],
     "cases": [
         {
             "name": "a matching word followed by a colon becomes a chip",
@@ -53,8 +53,8 @@
         },
         {
             "name": "a second pkg: token is not promoted once free text broke the leading run",
-            "input": "cards: budget drive: q3",
-            "chips": ["cards"],
+            "input": "boards: budget drive: q3",
+            "chips": ["boards"],
             "include": ["budget", "drive", "q3"],
             "exclude": []
         },

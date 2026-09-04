@@ -201,8 +201,8 @@ describe('buildConfigSource', () => {
     it('emits eventSources with a bare load thunk, never lazy()', () => {
         const cardsPkg: ConfigPkg = {
             ...contacts,
-            packageName: '@tinycld/cards',
-            slug: 'cards',
+            packageName: '@tinycld/boards',
+            slug: 'boards',
             schemaType: '',
             hasRegister: false,
             hasSidebar: false,
@@ -210,23 +210,23 @@ describe('buildConfigSource', () => {
             eventSources: [
                 {
                     target: 'calendar',
-                    id: 'cards-due',
+                    id: 'boards-due',
                     label: 'Card due dates',
                     module: 'calendar-source',
                     color: 'graphite',
                     order: 0,
                 },
             ],
-            manifest: { name: 'Cards', slug: 'cards', version: '0.1.0', description: 'd' },
+            manifest: { name: 'Boards', slug: 'boards', version: '0.1.0', description: 'd' },
         }
         const src = buildConfigSource([cardsPkg])
         expect(src).toContain('eventSources: [')
         expect(src).toContain(
-            'target: "calendar", id: "cards-due", label: "Card due dates", color: "graphite", order: 0'
+            'target: "calendar", id: "boards-due", label: "Card due dates", color: "graphite", order: 0'
         )
         // A bare thunk: the module exports a hook, so React.lazy cannot wrap it.
-        expect(src).toContain("load: () => import('@tinycld/cards/calendar-source')")
-        expect(src).not.toContain("lazy(() => import('@tinycld/cards/calendar-source'))")
+        expect(src).toContain("load: () => import('@tinycld/boards/calendar-source')")
+        expect(src).not.toContain("lazy(() => import('@tinycld/boards/calendar-source'))")
         // An event source alone must not pull in the react lazy import.
         expect(src).not.toContain("import { lazy } from 'react'")
     })
