@@ -3,6 +3,25 @@
 // Stub for react-native in unit tests. Vite/Rollup cannot parse react-native's
 // Flow type syntax or its CJS/ESM hybrid internals. This provides the minimal
 // surface that tests reference transitively via core hooks.
+const React = require('react')
+
+// RN accepts `style` as a nested array; a DOM host element does not. Flatten
+// it so a component that composes styles the RN way (`style={[a, b]}`) still
+// renders under the string-tag stubs below.
+function flattenStyle(style) {
+    if (!style) return undefined
+    if (!Array.isArray(style)) return style
+    return Object.assign({}, ...style.map(flattenStyle).filter(Boolean))
+}
+
+function host(tag) {
+    const Host = React.forwardRef(function Host({ style, ...props }, ref) {
+        return React.createElement(tag, { ...props, ref, style: flattenStyle(style) })
+    })
+    Host.displayName = tag
+    return Host
+}
+
 module.exports = {
     Platform: { OS: 'web', select: (map) => map.web ?? map.default },
     Dimensions: {
@@ -15,16 +34,18 @@ module.exports = {
         setBackgroundColor: () => {},
     },
     StyleSheet: { create: (s) => s, flatten: (s) => s, compose: (a, b) => [a, b] },
-    // Components are string tags so props pass straight through to attributes
-    // (text-input-autofill.test.tsx asserts on them). The names are dashed
-    // lowercase because React DOM treats those as custom elements and stays
-    // quiet; an uppercase tag like 'Text' triggers the "is using incorrect
-    // casing" / "unrecognized in this browser" dev warnings in every render.
-    View: 'rn-view',
-    Text: 'rn-text',
-    Pressable: 'rn-pressable',
-    ScrollView: 'rn-scrollview',
-    TextInput: 'rn-textinput',
+    // Components render as string tags so props pass straight through to
+    // attributes (text-input-autofill.test.tsx asserts on them). The names are
+    // dashed lowercase because React DOM treats those as custom elements and
+    // stays quiet; an uppercase tag like 'Text' triggers the "is using
+    // incorrect casing" / "unrecognized in this browser" dev warnings in every
+    // render. The layout primitives go through `host` so an array `style`
+    // survives the trip.
+    View: host('rn-view'),
+    Text: host('rn-text'),
+    Pressable: host('rn-pressable'),
+    ScrollView: host('rn-scrollview'),
+    TextInput: host('rn-textinput'),
     Image: 'rn-image',
     Modal: 'rn-modal',
     TouchableOpacity: 'rn-touchableopacity',
@@ -36,8 +57,8 @@ module.exports = {
     SafeAreaView: 'rn-safeareaview',
     KeyboardAvoidingView: 'rn-keyboardavoidingview',
     Animated: {
-        View: 'rn-view',
-        Text: 'rn-text',
+        View: host('rn-view'),
+        Text: host('rn-text'),
         Value: class {
             constructor(v) { this._value = v }
             setValue(v) { this._value = v }
