@@ -63,6 +63,18 @@ interface MenuContextValue {
     // each <Menu.Sub> derives its `isOpen` from `activeSubId === myId`.
     activeSubId: string | null
     setActiveSubId: React.Dispatch<React.SetStateAction<string | null>>
+    /**
+     * The Content element's DOM node on web, for outside-click dismissal.
+     *
+     * A ref rather than state because the handler reads it at event time and
+     * must not re-subscribe when Content mounts. Null on native, where the
+     * Portal's own backdrop handles dismissal.
+     *
+     * SubContent is a DOM DESCENDANT of Content, so `contains()` covers
+     * submenu clicks for free — the property the old sibling Overlay lacked,
+     * and the whole reason this exists.
+     */
+    contentNodeRef: React.MutableRefObject<HTMLElement | null>
 }
 
 const MenuContext = createContext<MenuContextValue | null>(null)
@@ -156,6 +168,7 @@ function MenuRoot({
         [isControlled, controlledOnChange]
     )
     const triggerRef = useRef<View | null>(null)
+    const contentNodeRef = useRef<HTMLElement | null>(null)
     const [internalLayout, setInternalLayout] = useState<{
         x: number
         y: number
@@ -212,6 +225,7 @@ function MenuRoot({
                 setContentLayout,
                 activeSubId,
                 setActiveSubId,
+                contentNodeRef,
             }}
         >
             <View className={className}>{children}</View>
@@ -325,6 +339,60 @@ function Trigger({ children, disableClick }: TriggerProps) {
     })
 }
 
+/**
+ * Web outside-click dismissal for an ordinary (non-menubar) menu.
+ *
+ * REPLACES the full-screen `Menu.Overlay` Pressable, which could not work for
+ * submenus. Overlay is a SIBLING of Menu.Content inside the Portal, while
+ * SubContent is a CHILD of Content positioned outside Content's box — so the
+ * overlay won hit-testing at the submenu's coordinates and every submenu item
+ * was unclickable. SubContent's own `zIndex: 50` cannot help: it applies
+ * within Content's stacking context, and the overlay is one level above that.
+ *
+ * A document listener has no such geometry problem. `node.contains(target)`
+ * treats SubContent as inside, because it genuinely is a DOM descendant.
+ *
+ * core/components/ContextMenu.tsx reached the same conclusion independently:
+ * "the Pressable approach is unreliable inside Gluestack's overlay container
+ * because depending on stacking and pointer-events, clicks can land on the row
+ * underneath instead of the dismiss layer."
+ *
+ * Capture phase, and `pointerdown` rather than `click`: a menu must close on
+ * the press that starts an outside interaction, not after that interaction has
+ * already been delivered somewhere else.
+ */
+function useWebOutsideClose(params: {
+    isOpen: boolean
+    onClose: () => void
+    contentNodeRef: React.MutableRefObject<HTMLElement | null>
+    triggerRef: React.RefObject<View | null>
+}) {
+    const { isOpen, onClose, contentNodeRef, triggerRef } = params
+    const onCloseRef = useRef(onClose)
+    onCloseRef.current = onClose
+
+    useEffect(() => {
+        if (Platform.OS !== 'web' || typeof document === 'undefined') return
+        if (!isOpen) return
+
+        const handler = (event: Event) => {
+            const target = event.target as Node | null
+            if (!target) return
+            const content = contentNodeRef.current as unknown as Node | null
+            if (content?.contains(target)) return
+            // The trigger toggles itself through its own onClickCapture.
+            // Closing here as well would make a click on an open menu's
+            // trigger close and immediately reopen it.
+            const trigger = triggerRef.current as unknown as Node | null
+            if (trigger?.contains(target)) return
+            onCloseRef.current()
+        }
+
+        document.addEventListener('pointerdown', handler, true)
+        return () => document.removeEventListener('pointerdown', handler, true)
+    }, [isOpen, contentNodeRef, triggerRef])
+}
+
 // ── Portal ──
 
 function Portal({
@@ -344,6 +412,15 @@ function Portal({
     hasTextInput?: boolean
 }) {
     const ctx = useMenuContext()
+
+    // Web dismissal lives here rather than in a full-screen Pressable, so it
+    // works for submenus. See useWebOutsideClose.
+    useWebOutsideClose({
+        isOpen: ctx.isOpen,
+        onClose: () => ctx.onOpenChange(false),
+        contentNodeRef: ctx.contentNodeRef,
+        triggerRef: ctx.triggerRef,
+    })
 
     // On native, render the overlay inside a real RN Modal
     // (statusBarTranslucent + transparent). Without it gluestack drops the
@@ -371,14 +448,18 @@ function Portal({
             onRequestClose={() => ctx.onOpenChange(false)}
         >
             <MenuContext.Provider value={ctx}>
-                {/* Native-only dismiss backdrop. On web, menus close via a
-                 * document-level outside-click handler and a backdrop here
-                 * would swallow clicks on sibling triggers (breaking the
-                 * menubar hover/click swap). On native there's no such
-                 * handler, and menubar menus render no <Menu.Overlay> of
-                 * their own — so without this, File/Edit/View etc. could
-                 * never be tapped closed. Rendered first so it sits behind
-                 * the menu content. */}
+                {/* Native-only dismiss backdrop. On web every menu now closes
+                 * via useWebOutsideClose above, and a backdrop here would
+                 * swallow clicks on sibling triggers (breaking the menubar
+                 * hover/click swap) as well as on submenu items — the bug
+                 * Menu.Overlay had. On native there is no document listener,
+                 * and menubar menus render no <Menu.Overlay> of their own —
+                 * so without this, File/Edit/View etc. could never be tapped
+                 * closed. Rendered first so it sits behind the menu content.
+                 *
+                 * A consumer's own <Menu.Overlay> also renders on native, so
+                 * some menus carry two backdrops. Harmless — both dismiss —
+                 * and pre-existing. */}
                 {Platform.OS !== 'web' && (
                     <Pressable
                         style={StyleSheet.absoluteFill}
@@ -393,8 +474,26 @@ function Portal({
 
 // ── Overlay ──
 
+/**
+ * The dismiss backdrop — NATIVE ONLY.
+ *
+ * On web this renders nothing, and that is the fix for a real bug rather than
+ * a tidy-up: as a full-screen Pressable it sat above any open submenu and
+ * swallowed every click aimed at a submenu item. Web dismissal moved to a
+ * document-level listener in Portal (useWebOutsideClose), which handles
+ * submenus correctly because SubContent is a DOM descendant of Content.
+ *
+ * The 38 call sites that render `<Menu.Overlay />` need no change: on web it
+ * is inert, on native it behaves exactly as before. The menubar, which
+ * deliberately never rendered one (it would "intercept clicks on sibling
+ * triggers and break the swap behavior" — MenuBarMenu.tsx), is unaffected.
+ *
+ * Kept rather than deleted so consumers stay source-compatible; a later sweep
+ * can remove the call sites.
+ */
 const Overlay = forwardRef<View, { onPress?: () => void }>(function Overlay(_props, _ref) {
     const { onOpenChange } = useMenuContext()
+    if (Platform.OS === 'web') return null
     return (
         <Pressable
             onPress={() => onOpenChange(false)}
@@ -418,7 +517,7 @@ const Content = forwardRef<View, ContentProps>(function Content(
     { children, placement = 'bottom', align = 'start', className, style: styleProp },
     ref
 ) {
-    const { triggerLayout, setContentLayout } = useMenuContext()
+    const { triggerLayout, setContentLayout, contentNodeRef } = useMenuContext()
     const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null)
     const windowDim = Dimensions.get('window')
     const innerRef = useRef<View | null>(null)
@@ -526,9 +625,14 @@ const Content = forwardRef<View, ContentProps>(function Content(
             else if (ref) (ref as React.MutableRefObject<View | null>).current = node
             if (Platform.OS === 'web') {
                 webDivRef.current = node as unknown as HTMLElement
+                // Published to the root context so Portal's outside-click
+                // handler can ask "is the click inside this menu?" — which,
+                // because SubContent is a DOM descendant, answers correctly
+                // for submenu items too.
+                contentNodeRef.current = node as unknown as HTMLElement
             }
         },
-        [ref]
+        [ref, contentNodeRef]
     )
 
     return (
