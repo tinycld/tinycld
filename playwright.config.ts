@@ -34,6 +34,31 @@ export default defineConfig({
     // attempt is always captured for diagnosis. Inherited by every package's
     // config.
     retries: 0,
+    // Two workers, overriding Playwright's default of 50% OF CPUS.
+    //
+    // That default is not a CI special case, whatever the folklore says — see
+    // resolveWorkers in playwright's common/config.js, which reads
+    // `os.cpus().length` and takes the percentage. A standard 2-core GitHub
+    // runner therefore resolves to ONE worker, and the cards e2e log said so
+    // exactly: "Running 140 tests using 1 worker", 16.7 minutes for a suite
+    // that takes 4.7 locally in parallel.
+    //
+    // Measured on cards before generalizing here: two workers on the same
+    // 2-core runner ran the same 140 tests in 11.9 minutes (139 passed, 1
+    // skipped — the same split as the serial run), a ~29% saving with no new
+    // failures.
+    //
+    // WHY A FIXED 2 RATHER THAN A PERCENTAGE. The runner has 2 cores, so any
+    // percentage at or below 100% resolves to 1 there, while a developer
+    // machine with 14 cores would take 7 and pay seven cold Metro compiles
+    // (see the reporter note above — each worker pays one on its first test).
+    // A fixed 2 is the number that helps CI, which is where the wall clock
+    // actually hurts, and it caps that startup cost on a laptop too.
+    //
+    // A package that needs different parallelism overrides this in its own
+    // config; a suite whose specs are not independent should be FIXED rather
+    // than serialized, for the reason `retries: 0` above gives.
+    workers: 2,
     // Scoped to tests/e2e/ specifically. The tests/install/ tree has
     // its own playwright.config.ts and is invoked separately by the
     // docker smoke-test workflow — leaving testDir at the playwright
