@@ -11,6 +11,7 @@ import React, {
     useRef,
     useState,
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
     Dimensions,
     Platform,
@@ -75,6 +76,33 @@ interface MenuContextValue {
      * and the whole reason this exists.
      */
     contentNodeRef: React.MutableRefObject<HTMLElement | null>
+    /**
+     * Where a submenu renders: a View that is a SIBLING of Content's
+     * ScrollView, inside Content's outer box.
+     *
+     * SubContent cannot simply live where it is declared. Content wraps its
+     * children in a ScrollView, and react-native-web gives every ScrollView
+     * `overflowY: auto` AND `transform: translateZ(0)` — so it both CLIPS a
+     * child drawn outside its box and becomes that child's containing block
+     * and stacking context. A submenu opens to the RIGHT of Content, i.e.
+     * entirely outside the ScrollView, so it was clipped away and its
+     * `zIndex: 50` was measured against the ScrollView's siblings rather than
+     * the page.
+     *
+     * Hoisting it to a sibling of the ScrollView fixes all three at once: no
+     * clip, the containing block becomes Content's outer View (which is what
+     * SubContent's position math already assumed), and the z-index applies
+     * where it was meant to.
+     *
+     * Deliberately NOT portalled to the overlay root: SubContent must stay a
+     * DOM descendant of Content so `contentNodeRef.contains()` in
+     * useWebOutsideClose still treats a submenu click as inside the menu.
+     * Portalling it away would close the menu before the item's press landed.
+     */
+    subSlotRef: React.MutableRefObject<HTMLElement | null>
+    /** Bumped when the slot mounts, so SubContent re-renders into it. */
+    subSlotVersion: number
+    publishSubSlot: (node: HTMLElement | null) => void
 }
 
 const MenuContext = createContext<MenuContextValue | null>(null)
@@ -110,6 +138,11 @@ function useMenuSubContext() {
 // Shared row + content styling. Extracting these keeps Menu.Content,
 // Menu.SubContent, Menu.Item, and Menu.SubTrigger visually identical
 // without each component duplicating className strings.
+// Zero-sized: the slot is an anchor, not a box. Its only child is an
+// absolutely-positioned submenu, so it must not occupy layout or catch
+// pointers of its own.
+const SUB_SLOT_STYLE = { width: 0, height: 0 } as const
+
 const MENU_CONTENT_CLASS =
     'absolute min-w-[200px] border border-border bg-background rounded-lg py-1'
 const MENU_CONTENT_SHADOW =
@@ -169,6 +202,15 @@ function MenuRoot({
     )
     const triggerRef = useRef<View | null>(null)
     const contentNodeRef = useRef<HTMLElement | null>(null)
+    const subSlotRef = useRef<HTMLElement | null>(null)
+    const [subSlotVersion, setSubSlotVersion] = useState(0)
+    const publishSubSlot = useCallback((node: HTMLElement | null) => {
+        subSlotRef.current = node
+        // The slot mounts after SubContent's first render, so a version bump
+        // is what tells SubContent to try again now that there is somewhere
+        // to go. Only on transitions, never on every render.
+        setSubSlotVersion(v => (node ? v + 1 : v))
+    }, [])
     const [internalLayout, setInternalLayout] = useState<{
         x: number
         y: number
@@ -226,6 +268,9 @@ function MenuRoot({
                 activeSubId,
                 setActiveSubId,
                 contentNodeRef,
+                subSlotRef,
+                subSlotVersion,
+                publishSubSlot,
             }}
         >
             <View className={className}>{children}</View>
@@ -343,11 +388,9 @@ function Trigger({ children, disableClick }: TriggerProps) {
  * Web outside-click dismissal for an ordinary (non-menubar) menu.
  *
  * REPLACES the full-screen `Menu.Overlay` Pressable, which could not work for
- * submenus. Overlay is a SIBLING of Menu.Content inside the Portal, while
- * SubContent is a CHILD of Content positioned outside Content's box — so the
- * overlay won hit-testing at the submenu's coordinates and every submenu item
- * was unclickable. SubContent's own `zIndex: 50` cannot help: it applies
- * within Content's stacking context, and the overlay is one level above that.
+ * submenus. Overlay is a SIBLING of Menu.Content inside the Portal, and it
+ * covered the whole viewport — so it won hit-testing at the submenu's
+ * coordinates and every submenu item was unclickable.
  *
  * A document listener has no such geometry problem. `node.contains(target)`
  * treats SubContent as inside, because it genuinely is a DOM descendant.
@@ -517,7 +560,7 @@ const Content = forwardRef<View, ContentProps>(function Content(
     { children, placement = 'bottom', align = 'start', className, style: styleProp },
     ref
 ) {
-    const { triggerLayout, setContentLayout, contentNodeRef } = useMenuContext()
+    const { triggerLayout, setContentLayout, contentNodeRef, publishSubSlot } = useMenuContext()
     const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null)
     const windowDim = Dimensions.get('window')
     const innerRef = useRef<View | null>(null)
@@ -668,6 +711,20 @@ const Content = forwardRef<View, ContentProps>(function Content(
                     {children}
                 </View>
             </ScrollView>
+            {/* The submenu slot — a sibling of the ScrollView above, not a
+                child of it. See MenuContextValue.subSlotRef for why that
+                distinction is the whole fix. Zero-sized and transparent to
+                pointers, so it changes nothing about Content's layout; the
+                submenu inside it is absolutely positioned. */}
+            <View
+                ref={node => {
+                    if (Platform.OS === 'web') {
+                        publishSubSlot((node as unknown as HTMLElement) ?? null)
+                    }
+                }}
+                pointerEvents="box-none"
+                style={SUB_SLOT_STYLE}
+            />
         </View>
     )
 })
@@ -1022,7 +1079,10 @@ const SubContent = forwardRef<View, SubContentProps>(function SubContent(
     ref
 ) {
     const { isOpen, setOpen, triggerLayout, hoverIntentRef } = useMenuSubContext()
-    const { contentLayout } = useMenuContext()
+    const { contentLayout, subSlotRef, subSlotVersion } = useMenuContext()
+    // Read so a slot mount re-renders this component; the ref itself is not
+    // reactive.
+    void subSlotVersion
     const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null)
     const windowDim = Dimensions.get('window')
 
@@ -1042,10 +1102,12 @@ const SubContent = forwardRef<View, SubContentProps>(function SubContent(
         const measuredHeight = contentSize?.height ?? 0
 
         // Compute target in window coords, then convert to coords relative
-        // to the parent Menu.Content (our containing block, since Content
-        // is `position: absolute`). Without this conversion the submenu
-        // ends up offset by Content's own (left, top) — typically far
-        // offscreen — and never visible.
+        // to the parent Menu.Content, which IS our containing block — but
+        // only because the panel is portalled into the slot beside Content's
+        // ScrollView (see MenuContextValue.subSlotRef). Rendered where it is
+        // declared, the containing block would be the ScrollView, whose
+        // `transform: translateZ(0)` makes it one — and this arithmetic would
+        // be silently off by Content's padding and its scroll offset.
         let leftWindow = contentLayout.x + contentLayout.width - overlap
         if (leftWindow + measuredWidth > windowDim.width - 8) {
             // Flip to open on the parent's left side.
@@ -1062,12 +1124,12 @@ const SubContent = forwardRef<View, SubContentProps>(function SubContent(
         pos.left = leftWindow - contentLayout.x
         pos.top = topWindow - contentLayout.y
 
-        // SubContent is an absolutely-positioned child of the parent
-        // Menu.Content, so it shares the parent's stacking context. Parent
-        // rows *after* the SubTrigger (e.g. "Bullets & numbering", "Table")
-        // come later in DOM order and would paint over the submenu without
-        // an explicit lift. zIndex covers web; elevation covers Android
-        // (which ignores zIndex on its own).
+        // Lift above Content's own rows. On web the panel is portalled to a
+        // slot that is a SIBLING of the ScrollView holding those rows, so
+        // this z-index is now measured where it was always meant to be;
+        // before the portal it applied inside the ScrollView's own stacking
+        // context and could not lift the submenu above anything outside it.
+        // elevation covers Android, which ignores zIndex on its own.
         pos.zIndex = 50
         pos.elevation = 24
 
@@ -1100,7 +1162,7 @@ const SubContent = forwardRef<View, SubContentProps>(function SubContent(
               }
             : {}
 
-    return (
+    const panel = (
         <View
             ref={ref}
             onLayout={e => {
@@ -1116,6 +1178,26 @@ const SubContent = forwardRef<View, SubContentProps>(function SubContent(
             {children}
         </View>
     )
+
+    // On web, relocate the panel OUT of Content's ScrollView and into the slot
+    // beside it. Declared here, rendered there.
+    //
+    // Without this the ScrollView clips the submenu away entirely (RNW gives
+    // it `overflowY: auto`) and traps it in a `translateZ(0)` stacking context
+    // where its zIndex means nothing against the page — which is how the board
+    // behind the menu ended up winning the hit test.
+    //
+    // createPortal keeps it a DOM DESCENDANT of Content, which
+    // useWebOutsideClose depends on: a submenu click has to read as "inside
+    // the menu", or the menu closes before the item's press lands.
+    //
+    // Native needs none of this — no ScrollView clip applies there — and
+    // renders in place.
+    if (Platform.OS !== 'web') return panel
+    // Until the slot mounts there is nowhere to go; the version bump
+    // re-renders us the moment there is.
+    if (!subSlotRef.current) return null
+    return createPortal(panel, subSlotRef.current)
 })
 
 // ── Assemble compound component ──
