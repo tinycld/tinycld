@@ -29,6 +29,16 @@ export interface NotificationPreferences {
      * the comment path for `cards_comments`.
      */
     cards_mention: boolean
+    /** A card was assigned to you (server/notifications.go in cards). */
+    cards_assigned: boolean
+    /** Someone replied to your comment on a card. */
+    cards_reply: boolean
+    /** Someone reacted to your comment on a card. */
+    cards_reaction: boolean
+    /** A card you watch gained a comment, moved, was completed or archived. */
+    cards_watched: boolean
+    /** A card you watch or are assigned is due soon or overdue. */
+    cards_due: boolean
 }
 
 const DEFAULT_PREFS: NotificationPreferences = {
@@ -41,6 +51,11 @@ const DEFAULT_PREFS: NotificationPreferences = {
     system_error: true,
     comment_mention: true,
     cards_mention: true,
+    cards_assigned: true,
+    cards_reply: true,
+    cards_reaction: true,
+    cards_watched: true,
+    cards_due: true,
 }
 
 export type MailNotifyMode = 'batched' | 'important_only'
