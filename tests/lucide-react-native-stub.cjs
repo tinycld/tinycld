@@ -37,6 +37,7 @@ const knownIcons = {
     Type: Icon,
     // Additional icons imported by text components
     AlertCircle: Icon,
+    ChevronRight: Icon,
     AlertTriangle: Icon,
     AlignJustify: Icon,
     Ban: Icon,

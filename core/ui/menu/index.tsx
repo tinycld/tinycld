@@ -8,6 +8,7 @@ import React, {
     useContext,
     useEffect,
     useId,
+    useLayoutEffect,
     useRef,
     useState,
 } from 'react'
@@ -98,11 +99,21 @@ interface MenuContextValue {
      * DOM descendant of Content so `contentNodeRef.contains()` in
      * useWebOutsideClose still treats a submenu click as inside the menu.
      * Portalling it away would close the menu before the item's press landed.
+     *
+     * State, not a ref: SubContent renders into it, so it has to re-render
+     * when the slot mounts. Null on native and until Content has mounted.
      */
-    subSlotRef: React.MutableRefObject<HTMLElement | null>
-    /** Bumped when the slot mounts, so SubContent re-renders into it. */
-    subSlotVersion: number
-    publishSubSlot: (node: HTMLElement | null) => void
+    subSlot: HTMLElement | null
+    /**
+     * Handed to the slot View as its ref callback. Its identity MUST be
+     * stable — React re-attaches a ref whose identity changed on every
+     * render (detach with null, attach with the node), so publishing the
+     * node from an inline arrow re-rendered the menu, which re-attached the
+     * ref, which published again, until React threw "Maximum update depth
+     * exceeded" and the error boundary remounted the whole menu. Every plain
+     * menu in the app hit that on open.
+     */
+    setSubSlot: (node: HTMLElement | null) => void
 }
 
 const MenuContext = createContext<MenuContextValue | null>(null)
@@ -165,6 +176,12 @@ const SUBMENU_HOVER_CLOSE_DELAY_MS = 120
 
 // ── Root ──
 
+type Layout = { x: number; y: number; width: number; height: number }
+
+function sameLayout(prev: Layout | null, x: number, y: number, width: number, height: number) {
+    return prev?.x === x && prev.y === y && prev.width === width && prev.height === height
+}
+
 interface MenuProps {
     children: React.ReactNode
     isOpen?: boolean
@@ -202,27 +219,9 @@ function MenuRoot({
     )
     const triggerRef = useRef<View | null>(null)
     const contentNodeRef = useRef<HTMLElement | null>(null)
-    const subSlotRef = useRef<HTMLElement | null>(null)
-    const [subSlotVersion, setSubSlotVersion] = useState(0)
-    const publishSubSlot = useCallback((node: HTMLElement | null) => {
-        subSlotRef.current = node
-        // The slot mounts after SubContent's first render, so a version bump
-        // is what tells SubContent to try again now that there is somewhere
-        // to go. Only on transitions, never on every render.
-        setSubSlotVersion(v => (node ? v + 1 : v))
-    }, [])
-    const [internalLayout, setInternalLayout] = useState<{
-        x: number
-        y: number
-        width: number
-        height: number
-    } | null>(null)
-    const [contentLayout, setContentLayout] = useState<{
-        x: number
-        y: number
-        width: number
-        height: number
-    } | null>(null)
+    const [subSlot, setSubSlot] = useState<HTMLElement | null>(null)
+    const [internalLayout, setInternalLayout] = useState<Layout | null>(null)
+    const [contentLayout, setContentLayout] = useState<Layout | null>(null)
     const [activeSubId, setActiveSubId] = useState<string | null>(null)
 
     // Shift the trigger Y by the Android status-bar inset so the menu —
@@ -255,6 +254,36 @@ function MenuRoot({
         if (!isOpen) setActiveSubId(null)
     }, [isOpen])
 
+    // Measure the trigger on every open, not only from the trigger's own
+    // pointer handlers. A menu opened without touching its trigger — a
+    // keyboard shortcut, a parent flipping a controlled `isOpen` — otherwise
+    // has no rect at all: Content's positionStyle is `{}` and the menu lands
+    // at the container origin. Re-measuring also covers a trigger that moved
+    // (resize, scroll) between two keyboard opens.
+    //
+    // A layout effect so the rect is in place before the first paint, and a
+    // value-compared write so a pointer open — which already measured in the
+    // click handler — changes nothing.
+    useLayoutEffect(() => {
+        if (!isOpen || triggerPosition) return
+        const trigger = triggerRef.current
+        if (!trigger) return
+        if (Platform.OS === 'web') {
+            const rect = (trigger as unknown as HTMLElement).getBoundingClientRect()
+            setInternalLayout(prev =>
+                sameLayout(prev, rect.left, rect.top, rect.width, rect.height)
+                    ? prev
+                    : { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+            )
+            return
+        }
+        trigger.measureInWindow((x, y, width, height) => {
+            setInternalLayout(prev =>
+                sameLayout(prev, x, y, width, height) ? prev : { x, y, width, height }
+            )
+        })
+    }, [isOpen, triggerPosition])
+
     return (
         <MenuContext.Provider
             value={{
@@ -268,9 +297,8 @@ function MenuRoot({
                 activeSubId,
                 setActiveSubId,
                 contentNodeRef,
-                subSlotRef,
-                subSlotVersion,
-                publishSubSlot,
+                subSlot,
+                setSubSlot,
             }}
         >
             <View className={className}>{children}</View>
@@ -560,7 +588,7 @@ const Content = forwardRef<View, ContentProps>(function Content(
     { children, placement = 'bottom', align = 'start', className, style: styleProp },
     ref
 ) {
-    const { triggerLayout, setContentLayout, contentNodeRef, publishSubSlot } = useMenuContext()
+    const { triggerLayout, setContentLayout, contentNodeRef, setSubSlot } = useMenuContext()
     const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null)
     const windowDim = Dimensions.get('window')
     const innerRef = useRef<View | null>(null)
@@ -661,6 +689,17 @@ const Content = forwardRef<View, ContentProps>(function Content(
         return () => setContentLayout(null)
     }, [setContentLayout])
 
+    // Stable on purpose — see MenuContextValue.setSubSlot for why an inline
+    // arrow here looped the whole menu. Native never portals the submenu, so
+    // it never publishes a slot.
+    const setSlotRef = useCallback(
+        (node: View | null) => {
+            if (Platform.OS !== 'web') return
+            setSubSlot((node as unknown as HTMLElement | null) ?? null)
+        },
+        [setSubSlot]
+    )
+
     const setRefs = useCallback(
         (node: View | null) => {
             innerRef.current = node
@@ -716,15 +755,7 @@ const Content = forwardRef<View, ContentProps>(function Content(
                 distinction is the whole fix. Zero-sized and transparent to
                 pointers, so it changes nothing about Content's layout; the
                 submenu inside it is absolutely positioned. */}
-            <View
-                ref={node => {
-                    if (Platform.OS === 'web') {
-                        publishSubSlot((node as unknown as HTMLElement) ?? null)
-                    }
-                }}
-                pointerEvents="box-none"
-                style={SUB_SLOT_STYLE}
-            />
+            <View ref={setSlotRef} pointerEvents="box-none" style={SUB_SLOT_STYLE} />
         </View>
     )
 })
@@ -1079,10 +1110,7 @@ const SubContent = forwardRef<View, SubContentProps>(function SubContent(
     ref
 ) {
     const { isOpen, setOpen, triggerLayout, hoverIntentRef } = useMenuSubContext()
-    const { contentLayout, subSlotRef, subSlotVersion } = useMenuContext()
-    // Read so a slot mount re-renders this component; the ref itself is not
-    // reactive.
-    void subSlotVersion
+    const { contentLayout, subSlot } = useMenuContext()
     const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null)
     const windowDim = Dimensions.get('window')
 
@@ -1194,10 +1222,10 @@ const SubContent = forwardRef<View, SubContentProps>(function SubContent(
     // Native needs none of this — no ScrollView clip applies there — and
     // renders in place.
     if (Platform.OS !== 'web') return panel
-    // Until the slot mounts there is nowhere to go; the version bump
-    // re-renders us the moment there is.
-    if (!subSlotRef.current) return null
-    return createPortal(panel, subSlotRef.current)
+    // Until the slot mounts there is nowhere to go; it is state, so this
+    // re-renders the moment there is.
+    if (!subSlot) return null
+    return createPortal(panel, subSlot)
 })
 
 // ── Assemble compound component ──
