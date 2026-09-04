@@ -38,7 +38,7 @@ func firstParagraphText(t *testing.T, pmJSON []byte) string {
 	return doc.Content[0].Content[0].Text
 }
 
-// The whole cards design rests on one document holding many independent
+// The whole boards design rests on one document holding many independent
 // editors. If fragments leaked into each other, every card on a board would
 // show the same description.
 func TestFragmentsAreIndependent(t *testing.T) {
@@ -286,7 +286,7 @@ func TestJanitorSpareLiveRooms(t *testing.T) {
 }
 
 // Seeding APPENDS into the fragment, so a second seed of an already-populated
-// one would leave the card's prose in the document twice. Cards hits this when
+// one would leave the card's prose in the document twice. Boards hits this when
 // a board's document is rebuilt: the bootstrap hook re-seeds every card from
 // storage, and any fragment that already carries content must be left alone.
 func TestSeedingSkipsAPopulatedFragment(t *testing.T) {

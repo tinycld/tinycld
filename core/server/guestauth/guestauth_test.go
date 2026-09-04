@@ -7,7 +7,7 @@ import (
 
 // ParseEmail and the code alphabet are pure; the account and OTP helpers need a
 // live app and are exercised end to end by the packages that use them
-// (cards/server/endpoints_share_otp_test.go drives the whole flow).
+// (boards/server/endpoints_share_otp_test.go drives the whole flow).
 //
 // What is worth pinning here is the part a reader is most likely to get wrong
 // when touching this file: WHICH rejection burns the code and which does not.

@@ -2,7 +2,7 @@ import { chipsToText } from '@tinycld/core/lib/search/chip-text'
 import { parseQuery } from '@tinycld/core/lib/search/parse-query'
 import { describe, expect, it } from 'vitest'
 
-const SLUGS = ['mail', 'drive', 'cards', 'contacts']
+const SLUGS = ['mail', 'drive', 'boards', 'contacts']
 
 describe('parseQuery — chips', () => {
     it('turns a matching word followed by a colon into a chip', () => {
@@ -87,8 +87,8 @@ describe('parseQuery — chip-after-text ordering (C1 regression)', () => {
     // second token must not be promoted to a chip (only the leading run
     // counts) and "budget" must not be lost.
     it('does not promote a second pkg: token once free text has broken the leading run', () => {
-        expect(parseQuery('cards: budget drive: q3', SLUGS)).toEqual({
-            chips: ['cards'],
+        expect(parseQuery('boards: budget drive: q3', SLUGS)).toEqual({
+            chips: ['boards'],
             include: ['budget', 'drive', 'q3'],
             exclude: [],
             remainder: 'budget drive: q3',

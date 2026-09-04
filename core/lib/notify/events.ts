@@ -11,8 +11,8 @@ export type NotificationEvents = {
     'drive.save_succeeded': { name: string; folder: string }
     'drive.save_failed': { reason: string }
     'drive.template_saved': { name: string }
-    'cards.attachment_failed': { card: string; name: string }
-    'cards.card_moved': { board: string; key: string }
+    'boards.attachment_failed': { card: string; name: string }
+    'boards.card_moved': { board: string; key: string }
     'import.complete': { source: 'google-takeout' | 'csv'; count: number }
     'import.failed': { source: string; error: string }
     'mutation.error': { operation: string; error: string }

@@ -47,7 +47,7 @@ const APP_SEGMENTS = [
     'calendar',
     'drive',
     'mail',
-    'cards',
+    'boards',
     'calc',
     'text',
     'contacts',

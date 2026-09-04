@@ -90,7 +90,7 @@ func stripYTiptapHashSuffix(attrKey string) string {
 // fragment holds a faithful representation of pmJSON.
 //
 // The fragment name is a parameter rather than text/'s fixed "prosemirror"
-// because one document can carry many independent editors: cards keeps a
+// because one document can carry many independent editors: boards keeps a
 // fragment per card (`card:<id>`), so a whole board shares one document and
 // therefore one websocket. It must match the `field` option passed to tiptap's
 // Collaboration extension on the client.

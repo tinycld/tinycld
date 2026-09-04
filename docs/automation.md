@@ -255,7 +255,7 @@ Register a `TriggerRecordAuthorizer` when the collection's own rules are looser
 than its write semantics — it runs after the floor:
 
 ```go
-automation.RegisterTriggerRecordAuthorizer("cards:move-card",
+automation.RegisterTriggerRecordAuthorizer("boards:move-card",
     func(app core.App, req automation.ActionRequest, record *core.Record) error {
         return cardMovableBy(app, req.OwnerID, record)
     })
@@ -310,7 +310,7 @@ was a which-record bug. Reference implementations worth copying:
   core's `driveshare.ParticipantIDs` rather than re-deriving sharing rules
   (a second copy would drift, and an over-reporting resolver fires other
   users' rules on documents they cannot see).
-- `cards/server/automation.go` — `cardOwnerResolver` (project membership
+- `boards/server/automation.go` — `cardOwnerResolver` (project membership
   scopes which personal rules fire at all).
 
 ## Execution semantics you inherit

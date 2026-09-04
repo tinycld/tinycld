@@ -76,7 +76,7 @@ export function manifestToConfigPkg(packageName: string, manifest: PackageManife
  *
  * docs/keyboard-shortcuts.md has always claimed generation "fails fast if two
  * manifests claim the same letter". It did not, and the e2e shortcut stub and
- * cards silently collided on 'k' until this was added.
+ * boards silently collided on 'k' until this was added.
  */
 export function validateNavShortcuts(pkgs: ConfigPkg[]): void {
     const claimedBy = new Map<string, string>()

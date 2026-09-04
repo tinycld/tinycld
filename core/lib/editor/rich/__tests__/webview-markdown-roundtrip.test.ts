@@ -88,10 +88,10 @@ describe('WebView markdown round-trip', () => {
     })
 
     it('preserves images, tokenless relative src included', () => {
-        // The shape cards stores for a description image (see cards'
+        // The shape cards stores for a description image (see boards'
         // lib/description-image.ts): a root-relative protected-file path with
         // no token. The serializer must not mangle or absolutize it.
-        const source = '![diagram](/api/files/cards_attachments/rec123/d_abc.png)'
+        const source = '![diagram](/api/files/boards_attachments/rec123/d_abc.png)'
         expect(roundTrip(source)).toBe(source)
     })
 
@@ -103,7 +103,7 @@ describe('WebView markdown round-trip', () => {
             content: 'para one\n\npara two',
             contentType: 'markdown',
         })
-        const src = '/api/files/cards_attachments/rec123/d_abc.png'
+        const src = '/api/files/boards_attachments/rec123/d_abc.png'
         const max = editor.state.doc.content.size
         editor.commands.insertContentAt(Math.min(9999, max), { type: 'image', attrs: { src } })
         expect(repairMarkdown(editor.getMarkdown())).toContain(`![](${src})`)

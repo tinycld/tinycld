@@ -301,8 +301,8 @@ interface SearchFieldProps {
 }
 
 // Scope chips render as their own row of pills — separate from the text
-// input — so a test (and a user) can see and target "cards" as a discrete
-// unit rather than parsing it back out of a raw "cards: " string prefix.
+// input — so a test (and a user) can see and target "boards" as a discrete
+// unit rather than parsing it back out of a raw "boards: " string prefix.
 // The input itself only ever holds the free-text remainder; typing composes
 // chips + remainder back into the store's single `text` field, which stays
 // the source of truth parseQuery re-derives BOTH chips and remainder from on

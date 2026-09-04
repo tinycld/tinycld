@@ -6,7 +6,7 @@
 // It is the reusable core of the machinery text/server grew first. Anything
 // text-specific (docx import warnings, authorship stamping, suggestion maps,
 // edit-event buffering) deliberately stayed behind in that package; what lives
-// here is what a second consumer — cards' board rooms — needed verbatim.
+// here is what a second consumer — boards' board rooms — needed verbatim.
 //
 // Backed by github.com/skyterra/y-crdt. Consumers refer to yjsdoc.Doc rather
 // than importing y-crdt directly, which keeps the dependency inside core: a

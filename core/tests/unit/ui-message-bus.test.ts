@@ -12,7 +12,7 @@ function showPopover(editorInstanceId?: string): EditorMessage {
         type: 'show-popover',
         requestId: 'req1',
         payload: {
-            kind: 'trigger:cards-mention',
+            kind: 'trigger:boards-mention',
             ...(editorInstanceId ? { editorInstanceId } : {}),
         },
     }

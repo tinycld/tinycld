@@ -19,7 +19,7 @@ import (
 // mentions a key name cannot trigger a false positive.
 //
 // The intended use is an UpdateContentValidator that admits only the roots a
-// room is supposed to own — cards accepts `card:<id>` and nothing else, which
+// room is supposed to own — boards accepts `card:<id>` and nothing else, which
 // keeps a crafted client from parking data under an arbitrary key in a document
 // shared by everyone on the board.
 //

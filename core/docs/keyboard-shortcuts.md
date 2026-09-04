@@ -170,7 +170,7 @@ const manifest = {
 
 `validateNavShortcuts` (`scripts/describe-packages.ts`, run from `scripts/generate.ts`) fails generation if two manifests claim the same letter — otherwise both register and `t <letter>` fires whichever the matcher reaches first, leaving one package unreachable. At runtime, `components/CoreShortcuts.tsx` iterates `packageRegistry` and registers `t <letter>` jumps for every package that declares one.
 
-Letters in use: `c` calendar, `d` drive, `k` cards, `m` mail, `o` contacts, `s` calc, `t` text.
+Letters in use: `c` calendar, `d` drive, `b` boards, `m` mail, `o` contacts, `s` calc, `t` text.
 
 ## Testing
 

@@ -19,7 +19,7 @@ const PACKAGE_ICONS: Record<string, typeof Bell> = {
     calendar: Calendar,
     mail: Mail,
     drive: File,
-    cards: SquareKanban,
+    boards: SquareKanban,
     core: Shield,
 }
 

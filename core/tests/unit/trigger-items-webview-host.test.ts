@@ -18,13 +18,13 @@ const ROSTER = [{ id: 'u1', label: 'Ada' }]
 describe('TriggerItemsWebViewHost', () => {
     it('pushes a roster in the shape the page parses', () => {
         const { host, sent } = setup()
-        host.push('cards-mention', ROSTER)
+        host.push('boards-mention', ROSTER)
 
         expect(sent).toHaveLength(1)
         expect(sent[0]).toMatchObject({
             namespace: 'app',
             type: 'trigger-items',
-            payload: { triggerId: 'cards-mention', items: ROSTER },
+            payload: { triggerId: 'boards-mention', items: ROSTER },
         })
     })
 
@@ -33,28 +33,28 @@ describe('TriggerItemsWebViewHost', () => {
         // writes, so without the identity skip every board edit would push the
         // same roster across the bridge again.
         const { host, sent } = setup()
-        host.push('cards-mention', ROSTER)
-        host.push('cards-mention', [{ id: 'u1', label: 'Ada' }])
+        host.push('boards-mention', ROSTER)
+        host.push('boards-mention', [{ id: 'u1', label: 'Ada' }])
         expect(sent).toHaveLength(1)
     })
 
     it('pushes when the roster actually changes', () => {
         const { host, sent } = setup()
-        host.push('cards-mention', ROSTER)
-        host.push('cards-mention', [...ROSTER, { id: 'u2', label: 'Grace' }])
+        host.push('boards-mention', ROSTER)
+        host.push('boards-mention', [...ROSTER, { id: 'u2', label: 'Grace' }])
         expect(sent).toHaveLength(2)
     })
 
     it('notices a changed label, not just a changed length', () => {
         const { host, sent } = setup()
-        host.push('cards-mention', ROSTER)
-        host.push('cards-mention', [{ id: 'u1', label: 'Ada Lovelace' }])
+        host.push('boards-mention', ROSTER)
+        host.push('boards-mention', [{ id: 'u1', label: 'Ada Lovelace' }])
         expect(sent).toHaveLength(2)
     })
 
     it('tracks each trigger separately', () => {
         const { host, sent } = setup()
-        host.push('cards-mention', ROSTER)
+        host.push('boards-mention', ROSTER)
         host.push('emoji', ROSTER)
         expect(sent).toHaveLength(2)
     })
@@ -63,9 +63,9 @@ describe('TriggerItemsWebViewHost', () => {
         // A reloaded page starts with an empty store while the host still
         // remembers sending; without the reset the popover would offer nothing.
         const { host, sent } = setup()
-        host.push('cards-mention', ROSTER)
+        host.push('boards-mention', ROSTER)
         host.reset()
-        host.push('cards-mention', ROSTER)
+        host.push('boards-mention', ROSTER)
         expect(sent).toHaveLength(2)
     })
 })

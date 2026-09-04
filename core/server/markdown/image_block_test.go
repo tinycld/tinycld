@@ -13,7 +13,7 @@ import (
 // paragraph-wrapped image), so it is pinned here: renderBlock used to have no
 // NodeImage case, the default branch walked the image's empty children, and
 // the flush wrote an empty document — the description was gone on the next
-// board open. Caught by cards' description-images e2e reload case.
+// board open. Caught by boards' description-images e2e reload case.
 func TestFromPMTopLevelImage(t *testing.T) {
 	doc := &PMNode{
 		Type: NodeDoc,
@@ -21,14 +21,14 @@ func TestFromPMTopLevelImage(t *testing.T) {
 			{
 				Type: NodeImage,
 				Attrs: map[string]any{
-					"src": "/api/files/cards_attachments/rec1/pic_ab.png",
+					"src": "/api/files/boards_attachments/rec1/pic_ab.png",
 					"alt": "pic.png",
 				},
 			},
 		},
 	}
 	got := FromPM(doc)
-	want := "![pic.png](/api/files/cards_attachments/rec1/pic_ab.png)\n"
+	want := "![pic.png](/api/files/boards_attachments/rec1/pic_ab.png)\n"
 	if got != want {
 		t.Fatalf("FromPM(top-level image) = %q; want %q", got, want)
 	}

@@ -200,7 +200,7 @@ describe('validateDefinitions', () => {
                 },
             ],
         }
-        expect(validateDefinitions('cards', bad).some(e => e.includes('no relationTarget'))).toBe(
+        expect(validateDefinitions('boards', bad).some(e => e.includes('no relationTarget'))).toBe(
             true
         )
     })
@@ -217,7 +217,7 @@ describe('validateDefinitions', () => {
             ],
         }
         expect(
-            validateDefinitions('cards', bad).some(e => e.includes('declares relationTarget'))
+            validateDefinitions('boards', bad).some(e => e.includes('declares relationTarget'))
         ).toBe(true)
     })
 
@@ -232,7 +232,7 @@ describe('validateDefinitions', () => {
                 },
             ],
         }
-        expect(validateDefinitions('cards', good)).toEqual([])
+        expect(validateDefinitions('boards', good)).toEqual([])
     })
 
     // Column params inherit the column's target; declaring one is not the

@@ -113,14 +113,14 @@ const OWNED_COLLECTIONS: Array<{ collection: string; ownerField: string }> = [
 // all, and mail_mailboxes has no user column either).
 const MAIL_MEMBERSHIP = { junction: 'mail_mailbox_members', mailboxes: 'mail_mailboxes' }
 
-// Cards and calendar hang off a root record that has no usable owner FK, so a
+// Boards and calendar hang off a root record that has no usable owner FK, so a
 // flat OWNED_COLLECTIONS entry cannot express them — and until now neither
 // package was wiped by this script AT ALL. Their demo data survived every reset.
 //
 // - calendar_calendars has NO owner column whatsoever; ownership lives only in
 //   the calendar_members junction. (This script used to list it with
 //   ownerField: 'created_by', a field that does not exist — a silent no-op.)
-// - cards_projects HAS created_by, but the seed deliberately points it at the
+// - boards_projects HAS created_by, but the seed deliberately points it at the
 //   teammate for the "Team retrospective" board, so filtering on created_by
 //   alone leaves a whole board behind.
 //
@@ -129,7 +129,7 @@ const MAIL_MEMBERSHIP = { junction: 'mail_mailbox_members', mailboxes: 'mail_mai
 // beneath it (verified against each package's create migration). So resolving
 // the root ids through membership and deleting those is sufficient and complete.
 const MEMBERSHIP_ROOTS: Array<{ junction: string; rootField: string; roots: string }> = [
-    { junction: 'cards_project_members', rootField: 'project', roots: 'cards_projects' },
+    { junction: 'boards_project_members', rootField: 'project', roots: 'boards_projects' },
     { junction: 'calendar_members', rootField: 'calendar', roots: 'calendar_calendars' },
 ]
 
@@ -236,7 +236,7 @@ async function wipeOwnedData(pb: PocketBase, userId: string): Promise<number> {
     return deleted
 }
 
-// wipeMembershipRoots deletes the cards boards and calendars the user belongs
+// wipeMembershipRoots deletes the boards and calendars the user belongs
 // to, letting each package's cascade clear everything beneath. See
 // MEMBERSHIP_ROOTS for why these can't be expressed as a flat owner filter.
 //

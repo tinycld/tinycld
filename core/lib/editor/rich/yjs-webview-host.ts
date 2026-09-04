@@ -11,7 +11,7 @@ import {
  * Host side of the Yjs relay: bridges the room's Y.Doc to the editor running
  * inside the WebView.
  *
- * The native side already holds an open room socket (cards' `useBoardPresence`
+ * The native side already holds an open room socket (boards' `useBoardPresence`
  * owns it, text's `useTextRoom` owns its own), so the WebView must NOT open its
  * own: a second connection both ships a credential into the page and makes the
  * local user appear twice in presence. Here the page is a pure participant: it

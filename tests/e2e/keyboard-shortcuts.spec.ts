@@ -20,7 +20,7 @@ const STUB_SLUG = 'shortcut-stub'
 // re-scaffold the stub every time this spec is collected.)
 //
 // It must also be a letter no real package claims, or `t <letter>` is
-// ambiguous. This read 'k' until cards shipped with nav.shortcut 'k' and made
+// ambiguous. This read 'k' until boards shipped with nav.shortcut 'k' and made
 // the chord unresolvable — real letters in use today: c d k m o s t.
 const STUB_SHORTCUT = 'z'
 test.describe('Keyboard shortcuts', () => {

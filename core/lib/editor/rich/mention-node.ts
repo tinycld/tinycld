@@ -9,7 +9,7 @@ interface MentionAttrs {
 
 // The `[[@<userId>|<name>]]` mention token, as an editor node.
 //
-// The token is the WIRE format: the ID is what cards' Go flush hook parses to
+// The token is the WIRE format: the ID is what boards' Go flush hook parses to
 // derive description mentions, and being id-based is what lets a mention
 // survive the person renaming themselves. What it must NOT be is what someone
 // reads while typing — before this node existed the picker inserted the token
@@ -142,7 +142,7 @@ export function resetMentionLabels(): void {
  * Accepts the backslash-escaped spelling too. The editor serializes through
  * markdown, where `[` is syntax, so a stored token round-trips as `\[\[@id\]\]`
  * — matching only the bare form would leave escaped tokens as visible text,
- * which is the same trap cards' own TOKEN regex documents.
+ * which is the same trap boards' own TOKEN regex documents.
  */
 const TOKEN_PATTERN = /\\?\[\\?\[@([A-Za-z0-9_-]+)(?:\|([^\]|]*))?\\?\]\\?\]/
 

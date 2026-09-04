@@ -57,7 +57,7 @@ describe('renderInsertTemplate', () => {
 
     it('substitutes the id and keeps the trailing space', () => {
         // The space is what lets someone keep typing after picking rather than
-        // landing inside the token — cards depends on it.
+        // landing inside the token — boards depends on it.
         expect(renderInsertTemplate('[[@{id}]] ', item)).toBe('[[@abc123XYZ_-]] ')
     })
 
@@ -84,10 +84,10 @@ describe('triggerPluginKey', () => {
     it('returns the SAME instance for an id', () => {
         // Load-bearing: the native bridge calls exitSuggestion with this key,
         // and a fresh PluginKey would resolve to no plugin state at all.
-        expect(triggerPluginKey('cards-mention')).toBe(triggerPluginKey('cards-mention'))
+        expect(triggerPluginKey('boards-mention')).toBe(triggerPluginKey('boards-mention'))
     })
 
     it('separates distinct triggers', () => {
-        expect(triggerPluginKey('cards-mention')).not.toBe(triggerPluginKey('emoji'))
+        expect(triggerPluginKey('boards-mention')).not.toBe(triggerPluginKey('emoji'))
     })
 })

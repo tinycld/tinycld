@@ -24,15 +24,15 @@ import (
 // out of reach (see gen-cli.ts). The client row is a hard CEILING
 // (ValidateClientScopes), so a scope missing THERE fails the login outright,
 // while one missing HERE fails later and quietly: the grant is issued without
-// it and the command 403s. cards:* was missing from both for an entire
-// release — `tinycld cards` could not run at all.
+// it and the command 403s. boards:* was missing from both for an entire
+// release — `tinycld boards` could not run at all.
 var cliScopes = []string{
 	"profile",
 	"mail:read", "mail:send",
 	"drive:read", "drive:write",
 	"contacts:read", "contacts:write",
 	"calendar:read", "calendar:write",
-	"cards:read", "cards:write",
+	"boards:read", "boards:write",
 	"text:read", "text:write",
 	"calc:read", "calc:write",
 }

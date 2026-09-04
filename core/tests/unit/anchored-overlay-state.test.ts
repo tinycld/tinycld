@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 const RECT = { top: 100, left: 40, width: 2, height: 18, scrollX: 0, scrollY: 0 }
 
 function open(requestId = 'req1'): AnchoredOverlayRequest {
-    return { kind: 'trigger:cards-mention', requestId, rect: RECT, payload: null }
+    return { kind: 'trigger:boards-mention', requestId, rect: RECT, payload: null }
 }
 
 describe('decodeUiMessage', () => {
@@ -20,12 +20,12 @@ describe('decodeUiMessage', () => {
             namespace: 'ui',
             type: 'show-popover',
             requestId: 'req1',
-            payload: { kind: 'trigger:cards-mention', rect: RECT, payload: { items: [] } },
+            payload: { kind: 'trigger:boards-mention', rect: RECT, payload: { items: [] } },
         }
         expect(decodeUiMessage(message)).toEqual({
             type: 'show',
             request: {
-                kind: 'trigger:cards-mention',
+                kind: 'trigger:boards-mention',
                 requestId: 'req1',
                 rect: RECT,
                 payload: { items: [] },

@@ -3,7 +3,7 @@
 // A share-link visitor is UNAUTHENTICATED — there is no auth record, no
 // membership row and nothing for `@request.auth.id` to match. What authorizes
 // them is a token, carried on every request as `X-Share-Token` and validated
-// inside the collection access rules (cards' pb-migrations/1980000003 is the
+// inside the collection access rules (boards' pb-migrations/1980000003 is the
 // first user of this).
 //
 // It lives in a module-level variable rather than a store because the two

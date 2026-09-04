@@ -8,7 +8,7 @@ import { useEditorSingleton } from './editor-singleton'
  * A package layout calls it to say "someone in here might start editing", and
  * the singleton above the route tree — which outlives this section — does the
  * rest. That indirection is the point. A package that MOUNTED its own host, as
- * cards did, destroyed and re-booted the editor every time the user left the
+ * boards did, destroyed and re-booted the editor every time the user left the
  * section and came back.
  *
  * Idempotent, and it never disposes: the first call flips the latch and every

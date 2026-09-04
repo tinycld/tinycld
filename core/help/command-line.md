@@ -73,8 +73,8 @@ Each installed package contributes its own command group:
 - [Contacts from the command line](help://contacts:command-line) — your
   address book, including vCard export and import (`tinycld contacts list`,
   `search`, `export`, …)
-- [Cards from the command line](help://cards:command-line) — boards, lists,
-  and cards (`tinycld cards board list`, `card view`, …)
+- [Boards from the command line](help://boards:command-line) — boards, columns,
+  and cards (`tinycld boards list`, `card view`, …)
 - [Calendar from the command line](help://calendar:command-line) — your
   agenda, events, and RSVPs, including iCalendar export and import
   (`tinycld calendar agenda`, `add`, `rsvp`, …)

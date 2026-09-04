@@ -467,14 +467,14 @@ const NOTIF_GROUPS: {
         types: [{ key: 'drive_file_shared', label: 'Files shared with you' }],
     },
     {
-        label: 'Cards',
+        label: 'Boards',
         types: [
-            { key: 'cards_mention', label: 'Mentions on a card' },
-            { key: 'cards_assigned', label: 'Cards assigned to you' },
-            { key: 'cards_reply', label: 'Replies to your comments' },
-            { key: 'cards_reaction', label: 'Reactions to your comments' },
-            { key: 'cards_watched', label: 'Changes to cards you watch' },
-            { key: 'cards_due', label: 'Due-date reminders' },
+            { key: 'boards_mention', label: 'Mentions on a card' },
+            { key: 'boards_assigned', label: 'Cards assigned to you' },
+            { key: 'boards_reply', label: 'Replies to your comments' },
+            { key: 'boards_reaction', label: 'Reactions to your comments' },
+            { key: 'boards_watched', label: 'Changes to cards you watch' },
+            { key: 'boards_due', label: 'Due-date reminders' },
         ],
     },
     {

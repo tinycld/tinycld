@@ -1,7 +1,7 @@
 // Package ratelimit is a small in-memory, per-key request limiter for the
 // public (credential-less) endpoints a package exposes.
 //
-// Promoted from drive/server, which had the only implementation, when cards'
+// Promoted from drive/server, which had the only implementation, when boards'
 // public boards needed the same thing. Keeping a second copy in a second
 // member was the alternative; a third was already foreseeable.
 //

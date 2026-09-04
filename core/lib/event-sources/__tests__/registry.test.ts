@@ -14,19 +14,19 @@ describe('deriveEventSources', () => {
                 ],
             },
             {
-                manifest: { slug: 'cards' },
+                manifest: { slug: 'boards' },
                 eventSources: [
-                    { target: 'calendar', id: 'cards-due', label: 'Cards', order: 0, load },
-                    { target: 'timeline', id: 'cards-activity', label: 'Cards', order: 5, load },
+                    { target: 'calendar', id: 'boards-due', label: 'Boards', order: 0, load },
+                    { target: 'timeline', id: 'boards-activity', label: 'Boards', order: 5, load },
                 ],
             },
             { manifest: { slug: 'contacts' } },
         ])
         expect(Object.keys(derived).sort()).toEqual(['calendar', 'timeline'])
-        expect(derived.calendar.map(s => s.id)).toEqual(['cards-due', 'tasks-due'])
+        expect(derived.calendar.map(s => s.id)).toEqual(['boards-due', 'tasks-due'])
         expect(derived.timeline[0]).toMatchObject({
-            contributorSlug: 'cards',
-            id: 'cards-activity',
+            contributorSlug: 'boards',
+            id: 'boards-activity',
             order: 5,
         })
     })
@@ -55,11 +55,17 @@ describe('createEventSourceLoader', () => {
         const loadSpy = vi.fn().mockResolvedValue(module)
         const loader = createEventSourceLoader({
             calendar: [
-                { contributorSlug: 'cards', id: 'cards-due', label: 'C', order: 0, load: loadSpy },
+                {
+                    contributorSlug: 'boards',
+                    id: 'boards-due',
+                    label: 'C',
+                    order: 0,
+                    load: loadSpy,
+                },
             ],
         })
-        const first = await loader('calendar', 'cards-due')
-        const second = await loader('calendar', 'cards-due')
+        const first = await loader('calendar', 'boards-due')
+        const second = await loader('calendar', 'boards-due')
         expect(first).toBe(module)
         expect(second).toBe(module)
         expect(loadSpy).toHaveBeenCalledTimes(1)
@@ -67,21 +73,21 @@ describe('createEventSourceLoader', () => {
 
     it('returns null for an unregistered source', async () => {
         const loader = createEventSourceLoader({})
-        expect(await loader('calendar', 'cards-due')).toBeNull()
+        expect(await loader('calendar', 'boards-due')).toBeNull()
     })
 
     it('returns null when the module lacks a useEventSource function', async () => {
         const loader = createEventSourceLoader({
             calendar: [
                 {
-                    contributorSlug: 'cards',
-                    id: 'cards-due',
+                    contributorSlug: 'boards',
+                    id: 'boards-due',
                     label: 'C',
                     order: 0,
                     load: () => Promise.resolve({ somethingElse: true }),
                 },
             ],
         })
-        expect(await loader('calendar', 'cards-due')).toBeNull()
+        expect(await loader('calendar', 'boards-due')).toBeNull()
     })
 })

@@ -12,11 +12,11 @@ func TestForPackageStampsThePkgAttr(t *testing.T) {
 	Install(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	t.Cleanup(func() { slog.SetDefault(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))) })
 
-	ForPackage("cards").Warn("refusing to flush")
+	ForPackage("boards").Warn("refusing to flush")
 
 	out := buf.String()
-	if !strings.Contains(out, "pkg=cards") {
-		t.Errorf("expected pkg=cards, got %q", out)
+	if !strings.Contains(out, "pkg=boards") {
+		t.Errorf("expected pkg=boards, got %q", out)
 	}
 	if !strings.Contains(out, "refusing to flush") {
 		t.Errorf("expected the message, got %q", out)

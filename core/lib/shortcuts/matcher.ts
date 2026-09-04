@@ -38,7 +38,7 @@ export function isScopeActive(shortcut: Shortcut): boolean {
     if (shortcut.scope !== topScope()) return false
     // A blurred screen stays mounted and keeps its shortcuts registered (on web
     // `freezeOnBlur` only hides the subtree), so the live screen is not the only
-    // owner of its scope's keys — mail's list and a cards board both register
+    // owner of its scope's keys — mail's list and a Boards board both register
     // 'list' j/k/x. Only the instance holding the keyboard may fire.
     //
     // An owner's id is assigned on MOUNT and never changes, so the stamp always

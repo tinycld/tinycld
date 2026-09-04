@@ -530,7 +530,7 @@ func TestSaveCoordinatorTruncateErrorIsLoggedAndIgnored(t *testing.T) {
 // reaches teardown without any timer flush ever having truncated, so the
 // journal still covered every edit the teardown flush wrote — and the next
 // room creation seeded the flushed snapshot AND replayed those rows on top,
-// doubling the entire document (caught by cards' toolbar e2e reload case).
+// doubling the entire document (caught by boards' toolbar e2e reload case).
 func TestSaveCoordinatorTeardownTruncates(t *testing.T) {
 	j := &recordingJournalForCoord{}
 	c := NewSaveCoordinator(func(context.Context, string, DocHandle) error { return nil })

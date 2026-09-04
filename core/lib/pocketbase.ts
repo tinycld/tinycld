@@ -343,7 +343,7 @@ const automation_catalog = newCollection('automation_catalog', {
 // made every OTHER package's mention notifications silently vanish on a
 // drive-less assembly: the writer looked the store up, found nothing, and
 // skipped the insert — comments posted, tokens rendered, nobody was notified.
-// Cards' CI (single-package assembly) is what finally caught it.
+// Boards' CI (single-package assembly) is what finally caught it.
 //
 // Drive still registers its own richer instance (expand over drive_items);
 // package stores spread AFTER core in the map, so drive's wins when present

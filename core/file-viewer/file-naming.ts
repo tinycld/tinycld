@@ -4,7 +4,7 @@
  * Both are needed by any surface that lists PB `file` fields: PocketBase
  * stores no mime alongside the blob and mangles the name on the way in, so a
  * client holding only a record has to recover both. Mail derived these first;
- * they live here so cards is not a second copy.
+ * they live here so boards is not a second copy.
  */
 
 const EXTENSION_TO_MIME: Record<string, string> = {

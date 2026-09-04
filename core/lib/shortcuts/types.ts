@@ -18,7 +18,7 @@ export interface Shortcut {
      * at registration; never set by hand.
      *
      * A frozen screen keeps its shortcuts registered, so two packages can hold
-     * the same key at the same scope (mail's list `j` and a cards board's `j`).
+     * the same key at the same scope (mail's list `j` and a Boards board's `j`).
      * The matcher uses this to fire the one belonging to the screen that
      * actually has the keyboard.
      */

@@ -42,7 +42,7 @@ type Config struct {
 	Scope Scope
 
 	// ExcludeField, when set, drops rows whose BOOL field is true (e.g.
-	// cards' `archived`).
+	// boards' `archived`).
 	//
 	// Deliberately distinct from SoftDeleteField: that one splits on
 	// `field = ''` vs `!= ''`, which is correct for a TEXT timestamp but
@@ -111,7 +111,7 @@ func (s OwnerScope) params(userID string) map[string]any {
 // subquery rather than a cached grant, so removing a member takes effect on the
 // next search.
 type MemberScope struct {
-	// Table is the membership collection (e.g. "cards_project_members").
+	// Table is the membership collection (e.g. "boards_project_members").
 	Table string
 	// MemberField is the column in Table pointing at the parent record.
 	MemberField string

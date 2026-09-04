@@ -7,7 +7,7 @@ func TestHref(t *testing.T) {
 		path string
 		want string
 	}{
-		{"cards", "/a/cards"},
+		{"boards", "/a/boards"},
 		{"settings/personal", "/a/settings/personal"},
 		// The workspace root is the bare prefix — a trailing slash would be a
 		// different path from the route it needs to match.

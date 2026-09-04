@@ -4,8 +4,8 @@
  * workspace hosting the app shell, so the palette's e2e can exercise
  * cross-package search without any real feature package installed.
  *
- * Why stubs: the palette spec used to drive `navigateToPackage(page, 'cards')`
- * and assert on seeded cards/drive/mail rows. App-shell CI assembles app+core
+ * Why stubs: the palette spec used to drive `navigateToPackage(page, 'boards')`
+ * and assert on seeded boards/drive/mail rows. App-shell CI assembles app+core
  * ONLY, so every one of those tests failed on a package that was never there —
  * 13 red tests describing nothing about the app's own behaviour. Worse, when the
  * packages *are* installed locally the suite silently depends on their seed
@@ -330,7 +330,7 @@ function writeGoServer(stubDir: string, stub: StubSpec, versions: GoVersions): v
     const dir = join(stubDir, 'server')
     mkdirSync(dir, { recursive: true })
 
-    // Versions must match what the other members pin (see cards/server/go.mod):
+    // Versions must match what the other members pin (see boards/server/go.mod):
     // the generated go.work `use`s every member, and a Go workspace resolves one
     // version per module across all of them, so a stub pinning a different
     // PocketBase silently changes what the whole server builds against — or

@@ -441,8 +441,8 @@ function emitCliWiring(features: Feature[]) {
     fs.writeFileSync(path.join(CLI_DIR, 'go.work'), buildCliGoWork(cliPkgs))
 
     // Every searchable package, not just the ones shipping CLI commands: the
-    // `tinycld search` grammar needs the full set to tell `cards:` (a chip)
-    // from `cards` (a word), and cards ships no CLI commands of its own.
+    // `tinycld search` grammar needs the full set to tell `boards:` (a chip)
+    // from `boards` (a word), and boards ships no CLI commands of its own.
     const searchSlugs = features.filter(f => f.manifest.search).map(f => f.manifest.slug)
     fs.writeFileSync(path.join(CLI_DIR, 'search_slugs.go'), buildSearchSlugsSource(searchSlugs))
 

@@ -24,7 +24,7 @@ import { afterEach, describe, expect, it } from 'vitest'
  * Content. This file guards the half of that fix a unit test can reach: the
  * Portal itself does not mount under the react-native stub (gluestack's
  * Overlay has no DOM path there), which is exactly why the interaction went
- * untested and shipped. The end-to-end proof is cards'
+ * untested and shipped. The end-to-end proof is boards'
  * tests/e2e/list-status.spec.ts, which clicks a submenu item for real.
  */
 describe('Menu.Overlay on web', () => {

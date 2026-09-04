@@ -128,7 +128,7 @@ func TestFederatedSearchAdmitsAnyReadScope(t *testing.T) {
 		t.Fatal("GET /api/search falls into default-deny — no token could search at all")
 	}
 	for _, scope := range []string{
-		ScopeMailRead, ScopeDriveRead, ScopeContactsRead, ScopeCalendarRead, ScopeCardsRead,
+		ScopeMailRead, ScopeDriveRead, ScopeContactsRead, ScopeCalendarRead, ScopeBoardsRead,
 	} {
 		if !rule.satisfiedBy([]string{scope}) {
 			t.Errorf("a token holding only %q cannot reach /api/search", scope)
@@ -143,16 +143,16 @@ func TestFederatedSearchAdmitsAnyReadScope(t *testing.T) {
 	}
 }
 
-// Cards' search route shipped before any cards scope existed, so it was
+// Boards' search route shipped before any cards scope existed, so it was
 // default-denied for every token — the route ran but no integration could call
-// it. This pins the classification now that cards:read exists.
+// it. This pins the classification now that boards:read exists.
 func TestCardsSearchIsClassified(t *testing.T) {
-	rule := ScopeForRoute("GET", "/api/cards/search")
+	rule := ScopeForRoute("GET", "/api/boards/search")
 	if len(rule) == 0 {
-		t.Fatal("GET /api/cards/search is default-denied")
+		t.Fatal("GET /api/boards/search is default-denied")
 	}
-	if !rule.satisfiedBy([]string{ScopeCardsRead}) {
-		t.Error("cards:read must admit the cards search route")
+	if !rule.satisfiedBy([]string{ScopeBoardsRead}) {
+		t.Error("boards:read must admit the cards search route")
 	}
 	if rule.satisfiedBy([]string{ScopeMailRead}) {
 		t.Error("an unrelated package's scope must not admit cards search")
@@ -168,31 +168,31 @@ func TestCardsContentCollectionsAreReadWrite(t *testing.T) {
 	// One representative verb per side. The table is per-collection, so a
 	// missing entry fails read and write together.
 	for _, collection := range []string{
-		"cards_projects", "cards_lists", "cards_cards", "cards_labels",
-		"cards_checklist_items", "cards_comments", "cards_attachments",
-		// The junctions. cards_card_links spans two boards, which is why it
+		"boards_projects", "boards_lists", "boards_cards", "boards_labels",
+		"boards_checklist_items", "boards_comments", "boards_attachments",
+		// The junctions. boards_card_links spans two boards, which is why it
 		// is worth naming here rather than assuming it rides along: its own
 		// create rule demands write on the source and membership on the
 		// target, so the scope grant adds nothing a caller could not already
 		// do in the app.
-		"cards_card_links", "cards_comment_reactions", "cards_card_watchers",
+		"boards_card_links", "boards_comment_reactions", "boards_card_watchers",
 	} {
 		path := "/api/collections/" + collection + "/records"
 		read := ScopeForRoute("GET", path)
-		if !read.satisfiedBy([]string{ScopeCardsRead}) {
-			t.Errorf("GET %s: cards:read must admit a read (got %q)", path, read)
+		if !read.satisfiedBy([]string{ScopeBoardsRead}) {
+			t.Errorf("GET %s: boards:read must admit a read (got %q)", path, read)
 		}
 		write := ScopeForRoute("POST", path)
-		if !write.satisfiedBy([]string{ScopeCardsWrite}) {
-			t.Errorf("POST %s: cards:write must admit a write (got %q)", path, write)
+		if !write.satisfiedBy([]string{ScopeBoardsWrite}) {
+			t.Errorf("POST %s: boards:write must admit a write (got %q)", path, write)
 		}
 		// Read must not carry write. A token consented to read-only cards
 		// access that could still POST would make the consent screen a lie.
-		if read.satisfiedBy([]string{ScopeCardsWrite}) && !read.satisfiedBy([]string{ScopeCardsRead}) {
-			t.Errorf("GET %s admits cards:write but not cards:read", path)
+		if read.satisfiedBy([]string{ScopeBoardsWrite}) && !read.satisfiedBy([]string{ScopeBoardsRead}) {
+			t.Errorf("GET %s admits boards:write but not boards:read", path)
 		}
-		if write.satisfiedBy([]string{ScopeCardsRead}) {
-			t.Errorf("POST %s: cards:read alone must NOT admit a write", path)
+		if write.satisfiedBy([]string{ScopeBoardsRead}) {
+			t.Errorf("POST %s: boards:read alone must NOT admit a write", path)
 		}
 		if read.satisfiedBy([]string{ScopeMailRead}) {
 			t.Errorf("GET %s: an unrelated package's scope must not admit it", path)
@@ -201,18 +201,18 @@ func TestCardsContentCollectionsAreReadWrite(t *testing.T) {
 }
 
 // The sharing surface is deliberately READ-ONLY for OAuth callers. A write to
-// cards_project_members adds a person to a board; a write to cards_share_links
+// boards_project_members adds a person to a board; a write to boards_share_links
 // mints a URL that opens the board to anyone holding it. Both are a
-// categorically larger grant than editing cards, and "cards:write" on the
+// categorically larger grant than editing cards, and "boards:write" on the
 // consent screen does not read as "give other people my boards".
 //
 // Asserted positively so relaxing it is a deliberate edit to this test rather
 // than an unnoticed side effect of touching the table.
 func TestCardsSharingSurfaceIsReadOnlyForOAuth(t *testing.T) {
-	for _, collection := range []string{"cards_project_members", "cards_share_links"} {
+	for _, collection := range []string{"boards_project_members", "boards_share_links"} {
 		path := "/api/collections/" + collection + "/records"
-		if !ScopeForRoute("GET", path).satisfiedBy([]string{ScopeCardsRead}) {
-			t.Errorf("GET %s: cards:read must still admit reading the roster/links", path)
+		if !ScopeForRoute("GET", path).satisfiedBy([]string{ScopeBoardsRead}) {
+			t.Errorf("GET %s: boards:read must still admit reading the roster/links", path)
 		}
 		// Every write verb, not just POST: revoking a link is a DELETE and
 		// changing a member's role is a PATCH, so a table entry that only
@@ -222,7 +222,7 @@ func TestCardsSharingSurfaceIsReadOnlyForOAuth(t *testing.T) {
 			if method != "POST" {
 				p += "/abc123"
 			}
-			for _, scope := range []string{ScopeCardsWrite, ScopeCardsRead} {
+			for _, scope := range []string{ScopeBoardsWrite, ScopeBoardsRead} {
 				if ScopeForRoute(method, p).satisfiedBy([]string{scope}) {
 					t.Errorf("%s %s must not be reachable with %q — an OAuth token "+
 						"must not be able to reshare a board or mint a public link",
@@ -233,7 +233,7 @@ func TestCardsSharingSurfaceIsReadOnlyForOAuth(t *testing.T) {
 	}
 }
 
-// cards_activity is READ-ONLY, and unlike the sharing surface above that is
+// boards_activity is READ-ONLY, and unlike the sharing surface above that is
 // not a policy judgement — it is the schema. Its create, update and delete
 // rules are all nil (pb-migrations/1980000008), so history is written by the
 // server alone and no client of any kind appends to it.
@@ -243,17 +243,17 @@ func TestCardsSharingSurfaceIsReadOnlyForOAuth(t *testing.T) {
 // security decision, whereas granting write here would name a capability that
 // does not exist and could never succeed.
 func TestCardsActivityIsReadOnlyForOAuth(t *testing.T) {
-	path := "/api/collections/cards_activity/records"
+	path := "/api/collections/boards_activity/records"
 
-	if !ScopeForRoute("GET", path).satisfiedBy([]string{ScopeCardsRead}) {
-		t.Errorf("GET %s: cards:read must admit reading card history", path)
+	if !ScopeForRoute("GET", path).satisfiedBy([]string{ScopeBoardsRead}) {
+		t.Errorf("GET %s: boards:read must admit reading card history", path)
 	}
 	for _, method := range []string{"POST", "PATCH", "PUT", "DELETE"} {
 		p := path
 		if method != "POST" {
 			p += "/abc123"
 		}
-		for _, scope := range []string{ScopeCardsWrite, ScopeCardsRead} {
+		for _, scope := range []string{ScopeBoardsWrite, ScopeBoardsRead} {
 			if ScopeForRoute(method, p).satisfiedBy([]string{scope}) {
 				t.Errorf("%s %s must not be reachable with %q — activity is "+
 					"server-written and its write rules are nil", method, p, scope)

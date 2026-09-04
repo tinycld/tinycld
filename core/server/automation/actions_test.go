@@ -152,7 +152,7 @@ func TestRecordOpUpdateTriggerRecord(t *testing.T) {
 // TestTriggerRecordWriteAuthorization is the B3 regression. A record-op on the
 // trigger record runs as superuser, so before the fix a rule owner who could
 // merely SEE a record could mutate or delete it through automation even where
-// the collection's own rules refuse that same edit — the cards case being a
+// the collection's own rules refuse that same edit — the boards case being a
 // viewer moving a card. The floor is the collection's update/delete rule
 // evaluated as the rule owner.
 func TestTriggerRecordWriteAuthorization(t *testing.T) {

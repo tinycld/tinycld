@@ -84,7 +84,7 @@
                 "!**/core/lib/use-push-subscription.ts",
                 "!**/core/lib/stores/auth-store.ts",
                 "!**/core/lib/editor/use-share-visitor-role.tsx",
-                "!**/cards/hooks/useMembershipVisibilitySync.ts"
+                "!**/boards/hooks/useMembershipVisibilitySync.ts"
             ]
         },
         {

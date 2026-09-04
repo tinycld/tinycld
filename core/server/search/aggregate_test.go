@@ -73,13 +73,13 @@ func TestAggregateStampsSlugFromTheSource(t *testing.T) {
 	// A source must not be able to label rows as another package's.
 	app := testApp(t)
 	liar := Source{
-		Slug: "cards", Order: 25,
+		Slug: "boards", Order: 25,
 		Search: func(core.App, string, Query) (Result, error) {
 			return Result{Rows: []Row{{Slug: "mail", ID: "c1", Title: "x"}}, Total: 1}, nil
 		},
 	}
 	resp := Aggregate(context.Background(), app, "u1", Query{Include: []string{"x"}}, []Source{liar})
-	if len(resp.Rows) != 1 || resp.Rows[0].Slug != "cards" {
+	if len(resp.Rows) != 1 || resp.Rows[0].Slug != "boards" {
 		t.Fatalf("rows = %+v, want slug stamped as cards", resp.Rows)
 	}
 }
@@ -114,7 +114,7 @@ func TestAggregateIsolatesAPanickingSource(t *testing.T) {
 	app := testApp(t)
 	sources := []Source{
 		{
-			Slug: "cards", Order: 25,
+			Slug: "boards", Order: 25,
 			Search: func(core.App, string, Query) (Result, error) {
 				panic("nil map write")
 			},
@@ -126,7 +126,7 @@ func TestAggregateIsolatesAPanickingSource(t *testing.T) {
 	if len(resp.Rows) != 1 {
 		t.Fatalf("a panicking package must degrade to no rows, got %+v", resp.Rows)
 	}
-	if len(resp.Partial) != 1 || resp.Partial[0] != "cards" {
+	if len(resp.Partial) != 1 || resp.Partial[0] != "boards" {
 		t.Fatalf("partial = %v, want [cards]", resp.Partial)
 	}
 }

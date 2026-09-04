@@ -2,7 +2,7 @@
 //
 // Promoted here from the calendar package (its `useCalendarNavigation` /
 // `useMonthGrid`), which was the only place in the workspace that could build a
-// month grid — so cards could not offer a due-date picker without either
+// month grid — so boards could not offer a due-date picker without either
 // duplicating it or importing a sibling, and siblings must not depend on each
 // other.
 //

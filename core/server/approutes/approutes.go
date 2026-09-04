@@ -13,8 +13,8 @@ package approutes
 // OUTSIDE this prefix and must never be rewritten with it.
 const Prefix = "/a"
 
-// Href returns an app path for a root-relative route, e.g. Href("cards") is
-// "/a/cards". The path should not start with a slash.
+// Href returns an app path for a root-relative route, e.g. Href("boards") is
+// "/a/boards". The path should not start with a slash.
 func Href(path string) string {
 	if path == "" {
 		return Prefix

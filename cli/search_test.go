@@ -44,7 +44,7 @@ func searchDeps(t *testing.T, s *searchServer) *deps {
 	// Fixed rather than the generated list: that one reflects whichever
 	// packages the checkout assembled (empty in CI), which would make these
 	// assertions pass or fail on the machine rather than on the code.
-	d.slugs = []string{"mail", "drive", "cards", "contacts"}
+	d.slugs = []string{"mail", "drive", "boards", "contacts"}
 
 	host := strings.TrimPrefix(s.srv.URL, "http://")
 	cfg := &config.Config{
@@ -182,7 +182,7 @@ func TestSearchReportsPerPackageCounts(t *testing.T) {
 	s := newSearchServer(t)
 	s.response = searchResponse{
 		Rows:   []searchRow{{Slug: "mail", ID: "m1", Title: "Q3 budget"}},
-		Counts: map[string]int{"mail": 12, "drive": 3, "cards": 0},
+		Counts: map[string]int{"mail": 12, "drive": 3, "boards": 0},
 	}
 	d := searchDeps(t, s)
 
@@ -195,7 +195,7 @@ func TestSearchReportsPerPackageCounts(t *testing.T) {
 	if !strings.Contains(stderr, "(12 in mail, 3 in drive)") {
 		t.Errorf("counts = %q", stderr)
 	}
-	if strings.Contains(stderr, "cards") {
+	if strings.Contains(stderr, "boards") {
 		t.Errorf("zero-count package should not be listed: %q", stderr)
 	}
 }

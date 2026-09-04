@@ -7,7 +7,7 @@ export interface UploadingFile {
     name: string
     /**
      * Whatever the surface groups uploads by — drive would pass a folder id,
-     * cards passes the card id. The store never interprets it; it exists so
+     * boards passes the card id. The store never interprets it; it exists so
      * one screen's in-flight uploads don't render on another's.
      */
     scopeId: string

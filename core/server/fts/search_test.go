@@ -18,12 +18,12 @@ func TestMemberScopeClause(t *testing.T) {
 	// fields in clause() changes the emitted SQL and this test catches it. Do
 	// not "tidy" these back to matching values.
 	s := MemberScope{
-		Table:       "cards_project_members",
+		Table:       "boards_project_members",
 		MemberField: "proj_id",
 		UserField:   "user",
 		RecordField: "project",
 	}
-	want := "c.project IN (SELECT proj_id FROM cards_project_members WHERE user = {:scopeUser})"
+	want := "c.project IN (SELECT proj_id FROM boards_project_members WHERE user = {:scopeUser})"
 	if got := s.clause(); got != want {
 		t.Errorf("clause() = %q, want %q", got, want)
 	}

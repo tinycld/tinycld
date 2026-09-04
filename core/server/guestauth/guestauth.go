@@ -6,10 +6,10 @@
 // created_by) is a required relation to `users`, so there is no writing
 // anything until that row exists.
 //
-// Promoted from drive/server, which had the only implementation, when cards'
+// Promoted from drive/server, which had the only implementation, when boards'
 // public boards needed the same flow. Everything here is package-agnostic: what
 // a redeemed link GRANTS differs per package (drive writes a drive_shares row,
-// cards a cards_project_members row) and stays in the package. What is shared
+// cards a boards_project_members row) and stays in the package. What is shared
 // is the account-and-code machinery, which is fiddly, security-sensitive, and
 // was identical in both.
 package guestauth

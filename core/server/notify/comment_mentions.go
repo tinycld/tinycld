@@ -164,9 +164,9 @@ func handleCommentMention(app core.App, mention *core.Record) {
 // A non-document package gets `<slug>_mention` instead, because its mentions
 // arrive at a different cadence and are worth muting separately — a board is
 // chattier than a document. This ALSO keeps a package's two mention sources on
-// one switch: cards' description mentions come from its own flush hook
-// (cards/server/description_mentions.go) and already send `cards_mention`, so a
-// comment mention must too, or muting cards would silence only half of them.
+// one switch: boards' description mentions come from its own flush hook
+// (boards/server/description_mentions.go) and already send `boards_mention`, so a
+// comment mention must too, or muting boards would silence only half of them.
 func mentionTypeFor(packageSlug, targetCollection string) string {
 	if isDocumentTarget(targetCollection) {
 		return "comment_mention"
@@ -184,7 +184,7 @@ func mentionTypeFor(packageSlug, targetCollection string) string {
 // opens on the matching suggestion row rather than the comments drawer.
 //
 // Every other package owns its own route, so there is no drive item to point
-// at and no generic shape to guess. Cards routes its board at `/cards` and
+// at and no generic shape to guess. Boards routes its board at `/boards` and
 // opens a card with `?focused=<key|id>` (usePeekUrl). The record id is used
 // rather than the OTTER-123 key because the key is composed from the board's
 // slug and a server-assigned number that this hook would have to re-derive —
@@ -208,7 +208,7 @@ func linkForTarget(
 	}
 
 	// Everything else: the package root with ?focused=<record>. A convention a
-	// package opts into (cards' usePeekUrl is the reference implementation) and
+	// package opts into (boards' usePeekUrl is the reference implementation) and
 	// may ignore, in which case the reader still lands somewhere useful.
 	// Stated as a convention because the previous shape switched on the slug,
 	// so a third-party package could not get a deep link without core naming it.

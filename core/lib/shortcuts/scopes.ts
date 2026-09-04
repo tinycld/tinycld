@@ -33,7 +33,7 @@ export function topScope(): Scope | null {
  * right now, as opposed to merely which KIND of screen it is.
  *
  * The distinction matters because `freezeOnBlur` leaves a departed screen
- * mounted: mail's list and a cards board can both hold registered 'list'
+ * mounted: mail's list and a Boards board can both hold registered 'list'
  * shortcuts at the same time, and several of them collide (j, k, x). Scope
  * alone cannot separate them; the owning instance can.
  */
@@ -101,7 +101,7 @@ export function useScopeOwner(): ScopeOwner | null {
  * WHEN a re-register happens rather than on WHO is registering: on web
  * `freezeOnBlur` only sets `display: none`, so a blurred screen keeps its live
  * queries emitting and re-registers on its own schedule. A mail re-register
- * landing while a cards board held the keyboard stamped mail's `j` with the
+ * landing while a Boards board held the keyboard stamped mail's `j` with the
  * BOARD's id, and — mail's entry being first in the registry's insertion order
  * — the matcher fired mail's handler for a keypress meant for the board, which
  * did nothing visible. That is the bug this hook's split of identity (mount)

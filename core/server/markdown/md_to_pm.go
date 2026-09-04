@@ -50,7 +50,7 @@ func ToPM(src string) *PMNode {
 // a BLOCK node, and an image seeded inside a paragraph is schema-invalid: the
 // first client to bind the fragment repairs its document by DELETING the
 // node, the repair syncs as an edit, and the next flush persists the loss.
-// (Found by cards' description-images e2e: insert image → reload → gone.)
+// (Found by boards' description-images e2e: insert image → reload → gone.)
 func liftBlockImages(inline []PMNode) []PMNode {
 	hasImage := false
 	for i := range inline {

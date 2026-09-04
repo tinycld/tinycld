@@ -16,7 +16,7 @@
 // So core creates the table whenever no package has yet: the generalized
 // shape, WITHOUT drive_item (a relation to a collection that may not exist
 // here), and with every rule null — superusers only, until a package appends
-// its own presence-gated createRule branch (cards' 1986000000 is the
+// its own presence-gated createRule branch (boards' 1986000000 is the
 // pattern; drive's create-or-adapt does the same when it arrives second).
 // On a deployment where drive already created the table this is a no-op.
 //
@@ -25,7 +25,7 @@
 //
 // Numbered 1985000003: after the generalization (on drive-present
 // deployments the adapt has already run, making this a clean no-op) and
-// before every package's branch-append (cards' is 1986000000), which needs
+// before every package's branch-append (boards' is 1986000000), which needs
 // the columns created here.
 migrate(
     app => {

@@ -121,7 +121,7 @@ describe('displacement', () => {
      * editor on, so it never renders again to notice the displacement — and for
      * a surface that stashes rather than commits, doing nothing on unmount
      * loses the revision outright. The surface is gone, and with it the only
-     * copy of what was typed. Cards' inline comment edit is the case.
+     * copy of what was typed. Boards' inline comment edit is the case.
      */
     it('stashes an unfinished edit when a non-committing surface goes away', async () => {
         const onCommit = vi.fn()
