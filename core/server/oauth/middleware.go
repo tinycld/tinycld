@@ -123,6 +123,28 @@ var collectionScopes = map[string]collectionAccess{
 	"cards_comments":        {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
 	"cards_attachments":     {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
 
+	// The junction collections, same reasoning as the content rows above:
+	// each one's access rules resolve membership before any of this is
+	// reached, so the grant decides whether an OAuth caller may use the
+	// collection at all — not which rows.
+	//
+	// cards_card_links is worth one moment of thought, being the only cards
+	// collection that spans two boards. Its create rule already demands write
+	// on the source board and membership on the target, so a token cannot
+	// link boards its holder could not link through the app. Reading one
+	// discloses the far card's id and nothing else — the far card stays
+	// governed by cards_cards' own rule.
+	"cards_card_links":        {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+	"cards_comment_reactions": {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+	"cards_card_watchers":     {read: scopeRule{ScopeCardsRead}, write: scopeRule{ScopeCardsWrite}},
+
+	// READ-ONLY, and unlike the sharing surface below this is not a policy
+	// choice — it is the schema. cards_activity is server-written history:
+	// its create, update and delete rules are all nil (pb-migrations
+	// 1980000008), so no client of any kind writes it. Granting write here
+	// would name a capability that does not exist and cannot be exercised.
+	"cards_activity": {read: scopeRule{ScopeCardsRead}},
+
 	// READ-ONLY for OAuth callers, deliberately, and NOT because the rules are
 	// weak — they already confine both to owners. These two are the SHARING
 	// surface: a write to cards_project_members adds a person to a board, and a

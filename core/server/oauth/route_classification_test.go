@@ -170,6 +170,12 @@ func TestCardsContentCollectionsAreReadWrite(t *testing.T) {
 	for _, collection := range []string{
 		"cards_projects", "cards_lists", "cards_cards", "cards_labels",
 		"cards_checklist_items", "cards_comments", "cards_attachments",
+		// The junctions. cards_card_links spans two boards, which is why it
+		// is worth naming here rather than assuming it rides along: its own
+		// create rule demands write on the source and membership on the
+		// target, so the scope grant adds nothing a caller could not already
+		// do in the app.
+		"cards_card_links", "cards_comment_reactions", "cards_card_watchers",
 	} {
 		path := "/api/collections/" + collection + "/records"
 		read := ScopeForRoute("GET", path)
@@ -222,6 +228,35 @@ func TestCardsSharingSurfaceIsReadOnlyForOAuth(t *testing.T) {
 						"must not be able to reshare a board or mint a public link",
 						method, p, scope)
 				}
+			}
+		}
+	}
+}
+
+// cards_activity is READ-ONLY, and unlike the sharing surface above that is
+// not a policy judgement — it is the schema. Its create, update and delete
+// rules are all nil (pb-migrations/1980000008), so history is written by the
+// server alone and no client of any kind appends to it.
+//
+// Asserted separately from the sharing surface because the reasons differ and
+// should not be conflated: relaxing the sharing entries would be a deliberate
+// security decision, whereas granting write here would name a capability that
+// does not exist and could never succeed.
+func TestCardsActivityIsReadOnlyForOAuth(t *testing.T) {
+	path := "/api/collections/cards_activity/records"
+
+	if !ScopeForRoute("GET", path).satisfiedBy([]string{ScopeCardsRead}) {
+		t.Errorf("GET %s: cards:read must admit reading card history", path)
+	}
+	for _, method := range []string{"POST", "PATCH", "PUT", "DELETE"} {
+		p := path
+		if method != "POST" {
+			p += "/abc123"
+		}
+		for _, scope := range []string{ScopeCardsWrite, ScopeCardsRead} {
+			if ScopeForRoute(method, p).satisfiedBy([]string{scope}) {
+				t.Errorf("%s %s must not be reachable with %q — activity is "+
+					"server-written and its write rules are nil", method, p, scope)
 			}
 		}
 	}
