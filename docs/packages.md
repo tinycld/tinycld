@@ -268,8 +268,8 @@ export default manifest
 | Field | Effect when present |
 |---|---|
 | `name` / `slug` / `version` / `description` | Required identifiers. `slug` is the URL segment and collection-name prefix. |
-| `routes.directory` | Each file becomes an authenticated route under `app/(app)/<slug>/`. |
-| `publicRoutes.directory` | Each file becomes a public top-level route under `app/<path>` (outside the authenticated `app/(app)/` group — e.g. drive's share routes). |
+| `routes.directory` | Each file becomes an authenticated route under `app/a/(app)/<slug>/`. |
+| `publicRoutes.directory` | Each file becomes a public top-level route under `app/<path>` (outside the authenticated `app/a/(app)/` group — e.g. drive's share routes). |
 | `nav` | Adds a nav-rail entry. `shortcut` registers a `t <letter>` jump and must be unique (validated at generate time). |
 | `migrations.directory` | `*.js` migrations symlinked into `server/pb_migrations/`. |
 | `hooks.directory` | PocketBase JS hooks symlinked into `server/pb_hooks/`. |
@@ -467,7 +467,7 @@ is gitignored — never commit any of it.**
 
 For each linked package it reads `manifest.ts` and emits **only**:
 
-### A. Route re-exports → `app/(app)/<slug>/**`
+### A. Route re-exports → `app/a/(app)/<slug>/**`
 
 For each file under `routes.directory`, a one-line re-export shim that plugs a
 sibling screen into Expo Router's filesystem routing — Expo Router needs real
@@ -478,7 +478,7 @@ export { default } from '@tinycld/contacts/screens/index'
 ```
 
 `publicRoutes` work the same way but land under the public tree — `app/p/<path>`
-(e.g. drive's share routes) — rather than the signed-in `app/(app)/` tree. The
+(e.g. drive's share routes) — rather than the signed-in `app/a/(app)/` tree. The
 generated public-route shims are gitignored; any hand-written layout/index files
 in the public tree stay tracked and are force-added despite the gitignore.
 
@@ -614,9 +614,9 @@ definePackageEntry<MailSchema>()({
 export const packageSettings = deriveSettings(tinycldConfig)
 // → PackageSettingsGroup[] grouped by package
 
-// app/(app)/settings/index.tsx
+// app/a/(app)/settings/index.tsx
 packageSettings.map(group => group.panels.map(panel => /* render link */))
-// app/(app)/settings/[...section].tsx
+// app/a/(app)/settings/[...section].tsx
 // looks up the matching panel by [pkgSlug, panelSlug] and renders panel.Component
 ```
 
@@ -779,7 +779,7 @@ match.
 
 ### Test build tag
 
-`pnpm run test:go` builds with the `no_ui` tag so PocketBase's admin UI route
+`pnpm run test:server` builds with the `no_ui` tag so PocketBase's admin UI route
 registration is skipped during tests (PB v0.37+ panics on duplicate route
 registration across test scenarios that share an app). The shipped binary is
 built **without** `no_ui`, so the admin UI ships in production.
@@ -820,10 +820,11 @@ pnpm install                         # links members + runs the generator
 cd ~/code/tinycld/tinycld           # other commands run from the app shell
 pnpm run dev                         # packages:generate, then Expo + PocketBase
 pnpm run checks                      # biome + tsc (lints app + all linked siblings)
-pnpm run test:unit                   # vitest (includes sibling tests)
+pnpm run test                        # vitest for the app shell
+pnpm run pkg:test:unit               # vitest across every present member
 pnpm run test:e2e                    # playwright (all linked siblings)
 pnpm run test:e2e --project=@tinycld/mail   # a single package's e2e specs
-pnpm run test:go                     # Go tests (no_ui build tag)
+pnpm run test:server                 # Go tests (no_ui build tag)
 ```
 
 Where changes go:
@@ -841,7 +842,7 @@ on every `packages:generate`:
   `tinycld-config.ts`, `package-help.ts`, `package-icons.ts`,
   `uniwind-sources.css`)
 - `tinycld/tinycld.config.ts` and `tinycld/tinycld.seeds.ts`
-- generated app routes under `tinycld/app/(app)/<slug>/**` and the
+- generated app routes under `tinycld/app/a/(app)/<slug>/**` and the
   generated public routes under `tinycld/app/p/<path>`
 - `tinycld/server/pb_migrations/` + `tinycld/server/pb_hooks/` (symlinks),
   `server/package_extensions.go`, `server/go.work`
@@ -850,8 +851,8 @@ on every `packages:generate`:
 
 (The `node_modules/@tinycld/*` symlinks are also local-only state, created by
 `link-members.ts` — never `git add` them. The app-owned route dirs
-`app/(app)/settings/`, `app/(app)/help/`, and `app/(app)/admin/`, plus
-`app/(app)/_layout.tsx` and `app/p/_layout.tsx`, are tracked via `.gitignore`
+`app/a/(app)/settings/`, `app/a/(app)/help/`, and `app/a/(app)/admin/`, plus
+`app/a/(app)/_layout.tsx` and `app/p/_layout.tsx`, are tracked via `.gitignore`
 carve-outs despite living under a gitignored tree.)
 
 ---

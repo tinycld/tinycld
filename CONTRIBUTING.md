@@ -147,19 +147,61 @@ available in production.
 - Do NOT use React Context for new shared UI state — use a Zustand store instead.
 
 ## Logging
-There is **no** central `log` helper. **Don't import `@tinycld/core/lib/logger` — it doesn't exist** (older drafts reference it).
 
-- **Errors → `captureException`** from `@tinycld/core/lib/errors`. Signature: `captureException(context: string, error: unknown, extra?)`. `context` is a short stable string Sentry groups on (e.g. `'mail.openDraft.fetchBody'`); `extra` is variable detail. Rethrow when the caller must handle it; swallow only when the surface recovers, with a comment saying why.
+**Client → `log` from `@tinycld/core/lib/logger`.** Every call becomes a Sentry
+breadcrumb; calls at or above `coreConfig.logLevel` (default `warn` in release,
+`debug` in dev) additionally become Sentry events.
+
+```ts
+import { log } from '@tinycld/core/lib/logger'
+
+log.debug('mail.compose', 'draft saved', { draftId })
+log.warn('mail.imap', 'reconnect attempt', { attempt })
+log.error('mail.send', err, { messageId })
+```
+
+`context` is a short stable dotted string Sentry groups on (e.g.
+`'mail.openDraft.fetchBody'`); `extra` is variable detail. Levels are `debug`,
+`info`, `warn`, and `error` — `error` takes the error itself rather than a
+message, so Sentry gets the real stack instead of a stringified one.
+
+- **Errors → `log.error(context, error, extra?)`.** Rethrow when the caller must
+  handle it; swallow only when the surface recovers, with a comment saying why.
   ```ts
   try {
       await pb.collection('example').create(data)
   } catch (err) {
-      captureException('example.create', err, { id: data.id })
+      log.error('example.create', err, { id: data.id })
       throw err
   }
   ```
-- **Form validation failures → `handleMutationErrorsWithForm`** (as the mutation's `onError`). Don't `captureException` these — they aren't bugs.
-- **Dev-only tracing → `console.*` guarded by `__DEV__`:** `if (__DEV__) console.debug('[mail.compose] draft id', draftId)`. Never ship an unguarded `console.log`.
+  `captureException` from `@tinycld/core/lib/errors` is retained for the many
+  existing call sites and simply delegates to `log.error`. New code uses
+  `log.error`.
+- **Form validation failures → `handleMutationErrorsWithForm`** (as the
+  mutation's `onError`). Don't log these — they aren't bugs.
+- **Never `console.*` in runtime code.** Biome enforces this as an error
+  (`noConsole`), including a `__DEV__`-guarded call — the guard is not an
+  exemption. The rule is off only under `scripts/`, `tests/`, `*.test.ts(x)`,
+  `package-scripts/`, and the handful of logging-infrastructure files that must
+  reach the console directly (`core/lib/logger.ts`, `core/lib/sentry.ts`,
+  `core/lib/debug-trace.ts`, `core/components/AppErrorBoundary.tsx`, and the
+  webview bundler's `build.ts`).
+
+**Server → `logging.ForPackage("<slug>")` from `tinycld.org/core/logging`.**
+Returns an `*slog.Logger` stamped with a `pkg` attribute. Records fan out to
+stderr (`info`+), the PocketBase `_logs` table (`info`+), and Sentry (`warn`+).
+
+```go
+log := logging.ForPackage("boards")
+log.WarnContext(ctx, "refusing to flush a card from another board", "cardID", id)
+```
+
+Prefer the `*Context` variants when a `ctx` is in scope — the per-request Sentry
+hub carries the user id, so those calls get user attribution for free. Calls
+without a `ctx` still log and still reach Sentry, just unattributed. Don't add a
+`ctx` parameter to a function solely to log, and don't write manual `"boards: "`
+message prefixes — the `pkg` attribute replaces them.
 
 ## Scripts Reference
 - `pnpm run dev` starts Expo + PocketBase together (generator runs first). It reuses whatever is in `tinycld/server/pb_data` — it does not seed.
@@ -234,7 +276,7 @@ signals it ran.
 - Feature packages live in **sibling git repos** at `~/code/tinycld/{contacts,mail,calendar,drive,calc,text,google-takeout-import}/` (source at `<slug>/tinycld/<slug>/`) and are **pnpm workspace members** (listed in `pnpm-workspace.yaml`) of a workspace root at `~/code/tinycld/`. `@tinycld/core` is **not** a separate sibling repo — it is nested at `tinycld/core/` inside the merged `tinycld` repo (still a workspace member, listed as `tinycld/core`), alongside `@tinycld/package-scripts` at `tinycld/package-scripts/`. The postinstall's `link-members` step creates `node_modules/@tinycld/<name>` symlinks for every member; pnpm itself only links depended-on members, so this covers the rest.
 - `tinycld.packages.ts::getPackages()` (at the workspace root) enumerates the workspace members that carry a `manifest.ts` — that set is the source of truth. To add a feature package, clone it as a sibling at the workspace root, add it to `pnpm-workspace.yaml`'s `packages:` list, and run `pnpm install` at the **workspace root** (`~/code/tinycld/`). There is no `packages:link`/`packages:install` — the workspace install does the linking.
 - `pnpm run packages:generate` (runs as the workspace-root `postinstall`, and before `dev`) wires linked feature packages into the app. It is now a **thin** step — most wiring moved to runtime imports. It:
-  - Re-exports package screens into `tinycld/app/(app)/{slug}/` (app routes) and public routes into `tinycld/app/p/<path>` (Expo Router needs files on disk).
+  - Re-exports package screens into `tinycld/app/a/(app)/{slug}/` (app routes) and public routes into `tinycld/app/p/<path>` (Expo Router needs files on disk).
   - Writes `tinycld.config.ts` (the installed-package source of truth — a typed `definePackageEntry` array) and `tinycld.seeds.ts` (Node-only seed list, kept out of the app bundle).
   - Writes `tinycld/lib/generated/package-help.ts` (frontmatter-parsed help topics) and `tinycld/lib/generated/uniwind-sources.css` (Tailwind `@source` roots).
   - Symlinks migrations/hooks into `tinycld/server/pb_migrations/` and `tinycld/server/pb_hooks/`, and generates the Go server wiring. Core's migrations are symlinked in via a separate explicit pass (core has no `manifest.ts`).
@@ -243,7 +285,7 @@ signals it ran.
 - Manifest fields `routes`, `publicRoutes`, and `nav` are all optional — a package can contribute only a settings panel (see `@tinycld/google-takeout-import`) with none of these.
 - The type system is fully integrated — package `types.ts` exports a `{PascalSlug}Schema` type. `generate-config.ts` composes these into `MergedPackageSchema` (a literal intersection), which `pocketbase.ts` intersects with core's `Schema` so `useStore('packageCollection')` is strongly typed end-to-end. (The literal intersection — not a `typeof tinycldConfig` derivation — avoids a circular type reference through `coreStores`.)
 - Package screens run in the app's bundle context and can import from the host app using `~/` and from core using `@tinycld/core/...`.
-- `tinycld/lib/generated/`, `tinycld/app/(app)/*/`, and `tinycld/app/p/*/` are gitignored; the app-owned route dirs `tinycld/app/(app)/settings/`, `tinycld/app/(app)/help/`, `tinycld/app/(app)/admin/`, plus `tinycld/app/(app)/_layout.tsx` and `tinycld/app/p/_layout.tsx`, are hand-written and tracked (`.gitignore` carve-outs).
+- `tinycld/lib/generated/`, `tinycld/app/a/(app)/*/`, and `tinycld/app/p/*/` are gitignored; the app-owned route dirs `tinycld/app/a/(app)/settings/`, `tinycld/app/a/(app)/help/`, `tinycld/app/a/(app)/admin/`, plus `tinycld/app/a/(app)/_layout.tsx` and `tinycld/app/p/_layout.tsx`, are hand-written and tracked (`.gitignore` carve-outs).
 - **Install at the workspace root (`~/code/tinycld/`), never inside a sibling** — see the **Assembling & installing a workspace** and **The duplicate-react hazard** sections below for the why and the recovery.
 - Metro bundler resolves workspace members via a `watchFolders` entry for the workspace root in `tinycld/metro.config.cjs`. The 388-line custom resolver is gone — npm's `node_modules/@tinycld/*` symlinks + Metro's default resolver handle member subpaths (`.ts`/`.tsx`/dir-index) with no singleton pins. Vitest still needs `@tinycld/core/*` path aliases because Vite's exports resolution lacks Metro's directory-index fallback.
 - **Tailwind/Uniwind class scanning across linked packages is wired up by the generator.** Tailwind v4's scanner respects `.gitignore`, and the symlinks (and `node_modules` installs) for linked packages live inside gitignored paths. Without help, any utility class used **only** inside a linked package (e.g. `mr-3`, `bg-green-500`) silently produces no CSS rule — the className lands on the DOM element but has no styles. The generator writes one absolute `@source "<package-real-path>";` line per linked package into `tinycld/lib/generated/uniwind-sources.css`, which `global.css` imports. The file regenerates on every `packages:link` / `packages:unlink`, so newly-linked packages (siblings, `node_modules`-installed third-party, or arbitrary checkouts) work automatically. Diagnose missing styles by checking `document.styleSheets` in DevTools for a `.your-class { ... }` rule; if missing, run `pnpm run packages:generate` and inspect `tinycld/lib/generated/uniwind-sources.css`.
@@ -306,7 +348,7 @@ Siblings avoid this by declaring framework deps as `peerDependencies` and carryi
 The generator (`tinycld/scripts/generate.ts`, run by the postinstall and by `pnpm run packages:generate`) walks `getPackages()` and emits the following, all **gitignored in the `tinycld` repo**. Treat every path here as machine-owned — never hand-edit or commit it:
 
 - `tinycld.config.ts` — the typed `definePackageEntry` array plus the `MergedPackageSchema` literal intersection; the runtime source of truth that the helpers in `tinycld/core/lib/packages/` derive stores/registry/components/seeds from. Plus `tinycld.seeds.ts`, the Node-only seed list kept out of the app bundle.
-- `tinycld/app/(app)/<slug>/**` — app route re-exports — and `tinycld/app/p/<path>` — public routes.
+- `tinycld/app/a/(app)/<slug>/**` — app route re-exports — and `tinycld/app/p/<path>` — public routes.
 - `tinycld/lib/generated/*` — including the `package.json` that makes it the `@tinycld/app-generated` package, plus `tinycld-config.ts`, `package-help.ts`, `package-icons.ts`, and `uniwind-sources.css`.
 - `tinycld/server/package_extensions.go`, `tinycld/server/go.work`, and the `tinycld/server/pb_migrations/*` + `tinycld/server/pb_hooks/*` symlinks.
 
@@ -385,5 +427,5 @@ The canonical config excludes generated artifacts — `server`, `lib/generated`,
 - PocketBase TS helper docs: https://raw.githubusercontent.com/satohshi/pocketbase-ts/refs/heads/master/README.md
 
 ## Project Structure & Module Organization
-The app shell is the `tinycld/` repo root. Expo routes live under `tinycld/app/`, with signed-in screens in `tinycld/app/(app)/` (generated package re-exports plus the hand-written `settings/`, `help/`, and `admin/` dirs), public screens in `tinycld/app/p/`, and shared layouts in `_layout.tsx`. Most shared UI, hooks, and domain utilities live in `@tinycld/core` (nested at `tinycld/core/`): `tinycld/core/components/`, `tinycld/core/ui/`, `tinycld/core/lib/`. Static assets stay in `tinycld/assets/` and `tinycld/public/`. PocketBase data, migrations, and hooks live under the app server at `tinycld/server/pb_data/`, `tinycld/server/pb_migrations/`, and `tinycld/server/pb_hooks/`. Tests and automation land in `tinycld/tests/`, covering Playwright, Vitest, and Docker helpers.
+The app shell is the `tinycld/` repo root. Expo routes live under `tinycld/app/`, with signed-in screens in `tinycld/app/a/(app)/` (generated package re-exports plus the hand-written `settings/`, `help/`, and `admin/` dirs), public screens in `tinycld/app/p/`, and shared layouts in `_layout.tsx`. Most shared UI, hooks, and domain utilities live in `@tinycld/core` (nested at `tinycld/core/`): `tinycld/core/components/`, `tinycld/core/ui/`, `tinycld/core/lib/`. Static assets stay in `tinycld/assets/` and `tinycld/public/`. PocketBase data, migrations, and hooks live under the app server at `tinycld/server/pb_data/`, `tinycld/server/pb_migrations/`, and `tinycld/server/pb_hooks/`. Tests and automation land in `tinycld/tests/`, covering Playwright, Vitest, and Docker helpers.
 
