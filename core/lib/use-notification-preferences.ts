@@ -33,6 +33,8 @@ export interface NotificationPreferences {
     cards_assigned: boolean
     /** Someone replied to your comment on a card. */
     cards_reply: boolean
+    /** Someone reacted to your comment on a card. */
+    cards_reaction: boolean
     /** A card you watch gained a comment, moved, was completed or archived. */
     cards_watched: boolean
     /** A card you watch or are assigned is due soon or overdue. */
@@ -51,6 +53,7 @@ const DEFAULT_PREFS: NotificationPreferences = {
     cards_mention: true,
     cards_assigned: true,
     cards_reply: true,
+    cards_reaction: true,
     cards_watched: true,
     cards_due: true,
 }

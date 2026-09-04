@@ -472,6 +472,7 @@ const NOTIF_GROUPS: {
             { key: 'cards_mention', label: 'Mentions on a card' },
             { key: 'cards_assigned', label: 'Cards assigned to you' },
             { key: 'cards_reply', label: 'Replies to your comments' },
+            { key: 'cards_reaction', label: 'Reactions to your comments' },
             { key: 'cards_watched', label: 'Changes to cards you watch' },
             { key: 'cards_due', label: 'Due-date reminders' },
         ],
