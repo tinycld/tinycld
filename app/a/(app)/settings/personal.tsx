@@ -475,6 +475,7 @@ const NOTIF_GROUPS: {
             { key: 'boards_reaction', label: 'Reactions to your comments' },
             { key: 'boards_watched', label: 'Changes to cards you watch' },
             { key: 'boards_due', label: 'Due-date reminders' },
+            { key: 'boards_sprint', label: 'Sprint starts and completes' },
         ],
     },
     {

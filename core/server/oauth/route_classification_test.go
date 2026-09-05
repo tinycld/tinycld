@@ -176,6 +176,10 @@ func TestCardsContentCollectionsAreReadWrite(t *testing.T) {
 		// target, so the scope grant adds nothing a caller could not already
 		// do in the app.
 		"boards_card_links", "boards_comment_reactions", "boards_card_watchers",
+		// The planning collections. boards_epics shipped with no entry and
+		// was default-denied for the life of the feature; naming it here is
+		// what keeps the next collection from repeating that.
+		"boards_epics", "boards_sprints",
 	} {
 		path := "/api/collections/" + collection + "/records"
 		read := ScopeForRoute("GET", path)
@@ -242,22 +246,60 @@ func TestCardsSharingSurfaceIsReadOnlyForOAuth(t *testing.T) {
 // should not be conflated: relaxing the sharing entries would be a deliberate
 // security decision, whereas granting write here would name a capability that
 // does not exist and could never succeed.
-func TestCardsActivityIsReadOnlyForOAuth(t *testing.T) {
-	path := "/api/collections/boards_activity/records"
+//
+// boards_sprint_snapshots is the same shape — a sprint's daily scope/done row,
+// written by the server's sweep and lifecycle endpoints — and is asserted in
+// the same loop for the same reason.
+func TestCardsServerWrittenCollectionsAreReadOnlyForOAuth(t *testing.T) {
+	for _, collection := range []string{"boards_activity", "boards_sprint_snapshots"} {
+		path := "/api/collections/" + collection + "/records"
 
-	if !ScopeForRoute("GET", path).satisfiedBy([]string{ScopeBoardsRead}) {
-		t.Errorf("GET %s: boards:read must admit reading card history", path)
-	}
-	for _, method := range []string{"POST", "PATCH", "PUT", "DELETE"} {
-		p := path
-		if method != "POST" {
-			p += "/abc123"
+		if !ScopeForRoute("GET", path).satisfiedBy([]string{ScopeBoardsRead}) {
+			t.Errorf("GET %s: boards:read must admit reading it", path)
 		}
-		for _, scope := range []string{ScopeBoardsWrite, ScopeBoardsRead} {
-			if ScopeForRoute(method, p).satisfiedBy([]string{scope}) {
-				t.Errorf("%s %s must not be reachable with %q — activity is "+
-					"server-written and its write rules are nil", method, p, scope)
+		for _, method := range []string{"POST", "PATCH", "PUT", "DELETE"} {
+			p := path
+			if method != "POST" {
+				p += "/abc123"
 			}
+			for _, scope := range []string{ScopeBoardsWrite, ScopeBoardsRead} {
+				if ScopeForRoute(method, p).satisfiedBy([]string{scope}) {
+					t.Errorf("%s %s must not be reachable with %q — the collection is "+
+						"server-written and its write rules are nil", method, p, scope)
+				}
+			}
+		}
+	}
+}
+
+// Boards' per-record POST endpoints are classified by prefix, since an id sits
+// in the middle of the path. The move endpoint shipped unclassified, so
+// `card move --board` over an OAuth token was denied while a session succeeded
+// — exactly the split the CLI's testserver cannot see. Both families are
+// content writes the handler re-authorizes in Go, so boards:write is the grant
+// and boards:read alone must not open them.
+func TestCardsRecordEndpointsAreClassified(t *testing.T) {
+	for _, path := range []string{
+		"/api/boards/cards/abc123/move",
+		"/api/boards/sprints/abc123/start",
+		"/api/boards/sprints/abc123/complete",
+	} {
+		rule := ScopeForRoute("POST", path)
+		if len(rule) == 0 {
+			t.Errorf("POST %s is default-denied", path)
+			continue
+		}
+		if !rule.satisfiedBy([]string{ScopeBoardsWrite}) {
+			t.Errorf("POST %s: boards:write must admit it (got %q)", path, rule)
+		}
+		if rule.satisfiedBy([]string{ScopeBoardsRead}) {
+			t.Errorf("POST %s: boards:read alone must NOT admit a write", path)
+		}
+	}
+	// The bare family prefix is a different route and must not ride along.
+	for _, path := range []string{"/api/boards/cards/", "/api/boards/sprints/"} {
+		if len(ScopeForRoute("POST", path)) != 0 {
+			t.Errorf("POST %s: the bare prefix must stay default-denied", path)
 		}
 	}
 }
