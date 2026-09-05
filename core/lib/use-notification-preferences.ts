@@ -39,6 +39,12 @@ export interface NotificationPreferences {
     boards_watched: boolean
     /** A card you watch or are assigned is due soon or overdue. */
     boards_due: boolean
+    /**
+     * A sprint on one of your boards started or completed (boards'
+     * server/notifications.go). Sent to every board member rather than to
+     * card watchers, since a sprint is a board-level event.
+     */
+    boards_sprint: boolean
 }
 
 const DEFAULT_PREFS: NotificationPreferences = {
@@ -56,6 +62,7 @@ const DEFAULT_PREFS: NotificationPreferences = {
     boards_reaction: true,
     boards_watched: true,
     boards_due: true,
+    boards_sprint: true,
 }
 
 export type MailNotifyMode = 'batched' | 'important_only'

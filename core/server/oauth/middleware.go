@@ -138,12 +138,27 @@ var collectionScopes = map[string]collectionAccess{
 	"boards_comment_reactions": {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
 	"boards_card_watchers":     {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
 
+	// The planning collections. Both are board content in every sense the
+	// block above relies on: each row names a `project`, the rules resolve
+	// membership through it, and a write is "change my cards" on the consent
+	// screen. boards_epics shipped WITHOUT an entry here, which default-denied
+	// it for every OAuth caller — the reason the CLI never grew an epic
+	// command. boards_sprints is granted from the start so the sprint
+	// commands can exist at all.
+	"boards_epics":   {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
+	"boards_sprints": {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
+
 	// READ-ONLY, and unlike the sharing surface below this is not a policy
 	// choice — it is the schema. boards_activity is server-written history:
 	// its create, update and delete rules are all nil (pb-migrations
 	// 1980000008), so no client of any kind writes it. Granting write here
 	// would name a capability that does not exist and cannot be exercised.
 	"boards_activity": {read: scopeRule{ScopeBoardsRead}},
+
+	// Same shape: a sprint's daily scope/done snapshot is written by the
+	// server's sweep and its lifecycle endpoints, never by a client, so the
+	// collection has no write rules to grant against.
+	"boards_sprint_snapshots": {read: scopeRule{ScopeBoardsRead}},
 
 	// READ-ONLY for OAuth callers, deliberately, and NOT because the rules are
 	// weak — they already confine both to owners. These two are the SHARING
@@ -231,6 +246,15 @@ var endpointPrefixScopes = []struct {
 	scopes         scopeRule
 }{
 	{"DELETE", "/api/drive/share-link/", scopeRule{ScopeDriveWrite}},
+
+	// Boards' per-record POST families. `/cards/{id}/move` was unclassified
+	// when it shipped, so `card move --board` over an OAuth token was
+	// default-denied while the same command worked for a session — the
+	// failure mode TestEveryRegisteredRouteIsClassified describes. Both
+	// families mutate board content the caller must already be a writer on
+	// (the handlers restate that check in Go), so boards:write is the grant.
+	{"POST", "/api/boards/cards/", scopeRule{ScopeBoardsWrite}},
+	{"POST", "/api/boards/sprints/", scopeRule{ScopeBoardsWrite}},
 }
 
 // exemptPaths need no scope: public probes, and the OAuth endpoints a client
