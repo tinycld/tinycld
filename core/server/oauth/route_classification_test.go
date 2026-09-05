@@ -303,3 +303,31 @@ func TestCardsRecordEndpointsAreClassified(t *testing.T) {
 		}
 	}
 }
+
+// Boards' file transfer routes, classified exactly as contacts' and calendar's
+// are: the export reads a whole board, the import writes one.
+//
+// The read/write split is the assertion that matters. An export handed
+// boards:write would be reachable by a token a user granted only to change
+// cards, and an import admitted by boards:read alone would let a read-only
+// integration create a board full of content.
+func TestBoardsTransferEndpointsAreClassified(t *testing.T) {
+	export := ScopeForRoute("GET", "/api/boards/export")
+	if len(export) == 0 {
+		t.Fatal("GET /api/boards/export is default-denied")
+	}
+	if !export.satisfiedBy([]string{ScopeBoardsRead}) {
+		t.Errorf("GET /api/boards/export: boards:read must admit it (got %q)", export)
+	}
+
+	imp := ScopeForRoute("POST", "/api/boards/import")
+	if len(imp) == 0 {
+		t.Fatal("POST /api/boards/import is default-denied")
+	}
+	if !imp.satisfiedBy([]string{ScopeBoardsWrite}) {
+		t.Errorf("POST /api/boards/import: boards:write must admit it (got %q)", imp)
+	}
+	if imp.satisfiedBy([]string{ScopeBoardsRead}) {
+		t.Error("POST /api/boards/import: boards:read alone must NOT admit a write")
+	}
+}
