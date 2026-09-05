@@ -24,6 +24,7 @@ export const eventRegistry: Record<NotifyEventName, EventConfig> = {
     'drive.template_saved': { channels: ['toast'], variant: 'success' },
     'boards.attachment_failed': { channels: ['toast'], variant: 'error' },
     'boards.card_moved': { channels: ['toast'], variant: 'success' },
+    'boards.sprint_completed': { channels: ['toast'], variant: 'success' },
     'import.complete': { channels: ['toast', 'bell'], variant: 'success' },
     'import.failed': { channels: ['toast', 'bell'], variant: 'error' },
     'mutation.error': { channels: ['toast'], variant: 'error' },

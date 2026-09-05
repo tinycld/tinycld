@@ -13,6 +13,7 @@ export type NotificationEvents = {
     'drive.template_saved': { name: string }
     'boards.attachment_failed': { card: string; name: string }
     'boards.card_moved': { board: string; key: string }
+    'boards.sprint_completed': { sprint: string; completed: number; rolled: number }
     'import.complete': { source: 'google-takeout' | 'csv'; count: number }
     'import.failed': { source: string; error: string }
     'mutation.error': { operation: string; error: string }
