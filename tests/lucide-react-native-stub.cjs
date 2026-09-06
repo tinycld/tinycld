@@ -72,6 +72,10 @@ const knownIcons = {
     // oauth: ConnectedAppsSection's revoke button
     Trash2: Icon,
     File: Icon,
+    // core Toast's VARIANT_ICONS table (AlertTriangle and X are seeded above)
+    CheckCircle: Icon,
+    Info: Icon,
+    XCircle: Icon,
 }
 
 const handler = {

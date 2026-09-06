@@ -1,37 +1,62 @@
+import { railWidth } from '@tinycld/core/components/workspace/rail-width'
+import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { type Toast as ToastType, useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { AlertTriangle, CheckCircle, Info, X, XCircle } from 'lucide-react-native'
 import { useEffect, useRef } from 'react'
-import { Animated, Platform, Pressable, Text, View } from 'react-native'
+import { Animated, Platform, Pressable, Text, View, type ViewStyle } from 'react-native'
+
+type ToastEdge = 'top' | 'bottom'
+
+// Where the stack is pinned. The container is `box-none`, but each card is an
+// opaque surface (it carries a dismiss button), so for a card's lifetime —
+// 4–8s — nothing underneath it is clickable. That makes placement the whole
+// question: it must be a region no package puts time-critical controls in.
+//
+// Desktop/tablet web goes bottom-left, clear of the rail. Top-right was where
+// every package's header action cluster lives, so a toast raised by an action
+// landed exactly on the controls a user reaches for next (boards' 6s "Sprint
+// completed" card sat on the sprint-scope pill). Bottom-right is mail's compose
+// window. Bottom-left past the rail covers only the tail of a sidebar list.
+// Native and mobile-web keep the banner-style top placement: a bottom stack
+// there would sit on the mobile tab bar.
+function useToastPlacement(): { edge: ToastEdge; style: ViewStyle } {
+    const insets = useDeviceInsets()
+    const breakpoint = useBreakpoint()
+
+    if (Platform.OS !== 'web') {
+        // Toasts sit at the app root, above every layout that insets its own
+        // content, so they must clear the sensor housing themselves — 8pt is
+        // well inside a landscape inset. Same max()-not-add rule as
+        // useSafeAreaPadding (these are `left`/`right` offsets rather than
+        // padding, so they cannot use the hook directly).
+        return {
+            edge: 'top',
+            style: { top: 60, right: Math.max(8, insets.right), left: Math.max(8, insets.left) },
+        }
+    }
+    if (breakpoint === 'mobile') {
+        return { edge: 'top', style: { top: 16, right: 16, width: 360 } }
+    }
+    return { edge: 'bottom', style: { bottom: 16, left: railWidth(insets.left) + 16, width: 360 } }
+}
 
 export function ToastRenderer() {
     const toasts = useToastStore(s => s.toasts)
     // Before the early return — hooks cannot be called conditionally.
-    const insets = useDeviceInsets()
+    const placement = useToastPlacement()
 
     if (toasts.length === 0) return null
 
     return (
         <View
-            style={{
-                position: 'absolute',
-                top: Platform.OS === 'web' ? 16 : 60,
-                // Toasts sit at the app root, above every layout that insets its
-                // own content, so they must clear the sensor housing themselves —
-                // 8pt is well inside a landscape inset. Same max()-not-add rule
-                // as useSafeAreaPadding (these are `left`/`right` offsets rather
-                // than padding, so they cannot use the hook directly).
-                right: Platform.OS === 'web' ? 16 : Math.max(8, insets.right),
-                left: Platform.OS === 'web' ? undefined : Math.max(8, insets.left),
-                width: Platform.OS === 'web' ? 360 : undefined,
-                zIndex: 10000,
-                gap: 8,
-            }}
+            testID="toast-stack"
+            style={{ position: 'absolute', zIndex: 10000, gap: 8, ...placement.style }}
             pointerEvents="box-none"
         >
             {toasts.map(toast => (
-                <ToastCard key={toast.id} toast={toast} />
+                <ToastCard key={toast.id} toast={toast} edge={placement.edge} />
             ))}
         </View>
     )
@@ -51,7 +76,7 @@ const VARIANT_ICONS = {
     error: XCircle,
 } as const
 
-function ToastCard({ toast }: { toast: ToastType }) {
+function ToastCard({ toast, edge }: { toast: ToastType; edge: ToastEdge }) {
     const removeToast = useToastStore(s => s.removeToast)
     const bgColor = useThemeColor('surface-secondary')
     const borderColor = useThemeColor('border')
@@ -59,7 +84,8 @@ function ToastCard({ toast }: { toast: ToastType }) {
     const variantColor = useThemeColor(VARIANT_COLORS[toast.variant])
 
     const opacity = useRef(new Animated.Value(0)).current
-    const translateY = useRef(new Animated.Value(-20)).current
+    // Slide in from the edge the stack is pinned to.
+    const translateY = useRef(new Animated.Value(edge === 'top' ? -20 : 20)).current
 
     useEffect(() => {
         Animated.parallel([
