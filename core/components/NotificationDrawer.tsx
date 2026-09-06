@@ -11,7 +11,7 @@ import { useRouter } from 'expo-router'
 import { Bell, Calendar, Check, File, Mail, Shield, SquareKanban, X } from 'lucide-react-native'
 import { useEffect, useMemo, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
-import { railWidth } from './workspace/PackageRail'
+import { railWidth } from './workspace/rail-width'
 
 const DRAWER_WIDTH = 340
 
