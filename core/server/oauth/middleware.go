@@ -218,6 +218,8 @@ var endpointScopes = map[string]scopeRule{
 	"GET /api/calendar/export":          {ScopeCalendarRead},
 	"POST /api/calendar/import":         {ScopeCalendarWrite},
 	"GET /api/boards/search":            {ScopeBoardsRead},
+	"GET /api/boards/export":            {ScopeBoardsRead},
+	"POST /api/boards/import":           {ScopeBoardsWrite},
 
 	// The federated search narrows itself: it drops the sources a caller's
 	// grant does not cover and returns the rest. So ANY read scope admits the
