@@ -14,9 +14,9 @@ function slugToIdentifier(slug: string): string {
 // cli/cli_extensions.go — mirrors buildPackageExtensionsGo for the CLI: each
 // package's cli module contributes its Cobra commands via Register(root, c).
 //
-// Only slug and module are ever interpolated (validated below). A manifest's
-// `cli.scopes` values contain ':', which SAFE_IMPORT_FIELD rightly rejects;
-// they are consumed on the TS side and must never reach Go source.
+// Only slug and module are ever interpolated (validated below). Nothing else
+// from a manifest reaches Go source: a package's OAuth scopes, for instance,
+// are registered by its own server code, not generated.
 export function buildCliExtensionsSource(pkgs: CliPkg[]): string {
     if (pkgs.length === 0) {
         return [

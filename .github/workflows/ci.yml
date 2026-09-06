@@ -84,6 +84,14 @@ jobs:
       - name: Check (lint + typecheck + unit)
         working-directory: ws/tinycld
         run: pnpm exec tinycld-pkg check
+      # Core must not name a package. With no features assembled this has
+      # nothing to scan and passes vacuously; it is here so the step exists
+      # for a run that does assemble features, and so the script itself stays
+      # runnable. The Go guard (oauth.TestCoreDeclaresNoPackageScopes) covers
+      # the scope registry without any feature present.
+      - name: Check core isolation
+        working-directory: ws/tinycld
+        run: pnpm run check:core-isolation
 
   go:
     name: Go build & test

@@ -58,204 +58,15 @@ const scopeExempt = "-"
 // already set and no-ops (see apis/middlewares.go:190).
 var middlewarePriority = apis.DefaultLoadAuthTokenMiddlewarePriority - 10
 
-// scopeRule is the set of scopes that satisfy a route. A caller passes when it
-// holds ANY of them (see satisfiedBy): a collection shared between packages
-// — `labels` is used by both mail and contacts — must be reachable by either
-// package's grant rather than demanding both. An empty rule denies.
-type scopeRule []string
-
-// collectionAccess pairs the read and write rules for one collection. An empty
-// write rule makes the collection read-only for OAuth callers.
-type collectionAccess struct {
-	read  scopeRule
-	write scopeRule
-}
-
-// collectionScopes maps a PocketBase collection to the scopes governing it.
-// Anything absent is denied for OAuth callers by default.
-var collectionScopes = map[string]collectionAccess{
-	"mail_messages":      {read: scopeRule{ScopeMailRead}, write: scopeRule{ScopeMailSend}},
-	"mail_threads":       {read: scopeRule{ScopeMailRead}, write: scopeRule{ScopeMailSend}},
-	"mail_thread_state":  {read: scopeRule{ScopeMailRead}, write: scopeRule{ScopeMailSend}},
-	"mail_mailboxes":     {read: scopeRule{ScopeMailRead}, write: scopeRule{ScopeMailSend}},
-	"drive_items":        {read: scopeRule{ScopeDriveRead}, write: scopeRule{ScopeDriveWrite}},
-	"drive_shares":       {read: scopeRule{ScopeDriveRead}, write: scopeRule{ScopeDriveWrite}},
-	"drive_item_state":   {read: scopeRule{ScopeDriveRead}, write: scopeRule{ScopeDriveWrite}},
-	"contacts":           {read: scopeRule{ScopeContactsRead}, write: scopeRule{ScopeContactsWrite}},
-	"calendar_events":    {read: scopeRule{ScopeCalendarRead}, write: scopeRule{ScopeCalendarWrite}},
-	"calendar_calendars": {read: scopeRule{ScopeCalendarRead}, write: scopeRule{ScopeCalendarWrite}},
-	"users":              {read: scopeRule{ScopeProfile}},
-
-	// Read-only surfaces the CLI needs: per-folder unread counts (a view), the
-	// caller's mailbox memberships, and the mailbox aliases a send can pick a
-	// From identity from. Aliases are administered in the app, so no write.
-	//
-	// mail_domains belongs here for a non-obvious reason: mail_mailboxes.address
-	// stores only the LOCAL PART, so every full address the CLI prints or matches
-	// on has to join the domain row. Without it `mail mailboxes`, `mail send`,
-	// and `--mailbox <address>` all fail closed on the domain read, even holding
-	// mail:read and mail:send. Domains are administered in the app, so no write.
-	"mail_folder_counts":   {read: scopeRule{ScopeMailRead}},
-	"mail_mailbox_members": {read: scopeRule{ScopeMailRead}},
-	"mail_mailbox_aliases": {read: scopeRule{ScopeMailRead}},
-	"mail_domains":         {read: scopeRule{ScopeMailRead}},
-
-	// Labels are CORE collections shared across packages (mail threads and
-	// contacts both get labelled through label_assignments), so either
-	// package's scope grants access — requiring both would make labelling
-	// mail impossible for a mail-only grant.
-	"labels":            {read: scopeRule{ScopeMailRead, ScopeContactsRead}, write: scopeRule{ScopeMailSend, ScopeContactsWrite}},
-	"label_assignments": {read: scopeRule{ScopeMailRead, ScopeContactsRead}, write: scopeRule{ScopeMailSend, ScopeContactsWrite}},
-
-	"drive_item_versions": {read: scopeRule{ScopeDriveRead}, write: scopeRule{ScopeDriveWrite}},
-
-	// Boards' board content. Every one of these carries a `project` relation
-	// (denormalized onto the content rows precisely so a rule can reach it),
-	// and the access rules resolve membership through boards_project_members —
-	// so a grant here widens WHICH ROWS a token may touch not at all. It only
-	// decides whether an OAuth caller may use the collection at all, on top of
-	// the membership the rules already demand.
-	"boards_projects":        {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-	"boards_lists":           {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-	"boards_cards":           {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-	"boards_labels":          {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-	"boards_checklist_items": {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-	"boards_comments":        {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-	"boards_attachments":     {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-
-	// The junction collections, same reasoning as the content rows above:
-	// each one's access rules resolve membership before any of this is
-	// reached, so the grant decides whether an OAuth caller may use the
-	// collection at all — not which rows.
-	//
-	// boards_card_links is worth one moment of thought, being the only cards
-	// collection that spans two boards. Its create rule already demands write
-	// on the source board and membership on the target, so a token cannot
-	// link boards its holder could not link through the app. Reading one
-	// discloses the far card's id and nothing else — the far card stays
-	// governed by boards_cards' own rule.
-	"boards_card_links":        {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-	"boards_comment_reactions": {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-	"boards_card_watchers":     {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-
-	// The planning collections. Both are board content in every sense the
-	// block above relies on: each row names a `project`, the rules resolve
-	// membership through it, and a write is "change my cards" on the consent
-	// screen. boards_epics shipped WITHOUT an entry here, which default-denied
-	// it for every OAuth caller — the reason the CLI never grew an epic
-	// command. boards_sprints is granted from the start so the sprint
-	// commands can exist at all.
-	"boards_epics":   {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-	"boards_sprints": {read: scopeRule{ScopeBoardsRead}, write: scopeRule{ScopeBoardsWrite}},
-
-	// READ-ONLY, and unlike the sharing surface below this is not a policy
-	// choice — it is the schema. boards_activity is server-written history:
-	// its create, update and delete rules are all nil (pb-migrations
-	// 1980000008), so no client of any kind writes it. Granting write here
-	// would name a capability that does not exist and cannot be exercised.
-	"boards_activity": {read: scopeRule{ScopeBoardsRead}},
-
-	// Same shape: a sprint's daily scope/done snapshot is written by the
-	// server's sweep and its lifecycle endpoints, never by a client, so the
-	// collection has no write rules to grant against.
-	"boards_sprint_snapshots": {read: scopeRule{ScopeBoardsRead}},
-
-	// READ-ONLY for OAuth callers, deliberately, and NOT because the rules are
-	// weak — they already confine both to owners. These two are the SHARING
-	// surface: a write to boards_project_members adds a person to a board, and a
-	// write to boards_share_links mints a URL that opens the board to anyone
-	// holding it. That is a categorically larger grant than editing cards, and
-	// `boards:write` reads to a user consenting on the OAuth screen as "change my
-	// cards" — not "give other people my boards".
-	//
-	// So a leaked or over-broad CLI token cannot reshare a board or publish a
-	// public link; those stay in the app, where the Share dialog shows exactly
-	// who gains access. Relaxing this later is one line and is backward
-	// compatible; the reverse would silently revoke a capability integrations
-	// had already built on, so start closed.
-	"boards_project_members": {read: scopeRule{ScopeBoardsRead}},
-	"boards_share_links":     {read: scopeRule{ScopeBoardsRead}},
-
-	// calendar_members is the same shape of surface, and was simply missing —
-	// so it default-denied and took `calendar list` down with it, since the
-	// ROLE column reads membership. Read-only for the same reason as
-	// boards_project_members: a write here grants another person access to a
-	// calendar, which is not what "change my calendar events" means on the
-	// consent screen. Read is what the CLI needs — a viewer learns their role
-	// from a column rather than from a failed write.
-	"calendar_members": {read: scopeRule{ScopeCalendarRead}},
-
-	// text and calc own ONLY their comment collections; the documents and
-	// spreadsheets they comment on are drive_items, governed by drive:*.
-	//
-	// A grant here widens which rows a token may touch not at all: both rules
-	// reach through `drive_item` and admit only the document's creator or
-	// someone it is shared with, and create additionally demands the caller be
-	// the comment's own author. So this decides whether an OAuth caller may use
-	// the collection at all, on top of the document access the rules demand —
-	// which in practice means a useful token also holds drive:read.
-	"text_comments": {read: scopeRule{ScopeTextRead}, write: scopeRule{ScopeTextWrite}},
-	"calc_comments": {read: scopeRule{ScopeCalcRead}, write: scopeRule{ScopeCalcWrite}},
-}
-
-// endpointScopes maps a bespoke Go endpoint to its required scope.
-var endpointScopes = map[string]scopeRule{
-	"GET /api/mail/search":              {ScopeMailRead},
-	"POST /api/mail/send":               {ScopeMailSend},
-	"POST /api/mail/draft":              {ScopeMailSend},
-	"GET /api/drive/search":             {ScopeDriveRead},
-	"POST /api/drive/download-token":    {ScopeDriveRead},
-	"POST /api/drive/export-token":      {ScopeDriveRead},
-	"GET /api/drive/storage-usage":      {ScopeDriveRead},
-	"POST /api/drive/upload-version":    {ScopeDriveWrite},
-	"POST /api/drive/share":             {ScopeDriveWrite},
-	"POST /api/drive/share-link":        {ScopeDriveWrite},
-	"GET /api/drive/share-links":        {ScopeDriveRead},
-	"POST /api/drive/versions/restore":  {ScopeDriveWrite},
-	"POST /api/drive/versions/snapshot": {ScopeDriveWrite},
-	"GET /api/contacts/export":          {ScopeContactsRead},
-	"POST /api/contacts/import":         {ScopeContactsWrite},
-	"GET /api/calendar/export":          {ScopeCalendarRead},
-	"POST /api/calendar/import":         {ScopeCalendarWrite},
-	"GET /api/boards/search":            {ScopeBoardsRead},
-
-	// The federated search narrows itself: it drops the sources a caller's
-	// grant does not cover and returns the rest. So ANY read scope admits the
-	// request — demanding one specific scope would 403 a contacts-only token
-	// outright instead of handing it the contacts results it may see.
-	"GET /api/search": {
-		ScopeMailRead, ScopeDriveRead, ScopeContactsRead,
-		ScopeCalendarRead, ScopeBoardsRead,
-	},
-
-	// Advertised in the discovery document as userinfo_endpoint, so an
-	// integration following the well-known metadata calls it with an ordinary
-	// access token. It needs an explicit entry: it lives under /oauth/ but is
-	// deliberately NOT in exemptPaths (only the credential-less endpoints are),
-	// so without this it would fall into default-deny and 403 the very call the
-	// server tells clients to make.
-	"GET /oauth/userinfo": {ScopeProfile},
-}
-
-// endpointPrefixScopes classifies routes whose path carries a record id, which
-// the exact-match table above cannot express. Kept deliberately short: a
-// prefix is broader than it looks, so each entry must end at a path segment
-// boundary and name a route family, never a bare namespace.
-var endpointPrefixScopes = []struct {
-	method, prefix string
-	scopes         scopeRule
-}{
-	{"DELETE", "/api/drive/share-link/", scopeRule{ScopeDriveWrite}},
-
-	// Boards' per-record POST families. `/cards/{id}/move` was unclassified
-	// when it shipped, so `card move --board` over an OAuth token was
-	// default-denied while the same command worked for a session — the
-	// failure mode TestEveryRegisteredRouteIsClassified describes. Both
-	// families mutate board content the caller must already be a writer on
-	// (the handlers restate that check in Go), so boards:write is the grant.
-	{"POST", "/api/boards/cards/", scopeRule{ScopeBoardsWrite}},
-	{"POST", "/api/boards/sprints/", scopeRule{ScopeBoardsWrite}},
-}
+// ScopeRule is the set of scopes that satisfy a route. A caller passes when it
+// holds ANY of them (see SatisfiedBy): a collection shared between packages
+// — core's `labels` is used by both mail and contacts — must be reachable by
+// either package's grant rather than demanding both. An empty rule denies.
+//
+// The rules themselves come from the registry (registry.go): each package
+// declares the collections and routes its scopes govern, and core owns only
+// the identity entries (users, /oauth/userinfo).
+type ScopeRule []string
 
 // exemptPaths need no scope: public probes, and the OAuth endpoints a client
 // must reach before it holds any grant.
@@ -296,25 +107,21 @@ var writeMethods = map[string]bool{
 // deny.
 //
 // Default deny is deliberate: a route nobody has classified must not be
-// reachable with a third-party token just because someone added it.
-func ScopeForRoute(method, path string) scopeRule {
+// reachable with a third-party token just because someone added it. A
+// package classifies its own routes with RegisterPackage; a route it forgets
+// 403s for OAuth callers only, which is why every package pins its
+// CLI-reachable routes in its own tests.
+func ScopeForRoute(method, path string) ScopeRule {
 	for _, p := range exemptPaths {
 		if strings.HasPrefix(path, p) {
-			return scopeRule{scopeExempt}
+			return ScopeRule{scopeExempt}
 		}
 	}
-	if s, ok := endpointScopes[method+" "+path]; ok {
+	if s, ok := lookupEndpoint(method, path); ok {
 		return s
 	}
-	for _, r := range endpointPrefixScopes {
-		// The remainder must be non-empty: the prefix ends in "/" and names a
-		// route family, so the bare prefix itself is a different route.
-		if method == r.method && strings.HasPrefix(path, r.prefix) && len(path) > len(r.prefix) {
-			return r.scopes
-		}
-	}
 	if name, ok := collectionFromPath(path); ok {
-		access, known := collectionScopes[name]
+		access, known := lookupCollection(name)
 		if !known {
 			return nil
 		}
@@ -324,12 +131,13 @@ func ScopeForRoute(method, path string) scopeRule {
 		return access.read
 	}
 	if name, ok := fileCollectionFromPath(path); ok {
-		// A stored file (mail body, attachment, drive content) is governed by
-		// its collection's READ scope. No field is `protected` today, so these
-		// URLs answer a bare unauthenticated GET — but the CLI attaches its
-		// bearer to every request, and without this classification the file
-		// fetch would 403 for OAuth callers only. Writes never go through
-		// /api/files/, so any write verb is denied outright.
+		// A stored file (a message body, an attachment, document content) is
+		// governed by its collection's READ scope. No field is `protected`
+		// today, so these URLs answer a bare unauthenticated GET — but the
+		// CLI attaches its bearer to every request, and without this
+		// classification the file fetch would 403 for OAuth callers only.
+		// Writes never go through /api/files/, so any write verb is denied
+		// outright.
 		//
 		// POST /api/files/token deliberately stays default-denied: file-token
 		// requests are never scope-checked, so a file token minted by a bearer
@@ -337,7 +145,7 @@ func ScopeForRoute(method, path string) scopeRule {
 		if method != http.MethodGet && method != http.MethodHead {
 			return nil
 		}
-		access, known := collectionScopes[name]
+		access, known := lookupCollection(name)
 		if !known {
 			return nil
 		}
@@ -347,13 +155,13 @@ func ScopeForRoute(method, path string) scopeRule {
 }
 
 // isExempt reports whether a rule marks the route as needing no scope.
-func (r scopeRule) isExempt() bool {
+func (r ScopeRule) isExempt() bool {
 	return len(r) == 1 && r[0] == scopeExempt
 }
 
 // describe renders the rule for an error message: a single scope reads as
 // itself, several as an any-of list.
-func (r scopeRule) describe() string {
+func (r ScopeRule) describe() string {
 	if len(r) == 1 {
 		return fmt.Sprintf("%q", r[0])
 	}
@@ -364,8 +172,8 @@ func (r scopeRule) describe() string {
 	return "one of " + strings.Join(quoted, ", ")
 }
 
-// satisfiedBy reports whether the granted scopes cover this rule.
-func (r scopeRule) satisfiedBy(granted []string) bool {
+// SatisfiedBy reports whether the granted scopes cover this rule.
+func (r ScopeRule) SatisfiedBy(granted []string) bool {
 	for _, want := range r {
 		if HasScope(granted, want) {
 			return true
@@ -374,8 +182,8 @@ func (r scopeRule) satisfiedBy(granted []string) bool {
 	return false
 }
 
-// fileCollectionFromPath extracts "drive_items" from
-// /api/files/drive_items/{recordId}/{filename}. All three segments must be
+// fileCollectionFromPath extracts the collection from
+// /api/files/{collection}/{recordId}/{filename}. All three segments must be
 // present and non-empty — "/api/files/token" (2 segments) is not a file path.
 func fileCollectionFromPath(path string) (string, bool) {
 	const prefix = "/api/files/"
@@ -389,8 +197,8 @@ func fileCollectionFromPath(path string) (string, bool) {
 	return parts[0], true
 }
 
-// collectionFromPath extracts "mail_messages" from
-// /api/collections/mail_messages/records[/id].
+// collectionFromPath extracts the collection from
+// /api/collections/{collection}/records[/id].
 func collectionFromPath(path string) (string, bool) {
 	const prefix = "/api/collections/"
 	if !strings.HasPrefix(path, prefix) {
@@ -482,7 +290,7 @@ func enforceGrant(re *core.RequestEvent) error {
 			"This endpoint is not available to API tokens", nil)
 	}
 	if !required.isExempt() {
-		if !required.satisfiedBy(ParseScopes(grant.GetString("scopes"))) {
+		if !required.SatisfiedBy(ParseScopes(grant.GetString("scopes"))) {
 			return re.ForbiddenError(
 				fmt.Sprintf("Requires the %s scope", required.describe()), nil)
 		}

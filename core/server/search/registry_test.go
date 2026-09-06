@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/oauth"
 )
 
 func fakeSource(slug string, order int, scopes ...string) Source {
@@ -143,5 +145,38 @@ func TestSelectSourcesDeniesScopelessSourceToTokens(t *testing.T) {
 	}
 	if got := selectSources(all, nil, nil); len(got) != 1 {
 		t.Fatal("scopeless source must stay reachable by a session")
+	}
+}
+
+// The federated route admits any scope that permits searching some registered
+// source, and nothing else: a write-only or profile-only grant has nothing to
+// read. Sources register from packages in no particular order, so the rule is
+// derived at request time rather than fixed when the route is bound.
+func TestFederatedSearchScopeRuleFollowsSources(t *testing.T) {
+	ResetSources()
+	t.Cleanup(ResetSources)
+	oauth.ResetRegistry()
+	t.Cleanup(oauth.ResetRegistry)
+	oauth.RegisterSharedEndpoint("GET", "/api/search", searchScopes)
+
+	if rule := oauth.ScopeForRoute("GET", "/api/search"); len(rule) != 0 {
+		t.Fatalf("with no sources the route must default-deny, got %v", rule)
+	}
+
+	noop := func(core.App, string, Query) (Result, error) { return Result{}, nil }
+	RegisterSources(
+		Source{Slug: "notes", Scopes: []string{"notes:read"}, Search: noop},
+		Source{Slug: "tasks", Scopes: []string{"tasks:read"}, Search: noop},
+	)
+	rule := oauth.ScopeForRoute("GET", "/api/search")
+	for _, scope := range []string{"notes:read", "tasks:read"} {
+		if !rule.SatisfiedBy([]string{scope}) {
+			t.Errorf("a token holding only %q cannot reach /api/search (rule %v)", scope, rule)
+		}
+	}
+	for _, scope := range []string{oauth.ScopeProfile, "notes:write"} {
+		if rule.SatisfiedBy([]string{scope}) {
+			t.Errorf("%q alone must not admit a search", scope)
+		}
 	}
 }

@@ -69,6 +69,47 @@ func (f *Flow) now() time.Time {
 	return time.Now()
 }
 
+// Metadata is the part of the RFC 8414 discovery document the CLI reads.
+type Metadata struct {
+	ScopesSupported []string `json:"scopes_supported"`
+}
+
+// Discover reads the server's authorization-server metadata.
+//
+// The CLI is first-party and asks for every scope the server can grant. Which
+// scopes exist depends on which packages THAT server has installed — each
+// package registers its own — so the list has to come from the server. A
+// fixed list in the binary locked a whole package out of the CLI for a
+// release once, and would do it again for every package added after a build.
+func (f *Flow) Discover(ctx context.Context) (*Metadata, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		f.Origin+"/.well-known/oauth-authorization-server", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := f.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("contacting %s: %w", f.Origin, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s does not publish OAuth metadata (HTTP %d) — is it a TinyCld server?",
+			f.Origin, resp.StatusCode)
+	}
+	var meta Metadata
+	if err := json.Unmarshal(body, &meta); err != nil {
+		return nil, fmt.Errorf("unexpected metadata from %s: %w", f.Origin, err)
+	}
+	if len(meta.ScopesSupported) == 0 {
+		return nil, fmt.Errorf("%s advertises no OAuth scopes", f.Origin)
+	}
+	return &meta, nil
+}
+
 // Start requests a device authorization (POST /oauth/device).
 func (f *Flow) Start(ctx context.Context, scopes []string) (*DeviceAuth, error) {
 	form := url.Values{

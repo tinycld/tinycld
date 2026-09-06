@@ -12,10 +12,10 @@ import (
 )
 
 func TestValidateScopesRejectsUnknown(t *testing.T) {
-	if err := ValidateScopes([]string{ScopeMailRead}); err != nil {
+	if err := ValidateScopes([]string{scopeNotesRead}); err != nil {
 		t.Fatalf("ValidateScopes on a known scope: %v", err)
 	}
-	if err := ValidateScopes([]string{"mail:read", "not-a-real-scope"}); err == nil {
+	if err := ValidateScopes([]string{"notes:read", "not-a-real-scope"}); err == nil {
 		t.Fatal("ValidateScopes must reject an unknown scope")
 	}
 	// An empty request is fine — it defaults to `profile` at issue time.
@@ -27,7 +27,7 @@ func TestValidateScopesRejectsUnknown(t *testing.T) {
 // TestValidateClientScopesEnforcesClientCeiling is the mutation target for
 // Finding 3: oauth_clients.scopes must be an actual ceiling, not a written-
 // but-never-read column. A client registered for `profile` only must not be
-// able to obtain mail:send/drive:write merely because those scopes exist in
+// able to obtain notes:write/tasks:write merely because those scopes exist in
 // the global AllScopes catalog.
 func TestValidateClientScopesEnforcesClientCeiling(t *testing.T) {
 	app := newSchemaApp(t)
@@ -39,15 +39,15 @@ func TestValidateClientScopesEnforcesClientCeiling(t *testing.T) {
 	c.Set("client_id", "narrow-client")
 	c.Set("name", "Narrow Client")
 	c.Set("type", "public")
-	c.Set("scopes", ScopeProfile+" "+ScopeMailRead)
+	c.Set("scopes", ScopeProfile+" "+scopeNotesRead)
 	if err := app.Save(c); err != nil {
 		t.Fatalf("save narrow client: %v", err)
 	}
 
-	if err := ValidateClientScopes(c, []string{ScopeMailRead}); err != nil {
+	if err := ValidateClientScopes(c, []string{scopeNotesRead}); err != nil {
 		t.Fatalf("a registered scope must be allowed: %v", err)
 	}
-	if err := ValidateClientScopes(c, []string{ScopeMailSend, ScopeDriveWrite}); err == nil {
+	if err := ValidateClientScopes(c, []string{scopeNotesWrite, scopeTasksWrite}); err == nil {
 		t.Fatal("a client must not be able to obtain a scope outside its own registration, " +
 			"even though both scopes are in the global catalog")
 	}
@@ -72,7 +72,7 @@ func TestValidateClientScopesEmptyRegistrationDenies(t *testing.T) {
 		t.Fatalf("save client: %v", err)
 	}
 
-	if err := ValidateClientScopes(c, []string{ScopeMailRead}); err == nil {
+	if err := ValidateClientScopes(c, []string{scopeNotesRead}); err == nil {
 		t.Fatal("an empty client.scopes must deny every non-baseline scope, not allow every scope")
 	}
 	// The profile default (what both handlers fall back to for an empty
@@ -137,7 +137,7 @@ func TestDeviceAuthorizationIssuesCodes(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("client_id", "tinycld-cli")
-	form.Set("scope", "mail:read drive:read")
+	form.Set("scope", "notes:read tasks:read")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/oauth/device",
@@ -202,8 +202,8 @@ func TestDeviceAuthorizationRejectsUnknownClient(t *testing.T) {
 
 // TestDeviceAuthorizationRejectsScopeOutsideClientCeiling is the endpoint-
 // level half of Finding 3's fix: a client registered for `profile` only must
-// not be able to obtain mail:read through the actual device flow, even
-// though mail:read is a perfectly valid scope in the global catalog.
+// not be able to obtain notes:read through the actual device flow, even
+// though notes:read is a perfectly valid scope in the global catalog.
 func TestDeviceAuthorizationRejectsScopeOutsideClientCeiling(t *testing.T) {
 	app := newSchemaApp(t)
 	clients, err := app.FindCollectionByNameOrId(clientsCollection)
@@ -221,7 +221,7 @@ func TestDeviceAuthorizationRejectsScopeOutsideClientCeiling(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("client_id", "narrow-device-client")
-	form.Set("scope", "mail:read")
+	form.Set("scope", "notes:read")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/oauth/device",
@@ -240,7 +240,7 @@ func TestDeviceAuthorizationRejectsUnknownScope(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("client_id", "tinycld-cli")
-	form.Set("scope", "mail:read wat:everything")
+	form.Set("scope", "notes:read wat:everything")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/oauth/device",
@@ -260,4 +260,33 @@ func serveDeviceForTest(app core.App, rec *httptest.ResponseRecorder, req *http.
 	re.Request = req
 	re.Response = rec
 	return handleDeviceAuthorization(app, re)
+}
+
+// A first-party client's ceiling is the catalog, not its scopes column. The
+// CLI's row is seeded by a core migration that cannot name a package's
+// scopes, so reading the column would lock every package installed after
+// that migration out of the CLI. The catalog check still applies: a scope no
+// package registered is refused even for a first-party client.
+func TestValidateClientScopesFirstPartyCeilingIsTheCatalog(t *testing.T) {
+	app := newSchemaApp(t)
+	clients, err := app.FindCollectionByNameOrId(clientsCollection)
+	if err != nil {
+		t.Fatalf("find clients: %v", err)
+	}
+	c := core.NewRecord(clients)
+	c.Set("client_id", "first-party-client")
+	c.Set("name", "First Party")
+	c.Set("type", "public")
+	c.Set("is_first_party", true)
+	c.Set("scopes", ScopeProfile)
+	if err := app.Save(c); err != nil {
+		t.Fatalf("save client: %v", err)
+	}
+
+	if err := ValidateClientScopes(c, AllScopes()); err != nil {
+		t.Fatalf("a first-party client must be able to request the whole catalog: %v", err)
+	}
+	if err := ValidateClientScopes(c, []string{"notes:admin"}); err == nil {
+		t.Fatal("first-party must not bypass the catalog check")
+	}
 }

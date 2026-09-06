@@ -1032,7 +1032,7 @@ function RegisterPackageModal({
                             control={control}
                             name="slug"
                             label="Slug"
-                            placeholder="contacts"
+                            placeholder="my-feature"
                             autoCapitalize="none"
                             hint="kebab-case"
                         />
@@ -1044,7 +1044,7 @@ function RegisterPackageModal({
                             control={control}
                             name="npm_package"
                             label="npm package / git URL"
-                            placeholder="@tinycld/contacts"
+                            placeholder="@tinycld/my-feature"
                             autoCapitalize="none"
                         />
                     </View>
@@ -1162,7 +1162,7 @@ function InstallPackageModal({
                     control={control}
                     name="npm_package"
                     label="Package source"
-                    placeholder="@tinycld/contacts"
+                    placeholder="@tinycld/my-feature"
                     autoCapitalize="none"
                     hint="npm package name, version spec, or a git URL"
                 />

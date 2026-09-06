@@ -112,13 +112,12 @@ export interface PackageManifest {
         }
     }
     // CLI commands this package contributes to the `tinycld` binary.
-    // package/module mirror `server` and drive gen-cli.ts; `scopes` feeds the
-    // OAuth scope registry. Cobra owns the command list and --help. See the
-    // PackageManifest doc in core/lib/packages/types.ts.
+    // package/module mirror `server` and drive gen-cli.ts. Cobra owns the
+    // command list and --help; the package's Go server owns its OAuth scopes.
+    // See the PackageManifest doc in core/lib/packages/types.ts.
     cli?: {
         package: string
         module: string
-        scopes?: string[]
     }
     help?: { directory: string }
     search?: { adapter: string; label?: string }

@@ -13,13 +13,32 @@ import (
 	"tinycld.org/cli/internal/keychain"
 )
 
-// authServer fakes the OAuth surface: device authorization, a token endpoint
-// that answers pending once then succeeds, userinfo, and revoke.
-func authServer(t *testing.T) (*httptest.Server, *struct{ tokenPolls, revokes int }) {
+// authServerScopes is what the fake server advertises. Fictional packages: the
+// CLI shell knows no real package, and the test only cares that whatever the
+// server advertises is exactly what the login asks for.
+const authServerScopes = "profile notes:read notes:write tasks:read"
+
+type authCounts struct {
+	tokenPolls, revokes int
+	// requestedScope is the scope string the login sent to /oauth/device.
+	requestedScope string
+}
+
+// authServer fakes the OAuth surface: discovery, device authorization, a token
+// endpoint that answers pending once then succeeds, userinfo, and revoke.
+func authServer(t *testing.T) (*httptest.Server, *authCounts) {
 	t.Helper()
-	counts := &struct{ tokenPolls, revokes int }{}
+	counts := &authCounts{}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"issuer":           "http://x",
+			"scopes_supported": strings.Fields(authServerScopes),
+		})
+	})
 	mux.HandleFunc("POST /oauth/device", func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		counts.requestedScope = r.FormValue("scope")
 		json.NewEncoder(w).Encode(map[string]any{
 			"device_code":               "dev-code",
 			"user_code":                 "WDJB-MJHT",
@@ -95,6 +114,11 @@ func TestAuthLoginNonTTY(t *testing.T) {
 	}
 	if counts.tokenPolls != 2 {
 		t.Fatalf("polls = %d, want pending then success", counts.tokenPolls)
+	}
+	// Every scope the server advertises, none it does not: the set comes
+	// from discovery, not from a list baked into the binary.
+	if counts.requestedScope != authServerScopes {
+		t.Fatalf("requested scope = %q, want the advertised %q", counts.requestedScope, authServerScopes)
 	}
 
 	// token persisted under the host-derived context name
@@ -215,6 +239,9 @@ func TestAuthLogoutSurvivesRevokeFailure(t *testing.T) {
 func TestAuthLoginLeavesNoOrphanedCredential(t *testing.T) {
 	counts := &struct{ tokenPolls int }{}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"scopes_supported": []string{"profile"}})
+	})
 	mux.HandleFunc("POST /oauth/device", func(w http.ResponseWriter, _ *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"device_code": "dev-code", "user_code": "WDJB-MJHT",
@@ -259,5 +286,19 @@ func TestAuthLoginLeavesNoOrphanedCredential(t *testing.T) {
 	}
 	if ctx.Origin != "http://"+host {
 		t.Errorf("context origin = %q", ctx.Origin)
+	}
+}
+
+// A host that publishes no OAuth metadata is not a TinyCld server the CLI can
+// log in to, and the message should say so rather than fail later on the
+// device request with a less specific error.
+func TestAuthLoginRequiresDiscovery(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	d, _ := loginDeps(t, srv)
+
+	_, _, err := runCLI(t, d, "auth", "login", hostOf(srv))
+	if err == nil || !strings.Contains(err.Error(), "does not publish OAuth metadata") {
+		t.Fatalf("err = %v, want a discovery failure", err)
 	}
 }

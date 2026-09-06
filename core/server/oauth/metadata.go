@@ -34,7 +34,7 @@ func handleMetadata(app core.App, re *core.RequestEvent) error {
 		DeviceAuthorizationEndpoint: base + "/oauth/device",
 		RevocationEndpoint:          base + "/oauth/revoke",
 		UserinfoEndpoint:            base + "/oauth/userinfo",
-		ScopesSupported:             AllScopes,
+		ScopesSupported:             AllScopes(),
 		ResponseTypesSupported:      []string{"code"},
 		GrantTypesSupported: []string{
 			grantTypeAuthCode, grantTypeRefresh, grantTypeDevice,

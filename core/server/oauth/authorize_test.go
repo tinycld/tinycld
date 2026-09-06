@@ -31,7 +31,7 @@ func pendingUserCodeGrant(t *testing.T, app *tests.TestApp) (userCode string, us
 	g := core.NewRecord(col)
 	g.Set("client", clientRecID)
 	g.Set("jti", jti)
-	g.Set("scopes", ScopeMailRead)
+	g.Set("scopes", scopeNotesRead)
 	g.Set("status", "pending")
 	g.Set("user_code", code)
 	dc, _ := randomToken(32)
@@ -454,7 +454,7 @@ func seedClientWithRedirectURIs(t *testing.T, app *tests.TestApp, clientID strin
 	// scope ceiling (ValidateClientScopes has its own dedicated tests) — a
 	// narrow registration here would make an unrelated scope check the
 	// reason a redirect/PKCE test fails.
-	c.Set("scopes", strings.Join(AllScopes, " "))
+	c.Set("scopes", strings.Join(AllScopes(), " "))
 	if err := app.Save(c); err != nil {
 		t.Fatalf("save client with redirect_uris: %v", err)
 	}
@@ -484,7 +484,7 @@ func validAuthorizeForm(clientID, redirectURI, verifier string) url.Values {
 	form.Set("redirect_uri", redirectURI)
 	form.Set("code_challenge", challengeFor(verifier))
 	form.Set("code_challenge_method", MethodS256)
-	form.Set("scope", ScopeMailRead)
+	form.Set("scope", scopeNotesRead)
 	form.Set("state", "xyz")
 	return form
 }
@@ -639,7 +639,7 @@ func TestAuthorizeRejectsScopeOutsideClientCeiling(t *testing.T) {
 	}
 
 	form := validAuthorizeForm(clientID, redirectURI, verifier)
-	form.Set("scope", ScopeMailRead)
+	form.Set("scope", scopeNotesRead)
 	re, _ := authorizeRequest(app, user, form)
 	err = handleAuthorize(app, re)
 	if status := apiStatus(err); status != http.StatusBadRequest {
@@ -825,8 +825,8 @@ func TestAuthorizeInfoReturnsClientNameAndScopes(t *testing.T) {
 	if info.ClientName != "TinyCld CLI" {
 		t.Errorf("client_name = %q, want %q", info.ClientName, "TinyCld CLI")
 	}
-	if len(info.Scopes) != 1 || info.Scopes[0] != ScopeMailRead {
-		t.Errorf("scopes = %v, want [%s]", info.Scopes, ScopeMailRead)
+	if len(info.Scopes) != 1 || info.Scopes[0] != scopeNotesRead {
+		t.Errorf("scopes = %v, want [%s]", info.Scopes, scopeNotesRead)
 	}
 }
 

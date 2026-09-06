@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -181,5 +182,46 @@ func TestStartRejectsNonTinyCldServer(t *testing.T) {
 	flow := &Flow{Origin: srv.URL, ClientID: "tinycld-cli", HTTP: srv.Client()}
 	if _, err := flow.Start(context.Background(), nil); err == nil {
 		t.Fatal("expected error for a non-TinyCld server")
+	}
+}
+
+func TestDiscoverReadsAdvertisedScopes(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"issuer":           "http://x",
+			"scopes_supported": []string{"profile", "notes:read"},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	flow := &Flow{Origin: srv.URL, ClientID: "tinycld-cli", HTTP: srv.Client()}
+
+	meta, err := flow.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(meta.ScopesSupported, " "); got != "profile notes:read" {
+		t.Fatalf("scopes_supported = %q", got)
+	}
+}
+
+func TestDiscoverRejectsEmptyOrMissingMetadata(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"issuer": "http://x"})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	flow := &Flow{Origin: srv.URL, ClientID: "tinycld-cli", HTTP: srv.Client()}
+	if _, err := flow.Discover(context.Background()); err == nil {
+		t.Fatal("a document advertising no scopes must be an error, not an empty login")
+	}
+
+	missing := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(missing.Close)
+	flow = &Flow{Origin: missing.URL, ClientID: "tinycld-cli", HTTP: missing.Client()}
+	if _, err := flow.Discover(context.Background()); err == nil {
+		t.Fatal("a host with no metadata document must be an error")
 	}
 }

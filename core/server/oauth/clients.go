@@ -92,7 +92,7 @@ func compareAgainstDummyHash(secret string) {
 // unknown scope would let a client believe it holds access it does not.
 func ValidateScopes(requested []string) error {
 	for _, s := range requested {
-		if !HasScope(AllScopes, s) {
+		if !HasScope(AllScopes(), s) {
 			return fmt.Errorf("oauth: unknown scope %q", s)
 		}
 	}
@@ -103,7 +103,7 @@ func ValidateScopes(requested []string) error {
 // on top of ValidateScopes' catalog check. AllScopes says what the SERVER
 // knows how to grant at all; oauth_clients.scopes says what THIS client was
 // registered to ask for. Both must hold, or a client registered for
-// `profile` only could request `mail:send drive:write` and receive it, since
+// `profile` only could request every write scope and receive it, since
 // nothing else in the request path ever reads the client's own scopes column
 // — it is set at registration time and otherwise silently unenforced.
 //
@@ -111,9 +111,15 @@ func ValidateScopes(requested []string) error {
 // scope. "Allow all" would make the column decorative for exactly the
 // clients most likely to leave it blank — quick manual registrations — which
 // is backwards: the ceiling matters most for a client nobody has reviewed
-// yet. The seeded first-party CLI client lists its full scope set
-// explicitly (1980000001_seed_cli_oauth_client.js), so deny-by-default costs
-// it nothing.
+// yet.
+//
+// A FIRST-PARTY client's ceiling is the catalog itself. The CLI ships with
+// TinyCld and asks for everything the server can grant; its scopes column
+// (seeded by 1985000001_seed_cli_oauth_client.js) cannot list scopes that
+// did not exist when that migration shipped, and a package's scopes come
+// from the package, not from a core migration. Reading the column would
+// silently lock every later package out of the CLI. is_first_party is set
+// only by core's seed, never through the clients endpoint.
 //
 // ScopeProfile is always allowed regardless of registration: it is the
 // baseline identity scope every grant gets (see its doc comment in
@@ -123,6 +129,9 @@ func ValidateScopes(requested []string) error {
 func ValidateClientScopes(client *core.Record, requested []string) error {
 	if err := ValidateScopes(requested); err != nil {
 		return err
+	}
+	if client.GetBool("is_first_party") {
+		return nil
 	}
 	allowed := ParseScopes(client.GetString("scopes"))
 	for _, s := range requested {
