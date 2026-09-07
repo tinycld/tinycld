@@ -7,6 +7,7 @@ import android.os.Looper
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -44,6 +45,10 @@ class PooledWebView(context: Context, val instanceKey: String) : WebView(context
     // Unlike iOS no shim script is needed: the Java object IS
     // window.ReactNativeWebView, present before any page script runs.
     addJavascriptInterface(Bridge(instanceKey), BRIDGE_NAME)
+
+    // Without a chrome client the page's console output goes nowhere; with the
+    // stock one it reaches logcat under the `chromium` tag.
+    webChromeClient = WebChromeClient()
 
     webViewClient = object : WebViewClient() {
       override fun onPageFinished(view: WebView, url: String) {

@@ -191,6 +191,7 @@ export function Editor() {
             }
             if (parsed.namespace === 'app' && parsed.type === 'init') {
                 const incoming = parsed.payload as RichEditorInitPayload
+                console.log(`TRACE init received gen ${incoming.generation}`)
                 setInit(current => reduceInit(current, incoming))
                 return
             }
@@ -237,6 +238,7 @@ export function Editor() {
 }
 
 function EditorMounted({ init }: { init: RichEditorInitPayload }) {
+    console.log(`TRACE render gen ${init.generation}`)
     useEffect(() => {
         const style = document.createElement('style')
         style.id = 'tinycld-rich-editor-styles'

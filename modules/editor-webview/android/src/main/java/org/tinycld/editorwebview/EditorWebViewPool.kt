@@ -144,7 +144,10 @@ object EditorWebViewPool {
       "var event = new MessageEvent('message', data);" +
       "document.dispatchEvent(event);" +
       "})();"
-    mainHandler.post { entry.webView.evaluateJavascript(script, null) }
+    mainHandler.post {
+      Log.d(TAG, "post $key -> ${data.take(60)}")
+      entry.webView.evaluateJavascript(script) { result -> Log.d(TAG, "post result $result") }
+    }
     return true
   }
 
