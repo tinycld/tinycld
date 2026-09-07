@@ -10,27 +10,27 @@ import (
 	"github.com/pocketbase/pocketbase/tools/router"
 )
 
-func TestScopeForRouteMapsKnownRoutes(t *testing.T) {
+func TestScopeForRouteMapsRegisteredRoutes(t *testing.T) {
 	cases := []struct {
 		method, path, want string
 	}{
-		{"GET", "/api/mail/search", ScopeMailRead},
-		{"POST", "/api/mail/send", ScopeMailSend},
-		{"POST", "/api/mail/draft", ScopeMailSend},
-		{"GET", "/api/drive/search", ScopeDriveRead},
-		{"POST", "/api/drive/download-token", ScopeDriveRead},
-		{"POST", "/api/drive/upload-version", ScopeDriveWrite},
-		{"GET", "/api/collections/mail_messages/records", ScopeMailRead},
-		{"POST", "/api/collections/drive_items/records", ScopeDriveWrite},
-		{"GET", "/api/collections/contacts/records", ScopeContactsRead},
-		{"PATCH", "/api/collections/calendar_events/records/abc", ScopeCalendarWrite},
-		{"GET", "/api/collections/mail_folder_counts/records", ScopeMailRead},
-		{"GET", "/api/collections/mail_mailbox_members/records", ScopeMailRead},
-		// Stored files carry the owning collection's read scope: mail bodies
-		// and attachments, drive content.
-		{"GET", "/api/files/mail_messages/rec123/body_ab12cd34ef.html", ScopeMailRead},
-		{"GET", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", ScopeDriveRead},
-		{"HEAD", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", ScopeDriveRead},
+		{"GET", "/api/notes/search", scopeNotesRead},
+		{"POST", "/api/notes/send", scopeNotesWrite},
+		{"POST", "/api/tasks/upload-version", scopeTasksWrite},
+		{"GET", "/api/tasks/export", scopeTasksRead},
+		{"GET", "/api/collections/notes_items/records", scopeNotesRead},
+		{"POST", "/api/collections/notes_items/records", scopeNotesWrite},
+		{"PATCH", "/api/collections/tasks_items/records/abc", scopeTasksWrite},
+		{"GET", "/api/collections/notes_folder_counts/records", scopeNotesRead},
+		// Stored files carry the owning collection's read scope.
+		{"GET", "/api/files/notes_items/rec123/body_ab12cd34ef.html", scopeNotesRead},
+		{"GET", "/api/files/tasks_items/rec123/report_ab12cd34ef.pdf", scopeTasksRead},
+		{"HEAD", "/api/files/tasks_items/rec123/report_ab12cd34ef.pdf", scopeTasksRead},
+		// A per-record family, classified by prefix.
+		{"POST", "/api/notes/items/abc123/move", scopeNotesWrite},
+		// Core's own identity entries.
+		{"GET", "/api/collections/users/records", ScopeProfile},
+		{"GET", "/oauth/userinfo", ScopeProfile},
 	}
 	for _, c := range cases {
 		if got := ScopeForRoute(c.method, c.path); !onlyScope(got, c.want) {
@@ -42,30 +42,31 @@ func TestScopeForRouteMapsKnownRoutes(t *testing.T) {
 func TestScopeForRouteDefaultDenies(t *testing.T) {
 	// Default deny: a route no rule covers must return "" so the middleware
 	// refuses it for OAuth callers rather than silently allowing it.
-	if got := ScopeForRoute("POST", "/api/admin/packages/install"); len(got) != 0 {
-		t.Fatalf("ScopeForRoute on an uncovered admin route = %q, want \"\"", got)
+	denied := []struct{ method, path, why string }{
+		{"POST", "/api/admin/packages/install", "uncovered admin route"},
+		{"GET", "/api/collections/pkg_registry/records", "uncovered collection"},
+		{"POST", "/api/collections/notes_folder_counts/records", "read-only collection"},
+		{"PATCH", "/api/collections/users/records/abc", "identity is read-only"},
+		{"POST", "/api/notes/items/", "bare prefix of a per-record family"},
+		{"GET", "/api/notes/items/abc123/move", "prefix family is method-specific"},
+		{"GET", "/api/notes/send", "exact endpoints are method-specific"},
 	}
-	if got := ScopeForRoute("GET", "/api/collections/pkg_registry/records"); len(got) != 0 {
-		t.Fatalf("ScopeForRoute on an uncovered collection = %q, want \"\"", got)
+	for _, d := range denied {
+		if got := ScopeForRoute(d.method, d.path); len(got) != 0 {
+			t.Errorf("ScopeForRoute(%s %s) = %q, want default-deny: %s", d.method, d.path, got, d.why)
+		}
 	}
 }
 
 func TestScopeForRouteFilePaths(t *testing.T) {
-	// Writes to the read-only view/membership collections must stay denied.
-	for _, c := range []string{"mail_folder_counts", "mail_mailbox_members"} {
-		if got := ScopeForRoute("POST", "/api/collections/"+c+"/records"); len(got) != 0 {
-			t.Errorf("POST on %s = %q, want default-deny (read-only collection)", c, got)
-		}
-	}
-
 	denied := []struct{ method, path, why string }{
 		{"POST", "/api/files/token", "a file token minted by a bearer would bypass the scope table"},
 		{"GET", "/api/files/oauth_clients/rec123/logo_ab12cd34ef.png", "unclassified collection"},
 		{"GET", "/api/files/pkg_registry/rec123/bundle_ab12cd34ef.zip", "unclassified collection"},
-		{"POST", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", "no write goes through /api/files/"},
-		{"DELETE", "/api/files/drive_items/rec123/report_ab12cd34ef.pdf", "no write goes through /api/files/"},
-		{"GET", "/api/files/drive_items/rec123", "missing filename segment"},
-		{"GET", "/api/files/drive_items", "missing record and filename segments"},
+		{"POST", "/api/files/tasks_items/rec123/report_ab12cd34ef.pdf", "no write goes through /api/files/"},
+		{"DELETE", "/api/files/tasks_items/rec123/report_ab12cd34ef.pdf", "no write goes through /api/files/"},
+		{"GET", "/api/files/tasks_items/rec123", "missing filename segment"},
+		{"GET", "/api/files/tasks_items", "missing record and filename segments"},
 		{"GET", "/api/files//rec123/name.pdf", "empty collection segment"},
 	}
 	for _, d := range denied {
@@ -82,14 +83,14 @@ func TestFileCollectionFromPath(t *testing.T) {
 		want string
 		ok   bool
 	}{
-		{"/api/files/drive_items/rec123/name_ab12cd34ef.pdf", "drive_items", true},
-		{"/api/files/mail_messages/rec123/body_ab12cd34ef.html", "mail_messages", true},
+		{"/api/files/tasks_items/rec123/name_ab12cd34ef.pdf", "tasks_items", true},
+		{"/api/files/notes_items/rec123/body_ab12cd34ef.html", "notes_items", true},
 		{"/api/files/token", "", false},
-		{"/api/files/drive_items/rec123", "", false},
-		{"/api/files/drive_items/rec123/", "", false},
+		{"/api/files/tasks_items/rec123", "", false},
+		{"/api/files/tasks_items/rec123/", "", false},
 		{"/api/files//rec123/name.pdf", "", false},
-		{"/api/files/drive_items//name.pdf", "", false},
-		{"/api/collections/drive_items/records", "", false},
+		{"/api/files/tasks_items//name.pdf", "", false},
+		{"/api/collections/tasks_items/records", "", false},
 	}
 	for _, c := range cases {
 		got, ok := fileCollectionFromPath(c.path)
@@ -148,7 +149,7 @@ func TestMintAccessTokenCarriesGrantClaim(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
 
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -182,7 +183,7 @@ func TestMintedTokenResolvesThroughPocketBase(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
 
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -284,7 +285,7 @@ func TestEnforceGrantLeavesPlainTokenAlone(t *testing.T) {
 		t.Fatalf("NewAuthToken: %v", err)
 	}
 
-	re := newRequestEvent(app, "GET", "/api/mail/search", plain)
+	re := newRequestEvent(app, "GET", "/api/notes/search", plain)
 	if err := enforceGrant(re); err != nil {
 		t.Fatalf("enforceGrant on a plain token returned an error: %v", err)
 	}
@@ -296,7 +297,7 @@ func TestEnforceGrantLeavesPlainTokenAlone(t *testing.T) {
 func TestEnforceGrantAllowsInScopeRequest(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -309,7 +310,7 @@ func TestEnforceGrantAllowsInScopeRequest(t *testing.T) {
 		t.Fatalf("MintAccessToken: %v", err)
 	}
 
-	re := newRequestEvent(app, "GET", "/api/mail/search", token)
+	re := newRequestEvent(app, "GET", "/api/notes/search", token)
 	if err := enforceGrant(re); err != nil {
 		t.Fatalf("enforceGrant on an in-scope request returned an error: %v", err)
 	}
@@ -320,11 +321,11 @@ func TestEnforceGrantAllowsInScopeRequest(t *testing.T) {
 
 func TestEnforceGrantRejectsOutOfScopeRequest(t *testing.T) {
 	// This is the assertion that must fail if the scope check is ever
-	// removed or short-circuited: a grant scoped to mail:read only must not
-	// authorize a drive:write route.
+	// removed or short-circuited: a grant scoped to notes:read only must not
+	// authorize a tasks:write route.
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -337,7 +338,7 @@ func TestEnforceGrantRejectsOutOfScopeRequest(t *testing.T) {
 		t.Fatalf("MintAccessToken: %v", err)
 	}
 
-	re := newRequestEvent(app, "POST", "/api/drive/upload-version", token)
+	re := newRequestEvent(app, "POST", "/api/tasks/upload-version", token)
 	err = enforceGrant(re)
 	if err == nil {
 		t.Fatal("enforceGrant must refuse a request outside the grant's scopes")
@@ -356,7 +357,7 @@ func TestEnforceGrantRejectsRevokedGrant(t *testing.T) {
 	// signature on the already-issued access token is still perfectly valid.
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -372,7 +373,7 @@ func TestEnforceGrantRejectsRevokedGrant(t *testing.T) {
 		t.Fatalf("RevokeGrant: %v", err)
 	}
 
-	re := newRequestEvent(app, "GET", "/api/mail/search", token)
+	re := newRequestEvent(app, "GET", "/api/notes/search", token)
 	err = enforceGrant(re)
 	if err == nil {
 		t.Fatal("enforceGrant must refuse a revoked grant's access token")
@@ -390,7 +391,7 @@ func TestEnforceGrantDefaultDeniesUncoveredRoute(t *testing.T) {
 	// callers even though the grant and token are otherwise perfectly valid.
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -419,218 +420,48 @@ func TestEnforceGrantDefaultDeniesUncoveredRoute(t *testing.T) {
 // onlyScope reports whether the rule is exactly the one expected scope. Most
 // routes are governed by a single scope; the any-of cases assert membership
 // explicitly instead.
-func onlyScope(got scopeRule, want string) bool {
+func onlyScope(got ScopeRule, want string) bool {
 	return len(got) == 1 && got[0] == want
 }
 
 func TestScopeForRouteAnyOfSharedCollections(t *testing.T) {
-	// labels and label_assignments are core collections used by BOTH mail and
-	// contacts. Requiring both scopes would make labelling mail impossible for
-	// a mail-only grant, so either package's scope satisfies the route.
-	for _, c := range []string{"labels", "label_assignments"} {
-		read := ScopeForRoute("GET", "/api/collections/"+c+"/records")
-		if !read.satisfiedBy([]string{ScopeMailRead}) {
-			t.Errorf("%s read must be reachable with mail:read alone", c)
-		}
-		if !read.satisfiedBy([]string{ScopeContactsRead}) {
-			t.Errorf("%s read must be reachable with contacts:read alone", c)
-		}
-		if read.satisfiedBy([]string{ScopeDriveRead}) {
-			t.Errorf("%s read must NOT be reachable with an unrelated scope", c)
-		}
+	// labels is a core collection both fixture packages register. Requiring
+	// both scopes would make labelling notes impossible for a notes-only
+	// grant, so either package's scope satisfies the route.
+	read := ScopeForRoute("GET", "/api/collections/labels/records")
+	if !read.SatisfiedBy([]string{scopeNotesRead}) {
+		t.Error("labels read must be reachable with notes:read alone")
+	}
+	if !read.SatisfiedBy([]string{scopeTasksRead}) {
+		t.Error("labels read must be reachable with tasks:read alone")
+	}
+	if read.SatisfiedBy([]string{scopeNotesWrite, scopeTasksWrite}) {
+		t.Error("labels read must NOT be satisfied by write-only scopes")
+	}
 
-		write := ScopeForRoute("POST", "/api/collections/"+c+"/records")
-		if !write.satisfiedBy([]string{ScopeMailSend}) {
-			t.Errorf("%s write must be reachable with mail:send alone", c)
-		}
-		if !write.satisfiedBy([]string{ScopeContactsWrite}) {
-			t.Errorf("%s write must be reachable with contacts:write alone", c)
-		}
-		if write.satisfiedBy([]string{ScopeMailRead, ScopeContactsRead}) {
-			t.Errorf("%s write must NOT be satisfied by read-only scopes", c)
-		}
+	write := ScopeForRoute("POST", "/api/collections/labels/records")
+	if !write.SatisfiedBy([]string{scopeNotesWrite}) {
+		t.Error("labels write must be reachable with notes:write alone")
+	}
+	if !write.SatisfiedBy([]string{scopeTasksWrite}) {
+		t.Error("labels write must be reachable with tasks:write alone")
+	}
+	if write.SatisfiedBy([]string{scopeNotesRead, scopeTasksRead}) {
+		t.Error("labels write must NOT be satisfied by read-only scopes")
 	}
 }
 
-func TestScopeForRouteNewCollectionsAndEndpoints(t *testing.T) {
-	reachable := []struct {
-		method, path, scope string
-	}{
-		{"GET", "/api/collections/mail_mailbox_aliases/records", ScopeMailRead},
-		// mail_domains: mail_mailboxes.address holds only the local part, so
-		// resolving any full address joins the domain row. Missing here, a
-		// mail:read+mail:send grant still failed closed on `mail mailboxes`,
-		// `mail send`, and `--mailbox <address>`. Found by the first live
-		// smoke test — every fake-server test served the row unguarded.
-		{"GET", "/api/collections/mail_domains/records", ScopeMailRead},
-		{"GET", "/api/collections/drive_item_versions/records", ScopeDriveRead},
-		{"POST", "/api/collections/drive_item_versions/records", ScopeDriveWrite},
-		{"POST", "/api/drive/share-link", ScopeDriveWrite},
-		{"GET", "/api/drive/share-links", ScopeDriveRead},
-		{"POST", "/api/drive/versions/restore", ScopeDriveWrite},
-		{"POST", "/api/drive/versions/snapshot", ScopeDriveWrite},
-		// vCard file transfer. These are raw Go routes, so PocketBase's
-		// collection rules never run on them — this table is the only thing
-		// separating a read grant from a write one.
-		{"GET", "/api/contacts/export", ScopeContactsRead},
-		{"POST", "/api/contacts/import", ScopeContactsWrite},
-
-		// iCalendar file transfer, same reasoning as the vCard pair above.
-		{"GET", "/api/calendar/export", ScopeCalendarRead},
-		{"POST", "/api/calendar/import", ScopeCalendarWrite},
-
-		// text and calc own only their comment collections. Unclassified,
-		// these default-denied, so `tinycld text comments` could not run at
-		// all — the same hole boards:* fell into before the first live smoke
-		// test found it.
-		{"GET", "/api/collections/text_comments/records", ScopeTextRead},
-		{"POST", "/api/collections/text_comments/records", ScopeTextWrite},
-		{"GET", "/api/collections/calc_comments/records", ScopeCalcRead},
-		{"POST", "/api/collections/calc_comments/records", ScopeCalcWrite},
-
-		// calendar_members carries the caller's ROLE per calendar, which
-		// `calendar list` renders. Unclassified, it default-denied and the
-		// whole command 403'd — found by the live smoke test, and invisible to
-		// calendar/cli's fake server, which has no scope layer.
-		{"GET", "/api/collections/calendar_members/records", ScopeCalendarRead},
-	}
-	for _, r := range reachable {
-		if got := ScopeForRoute(r.method, r.path); !onlyScope(got, r.scope) {
-			t.Errorf("ScopeForRoute(%s %s) = %v, want %q", r.method, r.path, got, r.scope)
+// One package's scope never opens another package's surface, however the
+// registrations are shaped.
+func TestScopeForRouteKeepsPackagesApart(t *testing.T) {
+	for _, r := range []struct{ method, path string }{
+		{"GET", "/api/notes/search"},
+		{"GET", "/api/collections/notes_items/records"},
+		{"POST", "/api/notes/items/abc123/move"},
+		{"GET", "/api/files/notes_items/rec123/body_ab12cd34ef.html"},
+	} {
+		if ScopeForRoute(r.method, r.path).SatisfiedBy([]string{scopeTasksRead, scopeTasksWrite}) {
+			t.Errorf("%s %s is reachable with another package's scopes", r.method, r.path)
 		}
-	}
-
-	// Export must not be reachable with a write-only grant, nor import with a
-	// read-only one. Asserting the mapping alone would pass even if both rows
-	// named the same scope.
-	if ScopeForRoute("GET", "/api/contacts/export").satisfiedBy([]string{ScopeContactsWrite}) {
-		t.Error("contacts export must NOT be satisfied by contacts:write alone")
-	}
-	if ScopeForRoute("POST", "/api/contacts/import").satisfiedBy([]string{ScopeContactsRead}) {
-		t.Error("contacts import must NOT be satisfied by contacts:read alone")
-	}
-
-	// Same asymmetry for calendar. It matters more here than for contacts:
-	// calendar read access is membership in ANY role, so a viewer legitimately
-	// holds calendar:read — and must still not be able to import.
-	if ScopeForRoute("GET", "/api/calendar/export").satisfiedBy([]string{ScopeCalendarWrite}) {
-		t.Error("calendar export must NOT be satisfied by calendar:write alone")
-	}
-	if ScopeForRoute("POST", "/api/calendar/import").satisfiedBy([]string{ScopeCalendarRead}) {
-		t.Error("calendar import must NOT be satisfied by calendar:read alone")
-	}
-
-	// GET /api/contacts/search is not mounted — contacts registers fts index
-	// sync only (fts.RegisterSync, not fts.Register) because both the palette
-	// and the CLI read the federated /api/search. A scope row for a route that
-	// does not exist reads as though the endpoint were live.
-	if got := ScopeForRoute("GET", "/api/contacts/search"); len(got) != 0 {
-		t.Errorf("unmounted contacts search route must not carry a scope, got %v", got)
-	}
-
-	// Aliases are administered in the app; the CLI only reads them.
-	if got := ScopeForRoute("PATCH", "/api/collections/mail_mailbox_aliases/records/abc"); len(got) != 0 {
-		t.Errorf("alias writes must stay denied, got %v", got)
-	}
-
-	// Same for domains — granting the read must not have opened a write path
-	// to DNS/verification state.
-	for _, m := range []string{"POST", "PATCH", "DELETE"} {
-		if got := ScopeForRoute(m, "/api/collections/mail_domains/records/abc"); len(got) != 0 {
-			t.Errorf("domain %s must stay denied, got %v", m, got)
-		}
-	}
-
-	// calendar_members is a SHARING surface: a write adds a person to a
-	// calendar. `calendar:write` reads as "change my events" on the consent
-	// screen, not "give other people my calendar", so the read added for
-	// `calendar list` must not have opened one.
-	for _, m := range []string{"POST", "PATCH", "DELETE"} {
-		if got := ScopeForRoute(m, "/api/collections/calendar_members/records/abc"); len(got) != 0 {
-			t.Errorf("calendar membership %s must stay denied, got %v", m, got)
-		}
-	}
-}
-
-func TestScopeForRoutePrefixRules(t *testing.T) {
-	// The exact-match table cannot express a path carrying a record id, so
-	// DELETE /api/drive/share-link/{id} is matched by prefix. The prefix must
-	// require a non-empty remainder and must not leak to other verbs or to
-	// the sibling collection route.
-	if got := ScopeForRoute("DELETE", "/api/drive/share-link/abc123"); !onlyScope(got, ScopeDriveWrite) {
-		t.Errorf("share-link delete = %v, want drive:write", got)
-	}
-	denied := []struct{ method, path, why string }{
-		{"GET", "/api/drive/share-link/abc123", "public metadata route, not the revoke"},
-		{"DELETE", "/api/drive/share-link/", "bare prefix is not a real route"},
-		{"DELETE", "/api/drive/share-links", "plural list route must not match the prefix"},
-		{"DELETE", "/api/drive/other/abc123", "unrelated path"},
-	}
-	for _, d := range denied {
-		if got := ScopeForRoute(d.method, d.path); len(got) != 0 {
-			t.Errorf("ScopeForRoute(%s %s) = %v, want deny: %s", d.method, d.path, got, d.why)
-		}
-	}
-}
-
-func TestScopeRuleDescribe(t *testing.T) {
-	if got := (scopeRule{ScopeMailRead}).describe(); got != `"mail:read"` {
-		t.Errorf("single-scope describe = %s", got)
-	}
-	if got := (scopeRule{ScopeMailRead, ScopeContactsRead}).describe(); got != `one of "mail:read", "contacts:read"` {
-		t.Errorf("any-of describe = %s", got)
-	}
-}
-
-func TestGrantedScopesPublishesTheGrantsScopes(t *testing.T) {
-	// An endpoint that federates over several packages narrows its OWN
-	// behavior by scope rather than passing or failing wholesale, so the
-	// verified grant's scopes have to reach the handler.
-	app := newSchemaApp(t)
-	userID, clientID := seedUserAndClient(t, app)
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead, ScopeProfile}, "active")
-	if err != nil {
-		t.Fatalf("NewGrant: %v", err)
-	}
-	user, err := app.FindRecordById("users", userID)
-	if err != nil {
-		t.Fatalf("find user: %v", err)
-	}
-	token, err := MintAccessToken(app, user, grant, AccessTokenTTL)
-	if err != nil {
-		t.Fatalf("MintAccessToken: %v", err)
-	}
-
-	re := newRequestEvent(app, "GET", "/api/mail/search", token)
-	if err := enforceGrant(re); err != nil {
-		t.Fatalf("enforceGrant: %v", err)
-	}
-	got := GrantedScopes(re)
-	if len(got) != 2 || !HasScope(got, ScopeMailRead) || !HasScope(got, ScopeProfile) {
-		t.Fatalf("GrantedScopes = %v, want the grant's two scopes", got)
-	}
-}
-
-func TestGrantedScopesIsNilForASession(t *testing.T) {
-	// nil and empty mean different things downstream: nil is "no scope ceiling
-	// applies" (a signed-in session), while an empty non-nil slice would be a
-	// token that granted nothing. A session must never read as the latter.
-	app := newSchemaApp(t)
-	userID, _ := seedUserAndClient(t, app)
-	user, err := app.FindRecordById("users", userID)
-	if err != nil {
-		t.Fatalf("find user: %v", err)
-	}
-	plain, err := user.NewAuthToken()
-	if err != nil {
-		t.Fatalf("NewAuthToken: %v", err)
-	}
-
-	re := newRequestEvent(app, "GET", "/api/mail/search", plain)
-	if err := enforceGrant(re); err != nil {
-		t.Fatalf("enforceGrant: %v", err)
-	}
-	if got := GrantedScopes(re); got != nil {
-		t.Fatalf("GrantedScopes = %v, want nil for a session token", got)
 	}
 }

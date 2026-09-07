@@ -59,7 +59,7 @@ func seedUserAndClient(t *testing.T, app *tests.TestApp) (userID, clientRecID st
 	// client ceiling (ValidateClientScopes) seed their own via
 	// seedClientWithRedirectURIs / a bespoke record, same as they already do
 	// for redirect_uris.
-	c.Set("scopes", strings.Join(AllScopes, " "))
+	c.Set("scopes", strings.Join(AllScopes(), " "))
 	if err := app.Save(c); err != nil {
 		t.Fatalf("save client: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestNewGrantIsFindableByJTI(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
 
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestVerifyGrantRejectsRevoked(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
 
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestRevokeGrantClearsAllCredentialMaterial(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
 
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "pending")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "pending")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestVerifyGrantRejectsDisabledUser(t *testing.T) {
 	addDisabledField(t, app)
 	userID, clientID := seedUserAndClient(t, app)
 
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestVerifyGrantRejectsDisabledClient(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
 
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestVerifyGrantRejectsExpired(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
 
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestVerifyGrantRejectsPending(t *testing.T) {
 	userID, clientID := seedUserAndClient(t, app)
 
 	// A device-flow grant awaiting approval must not authorize anything.
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "pending")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "pending")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}

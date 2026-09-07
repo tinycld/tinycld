@@ -26,12 +26,33 @@ func errPanic(r any) error {
 // normalized row shape is defined once and both the web palette and the CLI
 // consume it. The per-package routes stay for their own callers.
 func Register(app *pocketbase.PocketBase) {
+	// The route's scope rule is derived from the sources, not declared: any
+	// scope that permits searching SOME registered package admits the
+	// request, and handleSearch then narrows to the sources the grant covers.
+	// Demanding one specific scope would 403 a single-package token outright
+	// instead of handing it the results it may see. Evaluated per request so
+	// it is right whatever order packages registered in.
+	oauth.RegisterSharedEndpoint("GET", "/api/search", searchScopes)
+
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/api/search", func(re *core.RequestEvent) error {
 			return handleSearch(app, re)
 		}).Bind(apis.RequireAuth())
 		return e.Next()
 	})
+}
+
+// searchScopes is the union of every registered source's scopes.
+func searchScopes() []string {
+	var out []string
+	for _, src := range RegisteredSources() {
+		for _, s := range src.Scopes {
+			if !oauth.HasScope(out, s) {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
 }
 
 func handleSearch(app core.App, re *core.RequestEvent) error {

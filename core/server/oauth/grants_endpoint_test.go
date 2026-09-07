@@ -27,7 +27,7 @@ func newRevokeRequestEvent(app core.App, grantID string, auth *core.Record) *cor
 func TestRevokeGrantByIDRequiresAuthentication(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestRevokeGrantByIDRequiresAuthentication(t *testing.T) {
 func TestRevokeGrantByIDRejectsOAuthToken(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
-	target, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	target, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestRevokeGrantByIDNotFound(t *testing.T) {
 func TestRevokeGrantByIDRejectsOtherUsersGrant(t *testing.T) {
 	app := newSchemaApp(t)
 	ownerID, clientID := seedUserAndClient(t, app)
-	grant, err := NewGrant(app, ownerID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, ownerID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestRevokeGrantByIDRejectsOtherUsersGrant(t *testing.T) {
 func TestRevokeGrantByIDRevokesOwnGrant(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}

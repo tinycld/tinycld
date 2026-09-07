@@ -61,9 +61,9 @@ func TestParseScopes(t *testing.T) {
 		want int
 	}{
 		{"", 0},
-		{"mail:read", 1},
-		{"mail:read drive:write", 2},
-		{"  mail:read   drive:write  ", 2},
+		{"notes:read", 1},
+		{"notes:read tasks:write", 2},
+		{"  notes:read   tasks:write  ", 2},
 	}
 	for _, c := range cases {
 		if got := ParseScopes(c.in); len(got) != c.want {
@@ -73,14 +73,14 @@ func TestParseScopes(t *testing.T) {
 }
 
 func TestHasScope(t *testing.T) {
-	granted := []string{"mail:read", "drive:write"}
-	if !HasScope(granted, "mail:read") {
+	granted := []string{"notes:read", "tasks:write"}
+	if !HasScope(granted, "notes:read") {
 		t.Error("HasScope should find a granted scope")
 	}
-	if HasScope(granted, "mail:send") {
+	if HasScope(granted, "notes:write") {
 		t.Error("HasScope must not find an ungranted scope")
 	}
-	if HasScope(nil, "mail:read") {
+	if HasScope(nil, "notes:read") {
 		t.Error("HasScope on nil must be false")
 	}
 }

@@ -14,6 +14,7 @@ import { ActivityIndicator, Text, TextInput, View } from 'react-native'
 interface AuthorizeInfo {
     client_name: string
     scopes: string[]
+    scope_labels: Record<string, string>
     expires_at: string
 }
 
@@ -229,7 +230,7 @@ function GrantDetails({
     return (
         <View className="gap-4">
             <Text className="text-foreground text-lg">{info.client_name} wants access to:</Text>
-            <ScopeList scopes={info.scopes} />
+            <ScopeList scopes={info.scopes} labels={info.scope_labels} />
 
             <View className="gap-2">
                 <Text className="text-muted-foreground">Name this device</Text>

@@ -15,28 +15,6 @@ import (
 	"tinycld.org/cli/ui"
 )
 
-// cliScopes mirrors the scope set granted to the seeded tinycld-cli client:
-// the CLI is first-party, so it asks for everything up front and the consent
-// screen shows the full list.
-//
-// This list, the seed migration's `scopes`, and oauth.AllScopes must stay in
-// step, and nothing enforces that — the module boundary keeps the constants
-// out of reach (see gen-cli.ts). The client row is a hard CEILING
-// (ValidateClientScopes), so a scope missing THERE fails the login outright,
-// while one missing HERE fails later and quietly: the grant is issued without
-// it and the command 403s. boards:* was missing from both for an entire
-// release — `tinycld boards` could not run at all.
-var cliScopes = []string{
-	"profile",
-	"mail:read", "mail:send",
-	"drive:read", "drive:write",
-	"contacts:read", "contacts:write",
-	"calendar:read", "calendar:write",
-	"boards:read", "boards:write",
-	"text:read", "text:write",
-	"calc:read", "calc:write",
-}
-
 // contextTokenStore adapts the keychain to client.TokenStore for one context.
 // A missing credential maps to ErrAuthExpired: from a command's point of view
 // "never logged in" and "session expired" call for the same fix.
@@ -127,7 +105,15 @@ func newAuthLoginCmd(d *deps) *cobra.Command {
 				HTTP:     d.httpClient,
 				Sleep:    d.sleep,
 			}
-			da, err := flow.Start(cmd.Context(), cliScopes)
+			// The CLI is first-party: it asks for every scope this server
+			// grants, and the consent screen shows the full list. The set
+			// comes from the server's discovery document because it depends
+			// on which packages that server has installed.
+			meta, err := flow.Discover(cmd.Context())
+			if err != nil {
+				return err
+			}
+			da, err := flow.Start(cmd.Context(), meta.ScopesSupported)
 			if err != nil {
 				return err
 			}

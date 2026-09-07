@@ -13,7 +13,23 @@ import (
 type AuthorizeInfoResponse struct {
 	ClientName string   `json:"client_name"`
 	Scopes     []string `json:"scopes"`
-	ExpiresAt  string   `json:"expires_at"`
+	// ScopeLabels is the consent copy for each scope in Scopes. The labels
+	// live with the package that defines the scope (registry.go), so the
+	// screen asks the server rather than carrying a copy that drifts.
+	ScopeLabels map[string]string `json:"scope_labels"`
+	ExpiresAt   string            `json:"expires_at"`
+}
+
+// labelsFor picks the consent copy for the given scopes out of the catalog.
+func labelsFor(scopes []string) map[string]string {
+	all := ScopeLabels()
+	out := make(map[string]string, len(scopes))
+	for _, s := range scopes {
+		if label, ok := all[s]; ok {
+			out[s] = label
+		}
+	}
+	return out
 }
 
 // handleAuthorizeInfo implements GET /oauth/authorize?user_code=…
@@ -41,10 +57,12 @@ func handleAuthorizeInfo(app core.App, re *core.RequestEvent) error {
 	if err != nil {
 		return re.InternalServerError("Failed to load client", err)
 	}
+	scopes := ParseScopes(grant.GetString("scopes"))
 	return re.JSON(http.StatusOK, AuthorizeInfoResponse{
-		ClientName: client.GetString("name"),
-		Scopes:     ParseScopes(grant.GetString("scopes")),
-		ExpiresAt:  grant.GetDateTime("expires_at").String(),
+		ClientName:  client.GetString("name"),
+		Scopes:      scopes,
+		ScopeLabels: labelsFor(scopes),
+		ExpiresAt:   grant.GetDateTime("expires_at").String(),
 	})
 }
 

@@ -117,7 +117,7 @@ func TestGrantUserCodeIsUniqueWhileLive(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
 
-	first, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "pending")
+	first, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "pending")
 	if err != nil {
 		t.Fatalf("NewGrant (first): %v", err)
 	}
@@ -126,7 +126,7 @@ func TestGrantUserCodeIsUniqueWhileLive(t *testing.T) {
 		t.Fatalf("save first grant with user_code: %v", err)
 	}
 
-	second, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "pending")
+	second, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "pending")
 	if err != nil {
 		t.Fatalf("NewGrant (second): %v", err)
 	}
@@ -146,7 +146,7 @@ func TestGrantUserCodeClearedValuesDoNotCollide(t *testing.T) {
 	userID, clientID := seedUserAndClient(t, app)
 
 	for i := 0; i < 3; i++ {
-		g, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "revoked")
+		g, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "revoked")
 		if err != nil {
 			t.Fatalf("NewGrant %d: %v", i, err)
 		}
@@ -200,7 +200,7 @@ func TestGrantCredentialFieldsAreHiddenFromPublicExport(t *testing.T) {
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
 
-	grant, err := NewGrant(app, userID, clientID, []string{ScopeMailRead}, "active")
+	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
 	if err != nil {
 		t.Fatalf("NewGrant: %v", err)
 	}

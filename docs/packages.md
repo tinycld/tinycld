@@ -777,6 +777,75 @@ implement authorization manually. When changing API rules on a collection,
 check whether a Go hook also accesses that collection and update its filters to
 match.
 
+### Registries: how core learns what a package provides
+
+**Core must not name a package.** Not a slug, not a scope, not a collection,
+not a route. The shell, `@tinycld/core` and the CLI shell build and run with
+zero features linked, and a package is installable without a core change —
+both hold only while core has no idea which packages exist. A line in core
+that says `boards` is a core PR for something the package should own, and it
+is silently wrong on every deployment without boards.
+
+When core needs to know something about a package, the package **registers**
+it from its own `Register(app)`, and core reads the accumulated set at
+runtime. The registries that exist:
+
+| Core needs to know… | The package calls |
+|---|---|
+| its OAuth scopes, and which collections and routes they govern | `oauth.RegisterPackage` |
+| its contribution to the federated search | `search.RegisterSources` |
+| its storage-bearing collections | `quota.RegisterSources` |
+| which authorship FKs to reassign on offboarding | `offboard.RegisterReassignable` |
+| which collections to audit-log | `audit.RegisterCollection` |
+| its full-text index | `fts.Register` / `fts.RegisterSync` |
+| a CalDAV / CardDAV / WebDAV source | `caldav.Register` / `carddav.Register` / `webdav.Register` |
+| a native automation action | `automation.RegisterAction` |
+| version snapshot/restore hooks for its drive item type | `versionhooks.Register` |
+
+The OAuth registry is the reference shape. A package declares its scopes with
+consent copy, the collections each scope reads and writes, its bespoke
+endpoints, and per-record route families — and nothing else in the system
+carries a copy:
+
+```go
+oauth.RegisterPackage(oauth.Package{
+    Slug: "boards",
+    Scopes: []oauth.Scope{
+        {ID: "boards:read", Label: "Read your boards and cards"},
+        {ID: "boards:write", Label: "Create and modify your boards and cards"},
+    },
+    Collections: map[string]oauth.Access{
+        "boards_cards":    {Read: []string{"boards:read"}, Write: []string{"boards:write"}},
+        "boards_activity": {Read: []string{"boards:read"}}, // read-only for tokens
+    },
+    Endpoints: map[string][]string{
+        "GET /api/boards/export":  {"boards:read"},
+        "POST /api/boards/import": {"boards:write"},
+    },
+    EndpointPrefixes: []oauth.EndpointPrefix{
+        {Method: "POST", Prefix: "/api/boards/cards/", Scopes: []string{"boards:write"}},
+    },
+})
+```
+
+The catalog (`scopes_supported` in the discovery document), the consent
+screen's labels, and the CLI's login request are all derived from what is
+registered. A scope must be in the package's own namespace (`<slug>:…`),
+endpoints must live under `/api/<slug>/`, and a malformed registration panics
+at boot rather than silently default-denying. A collection two packages both
+claim (core's `labels`, used by mail and contacts) unions their rules. A
+package pins its own CLI-reachable routes in its own tests — an unclassified
+route 403s for OAuth callers only, which nothing else notices.
+
+The rule is enforced by `oauth.TestCoreDeclaresNoPackageScopes` (the
+registry is empty with no features present) and by
+`pnpm run check:core-isolation`, which derives the installed packages' slugs
+and collections from the workspace and refuses any reference to them in the
+shell's tracked runtime code. The script carries an allowlist of pre-existing
+debt, each entry naming the registry that should replace it; it fails when an
+entry goes stale, so the list only shrinks. Do not add to it to make a change
+pass.
+
 ### Test build tag
 
 `pnpm run test:server` builds with the `no_ui` tag so PocketBase's admin UI route
@@ -807,6 +876,10 @@ interface and tolerate the schema's absence at runtime.
 
 The `dependencies` manifest field is **not** a compile-time import — it only
 orders seed execution.
+
+The same rule applies with more force to core itself: **core must not name a
+package.** See [Registries: how core learns what a package
+provides](#registries-how-core-learns-what-a-package-provides).
 
 ---
 

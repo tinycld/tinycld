@@ -30,43 +30,11 @@ const (
 	grantsCollection  = "oauth_grants"
 )
 
-// Scopes. Named <package>:<capability> so the set grows naturally as packages
-// are installed. `profile` is the baseline identity scope every grant gets.
-const (
-	ScopeProfile       = "profile"
-	ScopeMailRead      = "mail:read"
-	ScopeMailSend      = "mail:send"
-	ScopeDriveRead     = "drive:read"
-	ScopeDriveWrite    = "drive:write"
-	ScopeContactsRead  = "contacts:read"
-	ScopeContactsWrite = "contacts:write"
-	ScopeCalendarRead  = "calendar:read"
-	ScopeCalendarWrite = "calendar:write"
-	ScopeBoardsRead    = "boards:read"
-	ScopeBoardsWrite   = "boards:write"
-	// text and calc own only their comment collections — the documents and
-	// spreadsheets themselves are drive_items, governed by drive:*. So these
-	// scopes are narrower than they look, and a token that can do anything
-	// useful with them holds drive:read too: a comment is unreachable without
-	// access to the item it hangs off (the rules reach through drive_item).
-	ScopeTextRead  = "text:read"
-	ScopeTextWrite = "text:write"
-	ScopeCalcRead  = "calc:read"
-	ScopeCalcWrite = "calc:write"
-)
-
-// AllScopes is the full catalog, used to validate a requested scope string and
-// to render the consent screen.
-var AllScopes = []string{
-	ScopeProfile,
-	ScopeMailRead, ScopeMailSend,
-	ScopeDriveRead, ScopeDriveWrite,
-	ScopeContactsRead, ScopeContactsWrite,
-	ScopeCalendarRead, ScopeCalendarWrite,
-	ScopeBoardsRead, ScopeBoardsWrite,
-	ScopeTextRead, ScopeTextWrite,
-	ScopeCalcRead, ScopeCalcWrite,
-}
+// ScopeProfile is the baseline identity scope every grant gets. It is the
+// only scope core defines: every other scope is "<package>:<capability>",
+// registered by the package that owns it (see registry.go), so the catalog
+// grows as packages are installed and core never names one.
+const ScopeProfile = "profile"
 
 var (
 	// ErrInvalidGrant covers a missing, malformed, or expired grant. Maps to 401.
