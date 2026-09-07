@@ -33,7 +33,7 @@ const subscriptions = new Set<Subscription>()
  * Read the editor instance a message belongs to, if it names one.
  *
  * The id rides inside the payload rather than on the envelope because the
- * envelope is TenTap's shared shape — widening it would touch every namespace
+ * envelope is shared by every channel — widening it would touch every namespace
  * for the benefit of one.
  */
 function messageInstanceId(message: EditorMessage): string | undefined {

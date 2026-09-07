@@ -15,6 +15,7 @@ import Markdown, { type MarkedStyles, Renderer } from 'react-native-marked'
 import { openHelp } from '../../lib/help/open-help'
 import { parseHelpTopicId } from '../../lib/help/types'
 import { type MarkdownPurpose, type MarkdownScale, markdownScale } from './markdown-purpose'
+import { markerBoxWidth } from './marker-box'
 
 interface Props {
     body: string
@@ -135,18 +136,6 @@ function headingLineHeight(scale: MarkdownScale, size: number): number {
  */
 export const MARKDOWN_TRAILING_SPACE = 8
 
-/**
- * Width of a bullet/number marker box, mirroring @jsamr/react-native-li's own
- * `maxNumOfCodepoints * fontSize * 0.6`.
- *
- * A disc marker is two codepoints (the glyph and its trailing space), which is
- * what the library measures for an unordered list. Derived rather than measured
- * at runtime because it feeds a style computed during render.
- */
-function markerBoxWidth(fontSize: number): number {
-    return fontSize * 1.2
-}
-
 interface RendererOptions {
     translateKeys: boolean
     shortcutTables: boolean
@@ -255,7 +244,21 @@ class HelpRenderer extends Renderer {
         // is a sibling box laid out before the text, so wrapping at the full
         // indent put the text a marker-width further right than the editor's.
         // Reserving it keeps the TEXT on the same x in both.
-        const inset = Math.max(0, this.listIndent - markerBoxWidth(this.bodySize))
+        //
+        // Measured against THIS list — an ordered list's marker is wider than a
+        // bullet's, and wider again past item 9 — because that is what the
+        // library lays out. A single constant here silently over-indented every
+        // numbered list.
+        //
+        // The inset may go NEGATIVE, and must be allowed to. A marker wider
+        // than the indent (`"10. "` is 33.6px against a 21px indent) is drawn
+        // by CSS in the padding and overflowing to its LEFT — measured in a
+        // browser, the editor starts its text at 21px for a bullet, a 3-item
+        // and a 10-item list alike. Clamping at zero instead pushed the read
+        // view's text right by the overflow, which is the same jump this
+        // reserve exists to remove, just at a different list length.
+        const inset =
+            this.listIndent - markerBoxWidth(ordered, this.bodySize, startIndex ?? 1, li.length)
         return (
             <View key={this.getKey()} style={{ marginLeft: inset }}>
                 {super.list(ordered, li, listStyle, textStyle, startIndex)}
@@ -625,7 +628,7 @@ export function MarkdownRenderer({
             // dropped every marker 8px below its own line.
             //
             // Typography only here; the row's indent and rhythm are applied in
-            // HelpRenderer.listItem, which is the one place that IS just the row.
+            // HelpRenderer.list, which is the one place that IS just the row.
             list: {},
             li: {
                 color: foreground,

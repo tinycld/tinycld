@@ -7,10 +7,9 @@ import { bundleWebViewEditor } from '../webview-bundler/build'
 //   pnpm exec tsx core/lib/editor/rich/build.ts
 //
 // Emits webview/build/editorHtml.ts — a self-contained HTML string that
-// use-rich-editor.native.tsx hands to TenTap's customSource. Owning the page
-// is what lets markdown be the editor's native format on mobile: the WebView
-// runs our own Tiptap with @tiptap/markdown, instead of TenTap's prebuilt page
-// whose bridge only speaks HTML.
+// use-rich-editor.native.tsx hands to the native host as the page source.
+// Owning the page is what lets markdown be the editor's native format on
+// mobile: the WebView runs our own Tiptap with @tiptap/markdown.
 //
 // Unlike a feature's build this one is declared explicitly in the generator,
 // because core has no manifest to carry a `build.script` field.

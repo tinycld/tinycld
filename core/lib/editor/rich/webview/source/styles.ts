@@ -6,10 +6,10 @@ import type { RichEditorColors } from './protocol'
  * The WebView page's CSS: the shared content stylesheet, plus the html/body
  * rules only a page that owns its own document needs.
  *
- * Relocated from use-rich-editor.native.tsx, where it was handed to TenTap via
- * `CoreBridge.configureCSS`. Now that we own the page it is injected directly,
- * which also lets it cover nodes TenTap's bridges never styled (task lists,
- * code blocks).
+ * Relocated from use-rich-editor.native.tsx, where it was injected through the
+ * bridge library this page once ran under. Now that we own the page it is
+ * injected directly, which also lets it cover nodes that library never styled
+ * (task lists, code blocks).
  *
  * The content rules themselves live in `editor-content-styles.ts` and are shared
  * with web — they used to live here, which is how web ended up shipping no caret

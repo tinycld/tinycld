@@ -6,17 +6,14 @@ function asAlign(v: unknown): EditorToolbarState['currentAlign'] {
     return v === 'left' || v === 'center' || v === 'right' || v === 'justify' ? v : null
 }
 
-// Derive the EditorToolbarState shape from the raw bridgeState the
-// WebView posts. Lives as a pure helper so it can be unit-tested
-// without instantiating a TenTap bridge (the hook itself isn't easily
-// rendered under vitest because the in-WebView editor depends on
-// react-native + tentap's bridge implementation).
+// Derive the EditorToolbarState shape from the raw state the WebView
+// posts. Lives as a pure helper so it can be unit-tested without the
+// native host the hook renders.
 //
-// `bridgeState` is the raw object TenTap's useBridgeState returns plus
-// any custom fields the in-WebView Editor.tsx posts via stateUpdate. We
-// read the custom fields through a loose record view rather than
-// extending TenTap's typed surface — the WebView contract is the
-// {namespace, type, payload} envelope, not the bridge object.
+// `bridgeState` is the latest `stateUpdate` payload verbatim: the basic
+// marks plus whatever custom fields the in-WebView Editor.tsx adds. We read
+// the fields through a loose record view — the WebView contract is the
+// message, not a typed object.
 //
 // Narrowing is strict: each field requires the expected runtime type
 // (`=== true` for booleans, `typeof === 'number'` for numbers, etc.)

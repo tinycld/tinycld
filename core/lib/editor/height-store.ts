@@ -10,7 +10,7 @@
  * settled.
  *
  * Lives in its own module rather than beside the hook so it can be unit-tested
- * without pulling in the TenTap/react-native-webview require chain.
+ * without pulling in the native host the hook renders.
  */
 export interface HeightStore {
     get: () => number | null

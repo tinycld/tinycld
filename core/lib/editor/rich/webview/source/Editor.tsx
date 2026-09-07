@@ -7,7 +7,14 @@ import {
     useEditor,
 } from '@tiptap/react'
 import { exitSuggestion } from '@tiptap/suggestion'
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+    Component,
+    type ReactNode,
+    useEffect,
+    useMemo,
+    useState,
+    useSyncExternalStore,
+} from 'react'
 import { Awareness, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import type { EditorMessage } from '../../../message-bus/types'
@@ -17,9 +24,18 @@ import { buildRichEditorExtensions } from '../../extensions'
 import { repairMarkdown } from '../../markdown-repair'
 import { getFileAuth, setFileAuth, subscribeFileAuth } from './file-auth-store'
 import {
+    applyKeyboardInset,
+    focusEditor,
+    readKeyboardInset,
+    reapplyKeyboardInset,
+} from './host-commands'
+import {
     APP_EDITOR_MOUNTED,
     APP_ESCAPE,
     APP_FILE_TOKEN,
+    APP_FOCUS,
+    APP_KEYBOARD_INSET,
+    APP_PAGE_ERROR,
     APP_PARK,
     APP_SUBMIT_SHORTCUT,
     APP_TRIGGER_ITEMS,
@@ -31,6 +47,7 @@ import {
     decodeUpdate,
     EDITOR_READY,
     encodeUpdate,
+    FORMAT_SET_EDITABLE,
     HTML_GET,
     HTML_RESULT,
     HTML_SET,
@@ -65,6 +82,34 @@ declare global {
 
 function postToNative(message: unknown): void {
     window.ReactNativeWebView?.postMessage(JSON.stringify(message))
+}
+
+/**
+ * Report a failure inside the page to the host. The page runs at an opaque
+ * origin, so `window.onerror` only ever sees "Script error." — the real
+ * message has to be posted from where it is caught.
+ */
+function reportPageError(where: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error)
+    const stack = error instanceof Error ? (error.stack ?? '').slice(0, 800) : ''
+    postToNative(makeMessage('app', APP_PAGE_ERROR, { message: `${where}: ${message}`, stack }))
+}
+
+/** A render or effect error in the editor would otherwise unmount it silently. */
+class EditorErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+    state = { failed: false }
+
+    static getDerivedStateFromError() {
+        return { failed: true }
+    }
+
+    componentDidCatch(error: unknown) {
+        reportPageError('render', error)
+    }
+
+    render() {
+        return this.state.failed ? null : this.props.children
+    }
 }
 
 /**
@@ -123,11 +168,9 @@ export function reduceInit(
  * same schema the web hook uses, `@tiptap/markdown` included — so markdown is
  * parsed and serialized in place. Nothing pivots through HTML.
  *
- * TenTap is still the WebView host (it supplies `RichText` and, importantly,
- * `avoidIosKeyboard`), but its bridge protocol is bypassed: we own the page via
- * `customSource`, so `useTenTap` and the `BridgeExtension` system are unused.
- * Their channel exchanges HTML strings, which is exactly the constraint being
- * removed.
+ * The host is core's own `editor-webview` native view (see
+ * lib/editor/use-webview-editor.tsx). Every instruction it sends arrives as a
+ * namespaced message on this page; nothing pivots through a third-party bridge.
  *
  * Mounts in two stages, because the extension set depends on the init payload
  * (placeholder, character limit, and later the collaboration binding): report
@@ -159,12 +202,24 @@ export function Editor() {
         // document; listen to both.
         window.addEventListener('message', onMessage)
         document.addEventListener('message', onMessage)
+        // Nothing inside a WebView is visible from the host. A page that
+        // throws during a hand-off would otherwise be an empty box.
+        function onError(event: ErrorEvent) {
+            postToNative(makeMessage('app', APP_PAGE_ERROR, { message: event.message }))
+        }
+        function onRejection(event: PromiseRejectionEvent) {
+            postToNative(makeMessage('app', APP_PAGE_ERROR, { message: String(event.reason) }))
+        }
+        window.addEventListener('error', onError)
+        window.addEventListener('unhandledrejection', onRejection)
         // Posted before Tiptap exists — this is the gate the host waits on
         // before sending init, so it must not depend on the editor.
         postToNative({ type: EDITOR_READY, payload: undefined })
         return () => {
             window.removeEventListener('message', onMessage)
             document.removeEventListener('message', onMessage)
+            window.removeEventListener('error', onError)
+            window.removeEventListener('unhandledrejection', onRejection)
         }
     }, [])
 
@@ -174,7 +229,11 @@ export function Editor() {
     // Tiptap, new Y.Doc (useCollabDoc's useState initializer reruns), new undo
     // stack, new extension set. Nothing survives the swap, which is what makes
     // it safe to reuse one page across surfaces.
-    return <EditorMounted key={init.generation} init={init} />
+    return (
+        <EditorErrorBoundary key={init.generation}>
+            <EditorMounted init={init} />
+        </EditorErrorBoundary>
+    )
 }
 
 function EditorMounted({ init }: { init: RichEditorInitPayload }) {
@@ -481,8 +540,8 @@ function useAwarenessRelay(collab: CollabBinding | null) {
 /**
  * Stream toolbar state to the host on every meaningful transaction.
  *
- * Posted under TenTap's own `stateUpdate` type so `useBridgeState` on the
- * native side keeps consuming it unchanged. Coalesced per frame, with an
+ * Posted as a bare `stateUpdate` (no namespace), the shape the host's state
+ * store reads into deriveToolbarState. Coalesced per frame, with an
  * identity skip so a burst of transactions that doesn't change the toolbar
  * (bulk paste, remote edits) doesn't spam the bridge.
  */
@@ -492,7 +551,19 @@ function useStateBroadcast(editor: TiptapEditor | null) {
         let scheduled = false
         let lastSerialized = ''
 
+        let frame: number | null = null
         function send() {
+            frame = null
+            // The frame can outlive the effect: a hand-off destroys this editor
+            // in the same commit that mounts the next one.
+            if (!editor || editor.isDestroyed) return
+            try {
+                sendUnguarded()
+            } catch (error) {
+                reportPageError('state-update', error)
+            }
+        }
+        function sendUnguarded() {
             scheduled = false
             if (!editor) return
             const payload = deriveWebViewState(editor)
@@ -504,7 +575,7 @@ function useStateBroadcast(editor: TiptapEditor | null) {
         function schedule() {
             if (scheduled) return
             scheduled = true
-            requestAnimationFrame(send)
+            frame = requestAnimationFrame(send)
         }
 
         editor.on('transaction', schedule)
@@ -523,6 +594,7 @@ function useStateBroadcast(editor: TiptapEditor | null) {
             editor.off('update', schedule)
             editor.off('focus', schedule)
             editor.off('blur', schedule)
+            if (frame !== null) cancelAnimationFrame(frame)
         }
     }, [editor])
 }
@@ -530,14 +602,20 @@ function useStateBroadcast(editor: TiptapEditor | null) {
 /**
  * Dispatch host → WebView messages.
  *
- * Two envelope shapes arrive: our own namespaced messages, and TenTap's bridge
- * actions, which wrap the real action as `{type:'action', payload:{type,...}}`.
- * Unwrapping that is load-bearing — without it every native toolbar button
- * reads as type 'action', matches nothing, and silently no-ops.
+ * Every message is our own `{namespace, type, payload}` envelope: document
+ * channels, file auth, the trigger roster, caret and keyboard instructions,
+ * and the toolbar's format commands.
  */
 function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
     useEffect(() => {
         if (!editor) return
+        // A hand-off rebuilds the editor; if the keyboard is still up the new
+        // one needs the same room at the bottom.
+        try {
+            reapplyKeyboardInset(editor)
+        } catch (error) {
+            reportPageError('keyboard-inset', error)
+        }
 
         function onMessage(evt: MessageEvent | Event) {
             const data = (evt as MessageEvent).data
@@ -548,37 +626,11 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
             } catch {
                 return
             }
-
-            // Handled by useYjsRelay; not a format action.
-            if (parsed.namespace === 'yjs') return
-            // Likewise useAwarenessRelay. Both bails matter: dispatchFormatAction
-            // no-ops on an unknown action today, so without them a relay message
-            // would fall through and become a latent bug the next time its
-            // default branch does something.
-            if (parsed.namespace === 'awareness') return
-            if (parsed.namespace === 'markdown') {
-                handleMarkdownMessage(editor, parsed, isCollab)
-                return
+            try {
+                dispatchHostMessage(editor, parsed, isCollab)
+            } catch (error) {
+                reportPageError(`${parsed.namespace}/${parsed.type}`, error)
             }
-            if (parsed.namespace === 'html') {
-                handleHtmlMessage(editor, parsed, isCollab)
-                return
-            }
-            if (parsed.namespace === 'app' && parsed.type === APP_FILE_TOKEN) {
-                const auth = parsed.payload as RichEditorFileAuth | undefined
-                if (auth && typeof auth.token === 'string' && typeof auth.baseURL === 'string') {
-                    setFileAuth(auth)
-                }
-                return
-            }
-            if (parsed.namespace === 'app' && parsed.type === APP_TRIGGER_ITEMS) {
-                const roster = parsed.payload as TriggerItemsPayload | undefined
-                if (roster && typeof roster.triggerId === 'string' && Array.isArray(roster.items)) {
-                    setTriggerItems(roster.triggerId, roster.items)
-                }
-                return
-            }
-            dispatchFormatAction(editor, unwrapTenTapAction(parsed))
         }
 
         window.addEventListener('message', onMessage)
@@ -591,6 +643,63 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
             document.removeEventListener('message', onMessage)
         }
     }, [editor, isCollab])
+}
+
+function dispatchHostMessage(editor: TiptapEditor, parsed: EditorMessage, isCollab: boolean): void {
+    // Handled by useYjsRelay; not a format action.
+    if (parsed.namespace === 'yjs') return
+    // Likewise useAwarenessRelay. Both bails matter: dispatchFormatAction
+    // no-ops on an unknown action today, so without them a relay message
+    // would fall through and become a latent bug the next time its
+    // default branch does something.
+    if (parsed.namespace === 'awareness') return
+    if (parsed.namespace === 'markdown') {
+        handleMarkdownMessage(editor, parsed, isCollab)
+        return
+    }
+    if (parsed.namespace === 'html') {
+        handleHtmlMessage(editor, parsed, isCollab)
+        return
+    }
+    if (parsed.namespace === 'app') {
+        handleAppMessage(editor, parsed)
+        return
+    }
+    if (parsed.namespace === 'format') dispatchFormatAction(editor, parsed)
+}
+
+/**
+ * The 'app' namespace once an editor exists: credentials for protected images,
+ * the mention roster, and the caret / keyboard instructions. (Init and park
+ * are the stage-one Editor's, above.)
+ */
+function handleAppMessage(editor: TiptapEditor, message: EditorMessage): void {
+    switch (message.type) {
+        case APP_FILE_TOKEN: {
+            const auth = message.payload as RichEditorFileAuth | undefined
+            if (auth && typeof auth.token === 'string' && typeof auth.baseURL === 'string') {
+                setFileAuth(auth)
+            }
+            break
+        }
+        case APP_TRIGGER_ITEMS: {
+            const roster = message.payload as TriggerItemsPayload | undefined
+            if (roster && typeof roster.triggerId === 'string' && Array.isArray(roster.items)) {
+                setTriggerItems(roster.triggerId, roster.items)
+            }
+            break
+        }
+        case APP_FOCUS:
+            focusEditor(editor, message.payload)
+            break
+        case APP_KEYBOARD_INSET: {
+            const bottom = readKeyboardInset(message.payload)
+            if (bottom !== null) applyKeyboardInset(editor, bottom)
+            break
+        }
+        default:
+            break
+    }
 }
 
 function handleMarkdownMessage(
@@ -646,24 +755,17 @@ export function handleHtmlMessage(
     }
 }
 
-interface IncomingAction {
-    namespace?: string
+interface FormatAction {
     type?: string
     payload?: unknown
 }
 
-// TenTap's useEditorBridge wraps every bridge command as
-// {type:'action', payload:{type:'toggle-bold'}}. Our own 'format' messages are
-// already flat and pass through untouched.
-function unwrapTenTapAction(parsed: IncomingAction): IncomingAction {
-    if (parsed.type !== 'action') return parsed
-    const inner = parsed.payload
-    if (inner === null || typeof inner !== 'object') return parsed
-    if (typeof (inner as IncomingAction).type !== 'string') return parsed
-    return inner as IncomingAction
-}
-
-function dispatchFormatAction(editor: TiptapEditor, action: IncomingAction): void {
+/**
+ * One toolbar command, as `buildWebViewEditorCommands` sends it: a flat
+ * `{namespace:'format', type, payload}`. Exported so the round-trip can be
+ * tested against a real Tiptap instance without a WebView.
+ */
+export function dispatchFormatAction(editor: TiptapEditor, action: FormatAction): void {
     const chain = () => editor.chain().focus()
     switch (action.type) {
         case 'toggle-bold':
@@ -684,8 +786,9 @@ function dispatchFormatAction(editor: TiptapEditor, action: IncomingAction): voi
         case 'toggle-code-block':
             chain().toggleCodeBlock().run()
             break
-        // TenTap's list bridges emit camelCase action strings, not kebab-case.
-        // The literal has to match exactly or the message is dropped.
+        // The list types are camelCase on the wire (a spelling inherited from
+        // the bridge library this page once ran under, and kept: both pages
+        // and the command builder agree on it).
         case 'toggle-bulletList':
             chain().toggleBulletList().run()
             break
@@ -723,8 +826,8 @@ function dispatchFormatAction(editor: TiptapEditor, action: IncomingAction): voi
         case 'redo':
             chain().redo().run()
             break
-        case 'focus':
-            editor.commands.focus('end')
+        case FORMAT_SET_EDITABLE:
+            if (typeof action.payload === 'boolean') editor.setEditable(action.payload)
             break
         default:
             break
@@ -733,8 +836,8 @@ function dispatchFormatAction(editor: TiptapEditor, action: IncomingAction): voi
 
 type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
 
-// TenTap's HeadingBridge emits the level bare; our own format messages wrap it
-// in {level}. Accept both rather than depending on which side sent it.
+// The level travels bare (`toggle-heading`'s payload is the number); an
+// `{level}` object is accepted too so a caller cannot get it wrong.
 function readHeadingLevel(payload: unknown): HeadingLevel | null {
     const raw =
         typeof payload === 'number'
@@ -779,6 +882,14 @@ function useContentHeight(editor: TiptapEditor | null) {
         if (!editor) return
         let last = -1
         function report() {
+            if (!editor || editor.isDestroyed) return
+            try {
+                reportUnguarded()
+            } catch (error) {
+                reportPageError('content-height', error)
+            }
+        }
+        function reportUnguarded() {
             const node = editor?.view.dom as HTMLElement | undefined
             if (!node) return
             const children = Array.from(node.children) as HTMLElement[]

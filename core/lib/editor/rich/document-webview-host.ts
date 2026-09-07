@@ -9,7 +9,7 @@ import { makeMessage } from '../message-bus/types'
  * (mail) — differing only in the namespace and the payload they carry, so the
  * mechanics live here once and each channel is a thin subclass.
  *
- * TenTap ships `asyncMessages` for this shape, but it is not usable here — its
+ * The bridge library this once ran under shipped a helper for this shape, but its
  * promise has no timeout and no reject path, so a WebView that dies mid-request
  * leaks a pending promise forever. Both channels sit on a save path (a
  * description save, a draft save on compose close), so that failure mode would

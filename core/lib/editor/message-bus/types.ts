@@ -1,18 +1,18 @@
-// Cross-WebView message protocol used by any editor hook backed by
-// TenTap's customSource pattern. TenTap's built-in messages keep their
-// existing shape under namespaces 'core' and 'format' so TenTap's
-// useBridgeState and built-in bridges continue to work unmodified.
-// Additional namespaces are reserved for app-specific concerns:
+// Cross-WebView message protocol between the native host
+// (lib/editor/use-webview-editor.tsx) and the editor pages it hosts. Two
+// page lifecycle messages — `editor-ready` and `stateUpdate` — travel bare,
+// without a namespace; everything else is one of these:
 //
-//   'app'           - package-specific init/lifecycle (init payload, etc.)
+//   'app'           - package-specific init/lifecycle (init payload, park,
+//                     editor-mounted, focus, keyboard-inset, etc.)
 //   'awareness'     - Yjs Awareness cursor/presence reporting
 //   'comment'       - comment threads (reserved for v1.1; protected from
 //                     future collision now)
-//   'core'          - TenTap's CoreMessages (StateUpdate, EditorReady, etc.)
 //   'find-replace'  - in-WebView find/replace plugin command + state
 //                     channel (used by the text package's FindReplaceBar
 //                     on native).
-//   'format'        - TenTap's per-bridge format commands (ToggleBold, etc.)
+//   'format'        - toolbar commands, flat {namespace:'format', type, payload}
+//                     (toggle-bold, set-link, insert-table, set-editable, …)
 //   'markdown'      - set/get for editors whose document format IS markdown
 //                     (card descriptions). The WebView owns the serializer,
 //                     so nothing pivots through HTML.

@@ -25,11 +25,11 @@ const POPOVER_GAP_PX = 4
 const POPOVER_HEIGHT_ESTIMATE_PX = 320
 const POPOVER_WIDTH_PX = 260
 
-// Minimal duck-typed shape we use off the WebView ref. The TenTap
-// webviewRef points at the underlying react-native-webview instance,
-// which exposes both .measure (a RN View method) and .postMessage
-// (an RN-WebView method). We don't depend on the full type — every
-// callsite narrows on `typeof ... === 'function'` before invoking.
+// Minimal duck-typed shapes we use off the two refs the editor hook hands
+// out: `measureRef` is the plain host View wrapping the WebView (measurable);
+// `webViewRef` is a poster shim keyed on the pooled native instance
+// (postMessage only). We don't depend on the full types — every callsite
+// narrows on `typeof ... === 'function'` before invoking.
 interface WebViewMeasurable {
     measure(
         cb: (

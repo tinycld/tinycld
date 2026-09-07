@@ -50,6 +50,12 @@ export default defineConfig({
                 find: /^app-updater$/,
                 replacement: path.join(APP_DIR, 'tests', 'app-updater-stub.cjs'),
             },
+            // editor-webview likewise lives in modules/ with no node_modules
+            // entry; the stub mirrors its inert web build.
+            {
+                find: /^editor-webview$/,
+                replacement: path.join(APP_DIR, 'tests', 'editor-webview-stub.cjs'),
+            },
             // @react-native-async-storage/async-storage requires the RN native
             // bridge; redirect to an in-memory stub so unit tests run without it.
             {
@@ -133,15 +139,6 @@ export default defineConfig({
             {
                 find: /^expo-image$/,
                 replacement: path.join(APP_DIR, '..', 'tests', 'expo-image-stub.tsx'),
-            },
-            // @10play/tentap-editor's `react-native` export condition resolves
-            // to src/index.tsx, whose RichText and bridge modules reach
-            // react-native internals carrying Flow syntax. Same failure mode as
-            // the react-native-svg stub above; without it any test importing
-            // use-webview-editor.tsx dies at collect time.
-            {
-                find: /^@10play\/tentap-editor$/,
-                replacement: path.join(APP_DIR, 'tests', 'tentap-editor-stub.cjs'),
             },
             // ~/* — package source. Resolved relative to the package's own dir
             // at invocation time via the test root, so we map it dynamically below.
