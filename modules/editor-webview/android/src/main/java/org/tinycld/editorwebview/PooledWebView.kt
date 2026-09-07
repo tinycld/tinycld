@@ -32,8 +32,6 @@ class PooledWebView(context: Context, val instanceKey: String) : WebView(context
     settings.domStorageEnabled = true
     settings.allowFileAccess = false
     settings.allowContentAccess = false
-    settings.allowFileAccessFromFileURLs = false
-    settings.allowUniversalAccessFromFileURLs = false
     settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
     settings.setSupportMultipleWindows(false)
     settings.builtInZoomControls = false
