@@ -1,20 +1,31 @@
 import {
-    type BridgeExtension,
-    type EditorBridge,
-    useBridgeState,
-    useEditorBridge,
-} from '@10play/tentap-editor'
+    destroy,
+    EditorWebView,
+    type EditorWebViewMessageEvent,
+    postMessage as postToInstance,
+    requestFocus,
+} from 'editor-webview'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { View } from 'react-native'
-import type { WebViewMessageEvent } from 'react-native-webview'
 import { captureException } from '../errors'
 import { log } from '../logger'
 import { deriveToolbarState } from './derive-toolbar-state'
+import { createEditorStateStore, type EditorStateStore } from './editor-state-store'
 import { createHeightStore, type HeightStore } from './height-store'
 import { type EditorMessage, makeMessage } from './message-bus/types'
+import { useKeyboardInset } from './native-host/use-keyboard-inset'
+import {
+    APP_FOCUS,
+    APP_INIT,
+    EDITOR_READY,
+    FORMAT_SET_EDITABLE,
+    STATE_UPDATE,
+} from './rich/webview/source/protocol'
 import type { EditorCommands, EditorHandle, EditorResult } from './types'
-import { buildWebViewEditorCommands } from './webview-editor-commands'
+import { buildWebViewEditorCommands, type PostEditorMessage } from './webview-editor-commands'
+
+declare const __DEV__: boolean
 
 export interface UseWebViewEditorOptions {
     // The pre-built HTML string that hosts the in-WebView editor.
@@ -23,34 +34,30 @@ export interface UseWebViewEditorOptions {
     // configured with whatever extensions the package wants.
     editorHtml: string
 
-    // TenTap bridges for native<->WebView command routing. These are
-    // the standard ones (BoldBridge, ItalicBridge, ...) plus any
-    // package-specific bridges. They run on the native side; their
-    // counterpart TipTap extensions live inside the WebView (compiled
-    // into editorHtml).
-    bridgeExtensions: BridgeExtension[]
-
     // App-specific init payload posted into the WebView once it
     // signals EditorReady. Typed as unknown because each package
     // chooses what to send (auth token, room id, user identity, ...).
     // The in-WebView Editor.tsx parses it via JSON.parse.
     initPayload: unknown
 
-    // Forwarded to TenTap's bridge.setEditable. Toggles whether the
-    // editor accepts user input; consumers also use this to disable
-    // their toolbar UI.
+    // Whether the editor accepts user input. Sent to the page as a
+    // `format/set-editable` message on change; consumers also use this to
+    // disable their toolbar UI.
     editable: boolean
 
-    // Forwarded to useEditorBridge for things like webview
-    // background color, etc. Optional.
-    theme?: Record<string, unknown>
+    // Background of the WebView itself, so a page that has not painted yet
+    // shows the app's colour rather than white. Optional.
+    backgroundColor?: string
 
-    // Optional TenTap-level avoidIosKeyboard flag. Defaults to true.
-    avoidIosKeyboard?: boolean
+    // Pad the document's bottom by the keyboard's height so the caret can
+    // scroll clear of it (see native-host/use-keyboard-inset.ts). Defaults to
+    // true.
+    avoidKeyboard?: boolean
 
-    // Optional initial content (HTML). Most consumers won't set this
-    // because the editor populates itself from the Y.Doc bootstrap.
-    initialContent?: string
+    // Identity of the pooled native WebView this hook owns. Defaults to a
+    // fresh id per hook mount; a consumer that already names its editor (the
+    // rich editor's editorInstanceId) passes that so logs line up.
+    instanceKey?: string
 
     // Whether the WebView contains its own scroll behavior. Pass false
     // when the editor is embedded inside an outer ScrollView (e.g. mail
@@ -71,9 +78,7 @@ export interface UseWebViewEditorOptions {
     // Subscribe to messages with the 'ui' namespace from the WebView.
     // Called for every parsable message whose namespace === 'ui'; the
     // payload shape depends on the message type and is the consumer's
-    // responsibility to interpret. TenTap's built-in messages (state
-    // updates, core action responses) still flow through their own
-    // channel via bridgeExtensions — we don't intercept those.
+    // responsibility to interpret.
     //
     // The callback identity is read through a ref, so the consumer
     // doesn't have to memoize it.
@@ -83,12 +88,11 @@ export interface UseWebViewEditorOptions {
     // its injected scroll listener. Anchored popovers rendered by the
     // host (slash menu, future image/comment popovers) subscribe to
     // this and dismiss themselves so the overlay doesn't drift away
-    // from the anchored element when the user scrolls. iOS RN-WebView's
-    // own `onScroll` does not fire for in-document scrolling when
-    // `scrollEnabled` is false (which TenTap sets), so the WebView
-    // installs a document-level scroll listener that posts a
-    // {namespace:'ui', type:'document-scroll'} message; this callback
-    // is invoked on every such message.
+    // from the anchored element when the user scrolls. A WebView's own
+    // scroll events do not fire for in-document scrolling when
+    // `scrollEnabled` is false, so the WebView installs a document-level
+    // scroll listener that posts a {namespace:'ui', type:'document-scroll'}
+    // message; this callback is invoked on every such message.
     //
     // The callback identity is read through a ref.
     onScroll?: () => void
@@ -122,9 +126,9 @@ export interface UseWebViewEditorOptions {
 
     // Subscribe to off-protocol {kind, payload} messages emitted by the
     // WebView's suggestion list bridge. Unlike the namespace-based
-    // channels above, the Phase 2c suggestion bridge posts a flat
-    // envelope ({kind: 'suggestion.changed', payload}) so the receiver
-    // can route by kind string into the NativeSuggestionBridge's
+    // channels above, the suggestion bridge posts a flat envelope
+    // ({kind: 'suggestion.changed', payload}) so the receiver can route
+    // by kind string into the NativeSuggestionBridge's
     // processIncomingMessage(kind, payload) without going through the
     // EditorMessage type. Today the only kind is 'suggestion.changed';
     // additional kinds (e.g. 'suggestion.list-reply') can be added
@@ -134,11 +138,11 @@ export interface UseWebViewEditorOptions {
     onSuggestionMessage?: (kind: string, payload: unknown) => void
 
     // Subscribe to messages the WebView posts on namespaces this hook has no
-    // dedicated channel for — today 'markdown' (the shared rich editor's
-    // set/get responses) and 'app' (submit-shortcut, escape). Reserved 'yjs'
-    // updates will arrive here too when native collaboration lands, which is
-    // why this is a namespace-agnostic fallback rather than another named
-    // callback: adding a namespace shouldn't mean adding a prop.
+    // dedicated channel for — today 'markdown', 'html' (the shared rich
+    // editor's document channels) and 'app' (submit-shortcut, escape,
+    // editor-mounted), plus 'yjs' and 'awareness' for collaboration. A
+    // namespace-agnostic fallback rather than another named callback: adding
+    // a namespace shouldn't mean adding a prop.
     //
     // Runs after the named channels above, so it never shadows them.
     //
@@ -161,10 +165,10 @@ export interface PostedInit {
  *
  * `epoch` counts the page's boots — it starts at 0 (not yet ready) and each
  * `editor-ready` bumps it. A page that boots again has lost everything init
- * built, so the SAME generation must go out again. That happens more than a
- * crash: re-parenting the warm editor's WebView on a handover recreates the
- * native view, and the page reloads while the host still remembers sending
- * this generation — which left the editor at its empty stage one.
+ * built, so the SAME generation must go out again. With the pooled native
+ * host a remount of the React component is NOT a boot: the page moves between
+ * hosts intact. A second boot means the WebView's content process died and
+ * the source was reloaded, or the instance was destroyed and recreated.
  */
 export function shouldPostInit(
     lastPosted: PostedInit | null,
@@ -176,23 +180,25 @@ export function shouldPostInit(
     return incomingGeneration > lastPosted.generation || epoch !== lastPosted.epoch
 }
 
-// Shared TenTap-customSource wrapper. Encapsulates:
-//   - useEditorBridge with the package's editorHtml + bridges
-//   - useBridgeState subscription
+/** Distinguishes concurrently-mounted editors. Never reused within a session. */
+let webViewInstanceCounter = 0
+
+// The one place the native WebView is hosted. Encapsulates:
+//   - the pooled `editor-webview` host and the instance key that owns it
+//   - message routing out of the page (namespaces, state, height, ready)
 //   - the EditorReady -> init-payload handshake
-//   - adapting TenTap's command surface to the EditorResult contract
+//   - the EditorResult contract: handle, commands, toolbar state, poster
 //
 // Returns the same EditorResult shape consumers expect from any
 // useDocumentEditor / useMailEditor variant.
 export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult {
     const {
         editorHtml,
-        bridgeExtensions,
         initPayload,
         editable,
-        theme,
-        avoidIosKeyboard = true,
-        initialContent,
+        backgroundColor,
+        avoidKeyboard = true,
+        instanceKey,
         scrollEnabled = true,
         minHeight = 72,
         onUiMessage,
@@ -206,9 +212,8 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
 
     // Pin onUiMessage behind a ref so the consumer can pass an
     // identity-fresh closure on each render without remounting the
-    // WebView. The RichText component is recreated when EditorComponent
-    // does its useMemo dance below; reading the latest callback off
-    // the ref keeps the message bridge stable across re-renders.
+    // host. Reading the latest callback off the ref keeps the message
+    // handler stable across re-renders.
     const onUiMessageRef = useRef(onUiMessage)
     onUiMessageRef.current = onUiMessage
 
@@ -236,41 +241,47 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // Same ref-backed pattern for the off-protocol suggestion-bridge
     // messages. The handler is keyed on parsed.kind (not namespace) so
     // the WebView's list-bridge can keep its simpler {kind, payload}
-    // shape from Phase 2c Task 12.
+    // shape.
     const onSuggestionMessageRef = useRef(onSuggestionMessage)
     onSuggestionMessageRef.current = onSuggestionMessage
 
     // Namespace-agnostic fallback for channels without a dedicated ref above.
-    // The shared rich editor routes 'markdown' and 'app' through here.
+    // The shared rich editor routes 'markdown', 'html' and 'app' through here.
     const onMessageRef = useRef(onMessage)
     onMessageRef.current = onMessage
 
-    const liveBridge = useEditorBridge({
-        initialContent,
-        bridgeExtensions,
-        theme,
-        autofocus: false,
-        avoidIosKeyboard,
-        customSource: editorHtml,
-    })
+    // The pooled WebView this hook owns, for the hook's whole life. The
+    // React host component may mount and unmount many times over that life —
+    // the warm editor is rendered off-screen while parked and inside whichever
+    // surface holds it — and the page survives every one of those, because
+    // the native pool only releases it here, when the OWNER goes away.
+    const keyRef = useRef('')
+    if (!keyRef.current) keyRef.current = instanceKey ?? `webview-${++webViewInstanceCounter}`
+    const key = keyRef.current
+    useEffect(() => () => destroy(key), [key])
 
-    // useEditorBridge returns a fresh wrapper object every render even
-    // though its underlying refs are stable. Pinning the first wrapper
-    // prevents the WebView from remounting on every parent re-render.
-    // Mirrors mail's useMailEditor pattern.
-    const bridgeRef = useRef<EditorBridge>(liveBridge)
-    const bridge = bridgeRef.current
+    // Generic message poster. Returns false when no pooled instance exists
+    // yet, so callers can choose to swallow, retry, or surface the failure.
+    // Stable for the hook's life, which is what lets consumers hold it in
+    // memoized bridges without a ref dance.
+    const post = useCallback<PostEditorMessage>(
+        message => postToInstance(key, JSON.stringify(message)),
+        [key]
+    )
 
-    const bridgeState = useBridgeState(bridge)
+    // The page's toolbar state, replaced wholesale by each `stateUpdate` it
+    // posts. Held in a store rather than React state so a post re-renders
+    // only through the subscription below, never the memoized host component.
+    const stateStoreRef = useRef<EditorStateStore>(null as unknown as EditorStateStore)
+    if (stateStoreRef.current === null) stateStoreRef.current = createEditorStateStore()
+    const stateStore = stateStoreRef.current
+    const editorState = useSyncExternalStore(stateStore.subscribe, stateStore.get, stateStore.get)
 
-    // Fire onFocusChange on the EDGE, not on every state update: the
-    // WebView rebroadcasts its whole payload on each transaction, so
-    // calling on every render would invoke the consumer once per
-    // keystroke. Undefined (a page that doesn't broadcast the field)
-    // never produces an edge, so non-rich WebView editors are unaffected.
-    const isWebViewFocused = (bridgeState as unknown as Record<string, unknown>).isFocused
+    // Focus edge-detection. The stateUpdate payload carries an `isFocused`
+    // flag on every broadcast; consumers care about the transition only.
     const focusChangeRef = useRef(onFocusChange)
     focusChangeRef.current = onFocusChange
+    const isWebViewFocused = editorState.isFocused
     const lastFocusRef = useRef<boolean | undefined>(undefined)
     useEffect(() => {
         if (typeof isWebViewFocused !== 'boolean') return
@@ -279,20 +290,19 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         focusChangeRef.current?.(isWebViewFocused)
     }, [isWebViewFocused])
 
-    // Plumb editable changes through to the WebView. setEditable is
-    // safe to call before EditorReady; TenTap queues it.
+    // Plumb editable changes through to the page. Before the page has an
+    // editor the message is dropped, and the init payload's own `editable`
+    // covers the editor that is then built.
     useEffect(() => {
-        bridge.setEditable(editable)
-    }, [bridge, editable])
+        post(makeMessage('format', FORMAT_SET_EDITABLE, editable))
+    }, [post, editable])
 
     // The WebView's in-page React app posts {type:'editor-ready'} as
     // soon as the top-level <Editor /> mounts — BEFORE it constructs
     // its TipTap instance, because TipTap construction is gated on the
     // init payload from native. So this is the right signal to gate
-    // the init post on. Note that we can't use bridgeState.isReady
-    // (TenTap's StateUpdate-driven flag) for this: that one only flips
-    // when the WebView sends a `stateUpdate`, which our custom Editor
-    // only sends after init arrives — chicken-and-egg.
+    // the init post on. Note that we can't use the page's stateUpdate
+    // for this: it is only sent after init arrives — chicken-and-egg.
     //
     // A counter rather than a flag, because the page can boot more than once
     // per mount of this hook (see shouldPostInit), and a second boot has to
@@ -309,13 +319,13 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     const loggedMountRef = useRef(false)
     if (!loggedMountRef.current) {
         loggedMountRef.current = true
-        log.debug('core.editor.webview', 'mounted (t0)')
+        log.debug('core.editor.webview', 'mounted (t0)', { instanceKey: key })
     }
 
     // Height the page reported for its own content, held in a tiny store
     // rather than state so that a new measurement re-renders ONLY the box
     // wrapping the WebView. Putting it in state here would change
-    // EditorComponent's identity and remount the WebView on every
+    // EditorComponent's identity and remount the host on every
     // measurement — see the memo below.
     // Created once and never reassigned, so both the store and its setter are
     // stable for the life of the hook. Read into locals rather than through
@@ -337,68 +347,57 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         // treat those as a single one-shot init, exactly as before.
         const incoming = typeof generation === 'number' ? generation : 0
         if (!shouldPostInit(lastInitRef.current, incoming, pageEpoch)) return
-        const webview = bridge.webviewRef?.current
-        if (!webview) return
-        const message = makeMessage('app', 'init', initPayload)
+        const message = makeMessage('app', APP_INIT, initPayload)
         try {
+            // No instance yet: nothing to post to. The generation is
+            // deliberately NOT recorded, so the next epoch or render retries.
+            if (!post(message)) return
             log.debug('core.editor.webview', 'init-sent', {
                 sinceMountMs: Date.now() - mountAtRef.current,
                 generation: incoming,
                 epoch: pageEpoch,
             })
-            webview.postMessage(JSON.stringify(message))
             lastInitRef.current = { generation: incoming, epoch: pageEpoch }
         } catch (err) {
-            // postMessage can fail mid-handshake; the next render's
-            // pageEpoch or bridge identity change will retry. The generation
-            // is deliberately NOT recorded here, so the retry still fires.
             captureException('editor.postInit', err, { generation: incoming })
         }
-    }, [bridge, pageEpoch, initPayload])
+    }, [post, pageEpoch, initPayload])
 
     const editor: EditorHandle = useMemo(
         () => ({
-            getHTML: () => bridge.getHTML(),
-            getText: () => bridge.getText(),
-            setContent: (html: string) => bridge.setContent(html),
-            focus: (position?: 'start' | 'end') => bridge.focus(position ?? 'end'),
-            clear: () => bridge.setContent(''),
-            // Native selection query is a request/response round-trip.
-            // The in-WebView editor responds to {app,getSelection,reqId}
-            // with {app,selectionResult,reqId}. Each call generates a
-            // fresh requestId and waits on a one-shot resolver. v1
-            // stub: return null until the Phase 4 work wires the
-            // selection-query bridge. Phase 5 (awareness cursor) is the
-            // first consumer.
+            // The document channels are the rich editor's (markdown / html
+            // hosts layered on in use-rich-editor.native.tsx); text's page
+            // owns its document through Yjs and never reads it this way. What
+            // is left here is deliberately inert rather than a request nobody
+            // answers.
+            getHTML: () => Promise.resolve(''),
+            getText: () => Promise.resolve(''),
+            setContent: () => {},
+            clear: () => {},
+            // Two halves: the native view becomes first responder (which is what
+            // brings the keyboard up), and the page moves its caret.
+            focus: position => {
+                requestFocus(key)
+                post(makeMessage('app', APP_FOCUS, position ?? 'end'))
+            },
+            // Native selection query is a request/response round-trip the
+            // pages don't answer yet; null is the documented "not ready".
             getSelection: () => Promise.resolve(null),
         }),
-        [bridge]
+        [key, post]
     )
 
-    const commands: EditorCommands = useMemo(() => buildWebViewEditorCommands(bridge), [bridge])
+    const commands: EditorCommands = useMemo(() => buildWebViewEditorCommands(post), [post])
 
-    // bridgeState carries every field posted in the WebView's
-    // stateUpdate payload, but TenTap only types the fields registered
-    // via bridge extensions. Our customSource Editor posts
-    // isInTable/selectionEmpty/wordCount/etc. too — deriveToolbarState
-    // reads them through a loose record view to avoid a declaration-
-    // merging ceremony per consumer. The helper itself is pure so a
-    // unit test can drive it against a synthetic bridgeState shape.
-    const toolbarState = deriveToolbarState(bridgeState as unknown as Record<string, unknown>)
+    useKeyboardInset(post, avoidKeyboard)
 
-    // Wraps the WebView's onMessage so TenTap's bridge-extension dispatch
-    // (state updates, core action responses) still runs while we layer
-    // on 'ui' / 'comment' namespace observation. exclusivelyUseCustomOnMessage
-    // is explicitly false so RichText's own handler keeps firing —
-    // passing true would silence every TenTap bridge, including the
-    // StateUpdate that powers useBridgeState. The handler ignores any
-    // message that doesn't carry our explicit { namespace } envelope
-    // (TenTap's own messages are typed { type, payload } without one).
-    //
-    // 'document-scroll' is a special-case 'ui' message that the WebView
-    // posts from a window-level scroll listener; we fan it out to
-    // onScroll(...) instead of forwarding to onUiMessage so consumers
-    // can take it without writing a switch over message.type.
+    // The page posts every field of its toolbar state in one object; our
+    // pages add fields (isInTable, wordCount, …) beyond the basic marks.
+    // deriveToolbarState narrows them all through a loose record view. The
+    // helper itself is pure so a unit test can drive it against a synthetic
+    // payload.
+    const toolbarState = deriveToolbarState(editorState)
+
     // The page measured itself. A WebView has no intrinsic height, so this is
     // the only way the container can track its content — without it the editor
     // is clipped to a guess (or, inside a ScrollView where flex resolves to
@@ -415,8 +414,16 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         [setContentHeight]
     )
 
+    // Everything the page posts arrives here. Bare messages (`editor-ready`,
+    // `stateUpdate`) are the page's lifecycle; the rest carry our
+    // {namespace} envelope and fan out to the callbacks above.
+    //
+    // 'document-scroll' is a special-case 'ui' message that the WebView
+    // posts from a window-level scroll listener; we fan it out to
+    // onScroll(...) instead of forwarding to onUiMessage so consumers
+    // can take it without writing a switch over message.type.
     const onWebViewMessage = useMemo(
-        () => (event: WebViewMessageEvent) => {
+        () => (event: EditorWebViewMessageEvent) => {
             const data = event?.nativeEvent?.data
             if (typeof data !== 'string') return
             let parsed: EditorMessage
@@ -427,11 +434,8 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             }
             // The WebView's bootstrap posts {type:'editor-ready'} as
             // its first message, before TipTap mounts. That's the
-            // signal we use to gate the init post — see pageEpoch
-            // above. TenTap's onMessage also sees this (we run
-            // alongside its dispatch), but it doesn't flip any
-            // bridgeState flag from it.
-            if (parsed.type === 'editor-ready') {
+            // signal we use to gate the init post — see pageEpoch above.
+            if (parsed.type === EDITOR_READY && parsed.namespace === undefined) {
                 setPageEpoch(epoch => {
                     log.debug('core.editor.webview', 'page-ready', {
                         sinceMountMs: Date.now() - mountAtRef.current,
@@ -439,6 +443,10 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                     })
                     return epoch + 1
                 })
+                return
+            }
+            if (parsed.type === STATE_UPDATE && parsed.namespace === undefined) {
+                stateStore.set(parsed.payload)
                 return
             }
             if (parsed.namespace === 'ui') {
@@ -473,43 +481,25 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                 return
             }
             // Anything left that carries a namespace goes to the generic
-            // subscriber — the shared rich editor's 'markdown' and 'app'
-            // channels, plus 'yjs' and 'awareness' for native collaboration.
+            // subscriber — the shared rich editor's document and 'app'
+            // channels, plus 'yjs' and 'awareness' for collaboration.
             if (typeof parsed.namespace === 'string') {
                 onMessageRef.current?.(parsed)
             }
         },
-        // Everything else is read through a ref; applyContentHeight is itself
-        // memoized on a store setter created once per mount, so this list never
-        // changes in practice.
-        [applyContentHeight]
+        // Everything else is read through a ref; applyContentHeight and the
+        // store are created once per mount, so this list never changes in
+        // practice.
+        [applyContentHeight, stateStore]
     )
 
-    // The anchor host overlays measure against.
-    //
-    // NOT the WebView ref. Under the New Architecture (Bridgeless) TenTap's
-    // `webviewRef.current` is a Fabric native-command handle exposing only
-    // WebView commands — goForward, reload, postMessage, injectJavaScript and
-    // friends — with no `measure` or `measureInWindow` on it or its prototype.
-    // Every anchored popover therefore measured null, and the controller's
-    // fail-closed path dismissed the request before drawing anything: on
-    // device the mention picker never appeared at all.
-    //
-    // This ref points at the plain host View wrapping the WebView, which is an
-    // ordinary RN view with the usual measurement methods. It is the same box,
-    // so its origin is the WebView's origin — exactly what the popover math
-    // wants — and it keeps working regardless of what TenTap's ref becomes.
+    // The anchor host overlays measure against: the plain host View wrapping
+    // the WebView, which is the same box and an ordinary measurable view.
     const measureRef = useRef<View | null>(null)
 
-    // RichText is loaded lazily inside the EditorComponent because this
-    // hook is a single non-platform file (not a .native.tsx split). A
-    // top-level import of RichText would force web bundles to resolve
-    // react-native-webview, which has no web shim. The lazy require runs
-    // only when EditorComponent renders, which only happens on native.
     const EditorComponent = useMemo(
         () =>
             function WebViewEditorContent() {
-                const { RichText } = require('@10play/tentap-editor')
                 return (
                     // Height is the page's to report, not ours to guess. A
                     // WebView has no intrinsic height, and `flex-1` resolves
@@ -528,52 +518,42 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                         grows={!scrollEnabled}
                         measureRef={measureRef}
                     >
-                        <RichText
-                            editor={bridge}
+                        <EditorWebView
+                            instanceKey={key}
+                            source={editorHtml}
                             scrollEnabled={scrollEnabled}
+                            webBackgroundColor={backgroundColor}
+                            inspectable={__DEV__}
+                            style={{ flex: 1 }}
                             onMessage={onWebViewMessage}
-                            exclusivelyUseCustomOnMessage={false}
                         />
                     </EditorHeightBox>
                 )
             },
         // contentHeight is deliberately ABSENT: this memo produces a component
         // IDENTITY, and consumers render it as <EditorComponent />. A new
-        // identity unmounts and remounts the WebView, which resets its
-        // viewport to minHeight — so feeding the measured height in here
-        // makes the editor thrash between 72px and its real height and never
-        // settle. The height is subscribed to inside EditorHeightBox instead.
+        // identity remounts the host — no longer a page reload, but still a
+        // detach and re-attach of the native view — so feeding the measured
+        // height in here would churn the host on every measurement. The
+        // height is subscribed to inside EditorHeightBox instead.
         // measureRef is deliberately absent: it is a useRef object, stable for
-        // the life of the mount. Listing it would be a no-op at best, and this
-        // memo produces a component IDENTITY — a new one remounts the WebView.
-        [bridge, scrollEnabled, onWebViewMessage, minHeight, heightStore]
+        // the life of the mount.
+        [key, editorHtml, scrollEnabled, onWebViewMessage, minHeight, heightStore, backgroundColor]
     )
 
-    // Surface the WebView ref through the EditorResult so host code can
-    // call .measure(...) to translate the WebView's viewport coords
-    // into screen coords (for anchored popovers) and .postMessage(...)
-    // to send 'ui' namespace responses back. The ref's `current` is
-    // the underlying react-native-webview instance — opaque to us, the
-    // anchored-overlay controller narrows it at the call site.
-    const webViewRef = bridge.webviewRef as React.RefObject<unknown>
-
-    // Generic message poster. Native consumers (e.g. the text package's
-    // comment bridge) use this to drive WebView-side handlers that
-    // don't have a first-class command surface on `commands`. Returns
-    // false when the WebView isn't mounted yet so callers can choose
-    // to swallow or surface the failure. Web variants of consuming
-    // hooks return `() => false` instead because there's no WebView.
-    const postMessage = useCallback(
-        (message: EditorMessage): boolean => {
-            const webview = bridge.webviewRef?.current as
-                | { postMessage?: (s: string) => void }
-                | null
-                | undefined
-            if (!webview || typeof webview.postMessage !== 'function') return false
-            webview.postMessage(JSON.stringify(message))
-            return true
-        },
-        [bridge]
+    // What host overlays POST through. Not a view ref any more — a poster shim
+    // keyed on the instance, in a ref-shaped object so the overlay
+    // controllers' duck-typing (`ref.current.postMessage(string)`) is
+    // untouched. Measuring is `measureRef`'s job.
+    const webViewRef = useMemo<React.RefObject<unknown>>(
+        () => ({
+            current: {
+                postMessage: (data: string) => {
+                    postToInstance(key, data)
+                },
+            },
+        }),
+        [key]
     )
 
     return {
@@ -583,8 +563,8 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         toolbarState,
         webViewRef,
         measureRef,
-        postMessage,
-        isReady: bridgeState.isReady === true,
+        postMessage: post,
+        isReady: editorState.isReady === true,
         pageEpoch,
     }
 }

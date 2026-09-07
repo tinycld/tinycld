@@ -17,9 +17,17 @@ import { buildRichEditorExtensions } from '../../extensions'
 import { repairMarkdown } from '../../markdown-repair'
 import { getFileAuth, setFileAuth, subscribeFileAuth } from './file-auth-store'
 import {
+    applyKeyboardInset,
+    focusEditor,
+    readKeyboardInset,
+    reapplyKeyboardInset,
+} from './host-commands'
+import {
     APP_EDITOR_MOUNTED,
     APP_ESCAPE,
     APP_FILE_TOKEN,
+    APP_FOCUS,
+    APP_KEYBOARD_INSET,
     APP_PARK,
     APP_SUBMIT_SHORTCUT,
     APP_TRIGGER_ITEMS,
@@ -31,6 +39,7 @@ import {
     decodeUpdate,
     EDITOR_READY,
     encodeUpdate,
+    FORMAT_SET_EDITABLE,
     HTML_GET,
     HTML_RESULT,
     HTML_SET,
@@ -123,11 +132,9 @@ export function reduceInit(
  * same schema the web hook uses, `@tiptap/markdown` included — so markdown is
  * parsed and serialized in place. Nothing pivots through HTML.
  *
- * TenTap is still the WebView host (it supplies `RichText` and, importantly,
- * `avoidIosKeyboard`), but its bridge protocol is bypassed: we own the page via
- * `customSource`, so `useTenTap` and the `BridgeExtension` system are unused.
- * Their channel exchanges HTML strings, which is exactly the constraint being
- * removed.
+ * The host is core's own `editor-webview` native view (see
+ * lib/editor/use-webview-editor.tsx). Every instruction it sends arrives as a
+ * namespaced message on this page; nothing pivots through a third-party bridge.
  *
  * Mounts in two stages, because the extension set depends on the init payload
  * (placeholder, character limit, and later the collaboration binding): report
@@ -481,8 +488,8 @@ function useAwarenessRelay(collab: CollabBinding | null) {
 /**
  * Stream toolbar state to the host on every meaningful transaction.
  *
- * Posted under TenTap's own `stateUpdate` type so `useBridgeState` on the
- * native side keeps consuming it unchanged. Coalesced per frame, with an
+ * Posted as a bare `stateUpdate` (no namespace), the shape the host's state
+ * store reads into deriveToolbarState. Coalesced per frame, with an
  * identity skip so a burst of transactions that doesn't change the toolbar
  * (bulk paste, remote edits) doesn't spam the bridge.
  */
@@ -530,14 +537,16 @@ function useStateBroadcast(editor: TiptapEditor | null) {
 /**
  * Dispatch host → WebView messages.
  *
- * Two envelope shapes arrive: our own namespaced messages, and TenTap's bridge
- * actions, which wrap the real action as `{type:'action', payload:{type,...}}`.
- * Unwrapping that is load-bearing — without it every native toolbar button
- * reads as type 'action', matches nothing, and silently no-ops.
+ * Every message is our own `{namespace, type, payload}` envelope: document
+ * channels, file auth, the trigger roster, caret and keyboard instructions,
+ * and the toolbar's format commands.
  */
 function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
     useEffect(() => {
         if (!editor) return
+        // A hand-off rebuilds the editor; if the keyboard is still up the new
+        // one needs the same room at the bottom.
+        reapplyKeyboardInset(editor)
 
         function onMessage(evt: MessageEvent | Event) {
             const data = (evt as MessageEvent).data
@@ -564,21 +573,11 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
                 handleHtmlMessage(editor, parsed, isCollab)
                 return
             }
-            if (parsed.namespace === 'app' && parsed.type === APP_FILE_TOKEN) {
-                const auth = parsed.payload as RichEditorFileAuth | undefined
-                if (auth && typeof auth.token === 'string' && typeof auth.baseURL === 'string') {
-                    setFileAuth(auth)
-                }
+            if (parsed.namespace === 'app') {
+                handleAppMessage(editor, parsed)
                 return
             }
-            if (parsed.namespace === 'app' && parsed.type === APP_TRIGGER_ITEMS) {
-                const roster = parsed.payload as TriggerItemsPayload | undefined
-                if (roster && typeof roster.triggerId === 'string' && Array.isArray(roster.items)) {
-                    setTriggerItems(roster.triggerId, roster.items)
-                }
-                return
-            }
-            dispatchFormatAction(editor, unwrapTenTapAction(parsed))
+            if (parsed.namespace === 'format') dispatchFormatAction(editor, parsed)
         }
 
         window.addEventListener('message', onMessage)
@@ -591,6 +590,40 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
             document.removeEventListener('message', onMessage)
         }
     }, [editor, isCollab])
+}
+
+/**
+ * The 'app' namespace once an editor exists: credentials for protected images,
+ * the mention roster, and the caret / keyboard instructions. (Init and park
+ * are the stage-one Editor's, above.)
+ */
+function handleAppMessage(editor: TiptapEditor, message: EditorMessage): void {
+    switch (message.type) {
+        case APP_FILE_TOKEN: {
+            const auth = message.payload as RichEditorFileAuth | undefined
+            if (auth && typeof auth.token === 'string' && typeof auth.baseURL === 'string') {
+                setFileAuth(auth)
+            }
+            break
+        }
+        case APP_TRIGGER_ITEMS: {
+            const roster = message.payload as TriggerItemsPayload | undefined
+            if (roster && typeof roster.triggerId === 'string' && Array.isArray(roster.items)) {
+                setTriggerItems(roster.triggerId, roster.items)
+            }
+            break
+        }
+        case APP_FOCUS:
+            focusEditor(editor, message.payload)
+            break
+        case APP_KEYBOARD_INSET: {
+            const bottom = readKeyboardInset(message.payload)
+            if (bottom !== null) applyKeyboardInset(editor, bottom)
+            break
+        }
+        default:
+            break
+    }
 }
 
 function handleMarkdownMessage(
@@ -646,24 +679,17 @@ export function handleHtmlMessage(
     }
 }
 
-interface IncomingAction {
-    namespace?: string
+interface FormatAction {
     type?: string
     payload?: unknown
 }
 
-// TenTap's useEditorBridge wraps every bridge command as
-// {type:'action', payload:{type:'toggle-bold'}}. Our own 'format' messages are
-// already flat and pass through untouched.
-function unwrapTenTapAction(parsed: IncomingAction): IncomingAction {
-    if (parsed.type !== 'action') return parsed
-    const inner = parsed.payload
-    if (inner === null || typeof inner !== 'object') return parsed
-    if (typeof (inner as IncomingAction).type !== 'string') return parsed
-    return inner as IncomingAction
-}
-
-function dispatchFormatAction(editor: TiptapEditor, action: IncomingAction): void {
+/**
+ * One toolbar command, as `buildWebViewEditorCommands` sends it: a flat
+ * `{namespace:'format', type, payload}`. Exported so the round-trip can be
+ * tested against a real Tiptap instance without a WebView.
+ */
+export function dispatchFormatAction(editor: TiptapEditor, action: FormatAction): void {
     const chain = () => editor.chain().focus()
     switch (action.type) {
         case 'toggle-bold':
@@ -684,8 +710,9 @@ function dispatchFormatAction(editor: TiptapEditor, action: IncomingAction): voi
         case 'toggle-code-block':
             chain().toggleCodeBlock().run()
             break
-        // TenTap's list bridges emit camelCase action strings, not kebab-case.
-        // The literal has to match exactly or the message is dropped.
+        // The list types are camelCase on the wire (a spelling inherited from
+        // the bridge library this page once ran under, and kept: both pages
+        // and the command builder agree on it).
         case 'toggle-bulletList':
             chain().toggleBulletList().run()
             break
@@ -723,8 +750,8 @@ function dispatchFormatAction(editor: TiptapEditor, action: IncomingAction): voi
         case 'redo':
             chain().redo().run()
             break
-        case 'focus':
-            editor.commands.focus('end')
+        case FORMAT_SET_EDITABLE:
+            if (typeof action.payload === 'boolean') editor.setEditable(action.payload)
             break
         default:
             break
@@ -733,8 +760,8 @@ function dispatchFormatAction(editor: TiptapEditor, action: IncomingAction): voi
 
 type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
 
-// TenTap's HeadingBridge emits the level bare; our own format messages wrap it
-// in {level}. Accept both rather than depending on which side sent it.
+// The level travels bare (`toggle-heading`'s payload is the number); an
+// `{level}` object is accepted too so a caller cannot get it wrong.
 function readHeadingLevel(payload: unknown): HeadingLevel | null {
     const raw =
         typeof payload === 'number'

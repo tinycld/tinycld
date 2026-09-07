@@ -87,8 +87,8 @@ export interface BundleWebViewEditorOptions {
     nodePaths?: string[]
 }
 
-// bundleWebViewEditor packages a self-contained HTML page for use as
-// TenTap's customSource. It runs esbuild against entryScript, inlines
+// bundleWebViewEditor packages a self-contained HTML page the native host
+// loads as its source. It runs esbuild against entryScript, inlines
 // the resulting JS into entryHtml's <script> tag (replacing the src
 // attribute), and emits a .ts file exporting the HTML as a string.
 //

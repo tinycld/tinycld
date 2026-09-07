@@ -62,6 +62,27 @@ export const APP_SUBMIT_SHORTCUT = 'submit-shortcut'
 /** WebView → host, Escape inside the editor. */
 export const APP_ESCAPE = 'escape'
 /**
+ * host → WebView: put the caret in the editor. Payload is `'start'`, `'end'`, or
+ * a `{ x, y }` point in viewport coordinates (the place the user pressed). The
+ * native host makes the WebView first responder alongside; this is the half
+ * the page owns.
+ */
+export const APP_FOCUS = 'focus'
+/**
+ * host → WebView: how much of the document's bottom the keyboard covers, as
+ * `{ bottom }` in CSS pixels. The page pads the document by it so the caret
+ * can scroll clear. See lib/editor/native-host/use-keyboard-inset.ts.
+ */
+export const APP_KEYBOARD_INSET = 'keyboard-inset'
+/**
+ * WebView → host: the editor's toolbar state, posted on every meaningful
+ * transaction. Bare — no namespace — a shape inherited from the TenTap host
+ * this page once ran under and kept because nothing is gained by changing it.
+ */
+export const STATE_UPDATE = 'stateUpdate'
+/** host → WebView on the 'format' namespace: `editor.setEditable(payload)`. */
+export const FORMAT_SET_EDITABLE = 'set-editable'
+/**
  * host → WebView: the server base URL and a fresh PocketBase file token.
  *
  * The page has no PocketBase client and must never hold a credential beyond
@@ -329,9 +350,8 @@ export interface YjsUpdatePayload {
 /**
  * State the WebView broadcasts on every meaningful transaction.
  *
- * Posted under TenTap's own `stateUpdate` message type rather than a namespace
- * of ours, deliberately: that is what `useBridgeState` listens for, so
- * `deriveToolbarState` keeps working unchanged.
+ * Posted as a bare `stateUpdate` (see STATE_UPDATE); the host keeps the
+ * latest payload verbatim and `deriveToolbarState` reads it.
  */
 export interface RichEditorStatePayload {
     isBoldActive: boolean
@@ -360,7 +380,7 @@ export interface RichEditorStatePayload {
      * same on native as on web.
      */
     isFocused: boolean
-    /** TenTap's readiness flag. Consumers gate on it via EditorResult.isReady. */
+    /** Always true once an editor exists. Consumers gate on it via EditorResult.isReady. */
     isReady: boolean
 }
 

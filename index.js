@@ -29,7 +29,8 @@
 // read by the global fatal handler + the report-bad upload. No-op on web/non-Hermes.
 import './lib/diagnose-regexp'
 // polyfill-dom-shim must run before anything that pulls in prosemirror-view
-// (tentap → @tiptap/core → @tiptap/pm/view). Something in our Expo SDK 55 stack
+// (@tinycld/core/lib/editor/rich → @tiptap/* → @tiptap/pm/view, reached at RN
+// top level by the shared editor's extensions). Something in our Expo SDK 55 stack
 // installs a partial `document` on Hermes that breaks prosemirror-view's
 // top-level browser sniff; the shim fills the missing `documentElement.style`
 // slot. See lib/polyfill-dom-shim.ts for the why. This had the same too-late

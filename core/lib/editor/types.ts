@@ -258,8 +258,8 @@ export interface EditorResult {
     postMessage?: (message: import('./message-bus/types').EditorMessage) => boolean
     // Whether the underlying editor (Tiptap web or WebView native) has
     // finished initializing. Web variant resolves true synchronously
-    // once the editor mounts; native depends on the WebView's TenTap
-    // bridge signal. Consumers should gate UI that depends on a working
+    // once the editor mounts; native flips on the page's first
+    // stateUpdate. Consumers should gate UI that depends on a working
     // editor handle (e.g. commentBridge, findReplaceEditor) until this
     // flips true.
     isReady?: boolean

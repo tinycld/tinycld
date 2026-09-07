@@ -1,4 +1,3 @@
-import { CoreBridge, TenTapStartKit } from '@10play/tentap-editor'
 import { useFileToken } from '@tinycld/core/file-viewer/use-authed-file-url'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { pb } from '../../pocketbase'
@@ -29,18 +28,15 @@ import { YjsWebViewHost } from './yjs-webview-host'
  * Native build of the shared editor: Tiptap inside a WebView page we own.
  *
  * Markdown is the editor's native format here, exactly as on web. The page is
- * supplied through TenTap's `customSource`, so it runs
- * `buildRichEditorExtensions()` — `@tiptap/markdown` included — and parses and
- * serializes markdown in place.
+ * ours (rich/webview/source), so it runs `buildRichEditorExtensions()` —
+ * `@tiptap/markdown` included — and parses and serializes markdown in place.
+ * Nothing pivots through HTML on the React Native thread.
  *
- * That replaces the previous arrangement, where markdown pivoted through HTML
- * on every read and write because TenTap's own bridge protocol exchanges HTML
- * strings. The conversion module that existed solely to cross that bridge is
- * gone, along with the parsing work it did on the React Native thread.
- *
- * TenTap remains the WebView host: `RichText`, the bridge lifecycle, and
- * `avoidIosKeyboard` — keyboard avoidance and the focus/scroll handling are the
- * genuinely fiddly part and are worth keeping.
+ * The WebView itself is core's own `editor-webview` native view (see
+ * lib/editor/use-webview-editor.tsx): a pooled page that survives React
+ * remounting its host, which is what lets the app's one warm editor be handed
+ * between surfaces without reloading. Keyboard avoidance and focus are the
+ * host's too — ported from the bridge library this once ran under.
  *
  * Collaboration works here too. The caller's Y.Doc — the room's, already
  * connected on the native side — is relayed to the page over the 'yjs'
@@ -288,10 +284,9 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
 
     useEffect(() => () => markdownHost.destroy(), [markdownHost])
 
-    // The html channel carries the handle's getHTML / getText / setContent.
-    // TenTap's own bridge has the same surface, but our page bypasses that
-    // protocol, so a request over it is never answered — and its promise has no
-    // timeout, which is how mail's compose close came to hang on native.
+    // The html channel carries the handle's getHTML / getText / setContent —
+    // with a timeout, unlike the bridge-library request this replaced, whose
+    // unanswered promise is how mail's compose close came to hang on native.
     const htmlHostRef = useRef<HtmlWebViewHost | null>(null)
     if (htmlHostRef.current === null) {
         htmlHostRef.current = new HtmlWebViewHost({
@@ -361,12 +356,6 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         }
     }, [rosterSignature, triggerItemsHost, liveEpoch])
 
-    // TenTap's stock bridges still drive the toolbar commands and focus. Their
-    // Tiptap counterparts live in our page, which registers the same schema.
-    // Reading and replacing the document goes over our own channels instead —
-    // see the markdown and html hosts above.
-    const bridgeExtensions = useMemo(() => [...TenTapStartKit, CoreBridge.configureCSS('')], [])
-
     const onDocumentScroll = useCallback(() => {
         publishUiMessage({ namespace: 'ui', type: UI_POPOVER_DISMISS_ON_SCROLL, payload: null })
     }, [])
@@ -391,14 +380,16 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
 
     const result = useWebViewEditor({
         editorHtml,
-        bridgeExtensions,
         initPayload,
         editable,
-        theme: { webview: { backgroundColor: theme?.backgroundColor ?? bgColor } },
+        backgroundColor: theme?.backgroundColor ?? bgColor,
+        // One key for the hook's life, shared with the overlay registry so a
+        // popover and a log line name the same editor.
+        instanceKey: editorInstanceId,
         // The floor the WebView is laid out at until the page reports its own
         // height — and the floor it never shrinks below afterwards.
         ...(minHeight === undefined ? {} : { minHeight }),
-        avoidIosKeyboard: true,
+        avoidKeyboard: true,
         // The description editor sits inside the card detail's scroll view;
         // an inner scroll surface would fight it.
         scrollEnabled: false,
@@ -461,8 +452,8 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         })
     }, [overlayKey, webViewRef, measureRef, editorInstanceId])
 
-    // Layer both document channels onto the shared handle. Only focus is left
-    // to TenTap's bridge, the one request of its protocol our page answers.
+    // Layer both document channels onto the shared handle. Focus stays the
+    // host's: a native first-responder call plus an `app/focus` message.
     const editor: EditorHandle = useMemo(
         () => ({
             ...result.editor,

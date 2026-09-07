@@ -7,8 +7,9 @@
 // top-level browser sniff:
 //   const webkit = !!doc && "webkitFontSmoothing" in doc.documentElement.style
 // At module-init that line throws "Cannot read property 'style' of undefined",
-// and the throw blows up every module that statically imports anything from
-// `@10play/tentap-editor` (mail compose, text documents).
+// and the throw blows up every module that statically reaches prosemirror-view
+// — the shared editor's extensions (`@tinycld/core/lib/editor/rich`), which mail
+// compose and the card editors import at RN top level.
 //
 // We patch the `document` object in place to add a `documentElement` with
 // an empty `style` object whenever something has installed the partial
