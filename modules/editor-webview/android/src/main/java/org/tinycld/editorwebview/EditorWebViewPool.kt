@@ -78,6 +78,11 @@ object EditorWebViewPool {
     entry.host = host
     val webView = entry.webView
     if (webView.parent !== host) {
+      // Leaving a view group clears focus. A focus asked for during the
+      // hand-off (the surface asks the moment it acquires) can land before the
+      // move, so carry it across; without this the caret is in the page but
+      // keystrokes go nowhere.
+      val hadFocus = webView.isFocused
       (webView.parent as? ViewGroup)?.removeView(webView)
       host.addView(
         webView,
@@ -86,6 +91,7 @@ object EditorWebViewPool {
       // React Native ignores the requestLayout a late addView triggers, so the
       // child would stay 0×0 until the next RN layout pass.
       host.measureAndLayout()
+      if (hadFocus) requestFocus(key)
     }
     host.apply(webView)
   }

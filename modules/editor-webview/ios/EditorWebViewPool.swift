@@ -109,9 +109,17 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
     }
     entry.host = host
     if entry.webView.superview !== host {
+      // Leaving a superview resigns first responder. A focus asked for during
+      // the hand-off (the surface asks the moment it acquires) can land before
+      // the move, so carry it across; without this the caret is in the page
+      // but keystrokes go nowhere.
+      let hadFocus = entry.webView.isFirstResponder
       // addSubview moves the view out of its previous superview.
       host.addSubview(entry.webView)
       entry.webView.frame = host.bounds
+      if hadFocus {
+        entry.webView.becomeFirstResponder()
+      }
     }
     host.apply(to: entry.webView)
   }
