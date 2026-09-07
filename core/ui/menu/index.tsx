@@ -7,6 +7,7 @@ import {
     type PopoverPresentation,
     placeSubmenu,
     type Rect,
+    type SheetSide,
     type Size,
     usePopoverContext,
 } from '@tinycld/core/ui/popover'
@@ -50,6 +51,12 @@ export interface MenuProps {
     width?: number
     /** Title of the sheet the menu becomes on a phone. */
     title?: string
+    /**
+     * The edge that sheet rests on. Default `top`, since most menu triggers sit
+     * near the top of the screen; pass `bottom` for a menu opened from the
+     * bottom of a screen.
+     */
+    sheetSide?: SheetSide
     className?: string
     testID?: string
     children: ReactNode
@@ -78,6 +85,7 @@ function MenuRoot({
     presentation = 'auto',
     width,
     title,
+    sheetSide = 'top',
     className,
     testID,
     children,
@@ -103,6 +111,7 @@ function MenuRoot({
             presentation={presentation}
             width={width}
             title={title}
+            sheetSide={sheetSide}
             sheetContentClassName="pb-2"
             className={className}
             testID={testID}
