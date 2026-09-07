@@ -2,6 +2,7 @@
 import { OverlayProvider } from '@gluestack-ui/core/overlay/creator'
 import { ToastProvider } from '@gluestack-ui/core/toast/creator'
 import { COLOR_THEMES, DEFAULT_COLOR_THEME } from '@tinycld/core/lib/color-themes'
+import { OverlayProvider as SurfaceOverlayProvider } from '@tinycld/core/ui/overlay'
 import React, { useEffect, useLayoutEffect } from 'react'
 import { Uniwind } from 'uniwind'
 import { script } from './script'
@@ -65,9 +66,18 @@ export function GluestackUIProvider({
                     __html: `(${script.toString()})(${JSON.stringify(validMode)},${JSON.stringify(validColorTheme)})`,
                 }}
             />
-            <OverlayProvider>
-                <ToastProvider>{props.children}</ToastProvider>
-            </OverlayProvider>
+            {/* Our own overlay host (dialogs, sheets, popovers, menus) wraps
+                gluestack's, which now serves only its toasts and drawers.
+                OUTSIDE it, not inside: gluestack renders a drawer's content as
+                a sibling of its own children, so a menu opened from a drawer
+                must find our provider above that level. Our root host also
+                renders after gluestack's portal items, so it paints above
+                them. See docs/overlays.md. */}
+            <SurfaceOverlayProvider>
+                <OverlayProvider>
+                    <ToastProvider>{props.children}</ToastProvider>
+                </OverlayProvider>
+            </SurfaceOverlayProvider>
         </>
     )
 }

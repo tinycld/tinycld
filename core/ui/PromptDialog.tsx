@@ -1,8 +1,7 @@
-import { Button, ButtonText } from '@tinycld/core/ui/button'
-import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
+import { Dialog } from '@tinycld/core/ui/dialog'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { useEffect, useRef, useState } from 'react'
-import { Pressable, Text, type TextInput, View } from 'react-native'
+import { type TextInput, View } from 'react-native'
 
 export type PromptDialogProps = {
     isOpen: boolean
@@ -41,7 +40,7 @@ export function PromptDialog({
     }, [isOpen, defaultValue])
 
     // GlueStack's overlay installs its own focus trap after mount and the
-    // ModalContent enters with a ZoomIn animation, so the input's `autoFocus`
+    // ModalContent enters with a fade animation, so the input's `autoFocus`
     // prop alone gets clobbered. Imperatively focus on the next frame, once
     // the trap has settled and the content has painted.
     useEffect(() => {
@@ -49,8 +48,6 @@ export function PromptDialog({
         const raf = requestAnimationFrame(() => inputRef.current?.focus())
         return () => cancelAnimationFrame(raf)
     }, [isOpen])
-
-    if (!isOpen) return null
 
     const trimmed = value.trim()
     const canSubmit = !isSubmitting && (!required || trimmed.length > 0)
@@ -61,13 +58,8 @@ export function PromptDialog({
     }
 
     return (
-        <Modal isOpen onClose={onClose}>
-            <ModalBackdrop />
-            <ModalContent className="w-[360px] p-4 gap-3">
-                <Text className="text-foreground" style={{ fontSize: 20, fontWeight: '600' }}>
-                    {title}
-                </Text>
-                {description ? <Text className="text-muted text-sm">{description}</Text> : null}
+        <Dialog isOpen={isOpen} onClose={onClose} title={title} description={description}>
+            <Dialog.Body>
                 <View
                     className="flex-row border border-border rounded-lg px-3"
                     style={{ paddingVertical: 10 }}
@@ -86,17 +78,19 @@ export function PromptDialog({
                         style={{ fontSize: 15 }}
                     />
                 </View>
-                <View className="flex-row gap-3 justify-end">
-                    <Pressable onPress={onClose} className="px-3 py-2" disabled={isSubmitting}>
-                        <Text className="text-foreground" style={{ fontSize: 13 }}>
-                            {cancelLabel}
-                        </Text>
-                    </Pressable>
-                    <Button onPress={handleSubmit} isDisabled={!canSubmit} size="sm">
-                        <ButtonText>{confirmLabel}</ButtonText>
-                    </Button>
-                </View>
-            </ModalContent>
-        </Modal>
+            </Dialog.Body>
+            <Dialog.Footer>
+                <Dialog.CancelButton
+                    onPress={onClose}
+                    label={cancelLabel}
+                    isDisabled={isSubmitting}
+                />
+                <Dialog.ActionButton
+                    label={confirmLabel}
+                    onPress={handleSubmit}
+                    isDisabled={!canSubmit}
+                />
+            </Dialog.Footer>
+        </Dialog>
     )
 }
