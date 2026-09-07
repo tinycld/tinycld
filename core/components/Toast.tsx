@@ -89,7 +89,15 @@ function ToastCard({ toast }: { toast: ToastType }) {
     const Icon = VARIANT_ICONS[toast.variant]
 
     return (
+        // `box-none` on the card as well as on the renderer's container: the
+        // container's box-none only made the CONTAINER transparent, and the
+        // opaque card underneath it still swallowed every click in its 360px
+        // strip — over the right-hand controls of any screen's header — for
+        // its whole 4s life. Only the dismiss X and the action are targets;
+        // a press anywhere else falls through to what the card is covering.
         <Animated.View
+            testID="toast-card"
+            pointerEvents="box-none"
             style={{
                 opacity,
                 transform: [{ translateY }],
@@ -114,13 +122,20 @@ function ToastCard({ toast }: { toast: ToastType }) {
         >
             <Icon size={18} color={variantColor} style={{ marginTop: 1 }} />
 
-            <View style={{ flex: 1, gap: 2 }}>
-                <Text className="text-sm font-semibold text-foreground">{toast.title}</Text>
+            <View style={{ flex: 1, gap: 2 }} pointerEvents="box-none">
+                <Text className="text-sm font-semibold text-foreground" pointerEvents="none">
+                    {toast.title}
+                </Text>
                 <ToastBody isVisible={!!toast.body} body={toast.body} color={mutedColor} />
                 <ToastAction action={toast.action} color={variantColor} />
             </View>
 
-            <Pressable onPress={() => removeToast(toast.id)} hitSlop={8}>
+            <Pressable
+                onPress={() => removeToast(toast.id)}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss notification"
+            >
                 <X size={16} color={mutedColor} />
             </Pressable>
         </Animated.View>
@@ -137,7 +152,11 @@ function ToastBody({
     color: string
 }) {
     if (!isVisible) return null
-    return <Text style={{ fontSize: 13, color }}>{body}</Text>
+    return (
+        <Text style={{ fontSize: 13, color }} pointerEvents="none">
+            {body}
+        </Text>
+    )
 }
 
 function ToastAction({

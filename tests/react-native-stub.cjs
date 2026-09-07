@@ -84,6 +84,12 @@ module.exports = {
         parallel: () => ({ start: () => {} }),
         sequence: () => ({ start: () => {} }),
         createAnimatedComponent: (c) => c,
+        // Animated.View/Text render like their plain counterparts, so a
+        // component built on react-native's own Animated (the toast) mounts.
+        View: host('rn-view'),
+        Text: host('rn-text'),
+        ScrollView: host('rn-scrollview'),
+        Image: host('rn-image'),
     },
     Easing: { linear: (t) => t, ease: (t) => t, bezier: () => (t) => t },
     PixelRatio: { get: () => 2, roundToNearestPixel: (n) => n },
