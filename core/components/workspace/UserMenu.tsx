@@ -1,4 +1,3 @@
-import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
@@ -7,10 +6,10 @@ import { canSwitchInPlace, isSameServer } from '@tinycld/core/lib/servers'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useSavedServers } from '@tinycld/core/lib/use-saved-servers'
-import { Menu, Separator } from '@tinycld/core/ui/menu'
+import { Menu } from '@tinycld/core/ui/menu'
 import { useRouter } from 'expo-router'
 import { Globe, LogOut, Server, Settings, User } from 'lucide-react-native'
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, Text } from 'react-native'
 import { isCurrentOrg, type UserOrgEntry, useApexUrl, useUserOrgs } from './useUserOrgs'
 
 export function UserMenu() {
@@ -21,8 +20,8 @@ export function UserMenu() {
     const orgs = useUserOrgs()
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable
                     className="size-8 rounded-full justify-center items-center"
                     style={{
@@ -32,36 +31,34 @@ export function UserMenu() {
                 >
                     <User size={20} color={railActiveText} />
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal>
-                <Menu.Overlay />
-                <Menu.Content presentation="popover" placement="top" align="start">
-                    <View className="px-3 py-2">
-                        <Text className="text-base font-bold text-foreground">{user.name}</Text>
-                    </View>
+            }
+            placement="top-start"
+            title={user.name}
+        >
+            <Menu.Custom className="px-3 py-2">
+                <Text className="text-base font-bold text-foreground">{user.name}</Text>
+            </Menu.Custom>
 
-                    <Separator />
+            <Menu.Separator />
 
-                    {/* The settings HUB, not the personal page: a generic
-                        "Settings" label must reach every section. Rules, Members
-                        and the rest are only listed on the hub, and on a tablet
-                        (>=768dp, see the note below) this menu is the sole
-                        Settings affordance — MoreDrawer never mounts. */}
-                    <MenuActionItem
-                        label="Settings"
-                        icon={Settings}
-                        onPress={() => router.push(orgHref('settings'))}
-                    />
+            {/* The settings HUB, not the personal page: a generic
+                "Settings" label must reach every section. Rules, Members
+                and the rest are only listed on the hub, and on a tablet
+                (>=768dp, see the note below) this menu is the sole
+                Settings affordance — MoreDrawer never mounts. */}
+            <Menu.Item
+                label="Settings"
+                icon={Settings}
+                onSelect={() => router.push(orgHref('settings'))}
+            />
 
-                    <OrganizationsSection orgs={orgs} />
+            <OrganizationsSection orgs={orgs} />
 
-                    <ServersSection hasOrgs={orgs.length > 0} />
+            <ServersSection hasOrgs={orgs.length > 0} />
 
-                    <Separator />
+            <Menu.Separator />
 
-                    <MenuActionItem label="Sign out" icon={LogOut} onPress={logout} />
-                </Menu.Content>
-            </Menu.Portal>
+            <Menu.Item label="Sign out" icon={LogOut} onSelect={logout} />
         </Menu>
     )
 }
@@ -81,7 +78,7 @@ export function UserMenu() {
 // signed into one org — this fills the same slot instead. Never both: the same org
 // would otherwise appear twice under two different names.
 //
-// Remove and Add are absent: Menu.Content closes on press, so there is nowhere to
+// Remove and Add are absent: a menu row closes the menu when chosen, so there is nowhere to
 // confirm a destructive action or show progress. Settings owns management; this is
 // purely a switcher.
 function ServersSection({ hasOrgs }: { hasOrgs: boolean }) {
@@ -116,22 +113,23 @@ function ServersSection({ hasOrgs }: { hasOrgs: boolean }) {
 
     return (
         <>
-            <Separator />
-            <Menu.Label>Servers</Menu.Label>
-            {servers.map(server => (
-                <MenuActionItem
-                    key={server.origin}
-                    label={server.label}
-                    icon={Server}
-                    isActive={isSameServer(server.origin, activeOrigin ?? '')}
-                    disabled={!!busyOrigin}
-                    // A real href on web, matching the org switcher: the row IS a
-                    // navigation there, so middle-click and open-in-new-tab should
-                    // work. Native has no URL bar to hand it to.
-                    href={canSwitchInPlace() ? undefined : server.origin}
-                    onPress={() => onSwitch(server.origin)}
-                />
-            ))}
+            <Menu.Separator />
+            <Menu.Section label="Servers">
+                {servers.map(server => (
+                    <Menu.Item
+                        key={server.origin}
+                        label={server.label}
+                        icon={Server}
+                        isSelected={isSameServer(server.origin, activeOrigin ?? '')}
+                        isDisabled={!!busyOrigin}
+                        // A real href on web, matching the org switcher: the row IS a
+                        // navigation there, so middle-click and open-in-new-tab should
+                        // work. Native has no URL bar to hand it to.
+                        href={canSwitchInPlace() ? undefined : server.origin}
+                        onSelect={() => onSwitch(server.origin)}
+                    />
+                ))}
+            </Menu.Section>
         </>
     )
 }
@@ -146,26 +144,32 @@ function OrganizationsSection({ orgs }: { orgs: UserOrgEntry[] }) {
     if (orgs.length === 0) return null
     return (
         <>
-            <Separator />
-            <Menu.Label>Organizations</Menu.Label>
-            {orgs.map(org => (
-                <MenuActionItem
-                    key={org.id}
-                    label={org.name}
-                    leading={<OrgLogo org={org} size={18} />}
-                    isActive={isCurrentOrg(org)}
-                    href={org.url}
-                    onPress={() => navigateToOrgUrl(org.url)}
-                />
-            ))}
-            {apexUrl !== null && (
-                <MenuActionItem
-                    label="Open another organization…"
-                    icon={Globe}
-                    href={apexUrl}
-                    onPress={() => navigateToOrgUrl(apexUrl)}
-                />
-            )}
+            <Menu.Separator />
+            <Menu.Section label="Organizations">
+                {orgs.map(org => (
+                    <Menu.Item
+                        key={org.id}
+                        label={org.name}
+                        leading={<OrgLogo org={org} size={18} />}
+                        isSelected={isCurrentOrg(org)}
+                        href={org.url}
+                        onSelect={() => navigateToOrgUrl(org.url)}
+                    />
+                ))}
+                <ApexItem url={apexUrl} />
+            </Menu.Section>
         </>
+    )
+}
+
+function ApexItem({ url }: { url: string | null }) {
+    if (url === null) return null
+    return (
+        <Menu.Item
+            label="Open another organization…"
+            icon={Globe}
+            href={url}
+            onSelect={() => navigateToOrgUrl(url)}
+        />
     )
 }

@@ -1,5 +1,5 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { BottomDrawer } from '@tinycld/core/ui/bottom-drawer'
+import { Sheet } from '@tinycld/core/ui/sheet'
 import { Camera, FileIcon, ImageIcon, type LucideIcon } from 'lucide-react-native'
 import { useCallback } from 'react'
 import { Platform, Pressable, Text, View } from 'react-native'
@@ -8,7 +8,7 @@ import { type PickerSource, usePickerSheetStore } from './picker-sheet-store'
 /**
  * The one mount point for the native file-source chooser. Lives beside
  * MoreDrawer/NotificationDrawer in each layout's content region so the
- * BottomDrawer's bottom edge lands on the tab bar — see picker-sheet-store
+ * the sheet's bottom edge lands on the tab bar — see picker-sheet-store
  * for why it cannot render inline where pickFiles is called.
  */
 export function FilePickerSheetHost() {
@@ -33,7 +33,7 @@ export function FilePickerSheetHost() {
     if (Platform.OS === 'web') return null
     const sources = request?.sources ?? []
     return (
-        <BottomDrawer isOpen={request !== null} onClose={handleClose}>
+        <Sheet isOpen={request !== null} onClose={handleClose}>
             <View className="px-2 pb-4">
                 <SourceRow
                     isVisible={sources.includes('photoLibrary')}
@@ -54,7 +54,7 @@ export function FilePickerSheetHost() {
                     onPress={() => handleSelect('documents')}
                 />
             </View>
-        </BottomDrawer>
+        </Sheet>
     )
 }
 

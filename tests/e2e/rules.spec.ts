@@ -134,15 +134,11 @@ test.describe('Rules', () => {
         await openOverflowMenu(page, ruleName)
         await page.getByText('Delete', { exact: true }).click()
 
-        await expect(page.getByText(`Delete "${ruleName}"?`, { exact: true })).toBeVisible()
+        const confirm = page.getByRole('dialog')
+        await expect(confirm.getByText(`Delete "${ruleName}"?`, { exact: true })).toBeVisible()
         // The dialog's own confirm button, not the row's menu item — scope by
         // the dialog to avoid ambiguity with any other "Delete" text on screen.
-        await page
-            .getByText(`Delete "${ruleName}"?`, { exact: true })
-            .locator('..')
-            .getByText('Delete', { exact: true })
-            .last()
-            .click()
+        await confirm.getByText('Delete', { exact: true }).last().click()
 
         await expect(page.getByText(ruleName, { exact: true })).not.toBeVisible()
     })

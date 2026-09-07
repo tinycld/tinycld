@@ -1,4 +1,3 @@
-import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import type { CatalogField } from '@tinycld/core/lib/automation/api'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
@@ -116,28 +115,25 @@ function SelectValueInput({
     const selectedLabel = typeof value === 'string' && value ? value : 'Select…'
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable className="flex-1 flex-row items-center justify-between border rounded-lg px-2.5 py-1.5 border-border bg-background">
                     <Text className="text-sm text-foreground" numberOfLines={1}>
                         {selectedLabel}
                     </Text>
                     <ChevronDown size={14} color={mutedColor} />
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal>
-                <Menu.Overlay />
-                <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {options.map(option => (
-                        <MenuActionItem
-                            key={option}
-                            label={option}
-                            isActive={value === option}
-                            onPress={() => onChange(option)}
-                        />
-                    ))}
-                </Menu.Content>
-            </Menu.Portal>
+            }
+            placement="bottom-start"
+        >
+            {options.map(option => (
+                <Menu.Item
+                    key={option}
+                    label={option}
+                    isSelected={value === option}
+                    onSelect={() => onChange(option)}
+                />
+            ))}
         </Menu>
     )
 }

@@ -108,6 +108,17 @@ export default defineConfig({
                 find: /^react-native-reanimated$/,
                 replacement: path.join(APP_DIR, 'tests', 'react-native-reanimated-stub.cjs'),
             },
+            // The overlay surfaces (core/ui/sheet, and everything built on it)
+            // reach react-native-gesture-handler and react-native-safe-area-context,
+            // whose entries carry Flow syntax and native setup. Inert stubs.
+            {
+                find: /^react-native-gesture-handler$/,
+                replacement: path.join(APP_DIR, 'tests', 'react-native-gesture-handler-stub.cjs'),
+            },
+            {
+                find: /^react-native-safe-area-context$/,
+                replacement: path.join(APP_DIR, 'tests', 'react-native-safe-area-context-stub.cjs'),
+            },
             // expo-clipboard transitively pulls in expo-modules-core, whose load-time
             // side effects (global __DEV__, native TurboModules) crash in Node. The
             // workspace-root stub provides an in-memory implementation for tests.

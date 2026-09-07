@@ -4,10 +4,10 @@ import { captureException } from '@tinycld/core/lib/errors'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
-import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
+import { Dialog } from '@tinycld/core/ui/dialog'
 import { History, RotateCcw, ShieldCheck, Trash2 } from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 import { PageHeader, SlugTag } from './console-ui'
 import { InstallProgressModal } from './InstallProgressModal'
@@ -349,95 +349,44 @@ function RevertModal({
     }
 
     return (
-        <Modal isOpen onClose={close}>
-            <ModalBackdrop />
-            <ModalContent className="w-[480px] p-5 gap-4">
-                <View className="flex-row gap-3 items-start">
-                    <View className="w-10 h-10 rounded-xl items-center justify-center bg-warning-soft">
-                        <RotateCcw size={20} color={warningColor} />
-                    </View>
-                    <View className="flex-1 gap-1">
-                        <Text
-                            className="text-foreground"
-                            style={{ fontSize: 18, fontWeight: '600' }}
-                        >
-                            Revert to this build
-                        </Text>
-                        <Text className="text-muted-foreground" style={{ fontSize: 14 }}>
-                            Roll the deployment back to{' '}
-                            <Text style={{ fontFamily: 'monospace', fontWeight: '600' }}>
-                                {build.pkg_slug}
-                                {build.version ? ` v${build.version}` : ''}
-                            </Text>
-                            . This reverses the schema added since it and restarts the server.
-                        </Text>
-                    </View>
-                </View>
-
-                {invalidates.length > 0 ? (
-                    <View className="rounded-xl p-4 gap-2 bg-danger-soft">
-                        <Text
-                            className="text-danger"
-                            style={{
-                                fontSize: 12,
-                                fontWeight: '600',
-                                textTransform: 'uppercase',
-                                letterSpacing: 0.5,
-                            }}
-                        >
-                            Permanently invalidates {invalidates.length} newer build
-                            {invalidates.length === 1 ? '' : 's'}
-                        </Text>
-                        {invalidates.map(b => (
-                            <Text
-                                key={b.id}
-                                className="text-danger"
-                                style={{ fontSize: 13, fontFamily: 'monospace' }}
-                            >
-                                − {b.pkg_slug} v{b.version}
-                            </Text>
-                        ))}
-                    </View>
-                ) : null}
-
+        <Dialog
+            isOpen
+            onClose={close}
+            size="lg"
+            title="Revert to this build"
+            header={
+                <BuildDialogHeader
+                    icon={<RotateCcw size={20} color={warningColor} />}
+                    iconClassName="bg-warning-soft"
+                    title="Revert to this build"
+                >
+                    Roll the deployment back to <BuildName build={build} />. This reverses the
+                    schema added since it and restarts the server.
+                </BuildDialogHeader>
+            }
+        >
+            <Dialog.Body>
+                <InvalidatedBuilds builds={invalidates} />
                 <View className="flex-row gap-2 items-center px-3 py-2.5 rounded-lg bg-success-soft">
                     <ShieldCheck size={16} color={successColor} />
                     <Text className="text-success-soft-foreground" style={{ fontSize: 13 }}>
                         Your data is preserved. A backup is taken before reverting.
                     </Text>
                 </View>
+            </Dialog.Body>
 
-                {error ? (
-                    <View className="rounded-lg p-2 bg-danger-soft">
-                        <Text className="text-danger" style={{ fontSize: 12 }}>
-                            {error}
-                        </Text>
-                    </View>
-                ) : null}
+            <DialogError message={error} />
 
-                <View className="flex-row gap-3 justify-end">
-                    <Pressable onPress={close} className="px-3 py-2" disabled={submitting}>
-                        <Text className="text-foreground" style={{ fontSize: 13 }}>
-                            Cancel
-                        </Text>
-                    </Pressable>
-                    <Button
-                        onPress={confirm}
-                        isDisabled={submitting}
-                        size="sm"
-                        variant="destructive"
-                    >
-                        <ButtonText>
-                            {submitting
-                                ? 'Reverting…'
-                                : invalidates.length > 0
-                                  ? `Revert & invalidate ${invalidates.length}`
-                                  : 'Revert'}
-                        </ButtonText>
-                    </Button>
-                </View>
-            </ModalContent>
-        </Modal>
+            <Dialog.Footer>
+                <Dialog.CancelButton onPress={close} isDisabled={submitting} />
+                <Dialog.ActionButton
+                    label={revertLabel(submitting, invalidates.length)}
+                    onPress={confirm}
+                    isDisabled={submitting}
+                    isDestructive
+                />
+            </Dialog.Footer>
+        </Dialog>
     )
 }
 
@@ -477,56 +426,122 @@ function DeleteBuildModal({
     }
 
     return (
-        <Modal isOpen onClose={close}>
-            <ModalBackdrop />
-            <ModalContent className="w-[440px] p-5 gap-4">
-                <View className="flex-row gap-3 items-start">
-                    <View className="w-10 h-10 rounded-xl items-center justify-center bg-danger-soft">
-                        <Trash2 size={20} color={dangerColor} />
-                    </View>
-                    <View className="flex-1 gap-1">
-                        <Text
-                            className="text-foreground"
-                            style={{ fontSize: 18, fontWeight: '600' }}
-                        >
-                            Delete this build archive
-                        </Text>
-                        <Text className="text-muted-foreground" style={{ fontSize: 14 }}>
-                            Removes the archived build for{' '}
-                            <Text style={{ fontFamily: 'monospace', fontWeight: '600' }}>
-                                {build.pkg_slug}
-                                {build.version ? ` v${build.version}` : ''}
-                            </Text>
-                            . You won't be able to revert to it afterward.
-                        </Text>
-                    </View>
-                </View>
+        <Dialog
+            isOpen
+            onClose={close}
+            size="lg"
+            title="Delete this build archive"
+            header={
+                <BuildDialogHeader
+                    icon={<Trash2 size={20} color={dangerColor} />}
+                    iconClassName="bg-danger-soft"
+                    title="Delete this build archive"
+                >
+                    Removes the archived build for <BuildName build={build} />. You won't be able to
+                    revert to it afterward.
+                </BuildDialogHeader>
+            }
+        >
+            <DialogError message={error} />
 
-                {error ? (
-                    <View className="rounded-lg p-2 bg-danger-soft">
-                        <Text className="text-danger" style={{ fontSize: 12 }}>
-                            {error}
-                        </Text>
-                    </View>
-                ) : null}
+            <Dialog.Footer>
+                <Dialog.CancelButton onPress={close} isDisabled={submitting} />
+                <Dialog.ActionButton
+                    label={submitting ? 'Deleting…' : 'Delete build'}
+                    onPress={confirm}
+                    isDisabled={submitting}
+                    isDestructive
+                />
+            </Dialog.Footer>
+        </Dialog>
+    )
+}
 
-                <View className="flex-row gap-3 justify-end">
-                    <Pressable onPress={close} className="px-3 py-2" disabled={submitting}>
-                        <Text className="text-foreground" style={{ fontSize: 13 }}>
-                            Cancel
-                        </Text>
-                    </Pressable>
-                    <Button
-                        onPress={confirm}
-                        isDisabled={submitting}
-                        size="sm"
-                        variant="destructive"
-                    >
-                        <ButtonText>{submitting ? 'Deleting…' : 'Delete build'}</ButtonText>
-                    </Button>
-                </View>
-            </ModalContent>
-        </Modal>
+function revertLabel(submitting: boolean, invalidated: number) {
+    if (submitting) return 'Reverting…'
+    if (invalidated > 0) return `Revert & invalidate ${invalidated}`
+    return 'Revert'
+}
+
+// BuildDialogHeader replaces the Dialog's default title row so the confirm
+// keeps its icon tile beside the title; the children are the description.
+function BuildDialogHeader({
+    icon,
+    iconClassName,
+    title,
+    children,
+}: {
+    icon: ReactNode
+    iconClassName: string
+    title: string
+    children: ReactNode
+}) {
+    return (
+        <View className="flex-row gap-3 items-start px-5 pt-5 pb-3">
+            <View className={`w-10 h-10 rounded-xl items-center justify-center ${iconClassName}`}>
+                {icon}
+            </View>
+            <View className="flex-1 gap-1">
+                <Text className="text-foreground" style={{ fontSize: 18, fontWeight: '600' }}>
+                    {title}
+                </Text>
+                <Text className="text-muted-foreground" style={{ fontSize: 14 }}>
+                    {children}
+                </Text>
+            </View>
+        </View>
+    )
+}
+
+function BuildName({ build }: { build: BuildRecord }) {
+    return (
+        <Text style={{ fontFamily: 'monospace', fontWeight: '600' }}>
+            {build.pkg_slug}
+            {build.version ? ` v${build.version}` : ''}
+        </Text>
+    )
+}
+
+function InvalidatedBuilds({ builds }: { builds: BuildRecord[] }) {
+    if (builds.length === 0) return null
+    return (
+        <View className="rounded-xl p-4 gap-2 bg-danger-soft">
+            <Text
+                className="text-danger"
+                style={{
+                    fontSize: 12,
+                    fontWeight: '600',
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.5,
+                }}
+            >
+                Permanently invalidates {builds.length} newer build
+                {builds.length === 1 ? '' : 's'}
+            </Text>
+            {builds.map(b => (
+                <Text
+                    key={b.id}
+                    className="text-danger"
+                    style={{ fontSize: 13, fontFamily: 'monospace' }}
+                >
+                    − {b.pkg_slug} v{b.version}
+                </Text>
+            ))}
+        </View>
+    )
+}
+
+// Pinned between the body and the footer so a failure is visible without scrolling.
+function DialogError({ message }: { message: string | null }) {
+    if (!message) return null
+    return (
+        <View className="px-5 pb-4">
+            <View className="rounded-lg p-2 bg-danger-soft">
+                <Text className="text-danger" style={{ fontSize: 12 }}>
+                    {message}
+                </Text>
+            </View>
+        </View>
     )
 }
 

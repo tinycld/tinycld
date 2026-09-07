@@ -22,6 +22,21 @@ function host(tag) {
     return Host
 }
 
+// A Pressable answers a DOM click with its onPress, so a test can drive a
+// button the way a user does. `disabled` swallows it, as on every platform.
+const Pressable = React.forwardRef(function Pressable(
+    { style, onPress, disabled, onClick, ...props },
+    ref
+) {
+    return React.createElement('rn-pressable', {
+        ...props,
+        ref,
+        style: flattenStyle(style),
+        onClick: disabled ? undefined : (onClick ?? onPress),
+    })
+})
+Pressable.displayName = 'rn-pressable'
+
 module.exports = {
     Platform: { OS: 'web', select: (map) => map.web ?? map.default },
     Dimensions: {
@@ -43,7 +58,7 @@ module.exports = {
     // survives the trip.
     View: host('rn-view'),
     Text: host('rn-text'),
-    Pressable: host('rn-pressable'),
+    Pressable,
     ScrollView: host('rn-scrollview'),
     TextInput: host('rn-textinput'),
     Image: 'rn-image',
@@ -69,13 +84,26 @@ module.exports = {
         parallel: () => ({ start: () => {} }),
         sequence: () => ({ start: () => {} }),
         createAnimatedComponent: (c) => c,
+        // Animated.View/Text render like their plain counterparts, so a
+        // component built on react-native's own Animated (the toast) mounts.
+        View: host('rn-view'),
+        Text: host('rn-text'),
+        ScrollView: host('rn-scrollview'),
+        Image: host('rn-image'),
     },
     Easing: { linear: (t) => t, ease: (t) => t, bezier: () => (t) => t },
     PixelRatio: { get: () => 2, roundToNearestPixel: (n) => n },
     Appearance: { getColorScheme: () => 'light', addChangeListener: () => ({ remove: () => {} }) },
     I18nManager: { isRTL: false },
     Linking: { openURL: () => Promise.resolve(), canOpenURL: () => Promise.resolve(true) },
-    AccessibilityInfo: { isScreenReaderEnabled: () => Promise.resolve(false) },
+    AccessibilityInfo: {
+        isScreenReaderEnabled: () => Promise.resolve(false),
+        setAccessibilityFocus: () => {},
+    },
+    // gluestack's Modal subscribes to the keyboard for its bottom inset and
+    // dismisses it on open; a dialog cannot mount under the stub without both.
+    Keyboard: { addListener: () => ({ remove: () => {} }), dismiss: () => {} },
+    findNodeHandle: () => null,
     useColorScheme: () => 'light',
     useWindowDimensions: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
 }

@@ -4,9 +4,9 @@ import { useHelpSearchStore } from '@tinycld/core/lib/help/search-store'
 import type { HelpTopicId } from '@tinycld/core/lib/help/types'
 import { useHelpTopics } from '@tinycld/core/lib/help/use-help-topics'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { type ReactNode, type RefObject, useEffect, useMemo, useRef } from 'react'
-import { createPortal } from 'react-dom'
-import { Pressable, Text, TextInput, View } from 'react-native'
+import { LayerEscape, OverlayPortal, useOverlayLayer } from '@tinycld/core/ui/overlay'
+import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from 'react'
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 
 const PALETTE_WIDTH_PX = 560
 const PALETTE_TOP_OFFSET_PX = 96
@@ -60,35 +60,23 @@ export function HelpSearchPalette() {
         return () => cancelAnimationFrame(raf)
     }, [isOpen])
 
-    // Click-outside dismiss. Anything outside the palette card closes
-    // it — matches Spotlight + the slash-menu's pattern.
-    useEffect(() => {
-        if (!isOpen || typeof document === 'undefined') return
-        function onPointerDown(event: MouseEvent) {
-            const target = event.target
-            if (!(target instanceof Element)) return
-            if (target.closest('[data-tinycld-help-palette]')) return
-            close()
-        }
-        document.addEventListener('mousedown', onPointerDown, true)
-        return () => document.removeEventListener('mousedown', onPointerDown, true)
-    }, [isOpen, close])
+    // Anything outside the card closes it — matches Spotlight. The card is
+    // state from a callback ref so the layer sees the node once it mounts.
+    const [card, setCard] = useState<View | null>(null)
+    useOverlayLayer({
+        isOpen,
+        nodes: () => [card as unknown as Node | null],
+        onDismiss: close,
+    })
 
-    // Keyboard navigation. Bound to document keydown in CAPTURE phase
-    // while the palette is open. Capture phase matters because
-    // react-native-web's TextInput swallows Escape on its own internal
-    // bubble-phase handler — a non-capturing listener never sees it.
-    // ArrowUp/ArrowDown likewise need this because TextInput.onKeyPress
-    // doesn't fire for non-character keys.
+    // Keyboard navigation. Bound to document keydown in CAPTURE phase while
+    // the palette is open: TextInput.onKeyPress doesn't fire for non-character
+    // keys, so ArrowUp/ArrowDown need a listener above it. Escape is the
+    // overlay engine's, which listens the same way.
     useEffect(() => {
         if (!isOpen || typeof document === 'undefined') return
         function onKeyDown(event: KeyboardEvent) {
             const key = event.key
-            if (key === 'Escape') {
-                event.preventDefault()
-                close()
-                return
-            }
             if (key === 'ArrowDown') {
                 event.preventDefault()
                 if (results.length === 0) return
@@ -116,44 +104,37 @@ export function HelpSearchPalette() {
 
     if (!isOpen || typeof document === 'undefined') return null
 
-    return createPortal(
-        <PaletteOverlay>
-            <PaletteCard>
-                <SearchField inputRef={inputRef} value={query} onChange={setQuery} />
-                <ResultList
-                    results={results}
-                    query={query}
-                    selectedIndex={clampedIndex}
-                    onPick={topicId => {
-                        openHelp(topicId)
-                        close()
-                    }}
-                    onHover={i => setSelectedIndex(i)}
-                />
-                <PaletteFooter />
-            </PaletteCard>
-        </PaletteOverlay>,
-        document.body
+    return (
+        <OverlayPortal>
+            <LayerEscape onEscape={close} />
+            <PaletteOverlay>
+                <PaletteCard cardRef={setCard}>
+                    <SearchField inputRef={inputRef} value={query} onChange={setQuery} />
+                    <ResultList
+                        results={results}
+                        query={query}
+                        selectedIndex={clampedIndex}
+                        onPick={topicId => {
+                            openHelp(topicId)
+                            close()
+                        }}
+                        onHover={i => setSelectedIndex(i)}
+                    />
+                    <PaletteFooter />
+                </PaletteCard>
+            </PaletteOverlay>
+        </OverlayPortal>
     )
 }
 
 function PaletteOverlay({ children }: { children: ReactNode }) {
-    // Full-viewport fixed layer so the click-outside listener has
-    // somewhere to fire. The card itself is positioned within.
+    // Fills the overlay host; the card sits near the top, Spotlight-style.
     return (
         <View
-            style={
-                {
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    alignItems: 'center',
-                    paddingTop: PALETTE_TOP_OFFSET_PX,
-                    zIndex: 1000,
-                } as object
-            }
+            style={[
+                StyleSheet.absoluteFill,
+                { alignItems: 'center', paddingTop: PALETTE_TOP_OFFSET_PX },
+            ]}
             pointerEvents="box-none"
         >
             {children}
@@ -161,7 +142,13 @@ function PaletteOverlay({ children }: { children: ReactNode }) {
     )
 }
 
-function PaletteCard({ children }: { children: ReactNode }) {
+function PaletteCard({
+    children,
+    cardRef,
+}: {
+    children: ReactNode
+    cardRef: (node: View | null) => void
+}) {
     // animationName drives the open animation defined in the module-
     // level <style> tag. RN ignores CSS animation properties on
     // native, but this component is .web.tsx so we're safe to use
@@ -171,14 +158,15 @@ function PaletteCard({ children }: { children: ReactNode }) {
         animationDuration: '120ms',
         animationTimingFunction: 'ease-out',
     } as object
-    const cardDomProps = {
-        'data-tinycld-help-palette': 'true',
-        role: 'dialog',
-        'aria-label': 'Search help',
-    } as object
+    // The data attribute is the e2e hook (text/tests/help-search.spec.ts).
+    const cardDomProps = { 'data-tinycld-help-palette': 'true' } as object
     return (
         <View
             {...(cardDomProps as Record<string, unknown>)}
+            ref={cardRef}
+            role="dialog"
+            aria-label="Search help"
+            pointerEvents="auto"
             style={
                 {
                     width: PALETTE_WIDTH_PX,

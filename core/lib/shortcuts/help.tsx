@@ -1,8 +1,8 @@
 import { create } from '@tinycld/core/lib/store'
+import { Dialog } from '@tinycld/core/ui/dialog'
 import { Kbd } from '@tinycld/core/ui/Kbd'
-import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { useMemo } from 'react'
-import { ScrollView, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 import { isScopeActive } from './matcher'
 import { useShortcutRegistry } from './registry'
 import type { Shortcut } from './types'
@@ -54,24 +54,14 @@ export function ShortcutHelp() {
     const grouped = useMemo(() => groupShortcuts(shortcuts), [shortcuts])
     const groupNames = Object.keys(grouped).sort()
 
-    if (!isOpen) return null
-
     return (
-        <Modal isOpen={isOpen} onClose={close} size="lg">
-            <ModalBackdrop />
-            <ModalContent>
-                <View className="pb-3 mb-3 border-b border-border">
-                    <Text className="text-lg font-semibold text-foreground">
-                        Keyboard shortcuts
-                    </Text>
-                </View>
-                <ScrollView className="max-h-[480px]">
-                    {groupNames.map(name => (
-                        <HelpGroup key={name} name={name} shortcuts={grouped[name]} />
-                    ))}
-                </ScrollView>
-            </ModalContent>
-        </Modal>
+        <Dialog isOpen={isOpen} onClose={close} title="Keyboard shortcuts" size="lg">
+            <Dialog.Body>
+                {groupNames.map(name => (
+                    <HelpGroup key={name} name={name} shortcuts={grouped[name]} />
+                ))}
+            </Dialog.Body>
+        </Dialog>
     )
 }
 

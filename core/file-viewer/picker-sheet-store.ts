@@ -24,7 +24,7 @@ interface PickerSheetState {
  *
  * The sheet itself renders in FilePickerSheetHost, mounted once at the layout
  * level. It used to be an element returned by usePickFiles and mounted inline
- * beside whichever button triggered it — but a BottomDrawer rests at the
+ * beside whichever button triggered it — but a Sheet rests at the
  * bottom of its PARENT, so from inside an absolutely-positioned panel (e.g.
  * boards' peek, zIndex 20) it sat at the panel's bottom edge, trapped in that
  * stacking context, instead of on the tab bar.

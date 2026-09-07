@@ -1,11 +1,10 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Menu, Separator } from '@tinycld/core/ui/menu'
+import { Menu } from '@tinycld/core/ui/menu'
 import type { LucideIcon } from 'lucide-react-native'
 import { EllipsisVertical } from 'lucide-react-native'
 import type { ReactNode } from 'react'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { Platform, Pressable, ScrollView, View } from 'react-native'
-import { MenuActionItem } from './DropdownMenu'
 import { ToolbarIconButton } from './ToolbarIconButton'
 import { ToolbarSeparator } from './ToolbarSeparator'
 
@@ -254,8 +253,8 @@ function OverflowMenu({ items }: { items: ToolbarItem[] }) {
     const mutedColor = useThemeColor('muted-foreground')
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable
                     className="p-2 rounded-full"
                     accessibilityLabel="More actions"
@@ -275,15 +274,12 @@ function OverflowMenu({ items }: { items: ToolbarItem[] }) {
                 >
                     <EllipsisVertical size={18} color={mutedColor} />
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal>
-                <Menu.Overlay />
-                <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {items.map((item, i) => (
-                        <OverflowItem key={overflowKey(item, i)} item={item} />
-                    ))}
-                </Menu.Content>
-            </Menu.Portal>
+            }
+            title="More actions"
+        >
+            {items.map((item, i) => (
+                <OverflowItem key={overflowKey(item, i)} item={item} />
+            ))}
         </Menu>
     )
 }
@@ -292,30 +288,29 @@ function OverflowItem({ item }: { item: ToolbarItem }) {
     switch (item.type) {
         case 'button':
             return (
-                <MenuActionItem
+                <Menu.Item
                     label={item.label}
                     icon={item.icon}
-                    onPress={item.onPress}
-                    disabled={item.disabled}
+                    onSelect={item.onPress}
+                    isDisabled={item.disabled}
                 />
             )
         case 'menu':
             return (
                 <>
-                    <Menu.Label>{item.label}</Menu.Label>
-                    {item.children}
-                    <Separator />
+                    <Menu.Section label={item.label}>{item.children}</Menu.Section>
+                    <Menu.Separator />
                 </>
             )
         case 'separator':
-            return <Separator />
+            return <Menu.Separator />
         case 'custom':
             if (item.overflowPress) {
                 return (
-                    <MenuActionItem
+                    <Menu.Item
                         label={item.overflowLabel ?? ''}
                         icon={item.overflowIcon}
-                        onPress={item.overflowPress}
+                        onSelect={item.overflowPress}
                     />
                 )
             }
@@ -338,16 +333,11 @@ function RenderItem({ item }: { item: ToolbarItem }) {
             )
         case 'menu':
             return (
-                <Menu>
-                    <Menu.Trigger>
-                        <ToolbarIconButton icon={item.icon} label={item.label} />
-                    </Menu.Trigger>
-                    <Menu.Portal>
-                        <Menu.Overlay />
-                        <Menu.Content presentation="popover" placement="bottom" align="start">
-                            {item.children}
-                        </Menu.Content>
-                    </Menu.Portal>
+                <Menu
+                    trigger={<ToolbarIconButton icon={item.icon} label={item.label} />}
+                    title={item.label}
+                >
+                    {item.children}
                 </Menu>
             )
         case 'separator':
