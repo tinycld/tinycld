@@ -1,4 +1,3 @@
-import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import type { CatalogResponse, CatalogTrigger } from '@tinycld/core/lib/automation/api'
 import { orderGroupsByUserPreference } from '@tinycld/core/lib/automation/condition-helpers'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
@@ -8,7 +7,6 @@ import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { Menu } from '@tinycld/core/ui/menu'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ChevronDown } from 'lucide-react-native'
-import { Fragment } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import { RuleCard } from './RuleCard'
 
@@ -63,34 +61,30 @@ function TriggerMenu({
     )
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable className="flex-1 flex-row items-center justify-between border rounded-lg px-2.5 py-1.5 border-border bg-background">
                     <Text className="text-sm text-foreground" numberOfLines={1}>
                         {selected?.label ?? 'Select a trigger…'}
                     </Text>
                     <ChevronDown size={14} color={mutedColor} />
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal>
-                <Menu.Overlay />
-                <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {groups.map(([pkg, triggers]) => (
-                        <Fragment key={pkg}>
-                            <Menu.Label testID={`trigger-group-${pkg}`}>{pkg}</Menu.Label>
-                            {triggers.map(trigger => (
-                                <MenuActionItem
-                                    key={trigger.ref}
-                                    testID={`trigger-option-${trigger.ref}`}
-                                    label={trigger.label}
-                                    isActive={trigger.ref === selectedRef}
-                                    onPress={() => onSelect(trigger)}
-                                />
-                            ))}
-                        </Fragment>
+            }
+            placement="bottom-start"
+        >
+            {groups.map(([pkg, triggers]) => (
+                <Menu.Section key={pkg} label={pkg} testID={`trigger-group-${pkg}`}>
+                    {triggers.map(trigger => (
+                        <Menu.Item
+                            key={trigger.ref}
+                            testID={`trigger-option-${trigger.ref}`}
+                            label={trigger.label}
+                            isSelected={trigger.ref === selectedRef}
+                            onSelect={() => onSelect(trigger)}
+                        />
                     ))}
-                </Menu.Content>
-            </Menu.Portal>
+                </Menu.Section>
+            ))}
         </Menu>
     )
 }
@@ -123,28 +117,25 @@ function SchedulePresetMenu({
     const activePreset = SCHEDULE_PRESETS.find(p => p.cron === cron)
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable className="flex-row items-center justify-between border rounded-lg px-2.5 py-1.5 border-border bg-background">
                     <Text className="text-sm text-foreground" numberOfLines={1}>
                         {activePreset?.label ?? 'Custom…'}
                     </Text>
                     <ChevronDown size={14} color={mutedColor} />
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal>
-                <Menu.Overlay />
-                <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {SCHEDULE_PRESETS.map(preset => (
-                        <MenuActionItem
-                            key={preset.label}
-                            label={preset.label}
-                            isActive={preset.cron === cron}
-                            onPress={() => preset.cron && onSelectCron(preset.cron)}
-                        />
-                    ))}
-                </Menu.Content>
-            </Menu.Portal>
+            }
+            placement="bottom-start"
+        >
+            {SCHEDULE_PRESETS.map(preset => (
+                <Menu.Item
+                    key={preset.label}
+                    label={preset.label}
+                    isSelected={preset.cron === cron}
+                    onSelect={() => preset.cron && onSelectCron(preset.cron)}
+                />
+            ))}
         </Menu>
     )
 }

@@ -4,6 +4,7 @@ import { FilePickerSheetHost } from '@tinycld/core/file-viewer/FilePickerSheetHo
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
+import { OverlayHost } from '@tinycld/core/ui/overlay'
 import { memo } from 'react'
 import { Platform, View } from 'react-native'
 import { MobileDrawer } from './MobileDrawer'
@@ -51,7 +52,7 @@ export const MobileLayout = memo(function MobileLayout({ isReady = true }: { isR
                     is nonzero — the notch side — and without it every package
                     screen inside PackageTabs runs under the notch.
 
-                    The sheets stay INSIDE this box: BottomDrawer rests at the
+                    The sheets stay INSIDE this box: a Sheet rests at the
                     bottom edge of its PARENT, which is what puts it exactly on
                     the tab bar without a manual offset — moving it out would
                     slide it under the bar, the bug that component was written to
@@ -63,6 +64,9 @@ export const MobileLayout = memo(function MobileLayout({ isReady = true }: { isR
                     style={{ paddingLeft: insets.left, paddingRight: insets.right }}
                 >
                     <PackageTabs />
+                    {/* Bottom sheets render here, so they rest on the tab bar
+                        rather than sliding under it. */}
+                    <OverlayHost name="sheet" />
                     {isReady && <MoreDrawer />}
                     {isReady && <NotificationDrawer mobile />}
                     {isReady && <FilePickerSheetHost />}

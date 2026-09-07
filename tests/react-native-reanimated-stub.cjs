@@ -15,11 +15,22 @@ class AnimatedValue {
     interpolate() { return this }
 }
 
+// Host tags matching the react-native stub, so an Animated.View renders like
+// a View and a test can still find what is inside it.
+function host(tag) {
+    const Host = React.forwardRef(function Host({ entering, exiting, layout, style, ...props }, ref) {
+        const flat = Array.isArray(style) ? Object.assign({}, ...style.flat(Infinity).filter(Boolean)) : style
+        return React.createElement(tag, { ...props, ref, style: flat })
+    })
+    Host.displayName = tag
+    return Host
+}
+
 const Animated = {
-    View: 'View',
-    Text: 'Text',
-    Image: 'Image',
-    ScrollView: 'ScrollView',
+    View: host('rn-view'),
+    Text: host('rn-text'),
+    Image: host('rn-image'),
+    ScrollView: host('rn-scrollview'),
     Value: AnimatedValue,
     createAnimatedComponent: (Component) => Component,
     timing: () => noopAnimation,
@@ -44,12 +55,21 @@ function withDelay(_, animation) { return animation }
 function withRepeat(animation) { return animation }
 function withSequence(...animations) { return animations[0] }
 
-const FadeIn = { duration: noop, delay: noop }
-const FadeOut = { duration: noop, delay: noop }
-const ZoomIn = { duration: noop, delay: noop }
-const ZoomOut = { duration: noop, delay: noop }
-const SlideInUp = { duration: noop, delay: noop }
-const SlideOutDown = { duration: noop, delay: noop }
+// The layout-animation builders chain (`FadeIn.duration(200).easing(...)`),
+// so each modifier hands back the same builder.
+function animationBuilder() {
+    const builder = {}
+    for (const modifier of ['duration', 'delay', 'easing', 'withInitialValues', 'withCallback']) {
+        builder[modifier] = () => builder
+    }
+    return builder
+}
+const FadeIn = animationBuilder()
+const FadeOut = animationBuilder()
+const ZoomIn = animationBuilder()
+const ZoomOut = animationBuilder()
+const SlideInUp = animationBuilder()
+const SlideOutDown = animationBuilder()
 const Easing = {
     linear: (t) => t,
     ease: (t) => t,
@@ -73,6 +93,10 @@ module.exports = {
     __esModule: true,
     default: Animated,
     Animated,
+    View: Animated.View,
+    Text: Animated.Text,
+    Image: Animated.Image,
+    ScrollView: Animated.ScrollView,
     // Also surface createAnimatedComponent at top level for any
     // import Animated from 'react-native-reanimated' that gets the full object
     createAnimatedComponent: Animated.createAnimatedComponent,

@@ -6,9 +6,9 @@ import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
+import { Dialog } from '@tinycld/core/ui/dialog'
 import { Divider } from '@tinycld/core/ui/divider'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
-import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { Switch } from '@tinycld/core/ui/switch'
 import {
     AlertTriangle,
@@ -717,27 +717,14 @@ function UninstallModal({
     }
 
     return (
-        <Modal isOpen onClose={close}>
-            <ModalBackdrop />
-            <ModalContent className="w-[460px] p-5 gap-4">
-                <View className="flex-row gap-3 items-start">
-                    <View className="w-10 h-10 rounded-xl items-center justify-center bg-danger-soft">
-                        <Trash2 size={20} color={dangerColor} />
-                    </View>
-                    <View className="flex-1 gap-1">
-                        <Text
-                            className="text-foreground"
-                            style={{ fontSize: 18, fontWeight: '600' }}
-                        >
-                            Uninstall {name}
-                        </Text>
-                        <Text className="text-muted-foreground" style={{ fontSize: 14 }}>
-                            This removes the feature and runs its down-migrations. Records owned by
-                            this package will be dropped.
-                        </Text>
-                    </View>
-                </View>
-
+        <Dialog
+            isOpen
+            onClose={close}
+            size="lg"
+            title={`Uninstall ${name}`}
+            header={<UninstallHeader name={name} />}
+        >
+            <Dialog.Body>
                 <View className="gap-2">
                     <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
                         Type{' '}
@@ -761,32 +748,61 @@ function UninstallModal({
                         A backup is taken before uninstalling.
                     </Text>
                 </View>
+            </Dialog.Body>
 
-                {error && (
-                    <View className="rounded-lg p-2 bg-danger-soft">
-                        <Text className="text-danger" style={{ fontSize: 12 }}>
-                            {error}
-                        </Text>
-                    </View>
-                )}
+            <PinnedDialogError message={error} />
 
-                <View className="flex-row gap-3 justify-end">
-                    <Pressable onPress={close} className="px-3 py-2" disabled={submitting}>
-                        <Text className="text-foreground" style={{ fontSize: 13 }}>
-                            Cancel
-                        </Text>
-                    </Pressable>
-                    <Button
-                        onPress={confirm}
-                        isDisabled={!confirmEnabled}
-                        size="sm"
-                        variant="destructive"
-                    >
-                        <ButtonText>{submitting ? 'Uninstalling…' : 'Uninstall'}</ButtonText>
-                    </Button>
-                </View>
-            </ModalContent>
-        </Modal>
+            <Dialog.Footer>
+                <Dialog.CancelButton onPress={close} isDisabled={submitting} />
+                <Dialog.ActionButton
+                    label={submitting ? 'Uninstalling…' : 'Uninstall'}
+                    onPress={confirm}
+                    isDisabled={!confirmEnabled}
+                    isDestructive
+                />
+            </Dialog.Footer>
+        </Dialog>
+    )
+}
+
+// UninstallHeader replaces the Dialog's default title row so the confirm keeps
+// its icon tile beside the title.
+function UninstallHeader({ name }: { name: string }) {
+    const dangerColor = useThemeColor('danger')
+    return (
+        <View className="flex-row gap-3 items-start px-5 pt-5 pb-3">
+            <View className="w-10 h-10 rounded-xl items-center justify-center bg-danger-soft">
+                <Trash2 size={20} color={dangerColor} />
+            </View>
+            <View className="flex-1 gap-1">
+                <Text className="text-foreground" style={{ fontSize: 18, fontWeight: '600' }}>
+                    Uninstall {name}
+                </Text>
+                <Text className="text-muted-foreground" style={{ fontSize: 14 }}>
+                    This removes the feature and runs its down-migrations. Records owned by this
+                    package will be dropped.
+                </Text>
+            </View>
+        </View>
+    )
+}
+
+function DialogError({ message }: { message: string | null }) {
+    if (!message) return null
+    return (
+        <View className="rounded-md p-2.5 bg-danger-soft">
+            <Text className="text-xs text-danger">{message}</Text>
+        </View>
+    )
+}
+
+// Pinned between the body and the footer so a failure is visible without scrolling.
+function PinnedDialogError({ message }: { message: string | null }) {
+    if (!message) return null
+    return (
+        <View className="px-5 pb-4">
+            <DialogError message={message} />
+        </View>
     )
 }
 
@@ -1003,20 +1019,11 @@ function RegisterPackageModal({
     if (!isOpen) return null
 
     return (
-        <Modal isOpen onClose={close}>
-            <ModalBackdrop />
-            <ModalContent className="w-[520px] p-5 gap-4">
-                <Text className="text-foreground" style={{ fontSize: 18, fontWeight: '600' }}>
-                    Register a package source
-                </Text>
-
+        <Dialog isOpen onClose={close} size="xl" title="Register a package source">
+            <Dialog.Body>
                 <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
 
-                {submitError && (
-                    <View className="rounded-md p-2.5 bg-danger-soft">
-                        <Text className="text-xs text-danger">{submitError}</Text>
-                    </View>
-                )}
+                <DialogError message={submitError} />
 
                 <View className="flex-row gap-3 flex-wrap">
                     <View className="flex-1 min-w-[200px]">
@@ -1057,19 +1064,17 @@ function RegisterPackageModal({
                         />
                     </View>
                 </View>
+            </Dialog.Body>
 
-                <View className="flex-row gap-3 justify-end">
-                    <Pressable onPress={close} className="px-3 py-2" disabled={create.isPending}>
-                        <Text className="text-foreground" style={{ fontSize: 13 }}>
-                            Cancel
-                        </Text>
-                    </Pressable>
-                    <Button onPress={onSubmit} isDisabled={create.isPending} size="sm">
-                        <ButtonText>{create.isPending ? 'Registering…' : 'Register'}</ButtonText>
-                    </Button>
-                </View>
-            </ModalContent>
-        </Modal>
+            <Dialog.Footer>
+                <Dialog.CancelButton onPress={close} isDisabled={create.isPending} />
+                <Dialog.ActionButton
+                    label={create.isPending ? 'Registering…' : 'Register'}
+                    onPress={onSubmit}
+                    isDisabled={create.isPending}
+                />
+            </Dialog.Footer>
+        </Dialog>
     )
 }
 
@@ -1141,20 +1146,11 @@ function InstallPackageModal({
     if (!isOpen) return null
 
     return (
-        <Modal isOpen onClose={close}>
-            <ModalBackdrop />
-            <ModalContent className="w-[520px] p-5 gap-4">
-                <Text className="text-foreground" style={{ fontSize: 18, fontWeight: '600' }}>
-                    Install from npm or git
-                </Text>
-
+        <Dialog isOpen onClose={close} size="xl" title="Install from npm or git">
+            <Dialog.Body>
                 <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
 
-                {submitError && (
-                    <View className="rounded-md p-2.5 bg-danger-soft">
-                        <Text className="text-xs text-danger">{submitError}</Text>
-                    </View>
-                )}
+                <DialogError message={submitError} />
 
                 <SecurityWarning isVisible={showWarning} />
 
@@ -1166,19 +1162,17 @@ function InstallPackageModal({
                     autoCapitalize="none"
                     hint="npm package name, version spec, or a git URL"
                 />
+            </Dialog.Body>
 
-                <View className="flex-row gap-3 justify-end">
-                    <Pressable onPress={close} className="px-3 py-2" disabled={isInstalling}>
-                        <Text className="text-foreground" style={{ fontSize: 13 }}>
-                            Cancel
-                        </Text>
-                    </Pressable>
-                    <Button onPress={onSubmit} isDisabled={isInstalling} size="sm">
-                        <ButtonText>{isInstalling ? 'Starting…' : 'Install'}</ButtonText>
-                    </Button>
-                </View>
-            </ModalContent>
-        </Modal>
+            <Dialog.Footer>
+                <Dialog.CancelButton onPress={close} isDisabled={isInstalling} />
+                <Dialog.ActionButton
+                    label={isInstalling ? 'Starting…' : 'Install'}
+                    onPress={onSubmit}
+                    isDisabled={isInstalling}
+                />
+            </Dialog.Footer>
+        </Dialog>
     )
 }
 

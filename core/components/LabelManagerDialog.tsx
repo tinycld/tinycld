@@ -1,10 +1,10 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { COLOR_PALETTE, ColorPickerGrid } from '@tinycld/core/ui/color-picker'
+import { Dialog } from '@tinycld/core/ui/dialog'
 import { Divider } from '@tinycld/core/ui/divider'
 import { useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useLabelMutations } from '@tinycld/core/ui/hooks/useLabelMutations'
 import { useLabels } from '@tinycld/core/ui/hooks/useLabels'
-import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
 import { Check, Plus, Trash2, X } from 'lucide-react-native'
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
@@ -294,23 +294,10 @@ interface LabelManagerDialogProps {
 }
 
 export function LabelManagerDialog({ isVisible, onClose }: LabelManagerDialogProps) {
-    const mutedColor = useThemeColor('muted-foreground')
-
     return (
-        <Modal isOpen={isVisible} onClose={onClose}>
-            <ModalBackdrop />
-            <ModalContent className="w-[360px] max-h-[480px] p-0 rounded-xl">
-                <View className="flex-row items-center justify-between px-3 py-2.5">
-                    <Text className="text-lg font-semibold text-foreground">Labels</Text>
-                    <Pressable onPress={onClose} className="p-1">
-                        <X size={18} color={mutedColor} />
-                    </Pressable>
-                </View>
-
-                <Divider />
-
-                <LabelManagerPanel maxListHeight={320} />
-            </ModalContent>
-        </Modal>
+        <Dialog isOpen={isVisible} onClose={onClose} title="Labels">
+            <Divider />
+            <LabelManagerPanel maxListHeight={320} />
+        </Dialog>
     )
 }

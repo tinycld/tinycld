@@ -1,12 +1,11 @@
 import { useLiveQuery } from '@tanstack/react-db'
-import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import { collectionByName } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ChevronDown } from 'lucide-react-native'
 import { useMemo, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, Text } from 'react-native'
 
 export interface RelationRecordPickerProps {
     target: string
@@ -112,50 +111,47 @@ export function RelationRecordPicker({
     const label = selected ? selected.label : value || 'Select…'
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable className="flex-1 flex-row items-center justify-between border rounded-lg px-2.5 py-1.5 border-border bg-background">
                     <Text className="text-sm text-foreground" numberOfLines={1}>
                         {label}
                     </Text>
                     <ChevronDown size={14} color={mutedColor} />
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal hasTextInput>
-                <Menu.Overlay />
-                <Menu.Content presentation="popover" placement="bottom" align="start">
-                    <View className="px-2 pt-1 pb-2">
-                        <PlainInput
-                            value={search}
-                            onChangeText={setSearch}
-                            placeholder="Search…"
-                            placeholderTextColor={placeholderColor}
-                            className="border rounded-lg px-2.5 py-1.5 text-sm text-foreground bg-background border-border"
-                        />
-                    </View>
-                    {matches.visible.map(({ record, label: recordName }) => (
-                        <MenuActionItem
-                            key={record.id as string}
-                            label={recordName}
-                            isActive={record.id === value}
-                            onPress={() => onChange(record.id as string)}
-                        />
-                    ))}
-                    {matches.visible.length === 0 ? (
-                        <Text className="px-3 py-2 text-xs text-muted-foreground">
-                            {records.length === 0 ? 'Nothing to choose from' : 'No matches'}
-                        </Text>
-                    ) : null}
-                    {matches.total > matches.visible.length ? (
-                        // Say so rather than silently truncating: a user who
-                        // can't see their record needs to know to narrow the
-                        // search, not assume it doesn't exist.
-                        <Text className="px-3 py-2 text-xs text-muted-foreground">
-                            {matches.total - matches.visible.length} more — keep typing to narrow
-                        </Text>
-                    ) : null}
-                </Menu.Content>
-            </Menu.Portal>
+            }
+            placement="bottom-start"
+        >
+            <Menu.Custom className="px-2 pt-1 pb-2">
+                <PlainInput
+                    value={search}
+                    onChangeText={setSearch}
+                    placeholder="Search…"
+                    placeholderTextColor={placeholderColor}
+                    className="border rounded-lg px-2.5 py-1.5 text-sm text-foreground bg-background border-border"
+                />
+            </Menu.Custom>
+            {matches.visible.map(({ record, label: recordName }) => (
+                <Menu.Item
+                    key={record.id as string}
+                    label={recordName}
+                    isSelected={record.id === value}
+                    onSelect={() => onChange(record.id as string)}
+                />
+            ))}
+            {matches.visible.length === 0 ? (
+                <Text className="px-3 py-2 text-xs text-muted-foreground">
+                    {records.length === 0 ? 'Nothing to choose from' : 'No matches'}
+                </Text>
+            ) : null}
+            {matches.total > matches.visible.length ? (
+                // Say so rather than silently truncating: a user who
+                // can't see their record needs to know to narrow the
+                // search, not assume it doesn't exist.
+                <Text className="px-3 py-2 text-xs text-muted-foreground">
+                    {matches.total - matches.visible.length} more — keep typing to narrow
+                </Text>
+            ) : null}
         </Menu>
     )
 }

@@ -1,4 +1,3 @@
-import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import type {
     CatalogAction,
     CatalogParam,
@@ -18,7 +17,6 @@ import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
 import { Menu } from '@tinycld/core/ui/menu'
 import { ArrowDown, ArrowUp, Braces, Plus, Trash2 } from 'lucide-react-native'
 import { newRecordId } from 'pbtsdb/core'
-import { Fragment } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import { RuleCard } from './RuleCard'
 import { ValueInput } from './ValueInput'
@@ -86,32 +84,28 @@ function AddActionMenu({
     const ambiguous = ambiguousLabels(options)
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable className="self-start flex-row items-center gap-1 py-1">
                     <Plus size={13} color={mutedColor} />
                     <Text className="text-xs text-muted-foreground">add action</Text>
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal>
-                <Menu.Overlay />
-                <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {groups.map(([pkg, actions]) => (
-                        <Fragment key={pkg}>
-                            <Menu.Label>{pkg}</Menu.Label>
-                            {actions.map(action => (
-                                <MenuActionItem
-                                    key={action.ref}
-                                    testID={`action-option-${action.ref}`}
-                                    label={actionOptionLabel(action, ambiguous.has(action.label))}
-                                    disabled={!action.available}
-                                    onPress={() => onSelect(action)}
-                                />
-                            ))}
-                        </Fragment>
+            }
+            placement="bottom-start"
+        >
+            {groups.map(([pkg, actions]) => (
+                <Menu.Section key={pkg} label={pkg}>
+                    {actions.map(action => (
+                        <Menu.Item
+                            key={action.ref}
+                            testID={`action-option-${action.ref}`}
+                            label={actionOptionLabel(action, ambiguous.has(action.label))}
+                            isDisabled={!action.available}
+                            onSelect={() => onSelect(action)}
+                        />
                     ))}
-                </Menu.Content>
-            </Menu.Portal>
+                </Menu.Section>
+            ))}
         </Menu>
     )
 }
@@ -128,24 +122,21 @@ function TemplateFieldMenu({
     if (fields.length === 0) return null
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable className="p-1.5" hitSlop={8}>
                     <Braces size={14} color={mutedColor} />
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal>
-                <Menu.Overlay />
-                <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {fields.map(field => (
-                        <MenuActionItem
-                            key={field.key}
-                            label={field.label}
-                            onPress={() => onSelectKey(field.key)}
-                        />
-                    ))}
-                </Menu.Content>
-            </Menu.Portal>
+            }
+            placement="bottom-start"
+        >
+            {fields.map(field => (
+                <Menu.Item
+                    key={field.key}
+                    label={field.label}
+                    onSelect={() => onSelectKey(field.key)}
+                />
+            ))}
         </Menu>
     )
 }

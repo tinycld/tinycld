@@ -5,7 +5,7 @@ import { navigateToOrgUrl } from '@tinycld/core/lib/org-url'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
-import { BottomDrawer } from '@tinycld/core/ui/bottom-drawer'
+import { Sheet } from '@tinycld/core/ui/sheet'
 import { useRouter } from 'expo-router'
 import { Bell, LogOut, Settings, User, X } from 'lucide-react-native'
 import { useCallback } from 'react'
@@ -41,7 +41,7 @@ export function MoreDrawer() {
     }
 
     return (
-        <BottomDrawer isOpen={isMoreOpen} onClose={close} surface="rail-background">
+        <Sheet isOpen={isMoreOpen} onClose={close} surface="rail-background">
             <View className="flex-row items-center justify-between px-5 pb-3">
                 <View className="flex-row items-center gap-3">
                     <View
@@ -59,12 +59,12 @@ export function MoreDrawer() {
                 </Pressable>
             </View>
 
-            {/* Scrollable because BottomDrawer caps its height at 85% of the
+            {/* Scrollable because the sheet caps its height at 85% of the
                 screen and has no internal scroller — content past the cap is
                 silently CLIPPED, and it clips from the bottom, where Sign out and
                 the overflow packages live. With up to 10 saved servers the content
                 exceeds the cap on a typical phone, which would cost the user their
-                Sign out row. Fixed here rather than in BottomDrawer: its other
+                Sign out row. Fixed here rather than in Sheet: its other
                 callers have their own content strategies. */}
             <ScrollView
                 contentContainerStyle={{ paddingHorizontal: 8, paddingBottom: 16 }}
@@ -190,6 +190,6 @@ export function MoreDrawer() {
                     </>
                 ) : null}
             </ScrollView>
-        </BottomDrawer>
+        </Sheet>
     )
 }

@@ -1,6 +1,5 @@
-import { Button, ButtonText } from '@tinycld/core/ui/button'
-import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
-import { Pressable, Text, View } from 'react-native'
+import { Dialog } from '@tinycld/core/ui/dialog'
+import { Text } from 'react-native'
 
 export type ConfirmDialogProps = {
     isOpen: boolean
@@ -25,32 +24,33 @@ export function ConfirmDialog({
     isDestructive = false,
     isSubmitting = false,
 }: ConfirmDialogProps) {
-    if (!isOpen) return null
-
     return (
-        <Modal isOpen onClose={onClose}>
-            <ModalBackdrop />
-            <ModalContent className="w-[360px] p-4 gap-3">
-                <Text className="text-foreground" style={{ fontSize: 20, fontWeight: '600' }}>
-                    {title}
-                </Text>
-                {message ? <Text className="text-foreground text-sm">{message}</Text> : null}
-                <View className="flex-row gap-3 justify-end">
-                    <Pressable onPress={onClose} className="px-3 py-2" disabled={isSubmitting}>
-                        <Text className="text-foreground" style={{ fontSize: 13 }}>
-                            {cancelLabel}
-                        </Text>
-                    </Pressable>
-                    <Button
-                        onPress={onConfirm}
-                        isDisabled={isSubmitting}
-                        size="sm"
-                        variant={isDestructive ? 'destructive' : 'default'}
-                    >
-                        <ButtonText>{confirmLabel}</ButtonText>
-                    </Button>
-                </View>
-            </ModalContent>
-        </Modal>
+        // No close button: a confirm is answered, and the two answers are the
+        // footer. Escape and the backdrop still dismiss it.
+        <Dialog isOpen={isOpen} onClose={onClose} title={title} hasCloseButton={false}>
+            <ConfirmMessage message={message} />
+            <Dialog.Footer>
+                <Dialog.CancelButton
+                    onPress={onClose}
+                    label={cancelLabel}
+                    isDisabled={isSubmitting}
+                />
+                <Dialog.ActionButton
+                    label={confirmLabel}
+                    onPress={onConfirm}
+                    isDisabled={isSubmitting}
+                    isDestructive={isDestructive}
+                />
+            </Dialog.Footer>
+        </Dialog>
+    )
+}
+
+function ConfirmMessage({ message }: { message?: string }) {
+    if (!message) return null
+    return (
+        <Dialog.Body>
+            <Text className="text-foreground text-sm">{message}</Text>
+        </Dialog.Body>
     )
 }

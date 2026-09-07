@@ -1,7 +1,6 @@
 // One row in RulesPanel: drag handle · name/summary · badges · last-run line
 // · enabled Switch · overflow Menu (Edit / Run history / Run now / Delete).
 
-import { DotsMenu, MenuActionItem, MenuSeparator } from '@tinycld/core/components/DropdownMenu'
 import { formatRelativeTime } from '@tinycld/core/components/NotificationDrawer'
 import { needsPackage, ruleSummary } from '@tinycld/core/components/rules/rule-summary'
 import { SortableDragHandle } from '@tinycld/core/components/SortableList'
@@ -11,10 +10,11 @@ import { useRulesUiStore } from '@tinycld/core/lib/stores/rules-ui-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import type { Rules } from '@tinycld/core/types/pbSchema'
 import { ConfirmDialog } from '@tinycld/core/ui/ConfirmDialog'
+import { Menu } from '@tinycld/core/ui/menu'
 import { Switch } from '@tinycld/core/ui/switch'
-import { Clock, History, Pencil, Play, Trash2 } from 'lucide-react-native'
+import { Clock, History, MoreVertical, Pencil, Play, Trash2 } from 'lucide-react-native'
 import { useEffect, useRef, useState } from 'react'
-import { Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 export interface RuleRowProps {
     rule: Rules
@@ -169,6 +169,7 @@ function RuleRowMenu({
     onRequestDelete: () => void
 }) {
     const { runNow } = useRuleMutations()
+    const mutedColor = useThemeColor('muted-foreground')
     const [isQueued, setIsQueued] = useState(false)
     const queuedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -199,22 +200,30 @@ function RuleRowMenu({
     }
 
     return (
-        <DotsMenu>
-            <MenuActionItem label="Edit" icon={Pencil} onPress={onEdit} disabled={!canEdit} />
-            <MenuActionItem label="Run history" icon={History} onPress={onOpenHistory} />
+        <Menu
+            trigger={
+                <Pressable className="p-1.5 rounded-full" accessibilityLabel="More actions">
+                    <MoreVertical size={16} color={mutedColor} />
+                </Pressable>
+            }
+            title={rule.name}
+        >
+            <Menu.Item label="Edit" icon={Pencil} onSelect={onEdit} isDisabled={!canEdit} />
+            <Menu.Item label="Run history" icon={History} onSelect={onOpenHistory} />
             <RunNowMenuItem
                 isVisible={canRunNow && canEdit}
                 isQueued={isQueued}
                 onPress={handleRunNow}
             />
-            <MenuSeparator />
-            <MenuActionItem
+            <Menu.Separator />
+            <Menu.Item
                 label="Delete"
                 icon={Trash2}
-                onPress={onRequestDelete}
-                disabled={!canEdit}
+                onSelect={onRequestDelete}
+                isDisabled={!canEdit}
+                isDestructive
             />
-        </DotsMenu>
+        </Menu>
     )
 }
 
@@ -228,7 +237,5 @@ function RunNowMenuItem({
     onPress: () => void
 }) {
     if (!isVisible) return null
-    return (
-        <MenuActionItem label={isQueued ? 'Queued ✓' : 'Run now'} icon={Play} onPress={onPress} />
-    )
+    return <Menu.Item label={isQueued ? 'Queued ✓' : 'Run now'} icon={Play} onSelect={onPress} />
 }
