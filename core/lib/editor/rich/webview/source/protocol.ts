@@ -19,6 +19,19 @@ export const MARKDOWN_GET = 'get'
 /** WebView → host, echoes the get's requestId. */
 export const MARKDOWN_RESULT = 'result'
 
+/**
+ * The 'html' namespace is the same shape for the editor's other wire format.
+ * Mail's messages are HTML and always will be, and it reads the plain text
+ * alongside (an emptiness check, the text/plain part of a send), so one `get`
+ * answers with both rather than costing two round-trips.
+ */
+/** host → WebView. Replaces the document. */
+export const HTML_SET = 'set'
+/** host → WebView, carries a requestId. */
+export const HTML_GET = 'get'
+/** WebView → host, echoes the get's requestId. */
+export const HTML_RESULT = 'result'
+
 /** WebView → host, posted once the page mounts, before Tiptap is constructed. */
 export const EDITOR_READY = 'editor-ready'
 /** host → WebView, the one-shot init payload. */
@@ -286,6 +299,15 @@ export interface MarkdownSetPayload {
 
 export interface MarkdownResultPayload {
     markdown: string
+}
+
+export interface HtmlSetPayload {
+    html: string
+}
+
+export interface HtmlResultPayload {
+    html: string
+    text: string
 }
 
 export interface YjsUpdatePayload {

@@ -132,6 +132,7 @@ export type EditorMessageNamespace =
     | 'core'
     | 'find-replace'
     | 'format'
+    | 'html'
     | 'markdown'
     | 'suggestion'
     | 'ui'

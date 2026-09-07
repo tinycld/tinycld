@@ -30,6 +30,10 @@ import {
     decodeUpdate,
     EDITOR_READY,
     encodeUpdate,
+    HTML_GET,
+    HTML_RESULT,
+    HTML_SET,
+    type HtmlSetPayload,
     MARKDOWN_GET,
     MARKDOWN_RESULT,
     MARKDOWN_SET,
@@ -555,6 +559,10 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
                 handleMarkdownMessage(editor, parsed, isCollab)
                 return
             }
+            if (parsed.namespace === 'html') {
+                handleHtmlMessage(editor, parsed, isCollab)
+                return
+            }
             if (parsed.namespace === 'app' && parsed.type === APP_FILE_TOKEN) {
                 const auth = parsed.payload as RichEditorFileAuth | undefined
                 if (auth && typeof auth.token === 'string' && typeof auth.baseURL === 'string') {
@@ -601,6 +609,36 @@ function handleMarkdownMessage(
         // escapes, and this value is what gets persisted.
         const markdown = repairMarkdown(editor.getMarkdown())
         postToNative(makeMessage('markdown', MARKDOWN_RESULT, { markdown }, message.requestId))
+    }
+}
+
+/**
+ * The html channel: the same two operations for the editor's other wire
+ * format. Exported so the round-trip can be tested against a real Tiptap
+ * instance without a WebView.
+ */
+export function handleHtmlMessage(
+    editor: TiptapEditor,
+    message: EditorMessage,
+    isCollab: boolean
+): void {
+    if (message.type === HTML_SET) {
+        // Same no-op as the markdown set: under collaboration the shared doc is
+        // the source of truth.
+        if (isCollab) return
+        const { html } = message.payload as HtmlSetPayload
+        editor.commands.setContent(html, { emitUpdate: false })
+        return
+    }
+    if (message.type === HTML_GET) {
+        postToNative(
+            makeMessage(
+                'html',
+                HTML_RESULT,
+                { html: editor.getHTML(), text: editor.getText() },
+                message.requestId
+            )
+        )
     }
 }
 
