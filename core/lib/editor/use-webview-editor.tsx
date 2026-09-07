@@ -289,7 +289,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         lastFocusRef.current = isWebViewFocused
         log.debug('core.editor.webview', 'focus', { instanceKey: key, isFocused: isWebViewFocused })
         focusChangeRef.current?.(isWebViewFocused)
-    }, [isWebViewFocused])
+    }, [isWebViewFocused, key])
 
     // Plumb editable changes through to the page. Before the page has an
     // editor the message is dropped, and the init payload's own `editable`
