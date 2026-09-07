@@ -2,6 +2,7 @@ package org.tinycld.editorwebview
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Color
 import android.webkit.WebView
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.records.Field
@@ -29,7 +30,7 @@ class EditorWebViewHost(context: Context, appContext: AppContext) : ExpoView(con
     }
   var source: String? = null
   var scrollEnabled = true
-  var webBackgroundColor: Int? = null
+  var webBackgroundColor: Color? = null
   var inspectable = false
 
   val onMessage by EventDispatcher<MessageEvent>()
@@ -69,7 +70,7 @@ class EditorWebViewHost(context: Context, appContext: AppContext) : ExpoView(con
    */
   fun apply(webView: PooledWebView) {
     webView.setScrollLocked(!scrollEnabled)
-    webBackgroundColor?.let { webView.setBackgroundColor(it) }
+    webBackgroundColor?.let { webView.setBackgroundColor(it.toArgb()) }
     WebView.setWebContentsDebuggingEnabled(inspectable)
   }
 }

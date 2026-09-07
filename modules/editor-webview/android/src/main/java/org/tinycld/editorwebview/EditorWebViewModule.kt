@@ -1,5 +1,6 @@
 package org.tinycld.editorwebview
 
+import android.graphics.Color
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -52,7 +53,7 @@ class EditorWebViewModule : Module() {
         view.scrollEnabled = enabled
       }
 
-      Prop("webBackgroundColor") { view: EditorWebViewHost, color: Int? ->
+      Prop("webBackgroundColor") { view: EditorWebViewHost, color: Color? ->
         view.webBackgroundColor = color
       }
 
