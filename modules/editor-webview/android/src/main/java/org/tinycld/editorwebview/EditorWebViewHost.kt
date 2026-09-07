@@ -33,7 +33,13 @@ class EditorWebViewHost(context: Context, appContext: AppContext) : ExpoView(con
   var webBackgroundColor: Color? = null
   var inspectable = false
 
-  val onMessage by EventDispatcher<MessageEvent>()
+  // React Native coalesces same-named view events that share a coalescing key
+  // and land in one frame, keeping only the last. The page posts bursts —
+  // `editor-mounted` immediately followed by `content-height` — and losing the
+  // first of those leaves the host waiting forever, so every message gets its
+  // own key.
+  private var messageSequence = 0
+  val onMessage by EventDispatcher<MessageEvent> { (messageSequence++ and 0x7fff).toShort() }
   val onLoad by EventDispatcher<InstanceEvent>()
   val onProcessGone by EventDispatcher<InstanceEvent>()
 
