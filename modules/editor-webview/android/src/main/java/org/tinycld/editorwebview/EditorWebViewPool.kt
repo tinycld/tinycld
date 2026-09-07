@@ -91,7 +91,9 @@ object EditorWebViewPool {
     host.apply(webView)
 
     while (entry.buffer.isNotEmpty()) {
-      host.onMessage(MessageEvent(entry.buffer.removeFirst()))
+      val data = entry.buffer.removeFirst()
+      Log.d(TAG, "replay $key ${data.take(70)}")
+      host.onMessage(MessageEvent(data))
     }
   }
 
@@ -118,6 +120,7 @@ object EditorWebViewPool {
   fun deliver(key: String, data: String) {
     val entry = entry(key) ?: return
     val host = entry.host
+    Log.d(TAG, "deliver $key host=${host != null} attached=${host?.isAttachedToWindow} ${data.take(70)}")
     if (host != null) {
       host.onMessage(MessageEvent(data))
       return
