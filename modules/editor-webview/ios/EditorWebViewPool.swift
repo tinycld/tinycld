@@ -1,4 +1,5 @@
 import ExpoModulesCore
+import os.log
 import WebKit
 
 /// One pooled editor page: a live WKWebView that outlives every host it is
@@ -51,6 +52,9 @@ final class ScriptMessageProxy: NSObject, WKScriptMessageHandler {
 final class EditorWebViewPool: NSObject, WKNavigationDelegate {
   static let shared = EditorWebViewPool()
   static let messageHandlerName = "ReactNativeWebView"
+  /// `log stream --predicate 'subsystem == "org.tinycld.editorwebview"'` shows the
+  /// pool's lifecycle on a device: creation, attach, load, process death.
+  static let log = OSLog(subsystem: "org.tinycld.editorwebview", category: "pool")
   private static let bufferLimit = 256
 
   private var entries: [String: EditorWebViewEntry] = [:]
@@ -87,7 +91,11 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
   /// Show the page for `key` in `host`, creating and loading it on first use.
   /// Last mount wins: whichever host attaches most recently takes the page.
   func attach(_ key: String, host: EditorWebViewHostView, source: String) {
-    let entry = self.entry(key) ?? create(key, source: source)
+    let existing = self.entry(key)
+    let entry = existing ?? create(key, source: source)
+    // The one line that proves a hand-off did not reload: "reused" means the
+    // page kept everything it had.
+    os_log(.debug, log: Self.log, "attach %{public}@: %{public}@", key, existing == nil ? "created" : "reused")
     if entry.source != source {
       NSLog("[EditorWebView] ignoring a different source for instance %@; the source is fixed at creation", key)
     }
@@ -179,6 +187,7 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
     guard let entry = entry(key) else {
       return
     }
+    os_log(.debug, log: Self.log, "destroy %{public}@", key)
     store(key, nil)
     teardown(entry)
   }
@@ -246,6 +255,7 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
     }
     let (key, entry) = found
     entry.isLoaded = true
+    os_log(.debug, log: Self.log, "loaded %{public}@", key)
     entry.host?.onLoad(["instanceKey": key])
   }
 
@@ -258,6 +268,7 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
     }
     let (key, entry) = found
     entry.isLoaded = false
+    os_log(.error, log: Self.log, "content process terminated %{public}@; reloading", key)
     webView.loadHTMLString(entry.source, baseURL: nil)
     entry.host?.onProcessGone(["instanceKey": key])
   }

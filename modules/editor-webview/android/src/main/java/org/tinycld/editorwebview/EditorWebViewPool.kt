@@ -60,7 +60,11 @@ object EditorWebViewPool {
    * Last mount wins: whichever host attaches most recently takes the page.
    */
   fun attach(key: String, host: EditorWebViewHost, source: String) {
-    val entry = entry(key) ?: create(key, webViewContext(host), source)
+    val existing = entry(key)
+    val entry = existing ?: create(key, webViewContext(host), source)
+    // The one line that proves a hand-off did not reload: "reused" means the
+    // page kept everything it had. `adb logcat -s EditorWebView`.
+    Log.d(TAG, "attach $key: ${if (existing == null) "created" else "reused"}")
     if (entry.source != source) {
       Log.w(TAG, "ignoring a different source for instance $key; the source is fixed at creation")
     }
@@ -157,6 +161,7 @@ object EditorWebViewPool {
 
   fun destroy(key: String) {
     val entry = entry(key) ?: return
+    Log.d(TAG, "destroy $key")
     store(key, null)
     teardown(entry)
   }
@@ -194,6 +199,7 @@ object EditorWebViewPool {
   fun onPageFinished(webView: PooledWebView) {
     val (key, entry) = find(webView) ?: return
     entry.isLoaded = true
+    Log.d(TAG, "loaded $key")
     entry.host?.onLoad(InstanceEvent(key))
   }
 
@@ -206,6 +212,7 @@ object EditorWebViewPool {
    */
   fun onRenderProcessGone(webView: PooledWebView): Boolean {
     val (key, entry) = find(webView) ?: return true
+    Log.e(TAG, "render process gone for $key; rebuilding")
     val host = entry.host
     (webView.parent as? ViewGroup)?.removeView(webView)
     webView.removeJavascriptInterface(PooledWebView.BRIDGE_NAME)
