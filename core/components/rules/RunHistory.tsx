@@ -1,17 +1,12 @@
-// Per-rule run history drawer: responsive like RuleBuilder (Modal on
-// desktop/tablet, BottomDrawer on mobile — same split, same
-// GestureHandlerRootView mount-region caveat: the mount screen provides it).
+// Per-rule run history: a Dialog, which is a sheet on a phone by itself.
 import { eq } from '@tanstack/db'
 import { formatRelativeTime } from '@tinycld/core/components/NotificationDrawer'
-import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import type { RuleRuns } from '@tinycld/core/types/pbSchema'
-import { BottomDrawer } from '@tinycld/core/ui/bottom-drawer'
-import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
-import { X } from 'lucide-react-native'
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native'
+import { Dialog } from '@tinycld/core/ui/dialog'
+import { ActivityIndicator, Text, View } from 'react-native'
 
 export interface RunHistoryProps {
     ruleId: string | null
@@ -47,59 +42,22 @@ function sortRunsDesc(runs: RuleRuns[] | undefined): RuleRuns[] {
 }
 
 export function RunHistory({ ruleId, onClose }: RunHistoryProps) {
-    const isMobile = useBreakpoint() === 'mobile'
     const isOpen = ruleId !== null
 
-    if (isMobile) {
-        return (
-            <BottomDrawer isOpen={isOpen} onClose={onClose}>
-                <View className="px-4 pb-4">
-                    <RunHistoryContent ruleId={ruleId} onClose={onClose} isMobile />
-                </View>
-            </BottomDrawer>
-        )
-    }
-
     return (
-        <Modal isOpen={isOpen} onClose={onClose}>
-            <ModalBackdrop />
-            {/* Caps the shell so the run list scrolls inside it rather than
-                overflowing ModalContent's `overflow-hidden` and being clipped.
-                Same rationale as RuleBuilder — see the note there. */}
-            <ModalContent className="max-h-[85vh]">
-                <RunHistoryContent ruleId={ruleId} onClose={onClose} isMobile={false} />
-            </ModalContent>
-        </Modal>
+        <Dialog isOpen={isOpen} onClose={onClose} title="Run history" size="md">
+            <RunHistoryContent ruleId={ruleId} />
+        </Dialog>
     )
 }
 
-function RunHistoryContent({ ruleId, onClose, isMobile }: RunHistoryProps & { isMobile: boolean }) {
+function RunHistoryContent({ ruleId }: Pick<RunHistoryProps, 'ruleId'>) {
     const { data: rawRuns, isReady } = useRuleRuns(ruleId)
     const runs = sortRunsDesc(rawRuns)
-
     return (
-        <View className={isMobile ? 'gap-3' : 'gap-3 flex-1 min-h-0'}>
-            <RunHistoryHeader onClose={onClose} />
-            {/* Sizing splits by shell for the same reason as RuleBuilder's
-                scrollRegionClass: the modal caps the shell and lets this flex,
-                while the drawer measures its own height from content and would
-                collapse a flex-1 child to nothing. */}
-            <ScrollView className={isMobile ? 'max-h-[70vh]' : 'flex-1 min-h-0'}>
-                <RunHistoryBody isReady={isReady} runs={runs} />
-            </ScrollView>
-        </View>
-    )
-}
-
-function RunHistoryHeader({ onClose }: { onClose: () => void }) {
-    const mutedColor = useThemeColor('muted-foreground')
-    return (
-        <View className="flex-row items-center justify-between">
-            <Text className="text-lg font-semibold text-foreground">Run history</Text>
-            <Pressable onPress={onClose} accessibilityLabel="Close" className="p-1">
-                <X size={18} color={mutedColor} />
-            </Pressable>
-        </View>
+        <Dialog.Body>
+            <RunHistoryBody isReady={isReady} runs={runs} />
+        </Dialog.Body>
     )
 }
 

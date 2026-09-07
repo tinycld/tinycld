@@ -1,8 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
-import { AlertTriangle } from 'lucide-react-native'
+import { Dialog } from '@tinycld/core/ui/dialog'
 import { useEffect, useState } from 'react'
-import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
+import { Text, TextInput, View } from 'react-native'
 import type { DropReport, PendingChange } from './use-package-versions'
 import { formatVersion } from './version-compare'
 
@@ -10,7 +9,7 @@ import { formatVersion } from './version-compare'
 // confirm; when the set includes downgrades it loads a drop report for EVERY
 // downgraded package and requires the operator to type each downgraded slug
 // (comma/space separated) — so confirming one package can never silently
-// downgrade another. An apply failure is surfaced inline (the modal stays open).
+// downgrade another. An apply failure is surfaced inline (the dialog stays open).
 export function ConfirmChangesModal({
     isOpen,
     pendingChanges,
@@ -26,8 +25,6 @@ export function ConfirmChangesModal({
     onCancel: () => void
     onConfirm: () => Promise<void>
 }) {
-    const dangerColor = useThemeColor('danger')
-    const fgColor = useThemeColor('foreground')
     const [typed, setTyped] = useState('')
     const [reports, setReports] = useState<Record<string, DropReport>>({})
     const [loadingReports, setLoadingReports] = useState(false)
@@ -83,7 +80,7 @@ export function ConfirmChangesModal({
             setReports({})
         } catch (err) {
             // Surface the failure inline instead of leaving the user with a
-            // silently-closed modal and no feedback.
+            // silently-closed dialog and no feedback.
             setSubmitError(err instanceof Error ? err.message : 'Failed to apply changes')
         } finally {
             setSubmitting(false)
@@ -103,88 +100,109 @@ export function ConfirmChangesModal({
             : `Type each package name to confirm: ${downgradeSlugs.join(', ')}`
 
     return (
-        <Modal isOpen onClose={handleCancel}>
-            <ModalBackdrop />
-            <ModalContent className="w-[520px] max-h-[560px] p-4 gap-3">
-                <View className="flex-row gap-2 items-center">
-                    {hasDowngrade && <AlertTriangle size={18} color={dangerColor} />}
-                    <Text className="text-foreground" style={{ fontSize: 19, fontWeight: '600' }}>
-                        {hasDowngrade ? 'Confirm downgrade' : 'Apply version changes'}
-                    </Text>
-                </View>
+        <Dialog
+            isOpen
+            onClose={handleCancel}
+            title={hasDowngrade ? 'Confirm downgrade' : 'Apply version changes'}
+            size="xl"
+        >
+            {/* Only the (potentially long) change list scrolls; the confirm
+                input + action buttons below stay pinned so a large
+                multi-package downgrade can never push them off-screen. */}
+            <Dialog.Body>
+                <ChangeTable
+                    pendingChanges={pendingChanges}
+                    reports={reports}
+                    loadingReports={loadingReports}
+                />
+            </Dialog.Body>
 
-                {/* Only the (potentially long) change list scrolls; the confirm
-                    input + action buttons below stay pinned so a large
-                    multi-package downgrade can never push them off-screen. */}
-                <ScrollView className="max-h-[340px]">
-                    <ChangeTable
-                        pendingChanges={pendingChanges}
-                        reports={reports}
-                        loadingReports={loadingReports}
-                    />
-                </ScrollView>
+            <DowngradeConfirm
+                isVisible={hasDowngrade}
+                hint={confirmHint}
+                slugs={downgradeSlugs}
+                typed={typed}
+                onChangeTyped={setTyped}
+            />
 
-                {hasDowngrade && (
-                    <Text className="text-muted-foreground" style={{ fontSize: 11 }}>
-                        The database is backed up before the change.
-                    </Text>
-                )}
+            <SubmitError message={submitError} />
 
-                {hasDowngrade && (
-                    <View className="gap-1">
-                        <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
-                            {confirmHint}
-                        </Text>
-                        <TextInput
-                            value={typed}
-                            onChangeText={setTyped}
-                            autoCapitalize="none"
-                            placeholder={downgradeSlugs.join(', ')}
-                            className="rounded-lg border border-border px-3 py-2"
-                            style={{ color: fgColor, fontSize: 14 }}
-                        />
-                    </View>
-                )}
+            <Dialog.Footer>
+                <Dialog.CancelButton onPress={handleCancel} isDisabled={submitting} />
+                <Dialog.ActionButton
+                    label={applyLabel(submitting, hasDowngrade)}
+                    onPress={handleConfirm}
+                    isDisabled={!confirmEnabled}
+                    isDestructive={hasDowngrade}
+                />
+            </Dialog.Footer>
+        </Dialog>
+    )
+}
 
-                {submitError && (
-                    <View className="rounded-lg p-2 bg-danger-soft">
-                        <Text className="text-danger" style={{ fontSize: 12 }}>
-                            {submitError}
-                        </Text>
-                    </View>
-                )}
+function applyLabel(submitting: boolean, hasDowngrade: boolean) {
+    if (submitting) return 'Applying…'
+    return hasDowngrade ? 'Downgrade' : 'Apply'
+}
 
-                <View className="flex-row gap-3 justify-end">
-                    <Pressable onPress={handleCancel} className="px-3 py-2" disabled={submitting}>
-                        <Text className="text-foreground" style={{ fontSize: 13 }}>
-                            Cancel
-                        </Text>
-                    </Pressable>
-                    <Pressable
-                        onPress={handleConfirm}
-                        disabled={!confirmEnabled}
-                        className={`px-4 py-2 rounded-lg ${hasDowngrade ? 'bg-danger' : 'bg-primary'} ${confirmEnabled ? 'opacity-100' : 'opacity-50'}`}
-                    >
-                        <Text
-                            className={
-                                hasDowngrade ? 'text-danger-foreground' : 'text-primary-foreground'
-                            }
-                            style={{ fontSize: 13, fontWeight: '600' }}
-                        >
-                            {submitting ? 'Applying…' : hasDowngrade ? 'Downgrade' : 'Apply'}
-                        </Text>
-                    </Pressable>
-                </View>
-            </ModalContent>
-        </Modal>
+// DowngradeConfirm is the typed-slug guard. It sits between the scrolling
+// change list and the footer so it is always on screen when a downgrade is
+// staged, however long the list gets.
+function DowngradeConfirm({
+    isVisible,
+    hint,
+    slugs,
+    typed,
+    onChangeTyped,
+}: {
+    isVisible: boolean
+    hint: string
+    slugs: string[]
+    typed: string
+    onChangeTyped: (value: string) => void
+}) {
+    const fgColor = useThemeColor('foreground')
+    if (!isVisible) return null
+    return (
+        <View className="px-5 pb-4 gap-3">
+            <Text className="text-muted-foreground" style={{ fontSize: 11 }}>
+                The database is backed up before the change.
+            </Text>
+            <View className="gap-1">
+                <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
+                    {hint}
+                </Text>
+                <TextInput
+                    value={typed}
+                    onChangeText={onChangeTyped}
+                    autoCapitalize="none"
+                    placeholder={slugs.join(', ')}
+                    className="rounded-lg border border-border px-3 py-2"
+                    style={{ color: fgColor, fontSize: 14 }}
+                />
+            </View>
+        </View>
+    )
+}
+
+function SubmitError({ message }: { message: string | null }) {
+    if (!message) return null
+    return (
+        <View className="px-5 pb-4">
+            <View className="rounded-lg p-2 bg-danger-soft">
+                <Text className="text-danger" style={{ fontSize: 12 }}>
+                    {message}
+                </Text>
+            </View>
+        </View>
     )
 }
 
 // ChangeTable lists every staged change as one row: the package + version move
 // on the left, and its data-loss summary on the right — so a multi-package set
 // shows each package's impact inline (not just the first), and a downgrade's
-// dropped schema is read alongside the package it belongs to. The caller wraps
-// this list in a bounded ScrollView so a long set scrolls without pushing the
+// dropped schema is read alongside the package it belongs to. The caller renders
+// this list inside Dialog.Body so a long set scrolls without pushing the
 // confirm controls off-screen.
 function ChangeTable({
     pendingChanges,

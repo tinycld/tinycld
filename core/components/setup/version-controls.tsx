@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Menu } from '@tinycld/core/ui/menu'
 import { ArrowUp, ChevronDown, ChevronsUpDown } from 'lucide-react-native'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 import { compareVersions, type PackageVersionInfo } from './version-compare'
 
 // Per-row version controls shared by the merged Packages screen: the version
@@ -86,8 +86,8 @@ export function RowVersionSelect({
               : 'bg-surface'
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable
                     className={`flex-row items-center justify-between gap-2 px-3 py-2 rounded-lg border ${triggerBg}`}
                     style={{ borderColor: triggerBorder }}
@@ -100,23 +100,18 @@ export function RowVersionSelect({
                     </Text>
                     <ChevronsUpDown size={14} color={mutedColor} />
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal>
-                <Menu.Overlay />
-                <Menu.Content align="end" className="max-h-[360px]">
-                    <ScrollView>
-                        {options.map(o => (
-                            <Menu.Item
-                                key={o.value}
-                                onPress={() => onChange(o.value)}
-                                className={o.value === value ? 'bg-accent/20' : ''}
-                            >
-                                <Menu.ItemTitle>{o.label}</Menu.ItemTitle>
-                            </Menu.Item>
-                        ))}
-                    </ScrollView>
-                </Menu.Content>
-            </Menu.Portal>
+            }
+            placement="bottom-end"
+            title="Version"
+        >
+            {options.map(o => (
+                <Menu.Item
+                    key={o.value}
+                    label={o.label}
+                    isSelected={o.value === value}
+                    onSelect={() => onChange(o.value)}
+                />
+            ))}
         </Menu>
     )
 }

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { downloadFromUrl } from '@tinycld/core/file-viewer/file-url'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
+import { Dialog } from '@tinycld/core/ui/dialog'
 import { Download, FileIcon } from 'lucide-react-native'
 import type { ReactNode } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
@@ -64,18 +64,23 @@ export function PublicShareLayout({
 
     return (
         <View className="flex-1 bg-background">
-            <Modal isOpen onClose={() => {}}>
-                <ModalBackdrop />
-                <ModalContent className="w-[95vw] h-[90vh] max-w-[1400px] p-0 rounded-xl overflow-hidden">
+            <Dialog
+                isOpen
+                onClose={() => {}}
+                title={data.name}
+                header={
                     <PreviewHeader
                         name={data.name}
                         orgName={data.org_name}
                         fileUrl={data.file_url}
                         mimeType={data.mime_type}
                     />
-                    <View className="flex-1 overflow-hidden">{preview}</View>
-                </ModalContent>
-            </Modal>
+                }
+                size="full"
+                presentation="dialog"
+            >
+                <View className="flex-1 overflow-hidden">{preview}</View>
+            </Dialog>
         </View>
     )
 }

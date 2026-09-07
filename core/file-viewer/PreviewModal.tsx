@@ -1,9 +1,8 @@
-import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useSafeAreaPadding } from '@tinycld/core/lib/use-safe-area'
-import { Modal, ModalBackdrop, ModalContent } from '@tinycld/core/ui/modal'
+import { Dialog } from '@tinycld/core/ui/dialog'
 import { ChevronLeft, ChevronRight, Download, X } from 'lucide-react-native'
-import { Platform, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 import { GenericPreview } from './previews/GenericPreview'
 import { getPreviewEntry } from './registry'
 import type { FilePreviewSource, PreviewAction } from './types'
@@ -29,46 +28,30 @@ export function PreviewModal({
     onDownload,
     actions,
 }: PreviewModalProps) {
-    const isMobile = useBreakpoint() === 'mobile'
-
     if (!source) return null
 
-    // Use the Gluestack Modal everywhere — it portals to the app-root
-    // OverlayProvider. On mobile/native we use the modal's `full` size so the
-    // panel fills the screen; on desktop web we keep the windowed 95vw × 90vh
-    // frame.
-    const isFullscreen = isMobile || Platform.OS !== 'web'
-    const contentClass = isFullscreen
-        ? 'h-full p-0 rounded-none border-0'
-        : 'w-[95vw] h-[90vh] max-w-[1400px] p-0 rounded-xl overflow-hidden'
-
+    // A lightbox: the content carries its own toolbar, so no title row, and
+    // it is pinned to the dialog presentation — on a phone `full` is the
+    // whole screen, which is what a preview wants rather than a sheet.
     return (
-        // On native the gluestack overlay portals into the React tree, where it
-        // shares no stacking context with the mobile bottom tab bar — so the tab
-        // bar (zIndex 10) painted over a fullscreen preview, leaving the nav
-        // visible/tappable underneath (you could switch tabs and strand the
-        // modal). `useRNModal` renders the overlay inside a real react-native
-        // <Modal> (a top-level OS window) which is guaranteed above everything,
-        // including the tab bar. Web is unaffected (it already stacks at 9999 and
-        // ignores useRNModal).
-        <Modal
+        <Dialog
             isOpen={isVisible}
             onClose={onClose}
-            size={isFullscreen ? 'full' : 'md'}
-            useRNModal={isFullscreen}
+            title={source.displayName}
+            header={null}
+            size="full"
+            presentation="dialog"
+            testID="file-preview-modal"
         >
-            <ModalBackdrop />
-            <ModalContent testID="file-preview-modal" className={contentClass}>
-                <PreviewModalContent
-                    source={source}
-                    onClose={onClose}
-                    onNext={onNext}
-                    onPrevious={onPrevious}
-                    onDownload={onDownload}
-                    actions={actions}
-                />
-            </ModalContent>
-        </Modal>
+            <PreviewModalContent
+                source={source}
+                onClose={onClose}
+                onNext={onNext}
+                onPrevious={onPrevious}
+                onDownload={onDownload}
+                actions={actions}
+            />
+        </Dialog>
     )
 }
 

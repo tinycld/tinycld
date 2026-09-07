@@ -1,4 +1,3 @@
-import { MenuActionItem } from '@tinycld/core/components/DropdownMenu'
 import type { CatalogField } from '@tinycld/core/lib/automation/api'
 import { operatorLabel, operatorsForField } from '@tinycld/core/lib/automation/condition-helpers'
 import { NO_VALUE_OPS } from '@tinycld/core/lib/automation/helpers'
@@ -38,29 +37,26 @@ function FieldMenu({
     const selected = fields.find(f => f.key === condition.field)
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable className="flex-1 flex-row items-center justify-between border rounded-lg px-2.5 py-1.5 border-border bg-background">
                     <Text className="text-sm text-foreground" numberOfLines={1}>
                         {selected?.label ?? 'Field…'}
                     </Text>
                     <ChevronDown size={14} color={mutedColor} />
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal>
-                <Menu.Overlay />
-                <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {fields.map(field => (
-                        <MenuActionItem
-                            key={field.key}
-                            testID={`condition-field-option-${field.key}`}
-                            label={field.label}
-                            isActive={field.key === condition.field}
-                            onPress={() => onSelectField(field)}
-                        />
-                    ))}
-                </Menu.Content>
-            </Menu.Portal>
+            }
+            placement="bottom-start"
+        >
+            {fields.map(field => (
+                <Menu.Item
+                    key={field.key}
+                    testID={`condition-field-option-${field.key}`}
+                    label={field.label}
+                    isSelected={field.key === condition.field}
+                    onSelect={() => onSelectField(field)}
+                />
+            ))}
         </Menu>
     )
 }
@@ -78,28 +74,25 @@ function OperatorMenu({
     const ops = selectedField ? operatorsForField(selectedField) : []
 
     return (
-        <Menu>
-            <Menu.Trigger>
+        <Menu
+            trigger={
                 <Pressable className="flex-1 flex-row items-center justify-between border rounded-lg px-2.5 py-1.5 border-border bg-background">
                     <Text className="text-sm text-foreground" numberOfLines={1}>
                         {condition.op ? operatorLabel(condition.op) : 'Operator…'}
                     </Text>
                     <ChevronDown size={14} color={mutedColor} />
                 </Pressable>
-            </Menu.Trigger>
-            <Menu.Portal>
-                <Menu.Overlay />
-                <Menu.Content presentation="popover" placement="bottom" align="start">
-                    {ops.map(op => (
-                        <MenuActionItem
-                            key={op}
-                            label={operatorLabel(op)}
-                            isActive={op === condition.op}
-                            onPress={() => onSelectOp(op)}
-                        />
-                    ))}
-                </Menu.Content>
-            </Menu.Portal>
+            }
+            placement="bottom-start"
+        >
+            {ops.map(op => (
+                <Menu.Item
+                    key={op}
+                    label={operatorLabel(op)}
+                    isSelected={op === condition.op}
+                    onSelect={() => onSelectOp(op)}
+                />
+            ))}
         </Menu>
     )
 }

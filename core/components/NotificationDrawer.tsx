@@ -6,7 +6,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import type { Notifications } from '@tinycld/core/types/pbSchema'
-import { BottomDrawer } from '@tinycld/core/ui/bottom-drawer'
+import { Sheet } from '@tinycld/core/ui/sheet'
 import { useRouter } from 'expo-router'
 import { Bell, Calendar, Check, File, Mail, Shield, SquareKanban, X } from 'lucide-react-native'
 import { useEffect, useMemo, useState } from 'react'
@@ -105,9 +105,9 @@ function MobileNotificationSheet() {
     const setOpen = useWorkspaceStore(s => s.setNotificationsOpen)
 
     return (
-        <BottomDrawer isOpen={isOpen} onClose={() => setOpen(false)}>
+        <Sheet isOpen={isOpen} onClose={() => setOpen(false)}>
             <NotificationContent />
-        </BottomDrawer>
+        </Sheet>
     )
 }
 
