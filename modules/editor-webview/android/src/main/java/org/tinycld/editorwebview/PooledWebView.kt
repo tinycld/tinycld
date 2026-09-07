@@ -53,7 +53,7 @@ class PooledWebView(context: Context, val instanceKey: String) : WebView(context
       // The page is the whole product; a link inside it must not navigate the
       // editor away. Only the source's own load passes.
       override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-        request.url.toString() != "about:blank"
+        request.url.toString() != EditorWebViewPool.PAGE_URL
 
       override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean =
         EditorWebViewPool.onRenderProcessGone(this@PooledWebView)

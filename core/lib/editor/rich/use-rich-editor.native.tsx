@@ -1,5 +1,6 @@
 import { useFileToken } from '@tinycld/core/file-viewer/use-authed-file-url'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { log } from '../../logger'
 import { pb } from '../../pocketbase'
 import { useThemeColor } from '../../use-app-theme'
 import { releaseEditorFocus, setEditorFocused } from '../editor-focus-state'
@@ -19,6 +20,7 @@ import {
     APP_EDITOR_MOUNTED,
     APP_ESCAPE,
     APP_FILE_TOKEN,
+    APP_PAGE_ERROR,
     APP_SUBMIT_SHORTCUT,
     type RichEditorInitPayload,
 } from './webview/source/protocol'
@@ -360,6 +362,13 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         publishUiMessage({ namespace: 'ui', type: UI_POPOVER_DISMISS_ON_SCROLL, payload: null })
     }, [])
 
+    // A focus asked for during a hand-off — LazyEditor asks the moment it
+    // acquires — reaches a page whose new editor does not exist yet, and is
+    // dropped. Hold the last request and repeat it once the page reports the
+    // editor mounted; the page's own focus report clears it.
+    const pendingFocusRef = useRef<Parameters<EditorHandle['focus']>[0] | null>(null)
+    const replayFocusRef = useRef<EditorHandle['focus'] | null>(null)
+
     const onMessage = useCallback(
         (message: { namespace?: string; type?: string }) => {
             if (awarenessHost?.handleMessage(message as never)) return
@@ -370,12 +379,26 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             if (message.type === APP_SUBMIT_SHORTCUT) submitRef.current?.()
             else if (message.type === APP_ESCAPE) escapeRef.current?.()
             else if (message.type === APP_EDITOR_MOUNTED) {
+                log.debug('core.editor.webview', 'editor-mounted', {
+                    instanceKey: editorInstanceId,
+                    generation,
+                })
                 markdownHost.markLive()
                 htmlHost.markLive()
                 setLiveEpoch(epoch => epoch + 1)
+                const pending = pendingFocusRef.current
+                if (pending !== null) replayFocusRef.current?.(pending)
+            } else if (message.type === APP_PAGE_ERROR) {
+                const detail = (message as { payload?: { message?: unknown; stack?: unknown } })
+                    .payload
+                log.error('core.editor.webview', `editor page error: ${String(detail?.message)}`, {
+                    instanceKey: editorInstanceId,
+                    generation,
+                    stack: typeof detail?.stack === 'string' ? detail.stack : undefined,
+                })
             }
         },
-        [markdownHost, htmlHost, yjsHost, awarenessHost]
+        [markdownHost, htmlHost, yjsHost, awarenessHost, editorInstanceId, generation]
     )
 
     const result = useWebViewEditor({
@@ -406,6 +429,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         // Split the host's single edge callback into the same pair of handlers
         // the web variant exposes, so the shared .d.ts contract holds.
         onFocusChange: (isFocused: boolean) => {
+            if (isFocused) pendingFocusRef.current = null
             // Tell the shortcut provider a WebView holds the keyboard. It reads
             // TextInput.State, which cannot see into a WebView, so without this
             // every plain letter typed here is offered to the global matcher as
@@ -420,6 +444,7 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     })
 
     posterRef.current = result.postMessage ?? null
+    replayFocusRef.current = result.editor.focus
 
     // The page booted again (a remounted WebView, a killed content process),
     // so the editor the channels were talking to is gone. Until the page posts
@@ -457,6 +482,10 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     const editor: EditorHandle = useMemo(
         () => ({
             ...result.editor,
+            focus: position => {
+                pendingFocusRef.current = position ?? 'end'
+                result.editor.focus(position)
+            },
             getHTML: () => htmlHost.get().then(document => document.html),
             getText: () => htmlHost.get().then(document => document.text),
             setContent: (html: string) => htmlHost.setHtml(html),

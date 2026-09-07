@@ -52,6 +52,12 @@ final class ScriptMessageProxy: NSObject, WKScriptMessageHandler {
 final class EditorWebViewPool: NSObject, WKNavigationDelegate {
   static let shared = EditorWebViewPool()
   static let messageHandlerName = "ReactNativeWebView"
+  /// The page's origin. Not about:blank: a document with an opaque origin has
+  /// every uncaught error masked to "Script error." by WebKit, which turned a
+  /// page crash during a hand-off into an empty box with no message anywhere.
+  /// Nothing is ever fetched from this host; it exists to give the page an
+  /// origin of its own.
+  static let pageURL = URL(string: "https://editor.tinycld.invalid/")!
   /// `log stream --predicate 'subsystem == "org.tinycld.editorwebview"'` shows the
   /// pool's lifecycle on a device: creation, attach, load, process death.
   static let log = OSLog(subsystem: "org.tinycld.editorwebview", category: "pool")
@@ -241,9 +247,7 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
 
     let entry = EditorWebViewEntry(webView: webView, source: source)
     store(key, entry)
-    // No base URL: the page runs at about:blank, exactly as it did under
-    // react-native-webview's `{ html }` source.
-    webView.loadHTMLString(source, baseURL: nil)
+    webView.loadHTMLString(source, baseURL: Self.pageURL)
     return entry
   }
 
@@ -269,7 +273,7 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
     let (key, entry) = found
     entry.isLoaded = false
     os_log(.error, log: Self.log, "content process terminated %{public}@; reloading", key)
-    webView.loadHTMLString(entry.source, baseURL: nil)
+    webView.loadHTMLString(entry.source, baseURL: Self.pageURL)
     entry.host?.onProcessGone(["instanceKey": key])
   }
 
@@ -280,7 +284,7 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
   ) {
     // The page is the whole product; a link inside it must not navigate the
     // editor away. Only the initial (and any reload) load of the source passes.
-    let isOwnLoad = navigationAction.request.url?.absoluteString == "about:blank"
+    let isOwnLoad = navigationAction.request.url == Self.pageURL
     decisionHandler(isOwnLoad ? .allow : .cancel)
   }
 }

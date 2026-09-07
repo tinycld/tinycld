@@ -56,8 +56,9 @@ let lastInset = 0
  */
 export function applyKeyboardInset(editor: Editor, bottom: number): void {
     lastInset = bottom
-    ;(editor.view.dom as HTMLElement).style.paddingBottom = `${bottom}px`
     const edges = { top: 0, right: 0, bottom, left: 0 }
+    // Merged into the options either way; the view picks them up when it is
+    // created if it does not exist yet.
     editor.setOptions({
         editorProps: {
             ...editor.options.editorProps,
@@ -65,6 +66,22 @@ export function applyKeyboardInset(editor: Editor, bottom: number): void {
             scrollMargin: edges,
         },
     })
+    const dom = editorDom(editor)
+    if (dom) dom.style.paddingBottom = `${bottom}px`
+}
+
+/**
+ * The editable element, if there is one yet. Tiptap 3 throws on any access to
+ * `editor.view` before the view is mounted — and the re-apply at a new
+ * generation's mount runs exactly then — so the DOM is found by class in that
+ * window rather than through the editor.
+ */
+function editorDom(editor: Editor): HTMLElement | null {
+    try {
+        return editor.view.dom as HTMLElement
+    } catch {
+        return document.querySelector<HTMLElement>('.ProseMirror')
+    }
 }
 
 export function reapplyKeyboardInset(editor: Editor): void {

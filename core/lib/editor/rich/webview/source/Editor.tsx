@@ -7,7 +7,14 @@ import {
     useEditor,
 } from '@tiptap/react'
 import { exitSuggestion } from '@tiptap/suggestion'
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+    Component,
+    type ReactNode,
+    useEffect,
+    useMemo,
+    useState,
+    useSyncExternalStore,
+} from 'react'
 import { Awareness, applyAwarenessUpdate, removeAwarenessStates } from 'y-protocols/awareness'
 import * as Y from 'yjs'
 import type { EditorMessage } from '../../../message-bus/types'
@@ -28,6 +35,7 @@ import {
     APP_FILE_TOKEN,
     APP_FOCUS,
     APP_KEYBOARD_INSET,
+    APP_PAGE_ERROR,
     APP_PARK,
     APP_SUBMIT_SHORTCUT,
     APP_TRIGGER_ITEMS,
@@ -74,6 +82,34 @@ declare global {
 
 function postToNative(message: unknown): void {
     window.ReactNativeWebView?.postMessage(JSON.stringify(message))
+}
+
+/**
+ * Report a failure inside the page to the host. The page runs at an opaque
+ * origin, so `window.onerror` only ever sees "Script error." — the real
+ * message has to be posted from where it is caught.
+ */
+function reportPageError(where: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error)
+    const stack = error instanceof Error ? (error.stack ?? '').slice(0, 800) : ''
+    postToNative(makeMessage('app', APP_PAGE_ERROR, { message: `${where}: ${message}`, stack }))
+}
+
+/** A render or effect error in the editor would otherwise unmount it silently. */
+class EditorErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+    state = { failed: false }
+
+    static getDerivedStateFromError() {
+        return { failed: true }
+    }
+
+    componentDidCatch(error: unknown) {
+        reportPageError('render', error)
+    }
+
+    render() {
+        return this.state.failed ? null : this.props.children
+    }
 }
 
 /**
@@ -166,12 +202,24 @@ export function Editor() {
         // document; listen to both.
         window.addEventListener('message', onMessage)
         document.addEventListener('message', onMessage)
+        // Nothing inside a WebView is visible from the host. A page that
+        // throws during a hand-off would otherwise be an empty box.
+        function onError(event: ErrorEvent) {
+            postToNative(makeMessage('app', APP_PAGE_ERROR, { message: event.message }))
+        }
+        function onRejection(event: PromiseRejectionEvent) {
+            postToNative(makeMessage('app', APP_PAGE_ERROR, { message: String(event.reason) }))
+        }
+        window.addEventListener('error', onError)
+        window.addEventListener('unhandledrejection', onRejection)
         // Posted before Tiptap exists — this is the gate the host waits on
         // before sending init, so it must not depend on the editor.
         postToNative({ type: EDITOR_READY, payload: undefined })
         return () => {
             window.removeEventListener('message', onMessage)
             document.removeEventListener('message', onMessage)
+            window.removeEventListener('error', onError)
+            window.removeEventListener('unhandledrejection', onRejection)
         }
     }, [])
 
@@ -181,7 +229,11 @@ export function Editor() {
     // Tiptap, new Y.Doc (useCollabDoc's useState initializer reruns), new undo
     // stack, new extension set. Nothing survives the swap, which is what makes
     // it safe to reuse one page across surfaces.
-    return <EditorMounted key={init.generation} init={init} />
+    return (
+        <EditorErrorBoundary key={init.generation}>
+            <EditorMounted init={init} />
+        </EditorErrorBoundary>
+    )
 }
 
 function EditorMounted({ init }: { init: RichEditorInitPayload }) {
@@ -499,7 +551,19 @@ function useStateBroadcast(editor: TiptapEditor | null) {
         let scheduled = false
         let lastSerialized = ''
 
+        let frame: number | null = null
         function send() {
+            frame = null
+            // The frame can outlive the effect: a hand-off destroys this editor
+            // in the same commit that mounts the next one.
+            if (!editor || editor.isDestroyed) return
+            try {
+                sendUnguarded()
+            } catch (error) {
+                reportPageError('state-update', error)
+            }
+        }
+        function sendUnguarded() {
             scheduled = false
             if (!editor) return
             const payload = deriveWebViewState(editor)
@@ -511,7 +575,7 @@ function useStateBroadcast(editor: TiptapEditor | null) {
         function schedule() {
             if (scheduled) return
             scheduled = true
-            requestAnimationFrame(send)
+            frame = requestAnimationFrame(send)
         }
 
         editor.on('transaction', schedule)
@@ -530,6 +594,7 @@ function useStateBroadcast(editor: TiptapEditor | null) {
             editor.off('update', schedule)
             editor.off('focus', schedule)
             editor.off('blur', schedule)
+            if (frame !== null) cancelAnimationFrame(frame)
         }
     }, [editor])
 }
@@ -546,7 +611,11 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
         if (!editor) return
         // A hand-off rebuilds the editor; if the keyboard is still up the new
         // one needs the same room at the bottom.
-        reapplyKeyboardInset(editor)
+        try {
+            reapplyKeyboardInset(editor)
+        } catch (error) {
+            reportPageError('keyboard-inset', error)
+        }
 
         function onMessage(evt: MessageEvent | Event) {
             const data = (evt as MessageEvent).data
@@ -557,27 +626,11 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
             } catch {
                 return
             }
-
-            // Handled by useYjsRelay; not a format action.
-            if (parsed.namespace === 'yjs') return
-            // Likewise useAwarenessRelay. Both bails matter: dispatchFormatAction
-            // no-ops on an unknown action today, so without them a relay message
-            // would fall through and become a latent bug the next time its
-            // default branch does something.
-            if (parsed.namespace === 'awareness') return
-            if (parsed.namespace === 'markdown') {
-                handleMarkdownMessage(editor, parsed, isCollab)
-                return
+            try {
+                dispatchHostMessage(editor, parsed, isCollab)
+            } catch (error) {
+                reportPageError(`${parsed.namespace}/${parsed.type}`, error)
             }
-            if (parsed.namespace === 'html') {
-                handleHtmlMessage(editor, parsed, isCollab)
-                return
-            }
-            if (parsed.namespace === 'app') {
-                handleAppMessage(editor, parsed)
-                return
-            }
-            if (parsed.namespace === 'format') dispatchFormatAction(editor, parsed)
         }
 
         window.addEventListener('message', onMessage)
@@ -590,6 +643,29 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
             document.removeEventListener('message', onMessage)
         }
     }, [editor, isCollab])
+}
+
+function dispatchHostMessage(editor: TiptapEditor, parsed: EditorMessage, isCollab: boolean): void {
+    // Handled by useYjsRelay; not a format action.
+    if (parsed.namespace === 'yjs') return
+    // Likewise useAwarenessRelay. Both bails matter: dispatchFormatAction
+    // no-ops on an unknown action today, so without them a relay message
+    // would fall through and become a latent bug the next time its
+    // default branch does something.
+    if (parsed.namespace === 'awareness') return
+    if (parsed.namespace === 'markdown') {
+        handleMarkdownMessage(editor, parsed, isCollab)
+        return
+    }
+    if (parsed.namespace === 'html') {
+        handleHtmlMessage(editor, parsed, isCollab)
+        return
+    }
+    if (parsed.namespace === 'app') {
+        handleAppMessage(editor, parsed)
+        return
+    }
+    if (parsed.namespace === 'format') dispatchFormatAction(editor, parsed)
 }
 
 /**
@@ -806,6 +882,14 @@ function useContentHeight(editor: TiptapEditor | null) {
         if (!editor) return
         let last = -1
         function report() {
+            if (!editor || editor.isDestroyed) return
+            try {
+                reportUnguarded()
+            } catch (error) {
+                reportPageError('content-height', error)
+            }
+        }
+        function reportUnguarded() {
             const node = editor?.view.dom as HTMLElement | undefined
             if (!node) return
             const children = Array.from(node.children) as HTMLElement[]

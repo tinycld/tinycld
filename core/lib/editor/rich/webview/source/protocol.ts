@@ -62,6 +62,13 @@ export const APP_SUBMIT_SHORTCUT = 'submit-shortcut'
 /** WebView → host, Escape inside the editor. */
 export const APP_ESCAPE = 'escape'
 /**
+ * WebView → host: an error in the page, as `{ message, stack? }`. The host
+ * logs it; without this a page that dies during a hand-off is an empty box
+ * with no explanation anywhere. One line per field — the dev server's console
+ * transport has been seen to stall on a multi-line message.
+ */
+export const APP_PAGE_ERROR = 'page-error'
+/**
  * host → WebView: put the caret in the editor. Payload is `'start'`, `'end'`, or
  * a `{ x, y }` point in viewport coordinates (the place the user pressed). The
  * native host makes the WebView first responder alongside; this is the half

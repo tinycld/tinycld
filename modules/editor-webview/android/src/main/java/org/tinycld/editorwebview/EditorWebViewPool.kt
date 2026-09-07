@@ -18,6 +18,14 @@ private const val BUFFER_LIMIT = 256
  * before posting to main.
  */
 object EditorWebViewPool {
+  /**
+   * The page's origin. Not about:blank: a document with an opaque origin has
+   * every uncaught error masked to "Script error.", which turned a page crash
+   * during a hand-off into an empty box with no message anywhere. Nothing is
+   * ever fetched from this host; it exists to give the page an origin of its own.
+   */
+  const val PAGE_URL = "https://editor.tinycld.invalid/"
+
   /** One pooled editor page: a live WebView that outlives every host it is shown in. */
   class Entry(var webView: PooledWebView, val source: String) {
     var isLoaded = false
@@ -189,9 +197,7 @@ object EditorWebViewPool {
     val webView = PooledWebView(context, key)
     val entry = Entry(webView, source)
     store(key, entry)
-    // No base URL: the page runs at about:blank, exactly as it did under
-    // react-native-webview's `{ html }` source.
-    webView.loadDataWithBaseURL(null, source, "text/html", "utf-8", null)
+    webView.loadDataWithBaseURL(PAGE_URL, source, "text/html", "utf-8", null)
     return entry
   }
 
@@ -221,7 +227,7 @@ object EditorWebViewPool {
     val replacement = PooledWebView(webView.context, key)
     entry.webView = replacement
     entry.isLoaded = false
-    replacement.loadDataWithBaseURL(null, entry.source, "text/html", "utf-8", null)
+    replacement.loadDataWithBaseURL(PAGE_URL, entry.source, "text/html", "utf-8", null)
     if (host != null) {
       host.addView(
         replacement,
