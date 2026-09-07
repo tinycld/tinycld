@@ -14,9 +14,33 @@ function flattenStyle(style) {
     return Object.assign({}, ...style.map(flattenStyle).filter(Boolean))
 }
 
+// `onLayout` is delivered from a DOM event, the way react-native-web feeds it
+// from a ResizeObserver: a test dispatches `rn-layout` with the box it wants
+// on the element (see `fireLayout` in responsive-toolbar.test.tsx). The stub
+// never invents a size. Pulled out of the props because React DOM would
+// otherwise register a function prop on a custom element as a dead 'Layout'
+// listener and the component would never hear it.
+const LAYOUT_EVENT = 'rn-layout'
+
 function host(tag) {
-    const Host = React.forwardRef(function Host({ style, ...props }, ref) {
-        return React.createElement(tag, { ...props, ref, style: flattenStyle(style) })
+    const Host = React.forwardRef(function Host({ style, onLayout, ...props }, ref) {
+        const node = React.useRef(null)
+        const setRef = React.useCallback(
+            (el) => {
+                node.current = el
+                if (typeof ref === 'function') ref(el)
+                else if (ref) ref.current = el
+            },
+            [ref]
+        )
+        React.useLayoutEffect(() => {
+            const el = node.current
+            if (!el || !onLayout) return
+            const handler = (e) => onLayout({ nativeEvent: { layout: e.detail } })
+            el.addEventListener(LAYOUT_EVENT, handler)
+            return () => el.removeEventListener(LAYOUT_EVENT, handler)
+        }, [onLayout])
+        return React.createElement(tag, { ...props, ref: setRef, style: flattenStyle(style) })
     })
     Host.displayName = tag
     return Host
