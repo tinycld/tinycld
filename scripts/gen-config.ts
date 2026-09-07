@@ -111,7 +111,6 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
     const needsLazy = pkgs.some(
         p =>
             p.hasSidebar ||
-            p.hasProvider ||
             p.settings.length > 0 ||
             p.systemSettings.length > 0 ||
             p.sidebarContributions.length > 0
@@ -143,7 +142,9 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
             lines.push(`        sidebar: lazy(() => import('${p.packageName}/sidebar')),`)
         }
         if (p.hasProvider) {
-            lines.push(`        provider: lazy(() => import('${p.packageName}/provider')),`)
+            // A load thunk, not lazy(): core resolves every provider before the
+            // route tree mounts (see PackageProviderLoader in config-types.ts).
+            lines.push(`        provider: { load: () => import('${p.packageName}/provider') },`)
         }
         if (p.settings.length > 0) {
             lines.push('        settings: [')

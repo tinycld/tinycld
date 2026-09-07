@@ -1,6 +1,7 @@
 import { tinycldConfig } from '@tinycld/app-generated/tinycld-config'
-import type { ComponentType, LazyExoticComponent, ReactNode } from 'react'
+import type { ComponentType, LazyExoticComponent } from 'react'
 import type {
+    PackageProviderLoader,
     PackageSettingsPanel,
     PackageSystemSettingsPanel,
     SidebarContribution,
@@ -9,16 +10,12 @@ import type {
 interface SidebarProps {
     isCollapsed: boolean
 }
-interface ProviderProps {
-    children: ReactNode
-}
 type SidebarComp = ComponentType<SidebarProps> | LazyExoticComponent<ComponentType<SidebarProps>>
-type ProviderComp = ComponentType<ProviderProps> | LazyExoticComponent<ComponentType<ProviderProps>>
 
 type ComponentEntryLike = {
     manifest: { slug: string }
     sidebar?: SidebarComp | null
-    provider?: ProviderComp | null
+    provider?: PackageProviderLoader | null
 }
 
 /** slug → sidebar component (null when the package contributes none). */
@@ -30,11 +27,11 @@ export function deriveSidebars(
     return out
 }
 
-/** slug → context provider component (null when the package contributes none). */
+/** slug → context provider loader (null when the package contributes none). */
 export function deriveProviders(
     entries: readonly ComponentEntryLike[]
-): Record<string, ProviderComp | null> {
-    const out: Record<string, ProviderComp | null> = {}
+): Record<string, PackageProviderLoader | null> {
+    const out: Record<string, PackageProviderLoader | null> = {}
     for (const e of entries) out[e.manifest.slug] = e.provider ?? null
     return out
 }
