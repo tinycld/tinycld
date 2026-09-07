@@ -274,7 +274,7 @@ export default manifest
 | `migrations.directory` | `*.js` migrations symlinked into `server/pb_migrations/`. |
 | `hooks.directory` | PocketBase JS hooks symlinked into `server/pb_hooks/`. |
 | `collections` | `register` + `types` export subpaths; wires pbtsdb collections and the schema type. |
-| `sidebar` / `provider` | A package may contribute a sidebar component **or** a context provider that wraps app children. |
+| `sidebar` / `provider` | A package may contribute a sidebar component **or** a context provider that wraps app children. The provider is emitted as a `{ load: () => import(...) }` thunk — not `lazy()` — and core resolves every provider before the route tree mounts (`core/lib/packages/provider-loader.ts`), so the package area never suspends on it. |
 | `settings[]` | Personal Settings panel contributions (`slug`, `label`, `component`). See [Extension points](#extension-points-settings-panels-and-sidebar-slots) below. |
 | `slots[]` | Names of sidebar slots this package exposes for *other* packages to render into. Free-form strings; duplicates within one manifest are a generator error. Render with `<SidebarSlot target="<this-slug>" slot="<name>" />` from `@tinycld/core/components/sidebar-primitives`. |
 | `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order? }` is generator-validated. |
@@ -596,7 +596,7 @@ It warns (but does not fail) when:
 
 ### Extension points: settings panels and sidebar slots
 
-The generator threads two manifest-declared extension points through the same lazy-import pipeline. Both share the same lifecycle: **manifest field → `gen-config.ts` emits a `lazy(() => import(...))` entry → runtime derivation in `core/lib/packages/derive-components.ts` → host UI calls a React helper that consumes the registry → component loads under `<Suspense>` on first render.**
+The generator threads two manifest-declared extension points through the same lazy-import pipeline. (Package `provider`s are the exception: they are needed on every signed-in boot, so they are loaded up front by `core/lib/packages/provider-loader.ts` rather than `lazy()`-suspended in place.) Both share the same lifecycle: **manifest field → `gen-config.ts` emits a `lazy(() => import(...))` entry → runtime derivation in `core/lib/packages/derive-components.ts` → host UI calls a React helper that consumes the registry → component loads under `<Suspense>` on first render.**
 
 **Settings panels** (`manifest.settings: [{ slug, label, component }]`):
 

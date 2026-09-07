@@ -12,7 +12,10 @@ describe('deriveSidebars / deriveProviders', () => {
             { manifest: { slug: 'mail' } },
         ]
         expect(deriveSidebars(entries)).toEqual({ contacts: SB, mail: null })
-        expect(deriveProviders([{ manifest: { slug: 'x' }, provider: PV }])).toEqual({ x: PV })
+        const loader = { load: async () => ({ default: PV }) }
+        expect(deriveProviders([{ manifest: { slug: 'x' }, provider: loader }])).toEqual({
+            x: loader,
+        })
     })
 })
 

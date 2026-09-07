@@ -16,8 +16,23 @@ export type UnionToIntersection<U> = (U extends unknown ? (k: U) => void : never
 interface PackageSidebarProps {
     isCollapsed: boolean
 }
-interface PackageProviderProps {
+export interface PackageProviderProps {
     children: ReactNode
+}
+/**
+ * A package's app-wide provider, as a module loader rather than a component.
+ *
+ * Dynamic on purpose: a static import would pull the provider's module graph
+ * (and through it, screens) into the collections module's eager import graph,
+ * which used to form a require cycle. Not `lazy()` either: the workspace needs
+ * every provider on every signed-in boot, and a lazy component suspends the
+ * whole package area on its first render — long enough for the root navigator
+ * to mount without it and write the bare app root over a deep link. Core
+ * resolves the loaders before the route tree mounts instead
+ * (lib/packages/provider-loader.ts).
+ */
+export interface PackageProviderLoader {
+    load: () => Promise<{ default: ComponentType<PackageProviderProps> }>
 }
 export interface PackageSettingsPanel {
     slug: string
@@ -105,10 +120,7 @@ export interface PackageEntry<S extends SchemaDeclaration, R> {
         | ComponentType<PackageSidebarProps>
         | LazyExoticComponent<ComponentType<PackageSidebarProps>>
         | null
-    provider?:
-        | ComponentType<PackageProviderProps>
-        | LazyExoticComponent<ComponentType<PackageProviderProps>>
-        | null
+    provider?: PackageProviderLoader | null
     settings?: PackageSettingsPanel[]
     systemSettings?: PackageSystemSettingsPanel[]
     sidebarContributions?: SidebarContribution[]

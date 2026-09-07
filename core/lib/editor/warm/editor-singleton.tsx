@@ -1,5 +1,6 @@
 import {
     createContext,
+    memo,
     type ReactNode,
     useCallback,
     useContext,
@@ -76,44 +77,75 @@ export function EditorSingletonProvider({ children }: { children: ReactNode }) {
     const [isBooted, setIsBooted] = useState(false)
     const declareNeed = useCallback(() => setIsBooted(true), [])
 
+    // What the booted editor publishes upward: null until it exists. Held here
+    // rather than provided from inside BootedEditor so the element tree above
+    // `children` never changes shape. Booting used to swap the wrapper from a
+    // bare context provider to <BootedEditor>, and a different element type at
+    // the same position means React unmounts everything beneath it — the
+    // ENTIRE route tree, every mounted screen and navigator, torn down and
+    // rebuilt the first time a package declared need. React Navigation clears a
+    // navigator's saved state when it unmounts, so that remount also reset
+    // route params (a deep link's `?focused=` vanished on arrival).
+    const [booted, setBooted] = useState<BootedValue | null>(null)
+
     const value = useMemo<EditorSingletonValue>(
-        () => ({ store, drafts, result: null, declareNeed, setOptions: () => {} }),
-        [store, drafts, declareNeed]
+        () => ({
+            store,
+            drafts,
+            result: booted?.result ?? null,
+            declareNeed,
+            setOptions: booted?.setOptions ?? noopSetOptions,
+        }),
+        [store, drafts, booted, declareNeed]
     )
 
-    // Before any declaration there is no editor and no hook to build one — the
-    // provider is a pass-through carrying only the latch. Splitting the booted
-    // half into its own component is what keeps `useRichEditor` from being
-    // called at all until then, since a hook cannot sit behind a branch.
-    if (!isBooted) {
-        return (
-            <EditorSingletonContext.Provider value={value}>
-                {children}
-            </EditorSingletonContext.Provider>
-        )
-    }
-
+    // `children` is always the first child of the same provider, booted or not,
+    // so this provider re-rendering (on boot, and on every editor generation)
+    // reconciles it in place: same element identity, no work below it. Only
+    // context consumers update.
     return (
-        <BootedEditor store={store} drafts={drafts} declareNeed={declareNeed}>
+        <EditorSingletonContext.Provider value={value}>
             {children}
-        </BootedEditor>
+            <BootedEditorGate isBooted={isBooted} store={store} onChange={setBooted} />
+        </EditorSingletonContext.Provider>
     )
 }
 
-function BootedEditor({
-    store,
-    drafts,
-    declareNeed,
-    children,
-}: {
+interface BootedValue {
+    result: EditorResult
+    setOptions: (options: UseRichEditorOptions) => void
+}
+
+function noopSetOptions() {}
+
+interface BootedEditorProps {
     store: WarmEditorStore
-    drafts: DraftStore
-    declareNeed: () => void
-    children: ReactNode
-}) {
+    onChange: (value: BootedValue) => void
+}
+
+// Before any declaration there is no editor and no hook to build one — the
+// gate renders nothing. Splitting the booted half into its own component is
+// what keeps `useRichEditor` from being called at all until then, since a hook
+// cannot sit behind a branch.
+//
+// memo() is load-bearing, not an optimisation. Every publish re-renders the
+// provider above, and without it that re-render would reach BootedEditor,
+// whose `useRichEditor` hands back a fresh result per render — which would
+// publish again, and spin. Its props never change identity, so the memo stops
+// the provider's re-render here and BootedEditor renders only on its own
+// store's snapshots.
+const BootedEditorGate = memo(function BootedEditorGate({
+    isBooted,
+    ...props
+}: BootedEditorProps & { isBooted: boolean }) {
+    if (!isBooted) return null
+    return <BootedEditor {...props} />
+})
+
+function BootedEditor({ store, onChange }: BootedEditorProps) {
     // The live configuration, held in a ref and read through the store's
-    // generation: putting it in state would re-render this provider — and so
-    // the entire route tree beneath it — on every handover.
+    // generation: putting it in state would re-render this component on every
+    // handover for nothing.
     const optionsRef = useRef<UseRichEditorOptions>({})
     const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot)
 
@@ -137,16 +169,24 @@ function BootedEditor({
         store.setReady(isReady)
     }, [store, isReady])
 
-    // `setOptions` is stable on its own, so the only member of this value that
-    // changes identity is `result`. That matters: a consumer derives its
-    // acquire/release callbacks from this object, and acquiring bumps the
-    // generation, which rebuilds the editor, which produces a new `result`. If
-    // that fed back into the callbacks' identity, an effect depending on
+    // `setOptions` is stable on its own, so the only member of the published
+    // value that changes identity is `result`. That matters: a consumer derives
+    // its acquire/release callbacks from the context value, and acquiring bumps
+    // the generation, which rebuilds the editor, which produces a new `result`.
+    // If that fed back into the callbacks' identity, an effect depending on
     // acquire would re-acquire and spin — which it did, at ~50 generations a
     // second.
     const setOptions = useCallback((next: UseRichEditorOptions) => {
         optionsRef.current = next
     }, [])
+
+    // Hand the editor up to the provider, which is where consumers read it
+    // from. An effect, not render-time work, because it sets the parent's
+    // state; it fires once per editor generation, which is exactly when the
+    // context value has to change anyway.
+    useEffect(() => {
+        onChange({ result, setOptions })
+    }, [result, setOptions, onChange])
 
     // A parked editor must not keep the last surface's text.
     //
@@ -165,18 +205,10 @@ function BootedEditor({
         if (isParked && !isCollab) editorHandle.setContent('')
     }, [isParked, isCollab, editorHandle])
 
-    const value = useMemo<EditorSingletonValue>(
-        () => ({ store, drafts, result, declareNeed, setOptions }),
-        [store, drafts, result, declareNeed, setOptions]
-    )
-
     return (
-        <EditorSingletonContext.Provider value={value}>
-            {children}
-            <ParkedEditorViewport isParked={snapshot.holder === null}>
-                <result.EditorComponent />
-            </ParkedEditorViewport>
-        </EditorSingletonContext.Provider>
+        <ParkedEditorViewport isParked={isParked}>
+            <result.EditorComponent />
+        </ParkedEditorViewport>
     )
 }
 

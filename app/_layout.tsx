@@ -11,15 +11,18 @@ import '~/lib/configure-core'
 import '~/global.css'
 import { AppErrorBoundary } from '@tinycld/core/components/AppErrorBoundary'
 import { NewVersionToast } from '@tinycld/core/components/NewVersionToast'
+import { useAuth } from '@tinycld/core/lib/auth'
 import { BundleSentinel } from '@tinycld/core/lib/bundle-sentinel'
 import { EditorSingletonProvider } from '@tinycld/core/lib/editor/warm'
 import { installFatalRollbackHandler } from '@tinycld/core/lib/install-fatal-rollback'
 import { CONNECT_HREF, PICK_ORG_HREF } from '@tinycld/core/lib/org-routes'
+import { usePackageProviders } from '@tinycld/core/lib/packages/provider-loader'
 import { initSentry } from '@tinycld/core/lib/sentry'
 import { useAppUpdates } from '@tinycld/core/lib/use-app-updates'
 import { useChunkLoadRecovery } from '@tinycld/core/lib/use-chunk-load-recovery'
 import { useVersionCheck } from '@tinycld/core/lib/use-version-check'
 import { Slot, usePathname } from 'expo-router'
+import { View } from 'react-native'
 import { BlankScreen, ConnectSlot, GateFailedScreen } from '~/lib/gate-screens'
 import { MarkBundleHealthy } from '~/lib/use-mark-bundle-healthy'
 import { useServerAddressGate } from '~/lib/use-server-address-gate'
@@ -66,9 +69,34 @@ export default function Layout() {
                 calls useEditorNeeded(), so an app whose user never opens an
                 editing package pays nothing for this. */}
             <EditorSingletonProvider>
-                <Slot />
+                <ReadySlot />
             </EditorSingletonProvider>
             <NewVersionToast />
         </Providers>
     )
+}
+
+// The route tree mounts only once the auth store has hydrated AND every
+// package provider module has loaded.
+//
+// Expo Router derives the browser URL from the navigators that are MOUNTED,
+// not from the navigation state. app/a/(app)/_layout cannot mount the package
+// tabs until it knows who is signed in (package screens require a user), and
+// the tabs sit inside the package providers, which are dynamic imports. With
+// the tree mounted before either settles there is a window where the root
+// navigator is up and the tabs are not — and the URL sync writes the deepest
+// mounted route, the bare app root, over a deep link like
+// /a/boards?focused=HOME-1. The state itself keeps the link and the URL comes
+// back once the tabs mount, but the address bar visibly bounces through /a on
+// every cold load. Waiting here means the tabs mount in the same commit as the
+// root navigator, so the sync only ever sees the whole tree. Both waits are
+// short — one storage read, one chunk fetch that starts alongside it.
+function ReadySlot() {
+    const { isInitializing } = useAuth({ throwIfAnon: false })
+    const providers = usePackageProviders()
+    if (providers.status === 'failed') return <GateFailedScreen error={providers.error} />
+    if (isInitializing || providers.status === 'loading') {
+        return <View className="flex-1 bg-background" />
+    }
+    return <Slot />
 }
