@@ -39,6 +39,7 @@
         "./Providers": "./components/Providers.tsx",
         "./tsconfig.package-base.json": "./tsconfig.package-base.json",
         "./uniwind-types": "./uniwind-types.d.ts",
+        "./types/editor-webview": "./types/editor-webview.d.ts",
         "./lucide-icons": "./lucide-icons.d.ts",
         "./vitest-config": "./vitest-config.ts",
         "./playwright-config": "./playwright-config.ts",
@@ -58,7 +59,6 @@
         "vitest": "^3.0.0"
     },
     "peerDependencies": {
-        "@10play/tentap-editor": "^1.0.1",
         "@expo/html-elements": "^0.12.5",
         "@gluestack-ui/core": ">=5.0.5-alpha.0 <6.0.0-0",
         "@gluestack-ui/utils": ">=5.0.5-alpha.0 <6.0.0-0",

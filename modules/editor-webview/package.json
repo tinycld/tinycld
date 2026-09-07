@@ -1,0 +1,7 @@
+{
+    "name": "editor-webview",
+    "version": "0.0.1",
+    "description": "Local Expo native view hosting the shared editor's WebView page, pooled so a page survives being moved between React trees.",
+    "main": "index.ts",
+    "private": true
+}

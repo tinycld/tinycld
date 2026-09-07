@@ -28,6 +28,12 @@ const APP_GENERATED_DIR = path.join(__dirname, 'lib', 'generated')
 const APP_UPDATER_DIR = path.join(__dirname, 'modules', 'app-updater')
 const APP_UPDATER_WEB_STUB = path.join(APP_UPDATER_DIR, 'index.web.ts')
 const APP_UPDATER_NATIVE_ENTRY = path.join(APP_UPDATER_DIR, 'index.ts')
+// Same arrangement for `editor-webview` (modules/editor-webview/), the pooled
+// WebView host the shared editor renders on native; reached via
+// core/lib/editor/use-webview-editor.tsx.
+const EDITOR_WEBVIEW_DIR = path.join(__dirname, 'modules', 'editor-webview')
+const EDITOR_WEBVIEW_WEB_STUB = path.join(EDITOR_WEBVIEW_DIR, 'index.web.ts')
+const EDITOR_WEBVIEW_NATIVE_ENTRY = path.join(EDITOR_WEBVIEW_DIR, 'index.ts')
 
 // Per-icon deep imports for lucide-react-native. Importing named icons from the
 // package root (`import { Folder } from 'lucide-react-native'`) pulls the whole
@@ -91,6 +97,10 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     }
     if (moduleName === 'app-updater') {
         const target = platform === 'web' ? APP_UPDATER_WEB_STUB : APP_UPDATER_NATIVE_ENTRY
+        return context.resolveRequest(context, target, platform)
+    }
+    if (moduleName === 'editor-webview') {
+        const target = platform === 'web' ? EDITOR_WEBVIEW_WEB_STUB : EDITOR_WEBVIEW_NATIVE_ENTRY
         return context.resolveRequest(context, target, platform)
     }
     if (moduleName.startsWith(LUCIDE_ICON_PREFIX)) {
