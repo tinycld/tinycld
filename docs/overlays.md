@@ -98,7 +98,8 @@ The engine (`core/ui/overlay/`, internal) owns:
   to the side with more room and caps height to what that side has; the
   content scrolls internally.
 - On the mobile breakpoint a Popover renders as a sheet unless
-  `presentation="popover"` is pinned.
+  `presentation="popover"` is pinned. `sheetSide` (`top|bottom`, default
+  `bottom`) picks the edge that sheet rests on.
 
 Placement is a pure function, `placePopover()` in `core/ui/popover/place.ts`,
 with unit tests. Do not put positioning arithmetic anywhere else.
@@ -138,18 +139,23 @@ the whole chain when chosen.
 - Controlled use and `anchor` work as on Popover. `ContextMenu` wraps a Menu
   in the right-click (web) and long-press (native) gestures; the menubar and
   the calc grid menus are controlled Menus in the single-open registry.
-- On the mobile breakpoint a Menu renders its items as a sheet. Pin
+- On the mobile breakpoint a Menu renders its items as a sheet hanging from
+  the **top** edge, since most menu triggers sit near the top of the screen;
+  pass `sheetSide="bottom"` for a menu opened from the bottom of a screen. Pin
   `presentation="popover"` for a menu of two or three items beside its
   trigger, where a sheet would be heavier than the choice.
 
 ## Sheet
 
-`Sheet` is the bottom surface the other three render on a phone. Packages use
-it directly only for something that is a sheet on every breakpoint (the
-mobile More menu, the notification drawer, the file picker). It replaces
-`BottomDrawer`, keeps its gesture and its "rests on the tab bar" behavior, and
-adds the title/body/footer structure so a Dialog rendered as a sheet looks
-like a sheet, not a dialog squashed to the bottom edge.
+`Sheet` is the edge surface the other three render on a phone: it rests on the
+bottom edge by default, or hangs from the top with `side="top"` (a Menu's
+default). The corners, the border, the drag pill and the dismiss gesture all
+face away from that edge. Packages use it directly only for something that is
+a sheet on every breakpoint (the mobile More menu, the notification drawer,
+the file picker). It replaces `BottomDrawer`, keeps its gesture and its "rests
+on the tab bar" behavior, and adds the title/body/footer structure so a Dialog
+rendered as a sheet looks like a sheet, not a dialog squashed to the bottom
+edge.
 
 ## Testing
 

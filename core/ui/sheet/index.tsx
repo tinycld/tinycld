@@ -1,9 +1,14 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
-import { LayerEscape, OverlayPortal, useOverlayLayer } from '@tinycld/core/ui/overlay'
+import {
+    LayerEscape,
+    OverlayPortal,
+    useHasSheetHost,
+    useOverlayLayer,
+} from '@tinycld/core/ui/overlay'
 import { X } from 'lucide-react-native'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import {
     KeyboardAvoidingView,
     Platform,
@@ -26,21 +31,39 @@ const SPRING_CONFIG = { damping: 28, stiffness: 220, mass: 0.8 }
 // Off-screen fallback before the sheet has measured itself (first open frame).
 const INITIAL_OFFSCREEN = 1000
 
+/** The edge a sheet rests on and slides in from. */
+export type SheetSide = 'top' | 'bottom'
+
+// The rounded corners and the border face away from the edge the sheet rests on.
+const SIDE_CLASS: Record<SheetSide, string> = {
+    bottom: 'absolute left-0 right-0 bottom-0 rounded-t-2xl border-t border-border',
+    top: 'absolute left-0 right-0 top-0 rounded-b-2xl border-b border-border',
+}
+
+// Footer padding depends on which edge the sheet rests on; the footer is a
+// descendant, so the side reaches it by context rather than a prop.
+const SheetSideContext = createContext<SheetSide>('bottom')
+
 /**
- * The bottom surface: what a Dialog, a Menu and a Popover become on a phone,
+ * The edge surface: what a Dialog, a Menu and a Popover become on a phone,
  * and what the mobile More menu, the notification drawer and the file picker
- * are on every breakpoint.
+ * are on every breakpoint. It rests on the bottom edge by default; `side="top"`
+ * hangs it from the top edge instead, which a Menu prefers because most menu
+ * triggers sit near the top of the screen.
  *
  * Rendered into the `sheet` overlay host — the mobile chrome's content
- * region, which ends at the top of the tab bar — so the sheet rests exactly
- * on the bar with no offset. Where no such host is mounted it falls back to
- * the root host. Backdrop first, sheet second: the sheet paints above the
- * backdrop by sibling order, no z-index needed.
+ * region, which ends at the top of the tab bar and starts below the status
+ * bar — so a bottom sheet rests exactly on the bar and a top sheet clears the
+ * status bar, with no offset either way. Where no such host is mounted it
+ * falls back to the root host and insets its own top edge. Backdrop first,
+ * sheet second: the sheet paints above the backdrop by sibling order, no
+ * z-index needed.
  *
- * Drag down past a threshold (or a fast flick) dismisses; a short drag snaps
- * back; the backdrop and Escape dismiss. Height is intrinsic to the content,
- * capped at `maxHeightPercent` of the host; a `Sheet.Body` inside scrolls
- * once that cap bites while the title row and `Sheet.Footer` stay put.
+ * Drag away from the edge past a threshold (or a fast flick) dismisses; a
+ * short drag snaps back; the backdrop and Escape dismiss. Height is intrinsic
+ * to the content, capped at `maxHeightPercent` of the host; a `Sheet.Body`
+ * inside scrolls once that cap bites while the title row and `Sheet.Footer`
+ * stay put.
  */
 interface SheetProps {
     isOpen: boolean
@@ -49,6 +72,8 @@ interface SheetProps {
     /** Renders a title row with a close button. */
     title?: string
     description?: string
+    /** The edge the sheet rests on. Default 'bottom'. */
+    side?: SheetSide
     /** Max height as a fraction of the host (0–1). Default 0.85. */
     maxHeightPercent?: number
     /** Background theme token for the sheet surface. Default 'background'. */
@@ -64,6 +89,7 @@ function SheetRoot({
     children,
     title,
     description,
+    side = 'bottom',
     maxHeightPercent = 0.85,
     surface = 'background',
     hideHandle = false,
@@ -72,9 +98,15 @@ function SheetRoot({
     const overlayBg = useThemeColor('overlay-backdrop')
     const surfaceBg = useThemeColor(surface)
     const handleColor = useThemeColor('border')
+    const insets = useDeviceInsets()
+    const hasSheetHost = useHasSheetHost()
 
+    // Sign of the off-screen direction: a bottom sheet leaves downward
+    // (positive translateY), a top sheet upward. Captured by the worklets
+    // below as a plain number, like SPRING_CONFIG.
+    const dir = side === 'top' ? -1 : 1
     const sheetHeight = useSharedValue(INITIAL_OFFSCREEN)
-    const translateY = useSharedValue(INITIAL_OFFSCREEN)
+    const translateY = useSharedValue(dir * INITIAL_OFFSCREEN)
     const backdropOpacity = useSharedValue(0)
     const [mounted, setMounted] = useState(false)
     const surfaceRef = useRef<View | null>(null)
@@ -87,12 +119,12 @@ function SheetRoot({
             translateY.value = withSpring(0, SPRING_CONFIG)
             backdropOpacity.value = withTiming(1, { duration: 200 })
         } else if (mounted) {
-            translateY.value = withSpring(sheetHeight.value, SPRING_CONFIG)
+            translateY.value = withSpring(dir * sheetHeight.value, SPRING_CONFIG)
             backdropOpacity.value = withTiming(0, { duration: 150 })
             const timeout = setTimeout(() => setMounted(false), 300)
             return () => clearTimeout(timeout)
         }
-    }, [isOpen, translateY, backdropOpacity, mounted, sheetHeight])
+    }, [isOpen, translateY, backdropOpacity, mounted, sheetHeight, dir])
 
     // The backdrop covers the host, so an outside press is a backdrop press;
     // the layer joins the stack for Escape and the Android back button only.
@@ -106,15 +138,17 @@ function SheetRoot({
     const panGesture = Gesture.Pan()
         .activeOffsetY(10)
         .onUpdate(e => {
-            translateY.value = Math.max(0, e.translationY)
+            // Only movement away from the edge moves the sheet.
+            translateY.value = dir * Math.max(0, dir * e.translationY)
         })
         .onEnd(e => {
             // Threshold inlined (kept in sync with shouldDismissDrawer, which the
-            // unit test pins): dragged past 100px or flicked down faster than
-            // 500px/s dismisses. This runs on the UI thread, so it must not call
-            // a non-worklet JS function — hence the literal comparison here.
-            if (e.translationY > 100 || e.velocityY > 500) {
-                translateY.value = withSpring(sheetHeight.value, SPRING_CONFIG)
+            // unit test pins): dragged past 100px or flicked away from the edge
+            // faster than 500px/s dismisses. This runs on the UI thread, so it
+            // must not call a non-worklet JS function — hence the literal
+            // comparison here.
+            if (dir * e.translationY > 100 || dir * e.velocityY > 500) {
+                translateY.value = withSpring(dir * sheetHeight.value, SPRING_CONFIG)
                 backdropOpacity.value = withTiming(0, { duration: 150 })
                 runOnJS(close)()
             } else {
@@ -129,6 +163,10 @@ function SheetRoot({
     const backdropStyle = useAnimatedStyle(() => ({
         opacity: backdropOpacity.value,
     }))
+
+    // The sheet host already sits below the status bar; only the root-host
+    // fallback puts a top sheet's edge under it.
+    const paddingTop = side === 'top' && !hasSheetHost ? insets.top : 0
 
     if (!mounted) return null
 
@@ -158,18 +196,32 @@ function SheetRoot({
                             onLayout={e => {
                                 sheetHeight.value = e.nativeEvent.layout.height
                             }}
-                            className="absolute left-0 right-0 bottom-0 rounded-t-2xl border-t border-border"
+                            className={SIDE_CLASS[side]}
                             style={[
                                 {
                                     maxHeight: `${maxHeightPercent * 100}%`,
                                     backgroundColor: surfaceBg,
+                                    paddingTop,
                                 },
                                 sheetStyle,
                             ]}
                         >
-                            <Handle isVisible={!hideHandle} color={handleColor} />
-                            <SheetHeader title={title} description={description} onClose={close} />
-                            {children}
+                            <SheetSideContext.Provider value={side}>
+                                <Handle
+                                    isVisible={!hideHandle && side === 'bottom'}
+                                    color={handleColor}
+                                />
+                                <SheetHeader
+                                    title={title}
+                                    description={description}
+                                    onClose={close}
+                                />
+                                {children}
+                                <Handle
+                                    isVisible={!hideHandle && side === 'top'}
+                                    color={handleColor}
+                                />
+                            </SheetSideContext.Provider>
                         </Animated.View>
                     </GestureDetector>
                 </KeyboardAvoidingView>
@@ -178,10 +230,11 @@ function SheetRoot({
     )
 }
 
+/** The drag pill, drawn at the edge the user pulls away from. */
 function Handle({ isVisible, color }: { isVisible: boolean; color: string }) {
     if (!isVisible) return null
     return (
-        <View className="items-center py-2.5">
+        <View className="items-center py-2.5" testID="sheet-handle">
             <View className="w-9 h-1 rounded-sm" style={{ backgroundColor: color }} />
         </View>
     )
@@ -245,13 +298,15 @@ function SheetBody({
     )
 }
 
-/** The button row, pinned under the body, above the home indicator. */
+/** The button row, pinned under the body — above the home indicator when the sheet rests on the bottom edge. */
 function SheetFooter({ children, className }: { children: ReactNode; className?: string }) {
     const insets = useDeviceInsets()
+    const side = useContext(SheetSideContext)
+    const paddingBottom = side === 'bottom' ? Math.max(12, insets.bottom) : 12
     return (
         <View
             className={`flex-row justify-end items-center gap-2 px-5 pt-3 border-t border-border ${className ?? ''}`}
-            style={{ paddingBottom: Math.max(12, insets.bottom) }}
+            style={{ paddingBottom }}
         >
             {children}
         </View>

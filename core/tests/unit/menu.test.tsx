@@ -1,11 +1,12 @@
 // @vitest-environment happy-dom
 
 import { cleanup, fireEvent, render as renderBare } from '@testing-library/react'
+import { useWindowSizeStore } from '@tinycld/core/lib/stores/window-size-store'
 import { Menu } from '@tinycld/core/ui/menu'
 import { OverlayProvider } from '@tinycld/core/ui/overlay'
 import type { ReactElement } from 'react'
 import { Pressable, Text } from 'react-native'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Every surface renders through the overlay host, which the app mounts once.
 const render = (ui: ReactElement) => renderBare(<OverlayProvider>{ui}</OverlayProvider>)
@@ -181,5 +182,53 @@ describe('Menu (web)', () => {
         fireEvent.click(getByText('Show done'))
         expect(onToggle).toHaveBeenCalledTimes(1)
         expect(queryByText('Show done')).not.toBeNull()
+    })
+})
+
+describe('Menu (phone)', () => {
+    // The stub reports a desktop window; the breakpoint reads the size store,
+    // so a phone is one store write away.
+    beforeEach(() => useWindowSizeStore.getState().setSize(390, 844))
+    afterEach(() => {
+        cleanup()
+        useWindowSizeStore.getState().setSize(1024, 768)
+    })
+
+    const sheetOf = (root: ParentNode) => {
+        const sheet = root.querySelector<HTMLElement>('[testid="sheet"]')
+        if (!sheet) throw new Error('menu did not render as a sheet')
+        return sheet
+    }
+
+    it('renders its rows in a sheet hanging from the top edge by default', () => {
+        const onSelect = vi.fn()
+        const { container, getByText } = render(
+            <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 10 }} testID="sheet">
+                <Menu.Item label="Rename" onSelect={onSelect} />
+                <Menu.Item label="Delete" isDestructive onSelect={() => {}} />
+            </Menu>
+        )
+        const sheet = sheetOf(container)
+        expect(sheet.className).toContain('top-0')
+        // Sheet rows are touch targets, not web menu items.
+        expect(sheet.contains(getByText('Rename'))).toBe(true)
+        expect(sheet.contains(getByText('Delete'))).toBe(true)
+        fireEvent.click(getByText('Rename'))
+        expect(onSelect).toHaveBeenCalledTimes(1)
+    })
+
+    it('rests on the bottom edge when the caller asks for it', () => {
+        const { container } = render(
+            <Menu
+                isOpen
+                onOpenChange={() => {}}
+                anchor={{ x: 10, y: 10 }}
+                sheetSide="bottom"
+                testID="sheet"
+            >
+                <Menu.Item label="Rename" onSelect={() => {}} />
+            </Menu>
+        )
+        expect(sheetOf(container).className).toContain('bottom-0')
     })
 })

@@ -1,7 +1,7 @@
 import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { useWindowSizeStore } from '@tinycld/core/lib/stores/window-size-store'
 import { OverlayPortal, useLayerFocus, useOverlayLayer } from '@tinycld/core/ui/overlay'
-import { Sheet } from '@tinycld/core/ui/sheet'
+import { Sheet, type SheetSide } from '@tinycld/core/ui/sheet'
 import React, {
     createContext,
     type ReactElement,
@@ -75,6 +75,8 @@ export interface PopoverProps {
     width?: number
     /** Title of the sheet the surface becomes on a phone. */
     title?: string
+    /** The edge that sheet rests on. Default `bottom`. */
+    sheetSide?: SheetSide
     /** Padding of the sheet's scrolled content. */
     sheetContentClassName?: string
     className?: string
@@ -103,6 +105,7 @@ export function Popover({
     presentation = 'auto',
     width,
     title,
+    sheetSide = 'bottom',
     sheetContentClassName,
     className,
     testID,
@@ -133,7 +136,13 @@ export function Popover({
         return (
             <>
                 {triggerElement}
-                <Sheet isOpen={isOpen} onClose={close} title={title} testID={testID}>
+                <Sheet
+                    isOpen={isOpen}
+                    onClose={close}
+                    title={title}
+                    side={sheetSide}
+                    testID={testID}
+                >
                     <PopoverContext.Provider value={SHEET_CONTEXT(isOpen, close)}>
                         <Sheet.Body contentClassName={sheetContentClassName ?? 'px-4 pb-4'}>
                             {children}
@@ -464,4 +473,5 @@ const SURFACE_SHADOW =
 const SCROLL_CONTENT_STYLE = { flexGrow: 1 } as const
 const SUB_SLOT_STYLE = { position: 'absolute', top: 0, left: 0, width: 0, height: 0 } as const
 
+export type { SheetSide } from '@tinycld/core/ui/sheet'
 export { type Placement, placePopover, placeSubmenu, type Rect, type Size } from './place'
