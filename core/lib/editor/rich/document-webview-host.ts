@@ -61,6 +61,14 @@ export class DocumentWebViewHost<T> {
     private lastKnown: T
     /** Which warm-editor generation `lastKnown` belongs to. See seedGeneration. */
     private seededGeneration: number | null = null
+    /**
+     * Whether the page currently has an editor listening (see markLive). A
+     * push sent while it does not lands on nothing — the WebView may not be
+     * mounted, the page may be booting, or the editor may be mid-rebuild — so
+     * it is held here and delivered on the next markLive instead.
+     */
+    private isLive = false
+    private pendingSet: T | null = null
     private destroyed = false
 
     constructor(shape: ChannelShape<T>, options: DocumentWebViewHostOptions) {
@@ -96,17 +104,45 @@ export class DocumentWebViewHost<T> {
             entry.resolve(this.lastKnown)
             this.pending.delete(id)
         }
+        // A push the displaced surface left undelivered was meant for ITS
+        // editor. The incoming surface's document comes from init.
+        this.pendingSet = null
         this.lastKnown = value
+        // The page rebuilds its editor for the new generation; until that one
+        // reports mounted there is nothing to push to.
+        this.isLive = false
+    }
+
+    /**
+     * The page reports an editor is constructed and listening. Delivers the
+     * push held while there was none.
+     */
+    markLive(): void {
+        this.isLive = true
+        if (this.pendingSet === null) return
+        const value = this.pendingSet
+        this.pendingSet = null
+        this.post(value)
+    }
+
+    /**
+     * The editor the page had is gone or about to be — the page is booting
+     * again, or a handover is rebuilding it. Pushes are held until the next
+     * markLive.
+     */
+    markStale(): void {
+        this.isLive = false
     }
 
     /**
      * Ask the WebView for the current document.
      *
-     * Resolves with the last known value — never rejects — if the WebView is
-     * not mounted, does not answer in time, or the host is torn down first.
+     * Resolves with the last known value — never rejects — if there is no
+     * live editor to ask, the WebView is not mounted, it does not answer in
+     * time, or the host is torn down first.
      */
     get(): Promise<T> {
-        if (this.destroyed) return Promise.resolve(this.lastKnown)
+        if (this.destroyed || !this.isLive) return Promise.resolve(this.lastKnown)
         const requestId = `${this.shape.namespace}-${this.nextId++}`
         return new Promise<T>(resolve => {
             const settle = (value: T) => {
@@ -129,10 +165,22 @@ export class DocumentWebViewHost<T> {
         })
     }
 
-    /** Replace the WebView's document. */
+    /**
+     * Replace the WebView's document — now if an editor is listening, else as
+     * soon as one is. A push before the page is live used to be dropped, which
+     * is how a draft reopened into mail's compose window showed an empty body.
+     */
     set(value: T): void {
         if (this.destroyed) return
         this.lastKnown = value
+        if (!this.isLive) {
+            this.pendingSet = value
+            return
+        }
+        this.post(value)
+    }
+
+    private post(value: T): void {
         this.postMessage(
             makeMessage(this.shape.namespace, this.shape.types.set, this.shape.encodeSet(value))
         )

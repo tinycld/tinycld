@@ -146,20 +146,34 @@ export interface UseWebViewEditorOptions {
     onMessage?: (message: EditorMessage) => void
 }
 
+/** Which init the host last posted, and to which boot of the page. */
+export interface PostedInit {
+    generation: number
+    epoch: number
+}
+
 /**
  * Whether the host should post this init payload.
  *
  * Replaces the previous one-shot latch. A warm editor is reconfigured by
  * re-sending init, so the rule is "each generation exactly once, never before
  * the page reports ready" rather than "only ever once".
+ *
+ * `epoch` counts the page's boots — it starts at 0 (not yet ready) and each
+ * `editor-ready` bumps it. A page that boots again has lost everything init
+ * built, so the SAME generation must go out again. That happens more than a
+ * crash: re-parenting the warm editor's WebView on a handover recreates the
+ * native view, and the page reloads while the host still remembers sending
+ * this generation — which left the editor at its empty stage one.
  */
 export function shouldPostInit(
-    lastPostedGeneration: number | null,
+    lastPosted: PostedInit | null,
     incomingGeneration: number,
-    isReady: boolean
+    epoch: number
 ): boolean {
-    if (!isReady) return false
-    return lastPostedGeneration === null || incomingGeneration > lastPostedGeneration
+    if (epoch === 0) return false
+    if (lastPosted === null) return true
+    return incomingGeneration > lastPosted.generation || epoch !== lastPosted.epoch
 }
 
 // Shared TenTap-customSource wrapper. Encapsulates:
@@ -279,7 +293,11 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // (TenTap's StateUpdate-driven flag) for this: that one only flips
     // when the WebView sends a `stateUpdate`, which our custom Editor
     // only sends after init arrives — chicken-and-egg.
-    const [webviewReady, setWebviewReady] = useState(false)
+    //
+    // A counter rather than a flag, because the page can boot more than once
+    // per mount of this hook (see shouldPostInit), and a second boot has to
+    // re-trigger the init post.
+    const [pageEpoch, setPageEpoch] = useState(0)
     // Mount timestamp for the phase timings below. A WebView editor is an
     // expensive thing to create — a browser cold start plus a bundle — and the
     // three marks (page-ready, init-sent, first-height) are what tell you WHICH
@@ -309,31 +327,34 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     const heightStore = heightStoreRef.current
     const setContentHeight = heightStore.set
 
-    // Which generation has been posted, rather than whether ANY init was — the
-    // warm editor reconfigures itself by posting a new one.
-    const lastInitGenerationRef = useRef<number | null>(null)
+    // Which generation has been posted, and to which page boot, rather than
+    // whether ANY init was — the warm editor reconfigures itself by posting a
+    // new one, and a rebooted page needs the current one again.
+    const lastInitRef = useRef<PostedInit | null>(null)
     useEffect(() => {
         const generation = (initPayload as { generation?: unknown })?.generation
         // Consumers that predate the warm path (mail, text) send no generation;
         // treat those as a single one-shot init, exactly as before.
         const incoming = typeof generation === 'number' ? generation : 0
-        if (!shouldPostInit(lastInitGenerationRef.current, incoming, webviewReady)) return
+        if (!shouldPostInit(lastInitRef.current, incoming, pageEpoch)) return
         const webview = bridge.webviewRef?.current
         if (!webview) return
         const message = makeMessage('app', 'init', initPayload)
         try {
             log.debug('core.editor.webview', 'init-sent', {
                 sinceMountMs: Date.now() - mountAtRef.current,
+                generation: incoming,
+                epoch: pageEpoch,
             })
             webview.postMessage(JSON.stringify(message))
-            lastInitGenerationRef.current = incoming
+            lastInitRef.current = { generation: incoming, epoch: pageEpoch }
         } catch (err) {
             // postMessage can fail mid-handshake; the next render's
-            // webviewReady or bridge identity change will retry. The generation
+            // pageEpoch or bridge identity change will retry. The generation
             // is deliberately NOT recorded here, so the retry still fires.
             captureException('editor.postInit', err, { generation: incoming })
         }
-    }, [bridge, webviewReady, initPayload])
+    }, [bridge, pageEpoch, initPayload])
 
     const editor: EditorHandle = useMemo(
         () => ({
@@ -406,15 +427,18 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
             }
             // The WebView's bootstrap posts {type:'editor-ready'} as
             // its first message, before TipTap mounts. That's the
-            // signal we use to gate the init post — see webviewReady
+            // signal we use to gate the init post — see pageEpoch
             // above. TenTap's onMessage also sees this (we run
             // alongside its dispatch), but it doesn't flip any
             // bridgeState flag from it.
             if (parsed.type === 'editor-ready') {
-                log.debug('core.editor.webview', 'page-ready', {
-                    sinceMountMs: Date.now() - mountAtRef.current,
+                setPageEpoch(epoch => {
+                    log.debug('core.editor.webview', 'page-ready', {
+                        sinceMountMs: Date.now() - mountAtRef.current,
+                        epoch: epoch + 1,
+                    })
+                    return epoch + 1
                 })
-                setWebviewReady(true)
                 return
             }
             if (parsed.namespace === 'ui') {
@@ -561,6 +585,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         measureRef,
         postMessage,
         isReady: bridgeState.isReady === true,
+        pageEpoch,
     }
 }
 

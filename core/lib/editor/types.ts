@@ -263,4 +263,10 @@ export interface EditorResult {
     // editor handle (e.g. commentBridge, findReplaceEditor) until this
     // flips true.
     isReady?: boolean
+    // How many times the WebView page has booted (native only; absent on
+    // web). 0 until its first `editor-ready`. A boot beyond the first means
+    // the page reloaded — a remounted WebView, a terminated content process —
+    // and holds nothing the host pushed before, so anything stateful the host
+    // keeps in the page has to be re-sent.
+    pageEpoch?: number
 }

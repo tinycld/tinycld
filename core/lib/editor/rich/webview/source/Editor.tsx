@@ -17,6 +17,7 @@ import { buildRichEditorExtensions } from '../../extensions'
 import { repairMarkdown } from '../../markdown-repair'
 import { getFileAuth, setFileAuth, subscribeFileAuth } from './file-auth-store'
 import {
+    APP_EDITOR_MOUNTED,
     APP_ESCAPE,
     APP_FILE_TOKEN,
     APP_PARK,
@@ -582,6 +583,9 @@ function useHostMessages(editor: TiptapEditor | null, isCollab: boolean) {
 
         window.addEventListener('message', onMessage)
         document.addEventListener('message', onMessage)
+        // After subscribing, never before: the host holds document pushes
+        // until it hears this, so the ordering is what makes them land.
+        postToNative(makeMessage('app', APP_EDITOR_MOUNTED, null))
         return () => {
             window.removeEventListener('message', onMessage)
             document.removeEventListener('message', onMessage)

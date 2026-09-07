@@ -18,6 +18,9 @@ function makeHost(options: { timeoutMs?: number; canPost?: boolean } = {}) {
         },
         timeoutMs: options.timeoutMs,
     })
+    // The page has an editor listening — the ordinary state these tests
+    // exercise. Liveness itself is covered in document-webview-host.test.ts.
+    host.markLive()
     return { host, sent }
 }
 

@@ -17,6 +17,7 @@ import { TriggerItemsWebViewHost } from './trigger-items-webview-host'
 import type { SerializableTriggerConfig, TriggerItem } from './triggers'
 import { editorHtml } from './webview/build/editorHtml'
 import {
+    APP_EDITOR_MOUNTED,
     APP_ESCAPE,
     APP_FILE_TOKEN,
     APP_SUBMIT_SHORTCUT,
@@ -312,12 +313,16 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     // surfaces holding identical text leaves initialContent unchanged, and the
     // seed still has to move — along with any request the displaced surface left
     // in flight.
+    //
+    // Both hosts, whatever the format: a handover rebuilds the page's editor,
+    // and each host has to stop pushing until the replacement reports mounted.
     useEffect(() => {
-        if (contentFormat === 'markdown') {
-            markdownHost.seedGeneration(generation, initialContent ?? '')
-        } else {
-            htmlHost.seedGeneration(generation, { html: initialContent ?? '', text: '' })
-        }
+        const isMarkdown = contentFormat === 'markdown'
+        markdownHost.seedGeneration(generation, isMarkdown ? (initialContent ?? '') : '')
+        htmlHost.seedGeneration(generation, {
+            html: isMarkdown ? '' : (initialContent ?? ''),
+            text: '',
+        })
     }, [markdownHost, htmlHost, contentFormat, initialContent, generation])
 
     const triggerItemsHostRef = useRef<TriggerItemsWebViewHost | null>(null)
@@ -327,10 +332,11 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         })
     }
     const triggerItemsHost = triggerItemsHostRef.current
-    // Assigned from `result` further down — declared here because the roster
-    // effect below is written before `useWebViewEditor` is called, and effects
-    // run after the whole body regardless.
-    const [isPageReady, setIsPageReady] = useState(false)
+    // Bumped on every APP_EDITOR_MOUNTED — each generation's editor, and each
+    // page boot's. Declared here because the roster effect below is written
+    // before `useWebViewEditor` is called, and effects run after the whole
+    // body regardless. 0 until the first editor exists.
+    const [liveEpoch, setLiveEpoch] = useState(0)
 
     // Push each roster whenever it changes. The effect depends on the
     // SERIALIZED rosters rather than the array: a live query hands back a fresh
@@ -341,19 +347,19 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         () => JSON.stringify((triggers ?? []).map(t => [t.id, t.allItems])),
         [triggers]
     )
-    // Gated on the page being ready, not just on the roster changing. The
+    // Gated on an editor being live, not just on the roster changing. The
     // editor mounts well before a members query resolves, so the first roster
     // is pushed at a WebView that cannot receive it; and a page reload gives
     // the page a fresh, empty store while the host still remembers sending the
-    // roster. Re-running when readiness flips (and clearing the memo first, so
+    // roster. Re-running on every live epoch (and clearing the memo first, so
     // an unchanged roster is not skipped as a duplicate) covers both.
     useEffect(() => {
-        if (!isPageReady) return
+        if (liveEpoch === 0) return
         triggerItemsHost.reset()
         for (const [id, items] of JSON.parse(rosterSignature) as [string, TriggerItem[]][]) {
             triggerItemsHost.push(id, items)
         }
-    }, [rosterSignature, triggerItemsHost, isPageReady])
+    }, [rosterSignature, triggerItemsHost, liveEpoch])
 
     // TenTap's stock bridges still drive the toolbar commands and focus. Their
     // Tiptap counterparts live in our page, which registers the same schema.
@@ -374,6 +380,11 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
             if (message.namespace !== 'app') return
             if (message.type === APP_SUBMIT_SHORTCUT) submitRef.current?.()
             else if (message.type === APP_ESCAPE) escapeRef.current?.()
+            else if (message.type === APP_EDITOR_MOUNTED) {
+                markdownHost.markLive()
+                htmlHost.markLive()
+                setLiveEpoch(epoch => epoch + 1)
+            }
         },
         [markdownHost, htmlHost, yjsHost, awarenessHost]
     )
@@ -419,11 +430,18 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
 
     posterRef.current = result.postMessage ?? null
 
-    // Mirror the bridge's readiness into state so the roster effect above can
-    // depend on it. Compared before setting: this runs on every render, and an
-    // unconditional set would loop.
-    const isReadyNow = result.isReady === true
-    if (isReadyNow !== isPageReady) setIsPageReady(isReadyNow)
+    // The page booted again (a remounted WebView, a killed content process),
+    // so the editor the channels were talking to is gone. Until the page posts
+    // APP_EDITOR_MOUNTED for the replacement, pushes are held rather than sent
+    // into the gap. Runs in the same commit as the init post that asks for
+    // that replacement, so it always precedes the mounted signal. (A handover
+    // goes stale the same way, from seedGeneration above.)
+    const pageEpoch = result.pageEpoch ?? 0
+    useEffect(() => {
+        if (pageEpoch === 0) return
+        markdownHost.markStale()
+        htmlHost.markStale()
+    }, [markdownHost, htmlHost, pageEpoch])
 
     // Publish the handle a host overlay needs to anchor to this editor. The
     // popover is rendered as a sibling (often in another subtree entirely), so

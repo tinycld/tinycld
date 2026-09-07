@@ -19,6 +19,7 @@ function makeHost(options: { timeoutMs?: number; canPost?: boolean } = {}) {
         },
         timeoutMs: options.timeoutMs,
     })
+    host.markLive()
     return { host, sent }
 }
 

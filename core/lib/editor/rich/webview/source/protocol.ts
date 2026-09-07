@@ -37,6 +37,17 @@ export const EDITOR_READY = 'editor-ready'
 /** host → WebView, the one-shot init payload. */
 export const APP_INIT = 'init'
 /**
+ * WebView → host: the Tiptap instance init asked for exists and is listening.
+ *
+ * Distinct from EDITOR_READY, which is stage one — a page with no editor yet.
+ * Anything addressed to the document (a set on either channel) must wait for
+ * this: earlier it lands on nothing, and it is posted from the SAME effect that
+ * subscribes the document handlers, so a message sent after it is heard.
+ * Re-posted for every editor the page constructs — each generation, and each
+ * boot.
+ */
+export const APP_EDITOR_MOUNTED = 'editor-mounted'
+/**
  * host → WebView: drop back to stage one — no Tiptap, no document, no
  * awareness — while keeping the page itself booted.
  *
