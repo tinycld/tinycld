@@ -287,6 +287,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         if (typeof isWebViewFocused !== 'boolean') return
         if (lastFocusRef.current === isWebViewFocused) return
         lastFocusRef.current = isWebViewFocused
+        log.debug('core.editor.webview', 'focus', { instanceKey: key, isFocused: isWebViewFocused })
         focusChangeRef.current?.(isWebViewFocused)
     }, [isWebViewFocused])
 

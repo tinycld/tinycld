@@ -363,9 +363,13 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
     }, [])
 
     // A focus asked for during a hand-off — LazyEditor asks the moment it
-    // acquires — reaches a page whose new editor does not exist yet, and is
-    // dropped. Hold the last request and repeat it once the page reports the
-    // editor mounted; the page's own focus report clears it.
+    // acquires — reaches a page whose new editor does not exist yet: the
+    // PREVIOUS editor takes it (and duly reports itself focused) and the new
+    // one gets nothing. Hold the latest request and repeat it once the page
+    // reports the next editor mounted. Nothing else clears it: the previous
+    // editor's focus report must not, and every mount is either a surface
+    // acquiring (which asks for focus itself, overwriting this) or a reboot of
+    // the page the user was editing in.
     const pendingFocusRef = useRef<Parameters<EditorHandle['focus']>[0] | null>(null)
     const replayFocusRef = useRef<EditorHandle['focus'] | null>(null)
 
@@ -387,7 +391,10 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
                 htmlHost.markLive()
                 setLiveEpoch(epoch => epoch + 1)
                 const pending = pendingFocusRef.current
-                if (pending !== null) replayFocusRef.current?.(pending)
+                if (pending !== null) {
+                    pendingFocusRef.current = null
+                    replayFocusRef.current?.(pending)
+                }
             } else if (message.type === APP_PAGE_ERROR) {
                 const detail = (message as { payload?: { message?: unknown; stack?: unknown } })
                     .payload
@@ -429,7 +436,6 @@ export function useRichEditor(options: UseRichEditorOptions = {}): EditorResult 
         // Split the host's single edge callback into the same pair of handlers
         // the web variant exposes, so the shared .d.ts contract holds.
         onFocusChange: (isFocused: boolean) => {
-            if (isFocused) pendingFocusRef.current = null
             // Tell the shortcut provider a WebView holds the keyboard. It reads
             // TextInput.State, which cannot see into a WebView, so without this
             // every plain letter typed here is offered to the global matcher as

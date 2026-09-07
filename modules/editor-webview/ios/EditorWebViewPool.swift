@@ -96,6 +96,15 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
 
   // MARK: - Attach / detach (main thread)
 
+  /// The responder inside a WKWebView is its private content view, not the
+  /// web view itself, so `webView.isFirstResponder` is always false.
+  private func containsFirstResponder(_ view: UIView) -> Bool {
+    if view.isFirstResponder {
+      return true
+    }
+    return view.subviews.contains { containsFirstResponder($0) }
+  }
+
   /// Show the page for `key` in `host`, creating and loading it on first use.
   /// Last mount wins: whichever host attaches most recently takes the page.
   func attach(_ key: String, host: EditorWebViewHostView, source: String) {
@@ -113,7 +122,7 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
       // the hand-off (the surface asks the moment it acquires) can land before
       // the move, so carry it across; without this the caret is in the page
       // but keystrokes go nowhere.
-      let hadFocus = entry.webView.isFirstResponder
+      let hadFocus = containsFirstResponder(entry.webView)
       // addSubview moves the view out of its previous superview.
       host.addSubview(entry.webView)
       entry.webView.frame = host.bounds
