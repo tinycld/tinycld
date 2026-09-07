@@ -108,7 +108,7 @@ const DESCRIPTION_SCALE: MarkdownScale = {
     // The editor draws no rule under a heading, so neither may this.
     headingRule: false,
     listSpacing: EDITOR_BLOCK_SPACING,
-    listIndent: Math.round(EDITOR_BASE_PX * EDITOR_LIST_INDENT_EM),
+    listIndent: EDITOR_BASE_PX * EDITOR_LIST_INDENT_EM,
 }
 
 /**
@@ -129,7 +129,7 @@ const DOCUMENTATION_SCALE: MarkdownScale = {
     h6: { size: 13, weight: '600', marginTop: 8, marginBottom: 2 },
     headingRule: true,
     listSpacing: 6,
-    listIndent: Math.round(15 * EDITOR_LIST_INDENT_EM),
+    listIndent: 15 * EDITOR_LIST_INDENT_EM,
 }
 
 /**
@@ -161,7 +161,7 @@ const COMPACT_SCALE: MarkdownScale = {
     h6: { size: 15, weight: '600', marginTop: 4, marginBottom: 0 },
     headingRule: false,
     listSpacing: 4,
-    listIndent: Math.round(15 * EDITOR_LIST_INDENT_EM),
+    listIndent: 15 * EDITOR_LIST_INDENT_EM,
 }
 
 const SCALES: Record<MarkdownPurpose, MarkdownScale> = {

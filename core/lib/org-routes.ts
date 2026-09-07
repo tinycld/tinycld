@@ -79,6 +79,33 @@ export function activeSlugFromPathname(pathname: string): string | null {
 }
 
 /**
+ * The builder itself, hoisted to module scope so every call to the hook below
+ * returns the SAME function.
+ *
+ * It closes over nothing, so there was never a reason to rebuild it per render
+ * — and rebuilding it had a real cost: a new identity on every render makes
+ * `orgHref` unusable in an effect's dependency array, because listing it re-runs
+ * that effect on every render. An effect that NAVIGATES then re-runs on the
+ * render its own navigation caused, which React kills as error #185 (infinite
+ * setState) — the same failure the return-value note below describes, reached
+ * through the function's identity rather than its result. Without this, every
+ * such call site has to omit a dependency the lint rule asks for.
+ */
+const orgHrefBuilder = (path: string, extra?: QueryParams): Href => {
+    const pathname = appHref(path)
+    // Return a plain string href when there are no query params. A string is
+    // a stable, referentially-equal value across renders; the object form
+    // (`{ pathname, params }`) is a NEW object every call, which makes
+    // <Redirect href={...}> / expo-router re-navigate on every render and can
+    // drive React Navigation into an infinite setState loop (React #185).
+    // Only build the object when params are actually present (dynamic routes).
+    if (!extra || Object.keys(extra).length === 0) {
+        return pathname as Href
+    }
+    return { pathname, params: extra } as Href
+}
+
+/**
  * Hook for navigation. Single-org deployment: routes carry no [orgSlug]
  * segment, so paths are relative to the app root (APP_PREFIX).
  *
@@ -93,17 +120,5 @@ export function activeSlugFromPathname(pathname: string): string | null {
  *   <Link href={orgHref('mail/[id]', { id: threadId })} />
  */
 export function useOrgHref() {
-    return (path: string, extra?: QueryParams): Href => {
-        const pathname = appHref(path)
-        // Return a plain string href when there are no query params. A string is
-        // a stable, referentially-equal value across renders; the object form
-        // (`{ pathname, params }`) is a NEW object every call, which makes
-        // <Redirect href={...}> / expo-router re-navigate on every render and can
-        // drive React Navigation into an infinite setState loop (React #185).
-        // Only build the object when params are actually present (dynamic routes).
-        if (!extra || Object.keys(extra).length === 0) {
-            return pathname as Href
-        }
-        return { pathname, params: extra } as Href
-    }
+    return orgHrefBuilder
 }

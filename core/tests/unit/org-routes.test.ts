@@ -95,3 +95,34 @@ describe('activeSlugFromPathname', () => {
         expect(activeSlugFromPathname('/p/demo')).toBeNull()
     })
 })
+
+/**
+ * The hook returns the SAME function every time.
+ *
+ * Load-bearing, not a micro-optimization: an unstable `orgHref` cannot go in an
+ * effect's dependency array, because a new identity per render re-runs the
+ * effect every render — and an effect that navigates then re-runs on the render
+ * its own navigation caused. React kills that as error #185 (infinite
+ * setState), which is what every boards deep link crashed with.
+ */
+describe('useOrgHref identity', () => {
+    it('returns a referentially stable builder', () => {
+        expect(useOrgHref()).toBe(useOrgHref())
+    })
+
+    it('still builds the same hrefs', () => {
+        const orgHref = useOrgHref()
+        expect(orgHref('boards')).toBe('/a/boards')
+        expect(orgHref('boards', { focused: 'PL-1' })).toEqual({
+            pathname: '/a/boards',
+            params: { focused: 'PL-1' },
+        })
+    })
+
+    // A bare path stays a STRING, which is its own stability guarantee at the
+    // call site — <Redirect href={...}> with a fresh object re-navigates every
+    // render.
+    it('returns a plain string when there are no params', () => {
+        expect(typeof useOrgHref()('boards/PL-1')).toBe('string')
+    })
+})
