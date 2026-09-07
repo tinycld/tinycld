@@ -34,15 +34,6 @@ declare module 'editor-webview' {
         webBackgroundColor?: string
         /** Exposes the page to Safari Web Inspector / chrome://inspect. */
         inspectable?: boolean
-        /** The page called `window.ReactNativeWebView.postMessage(data)`. */
-        onMessage?: (event: EditorWebViewMessageEvent) => void
-        /** The page finished loading its source. */
-        onLoad?: (event: EditorWebViewInstanceEvent) => void
-        /**
-         * The WebView's content/render process died and the source was reloaded.
-         * The page will post `editor-ready` again as it boots.
-         */
-        onProcessGone?: (event: EditorWebViewInstanceEvent) => void
         style?: StyleProp<ViewStyle>
     }
 
@@ -52,11 +43,22 @@ declare module 'editor-webview' {
         attached: boolean
     }
 
+    export interface EditorWebViewListeners {
+        /** The page called `window.ReactNativeWebView.postMessage(data)`. */
+        onMessage: (data: string) => void
+        /**
+         * The WebView's content/render process died and the source was reloaded.
+         * The page will post `editor-ready` again as it boots.
+         */
+        onProcessGone?: () => void
+    }
+
     /**
      * The host view. Mounting it ATTACHES the pooled native WebView for
      * `instanceKey` (moving it out of any host that held it — last mount wins);
      * unmounting detaches without destroying, so the page survives a remount in
-     * another subtree.
+     * another subtree. Messages from the page do not pass through it — see
+     * `subscribe`.
      */
     export const EditorWebView: ComponentType<EditorWebViewProps>
 
@@ -70,4 +72,11 @@ declare module 'editor-webview' {
     /** Release the pooled WebView. The owning hook calls this on unmount. */
     export function destroy(instanceKey: string): void
     export function getState(instanceKey: string): EditorWebViewState
+    /**
+     * Receive the page's messages for one instance, as module events rather
+     * than events on the host view — a host comes and goes with every hand-off,
+     * and an event addressed to a view being torn down is dropped. Returns the
+     * unsubscribe.
+     */
+    export function subscribe(instanceKey: string, listeners: EditorWebViewListeners): () => void
 }

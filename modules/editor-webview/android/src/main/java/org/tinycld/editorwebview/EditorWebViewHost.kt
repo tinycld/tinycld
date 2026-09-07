@@ -5,19 +5,13 @@ import android.content.Context
 import android.graphics.Color
 import android.webkit.WebView
 import expo.modules.kotlin.AppContext
-import expo.modules.kotlin.records.Field
-import expo.modules.kotlin.records.Record
-import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
-
-data class MessageEvent(@Field val data: String) : Record
-
-data class InstanceEvent(@Field val instanceKey: String) : Record
 
 /**
  * The React-side host: a plain view group the pooled WebView is placed into
  * while this host is on screen. It owns nothing — attach on entering the
- * window, release the claim on leaving it.
+ * window, release the claim on leaving it. Messages from the page do not pass
+ * through it (see EditorWebViewPool).
  */
 @SuppressLint("ViewConstructor")
 class EditorWebViewHost(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
@@ -32,10 +26,6 @@ class EditorWebViewHost(context: Context, appContext: AppContext) : ExpoView(con
   var scrollEnabled = true
   var webBackgroundColor: Color? = null
   var inspectable = false
-
-  val onMessage by EventDispatcher<MessageEvent>()
-  val onLoad by EventDispatcher<InstanceEvent>()
-  val onProcessGone by EventDispatcher<InstanceEvent>()
 
   /**
    * Attach only from the window. React Native may create and configure a host

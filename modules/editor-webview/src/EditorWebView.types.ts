@@ -12,16 +12,12 @@ import type { StyleProp, ViewStyle } from 'react-native'
  * handed between surfaces without reloading. `destroy` is the only thing that
  * releases the native WebView — the hook that owns the key calls it on unmount.
  *
+ * Messages from the page are MODULE events keyed by instance (`subscribe`),
+ * not events on the host view: a host comes and goes with every hand-off, and
+ * an event addressed to a view React Native is tearing down is dropped.
+ *
  * Keep in sync with `tinycld/core/types/editor-webview.d.ts`.
  */
-export interface EditorWebViewMessageEvent {
-    nativeEvent: { data: string }
-}
-
-export interface EditorWebViewInstanceEvent {
-    nativeEvent: { instanceKey: string }
-}
-
 export interface EditorWebViewProps {
     /** Pool key. The hook that owns the page holds one for its lifetime. */
     instanceKey: string
@@ -33,15 +29,6 @@ export interface EditorWebViewProps {
     webBackgroundColor?: string
     /** Exposes the page to Safari Web Inspector / chrome://inspect. */
     inspectable?: boolean
-    /** The page called `window.ReactNativeWebView.postMessage(data)`. */
-    onMessage?: (event: EditorWebViewMessageEvent) => void
-    /** The page finished loading its source. */
-    onLoad?: (event: EditorWebViewInstanceEvent) => void
-    /**
-     * The WebView's content/render process died and the source was reloaded.
-     * The page will post `editor-ready` again as it boots.
-     */
-    onProcessGone?: (event: EditorWebViewInstanceEvent) => void
     style?: StyleProp<ViewStyle>
 }
 
@@ -49,6 +36,16 @@ export interface EditorWebViewState {
     exists: boolean
     loaded: boolean
     attached: boolean
+}
+
+export interface EditorWebViewListeners {
+    /** The page called `window.ReactNativeWebView.postMessage(data)`. */
+    onMessage: (data: string) => void
+    /**
+     * The WebView's content/render process died and the source was reloaded.
+     * The page will post `editor-ready` again as it boots.
+     */
+    onProcessGone?: () => void
 }
 
 export interface EditorWebViewModuleType {
@@ -62,6 +59,10 @@ export interface EditorWebViewModuleType {
     /** Release the pooled WebView. */
     destroy(instanceKey: string): Promise<void>
     getState(instanceKey: string): EditorWebViewState
+    addListener(
+        event: 'onMessage' | 'onLoad' | 'onProcessGone',
+        listener: (event: { instanceKey: string; data?: string }) => void
+    ): { remove(): void }
 }
 
 export type EditorWebViewComponent = ComponentType<EditorWebViewProps>

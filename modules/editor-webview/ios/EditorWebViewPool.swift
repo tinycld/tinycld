@@ -11,12 +11,6 @@ final class EditorWebViewEntry {
   /// The host currently showing the page, if any. Weak: the host is a React
   /// view with its own lifetime; the pool must never keep one alive.
   weak var host: EditorWebViewHostView?
-  /// Messages the page posted while no host was attached — replayed, in order,
-  /// on the next attach. Without this a page that boots while parentless (a
-  /// reload after its content process died, or a hand-off that spans two React
-  /// commits) would post its one `editor-ready` into nothing, and the host
-  /// would never send init.
-  var buffer: [String] = []
 
   init(webView: WKWebView, source: String) {
     self.webView = webView
@@ -49,6 +43,12 @@ final class ScriptMessageProxy: NSObject, WKScriptMessageHandler {
 /// mounted. Everything here runs on the main thread except `postMessage` and
 /// `state`, which JS calls synchronously and which only read the table under
 /// the lock before hopping to main.
+///
+/// Messages from a page reach JS as MODULE events (`emit`), never as events on
+/// the host view: a host is a React view that comes and goes with every
+/// hand-off, and an event dispatched to a view React Native is tearing down at
+/// that moment is dropped. The page's `editor-mounted` after a hand-off was
+/// lost exactly that way on Android.
 final class EditorWebViewPool: NSObject, WKNavigationDelegate {
   static let shared = EditorWebViewPool()
   static let messageHandlerName = "ReactNativeWebView"
@@ -61,7 +61,9 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
   /// `log stream --predicate 'subsystem == "org.tinycld.editorwebview"'` shows the
   /// pool's lifecycle on a device: creation, attach, load, process death.
   static let log = OSLog(subsystem: "org.tinycld.editorwebview", category: "pool")
-  private static let bufferLimit = 256
+
+  /// Set by the module once it exists; the pool has no module reference of its own.
+  var emit: ((String, [String: Any]) -> Void)?
 
   private var entries: [String: EditorWebViewEntry] = [:]
   private let lock = NSLock()
@@ -103,7 +105,7 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
     // page kept everything it had.
     os_log(.debug, log: Self.log, "attach %{public}@: %{public}@", key, existing == nil ? "created" : "reused")
     if entry.source != source {
-      NSLog("[EditorWebView] ignoring a different source for instance %@; the source is fixed at creation", key)
+      os_log(.error, log: Self.log, "ignoring a different source for %{public}@; the source is fixed at creation", key)
     }
     entry.host = host
     if entry.webView.superview !== host {
@@ -112,12 +114,6 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
       entry.webView.frame = host.bounds
     }
     host.apply(to: entry.webView)
-
-    let pending = entry.buffer
-    entry.buffer.removeAll()
-    for data in pending {
-      host.onMessage(["data": data])
-    }
   }
 
   /// Drop the host's claim. Guarded on identity so the order in which React
@@ -141,22 +137,12 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
 
   // MARK: - Messages
 
-  /// Page → host. Main thread (WKScriptMessageHandler delivers there).
+  /// Page → JS. Main thread (WKScriptMessageHandler delivers there).
   func deliver(_ key: String, _ data: String) {
-    guard let entry = entry(key) else {
-      return
-    }
-    if let host = entry.host {
-      host.onMessage(["data": data])
-      return
-    }
-    entry.buffer.append(data)
-    if entry.buffer.count > Self.bufferLimit {
-      entry.buffer.removeFirst()
-    }
+    emit?("onMessage", ["instanceKey": key, "data": data])
   }
 
-  /// Host → page. Any thread; returns whether an instance exists to receive it.
+  /// JS → page. Any thread; returns whether an instance exists to receive it.
   /// Dispatched on `document`, the one target both platforms use — the page
   /// listens on `window` too, and dispatching on both would deliver twice.
   func postMessage(_ key: String, _ data: String) -> Bool {
@@ -260,7 +246,7 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
     let (key, entry) = found
     entry.isLoaded = true
     os_log(.debug, log: Self.log, "loaded %{public}@", key)
-    entry.host?.onLoad(["instanceKey": key])
+    emit?("onLoad", ["instanceKey": key])
   }
 
   /// The content process died (memory pressure, a WebKit crash). Reload the
@@ -274,7 +260,7 @@ final class EditorWebViewPool: NSObject, WKNavigationDelegate {
     entry.isLoaded = false
     os_log(.error, log: Self.log, "content process terminated %{public}@; reloading", key)
     webView.loadHTMLString(entry.source, baseURL: Self.pageURL)
-    entry.host?.onProcessGone(["instanceKey": key])
+    emit?("onProcessGone", ["instanceKey": key])
   }
 
   func webView(

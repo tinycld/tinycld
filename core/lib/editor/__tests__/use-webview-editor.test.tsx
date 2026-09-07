@@ -15,6 +15,7 @@ const native = {
     destroy: vi.fn<(key: string) => void>(),
 }
 let hostProps: EditorWebViewProps | null = null
+const listeners = new Map<string, (data: string) => void>()
 
 vi.mock('editor-webview', () => ({
     EditorWebView: (props: EditorWebViewProps) => {
@@ -25,12 +26,17 @@ vi.mock('editor-webview', () => ({
     requestFocus: (key: string) => native.requestFocus(key),
     destroy: (key: string) => native.destroy(key),
     getState: () => ({ exists: true, loaded: true, attached: true }),
+    subscribe: (key: string, l: { onMessage: (data: string) => void }) => {
+        listeners.set(key, l.onMessage)
+        return () => listeners.delete(key)
+    },
 }))
 
 const { useWebViewEditor } = await import('../use-webview-editor')
 
 beforeEach(() => {
     hostProps = null
+    listeners.clear()
     native.postMessage.mockReset().mockReturnValue(true)
     native.requestFocus.mockReset()
     native.destroy.mockReset()
@@ -77,7 +83,7 @@ function mount(
 
 function pageSays(message: unknown) {
     act(() => {
-        hostProps?.onMessage?.({ nativeEvent: { data: JSON.stringify(message) } })
+        for (const listener of listeners.values()) listener(JSON.stringify(message))
     })
 }
 
@@ -178,9 +184,11 @@ describe('useWebViewEditor', () => {
         expect(postedTypes().filter(t => t === 'app/init')).toHaveLength(1)
 
         // The warm editor is rendered off-screen, then inside whichever
-        // surface holds it: the host component comes and goes.
+        // surface holds it: the host component comes and goes, the
+        // subscription does not.
         view.unmount()
         expect(native.destroy).not.toHaveBeenCalled()
+        expect(listeners.size).toBe(1)
         const Host = hook.result.current.EditorComponent
         render(<Host />)
         expect(hostProps?.instanceKey).toBe(key)
@@ -190,6 +198,7 @@ describe('useWebViewEditor', () => {
         hook.unmount()
         expect(native.destroy).toHaveBeenCalledTimes(1)
         expect(native.destroy).toHaveBeenCalledWith(key)
+        expect(listeners.size).toBe(0)
     })
 
     it('routes namespaced messages to the generic subscriber and ui scroll to onScroll', () => {

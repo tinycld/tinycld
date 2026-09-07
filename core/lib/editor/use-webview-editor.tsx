@@ -1,9 +1,9 @@
 import {
     destroy,
     EditorWebView,
-    type EditorWebViewMessageEvent,
     postMessage as postToInstance,
     requestFocus,
+    subscribe,
 } from 'editor-webview'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -423,9 +423,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
     // onScroll(...) instead of forwarding to onUiMessage so consumers
     // can take it without writing a switch over message.type.
     const onWebViewMessage = useMemo(
-        () => (event: EditorWebViewMessageEvent) => {
-            const data = event?.nativeEvent?.data
-            if (typeof data !== 'string') return
+        () => (data: string) => {
             let parsed: EditorMessage
             try {
                 parsed = JSON.parse(data) as EditorMessage
@@ -493,6 +491,12 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         [applyContentHeight, stateStore]
     )
 
+    // The page's messages come as module events keyed by instance, for the
+    // hook's whole life — not through the host view, which is unmounted and
+    // remounted on every hand-off and would lose whatever the page posted in
+    // that window.
+    useEffect(() => subscribe(key, { onMessage: onWebViewMessage }), [key, onWebViewMessage])
+
     // The anchor host overlays measure against: the plain host View wrapping
     // the WebView, which is the same box and an ordinary measurable view.
     const measureRef = useRef<View | null>(null)
@@ -525,7 +529,6 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
                             webBackgroundColor={backgroundColor}
                             inspectable={__DEV__}
                             style={{ flex: 1 }}
-                            onMessage={onWebViewMessage}
                         />
                     </EditorHeightBox>
                 )
@@ -538,7 +541,7 @@ export function useWebViewEditor(options: UseWebViewEditorOptions): EditorResult
         // height is subscribed to inside EditorHeightBox instead.
         // measureRef is deliberately absent: it is a useRef object, stable for
         // the life of the mount.
-        [key, editorHtml, scrollEnabled, onWebViewMessage, minHeight, heightStore, backgroundColor]
+        [key, editorHtml, scrollEnabled, minHeight, heightStore, backgroundColor]
     )
 
     // What host overlays POST through. Not a view ref any more — a poster shim

@@ -1,29 +1,31 @@
 package org.tinycld.editorwebview
 
 import android.content.Context
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
+import androidx.core.os.bundleOf
 import org.json.JSONObject
 
 private const val TAG = "EditorWebView"
-private const val BUFFER_LIMIT = 256
 
 /**
  * The pool: WebViews keyed by instance, attached to whichever host is mounted.
  * Everything here runs on the main thread except [postMessage] and [state],
  * which JS calls synchronously and which only read the table under the lock
  * before posting to main.
+ *
+ * Messages from a page reach JS as MODULE events ([emit]), never as events on
+ * the host view: a host is a React view that comes and goes with every
+ * hand-off, and an event dispatched to a view React Native is tearing down at
+ * that moment is dropped. The page's `editor-mounted` after a hand-off was lost
+ * exactly that way.
  */
 object EditorWebViewPool {
-  /**
-   * The page's origin. Not about:blank: a document with an opaque origin has
-   * every uncaught error masked to "Script error.", which turned a page crash
-   * during a hand-off into an empty box with no message anywhere. Nothing is
-   * ever fetched from this host; it exists to give the page an origin of its own.
-   */
+  /** The page's origin — see the iOS pool for why it is not about:blank. */
   const val PAGE_URL = "https://editor.tinycld.invalid/"
 
   /** One pooled editor page: a live WebView that outlives every host it is shown in. */
@@ -31,13 +33,10 @@ object EditorWebViewPool {
     var isLoaded = false
     /** The host currently showing the page, if any. */
     var host: EditorWebViewHost? = null
-    /**
-     * Messages the page posted while no host was attached — replayed, in order,
-     * on the next attach. Without this a page that boots while parentless would
-     * post its one `editor-ready` into nothing, and the host would never send init.
-     */
-    val buffer = ArrayDeque<String>()
   }
+
+  /** Set by the module once it exists; the pool has no module reference of its own. */
+  var emit: ((String, Bundle) -> Unit)? = null
 
   private val entries = HashMap<String, Entry>()
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -89,12 +88,6 @@ object EditorWebViewPool {
       host.measureAndLayout()
     }
     host.apply(webView)
-
-    while (entry.buffer.isNotEmpty()) {
-      val data = entry.buffer.removeFirst()
-      Log.d(TAG, "replay $key ${data.take(70)}")
-      host.onMessage(MessageEvent(data))
-    }
   }
 
   /**
@@ -116,23 +109,14 @@ object EditorWebViewPool {
 
   // region Messages
 
-  /** Page → host. Main thread. */
+  /** Page → JS. Main thread. */
   fun deliver(key: String, data: String) {
-    val entry = entry(key) ?: return
-    val host = entry.host
-    Log.d(TAG, "deliver $key host=${host != null} attached=${host?.isAttachedToWindow} ${data.take(70)}")
-    if (host != null) {
-      host.onMessage(MessageEvent(data))
-      return
-    }
-    entry.buffer.addLast(data)
-    if (entry.buffer.size > BUFFER_LIMIT) {
-      entry.buffer.removeFirst()
-    }
+    if (entry(key) == null) return
+    emit?.invoke("onMessage", bundleOf("instanceKey" to key, "data" to data))
   }
 
   /**
-   * Host → page. Any thread; returns whether an instance exists to receive it.
+   * JS → page. Any thread; returns whether an instance exists to receive it.
    * The dispatch script is react-native-webview's, which already targets
    * `document` — the one target both platforms use.
    */
@@ -144,10 +128,7 @@ object EditorWebViewPool {
       "var event = new MessageEvent('message', data);" +
       "document.dispatchEvent(event);" +
       "})();"
-    mainHandler.post {
-      Log.d(TAG, "post $key -> ${data.take(60)}")
-      entry.webView.evaluateJavascript(script) { result -> Log.d(TAG, "post result $result") }
-    }
+    mainHandler.post { entry.webView.evaluateJavascript(script, null) }
     return true
   }
 
@@ -212,7 +193,7 @@ object EditorWebViewPool {
     val (key, entry) = find(webView) ?: return
     entry.isLoaded = true
     Log.d(TAG, "loaded $key")
-    entry.host?.onLoad(InstanceEvent(key))
+    emit?.invoke("onLoad", bundleOf("instanceKey" to key))
   }
 
   /**
@@ -241,8 +222,8 @@ object EditorWebViewPool {
       )
       host.measureAndLayout()
       host.apply(replacement)
-      host.onProcessGone(InstanceEvent(key))
     }
+    emit?.invoke("onProcessGone", bundleOf("instanceKey" to key))
     return true
   }
 

@@ -11,4 +11,5 @@ module.exports = {
     requestFocus: () => {},
     destroy: () => {},
     getState: () => ({ exists: false, loaded: false, attached: false }),
+    subscribe: () => () => {},
 }

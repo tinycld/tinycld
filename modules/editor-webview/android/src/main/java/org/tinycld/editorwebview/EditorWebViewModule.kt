@@ -13,10 +13,22 @@ class EditorWebViewModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("EditorWebView")
 
+    // Page → JS traffic is a module event, not a view event: a host view comes
+    // and goes with every hand-off, and an event addressed to a view React
+    // Native is tearing down is dropped. Each payload names its instance.
+    Events("onMessage", "onLoad", "onProcessGone")
+
+    OnCreate {
+      EditorWebViewPool.emit = { name, body -> sendEvent(name, body) }
+    }
+
     // A JS reload tears the module down; the pages would otherwise outlive the
     // hooks that own them. The Activity going away matters too: the pooled
     // WebViews were created with it as their context.
-    OnDestroy { EditorWebViewPool.destroyAll() }
+    OnDestroy {
+      EditorWebViewPool.emit = null
+      EditorWebViewPool.destroyAll()
+    }
     OnActivityDestroys { EditorWebViewPool.destroyAll() }
 
     // Synchronous so the hosting hook keeps its `post(): boolean` contract — the
@@ -39,8 +51,6 @@ class EditorWebViewModule : Module() {
     }
 
     View(EditorWebViewHost::class) {
-      Events("onMessage", "onLoad", "onProcessGone")
-
       Prop("instanceKey") { view: EditorWebViewHost, key: String ->
         view.instanceKey = key
       }

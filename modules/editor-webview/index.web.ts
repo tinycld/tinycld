@@ -18,4 +18,8 @@ export function getState(): EditorWebViewState {
     return { exists: false, loaded: false, attached: false }
 }
 
+export function subscribe(): () => void {
+    return () => {}
+}
+
 export type * from './src/EditorWebView.types'

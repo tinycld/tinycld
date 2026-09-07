@@ -4,6 +4,7 @@ import WebKit
 /// The React-side host: a plain view the pooled WebView is placed into while
 /// this host is on screen. It owns nothing — attach on entering a window,
 /// release the claim on leaving one, keep the WebView sized to its bounds.
+/// Messages from the page do not pass through it (see EditorWebViewPool).
 final class EditorWebViewHostView: ExpoView {
   var instanceKey = "" {
     didSet {
@@ -16,10 +17,6 @@ final class EditorWebViewHostView: ExpoView {
   var scrollEnabled = true
   var webBackgroundColor: UIColor?
   var inspectable = false
-
-  let onMessage = EventDispatcher()
-  let onLoad = EventDispatcher()
-  let onProcessGone = EventDispatcher()
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)

@@ -1,6 +1,7 @@
 import { requireNativeModule, requireNativeViewManager } from 'expo-modules-core'
 import type {
     EditorWebViewComponent,
+    EditorWebViewListeners,
     EditorWebViewModuleType,
     EditorWebViewProps,
 } from './src/EditorWebView.types'
@@ -27,6 +28,22 @@ export function destroy(instanceKey: string): void {
 
 export function getState(instanceKey: string) {
     return nativeModule.getState(instanceKey)
+}
+
+/** Receive the page's messages for one instance. Returns the unsubscribe. */
+export function subscribe(instanceKey: string, listeners: EditorWebViewListeners): () => void {
+    const message = nativeModule.addListener('onMessage', event => {
+        if (event.instanceKey === instanceKey && typeof event.data === 'string') {
+            listeners.onMessage(event.data)
+        }
+    })
+    const gone = nativeModule.addListener('onProcessGone', event => {
+        if (event.instanceKey === instanceKey) listeners.onProcessGone?.()
+    })
+    return () => {
+        message.remove()
+        gone.remove()
+    }
 }
 
 export type * from './src/EditorWebView.types'
