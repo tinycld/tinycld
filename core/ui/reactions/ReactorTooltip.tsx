@@ -1,4 +1,3 @@
-import { OverlayPortal } from '@tinycld/core/ui/overlay'
 import { Popover } from '@tinycld/core/ui/popover'
 import { type ReactElement, useCallback, useRef, useState } from 'react'
 import { Platform, Pressable, Text, View } from 'react-native'
@@ -106,8 +105,6 @@ function TooltipSurface({
     text: string
 }) {
     if (!point) return null
-    // biome-ignore lint/suspicious/noConsole: temporary diagnostic
-    console.log('[tt] rendering Popover at', JSON.stringify(point))
     return (
         <Popover
             anchor={point}
