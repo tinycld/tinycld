@@ -1,5 +1,6 @@
 import { captureException } from '@tinycld/core/lib/errors'
 import { unregisterExpoPushToken } from '@tinycld/core/lib/expo-push'
+import { clearPendingRoute } from '@tinycld/core/lib/pending-route'
 import {
     authStoreReady,
     getUserFromAuthStore,
@@ -195,6 +196,9 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         // the same device doesn't inherit the previous user's last-opened
         // file references.
         useWorkspaceStore.setState({ lastPackageHref: {} })
+        // Same reason: a route recorded for the signed-out user must not become
+        // the next user's post-sign-in destination.
+        clearPendingRoute()
         // Drop per-session in-memory caches (pbtsdb stores + React Query,
         // incl. the pb file token) so the next user signing in on this SPA
         // instance can't read the previous user's rows or reuse their token.

@@ -98,8 +98,11 @@ export function packageScreen(page: Page, pkg: string): Locator {
     return page.getByTestId(`pkg-active-${pkg}`)
 }
 
-export async function login(page: Page) {
-    await page.goto('/')
+// `startAt` lets a spec begin at a deep route instead of '/', to exercise the
+// "sign in, land back on the route you asked for" path. Defaults to '/', so
+// every existing caller is unaffected.
+export async function login(page: Page, options: { startAt?: string } = {}) {
+    await page.goto(options.startAt ?? '/')
     // Idempotent: a helper earlier in the same test (createInvitedUser) may
     // have left the fixture session authenticated, in which case '/' redirects
     // straight into the shell and NO login form exists — filling it would hang

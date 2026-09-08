@@ -3,8 +3,10 @@ import { ReviewModeHints } from '@tinycld/core/components/connect/ReviewModeHint
 import { requestPasswordReset } from '@tinycld/core/lib/account-password'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { navigateToOrg } from '@tinycld/core/lib/org-url'
+import { takePendingRoute } from '@tinycld/core/lib/pending-route'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
+import { router } from 'expo-router'
 import { useState } from 'react'
 import {
     ActivityIndicator,
@@ -85,9 +87,19 @@ function LoginForm({
             setError(result.error)
             setIsSubmitting(false)
         } else if (result.user) {
-            // Single-org deployment: org identity comes from the deployment, not
-            // the user — send every signed-in user to the app root.
-            navigateToOrg()
+            // Return to whatever route the gate interrupted — a deep link, or
+            // the screen an expired session flipped out from under the user.
+            // Recorded by AuthGate; replace (not push) so the sign-in overlay
+            // isn't a back-button destination.
+            const pending = takePendingRoute()
+            if (pending) {
+                router.replace(pending)
+            } else {
+                // Nothing to return to. Single-org deployment: org identity
+                // comes from the deployment, not the user — send every
+                // signed-in user to the app root.
+                navigateToOrg()
+            }
         }
     }
 
