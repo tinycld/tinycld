@@ -1,0 +1,85 @@
+{
+  "//": "GENERATED. Shared by core/lib/emoji/__tests__/normalize.test.ts and boards/server/reaction_emoji_test.go so the TS and Go normalizers cannot drift. want:null means the value must be REJECTED.",
+  "cases": [
+    {
+      "raw": "❤",
+      "want": "❤️",
+      "why": "bare heart gains its variation selector"
+    },
+    {
+      "raw": "❤️",
+      "want": "❤️",
+      "why": "canonical heart is left alone"
+    },
+    {
+      "raw": "✌",
+      "want": "✌️",
+      "why": "bare victory hand"
+    },
+    {
+      "raw": "☘",
+      "want": "☘️",
+      "why": "bare shamrock"
+    },
+    {
+      "raw": "☀",
+      "want": "☀️",
+      "why": "bare sun"
+    },
+    {
+      "raw": "👍",
+      "want": "👍",
+      "why": "thumbs up has no variation selector"
+    },
+    {
+      "raw": "🎉",
+      "want": "🎉",
+      "why": "party popper unchanged"
+    },
+    {
+      "raw": "👍🏽",
+      "want": "👍🏽",
+      "why": "a toned thumbs up is its own reaction"
+    },
+    {
+      "raw": "✌🏻",
+      "want": "✌🏻",
+      "why": "toned victory hand keeps no fe0f"
+    },
+    {
+      "raw": "🧑‍🚀",
+      "want": "🧑‍🚀",
+      "why": "astronaut zwj sequence unchanged"
+    },
+    {
+      "raw": "🏳️‍🌈",
+      "want": "🏳️‍🌈",
+      "why": "rainbow flag keeps its internal fe0f"
+    },
+    {
+      "raw": " 👍 ",
+      "want": "👍",
+      "why": "surrounding whitespace is trimmed"
+    },
+    {
+      "raw": "",
+      "want": null,
+      "why": "empty string"
+    },
+    {
+      "raw": "   ",
+      "want": null,
+      "why": "whitespace only"
+    },
+    {
+      "raw": "not an emoji",
+      "want": null,
+      "why": "plain text"
+    },
+    {
+      "raw": "👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍👍",
+      "want": null,
+      "why": "longer than the column allows"
+    }
+  ]
+}
