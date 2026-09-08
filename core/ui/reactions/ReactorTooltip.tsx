@@ -1,6 +1,7 @@
+import { OverlayPortal } from '@tinycld/core/ui/overlay'
 import { Popover } from '@tinycld/core/ui/popover'
 import { type ReactElement, useCallback, useRef, useState } from 'react'
-import { Platform, Text, View } from 'react-native'
+import { Platform, Pressable, Text, View } from 'react-native'
 
 /** How long a press must be held on touch before the names appear. */
 const LONG_PRESS_MS = 400
@@ -8,7 +9,7 @@ const LONG_PRESS_MS = 400
 export interface ReactorTooltipProps {
     /** The finished sentence, e.g. "You and Nathan reacted 👍". */
     text: string
-    /** The chip. Must forward `onPress`-adjacent handlers and a ref. */
+    /** The chip this describes. */
     children: ReactElement
     testID?: string
 }
@@ -21,17 +22,22 @@ export interface ReactorTooltipProps {
  * works on both platforms and becomes a sheet on the mobile breakpoint, which
  * is the right shape for a touch device anyway.
  *
- * Mounted only while open — a board can show hundreds of chips, and an
- * always-mounted overlay per chip would be a real cost for something almost
- * none of them will ever show.
+ * WEB HOVER IS A RAW DOM LISTENER, not Pressable's onHoverIn. RNW's synthetic
+ * hover never fires for this wrapper — the chip inside is itself a Pressable
+ * and owns the pointer — while a `mouseenter` listener attached to the same
+ * node fires reliably. This was verified rather than assumed: the DOM event
+ * logs, the synthetic one does not.
+ *
+ * Anchored to a POINT rather than a ref: Popover's ref anchor is only ever
+ * used together with a trigger it clones and measures, and a pointer event
+ * already carries coordinates — the same shape ContextMenu uses.
  */
 export function ReactorTooltip({ text, children, testID }: ReactorTooltipProps) {
-    const [isOpen, setIsOpen] = useState(false)
-    const anchorRef = useRef<View | null>(null)
+    const [point, setPoint] = useState<{ x: number; y: number } | null>(null)
     const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const cleanupRef = useRef<(() => void) | null>(null)
 
-    const open = useCallback(() => setIsOpen(true), [])
-    const close = useCallback(() => setIsOpen(false), [])
+    const close = useCallback(() => setPoint(null), [])
 
     const cancelPress = useCallback(() => {
         if (pressTimer.current) {
@@ -40,52 +46,77 @@ export function ReactorTooltip({ text, children, testID }: ReactorTooltipProps) 
         }
     }, [])
 
-    const startPress = useCallback(() => {
-        cancelPress()
-        pressTimer.current = setTimeout(open, LONG_PRESS_MS)
-    }, [cancelPress, open])
+    // Web only. The ref callback both attaches and tears down, so a chip
+    // unmounting (a reaction taken back) leaves no listener behind.
+    const attachHover = useCallback((node: unknown) => {
+        cleanupRef.current?.()
+        cleanupRef.current = null
+        if (Platform.OS !== 'web') return
 
-    // Hover on web, long-press on touch. Both land on the same surface.
-    const triggerProps =
+        const el = node as HTMLElement | null
+        if (!el?.addEventListener) return
+
+        const onEnter = (event: MouseEvent) => setPoint({ x: event.clientX, y: event.clientY })
+        const onLeave = () => setPoint(null)
+        el.addEventListener('mouseenter', onEnter)
+        el.addEventListener('mouseleave', onLeave)
+        cleanupRef.current = () => {
+            el.removeEventListener('mouseenter', onEnter)
+            el.removeEventListener('mouseleave', onLeave)
+        }
+    }, [])
+
+    const touchProps =
         Platform.OS === 'web'
-            ? { onHoverIn: open, onHoverOut: close }
-            : { onPressIn: startPress, onPressOut: cancelPress }
+            ? {}
+            : {
+                  onPressIn: (event: { nativeEvent: { pageX: number; pageY: number } }) => {
+                      const { pageX, pageY } = event.nativeEvent
+                      cancelPress()
+                      pressTimer.current = setTimeout(
+                          () => setPoint({ x: pageX, y: pageY }),
+                          LONG_PRESS_MS
+                      )
+                  },
+                  onPressOut: cancelPress,
+              }
 
     return (
-        <View ref={anchorRef} {...triggerProps} testID={testID}>
-            {children}
-            <ReactorSurface
-                anchor={anchorRef}
-                isOpen={isOpen}
-                onOpenChange={setIsOpen}
-                text={text}
-            />
-        </View>
+        <>
+            <Pressable
+                ref={attachHover as never}
+                {...touchProps}
+                testID={testID}
+                accessible={false}
+            >
+                {children}
+            </Pressable>
+            <TooltipSurface point={point} onClose={close} text={text} />
+        </>
     )
 }
 
-/**
- * Split out and given an isVisible-style early return so the Popover is not
- * constructed for a chip nobody is pointing at.
- */
-function ReactorSurface({
-    anchor,
-    isOpen,
-    onOpenChange,
+function TooltipSurface({
+    point,
+    onClose,
     text,
 }: {
-    anchor: React.RefObject<View | null>
-    isOpen: boolean
-    onOpenChange: (open: boolean) => void
+    point: { x: number; y: number } | null
+    onClose: () => void
     text: string
 }) {
-    if (!isOpen) return null
+    if (!point) return null
+    // biome-ignore lint/suspicious/noConsole: temporary diagnostic
+    console.log('[tt] rendering Popover at', JSON.stringify(point))
     return (
         <Popover
-            anchor={anchor}
-            isOpen={isOpen}
-            onOpenChange={onOpenChange}
+            anchor={point}
+            isOpen
+            onOpenChange={open => {
+                if (!open) onClose()
+            }}
             placement="top-start"
+            focus="none"
             title="Reactions"
         >
             <View className="px-2.5 py-1.5 max-w-[220px]">
