@@ -34,7 +34,8 @@ import { applyTone, isSkinTone, NEUTRAL_TONE, SKIN_TONES, stripTone } from './to
 /** Longest emoji sequence we accept, in UTF-16 code units. Matches the column. */
 const MAX_LENGTH = 32
 
-const toUnified = (glyph: string) => [...glyph].map(c => c.codePointAt(0)!.toString(16)).join('-')
+const toUnified = (glyph: string) =>
+    [...glyph].map(c => (c.codePointAt(0) ?? 0).toString(16)).join('-')
 
 const fromUnified = (unified: string) =>
     unified

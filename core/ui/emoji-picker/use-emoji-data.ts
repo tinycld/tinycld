@@ -10,6 +10,7 @@
 // The chunk is fetched at most once per session: the promise itself is cached,
 // so concurrent openings of the picker share one request rather than racing.
 
+import { parseNativeEmoji } from '@tinycld/core/lib/emoji/parse'
 import { type EmojiIndex, indexEmoji } from '@tinycld/core/lib/emoji/search'
 import { useEffect, useState } from 'react'
 import type { EmojiCategory, EmojiRecord } from './emoji-data'
@@ -20,6 +21,12 @@ export interface EmojiTable {
     all: readonly EmojiRecord[]
     /** First-character index, so a query narrows without scanning all 1647. */
     index: EmojiIndex
+    /**
+     * Glyph -> record, for looking an emoji back up from a stored value.
+     * Keyed by the toneless glyph: "frequently used" remembers 👍🏽 as picked,
+     * but the record it maps to is 👍's.
+     */
+    byGlyph: ReadonlyMap<string, EmojiRecord>
 }
 
 let pending: Promise<EmojiTable> | null = null
@@ -27,7 +34,8 @@ let pending: Promise<EmojiTable> | null = null
 function loadTable(): Promise<EmojiTable> {
     pending ??= import('./emoji-data').then(({ EMOJI_DATA }) => {
         const all = EMOJI_DATA.flatMap(category => category.e)
-        return { categories: EMOJI_DATA, all, index: indexEmoji(all) }
+        const byGlyph = new Map(all.map(emoji => [parseNativeEmoji(emoji.u), emoji]))
+        return { categories: EMOJI_DATA, all, index: indexEmoji(all), byGlyph }
     })
     return pending
 }

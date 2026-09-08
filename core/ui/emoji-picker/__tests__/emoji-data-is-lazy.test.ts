@@ -24,10 +24,18 @@ function sourceFiles(dir: string, found: string[] = []): string[] {
     return found
 }
 
-/** A value import of the module. A `import type` is erased and costs nothing. */
-const STATIC_IMPORT = /(?:^|\n)\s*import\s+(?!type\s)[^;\n]*?['"][^'"]*emoji-data['"]/
+// Anchored on the module SPECIFIER, not the substring: './use-emoji-data' also
+// contains "emoji-data", and matching that would fire on the loader's own
+// legitimate importers — a guard that cries wolf gets loosened.
+const SPECIFIER = String.raw`['"](?:\.{1,2}/|@tinycld/core/ui/emoji-picker/)emoji-data['"]`
+/** A value import of the module. An `import type` is erased and costs nothing. */
+const STATIC_IMPORT = new RegExp(String.raw`(?:^|\n)\s*import\s+(?!type\s)[^;\n]*?${SPECIFIER}`)
 /** `export * from './emoji-data'` re-exports it just as statically. */
-const STATIC_REEXPORT = /(?:^|\n)\s*export\s+(?!type\s)[^;\n]*?from\s+['"][^'"]*emoji-data['"]/
+const STATIC_REEXPORT = new RegExp(
+    String.raw`(?:^|\n)\s*export\s+(?!type\s)[^;\n]*?from\s+${SPECIFIER}`
+)
+/** Any mention of the module at all, type imports included. */
+const ANY_REFERENCE = new RegExp(SPECIFIER)
 
 describe('emoji-data stays out of the base bundle', () => {
     const files = sourceFiles(CORE).filter(file => !file.includes('__tests__'))
@@ -43,15 +51,28 @@ describe('emoji-data stays out of the base bundle', () => {
         expect(offenders).toEqual([])
     })
 
-    it('is reached only by the loader, and there only through import()', () => {
-        const importers = files
-            .filter(file => /['"][^'"]*emoji-data['"]/.test(readFileSync(file, 'utf8')))
-            .map(file => relative(CORE, file))
-
-        expect(importers.sort()).toEqual([LOADER, 'lib/emoji/search.ts'].sort())
+    it('is loaded through import(), by the loader', () => {
         expect(readFileSync(join(CORE, LOADER), 'utf8')).toMatch(
             /import\(\s*['"]\.\/emoji-data['"]\s*\)/
         )
+    })
+
+    it('is otherwise referenced only for its types', () => {
+        // Type-only references are free, so they are allowed anywhere — but
+        // list them, so a value import added to one of these files is visible
+        // in the diff rather than silently joining an approved set.
+        const referencing = files
+            .filter(file => ANY_REFERENCE.test(readFileSync(file, 'utf8')))
+            .map(file => relative(CORE, file))
+            .sort()
+
+        expect(referencing).toEqual([
+            'lib/emoji/search.ts',
+            'ui/emoji-picker/EmojiPickerGrid.tsx',
+            'ui/emoji-picker/rows.ts',
+            'ui/emoji-picker/use-emoji-data.ts',
+            'ui/emoji-picker/use-emoji-picker.ts',
+        ])
     })
 
     it('is big enough that the guard matters', () => {
