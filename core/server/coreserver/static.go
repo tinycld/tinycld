@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"tinycld.org/core/approutes"
+	"tinycld.org/core/embedpolicy"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -390,6 +391,22 @@ func writeAppShell(e *core.RequestEvent, html []byte) error {
 	e.Response.Header().Set("Cache-Control", "no-cache")
 	e.Response.Header().Set("ETag", etag)
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Who may frame this page. Every HTML response carries the header, and the
+	// default is 'none' — the workspace must never be framable, because a
+	// framed workspace is a clickjacking target and nothing in the product
+	// needs it.
+	//
+	// A package's PUBLIC share surface is the one exception, and core does not
+	// know which URLs those are: a package registers a resolver and this asks
+	// it (see embedpolicy's header for why the dependency points that way).
+	//
+	// Set BEFORE the 304 branch below. A conditional GET that revalidates an
+	// unchanged shell still needs the policy — a browser applies the CSP of
+	// the response it actually received, and a 304 carrying no directive is
+	// how a page becomes framable again the second time it is loaded.
+	e.Response.Header().Set("Content-Security-Policy",
+		"frame-ancestors "+embedpolicy.FrameAncestors(e.Request))
 
 	// http.ServeContent isn't usable here (the body is built in memory, not a
 	// ReadSeeker file), so match If-None-Match ourselves. A comma-split covers
