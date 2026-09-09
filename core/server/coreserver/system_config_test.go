@@ -252,3 +252,40 @@ func TestInjectPublicConfigSkipsSecretSentryDsn(t *testing.T) {
 		t.Errorf("a secret-flagged sentry.dsn must not be injected, got %q", out)
 	}
 }
+
+// The web client needs the VAPID PUBLIC key as pushManager.subscribe's
+// applicationServerKey, so it is whitelisted into the injected config. Before
+// this, the key reached the browser by no route at all and web push could never
+// subscribe. The PRIVATE key must never follow it out.
+func TestInjectPublicConfigPublishesVapidPublicKey(t *testing.T) {
+	prev := systemConfig
+	t.Cleanup(func() { systemConfig = prev })
+	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	systemConfig.set("vapid.public_key", "BPublicKey123", false)
+	systemConfig.set("vapid.private_key", "PrivateKeyNeverLeak", true)
+
+	out := string(injectPublicConfig([]byte("<head></head>")))
+
+	if !strings.Contains(out, `"vapidPublicKey"`) {
+		t.Errorf("public key should be published as vapidPublicKey, got %q", out)
+	}
+	if !strings.Contains(out, "BPublicKey123") {
+		t.Errorf("public key value missing from injected config: %q", out)
+	}
+	if strings.Contains(out, "PrivateKeyNeverLeak") || strings.Contains(out, "private_key") {
+		t.Fatalf("VAPID PRIVATE key must NEVER be injected into the HTML: %q", out)
+	}
+}
+
+// A VAPID public key mis-flagged is_secret=true must be blanked by the
+// publicValue gate rather than injected.
+func TestInjectPublicConfigSkipsSecretVapidPublicKey(t *testing.T) {
+	prev := systemConfig
+	t.Cleanup(func() { systemConfig = prev })
+	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	systemConfig.set("vapid.public_key", "BLeakKey", true) // mis-flagged secret
+
+	if out := string(injectPublicConfig([]byte("<head></head>"))); out != "<head></head>" {
+		t.Errorf("a secret-flagged vapid.public_key must not be injected, got %q", out)
+	}
+}

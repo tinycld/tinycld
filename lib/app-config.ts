@@ -30,7 +30,7 @@ function devDefaultServer(): string {
 // the bundle loads — see coreserver/static.go::publicConfigScript. Web only;
 // native has no window/HTML and uses the build-time path below.
 declare global {
-    var __TINYCLD_PUBLIC_CONFIG__: { sentryDsn?: string } | undefined
+    var __TINYCLD_PUBLIC_CONFIG__: { sentryDsn?: string; vapidPublicKey?: string } | undefined
 }
 
 // Resolve the Sentry DSN at startup. Order:
@@ -47,6 +47,18 @@ function resolveSentryDsn(): string {
         return globalThis.__TINYCLD_PUBLIC_CONFIG__.sentryDsn
     }
     return process.env.EXPO_PUBLIC_SENTRY_DSN ?? ''
+}
+
+// Resolve the web-push VAPID public key. Web ONLY: it is injected by the app
+// server from the operator's system_settings, so generating a keypair in
+// /admin takes effect on the next page load with no rebuild.
+//
+// There is deliberately no build-time env fallback. Each deployment mints its
+// own keypair, so a key baked into a bundle would be wrong for every host but
+// the one that built it. Native doesn't need this at all — it pushes over Expo,
+// not Web Push.
+function resolveVapidPublicKey(): string | undefined {
+    return globalThis.__TINYCLD_PUBLIC_CONFIG__?.vapidPublicKey
 }
 
 // App config handed to @tinycld/core at startup. Web resolves the PB address
@@ -75,6 +87,7 @@ export const appConfig: CoreConfig = {
         Platform.OS === 'web' && typeof window !== 'undefined' ? window.location.origin : null,
     defaultServer: __DEV__ ? devDefaultServer() : 'https://tinycld.org',
     sentryDsn: resolveSentryDsn(),
+    vapidPublicKey: resolveVapidPublicKey(),
     privacyUrl: 'https://tinycld.org/privacy',
     sourceUrl: 'https://github.com/tinycld/tinycld',
 }

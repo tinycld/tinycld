@@ -36,9 +36,17 @@ func publicConfigScript() string {
 	// leak is unrecoverable) so a row mis-flagged is_secret=false elsewhere still
 	// can't slip a credential into the page.
 	const sentryDSNKey = "sentry.dsn"
+	// The VAPID PUBLIC key is the applicationServerKey the browser must pass to
+	// pushManager.subscribe(), so the web client genuinely needs it. It is public
+	// by construction (it derives from, but does not reveal, the private key) and
+	// is stored is_secret=false. The private key is never whitelisted here.
+	const vapidPublicKeyKey = "vapid.public_key"
 	out := map[string]string{}
 	if v := systemConfig.publicValue(sentryDSNKey); v != "" {
 		out["sentryDsn"] = v
+	}
+	if v := systemConfig.publicValue(vapidPublicKeyKey); v != "" {
+		out["vapidPublicKey"] = v
 	}
 	if len(out) == 0 {
 		return ""

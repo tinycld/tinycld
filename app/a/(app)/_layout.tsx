@@ -15,6 +15,8 @@ import { useHelpSearchShortcut } from '@tinycld/core/lib/help/use-help-search-sh
 import { markNavMilestone } from '@tinycld/core/lib/nav-perf'
 import { activeSlugFromPathname } from '@tinycld/core/lib/org-routes'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
+import { useExpoPushRegistration } from '@tinycld/core/lib/use-expo-push-registration'
+import { useNativeNotificationHandler } from '@tinycld/core/lib/use-native-notification-handler'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { OrgSlugProvider } from '@tinycld/core/lib/use-org-slug'
 import { usePathname, useUnstableGlobalHref } from 'expo-router'
@@ -38,6 +40,14 @@ function OrgLayoutInner() {
     // org-scoped screen — not just package detail screens. The hook
     // is a no-op on native.
     useHelpSearchShortcut()
+    // Register this device's Expo push token once signed in, so the server's
+    // sendExpoPush has a token to deliver to. A no-op on web (web push
+    // subscribes explicitly from Settings) and self-guarded on user id, so it
+    // sits above the isReady return and simply does nothing until auth lands.
+    useExpoPushRegistration()
+    // Show notifications that arrive while the app is foregrounded, and route
+    // taps to the notification's deep link. A no-op on web — sw.js does both.
+    useNativeNotificationHandler()
 
     if (!isReady) {
         return (

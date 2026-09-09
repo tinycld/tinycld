@@ -2,7 +2,12 @@ import { useQuery, useQueryClient, useMutation as useTanStackMutation } from '@t
 import { useAuth } from '@tinycld/core/lib/auth'
 import { captureException } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
-import { isPushSupported, subscribeToPush, unsubscribeFromPush } from '@tinycld/core/lib/web-push'
+import {
+    isPushConfigured,
+    isPushSupported,
+    subscribeToPush,
+    unsubscribeFromPush,
+} from '@tinycld/core/lib/web-push'
 
 export function usePushSubscription() {
     const { user, isLoggedIn } = useAuth({ throwIfAnon: false })
@@ -23,6 +28,10 @@ export function usePushSubscription() {
     })
 
     const isSupported = isPushSupported()
+    // The browser can push, but this server has no VAPID keypair — the operator
+    // has to generate one. Surfaced separately so the toggle explains itself
+    // instead of appearing broken.
+    const isConfigured = isPushConfigured()
     const isSubscribed = (subscriptions?.length ?? 0) > 0
 
     const subscribe = useTanStackMutation({
@@ -45,6 +54,7 @@ export function usePushSubscription() {
 
     return {
         isSupported,
+        isConfigured,
         isSubscribed,
         subscribe: subscribe.mutate,
         unsubscribe: unsubscribe.mutate,
