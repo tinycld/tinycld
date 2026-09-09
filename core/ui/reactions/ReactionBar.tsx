@@ -4,7 +4,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { EmojiPicker } from '@tinycld/core/ui/emoji-picker'
 import { SmilePlus } from 'lucide-react-native'
 import { forwardRef } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { type GestureResponderEvent, Pressable, Text, View } from 'react-native'
 import { ReactorTooltip } from './ReactorTooltip'
 
 export interface ReactionBarProps {
@@ -63,7 +63,14 @@ export function ReactionBar({
                     group={group}
                     targetId={targetId}
                     canReact={interactive}
-                    onPress={() => onToggle(group.emoji)}
+                    onPress={e => {
+                        // A bar is almost always inside something else that is
+                        // itself pressable — a board tile that opens the card,
+                        // a row that opens a thread. Toggling a reaction must
+                        // never also trigger that, in any package.
+                        e.stopPropagation()
+                        onToggle(group.emoji)
+                    }}
                     nameFor={nameFor}
                     currentUserId={currentUserId}
                     testIDPrefix={testIDPrefix}
@@ -96,7 +103,7 @@ function ReactionChip({
     group: ReactionGroup
     targetId: string
     canReact: boolean
-    onPress: () => void
+    onPress: (event: GestureResponderEvent) => void
     nameFor: (userId: string) => string
     currentUserId: string
     testIDPrefix: string
@@ -166,20 +173,28 @@ function PickerSlot({
  * measures for placement — a wrapper that swallows either leaves the picker
  * unable to open or unable to position itself.
  */
-const AddReactionButton = forwardRef<View, { onPress?: () => void; testIDPrefix?: string }>(
-    function AddReactionButton({ testIDPrefix = 'reaction', ...props }, ref) {
-        const mutedColor = useThemeColor('muted')
-        return (
-            <Pressable
-                {...props}
-                ref={ref}
-                accessibilityRole="button"
-                accessibilityLabel="Add reaction"
-                testID={`${testIDPrefix}-add`}
-                className="w-6 h-6 items-center justify-center rounded-full border border-dashed border-border hover:border-muted web:outline-none web:focus-visible:ring-2 web:focus-visible:ring-ring"
-            >
-                <SmilePlus size={13} color={mutedColor} strokeWidth={2.2} />
-            </Pressable>
-        )
-    }
-)
+const AddReactionButton = forwardRef<
+    View,
+    { onPress?: (event: GestureResponderEvent) => void; testIDPrefix?: string }
+>(function AddReactionButton({ testIDPrefix = 'reaction', onPress, ...props }, ref) {
+    const mutedColor = useThemeColor('muted')
+    return (
+        <Pressable
+            {...props}
+            // Same reason as the chip: opening the picker must not also
+            // trigger the pressable this bar is sitting inside. Popover
+            // injects the onPress that opens it, so this wraps that.
+            onPress={event => {
+                event.stopPropagation()
+                onPress?.(event)
+            }}
+            ref={ref}
+            accessibilityRole="button"
+            accessibilityLabel="Add reaction"
+            testID={`${testIDPrefix}-add`}
+            className="w-6 h-6 items-center justify-center rounded-full border border-dashed border-border hover:border-muted web:outline-none web:focus-visible:ring-2 web:focus-visible:ring-ring"
+        >
+            <SmilePlus size={13} color={mutedColor} strokeWidth={2.2} />
+        </Pressable>
+    )
+})
