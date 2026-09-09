@@ -4,8 +4,10 @@ import { ExitAnimationContext } from '@gluestack-ui/core/overlay/creator'
 import type { VariantProps } from '@gluestack-ui/utils/nativewind-utils'
 import { tva, useStyleContext, withStyleContext } from '@gluestack-ui/utils/nativewind-utils'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
+import { useSwipeToDismiss } from '@tinycld/core/ui/swipe-dismiss'
 import React from 'react'
 import { Platform, Pressable, ScrollView, View } from 'react-native'
+import { GestureDetector } from 'react-native-gesture-handler'
 import Animated, {
     Easing,
     FadeIn,
@@ -22,6 +24,18 @@ import Animated, {
 import { useCloseOnNavigate } from './use-close-on-navigate'
 
 const SCOPE = 'MODAL'
+
+// The swipe gesture lives on DrawerContent but the dismiss callback is given to
+// Drawer, so it reaches the content by context rather than by threading a prop
+// through every call site. Ours rather than gluestack's ModalContext: that one
+// is an implementation detail of the modal creator, and nothing guarantees it
+// keeps carrying handleClose across a version bump.
+const DrawerCloseContext = React.createContext<(() => void) | undefined>(undefined)
+
+// A Drawer is always given onClose in practice; the fallback only keeps the
+// gesture hook's contract total, since a drag that cannot dismiss still has to
+// spring back rather than throw.
+const NOOP = () => {}
 
 const RootComponent = withStyleContext(View, SCOPE)
 
@@ -251,13 +265,15 @@ const Drawer = React.forwardRef<React.ComponentRef<typeof UIDrawer>, IDrawerProp
     if (!props.isOpen) return null
 
     return (
-        <UIDrawer
-            ref={ref}
-            {...props}
-            pointerEvents="box-none"
-            className={drawerStyle({ size, anchor, class: className })}
-            context={{ size, anchor }}
-        />
+        <DrawerCloseContext.Provider value={props.onClose}>
+            <UIDrawer
+                ref={ref}
+                {...props}
+                pointerEvents="box-none"
+                className={drawerStyle({ size, anchor, class: className })}
+                context={{ size, anchor }}
+            />
+        </DrawerCloseContext.Provider>
     )
 })
 
@@ -284,6 +300,20 @@ const DrawerContent = React.forwardRef<
 >(function DrawerContent({ className, style, ...props }, ref) {
     const { size: parentSize, anchor: parentAnchor } = useStyleContext(SCOPE)
     const insets = useDeviceInsets()
+    const onClose = React.useContext(DrawerCloseContext)
+
+    // How far the panel must travel to clear the screen. Measured rather than
+    // constant: a side drawer's width is `w-[80%] max-w-[32rem]`, so it depends
+    // on the viewport and cannot be hard-coded. Seeded high so a dismissal in
+    // the first frame — before onLayout has run — still leaves the screen.
+    const [panelSize, setPanelSize] = React.useState(1000)
+    const isHorizontalAnchor = parentAnchor === 'left' || parentAnchor === 'right'
+
+    const { gesture, animatedStyle } = useSwipeToDismiss({
+        anchor: parentAnchor,
+        onClose: onClose ?? NOOP,
+        distance: panelSize,
+    })
 
     // 24px base padding (was `p-6`) plus the device safe-area inset on the edges
     // the drawer reaches, so its header/body clears the status bar / notch /
@@ -324,21 +354,33 @@ const DrawerContent = React.forwardRef<
                 : SlideOutDown.duration(200)
 
     return (
-        <UIDrawer.Content
-            ref={ref}
-            entering={enteringAnimation}
-            exiting={exitingAnimation}
-            {...props}
-            className={drawerContentStyle({
-                parentVariants: {
-                    size: parentSize,
-                    anchor: parentAnchor,
-                },
-                class: `${className || ''} ${customClass}`,
-            })}
-            style={[paddingStyle, style]}
-            pointerEvents="auto"
-        />
+        <GestureDetector gesture={gesture}>
+            <UIDrawer.Content
+                ref={ref}
+                entering={enteringAnimation}
+                exiting={exitingAnimation}
+                {...props}
+                // Composed, not replaced: this sits after {...props}, so
+                // assigning it plainly would silently swallow a caller's own
+                // onLayout.
+                onLayout={e => {
+                    const { width, height } = e.nativeEvent.layout
+                    setPanelSize(isHorizontalAnchor ? width : height)
+                    // Narrowed: RN's animated prop types widen onLayout to
+                    // include a SharedValue, which is not callable.
+                    if (typeof props.onLayout === 'function') props.onLayout(e)
+                }}
+                className={drawerContentStyle({
+                    parentVariants: {
+                        size: parentSize,
+                        anchor: parentAnchor,
+                    },
+                    class: `${className || ''} ${customClass}`,
+                })}
+                style={[paddingStyle, style, animatedStyle]}
+                pointerEvents="auto"
+            />
+        </GestureDetector>
     )
 })
 
