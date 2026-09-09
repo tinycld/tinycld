@@ -30,7 +30,7 @@
             "!**/core/types/pbSchema.ts",
             "!**/core/types/pbZodSchema.ts",
             "!**/core/lib/emoji/canonical-forms.ts",
-            "!**/core/lib/emoji/__fixtures__/**",
+            "!**/core/lib/emoji/__fixtures__",
             "!**/core/ui/emoji-picker/emoji-data.ts",
             "!third_party",
             "!third_party/**/*",
