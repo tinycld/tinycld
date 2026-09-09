@@ -142,11 +142,11 @@ function SheetRoot({
             translateY.value = dir * Math.max(0, dir * e.translationY)
         })
         .onEnd(e => {
-            // Threshold inlined (kept in sync with shouldDismissDrawer, which the
-            // unit test pins): dragged past 100px or flicked away from the edge
-            // faster than 500px/s dismisses. This runs on the UI thread, so it
-            // must not call a non-worklet JS function — hence the literal
-            // comparison here.
+            // Threshold inlined (kept in sync with shouldDismissSwipe in
+            // ui/swipe-dismiss, which the unit test pins): dragged past 100px or
+            // flicked away from the edge faster than 500px/s dismisses. This
+            // runs on the UI thread, so it must not call a non-worklet JS
+            // function — hence the literal comparison here.
             if (dir * e.translationY > 100 || dir * e.velocityY > 500) {
                 translateY.value = withSpring(dir * sheetHeight.value, SPRING_CONFIG)
                 backdropOpacity.value = withTiming(0, { duration: 150 })
