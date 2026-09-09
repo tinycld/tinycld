@@ -99,6 +99,20 @@ export interface PopoverProps {
     onKeyDown?: (event: KeyboardEvent) => void
     /** `trap` keeps Tab inside (a picker with fields); `none` for a Menu, whose focus roves. */
     focus?: 'trap' | 'none'
+    /**
+     * Let presses fall THROUGH the surface to whatever is beneath it.
+     *
+     * For a surface that is purely informational and follows the pointer — a
+     * hover tooltip. Such a surface is placed against the very element the
+     * pointer is on, so an interactive one lands between a press and its
+     * release: the element under it receives pointerdown, the surface appears,
+     * and mouseup is delivered to the surface instead. The press never
+     * completes and the control silently does nothing.
+     *
+     * Leave this alone for anything with its own controls; a menu, a picker
+     * and a form all need the presses this gives away.
+     */
+    pointerTransparent?: boolean
     children: ReactNode
 }
 
@@ -124,6 +138,7 @@ export function Popover({
     role,
     onKeyDown,
     focus = 'trap',
+    pointerTransparent = false,
     children,
 }: PopoverProps) {
     const [internalOpen, setInternalOpen] = useState(false)
@@ -179,6 +194,7 @@ export function Popover({
                 role={role}
                 onKeyDown={onKeyDown}
                 focus={focus}
+                pointerTransparent={pointerTransparent}
                 close={close}
             >
                 {children}
@@ -285,6 +301,7 @@ interface PopoverLayerProps {
     role?: PopoverProps['role']
     onKeyDown?: PopoverProps['onKeyDown']
     focus: 'trap' | 'none'
+    pointerTransparent?: boolean
     close: () => void
     children: ReactNode
 }
@@ -307,6 +324,7 @@ function OpenPopoverLayer({
     role,
     onKeyDown,
     focus,
+    pointerTransparent,
     close,
     children,
 }: PopoverLayerProps) {
@@ -450,7 +468,7 @@ function OpenPopoverLayer({
                 testID={testID}
                 role={role}
                 tabIndex={-1}
-                pointerEvents="auto"
+                pointerEvents={pointerTransparent ? 'none' : 'auto'}
                 className={`${SURFACE_CLASS} ${className ?? ''}`}
                 style={[SURFACE_SHADOW, surfaceStyle]}
             >

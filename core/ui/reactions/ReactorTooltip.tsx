@@ -114,6 +114,11 @@ function TooltipSurface({
             }}
             placement="top-start"
             focus="none"
+            // The surface is placed against the very chip the pointer is on,
+            // so an interactive one lands between a press and its release:
+            // the chip gets pointerdown, this appears, and mouseup goes here
+            // instead. The toggle silently never fired.
+            pointerTransparent
             title="Reactions"
         >
             <View className="px-2.5 py-1.5 max-w-[220px]">
