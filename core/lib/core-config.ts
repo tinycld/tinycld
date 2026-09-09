@@ -43,6 +43,14 @@ export interface CoreConfig {
     defaultServer?: string
     /** Sentry DSN. When absent, Sentry init is skipped. */
     sentryDsn?: string
+    /**
+     * VAPID public key for web push, used as the `applicationServerKey` in
+     * `pushManager.subscribe()`. Operator-generated per deployment (Setup →
+     * Settings → Web push), so it is RUNTIME config, not a build constant:
+     * web reads it from the server-injected public config. When absent, web
+     * push subscription is unavailable and the UI says so.
+     */
+    vapidPublicKey?: string
     /** Sentry environment tag (maps to EXPO_PUBLIC_ENV in the old world). */
     environment?: string
     /** Sentry release tag (maps to EXPO_PUBLIC_GIT_COMMIT). */

@@ -36,6 +36,12 @@
                     "toolsButton": false
                 }
             ],
+            [
+                "expo-notifications",
+                {
+                    "color": "#0B4F4A"
+                }
+            ],
             "./plugins/with-app-updater.cjs"
         ],
         "icon": "./assets/app-icon.png",
@@ -69,7 +75,10 @@
                     "category": ["BROWSABLE", "DEFAULT"]
                 }
             ],
-            "permissions": ["android.permission.RECORD_AUDIO"]
+            "permissions": [
+                "android.permission.RECORD_AUDIO",
+                "android.permission.POST_NOTIFICATIONS"
+            ]
         },
         "web": {
             "bundler": "metro",

@@ -365,7 +365,8 @@ function ColorThemePicker({
 }
 
 function NotificationsSection() {
-    const { isSupported, isSubscribed, subscribe, unsubscribe, isPending } = usePushSubscription()
+    const { isSupported, isConfigured, isSubscribed, subscribe, unsubscribe, isPending } =
+        usePushSubscription()
 
     const handlePushToggle = () => {
         if (isSubscribed) {
@@ -380,6 +381,7 @@ function NotificationsSection() {
             <Text className="text-foreground text-xl font-bold">Notifications</Text>
             <PushToggle
                 isSupported={Platform.OS === 'web' && isSupported}
+                isConfigured={isConfigured}
                 isNative={Platform.OS !== 'web'}
                 isSubscribed={isSubscribed}
                 isPending={isPending}
@@ -392,12 +394,14 @@ function NotificationsSection() {
 
 function PushToggle({
     isSupported,
+    isConfigured,
     isNative,
     isSubscribed,
     isPending,
     onToggle,
 }: {
     isSupported: boolean
+    isConfigured: boolean
     isNative: boolean
     isSubscribed: boolean
     isPending: boolean
@@ -418,6 +422,19 @@ function PushToggle({
             <SectionCard>
                 <Text className="text-muted-foreground text-[13px]">
                     Your browser does not support push notifications.
+                </Text>
+            </SectionCard>
+        )
+    }
+
+    // Supported by the browser but the server has no VAPID keypair. Say so
+    // rather than showing a switch that can only fail.
+    if (!isConfigured) {
+        return (
+            <SectionCard>
+                <Text className="text-muted-foreground text-[13px]">
+                    Push notifications are not set up on this server. An administrator can enable
+                    them under Setup → Settings → Web push.
                 </Text>
             </SectionCard>
         )
