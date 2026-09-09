@@ -275,7 +275,17 @@ function SheetDescription({ text }: { text?: string }) {
     return <Text className="text-[13px] text-muted">{text}</Text>
 }
 
-/** The part that scrolls once the sheet reaches its cap. */
+/**
+ * The part that scrolls once the sheet reaches its cap.
+ *
+ * Content is STRETCHED to the sheet's full width. A sheet is as wide as the
+ * screen, but the surfaces that become one — a Popover, a Menu, a Dialog —
+ * are often authored around a popover's narrow measured box, and a body laid
+ * out at that intrinsic width leaves a phone-width sheet mostly empty with its
+ * content hugging the left edge. Stretching makes filling the default, so a
+ * body only has to opt OUT (see `usePopoverContext().isSheet`) rather than
+ * every caller having to remember to opt in.
+ */
 function SheetBody({
     children,
     contentClassName,
@@ -292,11 +302,19 @@ function SheetBody({
             keyboardShouldPersistTaps="handled"
             className="grow-0 shrink"
             contentContainerClassName={contentClassName ?? 'px-5 pb-5 gap-3'}
+            contentContainerStyle={sheetBodyContentStyle}
         >
             {children}
         </ScrollView>
     )
 }
+
+/**
+ * Cross-axis stretch for the scrolled content, so children fill the sheet's
+ * width instead of sizing to themselves. Exported for the unit test, which
+ * runs against the react-native stub and so has no computed layout to read.
+ */
+const sheetBodyContentStyle = { alignItems: 'stretch' } as const
 
 /** The button row, pinned under the body — above the home indicator when the sheet rests on the bottom edge. */
 function SheetFooter({ children, className }: { children: ReactNode; className?: string }) {
@@ -316,4 +334,4 @@ function SheetFooter({ children, className }: { children: ReactNode; className?:
 const Sheet = Object.assign(SheetRoot, { Body: SheetBody, Footer: SheetFooter })
 
 export type { SheetProps }
-export { Sheet }
+export { Sheet, sheetBodyContentStyle }

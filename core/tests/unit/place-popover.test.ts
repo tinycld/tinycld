@@ -1,4 +1,4 @@
-import { placePopover, placeSubmenu } from '@tinycld/core/ui/popover/place'
+import { placePopover, placeSubmenu, sheetSideForAnchor } from '@tinycld/core/ui/popover/place'
 import { describe, expect, it } from 'vitest'
 
 const viewport = { width: 1000, height: 600 }
@@ -97,5 +97,29 @@ describe('placeSubmenu', () => {
         const lowRow = { ...row, y: 560 }
         const result = placeSubmenu({ parent, row: lowRow, size, viewport })
         expect(result.top).toBe(600 - 150 - 8)
+    })
+})
+
+describe('sheetSideForAnchor', () => {
+    const height = 800
+
+    it('hangs from the top for a trigger in the top half', () => {
+        // A header button — the boards Filter case that motivated this.
+        expect(sheetSideForAnchor({ x: 0, y: 60, width: 80, height: 32 }, height)).toBe('top')
+    })
+
+    it('rests on the bottom for a trigger in the bottom half', () => {
+        expect(sheetSideForAnchor({ x: 0, y: 700, width: 80, height: 32 }, height)).toBe('bottom')
+    })
+
+    it('measures from the anchor CENTRE, not its top edge', () => {
+        // A tall trigger whose top is above the midpoint but whose bulk is
+        // below it belongs to the bottom half.
+        expect(sheetSideForAnchor({ x: 0, y: 380, width: 80, height: 200 }, height)).toBe('bottom')
+    })
+
+    it('treats a zero-size point anchor by its position', () => {
+        expect(sheetSideForAnchor({ x: 10, y: 10, width: 0, height: 0 }, height)).toBe('top')
+        expect(sheetSideForAnchor({ x: 10, y: 790, width: 0, height: 0 }, height)).toBe('bottom')
     })
 })

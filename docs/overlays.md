@@ -98,8 +98,17 @@ The engine (`core/ui/overlay/`, internal) owns:
   to the side with more room and caps height to what that side has; the
   content scrolls internally.
 - On the mobile breakpoint a Popover renders as a sheet unless
-  `presentation="popover"` is pinned. `sheetSide` (`top|bottom`, default
-  `bottom`) picks the edge that sheet rests on.
+  `presentation="popover"` is pinned. The edge that sheet rests on is derived
+  from the measured anchor — a trigger in the top half of the viewport gets a
+  top sheet, one in the bottom half a bottom sheet — so a surface opens from
+  the edge nearest the control that opened it. `sheetSide` (`top|bottom`)
+  overrides that; there is normally no reason to pass it.
+- `width` is **popover-only**. A sheet is as wide as the screen, and
+  `Sheet.Body` stretches its content to fill it, so a body fills by default. A
+  body that wants a fixed width in a popover and a fluid one in a sheet reads
+  `usePopoverContext().isSheet` and drops its own width — boards' `FilterPanel`
+  and the emoji grid are the two worked examples. Do not size sheet content
+  with `width`.
 
 Placement is a pure function, `placePopover()` in `core/ui/popover/place.ts`,
 with unit tests. Do not put positioning arithmetic anywhere else.
@@ -140,22 +149,43 @@ the whole chain when chosen.
   in the right-click (web) and long-press (native) gestures; the menubar and
   the calc grid menus are controlled Menus in the single-open registry.
 - On the mobile breakpoint a Menu renders its items as a sheet hanging from
-  the **top** edge, since most menu triggers sit near the top of the screen;
-  pass `sheetSide="bottom"` for a menu opened from the bottom of a screen. Pin
-  `presentation="popover"` for a menu of two or three items beside its
-  trigger, where a sheet would be heavier than the choice.
+  the edge nearest its trigger, derived from the measured anchor exactly as a
+  Popover's is. Pin `presentation="popover"` for a menu of two or three items
+  beside its trigger, where a sheet would be heavier than the choice.
 
 ## Sheet
 
 `Sheet` is the edge surface the other three render on a phone: it rests on the
-bottom edge by default, or hangs from the top with `side="top"` (a Menu's
-default). The corners, the border, the drag pill and the dismiss gesture all
+bottom edge by default, or hangs from the top with `side="top"` (which Popover
+and Menu derive from where the trigger sits). The corners, the border, the drag pill and the dismiss gesture all
 face away from that edge. Packages use it directly only for something that is
 a sheet on every breakpoint (the mobile More menu, the notification drawer,
-the file picker). It replaces `BottomDrawer`, keeps its gesture and its "rests
+the file picker). `Sheet.Body` stretches its content to the sheet's full width,
+so a body authored around a popover's narrow box fills it rather than hugging
+the left edge. It replaces `BottomDrawer`, keeps its gesture and its "rests
 on the tab bar" behavior, and adds the title/body/footer structure so a Dialog
 rendered as a sheet looks like a sheet, not a dialog squashed to the bottom
 edge.
+
+## Drawer (the right-edge panel)
+
+`Drawer` (`core/ui/drawer`) predates this engine and is not built on it — it is
+gluestack's modal creator with an `anchor` prop. It is listed here because it is
+the one edge a `Sheet` cannot cover: `Sheet` is `top | bottom` only, and every
+`Drawer` in the ecosystem is `anchor="right"` (help, comments, members, mail's
+mailbox, drive's detail panel, calc's pivot and conditional-format). If you need
+a right-edge panel, use `Drawer` — do not hand-roll a third one.
+
+On native it can be swiped toward its own edge to dismiss, via
+`useSwipeToDismiss` (`core/ui/swipe-dismiss`), the same hook the boards card
+peek uses. The hook is anchor-aware, so a drawer on any edge gets the gesture
+from the anchor it already declares. Its thresholds and spring match `Sheet`'s
+so every edge surface settles identically, and `should-dismiss.ts` holds the
+threshold as a pure function because the gesture's `onEnd` is a UI-thread
+worklet and cannot call one.
+
+Migrating `Drawer` onto the overlay engine is still open; until then it keeps
+its own Escape handling and its own hard unmount on close.
 
 ## Testing
 

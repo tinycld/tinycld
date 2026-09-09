@@ -24,7 +24,7 @@ import {
     StyleSheet,
     View,
 } from 'react-native'
-import { type Placement, placePopover, type Rect, type Size } from './place'
+import { type Placement, placePopover, type Rect, type Size, sheetSideForAnchor } from './place'
 
 // The native layer is a statusBarTranslucent RN Modal whose origin is the true
 // top of the screen, while `measureInWindow` reports Y from below the status
@@ -71,11 +71,23 @@ export interface PopoverProps {
     placement?: Placement
     /** `auto` is a sheet on the mobile breakpoint and a popover elsewhere. */
     presentation?: PopoverPresentation
-    /** A fixed width for the surface; otherwise it fits its content, at least 200 wide. */
+    /**
+     * A fixed width for the surface; otherwise it fits its content, at least
+     * 200 wide. POPOVER MODE ONLY — a sheet is as wide as the screen, and this
+     * is ignored there. A body that needs a fixed width in a popover and a
+     * fluid one in a sheet reads `usePopoverContext().isSheet` and drops its
+     * own width, the way FilterPanel and the emoji grid do; do not reach for
+     * this prop to size sheet content.
+     */
     width?: number
     /** Title of the sheet the surface becomes on a phone. */
     title?: string
-    /** The edge that sheet rests on. Default `bottom`. */
+    /**
+     * The edge that sheet rests on. Defaults to the edge NEAREST THE TRIGGER,
+     * derived from the measured anchor: a trigger in the top half of the
+     * viewport gets a top sheet, one in the bottom half a bottom sheet. Pass a
+     * side to override that.
+     */
     sheetSide?: SheetSide
     /** Padding of the sheet's scrolled content. */
     sheetContentClassName?: string
@@ -105,7 +117,7 @@ export function Popover({
     presentation = 'auto',
     width,
     title,
-    sheetSide = 'bottom',
+    sheetSide,
     sheetContentClassName,
     className,
     testID,
@@ -131,6 +143,7 @@ export function Popover({
 
     const triggerElement = useTriggerElement(trigger, triggerRef, isOpen, setOpen)
     const resolvedAnchor: PopoverAnchor = anchor ?? triggerRef
+    const derivedSide = useSheetSide(resolvedAnchor, isSheet && isOpen)
 
     if (isSheet) {
         return (
@@ -140,7 +153,7 @@ export function Popover({
                     isOpen={isOpen}
                     onClose={close}
                     title={title}
-                    side={sheetSide}
+                    side={sheetSide ?? derivedSide}
                     testID={testID}
                 >
                     <PopoverContext.Provider value={SHEET_CONTEXT(isOpen, close)}>
@@ -172,6 +185,50 @@ export function Popover({
             </PopoverLayer>
         </>
     )
+}
+
+/**
+ * The edge a sheet should rest on, measured from the trigger it opened from.
+ *
+ * Falls back to `bottom` — the edge a thumb reaches — while the anchor is
+ * unmeasured or when there is no anchor at all. Measurement runs on open only:
+ * a sheet is a full-width surface, so unlike a popover it has nothing to
+ * re-place when the window resizes, and re-deriving the side mid-life would
+ * flip a sheet across the screen while the user is reading it.
+ */
+function useSheetSide(anchor: PopoverAnchor, isActive: boolean): SheetSide {
+    const [side, setSide] = useState<SheetSide>('bottom')
+    // Read through a ref, not a subscription: the side is decided once per
+    // open, so tracking the height would re-run this on every resize frame
+    // and could flip an open sheet across the screen mid-read.
+    const viewportHeightRef = useRef(0)
+    viewportHeightRef.current = useWindowSizeStore(s => s.height)
+
+    useLayoutEffect(() => {
+        if (!isActive) return
+        const height = viewportHeightRef.current
+        if (isPoint(anchor)) {
+            setSide(sheetSideForAnchor({ x: anchor.x, y: anchor.y, width: 0, height: 0 }, height))
+            return
+        }
+        const node = anchor.current
+        if (!node) return
+        if (Platform.OS === 'web') {
+            const rect = (node as unknown as HTMLElement).getBoundingClientRect()
+            setSide(
+                sheetSideForAnchor(
+                    { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+                    height
+                )
+            )
+            return
+        }
+        node.measureInWindow((x, y, w, h) => {
+            setSide(sheetSideForAnchor({ x, y, width: w, height: h }, height))
+        })
+    }, [isActive, anchor])
+
+    return side
 }
 
 function SHEET_CONTEXT(isOpen: boolean, close: () => void): PopoverContextValue {

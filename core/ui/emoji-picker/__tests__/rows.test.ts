@@ -39,6 +39,18 @@ describe('toRows', () => {
     it('returns nothing for no sections', () => {
         expect(toRows([])).toEqual([])
     })
+
+    it('chunks at a caller-supplied width, for the wider sheet grid', () => {
+        const rows = toRows([{ category: 'objects', emoji: many(20) }], 12)
+        expect(rows.filter(r => r.kind === 'emoji')).toHaveLength(2) // 12 + 8
+        expect(cells(rows[1])).toHaveLength(12)
+        expect(cells(rows[2])).toHaveLength(8)
+    })
+
+    it('never chunks at zero or a fraction, which would not terminate', () => {
+        expect(cells(toRows([{ category: 'o', emoji: many(3) }], 0)[1])).toHaveLength(1)
+        expect(cells(toRows([{ category: 'o', emoji: many(9) }], 4.7)[1])).toHaveLength(4)
+    })
 })
 
 describe('toSearchRows', () => {
@@ -50,6 +62,12 @@ describe('toSearchRows', () => {
 
     it('returns nothing for no results', () => {
         expect(toSearchRows([])).toEqual([])
+    })
+
+    it('chunks at a caller-supplied width too', () => {
+        const rows = toSearchRows(many(10), 5)
+        expect(rows).toHaveLength(2)
+        expect(cells(rows[0])).toHaveLength(5)
     })
 
     it('keys distinctly from category rows, so a re-render cannot collide', () => {

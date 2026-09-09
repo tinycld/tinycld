@@ -171,3 +171,20 @@ export function placeSubmenu({
 
     return { top, left }
 }
+
+/**
+ * Which edge a sheet should rest on for a given trigger: the one NEAREST it.
+ *
+ * A sheet that slides in from the far edge reads as unrelated to the control
+ * that opened it — the boards Filter button sits in the header and its panel
+ * used to rise from the bottom of the screen, crossing the whole viewport to
+ * answer a tap at the top. Measuring the anchor's CENTRE (not its top) keeps a
+ * tall trigger straddling the midpoint from flipping on a few pixels.
+ *
+ * Pure, so `core/tests/unit/place-popover.test.ts` pins it rather than an e2e
+ * run that happens to open a menu near the middle of a screen.
+ */
+export function sheetSideForAnchor(anchor: Rect, viewportHeight: number): 'top' | 'bottom' {
+    const centre = anchor.y + anchor.height / 2
+    return centre < viewportHeight / 2 ? 'top' : 'bottom'
+}

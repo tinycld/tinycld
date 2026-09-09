@@ -17,6 +17,8 @@ export interface EmojiPickerGridProps {
     /** The tone applied to any emoji that takes one. */
     tone: ToneChoice
     onSelect: (glyph: string) => void
+    /** Cells per row — the count `rows` was chunked at. */
+    perRow: number
     /** Shown in place of the grid while the lazy table is in flight. */
     isLoading?: boolean
     emptyLabel?: string
@@ -35,6 +37,7 @@ export function EmojiPickerGrid({
     onVisibleCategoryChange,
     tone,
     onSelect,
+    perRow,
     isLoading = false,
     emptyLabel = 'No emoji found',
 }: EmojiPickerGridProps) {
@@ -43,9 +46,9 @@ export function EmojiPickerGrid({
             item.kind === 'header' ? (
                 <SectionHeader category={item.category} />
             ) : (
-                <EmojiRowCells emoji={item.emoji} tone={tone} onSelect={onSelect} />
+                <EmojiRowCells emoji={item.emoji} perRow={perRow} tone={tone} onSelect={onSelect} />
             ),
-        [tone, onSelect]
+        [tone, onSelect, perRow]
     )
 
     // The topmost visible row's section, so the nav highlights what you are
@@ -97,17 +100,31 @@ function SectionHeader({ category }: { category: string }) {
     )
 }
 
+/**
+ * One row of cells. A FULL row spreads: it is chunked to exactly the number of
+ * cells the surface fits, so the remainder from that integer division belongs
+ * between them — packed left at a fixed EMOJI_SIZE, a wide sheet shows a grid
+ * hugging its left edge with a bite of empty space at the right. A short last
+ * row keeps the default packing, so it continues the column rhythm above it
+ * instead of stranding three cells at opposite edges.
+ */
 function EmojiRowCells({
     emoji,
+    perRow,
     tone,
     onSelect,
 }: {
     emoji: readonly EmojiRecord[]
+    perRow: number
     tone: ToneChoice
     onSelect: (glyph: string) => void
 }) {
+    const isFull = emoji.length === perRow
     return (
-        <View className="flex-row" style={{ height: ROW_HEIGHT }}>
+        <View
+            className={`flex-row ${isFull ? 'justify-between' : ''}`}
+            style={{ height: ROW_HEIGHT }}
+        >
             {emoji.map(record => (
                 <EmojiCell key={record.u} record={record} tone={tone} onSelect={onSelect} />
             ))}
