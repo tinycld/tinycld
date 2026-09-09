@@ -15,7 +15,7 @@ import { toRows, toSearchRows } from './rows'
 import type { EmojiTable } from './use-emoji-data'
 import { useFrequentEmoji } from './use-frequent-emoji'
 
-export function useEmojiPicker(table: EmojiTable | null) {
+export function useEmojiPicker(table: EmojiTable | null, perRow?: number) {
     const [query, setQuery] = useState('')
     const [tone, setTone] = useUserPreference<ToneChoice>('core', 'emoji_skin_tone', NEUTRAL_TONE)
     const { frequent, record } = useFrequentEmoji()
@@ -31,7 +31,7 @@ export function useEmojiPicker(table: EmojiTable | null) {
 
     const rows = useMemo(() => {
         if (!table) return []
-        if (results) return toSearchRows(results)
+        if (results) return toSearchRows(results, perRow)
 
         const byCategory = new Map(table.categories.map(section => [section.c, section.e]))
         // A remembered pick may carry a tone; the table is keyed by the
@@ -48,9 +48,10 @@ export function useEmojiPicker(table: EmojiTable | null) {
                     category === FREQUENT_CATEGORY
                         ? frequentRecords
                         : (byCategory.get(category) ?? []),
-            }))
+            })),
+            perRow
         )
-    }, [table, results, frequent])
+    }, [table, results, frequent, perRow])
 
     return {
         query,

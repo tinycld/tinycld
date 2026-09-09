@@ -15,6 +15,16 @@ export const PICKER_WIDTH = EMOJI_PER_ROW * EMOJI_SIZE + GRID_PADDING * 2
 /** Height of the scrolling grid alone — the header and nav sit above it. */
 export const GRID_HEIGHT = 400 - 44 - 40
 
+/**
+ * How many cells fit a surface of the given width, at least one. A popover is
+ * sized to PICKER_WIDTH and gets EMOJI_PER_ROW back; a sheet is as wide as the
+ * screen and gets more, so the grid fills it instead of hugging the left edge.
+ */
+export function columnsForWidth(width: number): number {
+    const usable = width - GRID_PADDING * 2
+    return Math.max(1, Math.floor(usable / EMOJI_SIZE))
+}
+
 /** Row height in the virtualized list. */
 export const ROW_HEIGHT = EMOJI_SIZE
 

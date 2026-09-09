@@ -1,12 +1,12 @@
 import type { FlashListRef } from '@shopify/flash-list'
-import { Popover } from '@tinycld/core/ui/popover'
+import { Popover, usePopoverContext } from '@tinycld/core/ui/popover'
 import { type ReactElement, useCallback, useRef, useState } from 'react'
 import { View } from 'react-native'
 import { CategoryNav } from './CategoryNav'
 import { CATEGORY_ORDER } from './categories'
 import { EmojiPickerGrid } from './EmojiPickerGrid'
 import { EmojiSearch } from './EmojiSearch'
-import { PICKER_WIDTH } from './layout'
+import { columnsForWidth, EMOJI_PER_ROW, PICKER_WIDTH } from './layout'
 import type { EmojiRow } from './rows'
 import { useEmojiData } from './use-emoji-data'
 import { useEmojiPicker } from './use-emoji-picker'
@@ -65,7 +65,16 @@ export function EmojiPicker({
  */
 function PickerBody({ isOpen, onPick }: { isOpen: boolean; onPick: (glyph: string) => void }) {
     const { table, isLoading } = useEmojiData(isOpen)
-    const { query, setQuery, tone, setTone, rows, isSearching, recordUse } = useEmojiPicker(table)
+    // A popover is sized to PICKER_WIDTH, so its column count is known up
+    // front; a sheet is as wide as the screen, so the grid measures itself and
+    // chunks to fit rather than leaving a phone-width surface two-thirds empty.
+    const { isSheet } = usePopoverContext()
+    const [measuredWidth, setMeasuredWidth] = useState(0)
+    const perRow = isSheet && measuredWidth > 0 ? columnsForWidth(measuredWidth) : EMOJI_PER_ROW
+    const { query, setQuery, tone, setTone, rows, isSearching, recordUse } = useEmojiPicker(
+        table,
+        perRow
+    )
     const listRef = useRef<FlashListRef<EmojiRow> | null>(null)
     const [visibleCategory, setVisibleCategory] = useState<string | null>(null)
 
@@ -89,7 +98,12 @@ function PickerBody({ isOpen, onPick }: { isOpen: boolean; onPick: (glyph: strin
     )
 
     return (
-        <View>
+        <View
+            onLayout={e => {
+                const { width } = e.nativeEvent.layout
+                setMeasuredWidth(prev => (prev === width ? prev : width))
+            }}
+        >
             <EmojiSearch
                 query={query}
                 onQueryChange={setQuery}
@@ -103,6 +117,7 @@ function PickerBody({ isOpen, onPick }: { isOpen: boolean; onPick: (glyph: strin
             />
             <EmojiPickerGrid
                 rows={rows}
+                perRow={perRow}
                 listRef={listRef}
                 onVisibleCategoryChange={setVisibleCategory}
                 tone={tone}
