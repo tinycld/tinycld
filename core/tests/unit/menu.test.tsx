@@ -200,7 +200,7 @@ describe('Menu (phone)', () => {
         return sheet
     }
 
-    it('renders its rows in a sheet hanging from the top edge by default', () => {
+    it('renders its rows in a sheet hanging from the edge nearest the trigger', () => {
         const onSelect = vi.fn()
         const { container, getByText } = render(
             <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 10 }} testID="sheet">
@@ -217,7 +217,19 @@ describe('Menu (phone)', () => {
         expect(onSelect).toHaveBeenCalledTimes(1)
     })
 
-    it('rests on the bottom edge when the caller asks for it', () => {
+    it('rests on the bottom edge for a trigger low on the screen', () => {
+        // No sheetSide passed: the side is derived from the anchor, which sits
+        // in the bottom half of the 844-tall phone window.
+        const { container } = render(
+            <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 800 }} testID="sheet">
+                <Menu.Item label="Rename" onSelect={() => {}} />
+            </Menu>
+        )
+        expect(sheetOf(container).className).toContain('bottom-0')
+    })
+
+    it('lets an explicit sheetSide override the derived edge', () => {
+        // A top-half anchor would derive 'top'; the caller asked for bottom.
         const { container } = render(
             <Menu
                 isOpen

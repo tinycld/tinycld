@@ -32,7 +32,8 @@ import { Platform, Pressable, Text, View } from 'react-native'
 /**
  * A list of commands on a Popover: `role="menu"`, arrow keys and typeahead,
  * one submenu level, and rows that close the whole surface when chosen. On
- * the mobile breakpoint the same rows render in a Sheet.
+ * the mobile breakpoint the same rows render in a Sheet, hanging from the edge
+ * nearest the trigger.
  *
  * Rows are props, not children: a row is a label with an icon, a shortcut
  * and a state, and a sheet must be able to draw the same row as a touch
@@ -52,9 +53,8 @@ export interface MenuProps {
     /** Title of the sheet the menu becomes on a phone. */
     title?: string
     /**
-     * The edge that sheet rests on. Default `top`, since most menu triggers sit
-     * near the top of the screen; pass `bottom` for a menu opened from the
-     * bottom of a screen.
+     * The edge that sheet rests on. Defaults to the edge nearest the trigger,
+     * derived from the measured anchor; pass a side to override that.
      */
     sheetSide?: SheetSide
     className?: string
@@ -85,7 +85,7 @@ function MenuRoot({
     presentation = 'auto',
     width,
     title,
-    sheetSide = 'top',
+    sheetSide,
     className,
     testID,
     children,
