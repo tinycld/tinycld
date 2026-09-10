@@ -509,9 +509,7 @@ func detectArtifactDir() string {
 //     guards its own teardown removal by inode.
 //   - Only the router connects to these sockets; the tenant uid owns them.
 func BindTenantSocket(path string) (net.Listener, error) {
-	oldUmask := syscall.Umask(0o177)
-	ln, err := net.Listen("unix", path)
-	syscall.Umask(oldUmask)
+	ln, err := listenUnixUmasked(path)
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", path, err)
 	}
