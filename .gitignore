@@ -125,3 +125,4 @@ server/pb_test_releases/
 
 expo-env.d.ts
 # @end expo-cli
+/server/embedded_assets/
