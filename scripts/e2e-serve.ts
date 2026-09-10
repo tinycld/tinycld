@@ -128,6 +128,18 @@ async function waitForUpstream(port: number, label: string, timeoutMs: number): 
 // needs a running server — so they are seeded by Playwright's globalSetup
 // against the one server this script starts. See tests/playwright-global-setup.ts.
 function resetDataDir(dataDir: string): void {
+    // Build the server first: everything below runs it. This used to happen
+    // inside reset-dev-db.ts, which the seed step called — that step is gone
+    // (fixtures are seeded by globalSetup against the running server), so the
+    // build has to live here or nothing produces the binary on a clean
+    // checkout. A developer with one already sees a fast no-op rebuild.
+    log('phase 1/3: building the server')
+    const built = spawnSync('go', ['build', '-o', 'app', '.'], {
+        cwd: path.join(ROOT, 'server'),
+        stdio: 'inherit',
+    })
+    if (built.status !== 0) throw new Error('e2e-serve: failed to build the server binary')
+
     log('phase 1/3: clearing the test data dir')
     fs.rmSync(dataDir, { recursive: true, force: true })
 
