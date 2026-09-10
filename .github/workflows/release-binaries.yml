@@ -1,0 +1,150 @@
+name: Build and publish self-host binaries
+
+# Lives in the tinycld/tinycld repo — the release ANCHOR, same contract as
+# docker-publish.yml. A published Release assembles the workspace from the
+# release's pinned manifest (via the shared ci-assemble-workspace.sh, so the
+# image and these binaries are built from the same member set), then
+# cross-compiles the single-binary self-host artifact for each platform.
+#
+# Trigger is `release: published` only — NOT `push: tags` — because the
+# manifest.json and pnpm-lock.yaml assets are uploaded client-side after the
+# tag is pushed, so a tag-push trigger would race ahead of them.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: release-binaries-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build single binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      # Path MUST be the member's canonical dir name: bootstrap treats a dir
+      # with a .git as an already-cloned member and skips it. See the same note
+      # in docker-publish.yml.
+      - name: Checkout tinycld member (at the triggering tag)
+        uses: actions/checkout@v5
+        with:
+          path: ws/tinycld
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: ws/tinycld/.node-version
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ws/tinycld/server/go.mod
+
+      - name: Assemble workspace from pinned release manifest
+        working-directory: ws
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-$(git -C tinycld describe --tags --exact-match)}"
+          echo "Downloading release assets for ${TAG}…"
+          mkdir -p .release-assets
+          gh release download "${TAG}" -R "${GITHUB_REPOSITORY}" \
+            -p manifest.json -p pnpm-lock.yaml -p package-versions.json \
+            --dir .release-assets
+          # Shared with docker-publish.yml — see the script header.
+          tinycld/scripts/ci-assemble-workspace.sh .release-assets
+
+      - name: Install dependencies
+        working-directory: ws
+        run: corepack enable && pnpm install --frozen-lockfile
+
+      - name: Generate package wiring
+        working-directory: ws/tinycld
+        run: pnpm run packages:generate
+
+      # --source-maps external keeps the maps out of the bundle entirely; they
+      # are the bulk of the export and must never reach the embed payload.
+      - name: Export web bundle
+        working-directory: ws/tinycld
+        run: pnpm exec expo export --platform web --source-maps external
+
+      - name: Stage embeddable assets
+        working-directory: ws/tinycld
+        run: pnpm run stage:embed
+
+      - name: Fail if source maps reached the embed payload
+        working-directory: ws/tinycld
+        run: |
+          set -euo pipefail
+          count=$(find server/embedded_assets -name '*.map' | wc -l)
+          if [ "$count" -ne 0 ]; then
+            echo "::error::${count} source maps staged for embedding; they must be excluded"
+            exit 1
+          fi
+
+      # go:embed cannot follow symlinks, and the generator writes pb_migrations
+      # and pb_hooks as symlink farms into the sibling repos. If staging left
+      # links behind, the binary would build clean and ship with no migrations.
+      - name: Fail if any staged asset is still a symlink
+        working-directory: ws/tinycld
+        run: |
+          set -euo pipefail
+          count=$(find server/embedded_assets -type l | wc -l)
+          if [ "$count" -ne 0 ]; then
+            echo "::error::${count} staged assets are symlinks; go:embed would skip them"
+            exit 1
+          fi
+
+      - name: Cross-compile
+        working-directory: ws/tinycld/server
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dist
+          build() {
+            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build \
+              -tags embedassets -trimpath -ldflags="-s -w" \
+              -o "/tmp/dist/tinycld-$1-$2" .
+            echo "built tinycld-$1-$2"
+          }
+          build linux amd64
+          build linux arm64
+          build darwin arm64
+
+      # The floor catches the failure mode that matters: if the embed silently
+      # drops out (an unreferenced embed.FS is eliminated by the linker), the
+      # binary still builds and still serves — just with no web UI. The measured
+      # size is ~62MB embedded vs ~50MB without, so 55MB separates the two.
+      # The ceiling catches an accidental re-addition of source maps.
+      - name: Enforce size budget
+        run: |
+          set -euo pipefail
+          for f in /tmp/dist/tinycld-*; do
+            mb=$(( $(stat -c%s "$f") / 1048576 ))
+            echo "$(basename "$f"): ${mb} MB"
+            if [ "$mb" -gt 100 ]; then
+              echo "::error::$(basename "$f") is ${mb} MB, over the 100 MB budget"
+              exit 1
+            fi
+            if [ "$mb" -lt 55 ]; then
+              echo "::error::$(basename "$f") is only ${mb} MB — the embedded assets are missing"
+              exit 1
+            fi
+          done
+
+      - name: Generate checksums
+        working-directory: /tmp/dist
+        run: sha256sum tinycld-* > SHA256SUMS && cat SHA256SUMS
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          gh release upload "${TAG}" /tmp/dist/tinycld-* /tmp/dist/SHA256SUMS \
+            -R "${GITHUB_REPOSITORY}" --clobber
