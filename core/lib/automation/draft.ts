@@ -218,10 +218,20 @@ function validateActionParams(
 ): string[] {
     const errors: string[] = []
     for (const param of action.params ?? []) {
-        // Text params and field-ref params may legitimately be empty strings
-        // (matches what the engine can execute), so only relation params are
-        // enforced non-empty here.
-        if (param.field.type !== 'relation') continue
+        // Most text and field-ref params may legitimately be empty strings, so
+        // only params the catalog marks required are enforced — every relation
+        // param, plus text params that back a required column.
+        //
+        // This used to test `type !== 'relation'` and skip everything else,
+        // which let core:notify save with a blank title. The rule then RAN,
+        // reported a matched run, and failed at the insert with "title: cannot
+        // be blank" — a notification nobody received, on a run that looked
+        // healthy.
+        // A relation param is required regardless of the flag: the engine
+        // refuses an empty one, and deriving it here means the client stays
+        // correct against a catalog (or a test fixture) that predates
+        // `required` rather than silently dropping the check.
+        if (!param.required && param.field.type !== 'relation') continue
         const value = draftAction.params[param.key]
         const provided = value !== undefined && value !== null
         if (!provided || (typeof value === 'string' && value.trim() === '')) {

@@ -82,6 +82,11 @@ type ParamDef struct {
 	// RelationTarget names the collection a typed relation param picks from.
 	// Column params leave it empty — their target resolves from the column.
 	RelationTarget string `json:"relationTarget"`
+	// Required means the action cannot run without a non-empty value. Relation
+	// params are always enforced; a text param is optional unless it says so,
+	// because most legitimately accept an empty string. core:notify's title
+	// does not — it becomes notifications.title, which the schema requires.
+	Required bool `json:"required"`
 }
 
 type ActionDef struct {

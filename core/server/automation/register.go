@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"strings"
 
 	"tinycld.org/core/logging"
 	"tinycld.org/core/notify"
@@ -77,6 +78,15 @@ func registerCoreNativeActions() {
 	RegisterAction("core:notify", func(a core.App, req ActionRequest) error {
 		if !appIsLive(a) {
 			return fmt.Errorf("core:notify: server is shutting down")
+		}
+		// notifications.title is required in the schema, so a blank one fails
+		// at the INSERT with a raw "title: cannot be blank." Refuse it here
+		// instead: the run then records a comprehensible reason, and the rule
+		// counts toward auto-disable rather than silently never delivering.
+		// The builder blocks this at save time; this covers rules saved before
+		// that validation existed, and anything writing the record directly.
+		if strings.TrimSpace(req.Params["title"]) == "" {
+			return fmt.Errorf("core:notify: a title is required")
 		}
 		return deliverNotification(a, notify.NotifyParams{
 			UserID:  req.OwnerID,

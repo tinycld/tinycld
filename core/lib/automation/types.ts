@@ -93,6 +93,18 @@ export interface TypedParamDef {
     label?: string
     options?: string[]
     /**
+     * The action cannot run without a non-empty value. Relation params are
+     * always enforced; a TEXT param is optional by default, because most of
+     * them legitimately accept an empty string.
+     *
+     * Some do not. `core:notify`'s title lands in `notifications.title`, which
+     * is `required: true` in the schema — so a blank one failed at the DB with
+     * "title: cannot be blank" AFTER the rule had saved and run, and the run
+     * was recorded as matched. Marking it required moves that to save time,
+     * where the builder can show it.
+     */
+    required?: boolean
+    /**
      * Required when `type` is 'relation' (validateDefinitions enforces both
      * directions): the target collection NAME the record picker lists. A
      * column-referencing param inherits its target from the column instead;
