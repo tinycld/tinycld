@@ -66,7 +66,11 @@ func main() {
 		dataDir := coreserver.FlagValue(os.Args[1:], "--dir")
 		if dataDir == "" {
 			dataDir = defaultStandaloneDataDir
-			os.Args = append(os.Args, "--dir", dataDir)
+			// Only for an actual command: appending --dir to a bare --help or
+			// --version makes cobra read the path as a stray positional.
+			if coreserver.ShouldInjectDataDir(os.Args[1:]) {
+				os.Args = append(os.Args, "--dir", dataDir)
+			}
 		}
 		if err := os.Setenv("TINYCLD_STATE_DIR", coreserver.StandaloneStateDir(dataDir)); err != nil {
 			log.Fatal(err)

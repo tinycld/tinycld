@@ -70,9 +70,9 @@ func TestStandaloneSkipsSelfRebuild(t *testing.T) {
 	}
 }
 
-// hasRebuildRoute boots a composition far enough to populate its router, then
-// asks whether the package install endpoint was registered. No listener starts.
-func hasRebuildRoute(t *testing.T, opts Options) bool {
+// routerFor boots a composition far enough to populate its router, so a test
+// can ask which routes it registered. No listener starts.
+func routerFor(t *testing.T, opts Options) *router.Router[*core.RequestEvent] {
 	t.Helper()
 	quota.ResetSourcesForTesting()
 
@@ -90,7 +90,13 @@ func hasRebuildRoute(t *testing.T, opts Options) bool {
 		t.Fatalf("OnServe: %v", err)
 	}
 
-	return serveEvent.Router.HasRoute(http.MethodPost, "/api/admin/packages/install")
+	return serveEvent.Router
+}
+
+// hasRebuildRoute reports whether the package install endpoint was registered.
+func hasRebuildRoute(t *testing.T, opts Options) bool {
+	t.Helper()
+	return routerFor(t, opts).HasRoute(http.MethodPost, "/api/admin/packages/install")
 }
 
 // TestStandalone_OmitsRebuildRoutes is the route-level counterpart to
@@ -117,5 +123,78 @@ func TestStandalone_OmitsRebuildRoutes(t *testing.T) {
 	standalone.PublicFS = fstest.MapFS{}
 	if hasRebuildRoute(t, standalone) {
 		t.Error("a single-binary build must not expose the package rebuild API")
+	}
+}
+
+// TestStandalone_DoesNotRegisterPoolAssetRoutes is the regression guard for a
+// bug that let the binary boot and serve its SPA shell while every script 404'd.
+//
+// The /_expo/static/ and /assets/ routes read the cross-release asset pool the
+// container entrypoint maintains under <releasesDir>/_static/. They are
+// registered BEFORE the catch-all so the prefixes win — which means in a
+// single-binary build they shadow the embedded bundle and answer 404 for assets
+// that are present inside the binary. A standalone build has no pool, so the
+// catch-all must own those paths.
+func TestStandalone_DoesNotRegisterPoolAssetRoutes(t *testing.T) {
+	opts := Options{
+		HooksDir:      t.TempDir(),
+		MigrationsDir: t.TempDir(),
+		TypesDir:      t.TempDir(),
+		PublicDir:     t.TempDir(),
+		ReleasesDir:   t.TempDir(),
+		HooksPoolSize: 1,
+		MigrationsFS:  fstest.MapFS{},
+		HooksFS:       fstest.MapFS{},
+		PublicFS:      fstest.MapFS{},
+	}
+
+	r := routerFor(t, opts)
+	for _, path := range []string{"/_expo/static/{path...}", "/assets/{path...}"} {
+		if r.HasRoute(http.MethodGet, path) {
+			t.Errorf("standalone must not register %q — it shadows the embedded bundle", path)
+		}
+	}
+
+	// The catch-all must still be there to serve them. It is registered with
+	// Any, whose method is "" — HasRoute(MethodGet, …) would not match it.
+	if !r.HasRoute("", "/{path...}") {
+		t.Error("expected the catch-all to serve embedded assets")
+	}
+}
+
+// TestShouldInjectDataDir pins when standalone mode may append --dir to os.Args.
+//
+// --dir is a persistent flag, but appending it to a bare `--help` or `--version`
+// invocation makes cobra read the path as a stray positional argument and fail
+// with `unknown command "./tinycld-data/pb_data"`. Only inject when a command
+// will actually use it and the user has not set it.
+func TestShouldInjectDataDir(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"bare serve", []string{"serve"}, true},
+		{"serve with an address", []string{"serve", "--http", "127.0.0.1:9000"}, true},
+		{"serve with domains", []string{"serve", "example.com"}, true},
+		{"user set --dir", []string{"serve", "--dir", "/srv/x"}, false},
+		{"user set --dir= form", []string{"serve", "--dir=/srv/x"}, false},
+		{"help", []string{"--help"}, false},
+		{"version", []string{"--version"}, false},
+		{"short help", []string{"-h"}, false},
+		{"no args", nil, false},
+		// Every real command operates on the database, so each needs the
+		// default data dir — not just serve.
+		{"superuser", []string{"superuser", "create", "a@b.c", "pw"}, true},
+		{"create-owner", []string{"create-owner"}, true},
+		{"export-types", []string{"export-types"}, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ShouldInjectDataDir(tc.args); got != tc.want {
+				t.Errorf("ShouldInjectDataDir(%v) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
 	}
 }

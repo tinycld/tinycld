@@ -484,9 +484,16 @@ func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
 			// <releasesDir>/_static/. _expo/static/ filenames are fully
 			// content-hashed (immutable), while /assets/ contains a few
 			// stable names like app-icon.png so a shorter max-age applies.
-			if opts.ReleasesDir != "" {
+			//
+			// A single-binary build has no pool: its bundle is embedded. These
+			// prefixes would then shadow the catch-all that CAN serve it, so
+			// every script 404s while the shell still renders — the binary looks
+			// healthy and boots to a blank page.
+			if opts.ReleasesDir != "" && opts.PublicFS == nil {
 				e.Router.GET("/_expo/static/{path...}", PoolAssets(opts.ReleasesDir, "_expo/static", "public, max-age=31536000, immutable"))
 				e.Router.GET("/assets/{path...}", PoolAssets(opts.ReleasesDir, "assets", "public, max-age=300"))
+			}
+			if opts.ReleasesDir != "" {
 				e.Router.GET("/api/version", VersionHandler(opts.ReleasesDir))
 				e.Router.GET("/api/release", ReleaseHandler(opts.ReleasesDir))
 			}

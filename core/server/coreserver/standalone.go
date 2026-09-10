@@ -47,3 +47,34 @@ func StandaloneStateDir(dataDir string) string {
 func (o Options) supportsSelfRebuild() bool {
 	return o.MigrationsFS == nil
 }
+
+// ShouldInjectDataDir reports whether a standalone build may append its default
+// --dir to the argument list.
+//
+// Every real command (serve, superuser, create-owner, export-types) operates on
+// the database and wants the default. A flag-only invocation must NOT get one:
+// cobra reads the appended path as a stray positional and fails the command with
+// `unknown command "./tinycld-data/pb_data"`, which breaks --help and --version.
+// A --dir the user set always wins.
+func ShouldInjectDataDir(args []string) bool {
+	if FlagValue(args, "--dir") != "" || hasExactArg(args, "--dir") {
+		return false
+	}
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasExactArg reports whether args contains exactly the given token, so a
+// valueless trailing `--dir` is still treated as user-supplied.
+func hasExactArg(args []string, name string) bool {
+	for _, arg := range args {
+		if arg == name {
+			return true
+		}
+	}
+	return false
+}

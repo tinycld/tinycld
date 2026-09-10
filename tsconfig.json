@@ -33,6 +33,6 @@
     // /// <reference> whose relative path is authored for the source location, not
     // this materialized one), not in the app's TS/React environment — so they are
     // typechecked in their own package, never here.
-    "exclude": ["node_modules", ".expo", "dist", "server/pb_hooks"],
+    "exclude": ["node_modules", ".expo", "dist", "server/pb_hooks", "server/embedded_assets"],
     "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }
