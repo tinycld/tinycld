@@ -13,7 +13,7 @@
 // access path, and the receiver runs as one.
 //
 // Rows are pruned by age, not kept forever — the dedupe window only has to
-// outlive a provider's retry schedule (GitHub's is hours, not days).
+// outlive a provider's retry schedule (typically hours, not days).
 migrate(
     app => {
         const col = new Collection({

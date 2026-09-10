@@ -1,7 +1,7 @@
 // Package safehttp makes outbound HTTP requests to caller-supplied URLs
 // without becoming an SSRF vector.
 //
-// Lifted from calendar/server/subscription.go's ICS fetcher, which had these
+// Lifted from an existing ICS feed fetcher, which had these
 // guards first. The logic is unchanged; what differs is that this package
 // serves POSTs to user-authored webhook URLs, where two things matter more:
 //
