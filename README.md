@@ -203,6 +203,11 @@ semantic Tailwind tokens, pbtsdb for data, etc.
 
 ## Deploy
 
+Two distributions. A single binary is the quickest way to try TinyCld or to run
+a small instance — see
+[Running from a single binary](docs/single-binary.md) (no Docker required). For
+anything that needs to add packages after install, use the image:
+
 ```sh
 docker pull ghcr.io/tinycld/tinycld
 ```
