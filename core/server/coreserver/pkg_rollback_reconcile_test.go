@@ -8,6 +8,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/installjob"
 )
 
 // newRollbackReconcileTestApp builds a test app with a minimal pkg_install_log
@@ -150,14 +151,11 @@ func TestReconcileDefersWhenJobInFlight(t *testing.T) {
 
 	// Simulate a genuinely in-flight install (cannot happen on a fresh boot, but
 	// the guard must hold). Restore the global afterwards so other tests are clean.
-	installMu.Lock()
-	currentJob = &installJob{ID: "job_test", Action: "install", Status: "running"}
-	installMu.Unlock()
-	t.Cleanup(func() {
-		installMu.Lock()
-		currentJob = nil
-		installMu.Unlock()
-	})
+	inflight := installjob.New("install", "", "")
+	if _, ok := installjob.Claim(inflight); !ok {
+		t.Fatal("claim must win against an idle interlock")
+	}
+	t.Cleanup(func() { installjob.Release(inflight) })
 
 	ReconcileRolledBackInstall(app)
 

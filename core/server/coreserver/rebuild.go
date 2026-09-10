@@ -11,6 +11,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 
+	"tinycld.org/core/installjob"
 	"tinycld.org/core/pkgbuild"
 )
 
@@ -57,7 +58,7 @@ type rebuildDeps struct {
 	// state untouched. Optional (nil-safe) for orchestrator tests only — the
 	// production wiring in rebuild() always sets it.
 	verifyCompat func(m RebuildManifest, buildDir string) error
-	pipeline     func(job *installJob, buildDir string) (buildOutput, error)
+	pipeline     func(job *installjob.Job, buildDir string) (buildOutput, error)
 	backupDB     func() error
 	restoreDB    func() error
 	syncMig      func(buildDir string) (SyncResult, error)
@@ -82,7 +83,7 @@ type rebuildDeps struct {
 // fail finalizes the install log (if any) and marks the job failed. Used at
 // every pre-activation failure exit so the status endpoint reports the failure
 // instead of hanging the UI poller.
-func (d rebuildDeps) fail(job *installJob, step string, err error) error {
+func (d rebuildDeps) fail(job *installjob.Job, step string, err error) error {
 	if d.finalizeLog != nil {
 		d.finalizeLog("failed", err.Error())
 	}
@@ -94,7 +95,7 @@ func (d rebuildDeps) fail(job *installJob, step string, err error) error {
 // here; the freshly-built binary applies them on its post-swap boot. On any
 // failure before activation the build dir is discarded and (if the DB was
 // already backed up) the DB is restored, leaving the live `current` unchanged.
-func rebuildWith(job *installJob, m RebuildManifest, d rebuildDeps) error {
+func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 	buildDir := filepath.Join(stateBuildsDir(), m.BuildID)
 	rebuildStart := monoNow()
 
@@ -218,7 +219,7 @@ func restore(d rebuildDeps) {
 	}
 }
 
-func failJob(job *installJob, step string, err error) error {
+func failJob(job *installjob.Job, step string, err error) error {
 	job.Status = "failed"
 	job.Error = err.Error()
 	emitProgress(job, step, job.Progress, "FAILED: "+err.Error())
@@ -234,7 +235,7 @@ func failJob(job *installJob, step string, err error) error {
 // operation (install / uninstall / version change / core upgrade) funnels into.
 // logRecord is the pkg_install_log row the status endpoint polls; it is
 // finalized (success/failed) before the restart so the UI poller terminates.
-func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, logRecord *core.Record) error {
+func rebuild(app *pocketbase.PocketBase, job *installjob.Job, m RebuildManifest, logRecord *core.Record) error {
 	return rebuildWith(job, m, productionRebuildDeps(app, job, m, logRecord))
 }
 
@@ -242,7 +243,7 @@ func rebuild(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, log
 // Split from rebuild() so a test can assert the production wiring (e.g. that
 // verifyCompat is actually bound to verifyTargetPeerVersions) instead of only
 // exercising the orchestrator with stubs.
-func productionRebuildDeps(app *pocketbase.PocketBase, job *installJob, m RebuildManifest, logRecord *core.Record) rebuildDeps {
+func productionRebuildDeps(app *pocketbase.PocketBase, job *installjob.Job, m RebuildManifest, logRecord *core.Record) rebuildDeps {
 	buildDir := filepath.Join(stateBuildsDir(), m.BuildID)
 
 	// backupDatabase returns the restore closure; capture it across steps.
@@ -257,7 +258,7 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installJob, m Rebuil
 			logRecipeHashBreadcrumb(job, bd)
 			return nil
 		},
-		pipeline: func(j *installJob, bd string) (buildOutput, error) {
+		pipeline: func(j *installjob.Job, bd string) (buildOutput, error) {
 			return runBuildPipeline(j, bd, m.BuildID)
 		},
 		backupDB: func() error {
@@ -341,7 +342,7 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installJob, m Rebuil
 // unavailability reason today: a FromCurrent member copied from an active
 // build that predates members.lock.json carries no integrity, which
 // RecipeHash refuses by design.
-func logRecipeHashBreadcrumb(job *installJob, buildDir string) {
+func logRecipeHashBreadcrumb(job *installjob.Job, buildDir string) {
 	tc, err := pkgbuild.DetectToolchain(nil)
 	if err != nil {
 		jobLogf(job, "recipe hash unavailable: %v", err)

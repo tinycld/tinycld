@@ -6,9 +6,6 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 
 // The saved-server switcher in the mobile More drawer.
 //
-// This fills the slot the "Organizations" section leaves empty on native:
-// useUserOrgs() hard-returns [] off web, so that block never renders on a device.
-//
 // A switch means different things per platform and the notices below say which:
 // native repoints the running app and keeps every server's session, while web can
 // only navigate to the target origin.

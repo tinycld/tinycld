@@ -122,10 +122,11 @@ export interface PackageManifest {
     }
 
     /**
-     * `mailListeners`: this package serves mail protocols, so the hosting
-     * ROUTER creates per-org mail sockets for orgs whose set includes it; the
-     * package's single Register discovers them via coreserver's TenantContext
-     * (host mode binds its own ports instead).
+     * `mailListeners`: this package serves mail protocols. A self-hosted
+     * deployment binds its own ports; where the process is embedded in a
+     * supervisor that owns the public ports, the supervisor injects pre-bound
+     * sockets and the package's single Register discovers them through core's
+     * embedded-context seam instead of binding anything itself.
      */
     server?: {
         package: string
@@ -146,10 +147,9 @@ export interface PackageManifest {
 
     /**
      * Protocol capabilities. Core serves these; a package contributes only the
-     * config, so a hosting tenant (which links no feature Go) still gets the
-     * protocol. The host materializes these blocks into the tenant's runtime
-     * config — see hosting's controlplane/capabilities.go, which mirrors
-     * every shape here.
+     * config, so a deployment that links no feature Go still gets the
+     * protocol — the supervisor materializes these blocks into the runtime
+     * config dir and core reads them there.
      */
     carddav?: {
         collection: string

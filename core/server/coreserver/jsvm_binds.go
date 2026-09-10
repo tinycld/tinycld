@@ -48,12 +48,12 @@ func RegisterJSVMBinder(b JSVMBinder) {
 	binders = append(binders, b)
 }
 
-// buildJsvmOnInit returns the jsvm.Config.OnInit callback. It runs every
+// BuildJsvmOnInit returns the jsvm.Config.OnInit callback. It runs every
 // registered binder against the VM. A binder error is fatal for that VM — we
 // panic, matching jsvm's own MustRegister failure mode, because a VM missing a
 // core binding would surface as opaque "undefined is not a function" errors in
 // hook code rather than a clear boot failure.
-func buildJsvmOnInit(app *pocketbase.PocketBase) func(vm *sobek.Runtime) {
+func BuildJsvmOnInit(app *pocketbase.PocketBase) func(vm *sobek.Runtime) {
 	return func(vm *sobek.Runtime) {
 		bindersMu.RLock()
 		defer bindersMu.RUnlock()

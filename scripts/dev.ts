@@ -594,7 +594,6 @@ const LEGACY_APP_SEGMENTS = [
     'accept-invite',
     'reset-password',
     'connect',
-    'pick-org',
     'setup',
     'settings',
     'help',

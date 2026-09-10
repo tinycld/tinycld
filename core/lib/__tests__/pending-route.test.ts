@@ -1,4 +1,4 @@
-import { CONNECT_HREF, PICK_ORG_HREF } from '@tinycld/core/lib/org-routes'
+import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import {
     clearPendingRoute,
     setPendingRoute,
@@ -39,13 +39,7 @@ describe('pending-route', () => {
 
     // Landing routes: restoring these just re-enters the redirect that the
     // no-pending fallback already performs.
-    it.each([
-        '/',
-        '/a',
-        CONNECT_HREF,
-        PICK_ORG_HREF,
-        '/p/demo',
-    ])('ignores the landing/pre-auth route %s', href => {
+    it.each(['/', '/a', CONNECT_HREF, '/p/demo'])('ignores the landing/pre-auth route %s', href => {
         setPendingRoute(href)
         expect(takePendingRoute()).toBeNull()
     })

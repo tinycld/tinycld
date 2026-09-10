@@ -1,6 +1,9 @@
 package coreserver
 
-import "tinycld.org/core/pkgbuild"
+import (
+	"tinycld.org/core/installjob"
+	"tinycld.org/core/pkgbuild"
+)
 
 // This file is the coreserver ⇄ pkgbuild seam, and the extraction's audit
 // trail: every alias/delegate below exists because a coreserver host tail
@@ -147,10 +150,10 @@ func stageRelease(appDir string) (string, error) { return pkgbuild.StageRelease(
 
 func checkGoBuildPrereqs() error { return pkgbuild.CheckBuildPrereqs() }
 
-// installJobSink adapts an *installJob onto pkgbuild's ProgressSink: milestones
+// installJobSink adapts an *installjob.Job onto pkgbuild's ProgressSink: milestones
 // go through emitProgress (SSE + durable log line), detail lines through
 // jobLogf. A nil job degrades exactly like the underlying helpers do.
-type installJobSink struct{ job *installJob }
+type installJobSink struct{ job *installjob.Job }
 
 var _ pkgbuild.ProgressSink = installJobSink{}
 

@@ -27,10 +27,11 @@ export interface PackageManifest {
     seed?: { script: string }
     tests?: { directory: string }
     build?: { script: string }
-    // mailListeners: this package serves mail protocols, so the hosting
-    // ROUTER creates per-org mail sockets for orgs whose set includes it; the
-    // package's single Register discovers them via coreserver's TenantContext
-    // (host mode binds its own ports instead).
+    // mailListeners: this package serves mail protocols. A self-hosted
+    // deployment binds its own ports; where the process is embedded in a
+    // supervisor that owns the public ports, the supervisor injects pre-bound
+    // sockets and Register discovers them through core's embedded-context
+    // seam. Keep in step with core/lib/packages/types.ts.
     server?: { package: string; module: string; mailListeners?: boolean }
     // Go payload package (dir relative to the member root, e.g. 'server/api')
     // holding the exported HTTP request/response structs. The generator emits
@@ -38,9 +39,9 @@ export interface PackageManifest {
     // TS imports the types as @tinycld/app-generated/<slug>-api.
     payloads?: { package: string }
     // Protocol capabilities. Core serves these; a package contributes only the
-    // config, so a hosting tenant (which links no feature Go) still gets the
-    // protocol. The host materializes these blocks into the tenant's runtime
-    // config — see hosting's controlplane/capabilities.go.
+    // config, so a deployment that links no feature Go still gets the protocol
+    // — the supervisor materializes these blocks into the runtime config dir
+    // and core reads them there. Keep in step with core/lib/packages/types.ts.
     carddav?: {
         collection: string
         listFilter: string

@@ -69,7 +69,7 @@ the package does, passing a config for its own collection:
 
 | Package | What |
 |---|---|
-| `tinycld.org/core/carddav` | CardDAV/RFC-6352 protocol server + vCard codec for any collection. `Register(app, []Source)` mounts `/carddav` on serve (single-tenant); `HandlerFor(app, []Source)` returns a standalone `http.Handler` for one org (the hosting host). A `Source` is the record↔vCard field map. |
+| `tinycld.org/core/carddav` | CardDAV/RFC-6352 protocol server + vCard codec for any collection. `Register(app, []Source)` mounts `/carddav` on serve; `HandlerFor(app, []Source)` returns a standalone `http.Handler` for a caller that mounts it itself. A `Source` is the record↔vCard field map. |
 | `tinycld.org/core/caldav` | CalDAV/RFC-4791 protocol server + iCalendar codec over a calendars+events collection pair. Same `Register` / `HandlerFor` split. A `Source` carries the two collection names, the field maps, `Defaults` for schema-required fields iCalendar may omit, and an optional `OnError` reporter. Authorization is NOT a config field: core evaluates the collections' own PocketBase rules via `app.CanAccessRecord`. Exposes four TS hook points (below). |
 | `tinycld.org/core/fts` | SQLite FTS5 index sync + search for any collection. `Register(app, []Config)` binds index-sync record hooks + a `GET /api/{slug}/search` route; `Search(app, cfg, userID, opts)` runs an owner-scoped query. The FTS5 virtual table is created by the package's pb-migration. |
 | `tinycld.org/core/audit` | `RegisterCollection(app, name, *CollectionConfig)` — binds create/update/delete audit hooks writing to `audit_logs`, with field diffs, delete snapshots, redaction, and a customizable label extractor. |
@@ -78,9 +78,9 @@ the package does, passing a config for its own collection:
 These are **libraries, not boot-time wiring**: a package contributes the config
 (a `carddav.Source`, an `fts.Config`, an audit label extractor) from its own Go so
 there is exactly one copy of the heavy protocol/index code, shared by every
-consumer — the single-tenant app (via each package's `Register`) and the hosting
-host (which imports `carddav.HandlerFor` directly to serve tenants, which link
-no feature package of their own). See `contacts/server/register.go` for the
+consumer. The app wires them through each package's `Register`; `HandlerFor` is
+there for a caller that serves the protocol for a deployment that links no
+feature package of its own. See `contacts/server/register.go` for the
 reference: it builds a `carddav.Source` + `fts.Config` and calls these.
 
 Go server hooks use SDK methods that **bypass PocketBase API rules** — they
@@ -226,11 +226,11 @@ move (a client relocating an event PUTs it to the new calendar and DELETEs the
 old copy, which the write and delete points already see). `filterList` batches a
 whole calendar's UIDs. See `calendar/help/caldav-hooks.md`.
 
-> **Both are single-tenant only for now.** `serve-org` sets neither `OnInit` nor
-> `OnLoaderInit`, so a tenant's VMs carry no bindings and package TS cannot
+> **Both need the app's own JSVM wiring.** A composition that sets neither
+> `OnInit` nor `OnLoaderInit` gets VMs with no bindings, and package TS cannot
 > register a handler there. Everything else — including every access check —
-> works identically in a tenant, because authorization is a PB rule that travels
-> in the schema, not a Go closure.
+> still works, because authorization is a PB rule that travels in the schema,
+> not a Go closure.
 
 ---
 

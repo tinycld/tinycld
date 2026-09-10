@@ -44,9 +44,9 @@ func newAppUpdateTestApp(t *testing.T) *tests.TestApp {
 	// exercise production wiring: the manifest decision, the bad-bundle skip,
 	// and serveBuildFile's traversal guards. Only the two composition-specific
 	// seams are substituted — and `bundles` is the genuine host source.
-	registerAppUpdateEndpoints(app, appUpdateSources{
-		bundles:    currentBuildBundles,
-		nativeRoot: func(string) string { return t.TempDir() },
+	RegisterAppUpdateEndpointsWith(app, AppUpdateSources{
+		Bundles:    currentBuildBundles,
+		NativeRoot: func(string) string { return t.TempDir() },
 	})
 	return app
 }

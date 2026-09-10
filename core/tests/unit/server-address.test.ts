@@ -135,9 +135,10 @@ describe('server-address', () => {
     })
 
     describe('probeServer', () => {
-        // The apex's real response, captured from the router: it serves the
-        // org-finder page with HTTP 200 for EVERY path, /api/* included.
-        const APEX_HTML = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">'
+        // A host that answers every path with an HTML page — a reverse proxy, a
+        // marketing site, or a front-end that fronts something else entirely.
+        // Captured from a real deployment; note the HTTP 200 on /api/*.
+        const HTML_BODY = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">'
 
         function mockResponse(init: {
             ok?: boolean
@@ -175,33 +176,35 @@ describe('server-address', () => {
             await expect(probeServer('https://pb.example.com')).resolves.toBeUndefined()
         })
 
-        // The regression this whole change exists for: a status-only check
-        // admitted the apex, and the app then rendered a sign-in panel against
-        // a host with no PocketBase behind it.
-        it('rejects the hosting apex despite its HTTP 200', async () => {
+        // The regression this guards: a status-only check admitted a host that
+        // answers 200 with HTML, and the app then rendered a sign-in panel
+        // against something with no PocketBase behind it.
+        it('rejects a host that answers HTML instead of JSON', async () => {
             vi.stubGlobal(
                 'fetch',
                 vi
                     .fn()
                     .mockResolvedValue(
-                        mockResponse({ contentType: 'text/html; charset=utf-8', body: APEX_HTML })
+                        mockResponse({ contentType: 'text/html; charset=utf-8', body: HTML_BODY })
                     )
             )
             const { probeServer } = await importFresh()
-            const { ApexServerError } = await import('@tinycld/core/lib/apex')
-            await expect(probeServer('https://tinycld.org')).rejects.toBeInstanceOf(ApexServerError)
+            await expect(probeServer('https://example.com')).rejects.toThrow(
+                'did not answer like a TinyCld server'
+            )
         })
 
-        it('detects an apex that serves HTML without an html content type', async () => {
+        it('rejects a host that answers HTML without an html content type', async () => {
             vi.stubGlobal(
                 'fetch',
                 vi
                     .fn()
-                    .mockResolvedValue(mockResponse({ contentType: 'text/plain', body: APEX_HTML }))
+                    .mockResolvedValue(mockResponse({ contentType: 'text/plain', body: HTML_BODY }))
             )
             const { probeServer } = await importFresh()
-            const { ApexServerError } = await import('@tinycld/core/lib/apex')
-            await expect(probeServer('https://tinycld.org')).rejects.toBeInstanceOf(ApexServerError)
+            await expect(probeServer('https://example.com')).rejects.toThrow(
+                'did not answer like a TinyCld server'
+            )
         })
 
         it('rejects JSON that is not org-info shaped', async () => {

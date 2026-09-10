@@ -10,6 +10,13 @@ import { defineConfig, devices } from '@playwright/test'
 // through the node_modules symlink, so @playwright/test resolves against the
 // app shell's install.
 const PORT = Number(process.env.E2E_PORT ?? 7200)
+// A SECOND, independent deployment on its own port. The saved-server switcher
+// is the one feature whose interesting states need two servers — a second row
+// in the list, the active one identified among several, and a switch that
+// really lands elsewhere — and serverKeyFor normalizes an address to
+// scheme+host+port, so two localhost ports are two distinct servers exactly as
+// two self-hosted boxes would be. See tests/e2e/server-switcher.spec.ts.
+const SECOND_PORT = Number(process.env.E2E_PORT_2 ?? 7201)
 // Outbound mail is gated to LogSender during e2e (the PB --dev flag flips
 // delivery off). Pointing TINYCLD_EMAIL_LOG at the same tmp/emails.log file
 // the globalSetup truncates lets tests assert on emails without scraping
@@ -81,36 +88,63 @@ export default defineConfig({
         screenshot: 'only-on-failure',
         video: 'retain-on-failure',
     },
-    webServer: {
-        command: 'pnpm run e2e:serve',
-        cwd: import.meta.dirname,
-        // e2e:serve resets the DB, exports + promotes the web bundle, then
-        // serves it (and /api/*) off one PocketBase listener on PORT. The
-        // health gate only goes green AFTER the bundle is fully built and
-        // promoted on disk, so tests never race a cold bundle.
-        url: `http://localhost:${PORT}/api/health`,
-        reuseExistingServer: !process.env.CI,
-        timeout: 240_000,
-        // Inherits the launching shell (process.env is the default), but
-        // we explicitly export the email log path so PB (spawned by dev.ts)
-        // writes JSONL records there for tests to assert on. Filter out
-        // undefined values from process.env to satisfy Playwright's strict
-        // `{[key: string]: string}` env type.
-        env: Object.fromEntries(
-            Object.entries(process.env)
-                .filter(([, v]) => v !== undefined)
-                .map(([k, v]) => [k, v as string])
-                .concat([
-                    ['TINYCLD_EMAIL_LOG', EMAIL_LOG_PATH],
-                    // Shrink the @tinycld/text edit-event debounce window
-                    // from 60s to 1s for e2e so the Activity tab populates
-                    // within a single test budget. Production leaves this
-                    // unset and runs at the default. Read by the Go side
-                    // in text/server/edit_event_buffer.go:configureWindowFromEnv.
-                    ['TINYCLD_EDIT_EVENT_WINDOW_MS', '1000'],
-                ])
-        ),
-    },
+    webServer: [
+        {
+            command: 'pnpm run e2e:serve',
+            cwd: import.meta.dirname,
+            // e2e:serve clears the data dir, exports + promotes the web bundle,
+            // then serves it (and /api/*) off one PocketBase listener on PORT.
+            // The health gate only goes green AFTER the bundle is fully built
+            // and promoted on disk, so tests never race a cold bundle. Fixtures
+            // are seeded by globalSetup once this is up.
+            url: `http://localhost:${PORT}/api/health`,
+            reuseExistingServer: !process.env.CI,
+            timeout: 240_000,
+            // Inherits the launching shell (process.env is the default), but
+            // we explicitly export the email log path so PB (spawned by dev.ts)
+            // writes JSONL records there for tests to assert on. Filter out
+            // undefined values from process.env to satisfy Playwright's strict
+            // `{[key: string]: string}` env type.
+            env: Object.fromEntries(
+                Object.entries(process.env)
+                    .filter(([, v]) => v !== undefined)
+                    .map(([k, v]) => [k, v as string])
+                    .concat([
+                        ['TINYCLD_EMAIL_LOG', EMAIL_LOG_PATH],
+                        // Shrink the @tinycld/text edit-event debounce window
+                        // from 60s to 1s for e2e so the Activity tab populates
+                        // within a single test budget. Production leaves this
+                        // unset and runs at the default. Read by the Go side
+                        // in text/server/edit_event_buffer.go:configureWindowFromEnv.
+                        ['TINYCLD_EDIT_EVENT_WINDOW_MS', '1000'],
+                    ])
+            ),
+        },
+        // The second deployment: its own data dir, its own releases dir, its
+        // own PocketBase. Both origins serve the SAME app — only the origin
+        // differs — which is exactly what the switcher spec needs.
+        //
+        // Playwright starts every webServer entry CONCURRENTLY, so this one
+        // must not run `expo export` itself — the export CLEANS dist/ before
+        // writing it, so two racing exports leave the loser with a half-deleted
+        // tree. --mirror-releases-from waits for the first instance's `current`
+        // symlink (written last by promoteRelease) and then COPIES its promoted
+        // release, which is immutable and complete, rather than touching dist/.
+        {
+            command: 'pnpm run e2e:serve:second',
+            cwd: import.meta.dirname,
+            url: `http://localhost:${SECOND_PORT}/api/health`,
+            reuseExistingServer: !process.env.CI,
+            // The mirror waits on the first instance, so this one is idle for
+            // however long a cold export takes before it does any work of its
+            // own. Give it the export's budget on top of its own.
+            timeout: 480_000,
+            // Playwright swallows webServer stdout by default; without this a
+            // startup failure here surfaces only as ERR_CONNECTION_REFUSED in
+            // every test, with no reason attached.
+            stdout: 'pipe',
+        },
+    ],
     // Absolute path: per-package configs spread this config, and Playwright
     // resolves a relative globalSetup against the INHERITING config's dir —
     // so a relative './tests/...' would break for contacts/etc. Pin it here.

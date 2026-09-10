@@ -55,14 +55,15 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create-owner <email>",
-		Short: "Create the org's first operator (superuser + owner account), then exit",
-		Long: "Mints the two identities a hosted org needs to be usable: a PocketBase " +
+		Short: "Create this deployment's first operator (superuser + owner account), then exit",
+		Long: "Mints the two identities a deployment needs to be usable: a PocketBase " +
 			"_superusers record (the /_/ admin) and a `users` record with role=owner " +
-			"(the app login). This is what the /setup wizard creates " +
-			"on a single-tenant deployment; a hosted org has no wizard, so its router runs " +
-			"this instead. Pair with PB's --dir flag pointing at the org's pb_data. " +
-			"Without --password a random one is generated and printed. Re-running for an " +
-			"existing email is a no-op.",
+			"(the app login). The /setup wizard creates these on first run; a " +
+			"deployment provisioned WITHOUT the wizard — a scripted install, a restored " +
+			"backup, an automated provisioner — runs this instead, or it would serve " +
+			"correctly with nobody able to log in. Pair with PB's --dir flag pointing at " +
+			"the data directory. Without --password a random one is generated and " +
+			"printed. Re-running for an existing email is a no-op.",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {

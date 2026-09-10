@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/installjob"
 )
 
 // SyncResult records what a migration sync did.
@@ -27,7 +28,7 @@ type SyncResult struct {
 // which are pending (UP, applied by the new binary on its post-swap boot). When a
 // schema-state bug appears post-upgrade, this is the line that says what the
 // rebuild changed about the schema.
-func logSyncResult(job *installJob, res SyncResult) {
+func logSyncResult(job *installjob.Job, res SyncResult) {
 	// Surface skipped (unregistered) DOWN candidates regardless of the rest: for an
 	// uninstall these are the dropped package's migrations whose Down never ran, so
 	// its tables/data persist — the cause of "I uninstalled it but the tables are

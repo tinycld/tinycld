@@ -2,13 +2,12 @@ package coreserver
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/installjob"
 )
 
 // ---------- revert handler ----------
@@ -31,35 +30,18 @@ func handleRevert(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		return re.BadRequestError("Invalid buildId", nil)
 	}
 
-	installMu.Lock()
-	if currentJob != nil {
-		info := map[string]any{
-			"jobId":  currentJob.ID,
-			"action": currentJob.Action,
-			"slug":   currentJob.Slug,
-			"status": currentJob.Status,
-		}
-		installMu.Unlock()
+	job := installjob.New("revert", "", "")
+	job.BuildID = body.BuildID
+	if busy, ok := installjob.Claim(job); !ok {
 		return re.JSON(http.StatusConflict, map[string]any{
 			"error":      "Another operation is in progress",
-			"currentJob": info,
+			"currentJob": busy.Info(),
 		})
 	}
 
-	jobId := fmt.Sprintf("job_%d", time.Now().UnixMilli())
-	job := &installJob{
-		ID:      jobId,
-		Action:  "revert",
-		BuildID: body.BuildID,
-		Status:  "running",
-		Done:    make(chan struct{}),
-	}
-	currentJob = job
-	installMu.Unlock()
-
 	go runRevertRebuild(app, job)
 
-	return re.JSON(http.StatusAccepted, map[string]any{"jobId": jobId})
+	return re.JSON(http.StatusAccepted, map[string]any{"jobId": job.ID})
 }
 
 // ---------- delete-build handler ----------

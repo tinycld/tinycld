@@ -2,7 +2,6 @@ import { ChangeServerLink } from '@tinycld/core/components/ChangeServerLink'
 import { ReviewModeHints } from '@tinycld/core/components/connect/ReviewModeHints'
 import { requestPasswordReset } from '@tinycld/core/lib/account-password'
 import { useAuth } from '@tinycld/core/lib/auth'
-import { navigateToOrg } from '@tinycld/core/lib/org-url'
 import { takePendingRoute } from '@tinycld/core/lib/pending-route'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
@@ -95,10 +94,9 @@ function LoginForm({
             if (pending) {
                 router.replace(pending)
             } else {
-                // Nothing to return to. Single-org deployment: org identity
-                // comes from the deployment, not the user — send every
-                // signed-in user to the app root.
-                navigateToOrg()
+                // Nothing to return to: send every signed-in user to the
+                // app root.
+                router.replace('/')
             }
         }
     }

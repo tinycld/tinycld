@@ -7,6 +7,7 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/installjob"
 )
 
 // DB-backed compatibility gates. The solver itself (and the authoritative
@@ -81,7 +82,7 @@ func solveRegistryCompat(app core.App, changes map[string]string) ([]compatViola
 // solve the Versions UI runs, enforced server-side so posting straight to
 // /versions/apply cannot bypass the UI's advisory check (docs/packages.md
 // promises the server is authoritative — this is that check).
-func checkVersionChangeCompat(app core.App, changes []versionChange) error {
+func checkVersionChangeCompat(app core.App, changes []installjob.VersionChange) error {
 	proposed := make(map[string]string, len(changes))
 	for _, c := range changes {
 		proposed[c.Slug] = c.TargetVersion

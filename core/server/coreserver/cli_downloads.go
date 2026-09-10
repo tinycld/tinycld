@@ -29,33 +29,26 @@ type cliDownloadEntry struct {
 // HOST composition, serving from the activated build dir's cli-dist/ — the
 // pipeline writes the cross-compiled binaries next to the server binary, and
 // `current` points at builds/<id>/tinycld, so resolveServerDir() finds them.
-// A tenant serves its artifact's own copy via
-// RegisterTenantCliDownloadEndpoints.
+// A composition booted from a build artifact serves that artifact's own copy by
+// calling RegisterCliDownloadEndpointsWith with its own directory.
 //
-// Public like /api/app/update and /api/release (see registerCliDownloadEndpoints).
+// Public like /api/app/update and /api/release (see RegisterCliDownloadEndpointsWith).
 func RegisterCliDownloadEndpoints(app *pocketbase.PocketBase) {
-	registerCliDownloadEndpoints(app, func() string {
+	RegisterCliDownloadEndpointsWith(app, func() string {
 		return filepath.Join(resolveServerDir(), pkgbuild.CLIDistDirName)
 	})
 }
 
-// RegisterTenantCliDownloadEndpoints serves a tenant's CLI binaries from its
-// build artifact (the hosting builder stages cli-dist into the artifact).
-func RegisterTenantCliDownloadEndpoints(app core.App, artifactDir string) {
-	registerCliDownloadEndpoints(app, func() string {
-		return filepath.Join(artifactDir, pkgbuild.CLIDistDirName)
-	})
-}
-
-// registerCliDownloadEndpoints binds the shared handlers against a dist-dir
-// resolver. Takes core.App so the HTTP tests drive the real registration.
+// RegisterCliDownloadEndpointsWith binds the shared handlers against a
+// caller-supplied dist-dir resolver. Takes core.App so the HTTP tests drive the
+// real registration.
 //
 // Both routes are PUBLIC: a browser download link cannot carry PocketBase's
 // Authorization header, and the precedent is established — /api/app/update
 // serves the org's full JS bundles and /api/release its package inventory,
 // both unauthenticated. A CLI binary reveals nothing more. The OAuth grant
 // middleware exempts /api/cli/ for the same reason (see oauth.exemptPaths).
-func registerCliDownloadEndpoints(app core.App, distDir func() string) {
+func RegisterCliDownloadEndpointsWith(app core.App, distDir func() string) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		g := e.Router.Group("/api/cli")
 

@@ -1,4 +1,4 @@
-import { APP_PREFIX, CONNECT_HREF, PICK_ORG_HREF } from '@tinycld/core/lib/org-routes'
+import { APP_PREFIX, CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 
 /**
  * The route a signed-out user was trying to reach, held until they sign in.
@@ -21,7 +21,7 @@ import { APP_PREFIX, CONNECT_HREF, PICK_ORG_HREF } from '@tinycld/core/lib/org-r
 let pendingRoute: string | null = null
 
 /** Routes that are already the post-login landing, or are pre-auth plumbing. */
-const NEVER_RESTORED = new Set<string>(['/', APP_PREFIX, CONNECT_HREF, PICK_ORG_HREF, '/p/demo'])
+const NEVER_RESTORED = new Set<string>(['/', APP_PREFIX, CONNECT_HREF, '/p/demo'])
 
 /**
  * True for an href worth returning to after sign-in.

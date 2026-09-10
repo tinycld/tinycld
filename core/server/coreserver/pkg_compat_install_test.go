@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/installjob"
 )
 
 // installRegistryRow inserts a pkg_registry row at the given version so
@@ -119,7 +120,7 @@ func TestCheckVersionChangeCompat_RefusesViolatingChange(t *testing.T) {
 	registryRowWithManifest(t, app, "mail", "1.0.0",
 		`{"peerVersions":{"@tinycld/core":">=0.0.4 <0.1.0"}}`)
 
-	err := checkVersionChangeCompat(app, []versionChange{{Slug: "core", TargetVersion: "0.5.0"}})
+	err := checkVersionChangeCompat(app, []installjob.VersionChange{{Slug: "core", TargetVersion: "0.5.0"}})
 	if err == nil {
 		t.Fatal("expected the gate to refuse core 0.5.0 against mail's >=0.0.4 <0.1.0")
 	}
@@ -137,7 +138,7 @@ func TestCheckVersionChangeCompat_AllowsCompatibleChange(t *testing.T) {
 	registryRowWithManifest(t, app, "mail", "1.0.0",
 		`{"peerVersions":{"@tinycld/core":">=0.0.4 <0.1.0"}}`)
 
-	if err := checkVersionChangeCompat(app, []versionChange{{Slug: "core", TargetVersion: "0.0.9"}}); err != nil {
+	if err := checkVersionChangeCompat(app, []installjob.VersionChange{{Slug: "core", TargetVersion: "0.0.9"}}); err != nil {
 		t.Fatalf("expected core 0.0.9 to satisfy >=0.0.4 <0.1.0, got %v", err)
 	}
 }

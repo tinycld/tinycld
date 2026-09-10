@@ -15,7 +15,7 @@ import { useAuth } from '@tinycld/core/lib/auth'
 import { BundleSentinel } from '@tinycld/core/lib/bundle-sentinel'
 import { EditorSingletonProvider } from '@tinycld/core/lib/editor/warm'
 import { installFatalRollbackHandler } from '@tinycld/core/lib/install-fatal-rollback'
-import { CONNECT_HREF, PICK_ORG_HREF } from '@tinycld/core/lib/org-routes'
+import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import { usePackageProviders } from '@tinycld/core/lib/packages/provider-loader'
 import { initSentry } from '@tinycld/core/lib/sentry'
 import { useAppUpdates } from '@tinycld/core/lib/use-app-updates'
@@ -49,12 +49,11 @@ export default function Layout() {
     if (state.status === 'resolving') return <BlankScreen />
     if (state.status === 'failed') return <GateFailedScreen error={state.error} />
     if (state.status === 'unresolved') {
-        // The two routes whose whole job is to RESOLVE an address must render
-        // rather than blank-screen: /connect sets a server's, /pick-org sets an
-        // org's. Must stay in step with the gate's redirect exemptions
-        // (use-server-address-gate.ts) — a route exempt there but blanked here
-        // shows nothing at all.
-        const resolvesAddress = pathname === CONNECT_HREF || pathname === PICK_ORG_HREF
+        // /connect's whole job is to RESOLVE an address, so it must render
+        // rather than blank-screen. Must stay in step with the gate's redirect
+        // exemptions (use-server-address-gate.ts) — a route exempt there but
+        // blanked here shows nothing at all.
+        const resolvesAddress = pathname === CONNECT_HREF
         return resolvesAddress ? <ConnectSlot /> : <BlankScreen />
     }
 

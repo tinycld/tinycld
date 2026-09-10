@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/installjob"
 )
 
 // rollbackPendingMarkerPath is the breadcrumb the entrypoint's rollback path
@@ -25,7 +26,7 @@ func rollbackPendingMarkerPath() string {
 // taken (rebuild.go backupDB) while that install's pkg_install_log row was still
 // "running" — so the later finalize("success") write was discarded by the
 // restore and the row is stranded at "running" with no completed_at. There is no
-// in-process job on a fresh boot (currentJob is nil), so nothing else will ever
+// in-process job on a fresh boot (no job holds the interlock), so nothing else will ever
 // finalize it.
 //
 // This marks the stranded row "rolled_back" so the /admin status endpoint (and
@@ -38,7 +39,7 @@ func rollbackPendingMarkerPath() string {
 //   - Marker present but no "running" row → delete the marker, no-op (already
 //     reconciled, or the rollback predated any log write).
 //   - A concurrent in-flight job cannot exist on a fresh boot, but we guard on
-//     currentJob == nil anyway so a future caller can't clobber a live install.
+//     no job holds the interlock anyway, so a future caller can't clobber a live install.
 //
 // It only ever transitions running → rolled_back; it never touches success,
 // failed, or already-rolled_back rows.
@@ -52,9 +53,7 @@ func ReconcileRolledBackInstall(app core.App) {
 
 	// A fresh boot has no in-memory job. Never reconcile a row out from under a
 	// genuinely running operation (belt-and-suspenders; can't happen on boot).
-	installMu.Lock()
-	live := currentJob != nil
-	installMu.Unlock()
+	live := installjob.Running()
 	if live {
 		srvLog.Info("rollback-pending marker present but a job is in-flight; deferring reconcile")
 		return
@@ -66,7 +65,7 @@ func ReconcileRolledBackInstall(app core.App) {
 
 	// The stranded row is the single most-recent install-class row still at
 	// "running" (its finalize was discarded by the restore). There is at most one
-	// — the installer is single-flight (installMu/currentJob).
+	// — the installer is single-flight (see core/installjob).
 	rows, fErr := app.FindRecordsByFilter(
 		"pkg_install_log",
 		"status = 'running'",

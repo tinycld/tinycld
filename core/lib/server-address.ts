@@ -1,6 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Platform } from 'react-native'
-import { ApexServerError, looksLikeApexResponse } from './apex'
 import { getCoreConfigOptional, registerConfigListener } from './core-config'
 
 const STORAGE_KEY_PREFIX = 'tinycld:server:'
@@ -72,7 +71,8 @@ export function normalizeAddress(input: string): string {
 // It is polled on a timer by OfflineOverlay and the native connectivity
 // detector, so it stays the cheapest possible request and deliberately does not
 // inspect the body. Use probeServer() to ADMIT a new address — liveness is the
-// wrong question there, because a hosting apex is perfectly alive.
+// wrong question there, because a host that is not a TinyCld server at all can
+// still be perfectly alive.
 export async function probe(address: string, timeoutMs = 5000): Promise<void> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -86,15 +86,15 @@ export async function probe(address: string, timeoutMs = 5000): Promise<void> {
     }
 }
 
-// probeServer ADMITS an address: it answers "is there a TinyCld org here I can
-// sign into?", which reachability alone cannot.
+// probeServer ADMITS an address: it answers "is there a TinyCld server here I
+// can sign into?", which reachability alone cannot.
 //
 // It asks /api/org-info (unauthenticated, registered unconditionally in
-// coreserver.Setup, returns {name}) and requires a JSON object back. A
-// hosting apex answers 200 with the org-finder HTML for every path including
-// this one, so a status-only check admits it and the app then renders a sign-in
-// panel against a host with no PocketBase. Throws ApexServerError for that case
-// so the caller can offer the org picker instead of a network error.
+// coreserver.Setup, returns {name}) and requires a JSON object with a `name`
+// field back. A host that answers but is not a TinyCld server — a marketing
+// page, a reverse proxy, an unrelated service — fails that check rather than
+// admitting an address the app would then render a doomed sign-in panel
+// against.
 export async function probeServer(address: string, timeoutMs = 5000): Promise<void> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -102,16 +102,13 @@ export async function probeServer(address: string, timeoutMs = 5000): Promise<vo
     let body: string
     try {
         res = await fetch(`${address}/api/org-info`, { signal: controller.signal })
-        // Read the body before judging: the apex's HTML arrives with a 200, so
-        // status alone cannot tell the two apart.
+        // Read the body before judging: a non-server host can answer 200 with
+        // HTML, so status alone cannot tell the two apart.
         body = await res.text()
     } finally {
         clearTimeout(timer)
     }
 
-    if (looksLikeApexResponse(res.headers?.get?.('content-type') ?? '', body)) {
-        throw new ApexServerError(address)
-    }
     if (!res.ok) {
         throw new Error(`Server returned HTTP ${res.status}`)
     }

@@ -26,18 +26,16 @@ export function appHref(path: string): string {
 
 /** Pre-auth routes whose literals are referenced from more than one module. */
 export const CONNECT_HREF = appHref('connect')
-export const PICK_ORG_HREF = appHref('pick-org')
 
 /**
  * First path segments that were app routes before the move under APP_PREFIX.
  * Mirrors legacyAppSegments in core/server/coreserver/static.go and the set in
- * app/+native-intent.ts; keep the three in step.
+ * scripts/dev.ts; keep the three in step.
  */
 const LEGACY_APP_SEGMENTS = new Set([
     'accept-invite',
     'reset-password',
     'connect',
-    'pick-org',
     'setup',
     'settings',
     'help',

@@ -1,3 +1,12 @@
+//go:build !embedded
+
+// The tag: this file is the SELF-HOSTED entry point, and a build that supplies
+// its own `main` (one composed by a supervisor, which links this package for
+// its generated registrar) selects that one instead by building with -tags
+// embedded. Nothing in this repo defines the other side — deliberately: a
+// self-hoster builds the default and gets a single-org binary with no flag to
+// remember.
+
 package main
 
 import (
@@ -9,7 +18,6 @@ import (
 	"github.com/pocketbase/pocketbase"
 
 	"tinycld.org/core/coreserver"
-	"tinycld.org/core/tenantmain"
 )
 
 // defaultHTTPAddr is the loopback address tinycld serves on in dev when no
@@ -33,24 +41,6 @@ const defaultStandaloneDataDir = "./tinycld-data/pb_data"
 // generated-import dance.
 func main() {
 	coreserver.LoadEnvFile()
-
-	// Tenant mode (the dual-mode binary of DESIGN-org-package-agency D5): a
-	// hosting router spawned this binary to serve ONE org on a unix socket.
-	// The flag contract is exactly serve-org's, so a per-org build artifact is
-	// a drop-in replacement for the shared tenant binary — --org-dir is the
-	// discriminator, since no host-mode invocation uses that flag. The SAME
-	// generated registrar serves both modes (single-Register contract): a
-	// per-org build links exactly the org's package set, the artifact is the
-	// gate, and a package that must differ hosted detects it via coreserver's
-	// TenantContext (stamped before the registrar runs).
-	if coreserver.HasFlag("--org-dir") {
-		if err := tenantmain.Run(tenantmain.Options{
-			RegisterExtras: registerPackageExtensions,
-		}); err != nil {
-			log.Fatalf("tenant: %v", err)
-		}
-		return
-	}
 
 	// Embedded assets are present only in the single-binary build (the
 	// `embedassets` build tag). When absent every accessor returns nil and the
@@ -119,10 +109,10 @@ func main() {
 	// migrations dir, which not every coreserver consumer has.
 	app.RootCmd.AddCommand(coreserver.NewExportTypesCommand(app, coreserver.DefaultTypesDir(), ""))
 
-	// `create-owner` mints the first app account against an existing pb_data.
-	// The hosting router runs it on this binary when provisioning an org:
-	// a hosted tenant never binds the setup wizard's routes, so without it a
-	// new org serves correctly but has no user who can log in.
+	// `create-owner` mints the first app account against an existing pb_data —
+	// for a deployment provisioned without the setup wizard (a scripted
+	// install, a restored backup, or an automated provisioner), which would
+	// otherwise serve correctly but have no user who can log in.
 	app.RootCmd.AddCommand(coreserver.NewCreateOwnerCommand(app))
 
 	if err := app.Start(); err != nil {

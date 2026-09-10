@@ -12,9 +12,9 @@
  *   --url <url>        PocketBase URL (default: http://127.0.0.1:7100)
  *   --browse-url <url> URL the developer opens in the browser (cosmetic — it's
  *                      printed in the seed's login summary). Defaults to --url
- *                      with 127.0.0.1 → localhost. Set this when seeding happens
- *                      on a different port than the one served (e.g. the e2e
- *                      flow seeds PB on :7299 but serves on :7200).
+ *                      with 127.0.0.1 → localhost. Set this when the developer
+ *                      browses somewhere other than PB itself (e.g. a dev proxy
+ *                      on another port).
  *   --data-dir <dir>   Data directory (default: server/pb_data)
  *   --skip-build       Skip building PocketBase
  *   --keep-running     Keep server running after seeding (default: false)

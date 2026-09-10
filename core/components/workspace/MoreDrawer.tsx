@@ -1,7 +1,5 @@
-import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
-import { navigateToOrgUrl } from '@tinycld/core/lib/org-url'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useSortedPackages } from '@tinycld/core/lib/use-sorted-packages'
@@ -13,7 +11,6 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { MAX_VISIBLE_TABS } from './MobileTabBar'
 import { getIcon } from './package-icon-map'
 import { ServersDrawerSection } from './ServersDrawerSection'
-import { isCurrentOrg, useUserOrgs } from './useUserOrgs'
 
 export function MoreDrawer() {
     const isMoreOpen = useWorkspaceStore(s => s.isMoreOpen)
@@ -26,7 +23,6 @@ export function MoreDrawer() {
     const router = useRouter()
     const orgHref = useOrgHref()
     const { user, logout } = useAuth()
-    const orgs = useUserOrgs()
     const sorted = useSortedPackages()
     const textColor = railText
     const activeColor = railActive
@@ -98,46 +94,8 @@ export function MoreDrawer() {
                     </Text>
                 </Pressable>
 
-                {/* Cross-org switcher: entries come from the parent-domain
-                    cookie tenants write at login (useUserOrgs); each row is a
-                    full page load on the target org's own origin. Hidden
-                    unless the browser knows more than one org. */}
-                {orgs.length > 1 ? (
-                    <>
-                        <View
-                            className="my-2 mx-3"
-                            style={{
-                                height: StyleSheet.hairlineWidth,
-                                backgroundColor: borderColor,
-                            }}
-                        />
-                        <Text
-                            className="text-xs font-semibold uppercase opacity-50 px-4 pt-1 pb-2"
-                            style={{ color: textColor }}
-                        >
-                            Organizations
-                        </Text>
-                        {orgs.map(org => {
-                            const isActive = isCurrentOrg(org)
-                            const color = isActive ? activeColor : textColor
-                            return (
-                                <Pressable
-                                    key={org.id}
-                                    className="flex-row items-center gap-3.5 px-4 py-3.5 rounded-lg"
-                                    onPress={() => handleNav(() => navigateToOrgUrl(org.url))}
-                                >
-                                    <OrgLogo org={org} size={20} />
-                                    <Text className="text-base font-medium" style={{ color }}>
-                                        {org.name}
-                                    </Text>
-                                </Pressable>
-                            )
-                        })}
-                    </>
-                ) : null}
-
-                {/* The native counterpart to the org switcher above: on a device
-                    useUserOrgs() is always empty, so this fills the same slot. */}
+                {/* The saved-server switcher — the phone counterpart to
+                    UserMenu's ServersSection. */}
                 <ServersDrawerSection onNavigate={handleNav} />
 
                 <View

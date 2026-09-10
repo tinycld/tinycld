@@ -257,10 +257,10 @@ signals it ran.
 ## Users & Roles
 - **Single-org deployment: the process IS one org.** There is no `orgs` collection and no `user_org` junction — a user's role lives directly on their `users` auth record. (The hosting router hosts many deployments, each its own process and DB; none of that is visible from inside the app.)
 - Roles are `owner` / `admin` / `member` / `guest` (`users.role`). Read the current user's role with `useCurrentRole()` from `@tinycld/core/lib/use-current-role` — it returns `{ role, isOwner, isAdmin, isMember, isGuest, canManageOrg, canManageMembers }` (`isAdmin` includes owners).
-- `useOrgInfo()`, `useOrgSlug()`, `useCurrentUserOrg()` and `navigateToOrg()` survive only as shims so old call sites compile — `useOrgInfo()` returns `org: null` (org branding has no source yet) and `useCurrentUserOrg()?.id` is just the current user's id. Don't reach for them in new code: use `useAuth()` for the user and `useCurrentRole()` for the role.
+- Use `useAuth()` for the current user and `useCurrentRole()` for their role. `useOrgInfo()` is the one org-named survivor and returns deployment BRANDING only (`{ org }` — the name behind `/api/org-info`); it carries no id or slug, because there is no server-side org to identify.
 
 ## Routing & Navigation
-- **Routes are bare** — the org never appears in the URL: `/contacts`, `/mail`, `/settings/profile`. Org identity comes from the deployment (subdomain), which the hosting router resolves before a request reaches this app.
+- **Routes are bare** — no org segment ever appears in the URL: `/contacts`, `/mail`, `/settings/profile`. The deployment IS the org, so there is nothing to put there.
 - Use `useOrgHref()` from `@tinycld/core/lib/org-routes` for navigation. Paths are app-root-relative; the hook is retained (rather than raw strings) so the ~200 call sites keep one shape:
   ```tsx
   const orgHref = useOrgHref()
