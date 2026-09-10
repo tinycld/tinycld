@@ -1,9 +1,7 @@
 import { ConnectIllustration } from '@tinycld/core/components/connect/ConnectIllustration'
 import { PreAuthScreen } from '@tinycld/core/components/connect/PreAuthScreen'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
-import { ApexServerError } from '@tinycld/core/lib/apex'
 import { getCoreConfigOptional } from '@tinycld/core/lib/core-config'
-import { PICK_ORG_HREF } from '@tinycld/core/lib/org-routes'
 import { isReloadAvailable, ReloadUnavailableError } from '@tinycld/core/lib/reload-js-context'
 import { normalizeAddress, probeServer, setResolvedAddress } from '@tinycld/core/lib/server-address'
 import { setActiveServer } from '@tinycld/core/lib/servers'
@@ -92,22 +90,10 @@ export default function Connect() {
     })
 
     async function connectTo(addr: string) {
-        // probeServer, not probe: a hosting apex is alive and answers 200, so a
-        // liveness check admits it and the app then renders a sign-in panel
-        // against a host with no PocketBase. ApexServerError means "this address
-        // hosts orgs" — the recovery is to ask which one, not to report an error.
-        try {
-            await probeServer(addr)
-        } catch (err) {
-            if (err instanceof ApexServerError) {
-                router.replace({
-                    pathname: PICK_ORG_HREF,
-                    params: { apex: err.apexOrigin },
-                })
-                return
-            }
-            throw err
-        }
+        // probeServer, not probe: a host that is not a TinyCld server can still
+        // be alive and answer 200, so a liveness check would admit it and the
+        // app would then render a sign-in panel it can never complete.
+        await probeServer(addr)
 
         if (isAddMode) {
             // Adding a second server: persist it, then restart the JS context so

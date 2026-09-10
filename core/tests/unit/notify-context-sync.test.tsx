@@ -2,12 +2,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The whole point of this file is to drive the REAL mount path. bell.test.ts
-// hand-sets the notify context with a fabricated orgId, so it passes whether or
-// not anything ever sets that context in the running app — and nothing did:
-// NotifyContextSync gated on an orgId that useOrgInfo() has returned as '' ever
-// since the single-org migration, so the context was never set, every bell
-// dispatch no-opped, and each one fired captureException('notify.bell.no_context').
-// Takeout completion and failure notifications silently went nowhere.
+// hand-sets the notify context with a fabricated org id, so it passes whether
+// or not anything ever sets that context in the running app — and once nothing
+// did: NotifyContextSync gated on an orgId that useOrgInfo() returned as ''
+// ever since the single-org migration, so the context was never set, every
+// bell dispatch no-opped, and each one fired
+// captureException('notify.bell.no_context'). Takeout completion and failure
+// notifications silently went nowhere. That field no longer exists at all.
 //
 // So: mock the hooks the component actually consumes, mount it, and assert on
 // the context it produces.
@@ -26,8 +27,8 @@ describe('NotifyContextSync', () => {
     beforeEach(() => {
         clearNotifyContext()
         vi.clearAllMocks()
-        // What the shipped useOrgInfo() actually returns post-migration.
-        useOrgInfo.mockReturnValue({ orgSlug: '', orgId: '', org: null })
+        // What the shipped useOrgInfo() actually returns.
+        useOrgInfo.mockReturnValue({ org: null })
     })
 
     it('publishes the notify context for a signed-in user', () => {

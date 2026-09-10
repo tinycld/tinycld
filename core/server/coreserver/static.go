@@ -165,7 +165,6 @@ var legacyAppSegments = map[string]bool{
 	"accept-invite":  true,
 	"reset-password": true,
 	"connect":        true,
-	"pick-org":       true,
 	"setup":          true,
 	// Workspace areas a user may have bookmarked.
 	"settings": true,

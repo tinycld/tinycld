@@ -6,7 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 // Mock the org lookup so the test never touches the real pbtsdb stack. The
 // point of these tests is *whether* DocumentTitle calls into pbtsdb at all,
 // not what the lookup returns — so a spy is exactly the right granularity.
-const useOrgInfo = vi.fn(() => ({ orgSlug: 'acme', orgId: 'o1', org: { id: 'o1', name: 'Acme' } }))
+const useOrgInfo = vi.fn(() => ({ org: { id: 'o1', name: 'Acme' } }))
 vi.mock('../../lib/use-org-info', () => ({ useOrgInfo: () => useOrgInfo() }))
 
 import { DocumentTitle } from '../../components/DocumentTitle'

@@ -2,9 +2,9 @@ import { useSafeAreaPadding } from '@tinycld/core/lib/use-safe-area'
 import { ScrollView, View } from 'react-native'
 
 // The shared scaffold for the full-bleed screens shown before a workspace
-// exists: /connect (pick a server) and /pick-org (pick an organization).
+// exists — /connect (pick a server).
 //
-// It exists for the safe area. Both screens previously used
+// It exists for the safe area. Those screens previously used
 // `<SafeAreaView edges={['top', 'bottom']}>`, which handles the notch in
 // PORTRAIT and does nothing in landscape — where the sensor housing sits on
 // one side. Their content ran under the notch, and which side broke depended

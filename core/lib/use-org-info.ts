@@ -1,22 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
 import { getResolvedAddress } from './server-address'
 
-// Single-org deployment: the process IS one org, identified by the deployment
-// (subdomain), not by a row in an `orgs` collection. Branding comes from the
-// server's unauthenticated /api/org-info, which reads Settings().Meta.AppName —
-// the setup wizard's app name in a standalone deployment, or the org's
-// display_name in a router-managed tenant (materialized into .runtime/app.json
-// and adopted at tenant boot).
+// Deployment branding: the server's unauthenticated /api/org-info returns
+// Settings().Meta.AppName — the name set in the setup wizard, or one injected
+// by an embedding supervisor through the runtime config.
 //
-// The `{ orgSlug, orgId, org }` shape is preserved for the call sites that
-// still destructure it. There is no server-side org id or slug in single-org,
-// so both stay '' and `org.id` is a stable synthetic key (used only as an
-// avatar color key).
+// `org.id` is a stable synthetic key, not a server-side id; it is used only as
+// an avatar color key.
 
 export interface OrgBranding {
     id: string
     name: string
-    slug: string
 }
 
 // Exported for unit testing; prefer useOrgInfo in components.
@@ -33,9 +27,9 @@ export async function fetchOrgInfo(): Promise<{ name: string }> {
 }
 
 export function useOrgInfo() {
-    // Branding changes only when an operator renames the deployment (or the
-    // router re-materializes an org), so cache it for the session; a transient
-    // fetch blip renders the same fallbacks as "no branding".
+    // Branding changes only when an operator renames the deployment, so cache
+    // it for the session; a transient fetch blip renders the same fallbacks as
+    // "no branding".
     const { data } = useQuery({
         queryKey: ['org-info'],
         queryFn: fetchOrgInfo,
@@ -44,6 +38,6 @@ export function useOrgInfo() {
     })
 
     const name = data?.name?.trim() ?? ''
-    const org: OrgBranding | null = name ? { id: 'org', name, slug: '' } : null
-    return { orgSlug: '', orgId: '', org }
+    const org: OrgBranding | null = name ? { id: 'org', name } : null
+    return { org }
 }

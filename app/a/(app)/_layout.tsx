@@ -18,21 +18,12 @@ import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useExpoPushRegistration } from '@tinycld/core/lib/use-expo-push-registration'
 import { useNativeNotificationHandler } from '@tinycld/core/lib/use-native-notification-handler'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
-import { OrgSlugProvider } from '@tinycld/core/lib/use-org-slug'
 import { usePathname, useUnstableGlobalHref } from 'expo-router'
 import { useEffect } from 'react'
 
 export default function OrgLayout() {
     trace('OrgLayout mount')
 
-    return (
-        <OrgSlugProvider>
-            <OrgLayoutInner />
-        </OrgSlugProvider>
-    )
-}
-
-function OrgLayoutInner() {
     const auth = useAuth({ throwIfAnon: false })
     const isReady = !auth.isInitializing && auth.isLoggedIn
     const { org } = useOrgInfo()

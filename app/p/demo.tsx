@@ -1,9 +1,9 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
-import { navigateToOrg } from '@tinycld/core/lib/org-url'
 import { DEMO_SERVER, setResolvedAddress } from '@tinycld/core/lib/server-address'
 import { setActiveServer } from '@tinycld/core/lib/servers'
 import { useAuthStore } from '@tinycld/core/lib/stores/auth-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { router } from 'expo-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, Pressable, Text, View } from 'react-native'
 
@@ -44,7 +44,7 @@ function useStartDemo() {
             setState({ status: 'error', message: error })
             return
         }
-        navigateToOrg('demo')
+        router.push('/')
     }, [startDemo])
 
     // Kick off in an effect (not during render): starting the demo fires a

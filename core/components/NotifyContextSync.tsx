@@ -7,11 +7,12 @@ import { useEffect } from 'react'
  * callers (e.g. notify.emit) can reach it. Mounted once inside the app layout.
  *
  * This used to also require an orgId, which is what made every bell
- * notification dead app-wide: single-org's useOrgInfo() returns orgId as '',
- * so the guard always bailed, the context was never set, and each dispatch
- * no-opped while firing captureException('notify.bell.no_context') — a Sentry
- * report on a code path that could never work. The org is implicit now; the
- * user is the only identifier a notification needs.
+ * notification dead app-wide: that field was permanently '', so the guard
+ * always bailed, the context was never set, and each dispatch no-opped while
+ * firing captureException('notify.bell.no_context') — a Sentry report on a
+ * code path that could never work. The field is gone entirely now; the user is
+ * the only identifier a notification needs. notify-context-sync.test.tsx is
+ * the regression guard.
  */
 export function NotifyContextSync() {
     const auth = useAuth({ throwIfAnon: false })

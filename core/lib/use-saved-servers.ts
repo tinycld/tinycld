@@ -2,7 +2,7 @@ import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import { router } from 'expo-router'
 import { useCallback, useEffect, useState } from 'react'
 import { captureException } from './errors'
-import { navigateToOrgUrl } from './org-url'
+import { navigateToOrigin } from './navigate-to-origin'
 import { isReloadAvailable, ReloadUnavailableError } from './reload-js-context'
 import { forgetServer } from './remove-server'
 import { getResolvedAddress } from './server-address'
@@ -108,10 +108,9 @@ export function useSavedServers(): SavedServersState {
         // Web cannot switch in place: localStorage is origin-partitioned, so the
         // session for another origin does not exist in this document and no
         // amount of repointing `pb` would produce one. The only real move is to
-        // navigate there and let that origin decide who you are. This mirrors
-        // what the cookie org switcher already does (navigateToOrgUrl).
+        // navigate there and let that origin decide who you are.
         if (!canSwitchInPlace()) {
-            navigateToOrgUrl(origin)
+            navigateToOrigin(origin)
             return
         }
 

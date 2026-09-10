@@ -1,5 +1,5 @@
 import { log } from '@tinycld/core/lib/logger'
-import { CONNECT_HREF, PICK_ORG_HREF } from '@tinycld/core/lib/org-routes'
+import { CONNECT_HREF } from '@tinycld/core/lib/org-routes'
 import {
     DEMO_SERVER,
     getResolvedAddress,
@@ -94,14 +94,10 @@ export function useServerAddressGate(pathname: string): GateState {
         if (state.status !== 'unresolved') return
         // Routes that resolve the server address themselves must be exempt from the
         // →/connect redirect, or they get bounced before they can set it. /connect
-        // is the server picker; /pick-org is the org picker a hosting apex sends
-        // users to (it resolves an org's address the same way /connect resolves a
-        // server's, so bouncing it would strand the user in a loop between the
-        // two); /p/demo pins the public demo server (see app/p/demo.tsx), so a
-        // universal-link demo open on a fresh install (no cached address) must
-        // reach it instead of being sent to /connect.
-        if (pathname === CONNECT_HREF || pathname === PICK_ORG_HREF || pathname === '/p/demo')
-            return
+        // is the server picker; /p/demo pins the public demo server (see
+        // app/p/demo.tsx), so a universal-link demo open on a fresh install (no
+        // cached address) must reach it instead of being sent to /connect.
+        if (pathname === CONNECT_HREF || pathname === '/p/demo') return
         const backTo = encodeURIComponent(pathname || '/')
         router.replace(`${CONNECT_HREF}?backTo=${backTo}`)
     }, [state.status, pathname])

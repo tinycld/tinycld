@@ -4,7 +4,6 @@ import {
     appHref,
     CONNECT_HREF,
     normalizeLegacyAppPath,
-    PICK_ORG_HREF,
     useOrgHref,
 } from '@tinycld/core/lib/org-routes'
 import { describe, expect, it } from 'vitest'
@@ -20,9 +19,8 @@ describe('appHref', () => {
         expect(appHref('')).toBe('/a')
     })
 
-    it('agrees with the exported pre-auth constants', () => {
+    it('agrees with the exported pre-auth constant', () => {
         expect(CONNECT_HREF).toBe(`${APP_PREFIX}/connect`)
-        expect(PICK_ORG_HREF).toBe(`${APP_PREFIX}/pick-org`)
     })
 })
 
