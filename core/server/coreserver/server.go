@@ -24,6 +24,7 @@ import (
 	"tinycld.org/core/realtime"
 	"tinycld.org/core/search"
 	"tinycld.org/core/sharelink"
+	"tinycld.org/core/webhookin"
 )
 
 // srvLog is the package-wide structured logger for coreserver. Named srvLog
@@ -315,6 +316,7 @@ func registerSharedCore(app *pocketbase.PocketBase) {
 	RegisterAccountDelete(app)
 	RegisterAdminOffboard(app)
 	offboard.Register(app)
+	webhookin.RegisterRoutes(app)
 	RegisterUsersFieldGuard(app)
 	RegisterLastOwnerGuard(app)
 	RegisterUsersDemoAuditHook(app)

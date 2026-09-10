@@ -45,8 +45,9 @@ type Source struct {
 	// e.g. "X-Hub-Signature-256". Defaults to X-TinyCld-Signature-256.
 	SignatureHeader string
 
-	// EventHeader names the header carrying the event type, e.g.
-	// "X-GitHub-Event". Optional; Delivery.Event is blank without it.
+	// EventHeader names the header carrying the event type, e.g. an
+	// "X-Provider-Event" style header. Optional; Delivery.Event is blank
+	// without it.
 	EventHeader string
 
 	// DeliveryID extracts the provider's unique per-delivery id, the replay

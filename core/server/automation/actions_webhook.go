@@ -24,7 +24,7 @@ import (
 // key to meter on.
 const maxWebhookPostsPerRulePerHour = 60
 
-// webhookPostTimeout bounds one delivery. Receivers like Zapier acknowledge
+// webhookPostTimeout bounds one delivery. Receivers typically acknowledge
 // quickly; a slow one must not hold an action slot open.
 const webhookPostTimeout = 10 * time.Second
 
