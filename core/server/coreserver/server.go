@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -67,6 +68,13 @@ type Options struct {
 	HooksPoolSize int
 	MigrationsDir string
 	Automigrate   bool
+
+	// PublicFS / MigrationsFS / HooksFS supply embedded assets for
+	// single-binary builds. Each is nil for path-based deployments, which keeps
+	// the container and hosting paths on their existing behavior.
+	PublicFS     fs.FS
+	MigrationsFS fs.FS
+	HooksFS      fs.FS
 
 	// BinaryName is the file name of the running app binary (without
 	// directory). Used by package install/upgrade flows to locate the
@@ -162,6 +170,10 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	jsvm.MustRegister(app, jsvm.Config{
 		MigrationsDir: opts.MigrationsDir,
 		HooksDir:      opts.HooksDir,
+		// Non-nil only in a single-binary build, where the loaders read the
+		// embedded sources instead of the dirs above.
+		MigrationsFS:  opts.MigrationsFS,
+		HooksFS:       opts.HooksFS,
 		HooksWatch:    opts.HooksWatch,
 		HooksPoolSize: opts.HooksPoolSize,
 		// Install core's native $-bindings on every VM (hook + callback pools).
@@ -175,11 +187,17 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		OnLoaderInit: buildJsvmOnLoaderInit(app),
 	})
 
-	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
-		TemplateLang: migratecmd.TemplateLangJS,
-		Automigrate:  opts.Automigrate,
-		Dir:          opts.MigrationsDir,
-	})
+	// A single-binary build has no writable migrations dir, and `migrate
+	// create` / `migrate collections` are dev-time authoring commands with
+	// nowhere to write. Applying migrations does not depend on this: that runs
+	// off the in-memory core.AppMigrations registry which jsvm populates above.
+	if opts.MigrationsFS == nil {
+		migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
+			TemplateLang: migratecmd.TemplateLangJS,
+			Automigrate:  opts.Automigrate,
+			Dir:          opts.MigrationsDir,
+		})
+	}
 
 	registerSharedCore(app)
 
@@ -194,7 +212,11 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// toolchain. In hosting the ROUTER owns deploys (re-materialize + evict);
 	// a tenant that could rebuild or restart itself would escape the router's
 	// supervision.
-	RegisterPackageInstallEndpoints(app)
+	// A single-binary build cannot rebuild itself, so it does not expose this
+	// API at all; self-hosters upgrade by downloading a new binary.
+	if opts.supportsSelfRebuild() {
+		RegisterPackageInstallEndpoints(app)
+	}
 	// Admin-console panel endpoint. Tenant push keys will arrive via the org's
 	// system_settings (control-plane provisioned), not a self-serve panel.
 	RegisterVapidAdminEndpoints(app)
@@ -470,9 +492,14 @@ func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
 			}
 
 			if !e.Router.HasRoute(http.MethodGet, "/{path...}") {
-				if opts.ReleasesDir != "" {
+				switch {
+				case opts.PublicFS != nil:
+					// Single-binary build: the bundle is compiled in, so there
+					// is no releases dir to promote a deploy into.
+					e.Router.Any("/{path...}", StaticWithDynamicFallbackFS(opts.PublicFS, nil, nil, ""))
+				case opts.ReleasesDir != "":
 					e.Router.Any("/{path...}", StaticWithDynamicFallback(opts.PublicDir, opts.WebsiteDir, opts.ReleasesDir))
-				} else {
+				default:
 					e.Router.Any("/{path...}", StaticWithFallback(opts.PublicDir, opts.FallbackFile))
 				}
 			}
