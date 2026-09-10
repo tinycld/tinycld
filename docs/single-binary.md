@@ -6,7 +6,10 @@ and no Go toolchain.
 
 ## Install
 
-Download the binary for your platform and the `SHA256SUMS` file from the
+Each release carries a binary per platform — `tinycld-linux-amd64`,
+`tinycld-linux-arm64`, `tinycld-darwin-amd64` (Intel Mac), and
+`tinycld-darwin-arm64` (Apple silicon) — alongside a `SHA256SUMS` file.
+Download the one for your platform plus `SHA256SUMS` from the
 [latest release](https://github.com/tinycld/tinycld/releases/latest), then
 verify and run it:
 

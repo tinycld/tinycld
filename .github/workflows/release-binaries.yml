@@ -100,6 +100,9 @@ jobs:
             exit 1
           fi
 
+      # No Windows target: core/server/tenantcfg/runtime.go uses
+      # syscall.O_NOFOLLOW, which does not exist on Windows. Adding it is a
+      # porting task in core, not a matrix entry.
       - name: Cross-compile
         working-directory: ws/tinycld/server
         run: |
@@ -113,6 +116,7 @@ jobs:
           }
           build linux amd64
           build linux arm64
+          build darwin amd64
           build darwin arm64
 
       # The floor catches the failure mode that matters: if the embed silently
