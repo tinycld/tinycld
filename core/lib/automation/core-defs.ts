@@ -58,6 +58,24 @@ export const CORE_AUTOMATION: AutomationDefinitions = {
             ],
         },
         {
+            // The outbound half of the integration story: any trigger in any
+            // package becomes a source for an external automation tool with
+            // no package-specific code. Native IN CORE for send-email's
+            // reason — it ships in every build.
+            //
+            // `secret` is optional; when set the body carries an
+            // X-TinyCld-Signature-256 HMAC so the receiver can verify the
+            // post came from this deployment. It is a rule param rather than
+            // a system setting because each destination has its own.
+            id: 'post-webhook',
+            label: 'Post to a webhook',
+            kind: 'native',
+            params: [
+                { key: 'url', type: 'text', label: 'URL' },
+                { key: 'secret', type: 'text', label: 'Signing secret (optional)' },
+            ],
+        },
+        {
             // The universal "email me / the team when X". Native, but native
             // IN CORE — which is the point: it ships in every build
             // regardless of which feature packages an org installed, so an

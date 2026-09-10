@@ -13,7 +13,7 @@ describe('CORE_AUTOMATION', () => {
         const triggerIds = (CORE_AUTOMATION.triggers ?? []).map(t => t.id)
         const actionIds = (CORE_AUTOMATION.actions ?? []).map(a => a.id)
         expect(triggerIds).toEqual(['schedule', 'manual', 'user-added'])
-        expect(actionIds).toEqual(['apply-label', 'notify', 'send-email'])
+        expect(actionIds).toEqual(['apply-label', 'notify', 'post-webhook', 'send-email'])
     })
 
     // users carries password and tokenKey. The engine's exposure rules filter
