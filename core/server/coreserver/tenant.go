@@ -71,7 +71,7 @@ type TenantOptions struct {
 	// the SAME registrar host mode uses; a per-org build links exactly the
 	// org's package set, so the artifact is the gate.
 	//
-	// It runs immediately after registerSharedEarly and BEFORE quota and jsvm,
+	// It runs immediately after RegisterSharedEarly and BEFORE quota and jsvm,
 	// for the same load-bearing reasons as the host composition: a feature's
 	// record hooks must bind before quota's enforcement hook (drive corrects a
 	// forged size the quota check then reads), and every `$`-binding or loader
@@ -108,7 +108,7 @@ type TenantOptions struct {
 // server behavior as the single-org app, minus what is genuinely host-only.
 //
 // This is the tenant-shaped counterpart of Register, and the two must be read
-// together: everything shared lives in registerSharedEarly/registerSharedCore
+// together: everything shared lives in RegisterSharedEarly/RegisterSharedCore
 // (single source of truth), the host-only remainder is enumerated — each with
 // a reason — in Register's tail, and composition_parity_test.go fails if the
 // two compositions diverge anywhere without a recorded reason. This exists
@@ -149,7 +149,7 @@ func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
 		QuotaConfig:   opts.QuotaConfig,
 	})
 
-	registerSharedEarly(app)
+	RegisterSharedEarly(app)
 
 	// Feature package Go — the artifact links exactly the org's package set.
 	// Mirrors the host composition's RegisterExtras placement: before quota
@@ -190,13 +190,13 @@ func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
 		// Binders come from core sub-packages plus whatever feature packages
 		// RegisterExtras registered above (the org's enabled slice of the
 		// router's pinned menu).
-		OnInit:       buildJsvmOnInit(app),
-		OnLoaderInit: buildJsvmOnLoaderInit(app),
+		OnInit:       BuildJsvmOnInit(app),
+		OnLoaderInit: BuildJsvmOnLoaderInit(app),
 	}); err != nil {
 		return fmt.Errorf("jsvm register: %w", err)
 	}
 
-	registerSharedCore(app)
+	RegisterSharedCore(app)
 
 	// The org's own web bundle: the artifact's staged release, materialized at
 	// <orgDir>/pb_public (app.html shell, _expo/static assets, public files).

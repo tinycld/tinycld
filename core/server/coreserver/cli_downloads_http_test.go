@@ -31,7 +31,7 @@ func newCliDownloadTestApp(t *testing.T, seed bool) (*tests.TestApp, string) {
 			t.Fatal(err)
 		}
 	}
-	registerCliDownloadEndpoints(app, func() string { return dist })
+	RegisterCliDownloadEndpointsWith(app, func() string { return dist })
 	return app, dist
 }
 

@@ -133,7 +133,7 @@ func TestTenantCompositionMatchesHostMinusRecordedExceptions(t *testing.T) {
 			problems = append(problems, fmt.Sprintf(
 				"%s: host binds %d handler(s) the tenant does not (%d allowed). "+
 					"A registration was added to Register without deciding whether tenants get it: "+
-					"move it into registerSharedEarly/registerSharedCore, or record it host-only in "+
+					"move it into RegisterSharedEarly/RegisterSharedCore, or record it host-only in "+
 					"server.go's tail AND in hostOnlyHookDiff with a reason.",
 				name, diff, hostOnlyHookDiff[name]))
 		default:

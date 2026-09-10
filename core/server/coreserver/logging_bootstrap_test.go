@@ -10,20 +10,20 @@ import (
 
 // TestLoggerInstallDoesNotHangDuringBootstrap pins the ordering bug fixed
 // alongside this test: logging.Install must run from an app.OnBootstrap()
-// hook, AFTER e.Next(), not directly inside Register/registerSharedEarly.
+// hook, AFTER e.Next(), not directly inside Register/RegisterSharedEarly.
 //
 // Before bootstrap, app.Logger() falls back to slog.Default() (see
 // pocketbase/core/base.go). If Install were called with that fallback
 // handler, the fan-out it installs as the new default would contain a
 // handler that resolves back into itself — and the first log call
-// (registerSharedCore reaches automation.Register's slog.Info) recurses
+// (RegisterSharedCore reaches automation.Register's slog.Info) recurses
 // forever. That is exactly what happened when the install lived directly
 // in Register: go test ./coreserver/ -run
 // TestTenantCompositionMatchesHostMinusRecordedExceptions hung until its
 // 150s timeout.
 //
 // Registering a full app (Register/RegisterTenant) is the only way to
-// reach registerSharedEarly's hook binding, so this lives in coreserver
+// reach RegisterSharedEarly's hook binding, so this lives in coreserver
 // rather than the logging package, which can't see that wiring.
 //
 // The run happens in a goroutine with a bounded timeout: if the ordering
@@ -51,7 +51,7 @@ func TestLoggerInstallDoesNotHangDuringBootstrap(t *testing.T) {
 		// The path that previously recursed: a plain slog.Info on the
 		// process-wide default, taken right after bootstrap completes —
 		// the same point automation.Register logs from during
-		// registerSharedCore.
+		// RegisterSharedCore.
 		slog.Info("post-bootstrap log reaches the installed fan-out")
 		done <- nil
 	}()

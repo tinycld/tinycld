@@ -136,7 +136,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// plugins that read them (jsvm, migratecmd).
 	_ = app.RootCmd.ParseFlags(os.Args[1:])
 
-	registerSharedEarly(app)
+	RegisterSharedEarly(app)
 
 	// Feature packages register BEFORE jsvm, and the order is load-bearing:
 	// jsvm.Register executes the hook files synchronously (its registerHooks
@@ -179,12 +179,12 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		// Install core's native $-bindings on every VM (hook + callback pools).
 		// Binders are registered by core sub-packages (fts, carddav, …) and by
 		// feature packages via RegisterJSVMBinder; see jsvm_binds.go.
-		OnInit: buildJsvmOnInit(app),
+		OnInit: BuildJsvmOnInit(app),
 		// Install the loader-only bindings that REGISTER package TS handlers
 		// against a Go→TS hook point (e.g. webdavHook). These must run once,
 		// not once per pooled VM, so they ride OnLoaderInit rather than
 		// OnInit; see ts_hooks.go.
-		OnLoaderInit: buildJsvmOnLoaderInit(app),
+		OnLoaderInit: BuildJsvmOnLoaderInit(app),
 	})
 
 	// A single-binary build has no writable migrations dir, and `migrate
@@ -199,7 +199,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		})
 	}
 
-	registerSharedCore(app)
+	RegisterSharedCore(app)
 
 	// ---- Host-only registrations ----
 	// Everything below runs ONLY in the single-org app, never in a hosting
@@ -253,20 +253,26 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	registerStaticServe(app, opts)
 }
 
-// registerSharedEarly holds the registrations that must precede everything
+// RegisterSharedEarly holds the registrations that must precede everything
 // else that binds OnServe, in BOTH compositions: Sentry's router middleware
 // only applies to routes registered after it, and SystemConfig must be
 // loading before any subsystem that reads it (mailer, push, Sentry init).
 //
-// SHARED COMPOSITION CONTRACT: this function and registerSharedCore are the
-// single source of truth for what the single-org app (Register) and a
-// hosting tenant process (RegisterTenant) both run. A new registration goes
-// in one of them unless it genuinely must not run in a tenant — in which case
-// it goes in Register's host-only tail WITH a reason comment and an entry in
-// composition_parity_test.go's allowlist. See
-// hosting/docs/FINDING-tenant-composition-gap.md for what silent divergence
-// cost.
-func registerSharedEarly(app *pocketbase.PocketBase) {
+// SHARED COMPOSITION CONTRACT: this function and RegisterSharedCore are the
+// single source of truth for what EVERY composition of this server runs.
+// Register adds the self-host tail below; a composition layered on top (one
+// that supplies its own runtime wiring — see embedded.go) calls these two plus
+// its own middle.
+//
+// A new registration goes in one of these two unless it genuinely must not run
+// everywhere — in which case it goes in Register's own tail WITH a reason
+// comment AND a matching entry in composition_parity_test.go's allowlist.
+// That test is a tripwire for a real, proven privilege escalation: a
+// hand-rolled second composition drifted from this one, silently missed the
+// users field guard, and let any member PATCH their own role to owner. The
+// other arm of the comparison lives outside this repo, so the golden counts
+// here are what fires when a change is MADE.
+func RegisterSharedEarly(app *pocketbase.PocketBase) {
 	// Install the process-wide logger once PocketBase has bootstrapped, not
 	// here in Register/RegisterTenant. app.Logger() falls back to
 	// slog.Default() until PocketBase's own initLogger() runs during
@@ -303,13 +309,13 @@ func registerSharedEarly(app *pocketbase.PocketBase) {
 	RegisterSystemConfig(app)
 }
 
-// registerSharedCore is the bulk of the shared composition: everything both
+// RegisterSharedCore is the bulk of the shared composition: everything both
 // the single-org app and a hosting tenant register after their respective
 // engine plugins (quota, jsvm) are in place. See the contract note on
-// registerSharedEarly. Order within this list is preserved from the original
+// RegisterSharedEarly. Order within this list is preserved from the original
 // single-org composition; the users hooks in particular bind in
 // guard → demo-audit → disabled order.
-func registerSharedCore(app *pocketbase.PocketBase) {
+func RegisterSharedCore(app *pocketbase.PocketBase) {
 	notify.Register(app)
 	notify.RegisterCommentMentionHooks(app)
 	// Teach the realtime broker how to verify anonymous share-session

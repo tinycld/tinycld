@@ -36,7 +36,7 @@ func TestBuildJsvmOnInit_RunsBindersAndExposesCallable(t *testing.T) {
 	})
 
 	vm := sobek.New()
-	buildJsvmOnInit(nil)(vm)
+	BuildJsvmOnInit(nil)(vm)
 
 	v, err := vm.RunString(`$probe.echo("hi")`)
 	if err != nil {
@@ -60,13 +60,13 @@ func TestBuildJsvmOnInit_BinderErrorPanics(t *testing.T) {
 		}
 	}()
 
-	buildJsvmOnInit(nil)(sobek.New())
+	BuildJsvmOnInit(nil)(sobek.New())
 }
 
 func TestBuildJsvmOnInit_NoBindersIsNoop(t *testing.T) {
 	resetBinders(t)
 	// Must not panic with an empty registry.
-	buildJsvmOnInit(nil)(sobek.New())
+	BuildJsvmOnInit(nil)(sobek.New())
 }
 
 var errTestBinder = testErr("boom")

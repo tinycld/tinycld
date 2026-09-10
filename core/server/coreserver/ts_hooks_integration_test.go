@@ -65,8 +65,8 @@ func TestLoaderBinderRegistersHandlerFromDiskTS(t *testing.T) {
 		HooksDir:      hooksDir,
 		MigrationsDir: t.TempDir(),
 		HooksPoolSize: 2,
-		OnInit:        buildJsvmOnInit(pbApp),
-		OnLoaderInit:  buildJsvmOnLoaderInit(pbApp),
+		OnInit:        BuildJsvmOnInit(pbApp),
+		OnLoaderInit:  BuildJsvmOnLoaderInit(pbApp),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -150,8 +150,8 @@ func TestLoaderBinderRegistersExactlyOnce(t *testing.T) {
 		HooksDir:      hooksDir,
 		MigrationsDir: t.TempDir(),
 		HooksPoolSize: 8,
-		OnInit:        buildJsvmOnInit(pbApp),
-		OnLoaderInit:  buildJsvmOnLoaderInit(pbApp),
+		OnInit:        BuildJsvmOnInit(pbApp),
+		OnLoaderInit:  BuildJsvmOnLoaderInit(pbApp),
 	})
 	if err != nil {
 		t.Fatal(err)

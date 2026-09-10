@@ -39,12 +39,12 @@ import (
 // updates — and each device still has its own local crash-rollback.
 func RegisterTenantAppUpdateEndpoints(app core.App, orgDir, artifactDir string) {
 	loader := &artifactBundles{artifactDir: artifactDir}
-	registerAppUpdateEndpoints(app, appUpdateSources{
-		bundles: loader.source,
+	RegisterAppUpdateEndpointsWith(app, AppUpdateSources{
+		Bundles: loader.source,
 		// The org's pb_public is materialized as a symlink into the artifact, so
 		// serve through orgDir: it is the path the tenant is confined to, and it
 		// follows a deploy's atomic repoint without this closure going stale.
-		nativeRoot: func(string) string { return filepath.Join(orgDir, "pb_public") },
+		NativeRoot: func(string) string { return filepath.Join(orgDir, "pb_public") },
 	})
 }
 

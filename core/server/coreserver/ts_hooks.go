@@ -179,7 +179,7 @@ func RegisterLoaderBinder(b LoaderBinder) {
 // A host that omits these gets VMs with no `$` bindings and no way for package
 // TS to register a hook handler.
 func JSVMBindings(app *pocketbase.PocketBase) (func(*sobek.Runtime), jsvm.LoaderInit) {
-	return buildJsvmOnInit(app), buildJsvmOnLoaderInit(app)
+	return BuildJsvmOnInit(app), BuildJsvmOnLoaderInit(app)
 }
 
 // resetLoaderBindersForTesting clears the binder registry.
@@ -189,12 +189,12 @@ func resetLoaderBindersForTesting() {
 	loaderBinders = nil
 }
 
-// buildJsvmOnLoaderInit returns the jsvm.Config.OnLoaderInit callback. Mirrors
-// buildJsvmOnInit's failure mode: a binder error panics, because a loader
+// BuildJsvmOnLoaderInit returns the jsvm.Config.OnLoaderInit callback. Mirrors
+// BuildJsvmOnInit's failure mode: a binder error panics, because a loader
 // missing its registration binding would surface later as an opaque
 // "undefined is not a function" inside hook code rather than a clear boot
 // failure.
-func buildJsvmOnLoaderInit(app *pocketbase.PocketBase) jsvm.LoaderInit {
+func BuildJsvmOnLoaderInit(app *pocketbase.PocketBase) jsvm.LoaderInit {
 	return func(loader *sobek.Runtime, compile jsvm.Compiler) {
 		loaderBindersMu.RLock()
 		defer loaderBindersMu.RUnlock()

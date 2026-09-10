@@ -60,8 +60,8 @@ func bootHooks(t *testing.T, hookSource string) webdav.TSHooks {
 		HooksDir:      hooksDir,
 		MigrationsDir: t.TempDir(),
 		HooksPoolSize: 2,
-		OnInit:        buildJsvmOnInit(pbApp),
-		OnLoaderInit:  buildJsvmOnLoaderInit(pbApp),
+		OnInit:        BuildJsvmOnInit(pbApp),
+		OnLoaderInit:  BuildJsvmOnLoaderInit(pbApp),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -300,8 +300,8 @@ func TestWebDAVHookRejectsUnknownName(t *testing.T) {
 		HooksDir:      hooksDir,
 		MigrationsDir: t.TempDir(),
 		HooksPoolSize: 1,
-		OnInit:        buildJsvmOnInit(pbApp),
-		OnLoaderInit:  buildJsvmOnLoaderInit(pbApp),
+		OnInit:        BuildJsvmOnInit(pbApp),
+		OnLoaderInit:  BuildJsvmOnLoaderInit(pbApp),
 	})
 	_ = pbApp.Bootstrap()
 }
@@ -338,8 +338,8 @@ func TestWebDAVHookTypoRegistersNothing(t *testing.T) {
 			HooksDir:      hooksDir,
 			MigrationsDir: t.TempDir(),
 			HooksPoolSize: 1,
-			OnInit:        buildJsvmOnInit(pbApp),
-			OnLoaderInit:  buildJsvmOnLoaderInit(pbApp),
+			OnInit:        BuildJsvmOnInit(pbApp),
+			OnLoaderInit:  BuildJsvmOnLoaderInit(pbApp),
 		})
 		_ = pbApp.Bootstrap()
 	}()
