@@ -1,0 +1,254 @@
+name: Build and publish self-host binaries
+
+# Lives in the tinycld/tinycld repo — the release ANCHOR, same contract as
+# docker-publish.yml. A published Release assembles the workspace from the
+# release's pinned manifest (via the shared ci-assemble-workspace.sh, so the
+# image and these binaries are built from the same member set), then
+# cross-compiles the single-binary self-host artifact for each platform.
+#
+# Trigger is `release: published` only — NOT `push: tags` — because the
+# manifest.json and pnpm-lock.yaml assets are uploaded client-side after the
+# tag is pushed, so a tag-push trigger would race ahead of them.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+concurrency:
+  group: release-binaries-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build single binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Reads the release's pinned assets; only the publish job writes back.
+    permissions:
+      contents: read
+    steps:
+      # Path MUST be the member's canonical dir name: bootstrap treats a dir
+      # with a .git as an already-cloned member and skips it. See the same note
+      # in docker-publish.yml.
+      - name: Checkout tinycld member (at the triggering tag)
+        uses: actions/checkout@v5
+        with:
+          path: ws/tinycld
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: ws/tinycld/.node-version
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ws/tinycld/server/go.mod
+
+      - name: Assemble workspace from pinned release manifest
+        working-directory: ws
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME:-$(git -C tinycld describe --tags --exact-match)}"
+          echo "Downloading release assets for ${TAG}…"
+          mkdir -p .release-assets
+          gh release download "${TAG}" -R "${GITHUB_REPOSITORY}" \
+            -p manifest.json -p pnpm-lock.yaml -p package-versions.json \
+            --dir .release-assets
+          # Shared with docker-publish.yml — see the script header.
+          tinycld/scripts/ci-assemble-workspace.sh .release-assets
+
+      - name: Install dependencies
+        working-directory: ws
+        run: corepack enable && pnpm install --frozen-lockfile
+
+      - name: Generate package wiring
+        working-directory: ws/tinycld
+        run: pnpm run packages:generate
+
+      # --source-maps external keeps the maps out of the bundle entirely; they
+      # are the bulk of the export and must never reach the embed payload.
+      - name: Export web bundle
+        working-directory: ws/tinycld
+        run: pnpm exec expo export --platform web --source-maps external
+
+      - name: Stage embeddable assets
+        working-directory: ws/tinycld
+        run: pnpm run stage:embed
+
+      - name: Fail if source maps reached the embed payload
+        working-directory: ws/tinycld
+        run: |
+          set -euo pipefail
+          count=$(find server/embedded_assets -name '*.map' | wc -l)
+          if [ "$count" -ne 0 ]; then
+            echo "::error::${count} source maps staged for embedding; they must be excluded"
+            exit 1
+          fi
+
+      # go:embed cannot follow symlinks, and the generator writes pb_migrations
+      # and pb_hooks as symlink farms into the sibling repos. If staging left
+      # links behind, the binary would build clean and ship with no migrations.
+      - name: Fail if any staged asset is still a symlink
+        working-directory: ws/tinycld
+        run: |
+          set -euo pipefail
+          count=$(find server/embedded_assets -type l | wc -l)
+          if [ "$count" -ne 0 ]; then
+            echo "::error::${count} staged assets are symlinks; go:embed would skip them"
+            exit 1
+          fi
+
+      - name: Cross-compile
+        working-directory: ws/tinycld/server
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/dist
+          build() {
+            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build \
+              -tags embedassets -trimpath -ldflags="-s -w" \
+              -o "/tmp/dist/tinycld-$1-$2${3:-}" .
+            echo "built tinycld-$1-$2${3:-}"
+          }
+          build linux amd64
+          build linux arm64
+          build darwin amd64
+          build darwin arm64
+          build windows amd64 .exe
+          build windows arm64 .exe
+
+      # The floor catches the failure mode that matters: if the embed silently
+      # drops out (an unreferenced embed.FS is eliminated by the linker), the
+      # binary still builds and still serves — just with no web UI. The measured
+      # size is ~62MB embedded vs ~50MB without, so 55MB separates the two.
+      # The ceiling catches an accidental re-addition of source maps.
+      - name: Enforce size budget
+        run: |
+          set -euo pipefail
+          for f in /tmp/dist/tinycld-*; do
+            mb=$(( $(stat -c%s "$f") / 1048576 ))
+            echo "$(basename "$f"): ${mb} MB"
+            if [ "$mb" -gt 100 ]; then
+              echo "::error::$(basename "$f") is ${mb} MB, over the 100 MB budget"
+              exit 1
+            fi
+            if [ "$mb" -lt 55 ]; then
+              echo "::error::$(basename "$f") is only ${mb} MB — the embedded assets are missing"
+              exit 1
+            fi
+          done
+
+      # Hand the Windows build to the smoke-test job below. Cross-compiling only
+      # proves it links; nothing here has ever executed it.
+      - name: Upload the Windows binary for smoke testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binary
+          path: /tmp/dist/tinycld-windows-amd64.exe
+          retention-days: 1
+
+      - name: Generate checksums
+        working-directory: /tmp/dist
+        run: sha256sum tinycld-* > SHA256SUMS && cat SHA256SUMS
+
+      # Keep every artifact for the publish job, which runs only after the
+      # Windows smoke test passes.
+      - name: Upload the built binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: |
+            /tmp/dist/tinycld-*
+            /tmp/dist/SHA256SUMS
+          retention-days: 1
+
+  # Boot the Windows binary on a real Windows runner before the release keeps
+  # it. Path handling and SQLite are the risks a cross-compile cannot cover.
+  smoke-windows:
+    name: Smoke-test the Windows binary
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download the Windows binary
+        uses: actions/download-artifact@v5
+        with:
+          name: windows-binary
+
+      - name: Boot it in an empty directory and serve the embedded app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'tc-smoke'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $exe = Join-Path (Get-Location) 'tinycld-windows-amd64.exe'
+
+          # cwd is an empty dir: no dist/, no pb_migrations/, so anything served
+          # can only come from inside the binary.
+          $proc = Start-Process -FilePath $exe `
+            -ArgumentList 'serve','--http','127.0.0.1:8095' `
+            -WorkingDirectory $dir -PassThru `
+            -RedirectStandardOutput (Join-Path $dir 'out.log') `
+            -RedirectStandardError  (Join-Path $dir 'err.log')
+
+          try {
+            $ok = $false
+            foreach ($i in 1..60) {
+              Start-Sleep -Seconds 2
+              if ($proc.HasExited) { throw "binary exited early with $($proc.ExitCode)" }
+              try {
+                if ((Invoke-WebRequest "http://127.0.0.1:8095/api/health" -UseBasicParsing -TimeoutSec 5).StatusCode -eq 200) {
+                  $ok = $true; break
+                }
+              } catch { }
+            }
+            if (-not $ok) { throw "server never became healthy" }
+
+            # The SPA shell must come from the embedded bundle...
+            $shell = Invoke-WebRequest "http://127.0.0.1:8095/" -UseBasicParsing
+            if ($shell.Content -notmatch '<div id="root">') { throw "shell did not render from the embed" }
+
+            # ...and its scripts must resolve, or the app boots blank.
+            $src = [regex]::Match($shell.Content, 'src="([^"]+\.js)"').Groups[1].Value
+            if (-not $src) { throw "no script tags in the shell" }
+            $chunk = Invoke-WebRequest "http://127.0.0.1:8095$src" -UseBasicParsing
+            if ($chunk.StatusCode -ne 200) { throw "script $src returned $($chunk.StatusCode)" }
+
+            # Migrations applied from the embedded FS.
+            if (-not (Test-Path (Join-Path $dir 'tinycld-data\pb_data\data.db'))) {
+              throw "no database created"
+            }
+            Write-Host "Windows smoke test passed: health, shell, script chunk, database"
+          }
+          finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+            Write-Host "--- stdout ---"; Get-Content (Join-Path $dir 'out.log') -Tail 30 -EA SilentlyContinue
+            Write-Host "--- stderr ---"; Get-Content (Join-Path $dir 'err.log') -Tail 30 -EA SilentlyContinue
+          }
+
+  # Attaching happens only after the Windows binary has been proven to boot, so
+  # a release never carries an artifact that was never executed.
+  publish:
+    name: Attach binaries to the release
+    needs: [build, smoke-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download the built binaries
+        uses: actions/download-artifact@v5
+        with:
+          name: release-binaries
+          path: dist
+
+      - name: Attach to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          gh release upload "${TAG}" dist/tinycld-* dist/SHA256SUMS \
+            -R "${GITHUB_REPOSITORY}" --clobber

@@ -17,6 +17,12 @@ import (
 // and forwards here, so this needs to match the SSL proxy's --target port.
 const defaultHTTPAddr = "127.0.0.1:7090"
 
+// defaultStandaloneDataDir is where the single-binary build keeps its state
+// when no --dir is given. It is relative to the working directory (not the
+// binary's own dir) so a downloaded binary does not write into wherever the
+// user happened to leave it.
+const defaultStandaloneDataDir = "./tinycld-data/pb_data"
+
 // main composes the tinycld app server: load env, build the shared core
 // server via coreserver.Register (which initializes Sentry), then start
 // PocketBase.
@@ -46,6 +52,31 @@ func main() {
 		return
 	}
 
+	// Embedded assets are present only in the single-binary build (the
+	// `embedassets` build tag). When absent every accessor returns nil and the
+	// server reads from disk exactly as the container build does.
+	webFS := embeddedWebFS()
+	standalone := webFS != nil
+
+	if standalone {
+		// PocketBase owns --dir (its data directory), so standalone mode adds no
+		// competing location flag. Core's own state helpers key off
+		// TINYCLD_STATE_DIR instead, so derive it from --dir to keep releases
+		// and builds beside the database rather than beside the binary.
+		dataDir := coreserver.FlagValue(os.Args[1:], "--dir")
+		if dataDir == "" {
+			dataDir = defaultStandaloneDataDir
+			// Only for an actual command: appending --dir to a bare --help or
+			// --version makes cobra read the path as a stray positional.
+			if coreserver.ShouldInjectDataDir(os.Args[1:]) {
+				os.Args = append(os.Args, "--dir", dataDir)
+			}
+		}
+		if err := os.Setenv("TINYCLD_STATE_DIR", coreserver.StandaloneStateDir(dataDir)); err != nil {
+			log.Fatal(err)
+		}
+	}
+
 	// Default --http to defaultHTTPAddr when running `serve` without an
 	// explicit address and no domain args. PocketBase's autocert needs
 	// :80/:443 when domain args are present, so we don't override there.
@@ -65,15 +96,20 @@ func main() {
 
 	app := pocketbase.New()
 	coreserver.Register(app, coreserver.Options{
-		PublicDir:      coreserver.DefaultPublicDir(),
-		WebsiteDir:     coreserver.DefaultWebsiteDir(),
-		ReleasesDir:    coreserver.DefaultReleasesDir(),
-		FallbackFile:   "app.html",
-		TypesDir:       coreserver.DefaultTypesDir(),
-		BinaryName:     "tinycld",
-		HooksWatch:     true,
+		PublicDir:    coreserver.DefaultPublicDir(),
+		WebsiteDir:   coreserver.DefaultWebsiteDir(),
+		ReleasesDir:  coreserver.DefaultReleasesDir(),
+		FallbackFile: "app.html",
+		TypesDir:     coreserver.DefaultTypesDir(),
+		BinaryName:   "tinycld",
+		// An embedded FS cannot be watched, and a standalone build has nowhere
+		// to write generated migrations.
+		HooksWatch:     !standalone,
 		HooksPoolSize:  15,
-		Automigrate:    true,
+		Automigrate:    !standalone,
+		PublicFS:       webFS,
+		MigrationsFS:   embeddedMigrationsFS(),
+		HooksFS:        embeddedHooksFS(),
 		RegisterExtras: registerPackageExtensions,
 	})
 

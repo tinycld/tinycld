@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 
 	"tinycld.org/core/caldav"
 	"tinycld.org/core/carddav"
@@ -79,7 +78,7 @@ func WriteRuntimeFile(orgDir, name string, body []byte, mode os.FileMode) (strin
 		return "", err
 	}
 	path := filepath.Join(runtimeDir, name)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscall.O_NOFOLLOW, mode)
+	f, err := openRuntimeFileNoFollow(path, mode)
 	if err != nil {
 		return "", err
 	}
