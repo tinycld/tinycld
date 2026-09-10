@@ -141,7 +141,20 @@ describe('cropToTransform', () => {
     it('offsets toward the focal point', () => {
         const t = cropToTransform({ x: 1, y: 0.5, zoom: 2 }, 100)
         expect(t.translateX).toBe(-100)
-        expect(t.translateY).toBe(0)
+        expect(t.translateY).toBe(-50)
+    })
+
+    // Focal point below center means the image slides UP (negative Y).
+    it('offsets vertically toward the focal point', () => {
+        const t = cropToTransform({ x: 0.5, y: 1, zoom: 2 }, 100)
+        expect(t.translateY).toBe(-100)
+        expect(t.translateX).toBe(-50)
+    })
+
+    it('offsets both axes independently', () => {
+        const t = cropToTransform({ x: 0.25, y: 0.75, zoom: 3 }, 100)
+        expect(t.translateX).toBe(-50)
+        expect(t.translateY).toBe(-150)
     })
 
     it('never leaves a gap at any zoom or focal point', () => {

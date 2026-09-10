@@ -146,14 +146,15 @@ export function cropToTransform(
     rect: CropRect,
     size: number
 ): { width: number; height: number; translateX: number; translateY: number } {
-    const { x, y: _y, zoom } = clampCrop(rect)
+    const { x, y, zoom } = clampCrop(rect)
     const scaled = size * zoom
     const overflow = scaled - size
     const translateX = -overflow * x
+    const translateY = -overflow * y
     return {
         width: scaled,
         height: scaled,
         translateX: translateX || 0,
-        translateY: 0,
+        translateY: translateY || 0,
     }
 }
