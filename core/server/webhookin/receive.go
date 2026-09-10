@@ -25,6 +25,18 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 
 const defaultSignatureHeader = "X-TinyCld-Signature-256"
 
+// deliveryRetention bounds how long a claimed delivery id is kept. The
+// dedupe window (claimDelivery's unique index) only has to outlive a
+// provider's retry schedule, which runs in hours, not days; 7 days is
+// generous against the longest retry schedules while still bounding growth
+// at the receiver's own rate ceiling (see deliveryLimiter below).
+const deliveryRetention = 7 * 24 * time.Hour
+
+// pruneBatchSize caps how many rows one sweep deletes, mirroring
+// automation/runs.go's pruneRuns — a single request must not be able to
+// issue an unbounded number of deletes.
+const pruneBatchSize = 50
+
 var log = logging.ForPackage("core")
 
 // deliveryLimiter meters inbound deliveries per source.
@@ -132,6 +144,9 @@ func handleDelivery(re *core.RequestEvent, name string, source Source) error {
 			// status invites the provider to keep retrying.
 			return re.JSON(http.StatusOK, map[string]any{"duplicate": true})
 		}
+		// Only after a row was actually written — a duplicate claim wrote
+		// nothing, so there is nothing new to sweep against.
+		pruneDeliveries(re.App, name)
 	}
 
 	if source.Handle == nil {
@@ -190,4 +205,39 @@ func claimDelivery(app core.App, source, deliveryID string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// pruneDeliveries deletes claimed deliveries older than deliveryRetention
+// for one source, mirroring automation/runs.go's pruneRuns: batched deletes,
+// looping until a batch comes back short. Scoped to the source just written
+// (rather than a global sweep) so one high-volume source's retention pass
+// cannot starve another's — the same per-key shape pruneRuns uses for rules.
+//
+// Never fails the delivery: a prune failure only warns and returns, per the
+// same reasoning as pruneRuns — losing a retention pass costs disk, not
+// correctness, and it runs on every successful claim.
+func pruneDeliveries(app core.App, source string) {
+	cutoff := time.Now().UTC().Add(-deliveryRetention).Format("2006-01-02 15:04:05.000Z")
+	for {
+		extra, err := app.FindRecordsByFilter(
+			"webhook_deliveries", "source = {:source} && received < {:cutoff}", "-received", pruneBatchSize, 0,
+			map[string]any{"source": source, "cutoff": cutoff},
+		)
+		if err != nil {
+			log.Warn("prune webhook_deliveries failed", "source", source, "err", err)
+			return
+		}
+		if len(extra) == 0 {
+			return
+		}
+		for _, r := range extra {
+			if err := app.Delete(r); err != nil {
+				log.Warn("prune webhook_delivery failed", "source", source, "err", err)
+				return
+			}
+		}
+		if len(extra) < pruneBatchSize {
+			return
+		}
+	}
 }

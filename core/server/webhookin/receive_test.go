@@ -13,6 +13,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/router"
+	"github.com/pocketbase/pocketbase/tools/types"
 
 	"tinycld.org/core/ratelimit"
 )
@@ -116,9 +117,11 @@ func newDeliveriesTestApp(t *testing.T) *tests.TestApp {
 	deliveries := core.NewBaseCollection("webhook_deliveries")
 	deliveries.Fields.Add(&core.TextField{Name: "source", Required: true, Max: 50})
 	deliveries.Fields.Add(&core.TextField{Name: "delivery_id", Required: true, Max: 200})
+	deliveries.Fields.Add(&core.AutodateField{Name: "received", OnCreate: true})
 	// The unique index is the mechanism under test in the duplicate-delivery
 	// case: claimDelivery relies on the second insert violating it.
 	deliveries.AddIndex("idx_webhook_deliveries_unique", true, "source, delivery_id", "")
+	deliveries.AddIndex("idx_webhook_deliveries_received", false, "received", "")
 	if err := app.Save(deliveries); err != nil {
 		t.Fatalf("save webhook_deliveries: %v", err)
 	}
@@ -437,4 +440,167 @@ func apiStatus(err error) int {
 		return 0
 	}
 	return apiErr.Status
+}
+
+// insertDeliveryAt hand-inserts a claimed delivery row with `received`
+// backdated to `at`. AutodateField.FindSetter returns a noop for record.Set,
+// so record.Set("received", …) is silently ignored — SetRaw is the
+// documented escape hatch (Intercept only overrides the value when it still
+// equals the field's "last known" value, and SetRaw bypasses that check same
+// as PocketBase's own tests do for autodate fields).
+func insertDeliveryAt(t *testing.T, app core.App, source, deliveryID string, at time.Time) {
+	t.Helper()
+	collection, err := app.FindCollectionByNameOrId("webhook_deliveries")
+	if err != nil {
+		t.Fatalf("find webhook_deliveries: %v", err)
+	}
+	record := core.NewRecord(collection)
+	record.Set("source", source)
+	record.Set("delivery_id", deliveryID)
+	if err := app.Save(record); err != nil {
+		t.Fatalf("save delivery %s/%s: %v", source, deliveryID, err)
+	}
+
+	// The OnCreate interceptor already stamped "received" with now(); a
+	// second save with OnUpdate unset skips that interceptor entirely, so
+	// this SetRaw sticks.
+	dt, err := types.ParseDateTime(at)
+	if err != nil {
+		t.Fatalf("parse backdated time: %v", err)
+	}
+	record.SetRaw("received", dt)
+	if err := app.Save(record); err != nil {
+		t.Fatalf("backdate delivery %s/%s: %v", source, deliveryID, err)
+	}
+}
+
+func deliveryExists(t *testing.T, app core.App, source, deliveryID string) bool {
+	t.Helper()
+	_, err := app.FindFirstRecordByFilter(
+		"webhook_deliveries", "source = {:source} && delivery_id = {:id}",
+		map[string]any{"source": source, "id": deliveryID},
+	)
+	return err == nil
+}
+
+func TestPruneDeliveries_DeletesOnlyRowsOlderThanRetention(t *testing.T) {
+	resetRegistry(t)
+	app := newDeliveriesTestApp(t)
+
+	now := time.Now().UTC()
+	insertDeliveryAt(t, app, "acme", "dlv-old", now.Add(-deliveryRetention-time.Hour))
+	insertDeliveryAt(t, app, "acme", "dlv-recent", now.Add(-time.Hour))
+
+	pruneDeliveries(app, "acme")
+
+	if deliveryExists(t, app, "acme", "dlv-old") {
+		t.Error("a delivery older than the retention window survived pruning")
+	}
+	if !deliveryExists(t, app, "acme", "dlv-recent") {
+		t.Error("a delivery within the retention window was pruned")
+	}
+}
+
+func TestPruneDeliveries_ScopedToSource(t *testing.T) {
+	resetRegistry(t)
+	app := newDeliveriesTestApp(t)
+
+	old := time.Now().UTC().Add(-deliveryRetention - time.Hour)
+	insertDeliveryAt(t, app, "acme", "dlv-old", old)
+	insertDeliveryAt(t, app, "widgets", "dlv-old", old)
+
+	pruneDeliveries(app, "acme")
+
+	if deliveryExists(t, app, "acme", "dlv-old") {
+		t.Error("the pruned source's old delivery survived")
+	}
+	if !deliveryExists(t, app, "widgets", "dlv-old") {
+		t.Error("pruning one source deleted another source's old delivery")
+	}
+}
+
+// TestHandleDelivery_PrunesOldDeliveriesForTheSource proves the sweep is
+// wired into the live delivery path, not just callable in isolation: an old
+// row for the same source is gone after a fresh delivery is claimed, while a
+// recent row and the just-claimed row both survive.
+func TestHandleDelivery_PrunesOldDeliveriesForTheSource(t *testing.T) {
+	resetRegistry(t)
+	app := newDeliveriesTestApp(t)
+
+	secret := "s3cret"
+	src, _, _ := countingSource(secret, nil)
+	Register("acme", *src)
+	source, _ := lookup("acme")
+
+	now := time.Now().UTC()
+	insertDeliveryAt(t, app, "acme", "dlv-old", now.Add(-deliveryRetention-time.Hour))
+	insertDeliveryAt(t, app, "acme", "dlv-recent", now.Add(-time.Hour))
+
+	body := []byte(`{"hello":"world"}`)
+	re := newDeliveryRequestEvent(app, body, map[string]string{
+		defaultSignatureHeader: signBody(secret, body),
+		"X-Acme-Delivery":      "dlv-new",
+	})
+	if err := handleDelivery(re, "acme", source); err != nil {
+		t.Fatalf("handleDelivery returned an error: %v", err)
+	}
+
+	if deliveryExists(t, app, "acme", "dlv-old") {
+		t.Error("a delivery older than the retention window survived a live request")
+	}
+	if !deliveryExists(t, app, "acme", "dlv-recent") {
+		t.Error("a delivery within the retention window was pruned")
+	}
+	if !deliveryExists(t, app, "acme", "dlv-new") {
+		t.Error("the delivery just claimed by this request is missing")
+	}
+}
+
+// TestHandleDelivery_DuplicateDoesNotPrune proves pruneDeliveries only runs
+// after a successful claim: a duplicate delivery writes nothing, so an old
+// row must survive a replay.
+func TestHandleDelivery_DuplicateDoesNotPrune(t *testing.T) {
+	resetRegistry(t)
+	app := newDeliveriesTestApp(t)
+
+	secret := "s3cret"
+	src, _, _ := countingSource(secret, nil)
+	Register("acme", *src)
+	source, _ := lookup("acme")
+
+	old := time.Now().UTC().Add(-deliveryRetention - time.Hour)
+	insertDeliveryAt(t, app, "acme", "dlv-old", old)
+
+	body := []byte(`{"hello":"world"}`)
+	headers := map[string]string{
+		defaultSignatureHeader: signBody(secret, body),
+		"X-Acme-Delivery":      "dlv-old", // replays the id already claimed above
+	}
+	re := newDeliveryRequestEvent(app, body, headers)
+	if err := handleDelivery(re, "acme", source); err != nil {
+		t.Fatalf("handleDelivery returned an error: %v", err)
+	}
+	if rec := re.Response.(*httptest.ResponseRecorder); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+
+	if !deliveryExists(t, app, "acme", "dlv-old") {
+		t.Error("a duplicate delivery pruned the very row it replayed — pruning must only follow a fresh claim")
+	}
+}
+
+// TestPruneDeliveries_MissingCollectionOnlyWarns proves a prune failure
+// cannot surface as a delivery failure: pruneDeliveries must swallow the
+// error rather than panic or propagate, since it has no error return for a
+// caller to check.
+func TestPruneDeliveries_MissingCollectionOnlyWarns(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatalf("NewTestApp: %v", err)
+	}
+	t.Cleanup(app.Cleanup)
+
+	// webhook_deliveries was never created on this app, so the lookup inside
+	// pruneDeliveries fails; the call must simply return.
+	pruneDeliveries(app, "acme")
 }

@@ -77,6 +77,11 @@ func actionPostWebhook(_ core.App, req ActionRequest) error {
 	}
 
 	headers := map[string]string{}
+	// "secret" is coupled by name to its declaration in
+	// core/lib/automation/core-defs.ts. Unlike "url" above, a rename there
+	// has no guard here: req.Params["secret"] silently reads back "", this
+	// branch is skipped, and the delivery posts unsigned with a 2xx and no
+	// error or log line. Change the two together.
 	if secret := req.Params["secret"]; secret != "" {
 		mac := hmac.New(sha256.New, []byte(secret))
 		mac.Write(body)
