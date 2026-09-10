@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/installjob"
 )
 
 // Per-package version change (update or downgrade).
@@ -47,7 +47,7 @@ type versionChange struct {
 
 func handleVersionChange(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	var body struct {
-		Changes []versionChange `json:"changes"`
+		Changes []installjob.VersionChange `json:"changes"`
 	}
 	if err := json.NewDecoder(re.Request.Body).Decode(&body); err != nil {
 		return re.BadRequestError("Invalid request body", err)
@@ -77,33 +77,18 @@ func handleVersionChange(app *pocketbase.PocketBase, re *core.RequestEvent) erro
 		return re.BadRequestError(err.Error(), err)
 	}
 
-	installMu.Lock()
-	if currentJob != nil {
-		info := map[string]any{
-			"jobId": currentJob.ID, "action": currentJob.Action,
-			"slug": currentJob.Slug, "status": currentJob.Status,
-		}
-		installMu.Unlock()
+	job := installjob.New("version_change", body.Changes[0].Slug, "")
+	job.Changes = body.Changes
+	if busy, ok := installjob.Claim(job); !ok {
 		return re.JSON(http.StatusConflict, map[string]any{
 			"error":      "Another operation is in progress",
-			"currentJob": info,
+			"currentJob": busy.Info(),
 		})
 	}
-	jobId := fmt.Sprintf("job_%d", time.Now().UnixMilli())
-	job := &installJob{
-		ID:      jobId,
-		Action:  "version_change",
-		Slug:    body.Changes[0].Slug,
-		Changes: body.Changes,
-		Status:  "running",
-		Done:    make(chan struct{}),
-	}
-	currentJob = job
-	installMu.Unlock()
 
 	go runVersionChangeRebuild(app, job)
 
-	return re.JSON(http.StatusAccepted, map[string]any{"jobId": jobId})
+	return re.JSON(http.StatusAccepted, map[string]any{"jobId": job.ID})
 }
 
 // handleDropReport previews the schema a downgrade of one package to a SPECIFIC

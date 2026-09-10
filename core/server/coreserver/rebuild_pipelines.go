@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase"
+	"tinycld.org/core/installjob"
 )
 
 // newBuildID returns a fresh, server-generated build id. Never client-settable.
@@ -18,10 +19,10 @@ func newBuildID() string {
 // finishJob is the deferred cleanup every rebuild-based pipeline shares: clear
 // the single-flight slot and close the job's Done channel so SSE listeners and
 // the handler's caller unblock.
-func finishJob(job *installJob) {
-	installMu.Lock()
-	currentJob = nil
-	installMu.Unlock()
+func finishJob(job *installjob.Job) {
+	// Release compares before clearing, so a late unwind cannot evict whoever
+	// holds the interlock now.
+	installjob.Release(job)
 	close(job.Done)
 }
 
@@ -29,7 +30,7 @@ func finishJob(job *installJob) {
 // manifest, returning the package slug + version. It mirrors the old install
 // pipeline's validate→pack→parse→validate prologue but performs NO workspace
 // mutation — the real fetch happens again inside the rebuild's assemble step.
-func resolveInstallSlugVersion(app *pocketbase.PocketBase, job *installJob) (slug, version string, err error) {
+func resolveInstallSlugVersion(app *pocketbase.PocketBase, job *installjob.Job) (slug, version string, err error) {
 	// The resolve pre-flight (pack just far enough to read the manifest) occupies
 	// a tiny band below the assemble band [progAssembleStart, …) so the bar never
 	// jumps backward when assembleBuild re-fetches the member for real.
@@ -82,7 +83,7 @@ func resolveInstallSlugVersion(app *pocketbase.PocketBase, job *installJob) (slu
 
 // runInstallRebuild installs a package by computing the desired set (current +
 // the new member) and triggering a full rebuild.
-func runInstallRebuild(app *pocketbase.PocketBase, job *installJob) {
+func runInstallRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 	defer finishJob(job)
 
 	// Create the install-log row up front (slug falls back to the npm spec until
@@ -122,7 +123,7 @@ func runInstallRebuild(app *pocketbase.PocketBase, job *installJob) {
 
 // runUninstallRebuild uninstalls a package by computing the desired set (current
 // minus the member) and triggering a full rebuild.
-func runUninstallRebuild(app *pocketbase.PocketBase, job *installJob) {
+func runUninstallRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 	defer finishJob(job)
 
 	logRecord := createInstallLog(app, job, "uninstall")
@@ -175,7 +176,7 @@ func loadBuildManifest(buildID string) (RebuildManifest, error) {
 // disk. We back up the DB, sync the schema to the target build's migration set
 // (reverting any migrations newer builds applied), flip the `current` symlink
 // to the target, mirror its manifest into the registry, and restart.
-func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
+func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 	defer finishJob(job)
 
 	targetID := job.BuildID
@@ -281,7 +282,7 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installJob) {
 // runVersionChangeRebuild applies one or more version changes (upgrades or
 // downgrades, including the base/core) by folding each change into the current
 // member set, then triggering a single rebuild for the whole set.
-func runVersionChangeRebuild(app *pocketbase.PocketBase, job *installJob) {
+func runVersionChangeRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 	defer finishJob(job)
 
 	logRecord := createInstallLog(app, job, "version_change")

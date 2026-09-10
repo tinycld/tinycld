@@ -15,6 +15,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 
+	"tinycld.org/core/installjob"
 	"tinycld.org/core/pkgbuild"
 )
 
@@ -112,30 +113,14 @@ func RegisterHostedPackageEndpoints(app *pocketbase.PocketBase, ch *DeployChanne
 // claimHostedJob takes the single-flight slot, mirroring the host handlers'
 // conflict response. Returns nil and writes the 409 when another operation is
 // in flight.
-func claimHostedJob(re *core.RequestEvent, action, slug, npmPkg string) (*installJob, error) {
-	installMu.Lock()
-	defer installMu.Unlock()
-	if currentJob != nil {
-		info := map[string]any{
-			"jobId":  currentJob.ID,
-			"action": currentJob.Action,
-			"slug":   currentJob.Slug,
-			"status": currentJob.Status,
-		}
+func claimHostedJob(re *core.RequestEvent, action, slug, npmPkg string) (*installjob.Job, error) {
+	job := installjob.New(action, slug, npmPkg)
+	if busy, ok := installjob.Claim(job); !ok {
 		return nil, re.JSON(http.StatusConflict, map[string]any{
 			"error":      "Another install operation is in progress",
-			"currentJob": info,
+			"currentJob": busy.Info(),
 		})
 	}
-	job := &installJob{
-		ID:     fmt.Sprintf("job_%d", time.Now().UnixMilli()),
-		Action: action,
-		Slug:   slug,
-		NpmPkg: npmPkg,
-		Status: "running",
-		Done:   make(chan struct{}),
-	}
-	currentJob = job
 	return job, nil
 }
 
@@ -188,7 +173,7 @@ func handleHostedUninstall(app *pocketbase.PocketBase, ch *DeployChannel, orgDir
 
 func handleHostedVersionChange(app *pocketbase.PocketBase, ch *DeployChannel, orgDir string, re *core.RequestEvent) error {
 	var body struct {
-		Changes []versionChange `json:"changes"`
+		Changes []installjob.VersionChange `json:"changes"`
 	}
 	if err := json.NewDecoder(re.Request.Body).Decode(&body); err != nil {
 		return re.BadRequestError("Invalid request body", err)
@@ -338,7 +323,7 @@ func productionHostedDeps(app *pocketbase.PocketBase, ch *DeployChannel, orgDir 
 	}
 }
 
-func runHostedInstall(app core.App, job *installJob, d hostedDeps) {
+func runHostedInstall(app core.App, job *installjob.Job, d hostedDeps) {
 	defer finishJob(job)
 	logRecord := createInstallLog(app, job, "install")
 	bindFinalize(&d, app, logRecord, job)
@@ -386,7 +371,7 @@ func runHostedInstall(app core.App, job *installJob, d hostedDeps) {
 	runHostedDeploy(job, d, next)
 }
 
-func runHostedUninstall(app core.App, job *installJob, d hostedDeps) {
+func runHostedUninstall(app core.App, job *installjob.Job, d hostedDeps) {
 	defer finishJob(job)
 	logRecord := createInstallLog(app, job, "uninstall")
 	bindFinalize(&d, app, logRecord, job)
@@ -407,7 +392,7 @@ func runHostedUninstall(app core.App, job *installJob, d hostedDeps) {
 	runHostedDeploy(job, d, next)
 }
 
-func runHostedVersionChange(app core.App, job *installJob, d hostedDeps) {
+func runHostedVersionChange(app core.App, job *installjob.Job, d hostedDeps) {
 	defer finishJob(job)
 	logRecord := createInstallLog(app, job, "version_change")
 	bindFinalize(&d, app, logRecord, job)
@@ -441,7 +426,7 @@ func runHostedVersionChange(app core.App, job *installJob, d hostedDeps) {
 // build → snapshot → downs → propose → wait to be killed. On a refused
 // proposal after downs already ran, the tenant restores its own snapshot —
 // every earlier failure leaves live state untouched.
-func runHostedDeploy(job *installJob, d hostedDeps, next map[string]string) {
+func runHostedDeploy(job *installjob.Job, d hostedDeps, next map[string]string) {
 	ctx := context.Background()
 
 	emitProgress(job, "Building artifact", 10,
@@ -509,7 +494,7 @@ func runHostedDeploy(job *installJob, d hostedDeps, next map[string]string) {
 // admin downgrading right after an upgrade committed — legitimately trips the
 // 429; treating it as failure would run the risky in-process snapshot restore
 // for what is only a pacing refusal. Bounded: one floor window plus slack.
-func proposeWithRetry(ctx context.Context, d hostedDeps, job *installJob, next map[string]string) error {
+func proposeWithRetry(ctx context.Context, d hostedDeps, job *installjob.Job, next map[string]string) error {
 	const (
 		retryEvery = 10 * time.Second
 		retryFor   = 75 * time.Second
@@ -536,20 +521,20 @@ func proposeWithRetry(ctx context.Context, d hostedDeps, job *installJob, next m
 
 // bindFinalize wires the deps' log finalizer to the created row (deps are
 // built before the row exists).
-func bindFinalize(d *hostedDeps, app core.App, logRecord *core.Record, job *installJob) {
+func bindFinalize(d *hostedDeps, app core.App, logRecord *core.Record, job *installjob.Job) {
 	d.finalizeLog = func(status, errMsg string) {
 		finalizeInstallLog(app, logRecord, status, errMsg, job.LogLines)
 	}
 }
 
-func failHosted(d hostedDeps, job *installJob, step string, err error) {
+func failHosted(d hostedDeps, job *installjob.Job, step string, err error) {
 	if d.finalizeLog != nil {
 		d.finalizeLog("failed", err.Error())
 	}
 	_ = failJob(job, step, err)
 }
 
-func restoreHosted(d hostedDeps, job *installJob, restore func() error) {
+func restoreHosted(d hostedDeps, job *installjob.Job, restore func() error) {
 	if restore == nil {
 		return
 	}

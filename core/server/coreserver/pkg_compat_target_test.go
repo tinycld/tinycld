@@ -6,6 +6,7 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 
+	"tinycld.org/core/installjob"
 	"tinycld.org/core/pkgbuild/pkgbuildtest"
 )
 
@@ -24,7 +25,7 @@ func TestProductionRebuildDeps_WireVerifyCompat(t *testing.T) {
 		{Slug: "mail"},
 	}}
 
-	deps := productionRebuildDeps(pocketbase.New(), &installJob{ID: "j"}, m, nil)
+	deps := productionRebuildDeps(pocketbase.New(), &installjob.Job{ID: "j"}, m, nil)
 	if deps.verifyCompat == nil {
 		t.Fatal("production deps must wire verifyCompat")
 	}

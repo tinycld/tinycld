@@ -1,21 +1,24 @@
 package coreserver
 
-import "testing"
+import (
+	"testing"
+
+	"tinycld.org/core/installjob"
+)
 
 // TestShouldSuppressRestart is the H4 regression guard: a hooks-watcher restart
 // (IsRestart) must be vetoed while a package pipeline holds the single-flight
 // lock, so the generator's mid-pipeline pb_hooks rewrite can't tear the process
 // down between steps. Non-restart terminations and idle-state restarts proceed.
 func TestShouldSuppressRestart(t *testing.T) {
-	// Ensure a clean baseline and restore it (this is process-global state).
-	installMu.Lock()
-	prev := currentJob
-	currentJob = nil
-	installMu.Unlock()
+	// The interlock is process-global; leave it as we found it.
+	prev := installjob.Current()
+	installjob.Release(prev)
 	t.Cleanup(func() {
-		installMu.Lock()
-		currentJob = prev
-		installMu.Unlock()
+		installjob.Release(installjob.Current())
+		if prev != nil {
+			installjob.Claim(prev)
+		}
 	})
 
 	// Idle: a restart is allowed.
@@ -28,9 +31,10 @@ func TestShouldSuppressRestart(t *testing.T) {
 	}
 
 	// Job in flight: a restart must be vetoed.
-	installMu.Lock()
-	currentJob = &installJob{ID: "job_test", Action: "version_change", Status: "running"}
-	installMu.Unlock()
+	inflight := installjob.New("version_change", "", "")
+	if _, ok := installjob.Claim(inflight); !ok {
+		t.Fatal("claim must win against an idle interlock")
+	}
 
 	if !shouldSuppressRestart(true) {
 		t.Error("restart NOT suppressed during an in-flight pipeline — risks mid-pipeline teardown")

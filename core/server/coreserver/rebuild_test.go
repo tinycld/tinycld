@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
+	"tinycld.org/core/installjob"
 )
 
 func TestRebuildManifest_RoundTrip(t *testing.T) {
@@ -214,7 +215,7 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 			seq = append(seq, "verify")
 			return nil
 		},
-		pipeline: func(j *installJob, dir string) (buildOutput, error) {
+		pipeline: func(j *installjob.Job, dir string) (buildOutput, error) {
 			seq = append(seq, "pipeline")
 			return buildOutput{}, nil
 		},
@@ -227,7 +228,7 @@ func TestRebuild_HappyPath_Sequence(t *testing.T) {
 		finalizeLog:    func(status, errMsg string) { seq = append(seq, "finalize") },
 		restart:        func() { seq = append(seq, "restart") },
 	}
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
 	m := RebuildManifest{BuildID: "build-1", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
 	if err := rebuildWith(job, m, deps); err != nil {
 		t.Fatal(err)
@@ -252,7 +253,7 @@ func TestRebuild_VerifyCompatFailure_DiscardsBuildBeforeBackup(t *testing.T) {
 		verifyCompat: func(m RebuildManifest, dir string) error {
 			return fmt.Errorf("mail requires @tinycld/core >=0.5.0 (found: 0.0.4)")
 		},
-		pipeline: func(j *installJob, dir string) (buildOutput, error) {
+		pipeline: func(j *installjob.Job, dir string) (buildOutput, error) {
 			piped = true
 			return buildOutput{}, nil
 		},
@@ -264,7 +265,7 @@ func TestRebuild_VerifyCompatFailure_DiscardsBuildBeforeBackup(t *testing.T) {
 		finalizeLog: func(status, errMsg string) { finalized = status },
 		restart:     func() {},
 	}
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
 	m := RebuildManifest{BuildID: "build-vc", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
 	if err := rebuildWith(job, m, deps); err == nil {
 		t.Fatal("expected the verify failure to fail the rebuild")
@@ -290,7 +291,7 @@ func TestRebuild_FinalizesLogOnFailure(t *testing.T) {
 	var finalized string
 	deps := rebuildDeps{
 		assemble:    func(m RebuildManifest, dir string) error { return fmt.Errorf("assemble broke") },
-		pipeline:    func(j *installJob, dir string) (buildOutput, error) { return buildOutput{}, nil },
+		pipeline:    func(j *installjob.Job, dir string) (buildOutput, error) { return buildOutput{}, nil },
 		backupDB:    func() error { return nil },
 		syncMig:     func(buildDir string) (SyncResult, error) { return SyncResult{}, nil },
 		activate:    func(id string) error { return nil },
@@ -298,7 +299,7 @@ func TestRebuild_FinalizesLogOnFailure(t *testing.T) {
 		finalizeLog: func(status, errMsg string) { finalized = status },
 		restart:     func() {},
 	}
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
 	if err := rebuildWith(job, RebuildManifest{BuildID: "build-f"}, deps); err == nil {
 		t.Fatal("expected error")
 	}
@@ -312,8 +313,10 @@ func TestRebuild_PipelineFailure_NoActivateNoRestore(t *testing.T) {
 	t.Setenv("TINYCLD_STATE_DIR", state)
 	var restored, activated bool
 	deps := rebuildDeps{
-		assemble:  func(m RebuildManifest, dir string) error { return nil },
-		pipeline:  func(j *installJob, dir string) (buildOutput, error) { return buildOutput{}, fmt.Errorf("build broke") },
+		assemble: func(m RebuildManifest, dir string) error { return nil },
+		pipeline: func(j *installjob.Job, dir string) (buildOutput, error) {
+			return buildOutput{}, fmt.Errorf("build broke")
+		},
 		backupDB:  func() error { return nil },
 		restoreDB: func() error { restored = true; return nil },
 		syncMig:   func(buildDir string) (SyncResult, error) { return SyncResult{}, nil },
@@ -321,7 +324,7 @@ func TestRebuild_PipelineFailure_NoActivateNoRestore(t *testing.T) {
 		prune:     func(keep int) error { return nil },
 		restart:   func() {},
 	}
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
 	if err := rebuildWith(job, RebuildManifest{BuildID: "build-2"}, deps); err == nil {
 		t.Fatal("expected error")
 	}
@@ -460,7 +463,7 @@ func TestRebuild_HappyPath_ArmsBackup_NoRestore(t *testing.T) {
 		assemble: func(m RebuildManifest, dir string) error {
 			return os.MkdirAll(filepath.Join(dir, "tinycld", "server", "pb_migrations"), 0o755)
 		},
-		pipeline:  func(j *installJob, dir string) (buildOutput, error) { return buildOutput{}, nil },
+		pipeline:  func(j *installjob.Job, dir string) (buildOutput, error) { return buildOutput{}, nil },
 		backupDB:  func() error { return nil }, // the fake backup already exists on disk
 		restoreDB: func() error { restored = true; return nil },
 		syncMig:   func(buildDir string) (SyncResult, error) { return SyncResult{}, nil },
@@ -469,7 +472,7 @@ func TestRebuild_HappyPath_ArmsBackup_NoRestore(t *testing.T) {
 		// real success-path behavior (arm marker written, backup left in place).
 		restart: func() { armDatabaseBackup("build-armed") },
 	}
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
 	m := RebuildManifest{BuildID: "build-armed", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
 	if err := rebuildWith(job, m, deps); err != nil {
 		t.Fatal(err)
@@ -492,7 +495,7 @@ func TestRebuild_MigrateFailure_RestoresAndNoActivate(t *testing.T) {
 	var restored, activated bool
 	deps := rebuildDeps{
 		assemble:  func(m RebuildManifest, dir string) error { return nil },
-		pipeline:  func(j *installJob, dir string) (buildOutput, error) { return buildOutput{}, nil },
+		pipeline:  func(j *installjob.Job, dir string) (buildOutput, error) { return buildOutput{}, nil },
 		backupDB:  func() error { return nil },
 		restoreDB: func() error { restored = true; return nil },
 		syncMig:   func(buildDir string) (SyncResult, error) { return SyncResult{}, fmt.Errorf("down broke") },
@@ -500,7 +503,7 @@ func TestRebuild_MigrateFailure_RestoresAndNoActivate(t *testing.T) {
 		prune:     func(keep int) error { return nil },
 		restart:   func() {},
 	}
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
 	if err := rebuildWith(job, RebuildManifest{BuildID: "build-3"}, deps); err == nil {
 		t.Fatal("expected error")
 	}
@@ -521,7 +524,7 @@ func happyDeps(restored, restarted *bool) rebuildDeps {
 		assemble: func(m RebuildManifest, dir string) error {
 			return os.MkdirAll(filepath.Join(dir, "tinycld", "server", "pb_migrations"), 0o755)
 		},
-		pipeline:       func(j *installJob, dir string) (buildOutput, error) { return buildOutput{}, nil },
+		pipeline:       func(j *installjob.Job, dir string) (buildOutput, error) { return buildOutput{}, nil },
 		backupDB:       func() error { return nil },
 		restoreDB:      func() error { *restored = true; return nil },
 		syncMig:        func(buildDir string) (SyncResult, error) { return SyncResult{}, nil },
@@ -541,7 +544,7 @@ func TestRebuild_RecordBuildFailure_StillSucceeds(t *testing.T) {
 	deps := happyDeps(&restored, &restarted)
 	deps.recordBuild = func(out buildOutput) error { return fmt.Errorf("record broke") }
 
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
 	m := RebuildManifest{BuildID: "build-rb", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
 	if err := rebuildWith(job, m, deps); err != nil {
 		t.Fatalf("recordBuild failure must NOT fail an already-live build: %v", err)
@@ -563,7 +566,7 @@ func TestRebuild_CommitRegistryFailure_StillSucceeds(t *testing.T) {
 	deps := happyDeps(&restored, &restarted)
 	deps.commitRegistry = func() error { return fmt.Errorf("commit broke") }
 
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
 	m := RebuildManifest{BuildID: "build-cr", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
 	if err := rebuildWith(job, m, deps); err != nil {
 		t.Fatalf("commitRegistry failure must NOT fail an already-live build: %v", err)
@@ -582,7 +585,7 @@ func TestRebuild_PruneFailure_StillSucceeds(t *testing.T) {
 	deps := happyDeps(&restored, &restarted)
 	deps.prune = func(keep int) error { return fmt.Errorf("prune broke") }
 
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
 	m := RebuildManifest{BuildID: "build-pr", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
 	if err := rebuildWith(job, m, deps); err != nil {
 		t.Fatalf("prune failure must NOT fail an already-live build: %v", err)
@@ -601,7 +604,7 @@ func TestRebuild_ActivateFailure_RestoresAndDoesNotRestart(t *testing.T) {
 	deps := happyDeps(&restored, &restarted)
 	deps.activate = func(id string) error { return fmt.Errorf("activate broke") }
 
-	job := &installJob{ID: "j", Done: make(chan struct{})}
+	job := &installjob.Job{ID: "j", Done: make(chan struct{})}
 	m := RebuildManifest{BuildID: "build-af", Members: []MemberSpec{{Slug: "tinycld", Spec: "x"}}}
 	if err := rebuildWith(job, m, deps); err == nil {
 		t.Fatal("expected an error when activate fails")

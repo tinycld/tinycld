@@ -8,54 +8,11 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
-)
-
-// ---------- types ----------
-
-type installJob struct {
-	ID      string
-	Action  string // "install", "uninstall", "revert", or "version_change"
-	Slug    string
-	NpmPkg  string
-	BuildID string // revert target (action == "revert")
-	// version_change: the ordered set of {slug → targetVersion} to apply together.
-	Changes   []versionChange
-	Progress  int
-	Step      string
-	Status    string // "running", "success", "failed", "rolled_back"
-	Error     string
-	LogLines  []string
-	Done      chan struct{}
-	listeners []chan sseEvent
-	mu        sync.Mutex
-}
-
-type sseEvent struct {
-	Event string `json:"event"`
-	Data  any    `json:"data"`
-}
-
-type progressData struct {
-	Step     string `json:"step"`
-	Progress int    `json:"progress"`
-	Message  string `json:"message"`
-}
-
-type completeData struct {
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
-}
-
-// ---------- global state ----------
-
-var (
-	installMu  sync.Mutex
-	currentJob *installJob
+	"tinycld.org/core/installjob"
 )
 
 // ---------- registration ----------
@@ -144,9 +101,7 @@ func shouldSuppressRestart(isRestart bool) bool {
 	if !isRestart {
 		return false
 	}
-	installMu.Lock()
-	defer installMu.Unlock()
-	return currentJob != nil
+	return installjob.Running()
 }
 
 // isOwner reports whether the given user holds the owner role. Package
@@ -225,35 +180,17 @@ func handleInstall(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		return re.BadRequestError(err.Error(), nil)
 	}
 
-	installMu.Lock()
-	if currentJob != nil {
-		info := map[string]any{
-			"jobId":  currentJob.ID,
-			"action": currentJob.Action,
-			"slug":   currentJob.Slug,
-			"status": currentJob.Status,
-		}
-		installMu.Unlock()
+	job := installjob.New("install", "", body.NpmPackage)
+	if busy, ok := installjob.Claim(job); !ok {
 		return re.JSON(http.StatusConflict, map[string]any{
 			"error":      "Another install operation is in progress",
-			"currentJob": info,
+			"currentJob": busy.Info(),
 		})
 	}
 
-	jobId := fmt.Sprintf("job_%d", time.Now().UnixMilli())
-	job := &installJob{
-		ID:     jobId,
-		Action: "install",
-		NpmPkg: body.NpmPackage,
-		Status: "running",
-		Done:   make(chan struct{}),
-	}
-	currentJob = job
-	installMu.Unlock()
-
 	go runInstallRebuild(app, job)
 
-	return re.JSON(http.StatusAccepted, map[string]any{"jobId": jobId})
+	return re.JSON(http.StatusAccepted, map[string]any{"jobId": job.ID})
 }
 
 // rejectBaseUninstall returns an error when slug is the TinyCld base (`core`).
@@ -284,43 +221,23 @@ func handleUninstall(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		return re.BadRequestError(err.Error(), nil)
 	}
 
-	installMu.Lock()
-	if currentJob != nil {
-		info := map[string]any{
-			"jobId":  currentJob.ID,
-			"action": currentJob.Action,
-			"slug":   currentJob.Slug,
-			"status": currentJob.Status,
-		}
-		installMu.Unlock()
+	job := installjob.New("uninstall", body.Slug, "")
+	if busy, ok := installjob.Claim(job); !ok {
 		return re.JSON(http.StatusConflict, map[string]any{
 			"error":      "Another operation is in progress",
-			"currentJob": info,
+			"currentJob": busy.Info(),
 		})
 	}
 
-	jobId := fmt.Sprintf("job_%d", time.Now().UnixMilli())
-	job := &installJob{
-		ID:     jobId,
-		Action: "uninstall",
-		Slug:   body.Slug,
-		Status: "running",
-		Done:   make(chan struct{}),
-	}
-	currentJob = job
-	installMu.Unlock()
-
 	go runUninstallRebuild(app, job)
 
-	return re.JSON(http.StatusAccepted, map[string]any{"jobId": jobId})
+	return re.JSON(http.StatusAccepted, map[string]any{"jobId": job.ID})
 }
 
 func handleEvents(re *core.RequestEvent) error {
 	jobId := re.Request.PathValue("jobId")
 
-	installMu.Lock()
-	job := currentJob
-	installMu.Unlock()
+	job := installjob.Current()
 
 	if job == nil || job.ID != jobId {
 		return re.NotFoundError("Job not found", nil)
@@ -337,28 +254,26 @@ func handleEvents(re *core.RequestEvent) error {
 		return re.InternalServerError("Streaming not supported", nil)
 	}
 
-	ch := make(chan sseEvent, 64)
-	job.mu.Lock()
-	job.listeners = append(job.listeners, ch)
 	// Backfill the FULL progress history to a late-connecting client, not just
 	// the latest step. The pipeline can blow through several fast early stages
 	// (npm pack, manifest parse, file copy) in well under a second; a client
 	// whose EventSource connects after that would otherwise never see those
 	// messages, since only live events flow afterward. Replaying every recorded
 	// LogLine (each is "[N%] Step: message") makes the stream's history complete
-	// regardless of connect timing. We write these directly to the response here
-	// — while holding job.mu so the snapshot is consistent — rather than through
-	// the bounded channel, which could overflow on a long history.
-	backfill := make([]progressData, 0, len(job.LogLines))
-	for _, line := range job.LogLines {
+	// regardless of connect timing.
+	//
+	// Subscribing and snapshotting happen under ONE lock, so no event can land
+	// in the gap between them — arriving in neither the backlog nor the stream.
+	// The backlog is written straight to the response rather than through the
+	// bounded channel, which a long history could overflow.
+	ch, history, jobStatus, jobErr := job.SubscribeWithHistory(64)
+	backfill := make([]installjob.ProgressData, 0, len(history))
+	for _, line := range history {
 		if pct, step, msg, ok := parseLogLine(line); ok {
-			backfill = append(backfill, progressData{Step: step, Progress: pct, Message: msg})
+			backfill = append(backfill, installjob.ProgressData{Step: step, Progress: pct, Message: msg})
 		}
 	}
-	jobStatus := job.Status
-	jobErr := job.Error
-	jobDone := job.Status == "success" || job.Status == "failed" || job.Status == "rolled_back"
-	job.mu.Unlock()
+	jobDone := jobStatus == "success" || jobStatus == "failed" || jobStatus == "rolled_back"
 
 	for _, pd := range backfill {
 		data, _ := json.Marshal(pd)
@@ -372,7 +287,7 @@ func handleEvents(re *core.RequestEvent) error {
 		if jobStatus != "success" {
 			status = "failed"
 		}
-		data, _ := json.Marshal(completeData{Status: status, Error: jobErr})
+		data, _ := json.Marshal(installjob.CompleteData{Status: status, Error: jobErr})
 		fmt.Fprintf(w, "event: complete\ndata: %s\n\n", data)
 		flusher.Flush()
 		return nil
@@ -452,31 +367,12 @@ func installLogStatusJSON(record *core.Record) map[string]any {
 	}
 }
 
-func emitProgress(job *installJob, step string, progress int, message string) {
+func emitProgress(job *installjob.Job, step string, progress int, message string) {
 	if job == nil {
 		return
 	}
-	job.mu.Lock()
-	defer job.mu.Unlock()
-	job.Step = step
-	job.Progress = progress
-	job.LogLines = append(job.LogLines, fmt.Sprintf("[%d%%] %s: %s", progress, step, message))
+	job.RecordProgress(step, progress, message)
 	srvLog.Info("package install progress", "jobID", job.ID, "percent", progress, "step", step, "message", message)
-
-	evt := sseEvent{
-		Event: "progress",
-		Data: progressData{
-			Step:     step,
-			Progress: progress,
-			Message:  message,
-		},
-	}
-	for _, ch := range job.listeners {
-		select {
-		case ch <- evt:
-		default:
-		}
-	}
 }
 
 // parseLogLine reverses emitProgress's "[N%] Step: message" formatting back into
@@ -502,34 +398,18 @@ func parseLogLine(line string) (pct int, step, msg string, ok bool) {
 	return n, rest[:colon], rest[colon+2:], true
 }
 
-func emitComplete(job *installJob, status string, errMsg string) {
-	job.mu.Lock()
-	defer job.mu.Unlock()
-
+func emitComplete(job *installjob.Job, status string, errMsg string) {
 	if errMsg != "" {
 		srvLog.Info("package install complete", "jobID", job.ID, "status", status, "err", errMsg)
 	} else {
 		srvLog.Info("package install complete", "jobID", job.ID, "status", status)
 	}
-
-	evt := sseEvent{
-		Event: "complete",
-		Data: completeData{
-			Status: status,
-			Error:  errMsg,
-		},
-	}
-	for _, ch := range job.listeners {
-		select {
-		case ch <- evt:
-		default:
-		}
-	}
+	job.RecordComplete(status, errMsg)
 }
 
 // ---------- install log helpers ----------
 
-func createInstallLog(app core.App, job *installJob, action string) *core.Record {
+func createInstallLog(app core.App, job *installjob.Job, action string) *core.Record {
 	collection, err := app.FindCollectionByNameOrId("pkg_install_log")
 	if err != nil {
 		srvLog.Error("failed to find pkg_install_log collection", "err", err)

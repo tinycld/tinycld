@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/getsentry/sentry-go"
+	"tinycld.org/core/installjob"
 )
 
 // These helpers give the rebuild pipeline rich, operator-facing logging for what
@@ -25,15 +26,13 @@ import (
 // to pkg_install_log.log) and the process log, WITHOUT moving the progress bar.
 // Detail lines are prefixed "  ·" so they read as sub-items under the milestone
 // emitProgress lines in the recorded log.
-func jobLogf(job *installJob, format string, args ...any) {
+func jobLogf(job *installjob.Job, format string, args ...any) {
 	if job == nil {
 		srvLog.Info(fmt.Sprintf(format, args...))
 		return
 	}
 	msg := fmt.Sprintf(format, args...)
-	job.mu.Lock()
-	job.LogLines = append(job.LogLines, "  · "+msg)
-	job.mu.Unlock()
+	job.AppendLog("  · " + msg)
 	srvLog.Info(msg, "jobID", job.ID)
 }
 
@@ -42,7 +41,7 @@ func jobLogf(job *installJob, format string, args ...any) {
 // and error). The duration is the key debugging signal — which step is slow, and
 // which step a hang is stuck in. Returns fn's error unchanged so callers keep
 // their existing control flow.
-func timeStep(job *installJob, step string, fn func() error) error {
+func timeStep(job *installjob.Job, step string, fn func() error) error {
 	start := monoNow()
 	jobLogf(job, "%s: started", step)
 	err := fn()
@@ -92,7 +91,7 @@ func memberSetSummary(m RebuildManifest) string {
 // Safe when Sentry isn't configured (no SENTRY_DSN): the global hub no-ops.
 // The durable job log tail is attached as `extra` so the failing step + the
 // command output that caused it travel with the event.
-func captureRebuildFailure(job *installJob, action, step string, err error) {
+func captureRebuildFailure(job *installjob.Job, action, step string, err error) {
 	if err == nil {
 		return
 	}
@@ -122,17 +121,16 @@ func captureRebuildFailure(job *installJob, action, step string, err error) {
 
 // lastLogLines returns the final n durable log lines of a job, newest context
 // last, for attaching to a Sentry event.
-func lastLogLines(job *installJob, n int) string {
+func lastLogLines(job *installjob.Job, n int) string {
 	if job == nil {
 		return ""
 	}
-	job.mu.Lock()
-	defer job.mu.Unlock()
+	lines := job.Snapshot()
 	start := 0
-	if len(job.LogLines) > n {
-		start = len(job.LogLines) - n
+	if len(lines) > n {
+		start = len(lines) - n
 	}
-	return strings.Join(job.LogLines[start:], "\n")
+	return strings.Join(lines[start:], "\n")
 }
 
 // monoNow/monoSince wrap time so the rest of the logging code reads cleanly.

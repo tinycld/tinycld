@@ -10,6 +10,7 @@ import (
 
 	pbcore "github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
+	"tinycld.org/core/installjob"
 )
 
 // hostedRecorder is a hostedDeps fake that records step order and lets each
@@ -80,8 +81,8 @@ func (r *hostedRecorder) deps() hostedDeps {
 	}
 }
 
-func newHostedJob(action string) *installJob {
-	return &installJob{
+func newHostedJob(action string) *installjob.Job {
+	return &installjob.Job{
 		ID: "job_h1", Action: action, Status: "running", Done: make(chan struct{}),
 	}
 }
@@ -221,7 +222,7 @@ func TestRunHostedVersionChange_EditsLockfile(t *testing.T) {
 		"tinycld": "1.0.0", "@tinycld/todo": "1.0.0",
 	}}
 	job := newHostedJob("version_change")
-	job.Changes = []versionChange{
+	job.Changes = []installjob.VersionChange{
 		{Slug: "todo", TargetVersion: "2.0.0"},
 		{Slug: "core", TargetVersion: "1.1.0"},
 	}
