@@ -51,8 +51,10 @@ func RegisterRoutes(app *pocketbase.PocketBase) {
 //
 // UNAUTHENTICATED by necessity — a provider holds no session and no OAuth
 // token — so the HMAC signature IS the authentication, and every path below
-// fails closed. The route must be excluded from OAuth scope classification
-// rather than assigned a scope: it is not a caller acting for a user.
+// fails closed. The route sits outside the OAuth token surface entirely:
+// enforceGrant gates on a bearer token being present and no-ops without one,
+// so a provider's request (which carries no such token) never reaches scope
+// classification at all — there is no exclusion list to maintain here.
 func MountRoutes(se *core.ServeEvent) {
 	se.Router.POST("/api/webhooks/{source}", func(re *core.RequestEvent) error {
 		name := re.Request.PathValue("source")

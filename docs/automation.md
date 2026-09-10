@@ -191,6 +191,19 @@ Native-action caveats:
 - Returning an error records the action as failed in `rule_runs` and
   continues to the rule's later actions (mail-filter semantics).
 
+Core ships one native action itself: `core:post-webhook` (`url`, `secret`),
+so any package's rule can POST to an external service with no
+package-specific code. The body is `{collection, record, rule}` JSON built
+from `Record.PublicExport()` — the same export the engine uses for
+`{{placeholders}}`, so the payload exposes no field a rule's own templates
+could not reach. Setting `secret` adds an
+`X-TinyCld-Signature-256: sha256=<hex>` HMAC over the raw body, for a
+receiver to verify. A per-rule ceiling of 60 posts/hour guards the loop a
+receiver that writes back into this deployment would otherwise close;
+internal/private addresses and redirects are refused, since `url` is
+template-substituted and therefore only as trustworthy as the record that
+triggered the rule.
+
 ## Record-level authorization
 
 The engine runs actions with system authority: record-ops write with a
@@ -393,6 +406,64 @@ relation params get a record picker automatically (display field chosen
 from `name`/`title`/`label`/`subject`/`display_name`/`email`/`username`);
 an action on a collection that doesn't exist in the deployment shows as
 unavailable rather than vanishing.
+
+## Receiving webhooks (`webhookin`)
+
+`core:post-webhook` is the outbound half of this story; `webhookin` is the
+inbound half — a package that wants to *receive* a provider's callbacks
+mounts nothing of its own. Core already exposes one route,
+`POST /api/webhooks/{source}`, and a package claims a name under it from its
+own `Register(app)` — the same inversion `oauth.RegisterPackage` and
+`search.RegisterSources` use, so core still names no package:
+
+```go
+webhookin.Register("acme-tasks", webhookin.Source{
+    Secret: func(app core.App, r *http.Request) (string, error) {
+        return acmeWebhookSecret(app)
+    },
+    SignatureHeader: "X-Acme-Signature-256",
+    EventHeader:     "X-Acme-Event",
+    DeliveryID:      func(r *http.Request) string { return r.Header.Get("X-Acme-Delivery") },
+    Handle:          handleAcmeDelivery,
+})
+```
+
+`Secret` is a func rather than a string because the signing secret lives in
+the database — per-deployment and rotatable — so it has to be read per
+request, not captured at boot. `SignatureHeader` and `EventHeader` name the
+provider's own header conventions (default `X-TinyCld-Signature-256` for the
+signature); `DeliveryID` extracts the provider's per-delivery id, the replay
+dedupe key; `Handle` interprets one verified delivery.
+
+**The signature is the authentication**, not a bonus check on top of one.
+The route carries no session and no OAuth token — a provider has neither —
+so every request arrives looking identical to a forged one, and the HMAC is
+the only thing that tells them apart. That is also why an unconfigured or
+blank secret is *refused* rather than treated as "no secret configured, skip
+the check": treating absence as permission would mean a package that forgot
+to wire up its secret silently accepted unauthenticated writes instead of
+loudly failing to receive anything.
+
+`Delivery.Body` carries the raw request bytes, not a decoded struct, because
+the signature is computed over those exact bytes — re-encoding a parsed
+payload would not round-trip byte-for-byte and would invalidate any
+signature a handler wanted to verify again downstream.
+
+A repeated delivery id (a provider's own retry) returns `{"duplicate":
+true}` with a 200 rather than reprocessing it — a retry of work already done
+is success, and any other status just invites the provider to keep sending
+it. A handler error, by contrast, returns 500 so a well-behaved provider
+retries; the delivery id is already claimed by then, so that retry reads as
+a duplicate, which is deliberate — a handler that failed halfway must
+reconcile on its own terms rather than have the same payload replayed into
+it.
+
+**Transport only.** `webhookin` verifies, dedupes, meters and dispatches; it
+writes no domain row and knows no collection name. Interpretation — "this
+payload means link these two records" — belongs to the package that owns
+the schema, because that is where the access rules live. A generic "any
+webhook may write any collection" facility would route around those rules
+entirely, which for a rule-first package is its whole authorization story.
 
 ## Verifying your declarations
 
