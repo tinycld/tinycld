@@ -50,6 +50,7 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 // the full app-bootstrap path (LoadDefs + OnServe binding).
 func registerCoreNativeActions() {
 	registerCoreEmailAction()
+	registerCoreWebhookAction()
 
 	// core:apply-label's `label` param is a caller-supplied record id, so it
 	// needs a registered authorizer like any other relation param. The check
