@@ -318,12 +318,18 @@ func setHTMLRevalidate(e *core.RequestEvent, path string) {
 // legacy behavior used in dev where the volume isn't mounted. Any path
 // not present in any location returns 404.
 func StaticWithDynamicFallback(publicDir, websiteDir, releasesDir string) func(*core.RequestEvent) error {
-	publicFs := os.DirFS(publicDir)
 	var websiteFs fs.FS
 	if websiteDir != "" {
 		websiteFs = os.DirFS(websiteDir)
 	}
+	return StaticWithDynamicFallbackFS(os.DirFS(publicDir), websiteFs, nil, releasesDir)
+}
 
+// StaticWithDynamicFallbackFS is StaticWithDynamicFallback over fs.FS values,
+// so a single-binary build can serve its embedded web bundle through the same
+// handler the container build uses. releasesFS, when non-nil, supplies the SPA
+// shell in place of reading <releasesDir>/current/app.html from disk.
+func StaticWithDynamicFallbackFS(publicFs, websiteFs, releasesFs fs.FS, releasesDir string) func(*core.RequestEvent) error {
 	return func(e *core.RequestEvent) error {
 		if e.Request.Method != http.MethodGet && e.Request.Method != http.MethodHead {
 			return e.Next()
@@ -362,7 +368,13 @@ func StaticWithDynamicFallback(publicDir, websiteDir, releasesDir string) func(*
 		// via ETag (see its doc) so a tab reload always confirms the shell is
 		// current — a stale shell would reference asset hashes the client has
 		// since dropped — but an unchanged shell 304s instead of re-sending.
-		if releasesDir != "" {
+		// An embedded bundle has no releases dir to promote into, so its shell
+		// comes straight from the embedded FS.
+		if releasesFs != nil {
+			if data, err := fs.ReadFile(releasesFs, "app.html"); err == nil {
+				return writeAppShell(e, injectPublicConfig(data))
+			}
+		} else if releasesDir != "" {
 			currentApp := filepath.Join(releasesDir, "current", "app.html")
 			if data, err := os.ReadFile(currentApp); err == nil {
 				return writeAppShell(e, injectPublicConfig(data))
