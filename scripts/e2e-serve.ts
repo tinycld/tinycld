@@ -15,7 +15,7 @@
 //
 // FLOW (seed → export → promote → serve):
 //   1. Seed: reuse scripts/reset-dev-db.ts (builds PB, resets + seeds the test
-//      DB on a throwaway port :7299, exits after a WAL checkpoint).
+//      DB on a throwaway port derived from ours, exits after a WAL checkpoint).
 //   2. Export: `expo export --platform web` → dist/ (one deterministic compile).
 //   3. Promote: stage dist/ into the prod-shaped releases layout the Go server
 //      reads — a TypeScript port of entrypoint.sh's promote_release().
@@ -39,11 +39,6 @@ import { promoteRelease } from './promote-release'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const PB_BINARY = path.join(ROOT, 'server', 'app')
-
-// The throwaway port reset-dev-db.ts seeds on (it exits before we serve, so
-// this never collides with the user-facing port). Matches the value the old
-// expo:test chain used.
-const SEED_PORT = 7299
 
 function log(msg: string) {
     process.stdout.write(`[e2e-serve] ${msg}\n`)
@@ -77,6 +72,26 @@ function resolveDir(flag: string, fallback: string): string {
 
 const skipExport =
     process.argv.includes('--skip-export') || process.env.TINYCLD_E2E_SKIP_EXPORT === '1'
+
+// A second instance started CONCURRENTLY with the one that owns the export
+// (Playwright starts every webServer entry at once) must not run `expo export`
+// itself: the export CLEANS dist/ before writing it, so two of them racing
+// leaves the loser staring at a half-deleted tree.
+//
+// The value is the producer's releases dir. Waiting on its `current` symlink
+// (written last by promoteRelease) means the producer is done — and copying
+// THAT rather than dist/ is what makes this safe: a promoted release is
+// immutable and complete, while dist/ is scratch space the next export wipes.
+const mirrorReleasesFrom = flagValue('--mirror-releases-from')
+
+async function waitForFile(target: string, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+        if (fs.existsSync(target)) return
+        await new Promise(r => setTimeout(r, 500))
+    }
+    throw new Error(`e2e-serve: timed out after ${timeoutMs}ms waiting for ${target}`)
+}
 
 async function tryConnect(port: number, host = '127.0.0.1'): Promise<boolean> {
     return new Promise(resolve => {
@@ -120,15 +135,26 @@ function run(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<void
 // Phase 1 — seed the test DB. reset-dev-db.ts builds PB, deletes + recreates
 // the data dir, runs migrations, seeds, then SIGTERMs its own PB and waits for
 // the SQLite WAL to checkpoint before exiting (reset-dev-db.ts), so the
-// serving PB below opens a fully-flushed DB. --browse-url points the seed's
-// login summary at the user-facing port (cosmetic).
+// serving PB below opens a fully-flushed DB.
+//
+// The seed's PocketBase MUST NOT bind our user-facing port, even though it is
+// gone long before phase 3 starts one. It serves /api/health like any other PB,
+// so an external readiness probe (Playwright's webServer gate) would see the
+// gate go green during SEEDING, start the tests, and then hit connection-refused
+// the moment the seed tears its server down. Offsetting keeps the throwaway
+// distinct per instance, so two e2e stacks can also seed concurrently.
+//
+// +500 rather than a smaller offset: 73xx is taken (scripts/cli-smoke.ts), and
+// the gap has to clear every port a second instance might use.
+const seedPortFor = (port: number) => port + 500
+
 async function seed(dataDir: string, port: number): Promise<void> {
     log('phase 1/3: seeding test DB (reset-dev-db.ts)')
     await run('npx', [
         'tsx',
         'scripts/reset-dev-db.ts',
         '--url',
-        `http://127.0.0.1:${SEED_PORT}`,
+        `http://127.0.0.1:${seedPortFor(port)}`,
         '--browse-url',
         `http://localhost:${port}`,
         '--data-dir',
@@ -141,9 +167,11 @@ async function seed(dataDir: string, port: number): Promise<void> {
 // pre-builds the bundle). --skip-export reuses an existing dist/ — set in CI
 // (the action already built it) and for local fast iteration.
 function buildBundle(releaseId: string): void {
+    const indexHtml = path.join(ROOT, 'dist', 'index.html')
+
     if (skipExport) {
         log('phase 2/3: --skip-export set, reusing existing dist/')
-        if (!fs.existsSync(path.join(ROOT, 'dist', 'index.html'))) {
+        if (!fs.existsSync(indexHtml)) {
             throw new Error(
                 'e2e-serve: --skip-export but dist/index.html is missing; run once without --skip-export first (or let the CI action build it)'
             )
@@ -190,10 +218,23 @@ function serve(opts: { port: number; dataDir: string; releasesDir: string }): Ch
         path.join(ROOT, 'core', 'types'),
         'serve',
     ]
+    // Mail listeners bind FIXED ports, so a second instance on the same box
+    // would collide with the first (PB logs "address already in use" and
+    // carries on, but the noise is misleading). Offset them alongside the
+    // HTTP port; the IMAP e2e suite talks to the primary, whose :1193 matches
+    // dev.ts and imap-helpers.ts.
+    const mailEnv = mirrorReleasesFrom
+        ? {
+              IMAP_ADDR: ':1293',
+              IMAPS_ADDR: ':2093',
+              SMTP_ADDR: ':1687',
+              SMTPS_ADDR: ':1466',
+          }
+        : { IMAP_ADDR: ':1193' }
     return spawn(PB_BINARY, args, {
         cwd: ROOT,
         stdio: 'inherit',
-        env: { ...process.env, IMAP_ADDR: ':1193' },
+        env: { ...process.env, ...mailEnv },
     })
 }
 
@@ -207,8 +248,21 @@ async function main() {
     const releaseId = `e2e-${Date.now()}`
 
     await seed(dataDir, port)
-    buildBundle(releaseId)
-    promote(distDir, releasesDir, releaseId)
+
+    if (mirrorReleasesFrom) {
+        // Phases 2+3 collapse into a copy: the producer already exported and
+        // promoted, and its releases dir is immutable once `current` exists.
+        const sourceDir = path.resolve(ROOT, mirrorReleasesFrom)
+        const marker = path.join(sourceDir, 'current')
+        log(`phase 2/3: waiting for the exporting instance (${marker})`)
+        await waitForFile(marker, 600_000)
+        log(`phase 3/3: mirroring ${sourceDir} → ${releasesDir}`)
+        fs.rmSync(releasesDir, { recursive: true, force: true })
+        fs.cpSync(sourceDir, releasesDir, { recursive: true, verbatimSymlinks: true })
+    } else {
+        buildBundle(releaseId)
+        promote(distDir, releasesDir, releaseId)
+    }
 
     const pb = serve({ port, dataDir, releasesDir })
 

@@ -56,13 +56,13 @@ tsconfig.tsbuildinfo
 # Local PocketBase data
 server/pb_data/
 server/pb_test_data/
-# Per-org data dirs for the multi-org e2e stack (scripts/e2e-multi-org.ts),
-# one seeded DB per org.
+# Extra data dirs for the e2e stack (server/pb_test_data_2 is the second
+# deployment the saved-server switcher spec needs), one seeded DB each.
 server/pb_test_data_*/
 # Throwaway DB the live CLI smoke test seeds (scripts/cli-smoke.ts).
 server/pb_smoke_data/
 # Promoted web bundle the e2e static-serve flow (scripts/e2e-serve.ts) builds.
-server/pb_test_releases/
+server/pb_test_releases*/
 
 # Copied by `pnpm run assets:copy-pdfjs` from node_modules at install time.
 /public/workers/
