@@ -78,9 +78,18 @@ export function useLayerFocus({
 
         return () => {
             container.removeEventListener('keydown', onKeyDown)
-            if (restore && previous?.isConnected && typeof previous.focus === 'function') {
-                previous.focus()
-            }
+            if (!restore || !previous?.isConnected || typeof previous.focus !== 'function') return
+            // Hand focus back ONLY if nothing else has claimed it. A menu row
+            // may act by moving focus somewhere new — the board header's
+            // "Rename board" mounts an autoFocus input — and that focus lands
+            // BEFORE this layer unmounts. Restoring unconditionally stole it
+            // back, blurring the new field one frame after it appeared; an
+            // input that commits on blur then closed itself, so the row looked
+            // dead. Focus still inside the closing layer (or dropped to body)
+            // means no one else wanted it, which is when restoring is right.
+            const active = document.activeElement as HTMLElement | null
+            const isUnclaimed = !active || active === document.body || container.contains(active)
+            if (isUnclaimed) previous.focus()
         }
     }, [isActive, container, initialFocusRef, trap, restore])
 }
