@@ -40,15 +40,13 @@ export default function ConnectWeb() {
 
     async function connectTo(addr: string) {
         // probeServer, not probe: an address that merely answers is not
-        // necessarily a server. A hosting apex returns 200 for every path, so
-        // liveness alone would admit it. Web has no picker route — the router
-        // serves its own org-finder page at the apex — so the apex case surfaces
-        // here as an ordinary (accurate) error rather than a redirect.
+        // necessarily a TinyCld server. A host that returns 200 for every path
+        // would pass a liveness check, so admission asks for org-info's JSON
+        // shape and reports an ordinary, accurate error when it does not come.
         await probeServer(addr)
         // setActiveServer is the only sanctioned writer of the active pointer,
-        // on every platform — one code path. Web never surfaces the saved list
-        // (it is same-origin and has its own cookie switcher), so the extra list
-        // entry is inert bookkeeping here.
+        // on every platform — one code path. Web resolves same-origin, so the
+        // extra list entry is inert bookkeeping here.
         await setActiveServer(addr)
         setResolvedAddress(addr)
         const target = backTo?.startsWith('/') ? backTo : '/'
