@@ -71,12 +71,12 @@ func AssertCompositionDiff(t testing.TB, fullCounts, leanCounts, extra map[strin
 		switch {
 		case diff > allowed:
 			t.Errorf("%s: the full composition binds %d handler(s) the lean one does not (%d allowed). "+
-				"A registration was added to Register without deciding whether tenants get it: "+
+				"A registration was added to one composition without deciding whether the other gets it: "+
 				"move it into registerShared, or record it in the host-only tail AND in the "+
 				"test's host-only map with a reason.", name, diff, allowed)
 		case diff < allowed:
 			t.Errorf("%s: the lean composition binds %d MORE handler(s) than recorded (or a recorded "+
-				"host-only divergence disappeared — update the host-only map). Tenant-only "+
+				"recorded divergence disappeared — update the extra map). Composition-specific "+
 				"behavior is not a thing a feature should have; shared behavior belongs in "+
 				"registerShared.", name, allowed-diff)
 		}

@@ -100,4 +100,3 @@ func TestCredentiallessEndpointsStayExempt(t *testing.T) {
 		}
 	}
 }
-

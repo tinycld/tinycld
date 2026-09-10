@@ -13,8 +13,8 @@ import (
 // the hosting router can serve the same discovery over the per-org control
 // socket; this file keeps only the DB-backed endpoint.
 
-// versionInfo is the per-package discovery result returned to the UI.
-type versionInfo struct {
+// VersionInfo is the per-package discovery result returned to the UI.
+type VersionInfo struct {
 	Slug      string    `json:"slug"`
 	Source    pkgSource `json:"source"`
 	Current   string    `json:"current"`
@@ -58,8 +58,8 @@ func handleVersions(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 func versionInfosForRows(
 	records []*core.Record,
 	discover func(spec string) (pkgSource, []string, string),
-) []versionInfo {
-	infos := make([]versionInfo, len(records))
+) []VersionInfo {
+	infos := make([]VersionInfo, len(records))
 	sem := make(chan struct{}, versionsFanoutLimit)
 	var wg sync.WaitGroup
 	for i, rec := range records {
@@ -78,10 +78,10 @@ func versionInfosForRows(
 // versionInfoForRegistryRow builds one registry row's discovery result.
 // discover is the versions source — versionsForSpec on the host, the
 // control-socket call in a hosted tenant — so both paths share the row shape.
-func versionInfoForRegistryRow(rec *core.Record, discover func(spec string) (pkgSource, []string, string)) versionInfo {
+func versionInfoForRegistryRow(rec *core.Record, discover func(spec string) (pkgSource, []string, string)) VersionInfo {
 	spec := rec.GetString("npm_package")
 	current := rec.GetString("version")
-	info := versionInfo{
+	info := VersionInfo{
 		Slug:    rec.GetString("slug"),
 		Current: current,
 		// Always a non-nil slice so it marshals as `[]`, never `null`: the

@@ -29,21 +29,13 @@ type cliDownloadEntry struct {
 // HOST composition, serving from the activated build dir's cli-dist/ — the
 // pipeline writes the cross-compiled binaries next to the server binary, and
 // `current` points at builds/<id>/tinycld, so resolveServerDir() finds them.
-// A composition booted from a build artifact serves that artifact's own copy
-// via RegisterCliDownloadEndpointsWith.
+// A composition booted from a build artifact serves that artifact's own copy by
+// calling RegisterCliDownloadEndpointsWith with its own directory.
 //
 // Public like /api/app/update and /api/release (see RegisterCliDownloadEndpointsWith).
 func RegisterCliDownloadEndpoints(app *pocketbase.PocketBase) {
 	RegisterCliDownloadEndpointsWith(app, func() string {
 		return filepath.Join(resolveServerDir(), pkgbuild.CLIDistDirName)
-	})
-}
-
-// RegisterTenantCliDownloadEndpoints serves a tenant's CLI binaries from its
-// build artifact (the hosting builder stages cli-dist into the artifact).
-func RegisterTenantCliDownloadEndpoints(app core.App, artifactDir string) {
-	RegisterCliDownloadEndpointsWith(app, func() string {
-		return filepath.Join(artifactDir, pkgbuild.CLIDistDirName)
 	})
 }
 
