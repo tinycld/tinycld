@@ -18,7 +18,7 @@ import (
 // tenant never reads deployment-wide flags or env for these.
 type TenantOptions struct {
 	// Slug is the org's slug (identification and logging only; surfaced to
-	// feature packages via the TenantContext).
+	// feature packages via the EmbeddedContext).
 	Slug string
 
 	// HooksDir / MigrationsDir are the org's materialized pb_hooks /
@@ -51,17 +51,17 @@ type TenantOptions struct {
 
 	// LimitsConfig is the path the router materialized the org's limits.json
 	// to (empty = none). RegisterTenant does not read it — it is carried
-	// straight onto TenantContext so a composition layered on top can, without
+	// straight onto EmbeddedContext so a composition layered on top can, without
 	// re-parsing the command line.
 	LimitsConfig string
 
 	// ConfigSocket is the socket the router pushes live runtime-config updates
-	// on (empty = no push channel). Carried onto TenantContext unread, same as
+	// on (empty = no push channel). Carried onto EmbeddedContext unread, same as
 	// LimitsConfig.
 	ConfigSocket string
 
 	// QuotaConfig is the path the router materialized the org's quota.json to
-	// (empty = none). Carried onto TenantContext unread; a composition layered
+	// (empty = none). Carried onto EmbeddedContext unread; a composition layered
 	// on top needs it to report current usage from the same source list.
 	QuotaConfig string
 
@@ -79,7 +79,7 @@ type TenantOptions struct {
 	// the org's hook files synchronously. Feature DAV mounts (which declare
 	// their TS hook points) self-register here too, keeping that ordering.
 	//
-	// Features register through their single Register entry; the TenantContext
+	// Features register through their single Register entry; the EmbeddedContext
 	// is stamped before this runs, so a package that must differ hosted (mail
 	// listeners) detects it via GetTenantContext.
 	RegisterExtras func(app *pocketbase.PocketBase)
@@ -87,7 +87,7 @@ type TenantOptions struct {
 	// MailListeners are the router-managed mail sockets (zero value = none),
 	// surfaced to feature packages via the TenantContext. The router owns
 	// every listening socket; a tenant must never bind a port.
-	MailListeners MailListeners
+	MailListeners MailSockets
 
 	// QuotaSources come from each package's manifest `quota` block via the
 	// router's materialized quota.json. QuotaLimits must resolve the org

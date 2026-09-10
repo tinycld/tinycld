@@ -208,9 +208,9 @@ func TestTenantContext_CarriesTheRuntimePaths(t *testing.T) {
 		t.Fatalf("RegisterTenant: %v", err)
 	}
 
-	tc, ok := GetTenantContext(app)
+	tc, ok := GetEmbeddedContext(app)
 	if !ok {
-		t.Fatalf("GetTenantContext: want ok, got not-a-tenant")
+		t.Fatalf("GetEmbeddedContext: want ok, got not-embedded")
 	}
 	if tc.LimitsConfig != "/materialized/limits.json" {
 		t.Errorf("LimitsConfig: want %q, got %q", "/materialized/limits.json", tc.LimitsConfig)

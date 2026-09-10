@@ -72,7 +72,7 @@ type Options struct {
 	// registrar the host composition uses (single-Register contract): a
 	// per-org build links exactly its package set, the artifact is the gate,
 	// and per-org facts (slug, mail listeners, control socket) reach feature
-	// packages through coreserver's TenantContext, stamped before this runs.
+	// packages through coreserver's EmbeddedContext, stamped before this runs.
 	RegisterExtras func(app *pocketbase.PocketBase)
 
 	// QuotaLimits overrides how the tenant resolves its storage ceilings.
@@ -525,14 +525,14 @@ func BindTenantSocket(path string) (net.Listener, error) {
 
 // tenantMailListeners adapts the router-managed mail socket paths into lazy
 // ListenFuncs. Empty path ⇒ nil ListenFunc ⇒ that service is not started.
-func tenantMailListeners(socks mailSocketPaths) coreserver.MailListeners {
+func tenantMailListeners(socks mailSocketPaths) coreserver.MailSockets {
 	mk := func(path string) mailproto.ListenFunc {
 		if path == "" {
 			return nil
 		}
 		return func(string) (net.Listener, error) { return BindTenantSocket(path) }
 	}
-	return coreserver.MailListeners{
+	return coreserver.MailSockets{
 		IMAP:       mk(socks.imap),
 		Submission: mk(socks.smtp),
 		InboundMX:  mk(socks.mx),
