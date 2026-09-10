@@ -119,6 +119,13 @@ type Config struct {
 	// HookdsDir file ending in ".pb.js" or ".pb.ts" (the last one is to enforce IDE linters).
 	HooksFilesPattern string
 
+	// HooksFS, when non-nil, supplies the JS hook sources instead of reading
+	// HooksDir from the filesystem. Used by single-binary builds that embed
+	// hooks via go:embed. Because an embedded FS is read-only, setting this
+	// also skips the types-directive prepend (which writes to HooksDir) and
+	// the hooks watcher. When nil the loader falls back to HooksDir.
+	HooksFS fs.FS
+
 	// HooksPoolSize specifies how many sobek.Runtime instances to prewarm
 	// and keep for the JS app hooks gorotines execution.
 	//
@@ -134,6 +141,12 @@ type Config struct {
 	// If not set it fallbacks to `^.*(\.js|\.ts)$`, aka. any MigrationDir file
 	// ending in ".js" or ".ts" (the last one is to enforce IDE linters).
 	MigrationsFilesPattern string
+
+	// MigrationsFS, when non-nil, supplies the JS migration sources instead
+	// of reading MigrationsDir from the filesystem. Used by single-binary
+	// builds that embed migrations via go:embed. When nil the loader falls
+	// back to MigrationsDir, so path-based deployments are unaffected.
+	MigrationsFS fs.FS
 
 	// TypesDir specifies the directory where to store the embedded
 	// TypeScript declarations file.
@@ -281,7 +294,13 @@ func setTemplateBinding(vm *sobek.Runtime, reg *template.Registry, sandboxed boo
 // registerMigrations registers the JS migrations loader.
 func (p *plugin) registerMigrations() error {
 	// fetch all js migrations sorted by their filename
-	files, err := filesContent(p.config.MigrationsDir, p.config.MigrationsFilesPattern)
+	var files map[string][]byte
+	var err error
+	if p.config.MigrationsFS != nil {
+		files, err = filesContentFS(p.config.MigrationsFS, p.config.MigrationsFilesPattern)
+	} else {
+		files, err = filesContent(p.config.MigrationsDir, p.config.MigrationsFilesPattern)
+	}
 	if err != nil {
 		return err
 	}
@@ -357,32 +376,43 @@ func (p *plugin) registerMigrations() error {
 // registerHooks registers the JS app hooks loader.
 func (p *plugin) registerHooks() error {
 	// fetch all js hooks sorted by their filename
-	files, err := filesContent(p.config.HooksDir, p.config.HooksFilesPattern)
+	var files map[string][]byte
+	var err error
+	if p.config.HooksFS != nil {
+		files, err = filesContentFS(p.config.HooksFS, p.config.HooksFilesPattern)
+	} else {
+		files, err = filesContent(p.config.HooksDir, p.config.HooksFilesPattern)
+	}
 	if err != nil {
 		return err
 	}
 
-	// prepend the types reference directive
-	//
-	// note: it is loaded during startup to handle conveniently also
-	// the case when the HooksWatch option is enabled and the application
-	// restart on newly created file
-	for name, content := range files {
-		if len(content) != 0 {
-			// skip non-empty files for now to prevent accidental overwrite
-			continue
+	// Both blocks below write to or watch HooksDir, so they apply to the
+	// path-based mode only. With HooksFS set HooksDir is empty, which would
+	// resolve these names against the process working directory.
+	if p.config.HooksFS == nil {
+		// prepend the types reference directive
+		//
+		// note: it is loaded during startup to handle conveniently also
+		// the case when the HooksWatch option is enabled and the application
+		// restart on newly created file
+		for name, content := range files {
+			if len(content) != 0 {
+				// skip non-empty files for now to prevent accidental overwrite
+				continue
+			}
+			path := filepath.Join(p.config.HooksDir, name)
+			directive := `/// <reference path="` + p.relativeTypesPath(p.config.HooksDir) + `" />`
+			if err := prependToEmptyFile(path, directive+"\n\n"); err != nil {
+				color.Yellow("Unable to prepend the types reference: %v", err)
+			}
 		}
-		path := filepath.Join(p.config.HooksDir, name)
-		directive := `/// <reference path="` + p.relativeTypesPath(p.config.HooksDir) + `" />`
-		if err := prependToEmptyFile(path, directive+"\n\n"); err != nil {
-			color.Yellow("Unable to prepend the types reference: %v", err)
-		}
-	}
 
-	// initialize the hooks dir watcher
-	if p.config.HooksWatch {
-		if err := p.watchHooks(); err != nil {
-			color.Yellow("Unable to init hooks watcher: %v", err)
+		// initialize the hooks dir watcher
+		if p.config.HooksWatch {
+			if err := p.watchHooks(); err != nil {
+				color.Yellow("Unable to init hooks watcher: %v", err)
+			}
 		}
 	}
 
@@ -728,6 +758,49 @@ func filesContent(dirPath string, pattern string) (map[string][]byte, error) {
 		}
 
 		raw, err := os.ReadFile(filepath.Join(dirPath, f.Name()))
+		if err != nil {
+			return nil, err
+		}
+
+		transformed, err := transformSource(f.Name(), raw)
+		if err != nil {
+			return nil, err
+		}
+		result[f.Name()] = transformed
+	}
+
+	return result, nil
+}
+
+// filesContentFS is filesContent over an fs.FS. It deliberately mirrors that
+// function's contract — non-recursive, pattern-filtered, esbuild-transformed,
+// keyed by base filename — so a caller can swap the source without any
+// behavioral difference. A missing or empty FS yields an empty map, matching
+// filesContent's ErrNotExist handling.
+func filesContentFS(fsys fs.FS, pattern string) (map[string][]byte, error) {
+	entries, err := fs.ReadDir(fsys, ".")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return map[string][]byte{}, nil
+		}
+		return nil, err
+	}
+
+	var exp *regexp.Regexp
+	if pattern != "" {
+		if exp, err = regexp.Compile(pattern); err != nil {
+			return nil, err
+		}
+	}
+
+	result := map[string][]byte{}
+
+	for _, f := range entries {
+		if f.IsDir() || (exp != nil && !exp.MatchString(f.Name())) {
+			continue
+		}
+
+		raw, err := fs.ReadFile(fsys, f.Name())
 		if err != nil {
 			return nil, err
 		}
