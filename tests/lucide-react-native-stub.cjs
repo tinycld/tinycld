@@ -78,6 +78,10 @@ const knownIcons = {
     // drive icons (if any are value-checked)
     FolderOpen: Icon,
     Folder: Icon,
+    // boards: pr-link-status.ts's state → icon table (tests/pr-link-chip.test.ts)
+    GitMerge: Icon,
+    GitPullRequest: Icon,
+    GitPullRequestClosed: Icon,
     // oauth: ConnectedAppsSection's revoke button
     Trash2: Icon,
     File: Icon,
