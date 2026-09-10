@@ -136,11 +136,12 @@ type TenantOptions struct {
 // Call before app.Bootstrap(). Run apis.Serve (with the router-provided
 // listener) after.
 func RegisterTenant(app *pocketbase.PocketBase, opts TenantOptions) error {
-	// The tenant context must exist before ANY feature Register runs — it is
-	// how a package detects tenancy under the single-Register contract (mail
-	// picks injected listeners over binding ports).
-	setTenantContext(app, TenantContext{
-		Slug:          opts.Slug,
+	// The embedded context must exist before ANY feature Register runs — it is
+	// how a package detects that it does not own its own wiring under the
+	// single-Register contract (mail picks injected listeners over binding
+	// ports).
+	SetEmbeddedContext(app, EmbeddedContext{
+		InstanceID:    opts.Slug,
 		Mail:          opts.MailListeners,
 		ControlSocket: opts.ControlSocket,
 		LimitsConfig:  opts.LimitsConfig,
