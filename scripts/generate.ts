@@ -378,10 +378,10 @@ function emitGoWiring(features: Feature[]) {
         path.join(SERVER_DIR, 'package_extensions.go'),
         buildPackageExtensionsGo(serverPkgs)
     )
-    // Single-Register contract: one registrar serves both compositions (the
-    // tenant path stamps a TenantContext before calling it). Remove the
-    // pre-contract tenant registrar if a stale generated copy is on disk — it
-    // references RegisterTenant entries that no longer exist.
+    // Single-Register contract: ONE registrar serves every composition. Remove
+    // the pre-contract second registrar if a stale generated copy is still on
+    // disk from an older checkout — it references entry points that no longer
+    // exist, and leaving it there breaks the Go build with a confusing error.
     fs.rmSync(path.join(SERVER_DIR, 'package_extensions_tenant.go'), { force: true })
     const coreServerDir = path.join(memberDir('@tinycld/core'), 'server')
     const coreServerRel = path.relative(SERVER_DIR, coreServerDir)
