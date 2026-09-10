@@ -92,10 +92,11 @@ export default defineConfig({
         {
             command: 'pnpm run e2e:serve',
             cwd: import.meta.dirname,
-            // e2e:serve resets the DB, exports + promotes the web bundle, then
-            // serves it (and /api/*) off one PocketBase listener on PORT. The
-            // health gate only goes green AFTER the bundle is fully built and
-            // promoted on disk, so tests never race a cold bundle.
+            // e2e:serve clears the data dir, exports + promotes the web bundle,
+            // then serves it (and /api/*) off one PocketBase listener on PORT.
+            // The health gate only goes green AFTER the bundle is fully built
+            // and promoted on disk, so tests never race a cold bundle. Fixtures
+            // are seeded by globalSetup once this is up.
             url: `http://localhost:${PORT}/api/health`,
             reuseExistingServer: !process.env.CI,
             timeout: 240_000,

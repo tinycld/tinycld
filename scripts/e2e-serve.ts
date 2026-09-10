@@ -13,9 +13,12 @@
 // the lazy-compile failure class disappears entirely — the bundle is fully
 // built on disk before the webServer's /api/health gate goes green.
 //
-// FLOW (seed → export → promote → serve):
-//   1. Seed: reuse scripts/reset-dev-db.ts (builds PB, resets + seeds the test
-//      DB on a throwaway port derived from ours, exits after a WAL checkpoint).
+// FLOW (reset → export → promote → serve):
+//   1. Reset: remove the data dir and create the superuser. Both write straight
+//      to the dir (`superuser upsert --dir`), so NO server runs and NO port is
+//      opened here; PocketBase migrates the schema itself when it starts. The
+//      fixture seed needs an API and therefore a running server, so it happens
+//      after this one is up — see tests/playwright-global-setup.ts.
 //   2. Export: `expo export --platform web` → dist/ (one deterministic compile).
 //   3. Promote: stage dist/ into the prod-shaped releases layout the Go server
 //      reads — a TypeScript port of entrypoint.sh's promote_release().
@@ -30,7 +33,7 @@
 // package.json script). dev.ts is intentionally left untouched — dev keeps
 // Metro + HMR; only e2e switches to static serving.
 
-import { type ChildProcess, spawn } from 'node:child_process'
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as net from 'node:net'
 import * as path from 'node:path'
@@ -132,34 +135,27 @@ function run(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<void
     })
 }
 
-// Phase 1 — seed the test DB. reset-dev-db.ts builds PB, deletes + recreates
-// the data dir, runs migrations, seeds, then SIGTERMs its own PB and waits for
-// the SQLite WAL to checkpoint before exiting (reset-dev-db.ts), so the
-// serving PB below opens a fully-flushed DB.
+// Phase 1 — start from an empty data dir. PocketBase creates and migrates it
+// on startup (--migrationsDir + automigrate), so there is nothing to prepare
+// and no second server to run: this owns the dir, so it just removes it.
 //
-// The seed's PocketBase MUST NOT bind our user-facing port, even though it is
-// gone long before phase 3 starts one. It serves /api/health like any other PB,
-// so an external readiness probe (Playwright's webServer gate) would see the
-// gate go green during SEEDING, start the tests, and then hit connection-refused
-// the moment the seed tears its server down. Offsetting keeps the throwaway
-// distinct per instance, so two e2e stacks can also seed concurrently.
-//
-// +500 rather than a smaller offset: 73xx is taken (scripts/cli-smoke.ts), and
-// the gap has to clear every port a second instance might use.
-const seedPortFor = (port: number) => port + 500
+// Fixtures are NOT written here. They go through the PocketBase API, which
+// needs a running server — so they are seeded by Playwright's globalSetup
+// against the one server this script starts. See tests/playwright-global-setup.ts.
+function resetDataDir(dataDir: string): void {
+    log('phase 1/3: clearing the test data dir')
+    fs.rmSync(dataDir, { recursive: true, force: true })
 
-async function seed(dataDir: string, port: number): Promise<void> {
-    log('phase 1/3: seeding test DB (reset-dev-db.ts)')
-    await run('npx', [
-        'tsx',
-        'scripts/reset-dev-db.ts',
-        '--url',
-        `http://127.0.0.1:${seedPortFor(port)}`,
-        '--browse-url',
-        `http://localhost:${port}`,
-        '--data-dir',
-        path.relative(ROOT, dataDir),
-    ])
+    // The fixture seed authenticates as a superuser, so one has to exist before
+    // the server comes up. `superuser upsert` writes straight to the data dir —
+    // no server, no port — and creates the DB if it is missing.
+    const email = process.env.ADMIN_USER_LOGIN || 'admin@tinycld.org'
+    const password = process.env.ADMIN_USER_PW || 'AdminPass1234!'
+    log(`phase 1/3: creating superuser ${email}`)
+    const result = spawnSync(PB_BINARY, ['superuser', 'upsert', email, password, '--dir', dataDir], {
+        stdio: 'inherit',
+    })
+    if (result.status !== 0) throw new Error('e2e-serve: failed to create the superuser')
 }
 
 // Phase 2 — build the static web bundle (delegates to scripts/export-web.ts so
@@ -247,7 +243,7 @@ async function main() {
     // not a workflow), and tests never pin the value.
     const releaseId = `e2e-${Date.now()}`
 
-    await seed(dataDir, port)
+    resetDataDir(dataDir)
 
     if (mirrorReleasesFrom) {
         // Phases 2+3 collapse into a copy: the producer already exported and
