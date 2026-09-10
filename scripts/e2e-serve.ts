@@ -120,21 +120,6 @@ async function waitForUpstream(port: number, label: string, timeoutMs: number): 
     )
 }
 
-// Run a child to completion, inheriting stdio, rejecting on non-zero exit.
-function run(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<void> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(cmd, args, {
-            cwd: ROOT,
-            stdio: 'inherit',
-            env: env ?? process.env,
-        })
-        child.on('exit', code =>
-            code === 0 ? resolve() : reject(new Error(`${cmd} ${args.join(' ')} exited ${code}`))
-        )
-        child.on('error', reject)
-    })
-}
-
 // Phase 1 — start from an empty data dir. PocketBase creates and migrates it
 // on startup (--migrationsDir + automigrate), so there is nothing to prepare
 // and no second server to run: this owns the dir, so it just removes it.
@@ -152,9 +137,13 @@ function resetDataDir(dataDir: string): void {
     const email = process.env.ADMIN_USER_LOGIN || 'admin@tinycld.org'
     const password = process.env.ADMIN_USER_PW || 'AdminPass1234!'
     log(`phase 1/3: creating superuser ${email}`)
-    const result = spawnSync(PB_BINARY, ['superuser', 'upsert', email, password, '--dir', dataDir], {
-        stdio: 'inherit',
-    })
+    const result = spawnSync(
+        PB_BINARY,
+        ['superuser', 'upsert', email, password, '--dir', dataDir],
+        {
+            stdio: 'inherit',
+        }
+    )
     if (result.status !== 0) throw new Error('e2e-serve: failed to create the superuser')
 }
 
