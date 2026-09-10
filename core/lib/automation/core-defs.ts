@@ -52,7 +52,12 @@ export const CORE_AUTOMATION: AutomationDefinitions = {
             label: 'Send me a notification',
             kind: 'native',
             params: [
-                { key: 'title', type: 'text' },
+                // Required: this becomes notifications.title, which the schema
+                // declares required. Left optional, a blank title saved and ran
+                // fine and then failed at the INSERT with "title: cannot be
+                // blank" — a notification the user never received, on a run
+                // recorded as matched.
+                { key: 'title', type: 'text', required: true },
                 { key: 'body', type: 'text' },
                 { key: 'url', type: 'text', label: 'Link (optional)' },
             ],

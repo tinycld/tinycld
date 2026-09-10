@@ -39,6 +39,7 @@ type catalogParam struct {
 	Label    string       `json:"label"`
 	Field    catalogField `json:"field"`    // resolved type info (novel params synthesize from ParamDef.Type)
 	Template bool         `json:"template"` // true for text params when the trigger has fields (UI shows the placeholder menu)
+	Required bool         `json:"required"` // the action cannot run without a value (relation params, and text params that say so)
 }
 
 type catalogAction struct {
@@ -250,6 +251,9 @@ func resolveParam(app core.App, col *core.Collection, p ParamDef) catalogParam {
 		}
 	}
 	out.Template = out.Field.Type == "text"
+	// A relation param is required implicitly (the engine refuses an empty
+	// one); anything else says so in its definition.
+	out.Required = p.Required || out.Field.Type == "relation"
 	return out
 }
 

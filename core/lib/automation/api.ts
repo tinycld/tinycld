@@ -21,6 +21,15 @@ export interface CatalogParam {
     label: string
     field: CatalogField
     template: boolean
+    /**
+     * The action cannot run without a value. True for every relation param,
+     * and for text params whose definition says so (core:notify's title,
+     * which becomes the required notifications.title).
+     *
+     * Optional in the type because a server older than this field omits it;
+     * absent reads as false, which is the pre-existing behavior.
+     */
+    required?: boolean
 }
 
 export interface CatalogTrigger {

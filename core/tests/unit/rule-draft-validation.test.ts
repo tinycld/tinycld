@@ -46,7 +46,16 @@ const CATALOG: CatalogResponse = {
             label: 'Send me a notification',
             kind: 'native',
             available: true,
-            params: [{ key: 'title', label: 'Title', template: true, field: { type: 'text' } }],
+            params: [
+                {
+                    key: 'title',
+                    label: 'Title',
+                    template: true,
+                    required: true,
+                    field: { type: 'text' },
+                },
+                { key: 'body', label: 'Body', template: true, field: { type: 'text' } },
+            ],
         },
     ],
 } as unknown as CatalogResponse
@@ -177,5 +186,51 @@ describe('draftToRecord', () => {
                 },
             ],
         })
+    })
+})
+
+// core:notify's title becomes notifications.title, which the schema declares
+// required. validateActionParams used to enforce ONLY relation params, so a
+// blank title saved happily, the rule ran, the run was recorded as matched, and
+// delivery then failed at the insert with "title: cannot be blank" — a
+// notification the user never got, on a rule that looked healthy.
+describe('required action params', () => {
+    it('rejects a blank required text param', () => {
+        const draft = {
+            ...savableDraft(),
+            actions: [{ uid: 'a1', ref: 'core:notify', params: { title: '' } }],
+        }
+        expect(validateDraft(draft, CATALOG)).toContain(
+            "Action 'Send me a notification' requires 'Title'"
+        )
+    })
+
+    it('rejects whitespace as a value', () => {
+        const draft = {
+            ...savableDraft(),
+            actions: [{ uid: 'a1', ref: 'core:notify', params: { title: '   ' } }],
+        }
+        expect(validateDraft(draft, CATALOG)).toContain(
+            "Action 'Send me a notification' requires 'Title'"
+        )
+    })
+
+    it('rejects the param being absent entirely', () => {
+        const draft = {
+            ...savableDraft(),
+            actions: [{ uid: 'a1', ref: 'core:notify', params: {} }],
+        }
+        expect(validateDraft(draft, CATALOG)).toContain(
+            "Action 'Send me a notification' requires 'Title'"
+        )
+    })
+
+    it('still allows an OPTIONAL text param to be empty', () => {
+        // The point of the `required` flag: body is text too, and blank is fine.
+        const draft = {
+            ...savableDraft(),
+            actions: [{ uid: 'a1', ref: 'core:notify', params: { title: 'hi', body: '' } }],
+        }
+        expect(validateDraft(draft, CATALOG)).toEqual([])
     })
 })

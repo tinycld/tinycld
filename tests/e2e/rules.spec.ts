@@ -123,6 +123,10 @@ test.describe('Rules', () => {
         )
         await page.getByText('add action', { exact: true }).click()
         await page.getByText('Send me a notification', { exact: true }).click()
+        // The title is required — it becomes the notification's own title,
+        // which the schema requires. Leaving it blank now fails validation at
+        // save (it used to save, run, and then fail at the insert).
+        await page.getByText('Title').locator('..').getByRole('textbox').first().fill('t')
         await page.getByText('Save', { exact: true }).click()
         await expect(page.getByText(ruleName, { exact: true })).toBeVisible()
 
@@ -159,6 +163,10 @@ test.describe('Rules', () => {
         )
         await page.getByText('add action', { exact: true }).click()
         await page.getByText('Send me a notification', { exact: true }).click()
+        // The title is required — it becomes the notification's own title,
+        // which the schema requires. Leaving it blank now fails validation at
+        // save (it used to save, run, and then fail at the insert).
+        await page.getByText('Title').locator('..').getByRole('textbox').first().fill('t')
         await page.getByText('Save', { exact: true }).click()
         await expect(page.getByText(ruleName, { exact: true })).toBeVisible()
 
