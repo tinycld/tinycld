@@ -128,6 +128,7 @@
         "expo-file-system": "~55.0.19",
         "expo-haptics": "~55.0.14",
         "expo-image": "~55.0.11",
+        "expo-image-manipulator": "~55.0.21",
         "expo-image-picker": "~55.0.20",
         "expo-linking": "~55.0.15",
         "expo-notifications": "~55.0.22",

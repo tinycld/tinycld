@@ -1,4 +1,3 @@
-import { JPEG_QUALITY } from '@tinycld/core/lib/downscale-image-shared'
 import { notify } from '@tinycld/core/lib/notify'
 import * as DocumentPicker from 'expo-document-picker'
 import * as ImagePicker from 'expo-image-picker'
@@ -113,15 +112,10 @@ async function launchSource(
         return result.assets.map(documentAssetToPickedFile)
     }
     if (source === 'photoLibrary') {
-        // Native `downscaleImage` is a deliberate no-op (no expo-image-manipulator —
-        // see downscale-image.ts), so this picker-level compression is the ONLY
-        // size cap a native image upload gets, for every picker in the app
-        // (avatars, drive, mail, boards attachments), not just avatars.
-        // JPEG_QUALITY (0.85) matches the cap the web downscaler applies.
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images', 'videos'],
             allowsMultipleSelection: options.multiple,
-            quality: JPEG_QUALITY,
+            quality: 1,
             exif: false,
         })
         if (result.canceled) return []
@@ -141,7 +135,7 @@ async function launchSource(
         }
         const result = await ImagePicker.launchCameraAsync({
             mediaTypes: ['images'],
-            quality: JPEG_QUALITY,
+            quality: 1,
             exif: false,
         })
         if (result.canceled) return []
