@@ -6,8 +6,8 @@ order: 30
 ---
 
 Your organization's logo appears in the app sidebar, in place of the building
-icon at the top. Until you upload one, that spot shows your organization's
-initials instead.
+icon at the top, and above the sign-in form before you log in. Until you
+upload one, those spots show your organization's initials instead.
 
 You need the **owner** or **admin** role to change it.
 
