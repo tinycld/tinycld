@@ -58,9 +58,38 @@ function buildMemberDirIndex(): Map<string, string> {
             index.set(name, dir)
         }
     }
+    // A member may also be nested one level down inside a dir that is not
+    // itself a member — hosting/ui, whose parent ships Go only and stays out of
+    // the workspace. Scanned after the top level so a top-level member always
+    // wins a name collision.
+    for (const entry of fs.readdirSync(WS_ROOT)) {
+        const parent = path.join(WS_ROOT, entry)
+        if (entry === 'node_modules' || entry.startsWith('.')) continue
+        let nestedEntries: string[]
+        try {
+            if (!fs.statSync(parent).isDirectory()) continue
+            nestedEntries = fs.readdirSync(parent)
+        } catch {
+            continue
+        }
+        for (const nested of nestedEntries) {
+            if (nested === 'node_modules' || nested.startsWith('.')) continue
+            const dir = path.join(parent, nested)
+            let name: unknown
+            try {
+                if (!fs.statSync(dir).isDirectory()) continue
+                name = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).name
+            } catch {
+                continue
+            }
+            if (typeof name === 'string' && name.length > 0 && !index.has(name)) {
+                index.set(name, dir)
+            }
+        }
+    }
     // @tinycld/core now lives nested inside the tinycld member (at <APP_DIR>/core/),
     // not as a top-level sibling. The top-level scan above won't find it, so look
-    // for it explicitly. (Only core is nested; feature siblings stay top-level.)
+    // for it explicitly.
     if (!index.has('@tinycld/core')) {
         const nestedCore = path.join(APP_DIR, 'core')
         const corePkg = path.join(nestedCore, 'package.json')
