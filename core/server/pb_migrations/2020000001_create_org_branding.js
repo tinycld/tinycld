@@ -11,7 +11,13 @@
 // rest of deployment configuration is gated.
 migrate(
     app => {
-        const ADMIN = '@request.auth.id != "" && (@request.auth.role = "owner" || @request.auth.role = "admin")'
+        // `disabled != true` matches 1910000010_create_system_settings,
+        // 1960000000_audit_logs_admin_only and 1970000000_admin_console_role_rules:
+        // without it, an admin account that has just been suspended keeps write
+        // access for as long as its already-issued JWT lives.
+        const ADMIN =
+            '@request.auth.id != "" && @request.auth.disabled != true && ' +
+            '(@request.auth.role = "owner" || @request.auth.role = "admin")'
 
         const col = new Collection({
             id: 'pbc_org_branding',
