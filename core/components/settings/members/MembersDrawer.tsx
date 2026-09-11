@@ -1,8 +1,10 @@
+import { Avatar } from '@tinycld/core/components/Avatar'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useAvatarUrl } from '@tinycld/core/lib/use-avatar-url'
 import {
     Drawer,
     DrawerBackdrop,
@@ -25,7 +27,6 @@ import { Check, Mail, Send, Trash2, UserPlus, X } from 'lucide-react-native'
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import { InviteLinkPanel } from './InviteLinkPanel'
-import { MemberAvatar } from './MemberAvatar'
 import { PendingBadge, RoleBadge, YouBadge } from './MemberBadges'
 import { PackageAccessPanel } from './PackageAccessPanel'
 import { RemoveMemberFlow } from './RemoveMemberFlow'
@@ -93,6 +94,11 @@ function ViewMember({
 }) {
     const { user } = useAuth()
     const [usersCollection] = useStore('users')
+    const avatar = useAvatarUrl({
+        id: member.userId,
+        avatar: member.avatar,
+        avatar_crop: member.avatarCrop,
+    })
 
     const mutedColor = useThemeColor('muted-foreground')
     const fgColor = useThemeColor('foreground')
@@ -149,11 +155,17 @@ function ViewMember({
         <>
             <DrawerHeader>
                 <View className="flex-row items-start gap-3 flex-1">
-                    <MemberAvatar
+                    <Avatar
                         name={member.name}
                         email={member.email}
+                        colorKey={member.userId}
+                        avatar={avatar}
+                        emoji={member.avatarEmoji || undefined}
+                        color={member.avatarColor || undefined}
                         size={44}
                         dimmed={member.isPending}
+                        palette="soft"
+                        shape="squircle"
                     />
                     <View className="flex-1" style={{ minWidth: 0 }}>
                         <View className="flex-row items-center gap-2" style={{ flexWrap: 'wrap' }}>

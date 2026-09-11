@@ -8,6 +8,10 @@ export interface MemberRow {
     role: OrgRole
     isPending: boolean
     isDemo: boolean
+    avatar: string
+    avatarCrop: string
+    avatarColor: string
+    avatarEmoji: string
 }
 
 export type DrawerMode = { kind: 'closed' } | { kind: 'invite' } | { kind: 'view'; userId: string }

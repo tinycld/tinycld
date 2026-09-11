@@ -25,6 +25,30 @@ const SECOND_PORT = Number(process.env.E2E_PORT_2 ?? 7201)
 // process both see the same path resolved from this file's directory.
 const EMAIL_LOG_PATH = path.join(import.meta.dirname, 'tmp', 'emails.log')
 
+// The env EVERY deployment this config starts must carry. It is shared rather
+// than repeated because a value present on one server and missing on the other
+// is invisible until a test happens to land on the wrong one — which is how the
+// @tinycld/text activity spec failed: the second server ran the edit-event
+// debounce at its 60s production default and the test timed out at 30s.
+//
+// Filter out undefined values from process.env to satisfy Playwright's strict
+// `{[key: string]: string}` env type.
+const SERVER_ENV: Record<string, string> = Object.fromEntries(
+    Object.entries(process.env)
+        .filter(([, v]) => v !== undefined)
+        .map(([k, v]) => [k, v as string])
+        .concat([
+            // PB (spawned by dev.ts) writes JSONL records here for the tests
+            // that assert on outgoing mail.
+            ['TINYCLD_EMAIL_LOG', EMAIL_LOG_PATH],
+            // Shrink the @tinycld/text edit-event debounce from 60s to 1s so
+            // the Activity tab populates within a single test budget.
+            // Production leaves this unset. Read by the Go side in
+            // text/server/edit_event_buffer.go:configureWindowFromEnv.
+            ['TINYCLD_EDIT_EVENT_WINDOW_MS', '1000'],
+        ])
+)
+
 export default defineConfig({
     // Override Playwright's CI default (the `dot` reporter, which prints a bare
     // `·` per completed test — no name, so a run looks frozen during the cold
@@ -100,25 +124,7 @@ export default defineConfig({
             url: `http://localhost:${PORT}/api/health`,
             reuseExistingServer: !process.env.CI,
             timeout: 240_000,
-            // Inherits the launching shell (process.env is the default), but
-            // we explicitly export the email log path so PB (spawned by dev.ts)
-            // writes JSONL records there for tests to assert on. Filter out
-            // undefined values from process.env to satisfy Playwright's strict
-            // `{[key: string]: string}` env type.
-            env: Object.fromEntries(
-                Object.entries(process.env)
-                    .filter(([, v]) => v !== undefined)
-                    .map(([k, v]) => [k, v as string])
-                    .concat([
-                        ['TINYCLD_EMAIL_LOG', EMAIL_LOG_PATH],
-                        // Shrink the @tinycld/text edit-event debounce window
-                        // from 60s to 1s for e2e so the Activity tab populates
-                        // within a single test budget. Production leaves this
-                        // unset and runs at the default. Read by the Go side
-                        // in text/server/edit_event_buffer.go:configureWindowFromEnv.
-                        ['TINYCLD_EDIT_EVENT_WINDOW_MS', '1000'],
-                    ])
-            ),
+            env: SERVER_ENV,
         },
         // The second deployment: its own data dir, its own releases dir, its
         // own PocketBase. Both origins serve the SAME app — only the origin
@@ -143,6 +149,7 @@ export default defineConfig({
             // startup failure here surfaces only as ERR_CONNECTION_REFUSED in
             // every test, with no reason attached.
             stdout: 'pipe',
+            env: SERVER_ENV,
         },
     ],
     // Absolute path: per-package configs spread this config, and Playwright

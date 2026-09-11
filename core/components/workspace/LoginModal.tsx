@@ -1,9 +1,12 @@
 import { ChangeServerLink } from '@tinycld/core/components/ChangeServerLink'
 import { ReviewModeHints } from '@tinycld/core/components/connect/ReviewModeHints'
+import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { requestPasswordReset } from '@tinycld/core/lib/account-password'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { takePendingRoute } from '@tinycld/core/lib/pending-route'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import type { OrgBranding as OrgBrandingInfo } from '@tinycld/core/lib/use-org-info'
+import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import { router } from 'expo-router'
 import { useState } from 'react'
@@ -70,6 +73,11 @@ function LoginForm({
     const mutedColor = useThemeColor('muted-foreground')
     const primaryFg = useThemeColor('primary-foreground')
     const { login } = useAuth({ throwIfAnon: false })
+    // Pre-auth: reads the unauthenticated /api/org-info endpoint, so it
+    // resolves fine before the user signs in. `org` is null while loading or
+    // on an unbranded deployment — OrgBranding degrades to nothing rather
+    // than an empty circle in that case.
+    const { org } = useOrgInfo()
     const [identifier, setIdentifier] = useState('')
     const [password, setPassword] = useState('')
     const [error, setError] = useState<string | null>(null)
@@ -105,6 +113,8 @@ function LoginForm({
 
     return (
         <>
+            <OrgBranding org={org} />
+
             <Text className="text-[22px] font-bold mb-1 text-foreground">Sign in</Text>
             <Text className="text-sm mb-6 text-muted-foreground">
                 Sign in to your account to continue
@@ -183,6 +193,20 @@ function LoginForm({
                 <ChangeServerLink />
             </View>
         </>
+    )
+}
+
+// Exercises the same pre-login rendering path org_branding's public read
+// rule exists for. Renders nothing when org is null (loading, or a
+// deployment with no server-reported name) rather than an empty circle.
+function OrgBranding({ org }: { org: OrgBrandingInfo | null }) {
+    if (!org) return null
+
+    return (
+        <View className="items-center mb-4">
+            <OrgLogo org={org} size={52} />
+            <Text className="text-sm font-semibold mt-2 text-foreground">{org.name}</Text>
+        </View>
     )
 }
 
