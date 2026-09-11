@@ -8,6 +8,30 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
+// parseFormBody populates re.Request.Form from the request body, accepting
+// BOTH form encodings a browser can produce.
+//
+// http.Request.ParseForm alone parses only application/x-www-form-urlencoded;
+// against a multipart/form-data body it silently parses the URL query and
+// leaves the body's fields unreachable, so every FormValue reads "". That is
+// not a theoretical case: the consent screen posts a FormData, and the
+// PocketBase JS SDK deliberately omits Content-Type for a FormData body so
+// fetch sets multipart/form-data with its boundary. The result was a 404
+// "That code is not valid" for a code that was present, correct, and pending.
+func parseFormBody(re *core.RequestEvent) error {
+	if strings.HasPrefix(re.Request.Header.Get("Content-Type"), "multipart/form-data") {
+		// Populates Request.MultipartForm and merges its values into Form,
+		// which is what FormValue reads.
+		return re.Request.ParseMultipartForm(multipartMaxMemory)
+	}
+	return re.Request.ParseForm()
+}
+
+// multipartMaxMemory caps in-memory storage for a parsed multipart body;
+// anything larger spills to temp files. These endpoints carry only short text
+// fields, so this is generous.
+const multipartMaxMemory = 32 << 20
+
 // AuthorizeInfoResponse describes a pending device request so the consent
 // screen can name the client and list the scopes before the user approves.
 type AuthorizeInfoResponse struct {
@@ -66,8 +90,9 @@ func handleAuthorizeInfo(app core.App, re *core.RequestEvent) error {
 	})
 }
 
-// handleApproveDevice implements POST /oauth/authorize for the device flow:
-// the signed-in user binds themselves to a pending grant and activates it.
+// handleApproveDevice implements POST /oauth/authorize/approve for the device
+// flow: the signed-in user binds themselves to a pending grant and activates
+// it. (Bare POST /oauth/authorize is the authorization-code endpoint below.)
 func handleApproveDevice(app core.App, re *core.RequestEvent) error {
 	if re.Auth == nil {
 		return re.UnauthorizedError("Sign in to approve this request", nil)
@@ -75,7 +100,7 @@ func handleApproveDevice(app core.App, re *core.RequestEvent) error {
 	if err := rejectOAuthToken(re); err != nil {
 		return err
 	}
-	if err := re.Request.ParseForm(); err != nil {
+	if err := parseFormBody(re); err != nil {
 		return re.BadRequestError("Malformed form body", err)
 	}
 	userCode := strings.ToUpper(strings.TrimSpace(re.Request.FormValue("user_code")))
@@ -128,7 +153,7 @@ func handleDenyDevice(app core.App, re *core.RequestEvent) error {
 	if err := rejectOAuthToken(re); err != nil {
 		return err
 	}
-	if err := re.Request.ParseForm(); err != nil {
+	if err := parseFormBody(re); err != nil {
 		return re.BadRequestError("Malformed form body", err)
 	}
 	userCode := strings.ToUpper(strings.TrimSpace(re.Request.FormValue("user_code")))
@@ -164,7 +189,7 @@ func handleAuthorize(app core.App, re *core.RequestEvent) error {
 	if err := rejectOAuthToken(re); err != nil {
 		return err
 	}
-	if err := re.Request.ParseForm(); err != nil {
+	if err := parseFormBody(re); err != nil {
 		return re.BadRequestError("Malformed form body", err)
 	}
 	q := re.Request.Form

@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -888,5 +889,103 @@ func TestMetadataAdvertisesSupportedGrants(t *testing.T) {
 	}
 	if len(md.ScopesSupported) == 0 {
 		t.Error("metadata must advertise the scope catalog")
+	}
+}
+
+// The consent screen posts a FormData, and the PocketBase JS SDK deliberately
+// omits Content-Type for such a body, so the browser sends
+// multipart/form-data. http.Request.ParseForm does not read a multipart body:
+// before parseFormBody, user_code came back "" and a present, pending code was
+// rejected with 404 "That code is not valid". Every other test here sends
+// application/x-www-form-urlencoded, which is why this shipped.
+func multipartBody(t *testing.T, fields map[string]string) (string, string) {
+	t.Helper()
+	var buf strings.Builder
+	w := multipart.NewWriter(&buf)
+	for k, v := range fields {
+		if err := w.WriteField(k, v); err != nil {
+			t.Fatalf("write field %q: %v", k, err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close writer: %v", err)
+	}
+	return buf.String(), w.FormDataContentType()
+}
+
+func TestApproveDeviceAcceptsMultipartBody(t *testing.T) {
+	app := newSchemaApp(t)
+	userCode, userID := pendingUserCodeGrant(t, app)
+
+	body, contentType := multipartBody(t, map[string]string{
+		"user_code":    userCode,
+		"device_label": "Browser consent screen",
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize/approve", strings.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	re := &core.RequestEvent{App: app}
+	re.Request = req
+	re.Response = rec
+	re.Auth = user
+
+	if err := handleApproveDevice(app, re); err != nil {
+		t.Fatalf("handleApproveDevice: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	grant, err := FindGrantByUserCode(app, userCode)
+	if err != nil {
+		t.Fatalf("grant not found after approval: %v", err)
+	}
+	if grant.GetString("status") != "active" {
+		t.Fatalf("status = %q, want active", grant.GetString("status"))
+	}
+	if grant.GetString("user") != userID {
+		t.Fatalf("grant user = %q, want %q", grant.GetString("user"), userID)
+	}
+	if grant.GetString("device_label") != "Browser consent screen" {
+		t.Errorf("device_label = %q, want the multipart value",
+			grant.GetString("device_label"))
+	}
+}
+
+func TestDenyDeviceAcceptsMultipartBody(t *testing.T) {
+	app := newSchemaApp(t)
+	userCode, userID := pendingUserCodeGrant(t, app)
+
+	body, contentType := multipartBody(t, map[string]string{"user_code": userCode})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize/deny", strings.NewReader(body))
+	req.Header.Set("Content-Type", contentType)
+
+	user, err := app.FindRecordById("users", userID)
+	if err != nil {
+		t.Fatalf("find user: %v", err)
+	}
+	re := &core.RequestEvent{App: app}
+	re.Request = req
+	re.Response = rec
+	re.Auth = user
+
+	if err := handleDenyDevice(app, re); err != nil {
+		t.Fatalf("handleDenyDevice: %v", err)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	// RevokeGrant clears the code, so the grant must no longer be findable by it.
+	if _, err := FindGrantByUserCode(app, userCode); err == nil {
+		t.Fatal("user_code still resolves after deny; revocation did not clear it")
 	}
 }
