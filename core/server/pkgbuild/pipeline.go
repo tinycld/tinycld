@@ -25,6 +25,18 @@ const pnpmProgressInterval = 10 * time.Second
 // tinycld member's newer core table.
 const ServerRebuildEnv = "TINYCLD_SERVER_REBUILD=1"
 
+// childEnv is the extra environment every pipeline child that resolves the
+// workspace runs with. The build dir IS the workspace root for that child:
+// tinycld.packages.ts honours TINYCLD_WS_ROOT (a generator-test override) over
+// its own location, and children inherit the parent's environment, so a
+// caller that set the variable for its own purposes would otherwise make the
+// generator enumerate the caller's workspace while every other path resolves
+// the build dir. exec keeps the last value for a duplicated key, so this pin
+// wins over an inherited one.
+func childEnv(buildDir string) []string {
+	return []string{ServerRebuildEnv, "TINYCLD_WS_ROOT=" + buildDir}
+}
+
 // Pipeline turns an assembled build dir into a runnable one: install
 // dependencies (the workspace postinstall runs the generator + link-members),
 // compile the server binary, export + stage the web bundle, and export the
@@ -335,7 +347,7 @@ func (p Pipeline) runPnpmInstall(sink ProgressSink, buildDir string) error {
 		// the guard env is irrelevant there.
 		out, err = p.PnpmStream(onLine, buildDir, "pnpm", "install", "--no-frozen-lockfile")
 	} else {
-		out, err = RunCmdStreamingEnv(onLine, buildDir, []string{ServerRebuildEnv}, "pnpm", "install", "--no-frozen-lockfile")
+		out, err = RunCmdStreamingEnv(onLine, buildDir, childEnv(buildDir), "pnpm", "install", "--no-frozen-lockfile")
 	}
 	if err != nil {
 		// The failing output must ride the error itself: in the hosting
