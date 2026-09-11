@@ -1,3 +1,4 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { Avatar, type AvatarImage } from '@tinycld/core/components/Avatar'
 import { AvatarCropper } from '@tinycld/core/components/AvatarCropper'
 import {
@@ -16,7 +17,7 @@ import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { notify } from '@tinycld/core/lib/notify'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { useOrgBranding } from '@tinycld/core/lib/use-org-branding'
-import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
+import { ORG_INFO_QUERY_KEY, useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
@@ -48,9 +49,19 @@ function useOrgBrandingEditor() {
     const { branding, brandingCollection } = useOrgBranding()
     const { org } = useOrgInfo()
     const { pickFiles } = usePickFiles()
+    const queryClient = useQueryClient()
 
     const [cropperImageUri, setCropperImageUri] = useState<string | null>(null)
     const [pendingUpload, setPendingUpload] = useState<PreparedAvatarImage | null>(null)
+
+    // The rail and the sign-in screen read the logo through useOrgInfo's
+    // ORG_INFO_QUERY_KEY query, not through org_branding — a session-long
+    // cache over a separate unauthenticated endpoint. Every mutation that
+    // changes the logo or its crop must invalidate it, or the write succeeds
+    // while those surfaces keep showing the stale (or blank) logo.
+    const invalidateOrgInfo = () => {
+        queryClient.invalidateQueries({ queryKey: ORG_INFO_QUERY_KEY })
+    }
 
     const writeCrop = useMutation({
         mutationFn: mutation(function* (crop: CropRect) {
@@ -58,6 +69,7 @@ function useOrgBrandingEditor() {
                 draft.logo_crop = serializeCrop(crop)
             })
         }),
+        onSuccess: invalidateOrgInfo,
     })
 
     const removeLogo = useMutation({
@@ -67,6 +79,7 @@ function useOrgBrandingEditor() {
                 draft.logo_crop = ''
             })
         }),
+        onSuccess: invalidateOrgInfo,
     })
 
     const uploadLogoBytes = useMutation({
@@ -100,6 +113,7 @@ function useOrgBrandingEditor() {
                 draft.logo_crop = serializeCrop(params.crop)
             }).isPersisted.promise
         },
+        onSuccess: invalidateOrgInfo,
         onError: err => {
             captureException('settings.branding_upload', err)
             notify.emit({

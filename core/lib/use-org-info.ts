@@ -8,6 +8,12 @@ import { getResolvedAddress } from './server-address'
 // `org.id` is a stable synthetic key, not a server-side id; it is used only as
 // an avatar color key.
 
+// Shared with OrgBrandingSection: any mutation that changes the logo or its
+// crop must invalidate this key so the rail/sign-in screen (which read
+// branding through this query, not through the org_branding collection)
+// refetch instead of keeping the session-cached stale value.
+export const ORG_INFO_QUERY_KEY = ['org-info'] as const
+
 export interface OrgBranding {
     id: string
     name: string
@@ -45,7 +51,7 @@ export function useOrgInfo() {
     // it for the session; a transient fetch blip renders the same fallbacks as
     // "no branding".
     const { data } = useQuery({
-        queryKey: ['org-info'],
+        queryKey: ORG_INFO_QUERY_KEY,
         queryFn: fetchOrgInfo,
         staleTime: Number.POSITIVE_INFINITY,
         retry: false,

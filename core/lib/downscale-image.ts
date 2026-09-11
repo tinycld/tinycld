@@ -1,5 +1,5 @@
 import { log } from '@tinycld/core/lib/logger'
-import { manipulateAsync, SaveFormat } from 'expo-image-manipulator'
+import { ImageManipulator, manipulateAsync, SaveFormat } from 'expo-image-manipulator'
 import { JPEG_QUALITY, MAX_AVATAR_EDGE } from './downscale-image-shared'
 
 export { fitWithinMaxEdge, JPEG_QUALITY, MAX_AVATAR_EDGE } from './downscale-image-shared'
@@ -51,12 +51,18 @@ export async function downscaleImage(
 }
 
 /**
- * Source dimensions, needed to decide which edge to cap. A no-op
- * `manipulateAsync` call is the cheapest way to get them — React Native's
+ * Source dimensions, needed to decide which edge to cap. React Native's
  * `Image.getSize` is callback-based and does not resolve `file://` URIs
- * reliably across platforms.
+ * reliably across platforms, so this goes through expo-image-manipulator
+ * instead — via the non-deprecated object API (`ImageManipulator.manipulate`
+ * + `renderAsync`), not `manipulateAsync(uri, [])`. The empty-actions form of
+ * `manipulateAsync` looks like a cheap no-op probe but isn't: it still runs a
+ * full decode AND a `saveAsync`-equivalent re-encode to a temp file in
+ * `cacheDir/ImageManipulator/`, which this call never even reads before
+ * discarding it. `renderAsync()` resolves an `ImageRef` with `width`/`height`
+ * already populated from the decode — no save, no orphaned temp file.
  */
 async function measureImage(uri: string): Promise<{ width: number; height: number }> {
-    const probe = await manipulateAsync(uri, [])
-    return { width: probe.width, height: probe.height }
+    const ref = await ImageManipulator.manipulate(uri).renderAsync()
+    return { width: ref.width, height: ref.height }
 }
