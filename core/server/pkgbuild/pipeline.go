@@ -25,6 +25,18 @@ const pnpmProgressInterval = 10 * time.Second
 // tinycld member's newer core table.
 const ServerRebuildEnv = "TINYCLD_SERVER_REBUILD=1"
 
+// childEnv is the extra environment every pipeline child that resolves the
+// workspace runs with. The build dir IS the workspace root for that child:
+// tinycld.packages.ts honours TINYCLD_WS_ROOT (a generator-test override) over
+// its own location, and children inherit the parent's environment, so a
+// caller that set the variable for its own purposes would otherwise make the
+// generator enumerate the caller's workspace while every other path resolves
+// the build dir. exec keeps the last value for a duplicated key, so this pin
+// wins over an inherited one.
+func childEnv(buildDir string) []string {
+	return []string{ServerRebuildEnv, "TINYCLD_WS_ROOT=" + buildDir}
+}
+
 // Pipeline turns an assembled build dir into a runnable one: install
 // dependencies (the workspace postinstall runs the generator + link-members),
 // compile the server binary, export + stage the web bundle, and export the
@@ -56,6 +68,15 @@ type Pipeline struct {
 	// NativeExport exports the iOS/Android OTA bundles. Default
 	// (Pipeline).ExportNativeBundles.
 	NativeExport func(sink ProgressSink, appDir, buildID, runtimeVersion string) ([]BundleMeta, error)
+	// PrepareServer runs after the generator has produced the server dir's
+	// wiring (during pnpm install) and before `go build`, with that server
+	// dir. It exists for a host that composes its OWN entry point into the
+	// binary: the generator's outputs (go.work, the registrar) must already be
+	// on disk, and the compile must not have started. nil skips the step.
+	PrepareServer func(serverDir string) error
+	// GoBuildTags are passed to the server build as `-tags a,b`; empty passes
+	// none. Which main gets linked is a host decision, not a pipeline one.
+	GoBuildTags []string
 	// BinaryName is the server binary filename `go build -o` produces. The
 	// single-tenant host passes its Register-time binary name; default
 	// "tinycld".
@@ -159,9 +180,21 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// then runs in-process as the server, on every boot, with full privileges (DB
 	// handle, filesystem, secrets). Installing a package = trusting its author with
 	// the server. By design — see the doc section referenced above.
+	if p.PrepareServer != nil {
+		if err := TimeStep(sink, "prepare server dir", func() error {
+			return p.PrepareServer(goDir)
+		}); err != nil {
+			return BuildOutput{}, wrapStep("prepare server", err)
+		}
+	}
 	sink.Progress("Building server", ProgGoBuild, "go build")
 	if err := TimeStep(sink, "go build (server binary)", func() error {
-		out, e := p.run()(goDir, "go", "build", "-o", filepath.Join(appDir, p.binaryName()), ".")
+		args := []string{"build", "-o", filepath.Join(appDir, p.binaryName())}
+		if len(p.GoBuildTags) > 0 {
+			args = append(args, "-tags", strings.Join(p.GoBuildTags, ","))
+		}
+		args = append(args, ".")
+		out, e := p.run()(goDir, "go", args...)
 		if e != nil {
 			// Same rationale as runPnpmInstall: in the hosting builder the
 			// error string is all that leaves the job child, so the compile
@@ -314,7 +347,7 @@ func (p Pipeline) runPnpmInstall(sink ProgressSink, buildDir string) error {
 		// the guard env is irrelevant there.
 		out, err = p.PnpmStream(onLine, buildDir, "pnpm", "install", "--no-frozen-lockfile")
 	} else {
-		out, err = RunCmdStreamingEnv(onLine, buildDir, []string{ServerRebuildEnv}, "pnpm", "install", "--no-frozen-lockfile")
+		out, err = RunCmdStreamingEnv(onLine, buildDir, childEnv(buildDir), "pnpm", "install", "--no-frozen-lockfile")
 	}
 	if err != nil {
 		// The failing output must ride the error itself: in the hosting

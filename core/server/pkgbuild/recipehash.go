@@ -28,17 +28,18 @@ import (
 // Canonical form v1 (hand-rolled sorted lines, newline-terminated — language-
 // portable and diff-readable when a golden test fails):
 //
-//	tinycld-recipe/v1
+//	tinycld-recipe/v2
 //	go go1.26.3
 //	node v22.12.0
 //	pnpm pnpm@11.3.0+sha512…
 //	override <name> <version>     (sorted by name; the "//" doc key never appears)
 //	member <name>@<version> <integrity>   (sorted; third-party undistinguished)
+//	extra <name> <integrity>              (sorted; source a host links beyond the member set)
 //
 // Changing the canonical form REQUIRES bumping recipeFormatVersion and
 // regenerating BOTH golden tests (pkgbuild/recipehash_test.go and hosting's
 // internal/recipeparity) together.
-const recipeFormatVersion = "tinycld-recipe/v1"
+const recipeFormatVersion = "tinycld-recipe/v2"
 
 // Toolchain pins the tool versions that shape build output. All three fields
 // are required by RecipeHash: an unknown toolchain must never alias two
@@ -81,6 +82,15 @@ func DetectToolchain(run CmdRunner) (Toolchain, error) {
 	return Toolchain{Go: goFields[2], Node: nodeVer, Pnpm: PackageManagerSpec}, nil
 }
 
+// RecipeExtra is a resolved input a host compiles into the artifact beyond
+// the member set: source no member names but the binary links, identified
+// by a tree digest exactly as a member is by its tarball integrity. Two
+// builds that differ only here must not share an artifact.
+type RecipeExtra struct {
+	Name      string `json:"name"`
+	Integrity string `json:"integrity"`
+}
+
 // RecipeHash computes "sha256:<hex>" over the canonical form of the resolved
 // member set, the version-pin overrides (package-versions.json's pins), and
 // the toolchain.
@@ -90,7 +100,7 @@ func DetectToolchain(run CmdRunner) (Toolchain, error) {
 // containing whitespace (which could forge canonical-form line boundaries)
 // is an error. A silently-partial hash would poison the shared build cache —
 // wrong-key reuse is strictly worse than a failed hash.
-func RecipeHash(members []ResolvedMember, overrides map[string]string, tc Toolchain) (string, error) {
+func RecipeHash(members []ResolvedMember, overrides map[string]string, tc Toolchain, extras ...RecipeExtra) (string, error) {
 	if err := checkToken("toolchain go", tc.Go); err != nil {
 		return "", err
 	}
@@ -145,6 +155,26 @@ func RecipeHash(members []ResolvedMember, overrides map[string]string, tc Toolch
 	}
 	sort.Strings(lines)
 	for _, l := range lines {
+		sb.WriteString(l)
+	}
+
+	seenExtra := map[string]bool{}
+	extraLines := make([]string, 0, len(extras))
+	for _, x := range extras {
+		if err := checkToken("extra name", x.Name); err != nil {
+			return "", err
+		}
+		if err := checkToken(fmt.Sprintf("extra %s integrity", x.Name), x.Integrity); err != nil {
+			return "", err
+		}
+		if seenExtra[x.Name] {
+			return "", fmt.Errorf("recipe hash: duplicate extra %q", x.Name)
+		}
+		seenExtra[x.Name] = true
+		extraLines = append(extraLines, "extra "+x.Name+" "+x.Integrity+"\n")
+	}
+	sort.Strings(extraLines)
+	for _, l := range extraLines {
 		sb.WriteString(l)
 	}
 

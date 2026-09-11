@@ -34,7 +34,7 @@ func goldenRecipeFixture() ([]pkgbuild.ResolvedMember, map[string]string, pkgbui
 	return members, overrides, tc
 }
 
-const goldenRecipeHash = "sha256:1e01f41d23eb4ffc9bd6c590bc7497b0d3ece1ad1a08df21e1f3d4628f361329"
+const goldenRecipeHash = "sha256:38c13dc171a291ea4c35a3c0aefb27c8421ea39e1ba936daad0612702f7436b6"
 
 func TestRecipeHash_MatchesGolden(t *testing.T) {
 	members, overrides, tc := goldenRecipeFixture()
@@ -154,6 +154,46 @@ func TestDetectToolchain_RefusesGarbage(t *testing.T) {
 	}
 	if _, err := pkgbuild.DetectToolchain(run); err == nil {
 		t.Fatal("unparseable toolchain output must refuse")
+	}
+}
+
+// An extra is source the artifact links that no member names — a host's own
+// composition. Two builds differing only there must not share an artifact.
+func TestRecipeHash_ExtrasChangeTheHash(t *testing.T) {
+	members, overrides, tc := goldenRecipeFixture()
+	base, err := pkgbuild.RecipeHash(members, overrides, tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withExtra, err := pkgbuild.RecipeHash(members, overrides, tc,
+		pkgbuild.RecipeExtra{Name: "example.com/host", Integrity: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base == withExtra {
+		t.Fatal("an extra must change the recipe hash")
+	}
+	other, _ := pkgbuild.RecipeHash(members, overrides, tc,
+		pkgbuild.RecipeExtra{Name: "example.com/host", Integrity: "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"})
+	if other == withExtra {
+		t.Fatal("a different extra integrity must change the recipe hash")
+	}
+}
+
+func TestRecipeHash_ExtrasAreOrderIndependentAndUnique(t *testing.T) {
+	members, overrides, tc := goldenRecipeFixture()
+	a := pkgbuild.RecipeExtra{Name: "example.com/a", Integrity: "sha256:aaaa"}
+	b := pkgbuild.RecipeExtra{Name: "example.com/b", Integrity: "sha256:bbbb"}
+	ab, _ := pkgbuild.RecipeHash(members, overrides, tc, a, b)
+	ba, _ := pkgbuild.RecipeHash(members, overrides, tc, b, a)
+	if ab != ba {
+		t.Fatal("extra order must not affect the hash")
+	}
+	if _, err := pkgbuild.RecipeHash(members, overrides, tc, a, a); err == nil {
+		t.Fatal("a duplicate extra name must be refused")
+	}
+	if _, err := pkgbuild.RecipeHash(members, overrides, tc, pkgbuild.RecipeExtra{Name: "x", Integrity: ""}); err == nil {
+		t.Fatal("an empty extra integrity must be refused")
 	}
 }
 

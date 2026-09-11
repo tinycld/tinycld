@@ -368,3 +368,119 @@ func TestStageReleaseLayout(t *testing.T) {
 type cmdErr struct{ msg string }
 
 func (e *cmdErr) Error() string { return e.msg }
+
+// PrepareServer is the seam a host uses to drop its own entry point beside the
+// generated registrar. It must run after the generator (pnpm install) and before
+// the compile, or the file it writes is either clobbered or never built.
+func TestPipelineExecute_PrepareServerRunsBetweenInstallAndBuild(t *testing.T) {
+	build := t.TempDir()
+	var calls []string
+	record := func(name string, args []string) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+	}
+	p := Pipeline{
+		Run: func(dir, name string, args ...string) (string, error) {
+			record(name, args)
+			return "", nil
+		},
+		PnpmStream: func(_ func(string), _, name string, args ...string) (string, error) {
+			record(name, args)
+			return "", nil
+		},
+		ExpoStream: func(_ func(string), _, name string, args ...string) (string, error) {
+			record(name, args)
+			return "", nil
+		},
+		PrepareServer: func(serverDir string) error {
+			if filepath.Base(serverDir) != "server" || filepath.Base(filepath.Dir(serverDir)) != "tinycld" {
+				t.Fatalf("PrepareServer got %q, want <build>/tinycld/server", serverDir)
+			}
+			calls = append(calls, "prepare")
+			return nil
+		},
+		Stage:        func(appDir string) (string, error) { return filepath.Join(appDir, "r"), nil },
+		NativeExport: func(ProgressSink, string, string, string) ([]BundleMeta, error) { return nil, nil },
+	}
+	if _, err := p.Execute(NopSink(), build, "b"); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, " | ")
+	pnpm := strings.Index(joined, "pnpm install")
+	prep := strings.Index(joined, "prepare")
+	gob := strings.Index(joined, "go build")
+	if !(pnpm >= 0 && prep > pnpm && gob > prep) {
+		t.Fatalf("PrepareServer must run after pnpm install and before go build: %s", joined)
+	}
+}
+
+// A failing PrepareServer stops the pipeline: compiling without the host's
+// entry point would produce a binary that boots as the wrong thing.
+func TestPipelineExecute_PrepareServerFailureStopsTheBuild(t *testing.T) {
+	build := t.TempDir()
+	built := false
+	p := Pipeline{
+		Run: func(dir, name string, args ...string) (string, error) {
+			built = true
+			return "", nil
+		},
+		PnpmStream:    func(_ func(string), _, _ string, _ ...string) (string, error) { return "", nil },
+		ExpoStream:    func(_ func(string), _, _ string, _ ...string) (string, error) { return "", nil },
+		PrepareServer: func(string) error { return &cmdErr{"no go.work"} },
+		Stage:         func(appDir string) (string, error) { return appDir, nil },
+		NativeExport:  func(ProgressSink, string, string, string) ([]BundleMeta, error) { return nil, nil },
+	}
+	_, err := p.Execute(NopSink(), build, "b")
+	if err == nil || !strings.Contains(err.Error(), "no go.work") {
+		t.Fatalf("err = %v, want the PrepareServer failure", err)
+	}
+	if built {
+		t.Fatal("go build ran after PrepareServer failed")
+	}
+}
+
+// Build tags select which main the compile links; they must reach the go build
+// argv, after -o so fakes keyed on args[1]=="-o" keep seeing the output path.
+func TestPipelineExecute_GoBuildTags(t *testing.T) {
+	build := t.TempDir()
+	var goBuildArgs []string
+	p := Pipeline{
+		GoBuildTags: []string{"embedded", "extra"},
+		Run: func(dir, name string, args ...string) (string, error) {
+			if name == "go" {
+				goBuildArgs = args
+			}
+			return "", nil
+		},
+		PnpmStream:   func(_ func(string), _, _ string, _ ...string) (string, error) { return "", nil },
+		ExpoStream:   func(_ func(string), _, _ string, _ ...string) (string, error) { return "", nil },
+		Stage:        func(appDir string) (string, error) { return filepath.Join(appDir, "r"), nil },
+		NativeExport: func(ProgressSink, string, string, string) ([]BundleMeta, error) { return nil, nil },
+	}
+	if _, err := p.Execute(NopSink(), build, "b"); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(goBuildArgs, " ")
+	if !strings.Contains(joined, "-tags embedded,extra") {
+		t.Fatalf("go build args = %q, want -tags embedded,extra", joined)
+	}
+	if goBuildArgs[0] != "build" || goBuildArgs[1] != "-o" {
+		t.Fatalf("go build args = %q, want build -o first", joined)
+	}
+}
+
+// The generator resolves the workspace from TINYCLD_WS_ROOT when it is set,
+// and the pipeline's children inherit the parent's environment. A build
+// launched from a process that set the variable for its own reasons (a
+// caller's own e2e tests may use it to find sibling checkouts) must still
+// generate against the build dir, never the caller's workspace.
+func TestPipelineChildEnv_PinsTheWorkspaceRootToTheBuildDir(t *testing.T) {
+	t.Setenv("TINYCLD_WS_ROOT", "/somewhere/else")
+	env := childEnv("/build/dir")
+	joined := strings.Join(env, "\n")
+	if !strings.Contains(joined, "TINYCLD_WS_ROOT=/build/dir") {
+		t.Fatalf("child env must pin TINYCLD_WS_ROOT to the build dir, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, ServerRebuildEnv) {
+		t.Fatalf("child env must keep the rebuild marker, got:\n%s", joined)
+	}
+}
