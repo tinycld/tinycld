@@ -88,6 +88,7 @@ export function AvatarCropper({
                     style={{ width: size, height: size, borderRadius: size / 2 }}
                 >
                     <Image
+                        testID="avatar-cropper-image"
                         source={{ uri: imageUri }}
                         contentFit="cover"
                         style={{
