@@ -136,9 +136,8 @@ function AvatarContent({
         <Text
             style={{
                 color: foregroundColor,
-                fontWeight: '700',
-                fontSize: size * 0.36,
-                letterSpacing: 0.2,
+                fontWeight: '600',
+                fontSize: size * 0.42,
             }}
         >
             {resolveInitials(name, email)}
