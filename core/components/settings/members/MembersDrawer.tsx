@@ -1,3 +1,4 @@
+import { Avatar } from '@tinycld/core/components/Avatar'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
@@ -25,7 +26,6 @@ import { Check, Mail, Send, Trash2, UserPlus, X } from 'lucide-react-native'
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import { InviteLinkPanel } from './InviteLinkPanel'
-import { MemberAvatar } from './MemberAvatar'
 import { PendingBadge, RoleBadge, YouBadge } from './MemberBadges'
 import { PackageAccessPanel } from './PackageAccessPanel'
 import { RemoveMemberFlow } from './RemoveMemberFlow'
@@ -149,11 +149,13 @@ function ViewMember({
         <>
             <DrawerHeader>
                 <View className="flex-row items-start gap-3 flex-1">
-                    <MemberAvatar
+                    <Avatar
                         name={member.name}
                         email={member.email}
                         size={44}
                         dimmed={member.isPending}
+                        palette="soft"
+                        shape="squircle"
                     />
                     <View className="flex-1" style={{ minWidth: 0 }}>
                         <View className="flex-row items-center gap-2" style={{ flexWrap: 'wrap' }}>

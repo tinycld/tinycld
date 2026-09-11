@@ -1,5 +1,5 @@
+import { Avatar } from '@tinycld/core/components/Avatar'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
-import { MemberAvatar } from '@tinycld/core/components/settings/members/MemberAvatar'
 import {
     PendingBadge,
     RoleBadge,
@@ -368,11 +368,13 @@ function MemberRowItem({
                 borderTopWidth: isFirst ? 0 : 1,
             }}
         >
-            <MemberAvatar
+            <Avatar
                 name={member.name}
                 email={member.email}
                 size={38}
                 dimmed={member.isPending}
+                palette="soft"
+                shape="squircle"
             />
 
             <View className="flex-1" style={{ minWidth: 0 }}>

@@ -1,6 +1,6 @@
+import { AvatarStack } from '@tinycld/core/components/AvatarStack'
 import { useRemoteAwareness } from '@tinycld/core/lib/realtime/use-remote-awareness'
 import { useMemo } from 'react'
-import { Text, View } from 'react-native'
 import type { Awareness } from 'y-protocols/awareness'
 
 interface PresenceUser {
@@ -37,61 +37,18 @@ export function PresenceAvatars({ awareness, max = 4, size = 24 }: PresenceAvata
 
     if (peers.length === 0) return null
 
-    const visible = peers.slice(0, max)
-    const overflow = peers.length - visible.length
-
     return (
-        <View className="flex-row items-center">
-            {visible.map((peer, i) => (
-                <Avatar key={peer.clientID} user={peer.state.user} size={size} offset={i} />
-            ))}
-            {overflow > 0 ? (
-                <View
-                    className="items-center justify-center bg-surface-secondary border border-background"
-                    style={{
-                        width: size,
-                        height: size,
-                        borderRadius: size / 2,
-                        marginLeft: visible.length > 0 ? -size / 3 : 0,
-                    }}
-                >
-                    <Text
-                        className="text-foreground font-semibold"
-                        style={{ fontSize: size * 0.4 }}
-                    >
-                        +{overflow}
-                    </Text>
-                </View>
-            ) : null}
-        </View>
-    )
-}
-
-interface AvatarProps {
-    user: PresenceUser
-    size: number
-    offset: number
-}
-
-function Avatar({ user, size, offset }: AvatarProps) {
-    const initial = (user.name[0] ?? '?').toUpperCase()
-    return (
-        <View
-            accessibilityRole="image"
-            accessibilityLabel={user.name}
-            className="items-center justify-center border border-background"
-            style={{
-                width: size,
-                height: size,
-                borderRadius: size / 2,
-                backgroundColor: user.color,
-                marginLeft: offset === 0 ? 0 : -size / 3,
-            }}
-        >
-            <Text className="text-white font-semibold" style={{ fontSize: size * 0.42 }}>
-                {initial}
-            </Text>
-        </View>
+        <AvatarStack
+            items={peers.map(peer => ({
+                key: String(peer.clientID),
+                name: peer.state.user.name,
+                color: peer.state.user.color,
+                colorKey: peer.state.user.id,
+            }))}
+            max={max}
+            size={size}
+            ring="background"
+        />
     )
 }
 
