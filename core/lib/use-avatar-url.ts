@@ -12,8 +12,20 @@ interface AvatarUser {
     avatar_crop?: string
 }
 
+export interface ResolvedAvatar extends AvatarImage {
+    /**
+     * The un-thumbed original, same `?token=` auth as `fileUrl`. Re-editing
+     * must start from this, not `fileUrl` — PocketBase's `WxH` thumb form
+     * center-crops to a square, so feeding the thumbnail back into the
+     * cropper re-crops an already-cropped image instead of reopening the
+     * user's actual framing. Display code should keep using `fileUrl`.
+     */
+    sourceUrl: string
+}
+
 /**
- * Resolve a user's stored avatar into a displayable `AvatarImage`.
+ * Resolve a user's stored avatar into a displayable `AvatarImage` (plus the
+ * un-thumbed `sourceUrl` for re-editing — see `ResolvedAvatar`).
  *
  * The `users` collection's file field sits behind its view rule, so the URL
  * needs the shared `?token=`. `useFileToken` caches one token per session and
@@ -21,7 +33,7 @@ interface AvatarUser {
  * needs, and because the token is stable for the session, the browser's
  * URL-keyed HTTP cache actually hits instead of busting on every render.
  */
-export function useAvatarUrl(user: AvatarUser | null | undefined): AvatarImage | undefined {
+export function useAvatarUrl(user: AvatarUser | null | undefined): ResolvedAvatar | undefined {
     // Called unconditionally: hooks can't sit behind the early return below.
     const { data: token } = useFileToken()
 
@@ -33,6 +45,7 @@ export function useAvatarUrl(user: AvatarUser | null | undefined): AvatarImage |
 
     return {
         fileUrl: `${url}${url.includes('?') ? '&' : '?'}thumb=${AVATAR_THUMB}`,
+        sourceUrl: url,
         crop: parseCrop(user.avatar_crop),
     }
 }

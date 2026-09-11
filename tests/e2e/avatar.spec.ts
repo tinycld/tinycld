@@ -88,3 +88,69 @@ test('an uploaded photo replaces the initials circle', async ({ page }) => {
     await page.reload()
     await expect(page.getByTestId('avatar-preview-image')).toBeVisible()
 })
+
+// Regression coverage for the bug where Reposition fed the cropper the
+// already-thumbnailed (center-cropped-to-square) display URL instead of the
+// original upload. Re-editing on the thumbnail applies the stored crop rect
+// a SECOND time on top of a crop that already happened, so the subject
+// marches off-frame a little further on every reposition — the opposite of
+// the feature's promise that framing is stored separately and restored
+// exactly (core/help/personalizing-your-avatar.md). The 1x1 PNG this spec
+// uploads elsewhere can't distinguish "thumbnail" from "original" (both are
+// 1x1), so this test uses a real, larger source image and asserts the
+// cropper opens on an image whose natural size exceeds the 256x256 thumb —
+// which is only true if it is NOT the thumbnail.
+test('reposition reopens the cropper on the original photo, not the display thumbnail', async ({
+    page,
+}) => {
+    await login(page)
+    await openPersonalSettings(page)
+
+    // A solid-color 512x512 PNG — larger than the 256x256 AVATAR_THUMB, so
+    // natural dimensions alone prove which URL the cropper loaded.
+    const largePng = await page.evaluate(async () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = 512
+        canvas.height = 512
+        const ctx = canvas.getContext('2d')
+        if (!ctx) throw new Error('2d context unavailable')
+        ctx.fillStyle = '#3b82f6'
+        ctx.fillRect(0, 0, 512, 512)
+        const dataUrl = canvas.toDataURL('image/png')
+        return dataUrl.split(',')[1]
+    })
+
+    await attachAvatar(page, {
+        name: 'large-avatar.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from(largePng ?? '', 'base64'),
+    })
+    await expect(page.getByTestId('avatar-cropper-save')).toBeVisible()
+
+    // Zoom in before saving so the stored crop is non-default — a reposition
+    // bug that only shows up on a non-trivial crop must be caught.
+    await page.getByLabel('Zoom').fill('3')
+    await page.getByTestId('avatar-cropper-save').click()
+    await expect(page.getByTestId('avatar-preview-image')).toBeVisible()
+
+    await page.getByTestId('avatar-reposition').click()
+    // expo-image's web renderer puts `data-testid` on the transform wrapper,
+    // not the `<img>` itself, so the real element is one level in.
+    const cropperImage = page.getByTestId('avatar-cropper-image').locator('img')
+    await expect(cropperImage).toBeVisible()
+
+    const src = await cropperImage.getAttribute('src')
+    // The regression: Reposition fed the cropper the `?thumb=256x256` display
+    // URL instead of the original, so re-editing re-cropped an already-cropped
+    // image. Asserting the loaded src carries no `thumb=` param is a direct
+    // check on the fix, not just an inference from pixel size.
+    expect(src).not.toContain('thumb=')
+
+    const naturalWidth = await cropperImage.evaluate((el: HTMLImageElement) => el.naturalWidth)
+    // 256 is AVATAR_THUMB's edge (core/lib/use-avatar-url.ts) — anything
+    // larger proves the cropper loaded the un-thumbed original, not the
+    // display thumbnail.
+    expect(naturalWidth).toBeGreaterThan(256)
+
+    await page.getByTestId('avatar-cropper-cancel').click()
+})

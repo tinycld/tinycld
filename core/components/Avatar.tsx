@@ -3,6 +3,7 @@ import {
     type CropRect,
     cropToTransform,
     DEFAULT_CROP,
+    readableForegroundFor,
     resolveInitials,
     softAvatarColors,
 } from '@tinycld/core/lib/avatar'
@@ -29,6 +30,8 @@ export interface AvatarProps {
     ring?: 'none' | 'background' | 'card'
     dimmed?: boolean
     testID?: string
+    /** Overrides the default name/email announcement — e.g. to distinguish a viewer from an assignee. */
+    accessibilityLabel?: string
 }
 
 const RING_CLASS = {
@@ -58,18 +61,23 @@ export function Avatar({
     ring = 'none',
     dimmed = false,
     testID,
+    accessibilityLabel,
 }: AvatarProps) {
     const key = colorKey ?? (email || name)
     const [softBg, softFg] = softAvatarColors(key)
     const backgroundColor = color ?? (palette === 'soft' ? softBg : avatarColor(key))
-    const foregroundColor = palette === 'soft' && !color ? softFg : '#fff'
+    // Soft palette: an explicit user color needs its OWN readable pairing —
+    // the identity-derived softFg is only valid for identity-derived softBg.
+    // Solid palette is untouched: it has always been white-on-color.
+    const foregroundColor =
+        palette === 'soft' ? (color ? readableForegroundFor(color) : softFg) : '#fff'
     const borderRadius = shape === 'circle' ? size / 2 : size * 0.32
 
     return (
         <View
             testID={testID}
             accessibilityRole="image"
-            accessibilityLabel={name || email || 'Avatar'}
+            accessibilityLabel={accessibilityLabel || name || email || 'Avatar'}
             className={`items-center justify-center overflow-hidden ${RING_CLASS[ring]}`}
             style={{
                 width: size,

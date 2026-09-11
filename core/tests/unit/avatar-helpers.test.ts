@@ -5,11 +5,26 @@ import {
     cropToTransform,
     DEFAULT_CROP,
     parseCrop,
+    readableForegroundFor,
     resolveInitials,
     serializeCrop,
     softAvatarColors,
 } from '@tinycld/core/lib/avatar'
 import { describe, expect, it } from 'vitest'
+
+/** WCAG relative luminance / contrast, reimplemented independently of the
+ * production helper so these tests actually verify the math rather than
+ * just echoing it back. */
+function relativeLuminance(hex: string): number {
+    const channels = [1, 3, 5].map(i => Number.parseInt(hex.slice(i, i + 2), 16) / 255)
+    const [r, g, b] = channels.map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0)
+}
+
+function contrastRatio(a: string, b: string): number {
+    const [lighter, darker] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x)
+    return ((lighter ?? 0) + 0.05) / ((darker ?? 0) + 0.05)
+}
 
 describe('avatarColor', () => {
     it('always returns a color from the palette', () => {
@@ -50,6 +65,40 @@ describe('softAvatarColors', () => {
 
     it('is deterministic', () => {
         expect(softAvatarColors('a@b.c')).toEqual(softAvatarColors('a@b.c'))
+    })
+})
+
+describe('readableForegroundFor', () => {
+    // These four AVATAR_COLORS previously paired with a hardcoded white
+    // foreground and fell below the 3:1 large-text floor — the bug this
+    // helper fixes.
+    const failingColors = ['#eab308', '#22c55e', '#f97316', '#06b6d4']
+
+    it('clears WCAG AA (4.5:1) for every color that previously failed against white', () => {
+        for (const bg of failingColors) {
+            const fg = readableForegroundFor(bg)
+            expect(contrastRatio(bg, fg)).toBeGreaterThanOrEqual(4.5)
+        }
+    })
+
+    it('clears AA contrast for every AVATAR_COLORS swatch, not just the known failures', () => {
+        for (const bg of AVATAR_COLORS) {
+            const fg = readableForegroundFor(bg)
+            expect(contrastRatio(bg, fg)).toBeGreaterThanOrEqual(4.5)
+        }
+    })
+
+    it('is deterministic for a given background', () => {
+        expect(readableForegroundFor('#eab308')).toBe(readableForegroundFor('#eab308'))
+    })
+
+    it('reuses the designed pairing for a known soft-palette background', () => {
+        const [bg, fg] = ['#e0f2fe', '#0369a1']
+        expect(readableForegroundFor(bg)).toBe(fg)
+    })
+
+    it('picks a light foreground against a very dark background', () => {
+        expect(readableForegroundFor('#111111')).toBe('#ffffff')
     })
 })
 

@@ -28,15 +28,16 @@ const BRANDING_RECORD_ID = 'branding'
 
 function brandingImage(
     branding: { id: string; logo: string; logo_crop: string } | null
-): AvatarImage | undefined {
+): (AvatarImage & { sourceUrl: string }) | undefined {
     if (!branding?.logo) return undefined
     // org_branding's viewRule is public (pre-login screens render the logo
     // before any token exists), so unlike users' avatar this needs no `?token=`.
-    const fileUrl = pb.files.getURL(
-        { collectionId: 'org_branding', id: branding.id },
-        branding.logo
-    )
-    return { fileUrl, crop: parseCrop(branding.logo_crop) }
+    // Unlike useAvatarUrl, this URL is never given a `thumb=` param, so
+    // fileUrl and sourceUrl are already the same un-thumbed original — no
+    // separate thumbnail request exists here to re-crop on reposition. Both
+    // fields are still exposed so the two editors share one shape.
+    const url = pb.files.getURL({ collectionId: 'org_branding', id: branding.id }, branding.logo)
+    return { fileUrl: url, sourceUrl: url, crop: parseCrop(branding.logo_crop) }
 }
 
 /**
@@ -139,9 +140,14 @@ function useOrgBrandingEditor() {
     const image = brandingImage(branding)
 
     const startReposition = () => {
-        if (!image?.fileUrl) return
+        if (!image?.sourceUrl) return
         setPendingUpload(null)
-        setCropperImageUri(image.fileUrl)
+        // Use sourceUrl, not fileUrl, on principle even though the two are
+        // equal today (see brandingImage) — display and re-edit sources must
+        // stay decoupled so a future thumbnail added to fileUrl (mirroring
+        // useAvatarUrl) can't silently start re-cropping an already-cropped
+        // image the way it did for user avatars.
+        setCropperImageUri(image.sourceUrl)
     }
 
     const closeCropper = () => {

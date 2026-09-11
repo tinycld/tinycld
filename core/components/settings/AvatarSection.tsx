@@ -121,9 +121,15 @@ function useAvatarEditor() {
     }
 
     const startReposition = () => {
-        if (!avatarImage?.fileUrl) return
+        if (!avatarImage?.sourceUrl) return
         setPendingUpload(null)
-        setCropperImageUri(avatarImage.fileUrl)
+        // MUST use sourceUrl, not fileUrl: fileUrl is the 256x256 thumbnail,
+        // which PocketBase center-crops to a square. Reopening the cropper on
+        // that thumbnail would apply the stored crop rect a second time, on
+        // top of a crop that already happened — the subject marches off-frame
+        // a little more on every reposition. The un-thumbed original is the
+        // only correct source of truth for re-editing.
+        setCropperImageUri(avatarImage.sourceUrl)
     }
 
     const closeCropper = () => {

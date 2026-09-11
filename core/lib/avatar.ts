@@ -54,6 +54,42 @@ export function softAvatarColors(key: string): readonly [string, string] {
 }
 
 /**
+ * WCAG relative luminance of a `#rrggbb` color, in [0, 1].
+ * https://www.w3.org/WAI/GL/wiki/Relative_luminance
+ */
+function relativeLuminance(hex: string): number {
+    const channels = [1, 3, 5].map(i => Number.parseInt(hex.slice(i, i + 2), 16) / 255)
+    const [r, g, b] = channels.map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+    return 0.2126 * (r ?? 0) + 0.7152 * (g ?? 0) + 0.0722 * (b ?? 0)
+}
+
+/** WCAG contrast ratio between two `#rrggbb` colors, in [1, 21]. */
+function contrastRatio(a: string, b: string): number {
+    const [lighter, darker] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x)
+    return ((lighter ?? 0) + 0.05) / ((darker ?? 0) + 0.05)
+}
+
+const READABLE_DARK = '#0f172a'
+const READABLE_LIGHT = '#ffffff'
+
+/**
+ * A readable foreground for an arbitrary background color, for the soft
+ * palette's new "user picked a color" state. A known SOFT_AVATAR_PALETTE
+ * background reuses its designed pairing; anything else picks whichever of
+ * a near-black or white text yields the higher WCAG contrast ratio against
+ * that background — every AVATAR_COLORS swatch clears 4.5:1 against
+ * READABLE_DARK, so this always beats the flat white this replaces.
+ */
+export function readableForegroundFor(backgroundColor: string): string {
+    const paletteMatch = SOFT_AVATAR_PALETTE.find(([bg]) => bg === backgroundColor)
+    if (paletteMatch) return paletteMatch[1]
+
+    const darkContrast = contrastRatio(backgroundColor, READABLE_DARK)
+    const lightContrast = contrastRatio(backgroundColor, READABLE_LIGHT)
+    return darkContrast >= lightContrast ? READABLE_DARK : READABLE_LIGHT
+}
+
+/**
  * Two-letter initials. Prefers first+last of a name; falls back to the email's
  * local part, which is often the only identity we have in sharing dialogs.
  */
