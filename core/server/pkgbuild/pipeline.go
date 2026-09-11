@@ -56,6 +56,15 @@ type Pipeline struct {
 	// NativeExport exports the iOS/Android OTA bundles. Default
 	// (Pipeline).ExportNativeBundles.
 	NativeExport func(sink ProgressSink, appDir, buildID, runtimeVersion string) ([]BundleMeta, error)
+	// PrepareServer runs after the generator has produced the server dir's
+	// wiring (during pnpm install) and before `go build`, with that server
+	// dir. It exists for a host that composes its OWN entry point into the
+	// binary: the generator's outputs (go.work, the registrar) must already be
+	// on disk, and the compile must not have started. nil skips the step.
+	PrepareServer func(serverDir string) error
+	// GoBuildTags are passed to the server build as `-tags a,b`; empty passes
+	// none. Which main gets linked is a host decision, not a pipeline one.
+	GoBuildTags []string
 	// BinaryName is the server binary filename `go build -o` produces. The
 	// single-tenant host passes its Register-time binary name; default
 	// "tinycld".
@@ -159,9 +168,21 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// then runs in-process as the server, on every boot, with full privileges (DB
 	// handle, filesystem, secrets). Installing a package = trusting its author with
 	// the server. By design — see the doc section referenced above.
+	if p.PrepareServer != nil {
+		if err := TimeStep(sink, "prepare server dir", func() error {
+			return p.PrepareServer(goDir)
+		}); err != nil {
+			return BuildOutput{}, wrapStep("prepare server", err)
+		}
+	}
 	sink.Progress("Building server", ProgGoBuild, "go build")
 	if err := TimeStep(sink, "go build (server binary)", func() error {
-		out, e := p.run()(goDir, "go", "build", "-o", filepath.Join(appDir, p.binaryName()), ".")
+		args := []string{"build", "-o", filepath.Join(appDir, p.binaryName())}
+		if len(p.GoBuildTags) > 0 {
+			args = append(args, "-tags", strings.Join(p.GoBuildTags, ","))
+		}
+		args = append(args, ".")
+		out, e := p.run()(goDir, "go", args...)
 		if e != nil {
 			// Same rationale as runPnpmInstall: in the hosting builder the
 			// error string is all that leaves the job child, so the compile
