@@ -29,9 +29,10 @@ type MailSockets struct {
 }
 
 // EmbeddedContext is set when a supervising process composes this app and
-// supplies its runtime wiring — listeners, sockets, config file paths — instead
-// of the process discovering them itself. Present (GetEmbeddedContext ok) only
-// in that case; a self-hosted deployment has none.
+// supplies its runtime wiring instead of the process discovering it itself.
+// Present (GetEmbeddedContext ok) only in that case; a self-hosted deployment
+// has none. It carries only what a core-owned package must consult: the
+// instance's identity and the listeners it must not bind for itself.
 type EmbeddedContext struct {
 	// InstanceID identifies this process to its supervisor. Identification and
 	// logging only — nothing branches on the value.
@@ -39,21 +40,6 @@ type EmbeddedContext struct {
 	// Mail are the supervisor-managed mail listeners (zero value = this process
 	// runs no mail listeners).
 	Mail MailSockets
-	// ControlSocket is the supervisor-bound deploy-proposal socket path (empty =
-	// no deploy channel).
-	ControlSocket string
-	// LimitsConfig is the path the supervisor materialized this deployment's
-	// limits.json to (empty = none). This package does not read it; it is
-	// carried so a composition layered on top can, without re-parsing the
-	// command line.
-	LimitsConfig string
-	// ConfigSocket is the socket the supervisor pushes live runtime-config
-	// updates on (empty = no push channel).
-	ConfigSocket string
-	// QuotaConfig is the path the supervisor materialized this deployment's
-	// quota.json to (empty = none). It carries the storage-bearing source list,
-	// which a composition layered on top needs to report current usage.
-	QuotaConfig string
 }
 
 // embeddedContextKey namespaces the store entry; the app store is shared with

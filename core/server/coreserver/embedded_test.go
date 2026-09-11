@@ -17,10 +17,10 @@ func TestEmbeddedContext_RoundTripAndAbsence(t *testing.T) {
 		t.Fatal("GetEmbeddedContext on a bare app must report absence")
 	}
 
-	SetEmbeddedContext(app, EmbeddedContext{InstanceID: "acme", ControlSocket: "/run/ctl.sock"})
+	SetEmbeddedContext(app, EmbeddedContext{InstanceID: "acme"})
 
 	ec, ok := GetEmbeddedContext(app)
-	if !ok || ec.InstanceID != "acme" || ec.ControlSocket != "/run/ctl.sock" {
+	if !ok || ec.InstanceID != "acme" {
 		t.Fatalf("GetEmbeddedContext = %+v, %v", ec, ok)
 	}
 }
