@@ -11,19 +11,33 @@ import { getResolvedAddress } from './server-address'
 export interface OrgBranding {
     id: string
     name: string
+    logoUrl: string
+    logoCrop: string
 }
 
 // Exported for unit testing; prefer useOrgInfo in components.
 // Reads the address lazily (not PB_SERVER_ADDR, which throws pre-resolution)
 // because DocumentTitle mounts this hook on pre-auth screens under
 // MinimalProviders, before the server address exists.
-export async function fetchOrgInfo(): Promise<{ name: string }> {
+export async function fetchOrgInfo(): Promise<{
+    name: string
+    logoUrl: string
+    logoCrop: string
+}> {
     const addr = getResolvedAddress()
-    if (!addr) return { name: '' }
+    if (!addr) return { name: '', logoUrl: '', logoCrop: '' }
     const res = await fetch(`${addr}/api/org-info`, { cache: 'no-store' })
-    if (!res.ok) return { name: '' }
-    const body = (await res.json()) as Partial<{ name: string }>
-    return { name: body.name ?? '' }
+    if (!res.ok) return { name: '', logoUrl: '', logoCrop: '' }
+    const body = (await res.json()) as Partial<{
+        name: string
+        logoUrl: string
+        logoCrop: string
+    }>
+    return {
+        name: body.name ?? '',
+        logoUrl: body.logoUrl ?? '',
+        logoCrop: body.logoCrop ?? '',
+    }
 }
 
 export function useOrgInfo() {
@@ -38,6 +52,18 @@ export function useOrgInfo() {
     })
 
     const name = data?.name?.trim() ?? ''
-    const org: OrgBranding | null = name ? { id: 'org', name } : null
+    // The endpoint returns a server-relative path; resolve it against the
+    // same address fetchOrgInfo used, guarding for it being unavailable (this
+    // hook runs pre-auth under MinimalProviders, before the address resolves).
+    const addr = getResolvedAddress()
+    const logoPath = data?.logoUrl ?? ''
+    const org: OrgBranding | null = name
+        ? {
+              id: 'org',
+              name,
+              logoUrl: logoPath && addr ? `${addr}${logoPath}` : '',
+              logoCrop: data?.logoCrop ?? '',
+          }
+        : null
     return { org }
 }

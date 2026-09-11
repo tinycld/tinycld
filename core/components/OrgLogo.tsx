@@ -1,8 +1,9 @@
 import { Avatar } from '@tinycld/core/components/Avatar'
+import { parseCrop } from '@tinycld/core/lib/avatar'
 import type { ReactNode } from 'react'
 
 interface OrgLogoProps {
-    org: { id: string; name: string } | null | undefined
+    org: { id: string; name: string; logoUrl?: string; logoCrop?: string } | null | undefined
     size?: number
     /** Rendered when org is null/loading. Defaults to nothing. */
     fallback?: ReactNode
@@ -14,5 +15,8 @@ interface OrgLogoProps {
  */
 export function OrgLogo({ org, size = 36, fallback = null }: OrgLogoProps) {
     if (!org) return <>{fallback}</>
-    return <Avatar name={org.name} colorKey={org.id} size={size} />
+
+    const avatar = org.logoUrl ? { fileUrl: org.logoUrl, crop: parseCrop(org.logoCrop) } : undefined
+
+    return <Avatar name={org.name} colorKey={org.id} size={size} avatar={avatar} />
 }
