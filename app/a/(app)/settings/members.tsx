@@ -17,6 +17,7 @@ import { useAuth } from '@tinycld/core/lib/auth'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useAvatarUrl } from '@tinycld/core/lib/use-avatar-url'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
 import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
@@ -46,6 +47,10 @@ export default function MembersSettings() {
             role: u.role,
             verified: u.verified,
             isDemo: u.is_demo,
+            avatar: u.avatar,
+            avatarCrop: u.avatar_crop,
+            avatarColor: u.avatar_color,
+            avatarEmoji: u.avatar_emoji,
         }))
     )
 
@@ -59,6 +64,10 @@ export default function MembersSettings() {
                 role: (row.role ?? 'member') as OrgRole,
                 isPending: row.verified === false,
                 isDemo: !!row.isDemo,
+                avatar: row.avatar ?? '',
+                avatarCrop: row.avatarCrop ?? '',
+                avatarColor: row.avatarColor ?? '',
+                avatarEmoji: row.avatarEmoji ?? '',
             })),
         [memberRows]
     )
@@ -353,6 +362,11 @@ function MemberRowItem({
 }) {
     const { user } = useAuth()
     const mutedColor = useThemeColor('muted-foreground')
+    const avatar = useAvatarUrl({
+        id: member.userId,
+        avatar: member.avatar,
+        avatar_crop: member.avatarCrop,
+    })
 
     const isSelf = member.userId === user.id
     const displayName = member.name || member.username || member.email
@@ -371,6 +385,10 @@ function MemberRowItem({
             <Avatar
                 name={member.name}
                 email={member.email}
+                colorKey={member.userId}
+                avatar={avatar}
+                emoji={member.avatarEmoji || undefined}
+                color={member.avatarColor || undefined}
                 size={38}
                 dimmed={member.isPending}
                 palette="soft"

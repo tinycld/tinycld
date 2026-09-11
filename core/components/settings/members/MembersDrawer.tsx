@@ -4,6 +4,7 @@ import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useAvatarUrl } from '@tinycld/core/lib/use-avatar-url'
 import {
     Drawer,
     DrawerBackdrop,
@@ -93,6 +94,11 @@ function ViewMember({
 }) {
     const { user } = useAuth()
     const [usersCollection] = useStore('users')
+    const avatar = useAvatarUrl({
+        id: member.userId,
+        avatar: member.avatar,
+        avatar_crop: member.avatarCrop,
+    })
 
     const mutedColor = useThemeColor('muted-foreground')
     const fgColor = useThemeColor('foreground')
@@ -152,6 +158,10 @@ function ViewMember({
                     <Avatar
                         name={member.name}
                         email={member.email}
+                        colorKey={member.userId}
+                        avatar={avatar}
+                        emoji={member.avatarEmoji || undefined}
+                        color={member.avatarColor || undefined}
                         size={44}
                         dimmed={member.isPending}
                         palette="soft"
