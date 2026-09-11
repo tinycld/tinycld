@@ -470,9 +470,9 @@ func TestPipelineExecute_GoBuildTags(t *testing.T) {
 
 // The generator resolves the workspace from TINYCLD_WS_ROOT when it is set,
 // and the pipeline's children inherit the parent's environment. A build
-// launched from a process that set the variable for its own reasons (the
-// hosting e2e tests use it to find sibling checkouts) must still generate
-// against the build dir, never the caller's workspace.
+// launched from a process that set the variable for its own reasons (a
+// caller's own e2e tests may use it to find sibling checkouts) must still
+// generate against the build dir, never the caller's workspace.
 func TestPipelineChildEnv_PinsTheWorkspaceRootToTheBuildDir(t *testing.T) {
 	t.Setenv("TINYCLD_WS_ROOT", "/somewhere/else")
 	env := childEnv("/build/dir")
