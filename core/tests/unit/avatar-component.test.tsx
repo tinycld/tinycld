@@ -122,7 +122,27 @@ describe('Avatar presentation', () => {
         if (!image) throw new Error('avatar image did not render')
         expect(image.style.width).toBe('200px')
         expect(image.style.height).toBe('200px')
-        expect(image.style.transform).toContain('-100px')
+        // Both axes, in order: a substring match would pass even if the Y term
+        // were dropped or the two were swapped.
+        expect(image.style.transform).toBe('translateX(-100px) translateY(-50px)')
+    })
+
+    it('offsets both axes independently', () => {
+        const { image } = renderAvatar(
+            <Avatar
+                name="Ada"
+                size={100}
+                avatar={{
+                    fileUrl: 'https://example.test/a.jpg',
+                    crop: { x: 0.25, y: 0.75, zoom: 3 },
+                }}
+                testID="av"
+            />
+        )
+        if (!image) throw new Error('avatar image did not render')
+        expect(image.style.width).toBe('300px')
+        // scaled = 300, overflow = 200, translateX = -200*0.25 = -50, translateY = -200*0.75 = -150
+        expect(image.style.transform).toBe('translateX(-50px) translateY(-150px)')
     })
 
     it('exposes the name to assistive technology', () => {
