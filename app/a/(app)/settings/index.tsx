@@ -9,6 +9,7 @@ import {
     ChevronRight,
     HardDrive,
     History,
+    Image,
     KeyRound,
     Package,
     ScrollText,
@@ -83,6 +84,11 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
     return (
         <>
             <SettingsGroup label="Organization">
+                <SettingsLink
+                    label="Branding"
+                    onPress={() => router.push(orgHref('settings/organization'))}
+                    icon={<Image size={20} color={foregroundColor} />}
+                />
                 <SettingsLink
                     label="Storage"
                     onPress={() => router.push(orgHref('settings/storage'))}

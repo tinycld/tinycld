@@ -1,6 +1,7 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { SortableDragHandle, SortableList } from '@tinycld/core/components/SortableList'
 import { AboutSection } from '@tinycld/core/components/settings/AboutSection'
+import { AvatarSection } from '@tinycld/core/components/settings/AvatarSection'
 import { DisableAccountSection } from '@tinycld/core/components/settings/account/DisableAccountSection'
 import { ConnectedAppsSection } from '@tinycld/core/components/settings/ConnectedAppsSection'
 import { DeleteAccountSection } from '@tinycld/core/components/settings/DeleteAccountSection'
@@ -126,6 +127,8 @@ function ProfileSection() {
     return (
         <View className="gap-3">
             <Text className="text-foreground text-xl font-bold">Profile</Text>
+
+            <AvatarSection />
 
             <FormErrorSummary errors={errors} isEnabled={isSubmitted} />
 
