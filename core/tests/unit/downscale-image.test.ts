@@ -1,4 +1,7 @@
-import { fitWithinMaxEdge, MAX_AVATAR_EDGE } from '@tinycld/core/lib/downscale-image'
+// Imported directly from the shared module (not the platform entry) so this
+// test exercises the pure sizing math independently of which platform entry
+// the bundler resolves.
+import { fitWithinMaxEdge, MAX_AVATAR_EDGE } from '@tinycld/core/lib/downscale-image-shared'
 import { describe, expect, it } from 'vitest'
 
 describe('fitWithinMaxEdge', () => {
