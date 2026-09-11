@@ -297,6 +297,14 @@ const system_settings = newCollection('system_settings', {
     ...indexing,
 })
 
+// The deployment's uploaded logo. Public read (unlike system_settings, which is
+// admin-only) because pre-login screens render it before any auth token exists.
+// See the create_org_branding migration.
+const org_branding = newCollection('org_branding', {
+    omitOnInsert: ['created', 'updated'],
+    ...indexing,
+})
+
 const audit_logs = newCollection('audit_logs', {
     omitOnInsert: ['created', 'updated'],
     expand: { actor: users },
@@ -369,6 +377,7 @@ const coreStores = {
     rule_runs,
     automation_catalog,
     system_settings,
+    org_branding,
     oauth_grants,
     comment_mentions,
 }

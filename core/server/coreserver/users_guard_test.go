@@ -29,6 +29,9 @@ func setupGuardTestApp(t *testing.T) *tests.TestApp {
 		Name: "role", MaxSelect: 1,
 		Values: []string{"owner", "admin", "member", "guest"},
 	})
+	users.Fields.Add(&core.TextField{Name: "avatar_crop", Max: 200})
+	users.Fields.Add(&core.TextField{Name: "avatar_color", Max: 20})
+	users.Fields.Add(&core.TextField{Name: "avatar_emoji", Max: 16})
 	// PB's bundled test fixture ships the default users collection with a
 	// 3-char minimum username; our production migration relaxes it to 1.
 	// Mirror that here so derived usernames from short email prefixes
@@ -528,6 +531,49 @@ func TestUsersDemoAuditHook_NoLogWhenFlagUnchanged(t *testing.T) {
 	}
 	if len(logs) != 0 {
 		t.Errorf("expected 0 audit entries for non-demo-flag change, got %d", len(logs))
+	}
+}
+
+// A user must be able to set their own avatar crop, color and emoji in one
+// update — these are the three fields Task 8 adds to the allowlist.
+func TestGuardAllowsSelfAvatarCustomization(t *testing.T) {
+	app := setupGuardTestApp(t)
+	user := makeUser(t, app, "avatarself@test.local")
+
+	err := updateAsAuthenticated(t, app, user, user, func(r *core.Record) {
+		r.Set("avatar_crop", `{"x":0.25,"y":0.5,"zoom":2}`)
+		r.Set("avatar_color", "#3b82f6")
+		r.Set("avatar_emoji", "🦖")
+	})
+	if err != nil {
+		t.Fatalf("self avatar customization must be allowed, got: %v", err)
+	}
+
+	fresh, _ := app.FindRecordById("users", user.Id)
+	if fresh.GetString("avatar_crop") != `{"x":0.25,"y":0.5,"zoom":2}` {
+		t.Errorf("avatar_crop not saved, got %q", fresh.GetString("avatar_crop"))
+	}
+	if fresh.GetString("avatar_color") != "#3b82f6" {
+		t.Errorf("avatar_color not saved, got %q", fresh.GetString("avatar_color"))
+	}
+	if fresh.GetString("avatar_emoji") != "🦖" {
+		t.Errorf("avatar_emoji not saved, got %q", fresh.GetString("avatar_emoji"))
+	}
+}
+
+// An admin may already replace another user's avatar file, but crop, color
+// and emoji are personal presentation choices, not administrative state —
+// they must stay out of adminEditableUserFields.
+func TestGuardRejectsAvatarCustomizationOfAnotherUser(t *testing.T) {
+	app := setupGuardTestApp(t)
+	admin := makeUserWithRole(t, app, "avataradmin@test.local", "admin")
+	target := makeUserWithRole(t, app, "avatartarget@test.local", "member")
+
+	err := updateAsAuthenticated(t, app, admin, target, func(r *core.Record) {
+		r.Set("avatar_emoji", "🦖")
+	})
+	if err == nil {
+		t.Fatal("an admin must not change another user's avatar_emoji")
 	}
 }
 

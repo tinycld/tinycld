@@ -16,12 +16,21 @@ import (
 // `email` still flows through PB's confirmation endpoint (requestEmailChange);
 // `verified` is set by confirmVerification.
 //
+// `avatar_crop`, `avatar_color` and `avatar_emoji` are self-only, not
+// admin-editable: an admin may already replace another user's `avatar` file
+// (administrative state — e.g. clearing an inappropriate upload), but how
+// that photo is framed and the two no-upload fallbacks are purely personal
+// presentation choices with no administrative reason to override.
+//
 // `is_demo` is intentionally absent: a sandboxed user must not be able to
 // lift their own restrictions.
 var selfEditableUserFields = map[string]bool{
-	"name":     true,
-	"avatar":   true,
-	"password": true,
+	"name":         true,
+	"avatar":       true,
+	"avatar_crop":  true,
+	"avatar_color": true,
+	"avatar_emoji": true,
+	"password":     true,
 }
 
 // adminEditableUserFields lists the fields owners/admins are allowed to modify
