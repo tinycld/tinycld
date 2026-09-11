@@ -398,3 +398,75 @@ func TestFixedLimitsStillReadsPerUserFromSettings(t *testing.T) {
 		t.Fatalf("PerUser = %d, want 4096 from settings", limits.PerUser)
 	}
 }
+
+func TestUsageByUserRanksOwnersAndExcludesSharedBytes(t *testing.T) {
+	app, _, alice, bob := setupQuotaApp(t)
+
+	if err := addOwned(t, app, alice, "a1", 300); err != nil {
+		t.Fatal(err)
+	}
+	if err := addOwned(t, app, bob, "b1", 1000); err != nil {
+		t.Fatal(err)
+	}
+	// Shared bytes belong to no one and must not be attributed to a user.
+	if err := addShared(t, app, "s1", 5000); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := UsageByUser(app, testSources())
+	if err != nil {
+		t.Fatalf("UsageByUser: %v", err)
+	}
+
+	byEmail := map[string]int64{}
+	for _, r := range rows {
+		byEmail[r.Email] = r.Bytes
+	}
+	if got := byEmail["alice@example.com"]; got != 300 {
+		t.Errorf("alice = %d, want 300", got)
+	}
+	if got := byEmail["bob@example.com"]; got != 1000 {
+		t.Errorf("bob = %d, want 1000", got)
+	}
+
+	// Biggest consumer first — the whole point of the abuse view.
+	if len(rows) < 2 {
+		t.Fatalf("got %d rows, want at least 2", len(rows))
+	}
+	if rows[0].Email != "bob@example.com" {
+		t.Errorf("first row = %q, want the largest consumer (bob)", rows[0].Email)
+	}
+
+	var total int64
+	for _, r := range rows {
+		total += r.Bytes
+	}
+	if total != 1300 {
+		t.Errorf("sum of per-user bytes = %d, want 1300 (shared bytes excluded)", total)
+	}
+}
+
+// A package can declare a quota source and be absent from an assembly. The
+// breakdown must report zeros rather than failing, or the lean shell breaks.
+func TestUsageByUserToleratesAMissingCollection(t *testing.T) {
+	app, _, alice, _ := setupQuotaApp(t)
+
+	if err := addOwned(t, app, alice, "a1", 42); err != nil {
+		t.Fatal(err)
+	}
+
+	sources := append(testSources(), Source{
+		Slug: "absent", Collection: "not_installed_items",
+		SizeField: "size", OwnerField: "created_by",
+	})
+
+	rows, err := UsageByUser(app, sources)
+	if err != nil {
+		t.Fatalf("UsageByUser with an uninstalled source: %v", err)
+	}
+	for _, r := range rows {
+		if r.Email == "alice@example.com" && r.Bytes != 42 {
+			t.Errorf("alice = %d, want 42", r.Bytes)
+		}
+	}
+}

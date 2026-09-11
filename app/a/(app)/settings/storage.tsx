@@ -14,17 +14,35 @@ import { Divider } from '@tinycld/core/ui/divider'
 import { FormErrorSummary, NumberInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { ArrowLeft } from 'lucide-react-native'
 import { newRecordId } from 'pbtsdb/core'
-import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
-// Storage usage + per-user limit for this deployment. Org branding (name /
-// slug / logo) is owned by the deployment (the hosting router) and is not
-// editable in-app, so storage is what this screen manages — the route, title,
-// and nav label all say so rather than promising organization management.
+// Who is using the disk, and the per-user cap. This deployment's operator owns
+// the hardware, so the only storage question the app can answer for them is
+// which user is filling it — there is no plan to report against and no bytes
+// total to bill for. Anything shaped like a ceiling sold to an organization
+// belongs to whoever sells the hosting, not here.
+//
+// Usage comes from core's /api/storage-usage, which sums every collection the
+// installed packages registered as a quota source. It names no package, so the
+// numbers stay right as packages are added or removed.
+
+const BYTES_PER_GB = 1024 * 1024 * 1024
 
 const storageLimitSchema = z.object({
     limitGb: z.number().min(0, 'Must be 0 or greater'),
 })
+
+interface UserBytes {
+    userId: string
+    name: string
+    email: string
+    bytes: number
+}
+
+interface StorageUsage {
+    users: UserBytes[]
+    limitPerUser: number
+}
 
 function formatStorageBytes(bytes: number): string {
     return bytes === 0 ? '0 B' : formatBytes(bytes)
@@ -66,21 +84,13 @@ export default function StorageSettings() {
     )
 }
 
-function StorageSection() {
+function usePerUserLimit() {
     const queryClient = useQueryClient()
     const [settingsCollection] = useStore('settings')
-    const [showBreakdown, setShowBreakdown] = useState(false)
 
-    const dangerColor = useThemeColor('danger')
-    const warningColor = useThemeColor('warning')
-    const successColor = useThemeColor('success')
-
-    const { data: storageInfo, isLoading } = useQuery({
+    const { data: usage, isLoading } = useQuery<StorageUsage>({
         queryKey: ['storage-usage'],
-        queryFn: () =>
-            pb.send('/api/drive/storage-usage', {
-                query: { breakdown: 'users' },
-            }),
+        queryFn: () => pb.send('/api/storage-usage', {}),
     })
 
     const { data: settings } = useOrgLiveQuery(query =>
@@ -90,28 +100,17 @@ function StorageSection() {
                 and(eq(settings.app, 'core'), eq(settings.key, 'storage_limit_bytes'))
             )
     )
-
     const existingSetting = settings?.[0]
 
-    const currentLimitGb = storageInfo?.has_limit
-        ? storageInfo.limit_bytes / (1024 * 1024 * 1024)
-        : 0
-
-    const {
-        control: limitControl,
-        handleSubmit: handleLimitSubmit,
-        setError: setLimitError,
-        getValues: getLimitValues,
-        formState: { errors: limitErrors, isSubmitted: isLimitSubmitted, isDirty: isLimitDirty },
-    } = useForm({
+    const form = useForm({
         mode: 'onChange',
         resolver: zodResolver(storageLimitSchema),
-        values: { limitGb: currentLimitGb },
+        values: { limitGb: (usage?.limitPerUser ?? 0) / BYTES_PER_GB },
     })
 
     const saveLimit = useMutation({
         mutationFn: mutation(function* (data: z.infer<typeof storageLimitSchema>) {
-            const valueBytes = Math.round(data.limitGb * 1024 * 1024 * 1024)
+            const valueBytes = Math.round(data.limitGb * BYTES_PER_GB)
             if (existingSetting) {
                 yield settingsCollection.update(existingSetting.id, draft => {
                     draft.value = valueBytes
@@ -129,115 +128,50 @@ function StorageSection() {
             queryClient.invalidateQueries({ queryKey: ['storage-usage'] })
         },
         onError: handleMutationErrorsWithForm({
-            setError: setLimitError,
-            getValues: getLimitValues,
+            setError: form.setError,
+            getValues: form.getValues,
         }),
     })
 
-    const onSaveLimit = handleLimitSubmit(data => saveLimit.mutate(data))
-    const canSaveLimit = !saveLimit.isPending && isLimitDirty
+    return { usage, isLoading, form, saveLimit }
+}
+
+function StorageSection() {
+    const { usage, isLoading, form, saveLimit } = usePerUserLimit()
 
     if (isLoading) {
         return (
-            <View className="gap-3">
-                <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
-                    Loading...
-                </Text>
-            </View>
+            <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
+                Loading...
+            </Text>
         )
     }
 
-    const userUsed = storageInfo?.user_used_bytes ?? 0
-    const limitBytes = storageInfo?.limit_bytes ?? 0
-    const hasLimit = storageInfo?.has_limit ?? false
-    const usagePercent =
-        hasLimit && limitBytes > 0 ? Math.min((userUsed / limitBytes) * 100, 100) : 0
-    const orgDriveBytes = storageInfo?.org_drive_bytes ?? 0
-    const orgMailBytes = storageInfo?.org_mail_bytes ?? 0
-    const users = storageInfo?.users as
-        | { user_name: string; user_email: string; drive_used: number }[]
-        | undefined
-
-    const barColor =
-        usagePercent > 90 ? dangerColor : usagePercent > 70 ? warningColor : successColor
+    const limitBytes = usage?.limitPerUser ?? 0
+    const onSaveLimit = form.handleSubmit(data => saveLimit.mutate(data))
+    const canSave = !saveLimit.isPending && form.formState.isDirty
 
     return (
         <View className="gap-4">
-            <View className="gap-2">
-                <Text className="text-primary" style={{ fontSize: 13 }}>
-                    Your Usage
-                </Text>
-                <View className="flex-row justify-between items-center">
-                    <Text className="text-foreground" style={{ fontSize: 15 }}>
-                        {formatStorageBytes(userUsed)}
-                        {hasLimit ? ` of ${formatStorageBytes(limitBytes)}` : ''}
-                    </Text>
-                    {hasLimit && (
-                        <Text
-                            className={usagePercent > 90 ? 'text-danger' : 'text-muted-foreground'}
-                            style={{ fontSize: 13 }}
-                        >
-                            {usagePercent.toFixed(1)}%
-                        </Text>
-                    )}
-                </View>
-                {hasLimit && (
-                    <View className="h-2 rounded overflow-hidden bg-surface-secondary">
-                        <View
-                            className="h-full rounded"
-                            style={{
-                                width: `${usagePercent}%`,
-                                backgroundColor: barColor,
-                            }}
-                        />
-                    </View>
-                )}
-            </View>
-
-            <View className="gap-2">
-                <Text className="text-primary" style={{ fontSize: 13 }}>
-                    Organization Total
-                </Text>
-                <View className="flex-row gap-4">
-                    <View>
-                        <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
-                            Drive
-                        </Text>
-                        <Text className="text-foreground" style={{ fontSize: 15 }}>
-                            {formatStorageBytes(orgDriveBytes)}
-                        </Text>
-                    </View>
-                    <View>
-                        <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
-                            Mail
-                        </Text>
-                        <Text className="text-foreground" style={{ fontSize: 15 }}>
-                            {formatStorageBytes(orgMailBytes)}
-                        </Text>
-                    </View>
-                </View>
-            </View>
-
-            <Divider />
-
             <View className="gap-3">
                 <Text className="text-foreground" style={{ fontSize: 15, fontWeight: '600' }}>
                     Per-User Storage Limit
                 </Text>
                 <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
-                    Set to 0 for unlimited storage. Applies to drive uploads only.
+                    Set to 0 for unlimited storage. Applies to everything a user owns.
                 </Text>
-
-                <FormErrorSummary errors={limitErrors} isEnabled={isLimitSubmitted} />
-
+                <FormErrorSummary
+                    errors={form.formState.errors}
+                    isEnabled={form.formState.isSubmitted}
+                />
                 <View className="flex-row gap-3 items-end">
                     <View className="flex-1">
-                        <NumberInput control={limitControl} name="limitGb" label="Limit (GB)" />
+                        <NumberInput control={form.control} name="limitGb" label="Limit (GB)" />
                     </View>
                     <Pressable
                         onPress={onSaveLimit}
-                        disabled={!canSaveLimit}
-                        className={`px-4 py-2 rounded-lg self-start bg-primary ${canSaveLimit ? 'opacity-100' : 'opacity-50'}`}
+                        disabled={!canSave}
+                        className={`px-4 py-2 rounded-lg self-start bg-primary ${canSave ? 'opacity-100' : 'opacity-50'}`}
                     >
                         <Text className="text-primary-foreground" style={{ fontWeight: '600' }}>
                             {saveLimit.isPending ? 'Saving...' : 'Save Limit'}
@@ -246,70 +180,65 @@ function StorageSection() {
                 </View>
             </View>
 
-            {users && users.length > 0 && (
-                <>
-                    <Divider />
-                    <View className="gap-3">
-                        <Pressable onPress={() => setShowBreakdown(v => !v)}>
-                            <Text
-                                className="text-foreground"
-                                style={{ fontSize: 15, fontWeight: '600' }}
-                            >
-                                Per-User Breakdown {showBreakdown ? '▾' : '▸'}
-                            </Text>
-                        </Pressable>
-                        <UserBreakdownTable
-                            users={users}
-                            limitBytes={limitBytes}
-                            isVisible={showBreakdown}
-                        />
-                    </View>
-                </>
-            )}
+            <Divider />
+
+            <UsageByUser users={usage?.users ?? []} limitBytes={limitBytes} />
         </View>
     )
 }
 
-function UserBreakdownTable({
-    users,
-    limitBytes,
-    isVisible,
-}: {
-    users: { user_name: string; user_email: string; drive_used: number }[]
-    limitBytes: number
-    isVisible: boolean
-}) {
+// Largest consumer first, as the server sorts them.
+function UsageByUser({ users, limitBytes }: { users: UserBytes[]; limitBytes: number }) {
+    return (
+        <View className="gap-3">
+            <Text className="text-foreground" style={{ fontSize: 15, fontWeight: '600' }}>
+                Usage by User
+            </Text>
+            <EmptyUsers isVisible={users.length === 0} />
+            {users.map(user => (
+                <UserUsageRow key={user.userId} user={user} limitBytes={limitBytes} />
+            ))}
+        </View>
+    )
+}
+
+function EmptyUsers({ isVisible }: { isVisible: boolean }) {
     if (!isVisible) return null
 
     return (
-        <View className="gap-2">
-            {users.map(user => {
-                const percent =
-                    limitBytes > 0 ? Math.min((user.drive_used / limitBytes) * 100, 100) : 0
-                return (
-                    <View
-                        key={user.user_email}
-                        className="flex-row justify-between items-center py-1"
-                    >
-                        <View className="flex-1">
-                            <Text className="text-foreground" style={{ fontSize: 13 }}>
-                                {user.user_name || user.user_email}
-                            </Text>
-                            {user.user_name && (
-                                <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
-                                    {user.user_email}
-                                </Text>
-                            )}
-                        </View>
-                        <Text
-                            className={percent > 90 ? 'text-danger' : 'text-muted-foreground'}
-                            style={{ fontSize: 13 }}
-                        >
-                            {formatStorageBytes(user.drive_used)}
-                        </Text>
-                    </View>
-                )
-            })}
+        <Text className="text-muted-foreground" style={{ fontSize: 13 }}>
+            No stored data yet.
+        </Text>
+    )
+}
+
+function UserUsageRow({ user, limitBytes }: { user: UserBytes; limitBytes: number }) {
+    const isOverLimit = limitBytes > 0 && user.bytes > limitBytes
+
+    return (
+        <View className="flex-row justify-between items-center py-1">
+            <View className="flex-1">
+                <Text className="text-foreground" style={{ fontSize: 13 }}>
+                    {user.name || user.email}
+                </Text>
+                <UserSubtitle name={user.name} email={user.email} />
+            </View>
+            <Text
+                className={isOverLimit ? 'text-danger' : 'text-muted-foreground'}
+                style={{ fontSize: 13 }}
+            >
+                {formatStorageBytes(user.bytes)}
+            </Text>
         </View>
+    )
+}
+
+function UserSubtitle({ name, email }: { name: string; email: string }) {
+    if (!name) return null
+
+    return (
+        <Text className="text-muted-foreground" style={{ fontSize: 12 }}>
+            {email}
+        </Text>
     )
 }
