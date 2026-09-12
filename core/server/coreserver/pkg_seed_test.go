@@ -297,3 +297,80 @@ func mustJSON(t *testing.T, v any) string {
 	}
 	return string(data)
 }
+
+// TestFindBundledPackagesJSONPrefersServerCopy is the regression guard for the
+// stale-shadowing outage: an in-app install regenerates ONLY
+// server/bundled-packages.json (pkgbuild assemble → `pnpm run
+// packages:generate`), while the sibling copy next to the binary is written just
+// once at image-build time (Dockerfile / deploy/bare-metal/build.sh). When the
+// loader preferred the sibling copy, every in-app install read a frozen
+// pre-install file, so SyncBundledPackages never saw the newly installed slug
+// and never created its pkg_registry row — the package installed correctly in
+// every other respect but stayed invisible in the UI.
+//
+// server/ is the generator's output and therefore the source of truth; the
+// sibling copy is a derived fallback for layouts where server/ isn't reachable.
+// Resolution order must follow that, so the fresher file always wins.
+func TestFindBundledPackagesJSONPrefersServerCopy(t *testing.T) {
+	dir := t.TempDir()
+	serverDir := filepath.Join(dir, "server")
+	if err := os.MkdirAll(serverDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stale sibling copy: what the baked image shipped, missing `boards`.
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Mail", Slug: "mail", Version: "1.0.0"}})
+	// The freshly generated copy an in-app install just rewrote.
+	writeBundledJSON(t, serverDir, []bundledPackage{
+		{Name: "Mail", Slug: "mail", Version: "1.0.0"},
+		{Name: "Boards", Slug: "boards", Version: "0.3.0"},
+	})
+	withCwd(t, dir)
+
+	got := findBundledPackagesJSON()
+
+	data, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatalf("read resolved path %q: %v", got, err)
+	}
+	var rows []bundledPackage
+	if err := json.Unmarshal(data, &rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("resolved %q with %d package(s); want the 2-package server/ copy — the stale sibling shadowed the generator's output", got, len(rows))
+	}
+}
+
+// TestSyncBundledPackagesCreatesRowForNewSlug pins the outage's user-visible
+// symptom end to end: a package present in bundled-packages.json but absent from
+// pkg_registry must get a row created on boot. This is the path that would have
+// re-registered boards on its own had the loader read the fresh file.
+func TestSyncBundledPackagesCreatesRowForNewSlug(t *testing.T) {
+	app := newRegistryOnlyApp(t)
+
+	dir := t.TempDir()
+	serverDir := filepath.Join(dir, "server")
+	if err := os.MkdirAll(serverDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Mail", Slug: "mail", Version: "1.0.0"}})
+	writeBundledJSON(t, serverDir, []bundledPackage{
+		{Name: "Mail", Slug: "mail", Version: "1.0.0"},
+		{Name: "Boards", Slug: "boards", Version: "0.3.0", Icon: "kanban"},
+	})
+	withCwd(t, dir)
+
+	SyncBundledPackages(app)
+
+	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = {:slug}", map[string]any{"slug": "boards"})
+	if err != nil {
+		t.Fatalf("no pkg_registry row for boards after sync: %v", err)
+	}
+	if got := rec.GetString("status"); got != "bundled" {
+		t.Errorf("status = %q, want %q", got, "bundled")
+	}
+	if got := rec.GetString("version"); got != "0.3.0" {
+		t.Errorf("version = %q, want %q", got, "0.3.0")
+	}
+}

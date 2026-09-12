@@ -368,11 +368,26 @@ export async function seedForUser(pb: PocketBase, config: SeedConfig): Promise<S
     }
 
     // Single-org: the `role` enum moved onto the users record (the orgs/user_org
-    // collections are gone). Stamp the seeded user as owner so role-gated UI and
-    // RLS (@request.auth.role) resolve.
-    if (user.role !== 'owner') {
+    // collections are gone). Stamp a NEWLY CREATED seeded user as owner so
+    // role-gated UI and RLS (@request.auth.role) resolve on a fresh workspace.
+    //
+    // Only on create. This used to re-force `owner` on EVERY run, which made the
+    // role unchangeable on any deployment that re-seeds: the nightly demo reset
+    // calls seedForUser, so an operator who deliberately demoted the demo user
+    // (e.g. so a public demo cannot uninstall packages) silently found them back
+    // at `owner` the next morning, with only a log line to show for it.
+    //
+    // A role set after provisioning is an operator decision and is left alone.
+    // Re-seeding restores demo DATA, not demo PRIVILEGE. The create path above
+    // already sets role on the insert (the column is required by
+    // 1940000000_backfill_and_require_users_role), so a fresh seed is unaffected.
+    if (login.created && user.role !== 'owner') {
         log('Setting user role to "owner"')
         user = await pb.collection('users').update(user.id, { role: 'owner' })
+    } else if (!login.created && user.role !== 'owner') {
+        log(
+            `Leaving existing user role as "${user.role}" (not re-stamping "owner" on an existing account)`
+        )
     }
 
     // Created here rather than in main() so BOTH entry points get a companion —
