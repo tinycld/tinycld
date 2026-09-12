@@ -148,11 +148,36 @@ func SyncBundledPackages(app core.App) {
 	srvLog.Info("synced bundled packages", "count", len(packages))
 }
 
+// findBundledPackagesJSON locates the seed file, preferring the GENERATOR'S
+// OUTPUT over any copy derived from it.
+//
+// There are two copies at runtime and only one of them is regenerated:
+//
+//   - server/bundled-packages.json is written by `pnpm run packages:generate`
+//     (scripts/generate.ts), which an in-app package install re-runs on every
+//     rebuild. It is always current.
+//   - a sibling copy next to the binary is placed ONCE at image-build time
+//     (tinycld/Dockerfile, deploy/bare-metal/build.sh) because the entrypoint
+//     runs the binary with cwd = tinycld/, one level above server/.
+//
+// Ordering matters because the entrypoint's cwd makes the bare relative path
+// resolve to that never-refreshed sibling. Preferring it meant every in-app
+// install read a frozen pre-install file: SyncBundledPackages never saw the
+// newly installed slug, so it never created the pkg_registry row and the
+// package stayed invisible in the UI despite installing correctly. Checking
+// server/ first means the fresher file always wins, while the sibling copy
+// still serves layouts where server/ isn't reachable.
+//
+// The bare "bundled-packages.json" stays LAST-but-one so dev (cwd = server/)
+// still resolves, and remains a valid fallback for the packaged layout.
 func findBundledPackagesJSON() string {
-	// Try relative to working directory (typical for dev: server/)
 	candidates := []string{
-		"bundled-packages.json",
+		// The generator's own output, reached from the two cwds the binary runs
+		// under: tinycld/ (entrypoint) and server/ (dev).
+		"server/bundled-packages.json",
 		"../server/bundled-packages.json",
+		// Derived copies: current only as of the last image build.
+		"bundled-packages.json",
 		filepath.Join(filepath.Dir(os.Args[0]), "bundled-packages.json"),
 	}
 	for _, p := range candidates {

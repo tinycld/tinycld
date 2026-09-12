@@ -292,7 +292,12 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installjob.Job, m Re
 			if job.Action == "uninstall" && len(res.SkippedUnregistered) > 0 {
 				purged, pErr := purgeUnregisteredPackageRows(app, job.Slug, res.SkippedUnregistered)
 				if pErr != nil {
-					jobLogf(job, "WARNING: purging stranded %s migration rows failed (reinstall may skip its Up): %v", job.Slug, pErr)
+					// Includes the deliberate refusal when the package's collections
+					// survived the skipped Down. Keeping the rows is the SAFE outcome:
+					// history matches the schema that exists, so a reinstall skips the
+					// Up instead of re-running it and crash-looping the server. The
+					// leftover tables are reported by the SkippedUnregistered line above.
+					jobLogf(job, "did not purge stranded %s migration rows: %v", job.Slug, pErr)
 				} else if len(purged) > 0 {
 					jobLogf(job, "purged %d stranded %s _migrations row(s) whose Down was unregistered: %s", len(purged), job.Slug, strings.Join(purged, ", "))
 				}

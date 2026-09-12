@@ -109,12 +109,38 @@ func syncMigrations(app core.App, applied, newSet []string) (SyncResult, error) 
 // install reports success. Clearing the stranded rows lets a reinstall re-run the
 // Up cleanly. We only touch rows OWNED by the uninstalled slug (per the migration
 // owner map) AND in the skipped set, so no other package's (or core's) history is
-// affected. Schema the skipped Down would have dropped may persist (we have no
-// Down to run) — that's logged separately; the row purge is what unblocks
-// reinstall, which is the reported symptom.
+// affected.
+//
+// A ROW IS ONLY PURGED WHEN THE PACKAGE'S SCHEMA IS ACTUALLY GONE. "Down was
+// skipped" does not imply "the schema is gone" — it usually implies the
+// opposite, since the Down is precisely what would have dropped the
+// collections. Purging unconditionally is what took tinycld.org down: the
+// boards_* collections survived while their _migrations rows were deleted, so
+// the next install re-ran the Up against existing collections and the runner
+// died with "The model id is invalid or already exists" before the server could
+// bind a port. The rollback could not clear it either, because the DB backup was
+// armed AFTER the purge and carried the same contradictory state.
+//
+// So when any collection owned by the slug is still present, the rows are LEFT
+// IN PLACE: history then matches the schema that actually exists, and the
+// reinstall correctly skips the Up instead of crashing. Only a package with no
+// surviving collections — the genuinely stale rows this purge was written for —
+// gets its history cleared, which still unblocks that reinstall.
 func purgeUnregisteredPackageRows(app core.App, slug string, skipped []string) ([]string, error) {
 	if slug == "" || len(skipped) == 0 {
 		return nil, nil
+	}
+	// Keeping stale rows only delays a reinstall; deleting rows whose schema
+	// survives causes a boot crash loop. On an inspection error, prefer the
+	// recoverable failure.
+	surviving, err := packageCollectionsPresent(app, slug)
+	if err != nil {
+		return nil, fmt.Errorf("check surviving %s collections before purging migration rows: %w", slug, err)
+	}
+	if len(surviving) > 0 {
+		return nil, fmt.Errorf(
+			"refusing to purge %s migration rows: %d of its collection(s) still exist (%s) — deleting the history would make a reinstall re-run their Up and fail with \"already exists\"",
+			slug, len(surviving), strings.Join(surviving, ", "))
 	}
 	owned := make(map[string]bool)
 	for _, f := range migrationsForPackage(slug) {
@@ -144,6 +170,39 @@ func purgeUnregisteredPackageRows(app core.App, slug string, skipped []string) (
 	}
 	sort.Strings(purged)
 	return purged, nil
+}
+
+// packageCollectionsPresent returns the non-system collections that still belong
+// to slug, sorted. It is the guard on purging migration history: history may
+// only be cleared for a package whose schema is genuinely gone.
+//
+// Ownership is matched on the collection-name prefix (`boards_projects` for
+// `boards`), with `-` normalized to `_` because a slug may be hyphenated while
+// SQLite table names are not (google-takeout-import → google_takeout_import).
+// The bare slug counts too, for a package with a single same-named collection.
+//
+// A prefix match can only ever be too BROAD, never too narrow, and that is the
+// safe direction here: an extra match means we decline to purge and the operator
+// gets a clear error, whereas a miss means deleting history whose schema still
+// exists — the crash-loop failure this guard exists to prevent.
+func packageCollectionsPresent(app core.App, slug string) ([]string, error) {
+	cols, err := app.FindAllCollections()
+	if err != nil {
+		return nil, err
+	}
+	normalized := strings.ReplaceAll(slug, "-", "_")
+	prefix := normalized + "_"
+	var out []string
+	for _, c := range cols {
+		if c.System {
+			continue
+		}
+		if c.Name == normalized || strings.HasPrefix(c.Name, prefix) {
+			out = append(out, c.Name)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // unregisteredOnly is the complement of registeredOnly: the files NOT resolvable

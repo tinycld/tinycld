@@ -651,6 +651,43 @@ recover_interrupted_rebuild() {
 
 recover_interrupted_rebuild
 
+# RECOVERY HATCH. With TINYCLD_RESCUE=1 the container runs the given command (or
+# an interactive shell) INSTEAD of serving, then exits without entering the
+# restart loop.
+#
+# Why this exists: the loop below hardcodes `serve` and appends "$@" as FLAGS, so
+# a command passed to `docker run` / `dokku run` is never executed — it is handed
+# to serve as arguments. When a boot-time failure (a migration that cannot apply,
+# a corrupt pb_data) kills the server before it binds a port, `dokku enter` has no
+# running container to attach to and `dokku run <cmd>` just reboots the crashing
+# server. The instance is then unreachable by any in-band route, and repairing it
+# means host root access to the volume. That is what turned a failed boards
+# install into a full outage on tinycld.org.
+#
+# The hatch never triggers on its own: it is opt-in via an env var an operator
+# sets deliberately, e.g.
+#
+#   dokku run -e TINYCLD_RESCUE=1 tinycld.org sqlite3 /workspace/pb_data/data.db '.tables'
+#
+# It runs as the unprivileged runtime user, exactly like serve, so it grants no
+# privilege that a normal boot does not already have.
+if [ "${TINYCLD_RESCUE:-}" = "1" ]; then
+    echo "[entrypoint] RESCUE MODE: skipping serve"
+    echo "[entrypoint] state dir: $TINYCLD_STATE_DIR  current build: $(readlink -f "$CURRENT_LINK" 2>/dev/null || echo '<unresolved>')"
+    if [ "$#" -eq 0 ]; then
+        set -- /bin/sh
+    fi
+    echo "[entrypoint] running: $*"
+    RESCUE_CODE=0
+    if [ "$(id -u)" = "0" ]; then
+        gosu "$RUN_AS" "$@" || RESCUE_CODE=$?
+    else
+        "$@" || RESCUE_CODE=$?
+    fi
+    echo "[entrypoint] rescue command exited with code $RESCUE_CODE"
+    exit "$RESCUE_CODE"
+fi
+
 # Restart loop: exit code 75 signals a package install restart request.
 # Serve args are in $@ (positional params) so a multi-domain list survives
 # without re-splitting.
