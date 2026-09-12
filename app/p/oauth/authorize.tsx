@@ -186,6 +186,15 @@ function CodeInput({ code, onChangeCode }: { code: string; onChangeCode: (code: 
     )
 }
 
+// The server's message when it sent one, else a generic fallback covering the
+// three states a lookup failure can mean.
+const FALLBACK_CODE_ERROR = 'That code is not valid, has expired, or has already been used.'
+
+function authorizeErrorMessage(error: unknown): string {
+    const message = (error as { response?: { message?: string } })?.response?.message
+    return message && message.trim() !== '' ? message : FALLBACK_CODE_ERROR
+}
+
 function InfoStatus({ info }: { info: ReturnType<typeof useAuthorizeInfo> }) {
     if (info.isLoading) {
         return (
@@ -196,11 +205,10 @@ function InfoStatus({ info }: { info: ReturnType<typeof useAuthorizeInfo> }) {
     }
 
     if (info.isError) {
-        return (
-            <Text className="text-destructive">
-                That code is not valid, has expired, or has already been used.
-            </Text>
-        )
+        // Show what the server actually said. It distinguishes "already been
+        // used", "has expired" and "Sign in to approve this request"; a fixed
+        // catch-all made an auth or server failure read as a bad code.
+        return <Text className="text-destructive">{authorizeErrorMessage(info.error)}</Text>
     }
 
     return null

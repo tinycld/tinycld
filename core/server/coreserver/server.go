@@ -340,6 +340,10 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	RegisterInviteEndpoint(app)
 	RegisterInviteLinkEndpoints(app)
 	RegisterOrgInfoEndpoint(app)
+	// Per-user storage breakdown. Shared: a hosting tenant's admin has the
+	// same "which of my users is filling the disk" question as a self-hoster,
+	// and it reports no ceiling the org could not already read.
+	RegisterStorageUsageEndpoint(app)
 	RegisterPasswordResetMailer(app)
 	RegisterAuditHooks(app)
 	RegisterAccountDelete(app)

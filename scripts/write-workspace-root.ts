@@ -119,8 +119,62 @@ function discoverPresentMembers(wsRoot: string): string[] {
     })
 }
 
+// Members nested one level down inside a dir that is not itself a member —
+// hosting/ui, whose parent ships Go only and is deliberately not in the
+// workspace. Returned as "parent/child" so pnpm's `packages:` entry points at
+// the real path. Mirrors the same one-level scan in tinycld.packages.ts.
+function discoverNestedMembers(wsRoot: string): string[] {
+    let entries: string[]
+    try {
+        entries = fs.readdirSync(wsRoot)
+    } catch {
+        return []
+    }
+    const out: string[] = []
+    for (const parentName of entries) {
+        if (parentName === 'node_modules' || parentName.startsWith('.')) continue
+        const parent = path.join(wsRoot, parentName)
+        let nested: string[]
+        try {
+            if (!fs.statSync(parent).isDirectory()) continue
+            // A dir that is itself a member is already covered by the flat scan.
+            if (
+                fs.existsSync(path.join(parent, 'manifest.ts')) ||
+                fs.existsSync(path.join(parent, 'manifest.js'))
+            ) {
+                continue
+            }
+            nested = fs.readdirSync(parent)
+        } catch {
+            continue
+        }
+        for (const childName of nested) {
+            if (childName === 'node_modules' || childName.startsWith('.')) continue
+            const dir = path.join(parent, childName)
+            try {
+                if (!fs.statSync(dir).isDirectory()) continue
+            } catch {
+                continue
+            }
+            const hasManifest =
+                fs.existsSync(path.join(dir, 'manifest.ts')) ||
+                fs.existsSync(path.join(dir, 'manifest.js'))
+            if (fs.existsSync(path.join(dir, 'package.json')) && hasManifest) {
+                out.push(`${parentName}/${childName}`)
+            }
+        }
+    }
+    return out
+}
+
 function memberUnion(wsRoot: string): string[] {
-    return [...new Set([...ALL_MEMBERS, ...discoverPresentMembers(wsRoot)])]
+    return [
+        ...new Set([
+            ...ALL_MEMBERS,
+            ...discoverPresentMembers(wsRoot),
+            ...discoverNestedMembers(wsRoot),
+        ]),
+    ]
 }
 
 function pnpmWorkspaceYaml(wsRoot: string, pins: Record<string, string>): string {

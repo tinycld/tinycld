@@ -107,10 +107,6 @@ const ALLOWLIST: { file: string; reason: string }[] = [
         file: 'core/server/blankfile/blankfile.go',
         reason: 'blank files attach to drive_items; same document-access registry as driveshare',
     },
-    {
-        file: 'app/a/(app)/settings/storage.tsx',
-        reason: 'storage settings call a drive route; quota sources should expose usage through core',
-    },
 ]
 
 const SCAN_ROOTS = ['core', 'cli', 'app', 'scripts', 'server']

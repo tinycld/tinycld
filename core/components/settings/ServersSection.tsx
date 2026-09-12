@@ -12,12 +12,13 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 // target origin (localStorage is origin-partitioned, so a browser cannot hold
 // another origin's session). The copy below branches on canSwitchInPlace rather
 // than making one claim that is false on half the platforms.
-export function ServersSection() {
+export function ServersSection({ isVisible = true }: { isVisible?: boolean }) {
     const { servers, activeOrigin, busyOrigin, error, add, switchTo, remove } = useSavedServers()
     const fg = useThemeColor('foreground')
 
-    // The hook self-gates by platform, so an empty list is the only check needed.
-    if (servers.length === 0) return null
+    // The caller decides whether a list with nothing to switch between is worth
+    // showing; an empty list never is.
+    if (!isVisible || servers.length === 0) return null
 
     // No heading of its own: this is the entire body of the Servers settings
     // screen, which supplies the title.

@@ -1,9 +1,9 @@
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { packageSettings } from '@tinycld/core/lib/packages/derive-components'
-import { isSavedServersSupported } from '@tinycld/core/lib/servers'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
+import { useSavedServers } from '@tinycld/core/lib/use-saved-servers'
 import { useRouter } from 'expo-router'
 import {
     ChevronRight,
@@ -54,14 +54,20 @@ export default function SettingsIndex() {
 }
 
 // Saved servers are device/connection scope — not a personal preference and not
-// org administration, so neither existing group fits. Native-only: web is
-// same-origin by design and has nothing to switch between.
+// org administration, so neither existing group fits.
+//
+// Gated on having something to switch BETWEEN, the same rule the user menu's
+// switcher uses. The list always contains at least the current origin (on web
+// it is seeded from it), so a lone entry is just a label for where you already
+// are — and it left this link opening a titled screen with a blank body, since
+// ServersSection renders nothing for an empty list.
 function DeviceSettings() {
     const foregroundColor = useThemeColor('foreground')
     const orgHref = useOrgHref()
     const router = useRouter()
+    const { servers } = useSavedServers()
 
-    if (!isSavedServersSupported()) return null
+    if (servers.length < 2) return null
 
     return (
         <SettingsGroup label="This device">

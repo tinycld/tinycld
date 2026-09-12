@@ -3,6 +3,7 @@ import { ServersSection } from '@tinycld/core/components/settings/ServersSection
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
+import { useSavedServers } from '@tinycld/core/lib/use-saved-servers'
 import { ArrowLeft, Server } from 'lucide-react-native'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
@@ -18,6 +19,7 @@ export default function ServersSettings() {
     const orgHref = useOrgHref()
     const navigateBack = useNavigateBack(() => orgHref('settings'))
     const fgColor = useThemeColor('foreground')
+    const hasOtherServers = useSavedServers().servers.length > 1
 
     return (
         <View className="flex-1 bg-background">
@@ -31,9 +33,23 @@ export default function ServersSettings() {
             </View>
             <ScrollView className="flex-1" contentContainerStyle={{ padding: 16 }}>
                 <View className="max-w-[600px] w-full">
-                    <ServersSection />
+                    <NoOtherServers isVisible={!hasOtherServers} />
+                    <ServersSection isVisible={hasOtherServers} />
                 </View>
             </ScrollView>
         </View>
+    )
+}
+
+// ServersSection renders nothing when there is nothing to switch between, which
+// would leave this screen a bare header. The route stays reachable by URL even
+// though the nav link is gated, so say why it is empty.
+function NoOtherServers({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+
+    return (
+        <Text className="text-muted-foreground">
+            You have not saved another server yet. Add one to switch between them from this device.
+        </Text>
     )
 }

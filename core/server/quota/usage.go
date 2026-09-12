@@ -3,6 +3,7 @@ package quota
 import (
 	"fmt"
 	"regexp"
+	"sort"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -95,4 +96,61 @@ func sumCollection(app core.App, src Source, ownerID string) (int64, error) {
 func isMissingTable(app core.App, collection string) bool {
 	_, err := app.FindCollectionByNameOrId(collection)
 	return err != nil
+}
+
+// UserBytes is one user's owned bytes, for the per-user breakdown.
+type UserBytes struct {
+	UserID string `json:"userId"`
+	Name   string `json:"name"`
+	Email  string `json:"email"`
+	Bytes  int64  `json:"bytes"`
+}
+
+// UsageByUser returns every user's owned bytes, largest first.
+//
+// This is the "who is filling the disk" view: it aggregates across every
+// registered source that declares an owner, so it counts each installed
+// package's bytes without naming any of them. Users owning nothing are
+// included (zero), so the list doubles as the member roster.
+//
+// Shared data — a source with no OwnerField — belongs to no one and is
+// deliberately absent: attributing it to a user would be a lie, and the
+// per-user ceiling does not consider it either (see UserUsage).
+func UsageByUser(app core.App, sources []Source) ([]UserBytes, error) {
+	owned := make([]Source, 0, len(sources))
+	for _, src := range sources {
+		if src.OwnerField != "" {
+			owned = append(owned, src)
+		}
+	}
+
+	var users []struct {
+		ID    string `db:"id"`
+		Name  string `db:"name"`
+		Email string `db:"email"`
+	}
+	if err := app.DB().NewQuery(`SELECT id, name, email FROM users`).All(&users); err != nil {
+		return nil, fmt.Errorf("quota: list users: %w", err)
+	}
+
+	out := make([]UserBytes, 0, len(users))
+	for _, u := range users {
+		var total int64
+		for _, src := range owned {
+			n, err := sumCollection(app, src, u.ID)
+			if err != nil {
+				return nil, err
+			}
+			total += n
+		}
+		out = append(out, UserBytes{UserID: u.ID, Name: u.Name, Email: u.Email, Bytes: total})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Bytes != out[j].Bytes {
+			return out[i].Bytes > out[j].Bytes
+		}
+		return out[i].Email < out[j].Email
+	})
+	return out, nil
 }
