@@ -25,10 +25,10 @@ function recordLabel(record: Record<string, unknown>, displayField: string): str
 // pbtsdb store map (an unlinked package, or a name outside the tinycld
 // schema entirely). collectionByName resolves it dynamically when it IS
 // registered; the query itself no-ops (returns null, same pattern as
-// useOrgLiveQuery) when it isn't, rather than conditionally skipping the
+// useMyLiveQuery) when it isn't, rather than conditionally skipping the
 // useLiveQuery call — hooks must run unconditionally.
 //
-// Raw useLiveQuery (not useOrgLiveQuery) is correct here, same rationale as
+// Raw useLiveQuery (not useMyLiveQuery) is correct here, same rationale as
 // use-packages.ts: the collection may be a global, non-org-scoped store (or
 // belong to another package entirely), so org/user scoping is the caller's
 // concern, not this generic picker's — rows are already RLS-filtered by the

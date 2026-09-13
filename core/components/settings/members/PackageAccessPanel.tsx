@@ -1,10 +1,10 @@
 import { eq } from '@tanstack/db'
+import { useLiveQuery } from '@tanstack/react-db'
 import { ErrorMessage } from '@tinycld/core/components/settings/account/OffboardDialog'
 import { errorToString } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import type { PackageAccessLevel } from '@tinycld/core/lib/use-pkg-access'
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
@@ -20,7 +20,7 @@ export function PackageAccessPanel({ userId }: { userId: string }) {
     const packages = usePackages()
     const [orgPkgAccessCollection] = useStore('org_pkg_access')
 
-    const { data: overrides } = useOrgLiveQuery(
+    const { data: overrides } = useLiveQuery(
         query =>
             query
                 .from({ org_pkg_access: orgPkgAccessCollection })

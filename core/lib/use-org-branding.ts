@@ -1,5 +1,5 @@
+import { useLiveQuery } from '@tanstack/react-db'
 import { useStore } from '@tinycld/core/lib/pocketbase'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 
 /**
  * The deployment's single branding row (logo + crop). Absent until an admin
@@ -9,6 +9,6 @@ import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
  */
 export function useOrgBranding() {
     const [brandingCollection] = useStore('org_branding')
-    const { data } = useOrgLiveQuery(query => query.from({ branding: brandingCollection }))
+    const { data } = useLiveQuery(query => query.from({ branding: brandingCollection }))
     return { branding: data?.[0] ?? null, brandingCollection }
 }

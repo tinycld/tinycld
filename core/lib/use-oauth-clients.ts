@@ -21,7 +21,7 @@ export interface OAuthClient {
 const CLIENTS_QUERY_KEY = ['oauth-clients']
 
 // oauth_clients is superuser-only at the collection level (every API rule is
-// null), so this cannot be a useOrgLiveQuery — there is no readable collection
+// null), so this cannot be a useMyLiveQuery — there is no readable collection
 // to subscribe to. The Go endpoint is the only way in, which also means the
 // list does not update itself: refetch after a mutation is what keeps it
 // honest.

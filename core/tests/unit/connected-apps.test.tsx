@@ -29,15 +29,15 @@ interface Grant {
     last_used_at: string
     status: string
 }
-const useOrgLiveQuery = vi.fn<
+const useMyLiveQueryMock = vi.fn<
     () => { data: Grant[] | undefined; isError: boolean; isLoading: boolean }
 >(() => ({ data: [], isError: false, isLoading: false }))
-vi.mock('@tinycld/core/lib/use-org-live-query', () => ({
-    useOrgLiveQuery: () => useOrgLiveQuery(),
+vi.mock('@tinycld/core/lib/use-my-live-query', () => ({
+    useMyLiveQuery: () => useMyLiveQueryMock(),
 }))
 
 // ConnectedAppsSection only threads the collection through the (mocked)
-// useOrgLiveQuery call — a placeholder is enough since the query itself
+// useMyLiveQuery call — a placeholder is enough since the query itself
 // never runs.
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
     useStore: () => [{}],
@@ -48,8 +48,8 @@ import { ConnectedAppsSection } from '../../components/settings/ConnectedAppsSec
 
 afterEach(() => {
     cleanup()
-    useOrgLiveQuery.mockReset()
-    useOrgLiveQuery.mockReturnValue({ data: [], isError: false, isLoading: false })
+    useMyLiveQueryMock.mockReset()
+    useMyLiveQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false })
 })
 
 const ACTIVE_GRANT: Grant = {
@@ -77,7 +77,7 @@ describe('ConnectedAppsSection — query states', () => {
     // .length === 0) return null` branch), hiding a real sync/query error
     // behind what looks like an empty, healthy state.
     it('surfaces a distinct error message when the query fails', () => {
-        useOrgLiveQuery.mockReturnValue({ data: undefined, isError: true, isLoading: false })
+        useMyLiveQueryMock.mockReturnValue({ data: undefined, isError: true, isLoading: false })
         const { getByText, queryByText } = renderSection()
         expect(getByText(/couldn't load your connected apps/i)).toBeTruthy()
         // Must not also render as if the list were merely empty.
@@ -85,21 +85,25 @@ describe('ConnectedAppsSection — query states', () => {
     })
 
     it('renders nothing while still loading, not the error state', () => {
-        useOrgLiveQuery.mockReturnValue({ data: undefined, isError: false, isLoading: true })
+        useMyLiveQueryMock.mockReturnValue({ data: undefined, isError: false, isLoading: true })
         const { queryByText } = renderSection()
         expect(queryByText(/couldn't load/i)).toBeNull()
         expect(queryByText('Connected apps')).toBeNull()
     })
 
     it('renders nothing when the query succeeds with no active grants', () => {
-        useOrgLiveQuery.mockReturnValue({ data: [], isError: false, isLoading: false })
+        useMyLiveQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false })
         const { queryByText } = renderSection()
         expect(queryByText(/couldn't load/i)).toBeNull()
         expect(queryByText('Connected apps')).toBeNull()
     })
 
     it('renders the grant list when the query succeeds with active grants', () => {
-        useOrgLiveQuery.mockReturnValue({ data: [ACTIVE_GRANT], isError: false, isLoading: false })
+        useMyLiveQueryMock.mockReturnValue({
+            data: [ACTIVE_GRANT],
+            isError: false,
+            isLoading: false,
+        })
         const { getByText } = renderSection()
         expect(getByText('Connected apps')).toBeTruthy()
         expect(getByText("Nathan's laptop")).toBeTruthy()

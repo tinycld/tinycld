@@ -1,3 +1,4 @@
+import { useLiveQuery } from '@tanstack/react-db'
 import { Avatar } from '@tinycld/core/components/Avatar'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import {
@@ -20,7 +21,6 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useAvatarUrl } from '@tinycld/core/lib/use-avatar-url'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import { ArrowLeft, ChevronRight, Search, UserPlus, Users } from 'lucide-react-native'
 import { useMemo, useState } from 'react'
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
@@ -38,7 +38,7 @@ export default function MembersSettings() {
 
     // Single-org deployment: every user in the DB is a member of the one org, so
     // list `users` directly. Role lives on the users record.
-    const { data: memberRows } = useOrgLiveQuery(query =>
+    const { data: memberRows } = useLiveQuery(query =>
         query.from({ u: usersCollection }).select(({ u }) => ({
             userId: u.id,
             username: u.username,

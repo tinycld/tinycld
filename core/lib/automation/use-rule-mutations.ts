@@ -14,7 +14,7 @@ function nextOrderFor(rules: { order: number }[]): number {
     return Math.max(...rules.map(r => r.order)) + 1
 }
 
-// `useCurrentUserId`/`useOrgLiveQuery` doesn't export a bare user-id hook —
+// `useCurrentUserId`/`useMyLiveQuery` doesn't export a bare user-id hook —
 // the established idiom (see useLabelMutations) is `useAuth().user.id`.
 export function useRuleMutations() {
     const [rulesCollection] = useStore('rules')

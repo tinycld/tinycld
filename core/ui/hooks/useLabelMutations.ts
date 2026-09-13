@@ -3,7 +3,7 @@ import { useAuth } from '@tinycld/core/lib/auth'
 import { captureException } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
+import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
 import { newRecordId } from 'pbtsdb/core'
 
 export function useLabelMutations() {
@@ -14,7 +14,7 @@ export function useLabelMutations() {
     // This user's assignments, so unassignLabel can resolve a (label,
     // record, collection) tuple to its row id through pbtsdb instead of a raw
     // pb.collection(...).getFirstListItem/delete.
-    const { data: myAssignments = [] } = useOrgLiveQuery(
+    const { data: myAssignments = [] } = useMyLiveQuery(
         (query, { userId: uid }) =>
             query
                 .from({ label_assignments: assignmentsCollection })
@@ -107,7 +107,7 @@ export function useLabelMutations() {
 export function useAssignmentsForRecord(recordId: string, collection: string) {
     const [assignmentsCollection] = useStore('label_assignments')
 
-    const { data: assignments } = useOrgLiveQuery(
+    const { data: assignments } = useMyLiveQuery(
         (query, { userId }) =>
             query
                 .from({ label_assignments: assignmentsCollection })

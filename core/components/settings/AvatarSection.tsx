@@ -16,7 +16,7 @@ import { notify } from '@tinycld/core/lib/notify'
 import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useAvatarUrl } from '@tinycld/core/lib/use-avatar-url'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
+import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { EmojiPicker } from '@tinycld/core/ui/emoji-picker'
 import { Check } from 'lucide-react-native'
@@ -38,7 +38,7 @@ function useAvatarEditor() {
     // useAuth's user only carries {id, name, email, isDemo} — the avatar
     // fields live on the full row, read live so a change (incl. one made
     // elsewhere, e.g. an admin clearing an inappropriate photo) reflects here.
-    const { data: rows } = useOrgLiveQuery((query, { userId }) =>
+    const { data: rows } = useMyLiveQuery((query, { userId }) =>
         query.from({ users: usersCollection }).where(({ users }) => eq(users.id, userId))
     )
     const profile = rows?.[0]

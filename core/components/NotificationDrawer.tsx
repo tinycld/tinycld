@@ -1,9 +1,9 @@
 import { eq } from '@tanstack/db'
+import { useLiveQuery } from '@tanstack/react-db'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
 import type { Notifications } from '@tinycld/core/types/pbSchema'
 import { Sheet } from '@tinycld/core/ui/sheet'
@@ -120,7 +120,7 @@ function NotificationContent() {
     const close = useWorkspaceStore(s => s.setNotificationsOpen)
     const router = useRouter()
 
-    const { data: rawNotifications } = useOrgLiveQuery(
+    const { data: rawNotifications } = useLiveQuery(
         query =>
             query.from({ n: notificationsCollection }).where(({ n }) => eq(n.dismissed, false)),
         []

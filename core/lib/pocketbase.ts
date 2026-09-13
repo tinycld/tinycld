@@ -245,32 +245,32 @@ const settings = newCollection('settings', {
 
 const user_preferences = newCollection('user_preferences', {
     omitOnInsert: ['created', 'updated'],
-    expand: { user: users },
+    relations: { user: users },
     ...indexing,
 })
 
 const labels = newCollection('labels', {
     omitOnInsert: ['created', 'updated'],
-    expand: { user: users },
+    relations: { user: users },
     ...indexing,
 })
 
 const label_assignments = newCollection('label_assignments', {
     omitOnInsert: ['created', 'updated'],
-    expand: { label: labels, user: users },
+    relations: { label: labels, user: users },
     ...indexing,
 })
 
 const org_pkg_access = newCollection('org_pkg_access', {
     omitOnInsert: ['created', 'updated'],
-    expand: { user: users },
+    relations: { user: users },
     ...indexing,
 })
 
 // Read-only from the client: creation/approval/revocation all go through Go
 // handlers in core/server/oauth (grants carry credential material a client must
 // never write). Registered so the Connected apps settings screen can read a
-// user's own grants live via useOrgLiveQuery — the oauth_grants list/view rule
+// user's own grants live via useMyLiveQuery — the oauth_grants list/view rule
 // already scopes reads to `user = @request.auth.id`.
 const oauth_grants = newCollection('oauth_grants', {
     ...indexing,
@@ -307,32 +307,32 @@ const org_branding = newCollection('org_branding', {
 
 const audit_logs = newCollection('audit_logs', {
     omitOnInsert: ['created', 'updated'],
-    expand: { actor: users },
+    relations: { actor: users },
     ...indexing,
 })
 
 const pkg_install_log = newCollection('pkg_install_log', {
     omitOnInsert: ['created', 'updated'],
-    expand: { initiated_by: users },
+    relations: { initiated_by: users },
     ...indexing,
 })
 
 const notifications = newCollection('notifications', {
     omitOnInsert: ['created', 'updated'],
-    expand: { user: users },
+    relations: { user: users },
     ...indexing,
 })
 export const notificationsCollection = notifications
 
 const rules = newCollection('rules', {
     omitOnInsert: ['created', 'updated'],
-    expand: { owner: users },
+    relations: { owner: users },
     ...indexing,
 })
 
 const rule_runs = newCollection('rule_runs', {
     omitOnInsert: ['created', 'updated'],
-    expand: { rule: rules },
+    relations: { rule: rules },
     ...indexing,
 })
 

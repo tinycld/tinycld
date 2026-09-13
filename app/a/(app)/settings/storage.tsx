@@ -1,4 +1,5 @@
 import { and, eq } from '@tanstack/db'
+import { useLiveQuery } from '@tanstack/react-db'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
@@ -9,7 +10,6 @@ import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import { Divider } from '@tinycld/core/ui/divider'
 import { FormErrorSummary, NumberInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { ArrowLeft } from 'lucide-react-native'
@@ -93,7 +93,7 @@ function usePerUserLimit() {
         queryFn: () => pb.send('/api/storage-usage', {}),
     })
 
-    const { data: settings } = useOrgLiveQuery(query =>
+    const { data: settings } = useLiveQuery(query =>
         query
             .from({ settings: settingsCollection })
             .where(({ settings }) =>
