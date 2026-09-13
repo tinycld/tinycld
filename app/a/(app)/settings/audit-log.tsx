@@ -171,7 +171,7 @@ function AuditLogList({
     actionFilter: string
     resourceFilter: string
 }) {
-    const [auditLogsCollection] = useStore('audit_logs')
+    const [auditLogsCollection, usersCollection] = useStore('audit_logs', 'users')
 
     const { data: logs } = useOrgLiveQuery(
         query => {
@@ -188,9 +188,23 @@ function AuditLogList({
                     return eq(audit_logs.resource_type, resourceFilter)
                 })
             }
-            return q.orderBy(({ audit_logs }) => audit_logs.created, 'desc')
+            // Left-join the actor rather than reading it off `row.expand`: a
+            // row's embedded copy is a shape the collection controls, so a
+            // hand-written `expand?` keeps compiling after it goes away and the
+            // name silently falls back to "System". `users` is eager, so this
+            // resolves from the local store with no extra request.
+            return q
+                .join({ actor: usersCollection }, ({ audit_logs, actor }) =>
+                    eq(audit_logs.actor, actor.id)
+                )
+                .orderBy(({ audit_logs }) => audit_logs.created, 'desc')
+                .select(({ audit_logs, actor }) => ({
+                    ...audit_logs,
+                    actorName: actor?.name,
+                    actorEmail: actor?.email,
+                }))
         },
-        [actionFilter, resourceFilter]
+        [actionFilter, resourceFilter, usersCollection]
     )
 
     if (!logs || logs.length === 0) {
@@ -217,14 +231,15 @@ interface AuditEntry {
     changes: Record<string, { before?: unknown; after?: unknown; redacted?: boolean }> | null
     snapshot: Record<string, unknown> | null
     created: string
-    expand?: { actor?: { name: string; email: string } }
+    actorName?: string
+    actorEmail?: string
 }
 
 function AuditLogRow({ entry }: { entry: AuditEntry }) {
     const [expanded, setExpanded] = useState(false)
     const mutedColor = useThemeColor('muted-foreground')
 
-    const actorName = entry.expand?.actor?.name || entry.expand?.actor?.email || 'System'
+    const actorName = entry.actorName || entry.actorEmail || 'System'
     const hasDetails = Boolean(
         (entry.action === 'updated' && entry.changes && Object.keys(entry.changes).length > 0) ||
             (entry.action === 'deleted' && entry.snapshot && Object.keys(entry.snapshot).length > 0)
