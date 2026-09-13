@@ -246,28 +246,24 @@ const settings = newCollection('settings', {
 const user_preferences = newCollection('user_preferences', {
     omitOnInsert: ['created', 'updated'],
     relations: { user: users },
-    alwaysExpand: ['user'],
     ...indexing,
 })
 
 const labels = newCollection('labels', {
     omitOnInsert: ['created', 'updated'],
     relations: { user: users },
-    alwaysExpand: ['user'],
     ...indexing,
 })
 
 const label_assignments = newCollection('label_assignments', {
     omitOnInsert: ['created', 'updated'],
     relations: { label: labels, user: users },
-    alwaysExpand: ['label', 'user'],
     ...indexing,
 })
 
 const org_pkg_access = newCollection('org_pkg_access', {
     omitOnInsert: ['created', 'updated'],
     relations: { user: users },
-    alwaysExpand: ['user'],
     ...indexing,
 })
 
@@ -312,21 +308,18 @@ const org_branding = newCollection('org_branding', {
 const audit_logs = newCollection('audit_logs', {
     omitOnInsert: ['created', 'updated'],
     relations: { actor: users },
-    alwaysExpand: ['actor'],
     ...indexing,
 })
 
 const pkg_install_log = newCollection('pkg_install_log', {
     omitOnInsert: ['created', 'updated'],
     relations: { initiated_by: users },
-    alwaysExpand: ['initiated_by'],
     ...indexing,
 })
 
 const notifications = newCollection('notifications', {
     omitOnInsert: ['created', 'updated'],
     relations: { user: users },
-    alwaysExpand: ['user'],
     ...indexing,
 })
 export const notificationsCollection = notifications
@@ -334,14 +327,12 @@ export const notificationsCollection = notifications
 const rules = newCollection('rules', {
     omitOnInsert: ['created', 'updated'],
     relations: { owner: users },
-    alwaysExpand: ['owner'],
     ...indexing,
 })
 
 const rule_runs = newCollection('rule_runs', {
     omitOnInsert: ['created', 'updated'],
     relations: { rule: rules },
-    alwaysExpand: ['rule'],
     ...indexing,
 })
 
