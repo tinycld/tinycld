@@ -203,10 +203,17 @@ func generatePbTsSchema(collections []*core.Collection, collectionIDToName map[s
 			forward := fmt.Sprintf("%s%s: %s%s", rf.GetName(), optionalMark, toPascalCase(relatedName), suffix)
 			relationMap[collection.Name] = append(relationMap[collection.Name], forward)
 
+			// Back-relations are emitted as real members, not comments: pbtsdb
+			// derives the keys a collection may declare under `relations` (and
+			// so the paths `fetchRelations()` accepts) from this map, and a
+			// package that files a parent's children in one request names
+			// them here (a `posts_via_author` on `users`). PocketBase expands a
+			// back-relation as an array unless the field carries a
+			// single-column UNIQUE index, in which case it is one record.
 			hasUnique := uniqueFields[rf.GetName()]
 			backRelation := fmt.Sprintf("%s_via_%s?: %s", collection.Name, rf.GetName(), toPascalCase(collection.Name))
 			if !hasUnique {
-				backRelation = "// " + backRelation + "[]"
+				backRelation += "[]"
 			}
 			relationMap[relatedName] = append(relationMap[relatedName], backRelation)
 		}
@@ -215,12 +222,12 @@ func generatePbTsSchema(collections []*core.Collection, collectionIDToName map[s
 	var sb strings.Builder
 	sb.WriteString(`
 /**
- * Commented-out back-relations are what will be inferred by pocketbase-ts from the forward relations.
- *
- * The "UNIQUE index constraint" case is automatically handled by this hook,
- * but if you want to make a back-relation non-nullable, you can uncomment it and remove the "?".
- *
- * See https://github.com/satohshi/pocketbase-ts#back-relations for more information.
+ * Relations carry both directions. A forward relation is the field itself; a
+ * back-relation is PocketBase's <collection>_via_<field> expand, an array
+ * unless the field has a single-column UNIQUE index. pbtsdb types a
+ * collection's relations option and its fetchRelations() paths from
+ * this map, so a back-relation listed here is what lets a parent request file
+ * its children in one round trip.
  */
 export type Schema = {
 `)
