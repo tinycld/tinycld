@@ -1,11 +1,11 @@
 import { and, eq } from '@tanstack/db'
+import { useLiveQuery } from '@tanstack/react-db'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import { ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react-native'
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
@@ -173,7 +173,7 @@ function AuditLogList({
 }) {
     const [auditLogsCollection, usersCollection] = useStore('audit_logs', 'users')
 
-    const { data: logs } = useOrgLiveQuery(
+    const { data: logs } = useLiveQuery(
         query => {
             let q = query.from({ audit_logs: auditLogsCollection })
             if (actionFilter || resourceFilter) {

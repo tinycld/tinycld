@@ -17,7 +17,7 @@ import { useRuleMutations } from '@tinycld/core/lib/automation/use-rule-mutation
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useRulesUiStore } from '@tinycld/core/lib/stores/rules-ui-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
+import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
 import type { Rules } from '@tinycld/core/types/pbSchema'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { Plus } from 'lucide-react-native'
@@ -32,7 +32,7 @@ export interface RulesPanelProps {
 
 function useScopedRules(scope: 'personal' | 'org') {
     const [rulesCollection] = useStore('rules')
-    return useOrgLiveQuery(
+    return useMyLiveQuery(
         (query, { userId }) => {
             if (scope === 'personal') {
                 return query
@@ -61,7 +61,7 @@ function useLastRunByRule(rules: Rules[], scope: 'personal' | 'org') {
     const [rulesCollection, runsCollection] = useStore('rules', 'rule_runs')
     const ruleIds = useMemo(() => new Set(rules.map(r => r.id)), [rules])
 
-    const { data: rows } = useOrgLiveQuery(
+    const { data: rows } = useMyLiveQuery(
         (query, { userId }) =>
             query
                 .from({ run: runsCollection })

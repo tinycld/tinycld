@@ -3,7 +3,7 @@ import { captureException } from '@tinycld/core/lib/errors'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
+import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
 import { ConfirmDialog } from '@tinycld/core/ui/ConfirmDialog'
 import { Trash2 } from 'lucide-react-native'
 import { useState } from 'react'
@@ -68,7 +68,7 @@ export function ConnectedAppsSection() {
         data: grants,
         isError,
         isLoading,
-    } = useOrgLiveQuery((query, { userId }) =>
+    } = useMyLiveQuery((query, { userId }) =>
         query
             .from({ grant: grantsCollection })
             .where(({ grant }) => eq(grant.user, userId))

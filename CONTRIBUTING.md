@@ -69,7 +69,7 @@ available in production.
 - Keep hooks pure and side-effect free; call them at the top level of React components.
 - **Avoid `useState` and `useEffect`** — almost always there is a better primitive:
   - Form fields → `useForm` + zod (see **Forms** section)
-  - Server/async data → `useOrgLiveQuery` (raw `useLiveQuery` only in bootstrap hooks or user-level queries)
+  - Server/async data → `useLiveQuery` (`useMyLiveQuery` when filtering my own rows)
   - Mutations → `useMutation` from `@tinycld/core/lib/mutations`
   - Derived values → use `.select()` on liveQuery expressions to return computed values
   - Responding to prop/state changes → compute during render (not `useEffect` + `setState`)
@@ -87,16 +87,16 @@ available in production.
 - Import collections with `useStore('collection1', 'collection2')` from `pbtsdb` - it uses variadic arguments and returns a tuple array
   - Example: `const [tagsCollection] = useStore('tags')`
   - Example: `const [jobsCollection, addressesCollection] = useStore('jobs', 'addresses')`
-- **Always use `useOrgLiveQuery`** from `@tinycld/core/lib/use-org-live-query` for data queries instead of raw `useLiveQuery`. Single-org deployment: the process IS one org, so the only scoping value is the current user's id — `OrgScope` is `{ userId }`. The hook disables the query until the user id is known and auto-includes `userId` in the dependency array. Only use raw `useLiveQuery` in low-level hooks `useOrgLiveQuery` itself depends on (e.g. `use-current-role`).
+- **Use `useLiveQuery`** from `@tanstack/react-db` for data queries. Single-org deployment: the process IS one org, so there is nothing to scope by except the caller's identity. When a query filters **my own rows**, use **`useMyLiveQuery`** from `@tinycld/core/lib/use-my-live-query`: it injects a guaranteed-non-empty `userId`, disables the query until the user id is known, and auto-includes `userId` in the dependency array.
   ```ts
-  const { data: items } = useOrgLiveQuery((query, { userId }) =>
+  const { data: items } = useMyLiveQuery((query, { userId }) =>
       query.from({ item: itemsCollection }).where(({ item }) => eq(item.user, userId))
   )
   ```
 - **Combine related data in ONE query** with `.join()` + `.select()` rather than running separate `useLiveQuery` calls and stitching results with JS `Map`s — a join resolves optimistic local writes immediately. `mail/tinycld/mail/hooks/useMailboxes.ts` is the reference example.
 - Use TanStack DB operators (`eq`, `and`, `or`, `gt`, `lt`, etc.) from `@tanstack/db` for type-safe filtering
 - Query syntax: `.from()`, `.where()`, `.orderBy()`, `.join()`, `.select()` - follows TanStack DB patterns
-- **Prefer inline queries** — write `useStore` + `useOrgLiveQuery` directly in the screen component rather than wrapping them in custom hooks. This keeps the data flow visible where it's used. Only extract a shared hook when the exact same query is needed in 3+ screens.
+- **Prefer inline queries** — write `useStore` + `useLiveQuery` directly in the screen component rather than wrapping them in custom hooks. This keeps the data flow visible where it's used. Only extract a shared hook when the exact same query is needed in 3+ screens.
 - **Mutations** — use `useMutation` from `@tinycld/core/lib/mutations` (not directly from `@tanstack/react-query`). It supports generator-based mutation functions that automatically await pbtsdb `Transaction` objects:
   ```ts
   const create = useMutation({

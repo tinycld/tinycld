@@ -1,9 +1,9 @@
 // Per-rule run history: a Dialog, which is a sheet on a phone by itself.
 import { eq } from '@tanstack/db'
+import { useLiveQuery } from '@tanstack/react-db'
 import { formatRelativeTime } from '@tinycld/core/components/NotificationDrawer'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import type { RuleRuns } from '@tinycld/core/types/pbSchema'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { ActivityIndicator, Text, View } from 'react-native'
@@ -21,7 +21,7 @@ interface RunActionResult {
 
 function useRuleRuns(ruleId: string | null) {
     const [runsCollection] = useStore('rule_runs')
-    return useOrgLiveQuery(
+    return useLiveQuery(
         query => {
             if (!ruleId) return null
             return query.from({ r: runsCollection }).where(({ r }) => eq(r.rule, ruleId))

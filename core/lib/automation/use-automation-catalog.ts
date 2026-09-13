@@ -1,7 +1,6 @@
+import { useLiveQuery } from '@tanstack/react-db'
 import { useStore } from '@tinycld/core/lib/pocketbase'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import { useMemo } from 'react'
-
 import type { CatalogAction, CatalogResponse, CatalogTrigger } from './api'
 
 export function useAutomationCatalog(): { catalog: CatalogResponse | undefined; isReady: boolean } {
@@ -11,7 +10,7 @@ export function useAutomationCatalog(): { catalog: CatalogResponse | undefined; 
     // TriggerCard groups by package in encounter order, so a package could
     // land anywhere in the list and, in a viewport-height popover, below the
     // fold — where it renders but can't be clicked.
-    const { data: rows, isReady } = useOrgLiveQuery(query =>
+    const { data: rows, isReady } = useLiveQuery(query =>
         query
             .from({ automation_catalog: catalogCollection })
             .orderBy(({ automation_catalog }) => automation_catalog.ref)

@@ -1,4 +1,5 @@
 import { eq } from '@tanstack/db'
+import { useLiveQuery } from '@tanstack/react-db'
 import { EmptyState } from '@tinycld/core/components/EmptyState'
 import type { RuleDraft } from '@tinycld/core/lib/automation/draft'
 import { emptyDraft, recordToDraft } from '@tinycld/core/lib/automation/draft'
@@ -7,7 +8,6 @@ import { useRuleDraft } from '@tinycld/core/lib/automation/use-rule-draft'
 import { useRuleMutations } from '@tinycld/core/lib/automation/use-rule-mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 import { Button, ButtonSpinner, ButtonText } from '@tinycld/core/ui/button'
 import { Dialog } from '@tinycld/core/ui/dialog'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
@@ -36,7 +36,7 @@ export interface RuleBuilderProps {
 // it, and only actually queries `rules` when a ruleId is present.
 function useEditingRecord(ruleId: string | undefined) {
     const [rulesCollection] = useStore('rules')
-    const { data, isReady } = useOrgLiveQuery(
+    const { data, isReady } = useLiveQuery(
         query => {
             if (!ruleId) return null
             return query.from({ r: rulesCollection }).where(({ r }) => eq(r.id, ruleId))

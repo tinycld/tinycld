@@ -4,7 +4,6 @@ import { useAuth } from '@tinycld/core/lib/auth'
 import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
 
 type AccessiblePackage = ReturnType<typeof usePackages>[number]
 
@@ -44,7 +43,7 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
     )
 
     // User-level access overrides
-    const { data: overrides, isReady: overridesReady } = useOrgLiveQuery(
+    const { data: overrides, isReady: overridesReady } = useLiveQuery(
         query =>
             query
                 .from({ org_pkg_access: orgPkgAccessCollection })

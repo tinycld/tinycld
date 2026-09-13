@@ -10,7 +10,7 @@ export type { SettingRow }
  * Read/write access to the system_settings collection for the /admin Settings
  * console. Returns a key→row map of everything currently stored and an `upsert`
  * mutation (update existing row by id, or insert a new one). System-scoped, so a
- * plain useLiveQuery (not useOrgLiveQuery). The console runs as a super-admin app
+ * plain useLiveQuery (not useMyLiveQuery). The console runs as a super-admin app
  * user, so the collection rules authorize these writes.
  */
 export function useSystemSettings() {

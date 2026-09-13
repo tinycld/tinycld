@@ -1,6 +1,7 @@
 import { and, eq, or } from '@tanstack/db'
+import { useLiveQuery } from '@tanstack/react-db'
 import { useStore } from '@tinycld/core/lib/pocketbase'
-import { useOrgLiveQuery } from '@tinycld/core/lib/use-org-live-query'
+import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
 import { useCallback, useMemo } from 'react'
 
 type LabelInfo = { id: string; name: string; color: string }
@@ -8,7 +9,7 @@ type LabelInfo = { id: string; name: string; color: string }
 export function useLabels() {
     const [labelsCollection] = useStore('labels')
 
-    const { data: allLabels } = useOrgLiveQuery((query, { userId }) =>
+    const { data: allLabels } = useMyLiveQuery((query, { userId }) =>
         query
             .from({ labels: labelsCollection })
             .where(({ labels }) => or(eq(labels.user, ''), eq(labels.user, userId)))
@@ -33,7 +34,7 @@ export function useLabels() {
 export function useLabelsForRecord(recordId: string, collection: string) {
     const [assignmentsCollection, labelsCollection] = useStore('label_assignments', 'labels')
 
-    const { data: assignments } = useOrgLiveQuery(
+    const { data: assignments } = useMyLiveQuery(
         (query, { userId }) =>
             query
                 .from({ label_assignments: assignmentsCollection })
@@ -47,7 +48,7 @@ export function useLabelsForRecord(recordId: string, collection: string) {
         [recordId, collection]
     )
 
-    const { data: allLabels } = useOrgLiveQuery(query => query.from({ labels: labelsCollection }))
+    const { data: allLabels } = useLiveQuery(query => query.from({ labels: labelsCollection }))
 
     const labels = useMemo(() => {
         if (!assignments || !allLabels) return []

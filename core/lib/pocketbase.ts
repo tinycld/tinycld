@@ -270,7 +270,7 @@ const org_pkg_access = newCollection('org_pkg_access', {
 // Read-only from the client: creation/approval/revocation all go through Go
 // handlers in core/server/oauth (grants carry credential material a client must
 // never write). Registered so the Connected apps settings screen can read a
-// user's own grants live via useOrgLiveQuery — the oauth_grants list/view rule
+// user's own grants live via useMyLiveQuery — the oauth_grants list/view rule
 // already scopes reads to `user = @request.auth.id`.
 const oauth_grants = newCollection('oauth_grants', {
     ...indexing,
