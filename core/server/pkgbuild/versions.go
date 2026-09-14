@@ -218,6 +218,15 @@ func ListGitTagVersions(remote string) ([]string, error) {
 	if err != nil {
 		return nil, ErrFromCmd("git ls-remote", out, err)
 	}
+	return ParseGitTagVersions(out), nil
+}
+
+// ParseGitTagVersions extracts the semver tags from `git ls-remote --tags
+// --refs` output, newest first. Split out from ListGitTagVersions so a caller
+// that must run the command itself — the hosting router runs it inside the
+// builder's fetch jail rather than as its own root process — shares this
+// parsing instead of restating its tag semantics.
+func ParseGitTagVersions(out string) []string {
 	versions := []string{}
 	for _, line := range strings.Split(out, "\n") {
 		idx := strings.Index(line, "refs/tags/")
@@ -238,7 +247,7 @@ func ListGitTagVersions(remote string) ([]string, error) {
 			versions = append(versions, tag)
 		}
 	}
-	return SortVersionsDesc(versions), nil
+	return SortVersionsDesc(versions)
 }
 
 // GitRemoteURL turns a host-shorthand spec into a fetchable URL for ls-remote.
