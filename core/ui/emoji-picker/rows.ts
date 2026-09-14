@@ -13,7 +13,10 @@ import { EMOJI_PER_ROW } from './layout'
 
 export type EmojiRow =
     | { kind: 'header'; category: string; key: string }
-    | { kind: 'emoji'; emoji: readonly EmojiRecord[]; key: string }
+    | { kind: 'emoji'; category: string; emoji: readonly EmojiRecord[]; key: string }
+
+/** The category search rows carry: results belong to no section. */
+export const SEARCH_CATEGORY = 'search'
 
 interface Section {
     category: string
@@ -34,6 +37,7 @@ export function toRows(sections: readonly Section[], perRow: number = EMOJI_PER_
             const chunk = section.emoji.slice(i, i + columns)
             rows.push({
                 kind: 'emoji',
+                category: section.category,
                 emoji: chunk,
                 key: `${section.category}:${chunk[0].u}`,
             })
@@ -51,7 +55,12 @@ export function toSearchRows(
     const rows: EmojiRow[] = []
     for (let i = 0; i < results.length; i += columns) {
         const chunk = results.slice(i, i + columns)
-        rows.push({ kind: 'emoji', emoji: chunk, key: `s:${chunk[0].u}` })
+        rows.push({
+            kind: 'emoji',
+            category: SEARCH_CATEGORY,
+            emoji: chunk,
+            key: `s:${chunk[0].u}`,
+        })
     }
     return rows
 }
