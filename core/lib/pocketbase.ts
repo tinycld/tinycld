@@ -2,6 +2,7 @@ import { QueryCache, QueryClient } from '@tanstack/react-query'
 import { type MergedPackageSchema, tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
+import { refetchLoadedStores } from '@tinycld/core/lib/refetch-loaded-stores'
 import type { Schema, Users } from '@tinycld/core/types/pbSchema'
 import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
 import PocketBase, { AsyncAuthStore } from 'pocketbase'
@@ -453,6 +454,10 @@ export async function seedUser(userRecord: Users) {
 }
 
 export async function preloadStores() {
+    // Whatever synced before sign-in was fetched as nobody — see
+    // refetchLoadedStores. Done before the preloads so a store that is already
+    // syncing is not preloaded (a no-op) and then refetched.
+    await refetchLoadedStores(Object.values(stores))
     await Promise.all([
         stores.users.preload(),
         stores.org_pkg_access.preload(),

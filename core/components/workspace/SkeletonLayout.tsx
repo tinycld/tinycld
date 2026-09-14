@@ -3,15 +3,52 @@ import { useEffect, useRef } from 'react'
 import { Animated, Platform, View } from 'react-native'
 import { useBreakpoint } from './useBreakpoint'
 
-function SkeletonBlock({
-    width,
-    height,
-    style,
-}: {
+interface SkeletonBlockProps {
     width: number | string
     height: number
     style?: object
-}) {
+}
+
+// The pulse is a CSS animation on web. React Native Web has no native
+// animation driver, so a JS-driven Animated.loop dispatches a React update to
+// every animated block on every frame — and this skeleton is the Suspense
+// fallback shown while the real sidebar renders underneath it. Those per-frame
+// sync updates interrupted that concurrent render whenever it was long enough
+// to yield (a sidebar listing a few hundred boards), so the sidebar never
+// committed until LazySidebarBoundary's watchdog remounted it 15s later.
+const PULSE_ANIMATION = 'tinycld-skeleton-pulse'
+
+if (Platform.OS === 'web' && typeof document !== 'undefined') {
+    const styleEl = document.createElement('style')
+    styleEl.id = `${PULSE_ANIMATION}-styles`
+    styleEl.textContent = `@keyframes ${PULSE_ANIMATION} {
+        0%, 100% { opacity: 0.3; }
+        50% { opacity: 0.7; }
+    }`
+    document.head.appendChild(styleEl)
+}
+
+const WEB_PULSE_STYLE = {
+    animationName: PULSE_ANIMATION,
+    animationDuration: '1.6s',
+    animationTimingFunction: 'ease-in-out',
+    animationIterationCount: 'infinite',
+} as object
+
+function WebSkeletonBlock({ width, height, style }: SkeletonBlockProps) {
+    const borderColor = useThemeColor('border')
+    return (
+        <View
+            style={[
+                { width: width as number, height, borderRadius: 8, backgroundColor: borderColor },
+                WEB_PULSE_STYLE,
+                style,
+            ]}
+        />
+    )
+}
+
+function NativeSkeletonBlock({ width, height, style }: SkeletonBlockProps) {
     const borderColor = useThemeColor('border')
     const opacity = useRef(new Animated.Value(0.3)).current
 
@@ -41,6 +78,8 @@ function SkeletonBlock({
         />
     )
 }
+
+const SkeletonBlock = Platform.OS === 'web' ? WebSkeletonBlock : NativeSkeletonBlock
 
 function SkeletonRail() {
     const railBg = useThemeColor('rail-background')

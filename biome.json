@@ -86,8 +86,7 @@
                 "!**/core/lib/expo-push.ts",
                 "!**/core/lib/use-push-subscription.ts",
                 "!**/core/lib/stores/auth-store.ts",
-                "!**/core/lib/editor/use-share-visitor-role.tsx",
-                "!**/boards/hooks/useMembershipVisibilitySync.ts"
+                "!**/core/lib/editor/use-share-visitor-role.tsx"
             ]
         },
         {

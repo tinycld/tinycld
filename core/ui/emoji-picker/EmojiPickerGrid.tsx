@@ -3,7 +3,7 @@ import { parseNativeEmoji } from '@tinycld/core/lib/emoji/parse'
 import { applyTone, type ToneChoice } from '@tinycld/core/lib/emoji/tones'
 import { type RefObject, useCallback } from 'react'
 import { Pressable, Text, View } from 'react-native'
-import { CATEGORY_LABELS } from './categories'
+import { CATEGORY_LABELS, FREQUENT_CATEGORY } from './categories'
 import type { EmojiRecord } from './emoji-data'
 import { EMOJI_SIZE, GRID_HEIGHT, ROW_HEIGHT, SECTION_HEADER_HEIGHT } from './layout'
 import type { EmojiRow } from './rows'
@@ -46,7 +46,13 @@ export function EmojiPickerGrid({
             item.kind === 'header' ? (
                 <SectionHeader category={item.category} />
             ) : (
-                <EmojiRowCells emoji={item.emoji} perRow={perRow} tone={tone} onSelect={onSelect} />
+                <EmojiRowCells
+                    category={item.category}
+                    emoji={item.emoji}
+                    perRow={perRow}
+                    tone={tone}
+                    onSelect={onSelect}
+                />
             ),
         [tone, onSelect, perRow]
     )
@@ -109,11 +115,13 @@ function SectionHeader({ category }: { category: string }) {
  * instead of stranding three cells at opposite edges.
  */
 function EmojiRowCells({
+    category,
     emoji,
     perRow,
     tone,
     onSelect,
 }: {
+    category: string
     emoji: readonly EmojiRecord[]
     perRow: number
     tone: ToneChoice
@@ -126,7 +134,13 @@ function EmojiRowCells({
             style={{ height: ROW_HEIGHT }}
         >
             {emoji.map(record => (
-                <EmojiCell key={record.u} record={record} tone={tone} onSelect={onSelect} />
+                <EmojiCell
+                    key={record.u}
+                    record={record}
+                    category={category}
+                    tone={tone}
+                    onSelect={onSelect}
+                />
             ))}
         </View>
     )
@@ -134,10 +148,12 @@ function EmojiRowCells({
 
 function EmojiCell({
     record,
+    category,
     tone,
     onSelect,
 }: {
     record: EmojiRecord
+    category: string
     tone: ToneChoice
     onSelect: (glyph: string) => void
 }) {
@@ -146,13 +162,17 @@ function EmojiCell({
     const unified = record.t ? applyTone(record.u, tone) : record.u
     const glyph = parseNativeEmoji(unified)
     const name = record.n[record.n.length - 1]
+    // A remembered emoji is on screen twice — under "Frequently used" and in
+    // its own section — so the two cells carry different ids; a test that
+    // asks for `emoji-pick-<u>` gets exactly the section cell.
+    const testIDPrefix = category === FREQUENT_CATEGORY ? 'emoji-frequent' : 'emoji-pick'
 
     return (
         <Pressable
             onPress={() => onSelect(glyph)}
             accessibilityRole="button"
             accessibilityLabel={name}
-            testID={`emoji-pick-${record.u}`}
+            testID={`${testIDPrefix}-${record.u}`}
             style={{ width: EMOJI_SIZE, height: EMOJI_SIZE }}
             className="items-center justify-center rounded hover:bg-accent web:outline-none web:focus-visible:ring-2 web:focus-visible:ring-ring"
         >

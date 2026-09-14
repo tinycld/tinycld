@@ -1,5 +1,10 @@
 import type { EmojiRecord } from '@tinycld/core/ui/emoji-picker/emoji-data'
-import { type EmojiRow, toRows, toSearchRows } from '@tinycld/core/ui/emoji-picker/rows'
+import {
+    type EmojiRow,
+    SEARCH_CATEGORY,
+    toRows,
+    toSearchRows,
+} from '@tinycld/core/ui/emoji-picker/rows'
 import { describe, expect, it } from 'vitest'
 
 const cells = (row: EmojiRow) => (row.kind === 'emoji' ? row.emoji : [])
@@ -40,6 +45,17 @@ describe('toRows', () => {
         expect(toRows([])).toEqual([])
     })
 
+    it('stamps each emoji row with its section, so a frequent cell is told apart from the same emoji in its category', () => {
+        const rows = toRows([
+            { category: 'frequent', emoji: many(2) },
+            { category: 'objects', emoji: many(2) },
+        ])
+        expect(rows.filter(r => r.kind === 'emoji').map(r => r.category)).toEqual([
+            'frequent',
+            'objects',
+        ])
+    })
+
     it('chunks at a caller-supplied width, for the wider sheet grid', () => {
         const rows = toRows([{ category: 'objects', emoji: many(20) }], 12)
         expect(rows.filter(r => r.kind === 'emoji')).toHaveLength(2) // 12 + 8
@@ -62,6 +78,10 @@ describe('toSearchRows', () => {
 
     it('returns nothing for no results', () => {
         expect(toSearchRows([])).toEqual([])
+    })
+
+    it('belongs to no section', () => {
+        expect(toSearchRows(many(2))[0]).toMatchObject({ category: SEARCH_CATEGORY })
     })
 
     it('chunks at a caller-supplied width too', () => {
