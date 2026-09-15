@@ -1,14 +1,13 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { History, type LucideIcon, Package, Settings } from 'lucide-react-native'
+import { History, type LucideIcon, Package } from 'lucide-react-native'
 import type PocketBase from 'pocketbase'
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { DraxProvider } from 'react-native-drax'
 import { BuildHistoryTab } from './BuildHistoryTab'
 import { PackageManager } from './PackageManager'
-import { SettingsTab } from './SettingsTab'
 
-type SetupTab = 'packages' | 'builds' | 'settings'
+type SetupTab = 'packages' | 'builds'
 
 interface NavEntry {
     tab: SetupTab
@@ -22,10 +21,15 @@ interface NavEntry {
 
 // Order here is the rail order. `crumb` is the topbar breadcrumb leaf shown after
 // the `admin /` root (the breadcrumb is the only place a route literal appears).
+//
+// This console is reached ONLY by a raw PocketBase superuser doing recovery —
+// any admin with an app session is redirected to /settings (app/a/setup.tsx).
+// So every tab here must also exist under /settings, or it is unreachable in
+// practice: that is exactly how the system-settings panels were stranded. Both
+// tabs below mount the same components /settings does.
 const NAV: NavEntry[] = [
     { tab: 'packages', label: 'Packages', crumb: 'packages', Icon: Package, ownerOnly: true },
     { tab: 'builds', label: 'Build History', crumb: 'build history', Icon: History },
-    { tab: 'settings', label: 'Settings', crumb: 'settings', Icon: Settings },
 ]
 
 interface SetupDashboardProps {
@@ -60,7 +64,6 @@ export function SetupDashboard({ pb, defaultTab, isOwner = true }: SetupDashboar
                         <View className="w-full self-center p-8 gap-6" style={{ maxWidth: 1040 }}>
                             <PackagesTab isVisible={isOwner && activeTab === 'packages'} pb={pb} />
                             <BuildHistoryTab isVisible={activeTab === 'builds'} pb={pb} />
-                            <SettingsTab isVisible={activeTab === 'settings'} />
                         </View>
                     </ScrollView>
                 </View>

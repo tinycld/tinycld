@@ -11,6 +11,9 @@ import { clickSidebarItem, createInvitedUser, login, loginAs, navigateToPackage 
 //     the artifact the whole deployment serves. Enablement is a
 //     pkg_registry.status write, the same axis as install, so the entire
 //     Packages screen is owner-only rather than split across two lists.
+//   - owner ALONE     → the System group (Error Reporting, Web Push, Mail
+//     Sending, plus any package-contributed system panel), which configures
+//     the whole server rather than one organization.
 //
 // The seeded TEST_USER is the owner. The admin is minted through the UI —
 // invite flow, then the Members role picker — rather than a raw PB write, so
@@ -68,12 +71,57 @@ test.describe('Settings · role access', () => {
                 // appears in the settings index.
                 await expect(adminPage.getByText('Packages', { exact: true })).toHaveCount(0)
                 await expect(adminPage.getByText('Build History', { exact: true })).toHaveCount(0)
+                // The System group is owner-only for the same reason.
+                await expect(adminPage.getByText('System', { exact: true })).toHaveCount(0)
+                await expect(adminPage.getByText('Web Push', { exact: true })).toHaveCount(0)
             } finally {
                 await adminContext.close()
             }
         } finally {
             await close()
         }
+    })
+
+    // The regression guard for the orphaned system panels. These screens were
+    // only ever mounted by the /setup console's Settings tab, and when
+    // administration moved into /settings that tab was left behind — so every
+    // deployment-wide setting (Sentry DSN, the VAPID keypair, transactional
+    // mail) became unreachable for anyone with an app session. Walking the
+    // owner from the index into each one is what proves they are mounted.
+    test('owner reaches every System settings screen from the index', async ({ page }) => {
+        await login(page)
+        await navigateToPackage(page, 'settings')
+        await expect(page.getByText('System', { exact: true })).toBeVisible({ timeout: 15_000 })
+
+        for (const [label, testID] of [
+            ['Error Reporting', 'settings-section-error-reporting'],
+            ['Web Push', 'settings-section-web-push'],
+            ['Mail Sending', 'settings-section-mail-sending'],
+        ] as const) {
+            await clickSidebarItem(page, label)
+            await expect(page.getByTestId(testID)).toBeVisible({ timeout: 20_000 })
+            await page.goBack()
+        }
+    })
+
+    // Mail declares the slug `provider` in BOTH its org-scoped settings (mail
+    // domains) and its systemSettings (provider choice + credentials). They are
+    // addressed through separate route trees precisely so one does not shadow
+    // the other; this walks to each and asserts they are different screens.
+    test('the two Mail Provider panels resolve to different screens', async ({ page }) => {
+        await login(page)
+        await navigateToPackage(page, 'settings')
+
+        // System-scoped: the provider picker.
+        await clickSidebarItem(page, 'Mail — Provider')
+        await expect(page).toHaveURL(/settings\/system\/mail\/provider/, { timeout: 20_000 })
+        await expect(page.getByTestId('mail-system-provider-save')).toBeVisible({ timeout: 20_000 })
+        await page.goBack()
+
+        // Org-scoped: the domains manager, at its own URL.
+        await clickSidebarItem(page, 'Provider')
+        await expect(page).toHaveURL(/settings\/mail\/provider/, { timeout: 20_000 })
+        await expect(page.getByText('Mail Domains')).toBeVisible({ timeout: 20_000 })
     })
 
     test('a member sees no Organization settings', async ({ page }) => {
@@ -88,6 +136,7 @@ test.describe('Settings · role access', () => {
             })
             await expect(inviteePage.getByText('Members', { exact: true })).toHaveCount(0)
             await expect(inviteePage.getByText('Build History', { exact: true })).toHaveCount(0)
+            await expect(inviteePage.getByText('System', { exact: true })).toHaveCount(0)
         } finally {
             await close()
         }

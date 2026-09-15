@@ -1,11 +1,16 @@
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
-import { packageSettings } from '@tinycld/core/lib/packages/derive-components'
+import {
+    packageSettings,
+    packageSystemSettings,
+} from '@tinycld/core/lib/packages/derive-components'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useSavedServers } from '@tinycld/core/lib/use-saved-servers'
 import { useRouter } from 'expo-router'
 import {
+    Bell,
+    Bug,
     ChevronRight,
     HardDrive,
     History,
@@ -13,7 +18,9 @@ import {
     KeyRound,
     Package,
     ScrollText,
+    Send,
     Server,
+    Sliders,
     Tag,
     User,
     Users,
@@ -123,6 +130,8 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
                 <OwnerLinks isVisible={isOwner} />
             </SettingsGroup>
 
+            <SystemSettings isVisible={isOwner} />
+
             {packageSettings.map(group => {
                 const Icon = getIcon(group.icon ?? '')
                 return (
@@ -145,6 +154,58 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
                 )
             })}
         </>
+    )
+}
+
+// Deployment-wide configuration: these values configure the whole server, not
+// one organization, which is why they are a group of their own rather than more
+// rows under Organization. Owner-only, matching Packages and Build History.
+//
+// Package-contributed panels (manifest `systemSettings`) route through
+// settings/system/<pkgSlug>/<panelSlug> — a separate tree from the org-scoped
+// packageSettings above, because a package may declare the same slug in both
+// (mail declares `provider` twice) and one route could not address both.
+function SystemSettings({ isVisible }: { isVisible: boolean }) {
+    const foregroundColor = useThemeColor('foreground')
+    const orgHref = useOrgHref()
+    const router = useRouter()
+
+    if (!isVisible) return null
+
+    return (
+        <SettingsGroup label="System">
+            <SettingsLink
+                label="Error Reporting"
+                onPress={() => router.push(orgHref('settings/error-reporting'))}
+                icon={<Bug size={20} color={foregroundColor} />}
+            />
+            <SettingsLink
+                label="Web Push"
+                onPress={() => router.push(orgHref('settings/web-push'))}
+                icon={<Bell size={20} color={foregroundColor} />}
+            />
+            <SettingsLink
+                label="Mail Sending"
+                onPress={() => router.push(orgHref('settings/mail-sending'))}
+                icon={<Send size={20} color={foregroundColor} />}
+            />
+            {packageSystemSettings.map(group =>
+                group.panels.map(panel => (
+                    <SettingsLink
+                        key={`${group.pkgSlug}:${panel.slug}`}
+                        label={`${group.packageName} — ${panel.label}`}
+                        onPress={() =>
+                            router.push(
+                                orgHref('settings/system/[...section]', {
+                                    section: [group.pkgSlug, panel.slug],
+                                })
+                            )
+                        }
+                        icon={<Sliders size={20} color={foregroundColor} />}
+                    />
+                ))
+            )}
+        </SettingsGroup>
     )
 }
 

@@ -1,5 +1,6 @@
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { packageSettings } from '@tinycld/core/lib/packages/derive-components'
+import { resolvePanel } from '@tinycld/core/lib/packages/resolve-panel'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
@@ -22,14 +23,10 @@ export default function PackageSettingsSection() {
     const bgColor = useThemeColor('background')
     const primaryColor = useThemeColor('primary')
 
-    const match = useMemo(() => {
-        if (!pkgSlug || !panelSlug) return null
-        const group = packageSettings.find(g => g.pkgSlug === pkgSlug)
-        if (!group) return null
-        const panel = group.panels.find(p => p.slug === panelSlug)
-        if (!panel) return null
-        return { group, panel }
-    }, [pkgSlug, panelSlug])
+    const match = useMemo(
+        () => resolvePanel(packageSettings, pkgSlug, panelSlug),
+        [pkgSlug, panelSlug]
+    )
 
     if (!isAdmin) {
         return (

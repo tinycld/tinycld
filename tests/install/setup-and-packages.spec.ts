@@ -7,6 +7,9 @@ import { expect, type Page, test } from '@playwright/test'
 //   2. dashboard packages tab — logs in as the superuser, asserts every
 //      bundled feature package shows up.
 //   3. system settings — saves a value and asserts it reaches the client.
+//      Drives /settings as the OWNER app user, not the /setup console: the
+//      system-settings panels live in the in-app settings area (the /setup
+//      console is superuser-recovery only, and redirects any admin away).
 //
 // The tests run serially: the later tests depend on the superuser created by
 // test 1 (or by a previous bootstrap if PW_SETUP_TOKEN was consumed earlier).
@@ -43,6 +46,33 @@ const EXPECTED_BUNDLED = [
 // empty value must not override the fallback. Mirrors todo-install.spec.ts.
 const SUPERUSER_EMAIL = process.env.ADMIN_USER_LOGIN || 'smoke@example.com'
 const SUPERUSER_PASSWORD = process.env.ADMIN_USER_PW || 'SmokeTest1234!'
+
+// Signs in as the owner APP user (same credentials as the superuser — the
+// first-run wizard mints both from one form, see createOwnerOperator). Needed
+// because the system-settings screens are owner-gated app routes; a raw
+// _superusers session is not an app user and never reaches them.
+async function loginAsOwner(page: Page) {
+    await page.goto('/a/settings')
+    const identifier = page.getByTestId('identifier')
+    const landed = await Promise.race([
+        identifier
+            .waitFor({ state: 'visible', timeout: 15_000 })
+            .then(() => 'login-form' as const)
+            .catch(() => 'neither' as const),
+        page
+            .getByText('Settings', { exact: true })
+            .first()
+            .waitFor({ state: 'visible', timeout: 15_000 })
+            .then(() => 'settings' as const)
+            .catch(() => 'neither' as const),
+    ])
+    if (landed === 'settings') return
+
+    await identifier.fill(SUPERUSER_EMAIL)
+    await page.getByPlaceholder('Password').fill(SUPERUSER_PASSWORD)
+    await page.getByRole('button', { name: 'Sign in' }).click()
+    await expect(page.getByText('System', { exact: true })).toBeVisible()
+}
 
 async function loginAsSuperuser(page: Page) {
     // /setup, not /admin: the pre-auth bootstrap + superuser-login console moved
@@ -126,11 +156,14 @@ test.describe('first-run install', () => {
     // non-secret public config into app.html → the next page load exposes it on
     // window.__TINYCLD_PUBLIC_CONFIG__ (which lib/app-config.ts reads for the
     // Sentry DSN). Also drives the VAPID generate button.
-    test('superuser can configure system settings (Sentry DSN + VAPID)', async ({ page }) => {
+    test('owner can configure system settings (Sentry DSN + VAPID)', async ({ page }) => {
         const TEST_DSN = 'https://e2ekey@o1.ingest.sentry.io/42'
 
-        await loginAsSuperuser(page)
-        await page.getByText('Settings', { exact: true }).first().click()
+        await loginAsOwner(page)
+
+        // Each system panel is its own owner-gated route under the System group,
+        // reached from the settings index — the path a real operator takes.
+        await page.getByText('Error Reporting', { exact: true }).click()
 
         // Sentry DSN: fill, save. On a fresh deployment the field starts empty, so
         // filling it makes the form dirty and enables Save. After a successful save
@@ -140,6 +173,10 @@ test.describe('first-run install', () => {
         await page.getByRole('textbox', { name: 'Sentry DSN', exact: true }).fill(TEST_DSN)
         await page.getByTestId('sentry-dsn-save').click()
         await expect(page.getByTestId('sentry-dsn-save')).toBeDisabled()
+
+        // VAPID lives on its own screen; go back to the index and into it.
+        await page.goBack()
+        await page.getByText('Web Push', { exact: true }).click()
 
         // VAPID: generate a keypair server-side; the panel flips to "Configured".
         await page.getByTestId('vapid-generate').click()
