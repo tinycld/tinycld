@@ -261,7 +261,7 @@ signals it ran.
 - Use `useAuth()` for the current user and `useCurrentRole()` for their role. `useOrgInfo()` is the one org-named survivor and returns deployment BRANDING only (`{ org }` — the name behind `/api/org-info`); it carries no id or slug, because there is no server-side org to identify.
 
 ## Routing & Navigation
-- **Routes are bare** — no org segment ever appears in the URL: `/a/contacts`, `/a/mail`, `/a/settings/profile` (the `/a/` prefix is the app group, added by `useOrgHref()`). The deployment IS the org, so there is nothing to put there.
+- **Routes are bare** — no org segment ever appears in the URL: `/a/contacts`, `/a/mail`, `/a/settings/personal` (the `/a/` prefix is the app group, added by `useOrgHref()`). The deployment IS the org, so there is nothing to put there.
 - Use `useOrgHref()` from `@tinycld/core/lib/org-routes` for navigation. Paths are app-root-relative; the hook is retained (rather than raw strings) so the ~200 call sites keep one shape:
   ```tsx
   const orgHref = useOrgHref()
@@ -271,7 +271,7 @@ signals it ran.
   <Link href={orgHref('mail/[id]', { id: threadId })} />
   ```
 - **Never** use `as OneRouter.Href` casts for app routes — always use `useOrgHref()`
-- For dynamic package navigation where the slug is a runtime value (e.g. rail/tab bar), use the resolved URL string: `` `/${pkgSlug}` ``
+- For dynamic package navigation where the slug is a runtime value (e.g. rail/tab bar), pass it through the same hook: `orgHref(pkg.slug as never)` (the cast bridges the typed-routes gap; see `PackageRail.tsx`)
 
 ## Package System
 - Feature packages live in **sibling git repos** at `~/code/tinycld/{contacts,mail,calendar,drive,calc,text,google-takeout-import}/` (source at `<slug>/tinycld/<slug>/`) and are **pnpm workspace members** (listed in `pnpm-workspace.yaml`) of a workspace root at `~/code/tinycld/`. `@tinycld/core` is **not** a separate sibling repo — it is nested at `tinycld/core/` inside the merged `tinycld` repo (still a workspace member, listed as `tinycld/core`), alongside `@tinycld/package-scripts` at `tinycld/package-scripts/`. The postinstall's `link-members` step creates `node_modules/@tinycld/<name>` symlinks for every member; pnpm itself only links depended-on members, so this covers the rest.
