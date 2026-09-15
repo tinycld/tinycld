@@ -119,7 +119,7 @@ test.describe('Settings · role access', () => {
         await page.goBack()
 
         // Org-scoped: the domains manager, at its own URL.
-        await clickSidebarItem(page, 'Provider')
+        await clickSidebarItem(page, 'Domains')
         await expect(page).toHaveURL(/settings\/mail\/provider/, { timeout: 20_000 })
         await expect(page.getByText('Mail Domains')).toBeVisible({ timeout: 20_000 })
     })
