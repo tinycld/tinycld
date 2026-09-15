@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"tinycld.org/core/approutes"
@@ -79,6 +81,40 @@ func injectPublicConfig(html []byte) []byte {
 	out = append(out, script...)
 	out = append(out, html[idx:]...)
 	return out
+}
+
+// shellAssetURL matches the src/href of every _expo/static asset the SPA shell
+// pins: Expo writes them as absolute, query-less paths.
+var shellAssetURL = regexp.MustCompile(`(src|href)="(/_expo/static/[^"?]+)"`)
+
+// pinShellAssets appends ?r=<releaseID> to each _expo/static URL in the shell.
+//
+// Expo names a bundle by a hash of its own code with the paths of the async
+// chunks it links to left out (see PoolAssets), so an entry bundle can keep its
+// filename across releases while its chunk table changes. A browser that once
+// cached that URL as immutable would reuse the old copy forever, since nothing
+// the server sends later can revise an already-cached policy. Suffixing the
+// release id gives every release distinct URLs, so a cached copy from another
+// release is never a candidate. The asset handlers ignore the query.
+//
+// An empty releaseID (no release-id.txt, e.g. the dev fallback shell) leaves
+// the HTML unchanged.
+func pinShellAssets(html []byte, releaseID string) []byte {
+	if releaseID == "" {
+		return html
+	}
+	suffix := `?r=` + url.QueryEscape(releaseID) + `"`
+	return shellAssetURL.ReplaceAllFunc(html, func(match []byte) []byte {
+		// match aliases html; build the replacement rather than appending
+		// in place, which would clobber the bytes that follow it.
+		return []byte(string(match[:len(match)-1]) + suffix)
+	})
+}
+
+// renderAppShell prepares the on-disk shell for a client: public config
+// injected, asset URLs pinned to releaseID.
+func renderAppShell(html []byte, releaseID string) []byte {
+	return pinShellAssets(injectPublicConfig(html), releaseID)
 }
 
 // binaryDir returns the directory containing the running executable, or
@@ -371,29 +407,32 @@ func StaticWithDynamicFallbackFS(publicFs, websiteFs, releasesFs fs.FS, releases
 		// comes straight from the embedded FS.
 		if releasesFs != nil {
 			if data, err := fs.ReadFile(releasesFs, "app.html"); err == nil {
-				return writeAppShell(e, injectPublicConfig(data))
+				id, _ := fs.ReadFile(releasesFs, "release-id.txt")
+				return writeAppShell(e, renderAppShell(data, strings.TrimSpace(string(id))))
 			}
 		} else if releasesDir != "" {
-			currentApp := filepath.Join(releasesDir, "current", "app.html")
-			if data, err := os.ReadFile(currentApp); err == nil {
-				return writeAppShell(e, injectPublicConfig(data))
+			current := filepath.Join(releasesDir, "current")
+			if data, err := os.ReadFile(filepath.Join(current, "app.html")); err == nil {
+				return writeAppShell(e, renderAppShell(data, readReleaseID(current)))
 			}
 		}
 
 		// Dev fallback: publicDir/app.html. Read into memory (rather than
 		// streaming via FileFS) so the same public-config injection applies.
+		// There is no release to pin to here.
 		if data, err := fs.ReadFile(publicFs, "app.html"); err == nil {
-			return writeAppShell(e, injectPublicConfig(data))
+			return writeAppShell(e, renderAppShell(data, ""))
 		}
 
 		return e.NotFoundError("", nil)
 	}
 }
 
-// writeAppShell sends the injected SPA shell HTML with revalidation caching.
+// writeAppShell sends the rendered SPA shell HTML with revalidation caching.
 //
-// The shell body changes only per release (a new app.html) or when injected
-// public config changes, so a content-hash ETag identifies it exactly. We set
+// The shell body changes only per release (a new app.html, and the release id
+// pinned into its asset URLs) or when injected public config changes, so a
+// content-hash ETag identifies it exactly. We set
 // `no-cache` (always revalidate, never serve from cache blindly) plus that
 // ETag: an unchanged shell answers a conditional GET with a 304 and no body,
 // while a changed shell sends the new bytes. This keeps the shell always-fresh

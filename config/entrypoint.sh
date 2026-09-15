@@ -302,16 +302,23 @@ seed_baked_build
 # Layout produced under /workspace/tinycld/releases/:
 #   <id>/             per-release dir: app.html + release-id.txt
 #   _static/          cross-release asset pool:
-#     _expo/static/...    (content-hashed, immutable)
+#     _expo/static/...    (hashed names; newest release wins a collision)
 #     assets/...           (mostly hashed; a few stable names like
 #                           app-icon.png get overwritten per deploy)
 #   current → <id>    SPA fallback reads <current>/app.html
 #
-# Why a pool: asset filenames are content-hashed, so files from different
-# releases coexist without collision. Stale tabs that dynamic-import a
-# chunk see their hashed filename in the pool until a future prune wipes
-# old entries. The Go server serves /_expo/static/ and /assets/ from
-# _static/ directly — there is no per-request release lookup.
+# Why a pool: asset filenames are hashed, so files from different releases
+# mostly coexist without collision. Stale tabs that dynamic-import a chunk
+# see their hashed filename in the pool until a future prune wipes old
+# entries. The Go server serves /_expo/static/ and /assets/ from _static/
+# directly — there is no per-request release lookup.
+#
+# The hashes are NOT content hashes: Expo leaves the paths of a chunk's async
+# imports out of the hash, so a bundle can keep its name while the chunk table
+# inside it changes. cp -a below lets the newest release's bytes win, and the
+# server serves the pool no-cache (revalidated by mtime) and pins the shell's
+# asset URLs to the release id, so a browser never reuses a same-named copy
+# from an earlier release. See coreserver.PoolAssets.
 promote_release() {
     staging_dir=/workspace/current/release-staging
     releases_dir=/workspace/releases
@@ -360,10 +367,12 @@ promote_release() {
     dst="$releases_dir/$release_id"
 
     # Merge this release's asset trees into the cross-release pool.
-    # cp -a (no -n) is used deliberately: same hashed filename = same
-    # content, so re-copying is a no-op in effect; for the handful of
-    # unhashed names under assets/ (app-icon.png, app-splash.png), the
-    # current release's copy wins, which is the desired behavior. The
+    # cp -a (no -n) is used deliberately: the current release's copy must
+    # win a name collision — Expo can re-emit a bundle under an unchanged
+    # name with a different chunk table (see the pool note above), and the
+    # unhashed names under assets/ (app-icon.png, app-splash.png) change
+    # per deploy. cp -a keeps each file's build mtime, which is the
+    # validator the server's no-cache policy revalidates against. The
     # whole tree is a few MB so the redundant rewrites cost nothing.
     if [ -d "$src/_expo/static" ]; then
         echo "[entrypoint] merging _expo/static into pool"
