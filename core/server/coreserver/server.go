@@ -492,16 +492,17 @@ func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
 			// Per-route asset handlers, registered before the catch-all so
 			// the asset prefixes win. Both paths read from the cross-release
 			// asset pool the entrypoint maintains under
-			// <releasesDir>/_static/. _expo/static/ filenames are fully
-			// content-hashed (immutable), while /assets/ contains a few
-			// stable names like app-icon.png so a shorter max-age applies.
+			// <releasesDir>/_static/. _expo/static/ is served no-cache: its
+			// filenames are NOT content hashes (see PoolAssets), so a browser
+			// must revalidate before reusing a copy. /assets/ contains a few
+			// stable names like app-icon.png so a short max-age applies.
 			//
 			// A single-binary build has no pool: its bundle is embedded. These
 			// prefixes would then shadow the catch-all that CAN serve it, so
 			// every script 404s while the shell still renders — the binary looks
 			// healthy and boots to a blank page.
 			if opts.ReleasesDir != "" && opts.PublicFS == nil {
-				e.Router.GET("/_expo/static/{path...}", PoolAssets(opts.ReleasesDir, "_expo/static", "public, max-age=31536000, immutable"))
+				e.Router.GET("/_expo/static/{path...}", PoolAssets(opts.ReleasesDir, "_expo/static", "public, no-cache"))
 				e.Router.GET("/assets/{path...}", PoolAssets(opts.ReleasesDir, "assets", "public, max-age=300"))
 			}
 			if opts.ReleasesDir != "" {

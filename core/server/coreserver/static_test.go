@@ -252,6 +252,51 @@ func TestStatic_ShellStaleETagRefetches(t *testing.T) {
 	})
 }
 
+// TestStatic_ShellPinsAssetURLsToRelease: every _expo/static URL the shell
+// references carries the release id, so a bundle Expo re-emitted under an
+// unchanged filename can't be satisfied from a copy cached for an earlier
+// release. URLs outside _expo/static are left alone.
+func TestStatic_ShellPinsAssetURLsToRelease(t *testing.T) {
+	const shell = `<html><head>` +
+		`<link rel="stylesheet" href="/_expo/static/css/global-1.css">` +
+		`</head><body>` +
+		`<script src="/_expo/static/js/web/index-abc.js" defer></script>` +
+		`<script src="/sw.js"></script>` +
+		`</body></html>`
+	publicDir, websiteDir, releasesDir := staticDirs(t, nil, nil, shell)
+	if err := os.WriteFile(filepath.Join(releasesDir, "current", "release-id.txt"), []byte("2026-09-15-005748-50a0598\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
+		Name:           "shell asset URLs carry ?r=<release id>",
+		Method:         http.MethodGet,
+		URL:            "/a/mail",
+		ExpectedStatus: http.StatusOK,
+		ExpectedContent: []string{
+			`href="/_expo/static/css/global-1.css?r=2026-09-15-005748-50a0598"`,
+			`src="/_expo/static/js/web/index-abc.js?r=2026-09-15-005748-50a0598"`,
+			`src="/sw.js"`,
+		},
+		NotExpectedContent: []string{`sw.js?r=`},
+	})
+}
+
+// TestStatic_ShellWithoutReleaseIDIsUnchanged: a release dir with no
+// release-id.txt (or the dev fallback shell) has nothing to pin to and must
+// not mangle the URLs.
+func TestStatic_ShellWithoutReleaseIDIsUnchanged(t *testing.T) {
+	const shell = `<script src="/_expo/static/js/web/index-abc.js" defer></script>`
+	publicDir, websiteDir, releasesDir := staticDirs(t, nil, nil, shell)
+	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
+		Name:               "no release id leaves asset URLs untouched",
+		Method:             http.MethodGet,
+		URL:                "/a/mail",
+		ExpectedStatus:     http.StatusOK,
+		ExpectedContent:    []string{`src="/_expo/static/js/web/index-abc.js"`},
+		NotExpectedContent: []string{`?r=`},
+	})
+}
+
 // TestStatic_WebsiteHTMLRevalidates confirms static HTML documents (the
 // marketing site's entry) are served no-cache so they too can't be
 // heuristically cached and pin old asset hashes. FileFS supplies Last-Modified,
