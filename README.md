@@ -78,14 +78,16 @@ pnpm run ssl:generate
 
 ## What's where
 
-- **`app/`** — Expo Router route tree. `_layout.tsx` runs the Hermes polyfills first
-  (`~/lib/diagnose-regexp`, `~/lib/polyfill-dom-shim`, `~/lib/polyfill-crypto`), then imports
-  `~/lib/configure-core` (which calls `configureCore(appConfig)` at module-init), then imports
-  core's Providers and mounts the gate.
+- **`index.js`** — bundle entry (`package.json` `main`). Runs the Hermes polyfills first
+  (`~/lib/diagnose-regexp`, `~/lib/polyfill-dom-shim`, `~/lib/polyfill-crypto`), then loads
+  `expo-router/entry`.
+- **`app/`** — Expo Router route tree. `_layout.tsx` imports `~/lib/configure-core` first (which
+  calls `configureCore(appConfig)` at module-init), then imports core's Providers and mounts the
+  gate. The polyfills are deliberately not imported here — see the comment at the top of `index.js`.
 - **`lib/app-config.ts`** — `CoreConfig` value handed to core at boot. Branding, server
   shortcuts, Sentry creds, review-mode flags.
-- **`lib/configure-core.ts`** — side-effect-only module imported by `_layout.tsx` right after the
-  Hermes polyfills (and before any other `@tinycld/core/*` import) so `configureCore` runs first.
+- **`lib/configure-core.ts`** — side-effect-only module imported by `_layout.tsx` first (before
+  any other `@tinycld/core/*` import) so `configureCore` runs first.
 - **`tinycld.config.ts`** — generated source of truth for installed packages (a typed
   `definePackageEntry` array). Core derives stores/sidebars/providers/registry/seeds from it
   at runtime. Gitignored.
@@ -154,8 +156,9 @@ cd cli && go build .
 ```
 
 A feature package contributes a command group with a `cli` manifest block (`package`,
-`module`, `scopes`) plus a Go module exposing
-`Register(root *cobra.Command, c *client.Client)`. The generator emits
+`module`) plus a Go module exposing
+`Register(root *cobra.Command, c *client.Client)`. OAuth scopes are not declared in the
+manifest — the package's Go server registers them (`oauth.RegisterPackage`). The generator emits
 `cli/cli_extensions.go`, `cli/go.work`, and `cli/search_slugs.go` (all gitignored). The CLI
 module deliberately does **not** import `tinycld.org/core`.
 
@@ -186,14 +189,14 @@ Package-author guide: [docs/automation.md](docs/automation.md) and
 ```sh
 cd ~/code/tinycld && pnpm install   # at the workspace root (postinstall runs the generator)
 cd tinycld
-pnpm run checks                     # biome + tsc
+pnpm run checks                     # biome + tsc + core-isolation check
 pnpm run test                       # vitest (this member)
 pnpm run test:e2e                   # playwright (this member)
 cd server && go build -o tinycld . && ./tinycld --help
 ```
 
 Per-member checks run via the `tinycld-pkg` CLI (`@tinycld/package-scripts`): from any
-member dir, `pnpm exec tinycld-pkg check` typechecks + unit-tests just that member;
+member dir, `pnpm exec tinycld-pkg check` runs biome, then tsc, then vitest for just that member;
 `tinycld-pkg check --all` runs every member (the `tinycld` shell, core, and each feature sibling).
 
 ## Code style
@@ -216,12 +219,11 @@ The image bakes the Go binary, Expo web export, PocketBase server, and the
 [mail](https://github.com/tinycld/mail),
 [calendar](https://github.com/tinycld/calendar),
 [contacts](https://github.com/tinycld/contacts),
-[drive](https://github.com/tinycld/drive), and
+[drive](https://github.com/tinycld/drive),
+[calc](https://github.com/tinycld/calc),
+[text](https://github.com/tinycld/text), and
 [google-takeout-import](https://github.com/tinycld/google-takeout-import)
-packages into one container.
-[text](https://github.com/tinycld/text) and [calc](https://github.com/tinycld/calc)
-are available but not bundled by default — clone them as siblings and re-install to
-include them in your own image build.
+packages into one container (the set is fixed in `scripts/ci-assemble-workspace.sh`).
 Healthchecks and Let's Encrypt-friendly cert handling are baked in. Dokku one-liner deploys
 work via `app.json` + the `Dockerfile`.
 

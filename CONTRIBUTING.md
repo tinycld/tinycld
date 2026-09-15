@@ -261,7 +261,7 @@ signals it ran.
 - Use `useAuth()` for the current user and `useCurrentRole()` for their role. `useOrgInfo()` is the one org-named survivor and returns deployment BRANDING only (`{ org }` — the name behind `/api/org-info`); it carries no id or slug, because there is no server-side org to identify.
 
 ## Routing & Navigation
-- **Routes are bare** — no org segment ever appears in the URL: `/contacts`, `/mail`, `/settings/profile`. The deployment IS the org, so there is nothing to put there.
+- **Routes are bare** — no org segment ever appears in the URL: `/a/contacts`, `/a/mail`, `/a/settings/profile` (the `/a/` prefix is the app group, added by `useOrgHref()`). The deployment IS the org, so there is nothing to put there.
 - Use `useOrgHref()` from `@tinycld/core/lib/org-routes` for navigation. Paths are app-root-relative; the hook is retained (rather than raw strings) so the ~200 call sites keep one shape:
   ```tsx
   const orgHref = useOrgHref()
@@ -369,11 +369,11 @@ The canonical config excludes generated artifacts — `server`, `lib/generated`,
 **The Biome version in `tinycld/package.json` is pinned exactly (`"2.5.1"`, no `~` or `^`) — leave it that way.** CI installs with `--no-frozen-lockfile`, and it has to: bootstrap assembles a fresh workspace whose member set the lockfile cannot match. A range therefore floats to whatever patch is newest at run time, while a developer keeps whatever the lockfile pinned. Biome patches change formatting, so the two disagree — and the failure is maddening: `tinycld-pkg check` passes locally and fails in CI, on files the PR never touched, with no version stated anywhere in the error. It is not fixable by reformatting either, since the versions disagree in both directions. Upgrading Biome is fine; do it deliberately, in one commit, with the reformat it implies.
 
 ## In-app help
-- Packages contribute help via a `help/` directory of `<id>.md` files. Each file is a markdown document with a YAML frontmatter block (`title`, `summary` required; `tags: [..]` and `order: N` optional). The filename (without `.md`) is the topic ID. Declare it in `manifest.ts` with `help: { directory: 'help' }`. The generator writes `tinycld/lib/generated/package-help.ts`; topics surface in the global hub at `/help`, the per-package help screen, and the right-slide drawer.
+- Packages contribute help via a `help/` directory of `<id>.md` files. Each file is a markdown document with a YAML frontmatter block (`title`, `summary` required; `tags: [..]` and `order: N` optional). The filename (without `.md`) is the topic ID. Declare it in `manifest.ts` with `help: { directory: 'help' }`. The generator writes `tinycld/lib/generated/package-help.ts`; topics surface in the global hub at `/a/help`, the per-package help screen, and the right-slide drawer.
 - `@tinycld/core` contributes baseline topics from `tinycld/core/help/`. The generator includes core explicitly the same way it symlinks core's migrations.
 - **Whenever you implement or significantly change a user-facing feature, add or update a help topic for it.** The feature is not "done" until a user can find out how to use it from inside the app.
 - Open the drawer to a specific topic from anywhere with `openHelp('<pkg>:<id>')` from `@tinycld/core/lib/help/open-help`. Render `<HelpIcon topic="<pkg>:<id>" />` from `@tinycld/core/components/help/HelpIcon` next to UI controls. Cross-link between topics inside markdown bodies with `[label](help://<pkg>:<id>)` — the renderer intercepts that scheme and reopens the drawer instead of navigating away.
-- Permalinks: `/help/[pkg]/[topic]` is a real route — shareable in conversation. The hub has full-text search (substring, weighted: title > tags > summary > body).
+- Permalinks: `/a/help/[pkg]/[topic]` is a real route — shareable in conversation. The hub has full-text search (substring, weighted: title > tags > summary > body).
 - **Deployment tokens:** write `{{server-host}}` wherever a body needs the deployment's hostname (connection settings, example URLs) — the viewer substitutes the hostname the app actually talks to (`core/lib/help/tokens.ts`). It is a whole-body text replacement, so it works inside code spans and fenced blocks. Never hand-author an example hostname like `mail.example.com` for a value the reader must copy.
 
 ## Forms and other components

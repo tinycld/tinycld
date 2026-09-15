@@ -7,8 +7,9 @@ imported as `@tinycld/core`.
 It exposes the app-facing surface of core via `@tinycld/core/*` subpaths:
 `~/lib/*`, `~/ui/*`, `~/components/*`, `~/types/*`, the top-level `Providers`,
 and the runtime package-derivation modules under `lib/packages/`
-(`config-types`, `derive-stores`, `derive-components`, `derive-seeds`,
-`static-registry`) which the app consumes from the generated
+(`config-types`, `derive-automation`, `derive-components`, `derive-seeds`,
+`derive-stores`, `provider-loader`, `static-registry`, `use-packages`) which the
+app consumes from the generated
 `tinycld.config.ts`. The Go side (`server/`, module `tinycld.org/core`) provides
 `coreserver` plus subsystems (notify, push, mailer, audit, textextract,
 thumbnails, render, realtime, sharelink) and core's PocketBase migrations.
