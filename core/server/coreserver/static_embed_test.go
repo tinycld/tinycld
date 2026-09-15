@@ -91,3 +91,34 @@ func TestStaticFS_APIPathIsNotGivenTheShell(t *testing.T) {
 		NotExpectedContent: []string{"EMBEDDED SHELL"},
 	})
 }
+
+// TestStaticFS_UnrenamedShellBreaksEveryDeepLink pins the failure shape of the
+// single-binary 404, so the handler's contract with the staging step is
+// explicit: the embedded bundle must carry the shell as app.html, NOT under
+// expo's exported name. Staging once copied dist verbatim, leaving index.html.
+//
+// The insidious part is asymmetry, reproduced here: "/" keeps working, because
+// an empty path defaults to index.html and hits it as an ordinary static file.
+// So the binary boots, the root URL renders, and only deep links 404 — starting
+// with the setup URL the server prints on first run. See scripts/app-shell.ts.
+func TestStaticFS_UnrenamedShellBreaksEveryDeepLink(t *testing.T) {
+	unrenamed := fstest.MapFS{
+		"index.html": {Data: []byte("<html>EMBEDDED SHELL</html>")},
+	}
+
+	runStaticFSScenario(t, unrenamed, nil, nil, &tests.ApiScenario{
+		Name:            "the root URL still serves, hiding the breakage",
+		Method:          http.MethodGet,
+		URL:             "/",
+		ExpectedStatus:  http.StatusOK,
+		ExpectedContent: []string{"EMBEDDED SHELL"},
+	})
+
+	runStaticFSScenario(t, unrenamed, nil, nil, &tests.ApiScenario{
+		Name:            "the first-run setup deep link 404s",
+		Method:          http.MethodGet,
+		URL:             "/a/setup?token=abc",
+		ExpectedStatus:  http.StatusNotFound,
+		ExpectedContent: []string{"wasn't found"},
+	})
+}

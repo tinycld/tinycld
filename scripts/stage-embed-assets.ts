@@ -2,13 +2,17 @@
 /**
  * Stage the assets that get compiled into the single-binary build.
  *
- * Two constraints drive this script:
+ * Three constraints drive this script:
  *   1. `go:embed` does not follow symlinks, and server/pb_migrations +
  *      server/pb_hooks are symlink farms the generator points at sibling
  *      repos. They must be materialized into real files.
  *   2. Source maps must never be embedded. They are the bulk of the web
  *      export and ship to Sentry separately via
  *      `expo export --source-maps external`.
+ *   3. The SPA shell must land under the name the server reads (app.html, not
+ *      Expo's index.html) — see ./app-shell.ts. Copying dist verbatim, as this
+ *      script once did, yields a binary that serves / but 404s every deep link,
+ *      including the first-run setup URL it prints on boot.
  */
 import {
     copyFileSync,
@@ -21,6 +25,7 @@ import {
     statSync,
 } from 'node:fs'
 import { basename, join } from 'node:path'
+import { renameStagedShell } from './app-shell'
 
 const appRoot = join(import.meta.dirname, '..')
 const outDir = join(appRoot, 'server', 'embedded_assets')
@@ -66,7 +71,11 @@ const copyWebBundle = (srcDir: string, destDir: string) => {
 rmSync(outDir, { recursive: true, force: true })
 mkdirSync(outDir, { recursive: true })
 
-const skippedMaps = copyWebBundle(join(appRoot, 'dist'), join(outDir, 'web'))
+const webDir = join(outDir, 'web')
+const skippedMaps = copyWebBundle(join(appRoot, 'dist'), webDir)
+// index.html → app.html. Throws when the export produced no shell, rather than
+// embedding a bundle whose every deep link 404s at runtime.
+renameStagedShell(webDir)
 const migrations = copyResolvedFiles(
     join(appRoot, 'server', 'pb_migrations'),
     join(outDir, 'pb_migrations')
