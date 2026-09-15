@@ -298,7 +298,10 @@ func CheckBuildPrereqs() error {
 // StageRelease moves the freshly-built <appDir>/dist into
 // <appDir>/release-staging/<id>/ with a release-id.txt and index.html renamed
 // to app.html, matching the layout entrypoint.sh's promote_release expects. The
-// entrypoint promotes the staged release (merging assets into releases/_static/
+// rename is the shared SPA-shell convention — Go cannot import it, so the
+// definition and rationale live in scripts/app-shell.ts; keep the two in sync.
+//
+// The entrypoint promotes the staged release (merging assets into releases/_static/
 // and pointing releases/current at it) on the next boot — which the install /
 // uninstall pipelines trigger via requestRestart. Returns the staged dir.
 func StageRelease(appDir string) (string, error) {

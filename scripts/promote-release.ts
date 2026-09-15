@@ -7,6 +7,8 @@
 //   <releasesDir>/<id>/release-id.txt     ← <id>                  (VersionHandler)
 //   <releasesDir>/current → <id>          (symlink)
 //
+// The index.html → app.html rename is the shared convention; see ./app-shell.ts.
+//
 // Extracted from e2e-serve.ts so BOTH e2e launchers promote through one code
 // path. Two copies of this layout would drift, and a mismatch does not fail
 // loudly — it presents as the server quietly handing the browser a stale bundle,
@@ -17,6 +19,7 @@
 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { exportedShellPath, SERVED_SHELL } from './app-shell'
 
 export function promoteRelease(
     distDir: string,
@@ -26,10 +29,7 @@ export function promoteRelease(
 ): void {
     log(`promoting dist/ → ${releasesDir} (current → ${releaseId})`)
 
-    const indexHtml = path.join(distDir, 'index.html')
-    if (!fs.existsSync(indexHtml)) {
-        throw new Error(`${indexHtml} missing — expo export did not produce a web bundle`)
-    }
+    const indexHtml = exportedShellPath(distDir)
 
     fs.rmSync(releasesDir, { recursive: true, force: true })
     const pool = path.join(releasesDir, '_static')
@@ -48,7 +48,7 @@ export function promoteRelease(
 
     const releaseDir = path.join(releasesDir, releaseId)
     fs.mkdirSync(releaseDir, { recursive: true })
-    fs.copyFileSync(indexHtml, path.join(releaseDir, 'app.html'))
+    fs.copyFileSync(indexHtml, path.join(releaseDir, SERVED_SHELL))
     fs.writeFileSync(path.join(releaseDir, 'release-id.txt'), releaseId)
 
     // current → <id>. A relative target keeps the symlink valid regardless of
