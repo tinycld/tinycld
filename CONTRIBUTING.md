@@ -271,7 +271,7 @@ signals it ran.
   <Link href={orgHref('mail/[id]', { id: threadId })} />
   ```
 - **Never** use `as OneRouter.Href` casts for app routes — always use `useOrgHref()`
-- For dynamic package navigation where the slug is a runtime value (e.g. rail/tab bar), pass it through the same hook: `orgHref(pkg.slug as never)` (the cast bridges the typed-routes gap; see `PackageRail.tsx`)
+- For dynamic package navigation where the slug is a runtime value (e.g. rail/tab bar), pass it through the same hook: `orgHref(pkg.slug)` (see `CoreShortcuts.tsx`)
 
 ## Package System
 - Feature packages live in **sibling git repos** at `~/code/tinycld/{contacts,mail,calendar,drive,calc,text,google-takeout-import}/` (source at `<slug>/tinycld/<slug>/`) and are **pnpm workspace members** (listed in `pnpm-workspace.yaml`) of a workspace root at `~/code/tinycld/`. `@tinycld/core` is **not** a separate sibling repo — it is nested at `tinycld/core/` inside the merged `tinycld` repo (still a workspace member, listed as `tinycld/core`), alongside `@tinycld/package-scripts` at `tinycld/package-scripts/`. The postinstall's `link-members` step creates `node_modules/@tinycld/<name>` symlinks for every member; pnpm itself only links depended-on members, so this covers the rest.
