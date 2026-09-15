@@ -104,24 +104,29 @@ test.describe('Settings · role access', () => {
         }
     })
 
-    // Mail declares the slug `provider` in BOTH its org-scoped settings (mail
-    // domains) and its systemSettings (provider choice + credentials). They are
-    // addressed through separate route trees precisely so one does not shadow
-    // the other; this walks to each and asserts they are different screens.
-    test('the two Mail Provider panels resolve to different screens', async ({ page }) => {
+    // The two settings route trees must not shadow each other. A package may
+    // declare the SAME slug in both `settings` (org-scoped) and
+    // `systemSettings` (deployment-wide) — mail ships exactly that, where
+    // 'provider' is both a domains screen and the provider picker. App-shell CI
+    // installs no feature package, so shortcut-stub carries the collision
+    // instead (see tests/scripts/scaffold-shortcut-stub.ts) and this proves the
+    // routing without depending on mail being present.
+    test('one slug in both registries resolves to two different screens', async ({ page }) => {
         await login(page)
         await navigateToPackage(page, 'settings')
 
-        // System-scoped: the provider picker.
-        await clickSidebarItem(page, 'Mail — Provider')
-        await expect(page).toHaveURL(/settings\/system\/mail\/provider/, { timeout: 20_000 })
-        await expect(page.getByTestId('mail-system-provider-save')).toBeVisible({ timeout: 20_000 })
+        // System-scoped: reached from the System group, under settings/system/.
+        await clickSidebarItem(page, 'Shortcut Stub — Stub System Panel')
+        await expect(page).toHaveURL(/settings\/system\/shortcut-stub\/panel/, {
+            timeout: 20_000,
+        })
+        await expect(page.getByTestId('stub-system-panel')).toBeVisible({ timeout: 20_000 })
         await page.goBack()
 
-        // Org-scoped: the domains manager, at its own URL.
-        await clickSidebarItem(page, 'Domains')
-        await expect(page).toHaveURL(/settings\/mail\/provider/, { timeout: 20_000 })
-        await expect(page.getByText('Mail Domains')).toBeVisible({ timeout: 20_000 })
+        // Org-scoped: the same slug, its own URL, a different component.
+        await clickSidebarItem(page, 'Stub Org Panel')
+        await expect(page).toHaveURL(/settings\/shortcut-stub\/panel/, { timeout: 20_000 })
+        await expect(page.getByTestId('stub-org-panel')).toBeVisible({ timeout: 20_000 })
     })
 
     test('a member sees no Organization settings', async ({ page }) => {
