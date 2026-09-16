@@ -11,7 +11,7 @@ type stubRegistrar struct{ name string }
 func (s stubRegistrar) AddDomain(context.Context, string) (*DomainRecords, error) {
 	return &DomainRecords{Domain: s.name}, nil
 }
-func (s stubRegistrar) GetDomain(context.Context, string) (*DomainRecords, error) {
+func (s stubRegistrar) GetDomain(context.Context, string, int64) (*DomainRecords, error) {
 	return &DomainRecords{Domain: s.name}, nil
 }
 
@@ -24,7 +24,7 @@ func TestUnconfiguredReturnsErrNotConfigured(t *testing.T) {
 	if _, err := Current().AddDomain(context.Background(), "acme.com"); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("AddDomain err = %v, want ErrNotConfigured", err)
 	}
-	if _, err := Current().GetDomain(context.Background(), "acme.com"); !errors.Is(err, ErrNotConfigured) {
+	if _, err := Current().GetDomain(context.Background(), "acme.com", 0); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("GetDomain err = %v, want ErrNotConfigured", err)
 	}
 }
@@ -36,7 +36,7 @@ func TestSetResolverInstalls(t *testing.T) {
 	t.Cleanup(ResetForTesting)
 
 	SetResolver(stubRegistrar{name: "own"})
-	rec, err := Current().GetDomain(context.Background(), "acme.com")
+	rec, err := Current().GetDomain(context.Background(), "acme.com", 0)
 	if err != nil {
 		t.Fatalf("GetDomain: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestSetRegistrarClaimsAndBlocksResolver(t *testing.T) {
 	}
 
 	SetResolver(stubRegistrar{name: "own"})
-	rec, err := Current().GetDomain(context.Background(), "acme.com")
+	rec, err := Current().GetDomain(context.Background(), "acme.com", 0)
 	if err != nil {
 		t.Fatalf("GetDomain: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestNilRegistrarIgnored(t *testing.T) {
 
 	SetRegistrar(stubRegistrar{name: "good"})
 	SetRegistrar(nil)
-	rec, err := Current().GetDomain(context.Background(), "acme.com")
+	rec, err := Current().GetDomain(context.Background(), "acme.com", 0)
 	if err != nil {
 		t.Fatalf("GetDomain: %v", err)
 	}

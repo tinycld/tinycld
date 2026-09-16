@@ -53,11 +53,20 @@ type DomainRecords struct {
 //
 // AddDomain enrolls the domain with the provider and returns its initial
 // records. GetDomain reads back the current state of an already-enrolled
-// domain. Both take a plain string and return plain data, which is what lets
-// the hosted implementation be a transport.
+// domain. Both take plain data and return plain data, which is what lets the
+// hosted implementation be a transport.
 type Registrar interface {
 	AddDomain(ctx context.Context, domain string) (*DomainRecords, error)
-	GetDomain(ctx context.Context, domain string) (*DomainRecords, error)
+
+	// GetDomain reads the current state of an enrolled domain.
+	//
+	// providerDomainID is the provider's own id, or 0 when it is not known — a
+	// row enrolled before the id was stored. A zero id forces a by-name lookup,
+	// which is why it is worth persisting the id from the returned records:
+	// Postmark has no lookup-by-name, so the fallback must page the account's
+	// whole domain list and would report a domain past the first page as
+	// unenrolled.
+	GetDomain(ctx context.Context, domain string, providerDomainID int64) (*DomainRecords, error)
 }
 
 var (
@@ -79,7 +88,7 @@ type unconfigured struct{}
 func (unconfigured) AddDomain(context.Context, string) (*DomainRecords, error) {
 	return nil, ErrNotConfigured
 }
-func (unconfigured) GetDomain(context.Context, string) (*DomainRecords, error) {
+func (unconfigured) GetDomain(context.Context, string, int64) (*DomainRecords, error) {
 	return nil, ErrNotConfigured
 }
 

@@ -59,31 +59,69 @@ func (p *PostmarkRegistrar) AddDomain(ctx context.Context, domain string) (*Doma
 	return toDomainRecords(details), nil
 }
 
-func (p *PostmarkRegistrar) GetDomain(ctx context.Context, domain string) (*DomainRecords, error) {
+func (p *PostmarkRegistrar) GetDomain(ctx context.Context, domain string, providerDomainID int64) (*DomainRecords, error) {
 	if p.accountToken == "" {
 		return nil, ErrNotConfigured
 	}
-	list, err := p.client.GetDomains(ctx, domainListLimit, 0)
-	if err != nil {
-		return nil, fmt.Errorf("postmark list domains: %w", err)
-	}
-	for _, d := range list.Domains {
-		if !strings.EqualFold(d.Name, domain) {
-			continue
-		}
-		details, err := p.client.GetDomain(ctx, d.ID)
+	if providerDomainID != 0 {
+		details, err := p.client.GetDomain(ctx, providerDomainID)
 		if err != nil {
+			// A stored id Postmark no longer knows means the domain was removed
+			// on their side. That is "not enrolled" — the actionable answer —
+			// not an opaque API failure the admin cannot interpret.
+			if isNotFound(err) {
+				return nil, fmt.Errorf("%w: %s", ErrDomainNotEnrolled, domain)
+			}
 			return nil, fmt.Errorf("postmark get domain: %w", err)
 		}
 		return toDomainRecords(details), nil
 	}
-	return nil, fmt.Errorf("%w: %s", ErrDomainNotEnrolled, domain)
+	return p.findByName(ctx, domain)
 }
 
-// isAlreadyExists recognises Postmark's duplicate-name refusal. Matched on the
-// message as well as the code because the code is not documented as stable,
-// and misclassifying a duplicate as a generic failure would show an operator a
-// raw provider string.
+// findByName is the fallback for a row enrolled before the id was stored. It
+// pages the account's domain list; the caller is expected to persist the id
+// from the result so this runs at most once per domain.
+func (p *PostmarkRegistrar) findByName(ctx context.Context, domain string) (*DomainRecords, error) {
+	for offset := 0; ; offset += domainListLimit {
+		list, err := p.client.GetDomains(ctx, domainListLimit, offset)
+		if err != nil {
+			return nil, fmt.Errorf("postmark list domains: %w", err)
+		}
+		for _, d := range list.Domains {
+			if strings.EqualFold(d.Name, domain) {
+				details, err := p.client.GetDomain(ctx, d.ID)
+				if err != nil {
+					return nil, fmt.Errorf("postmark get domain: %w", err)
+				}
+				return toDomainRecords(details), nil
+			}
+		}
+		// Stop at the last page. TotalCount is the account's full size, so
+		// this terminates even when a page comes back short.
+		if len(list.Domains) == 0 || offset+len(list.Domains) >= list.TotalCount {
+			return nil, fmt.Errorf("%w: %s", ErrDomainNotEnrolled, domain)
+		}
+	}
+}
+
+// isNotFound recognises Postmark's "no such domain" refusal. Matched on the
+// message for the same reason as isAlreadyExists: the numeric codes are not
+// documented as stable.
+func isNotFound(err error) bool {
+	var apiErr postmark.APIError
+	if errors.As(err, &apiErr) {
+		msg := strings.ToLower(apiErr.Message)
+		return strings.Contains(msg, "does not exist") || strings.Contains(msg, "not found")
+	}
+	return false
+}
+
+// isAlreadyExists recognises Postmark's duplicate-name refusal.
+//
+// Matched on the message rather than the numeric code, which Postmark does not
+// document as stable. If they reword it this returns false and the caller
+// surfaces a generic wrapped error — worse copy, but never a wrong outcome.
 func isAlreadyExists(err error) bool {
 	var apiErr postmark.APIError
 	if errors.As(err, &apiErr) {
