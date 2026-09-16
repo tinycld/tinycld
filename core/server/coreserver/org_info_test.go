@@ -134,7 +134,7 @@ func TestOrgInfoPublishesManagedNamespacesNeverValues(t *testing.T) {
 	t.Cleanup(app.Cleanup)
 
 	syscfg.SetProvider(secretfulProvider{})
-	t.Cleanup(func() { syscfg.SetResolver(func(string) string { return "" }) })
+	t.Cleanup(syscfg.ResetForTesting)
 
 	RegisterOrgInfoEndpoint(app)
 
@@ -165,7 +165,8 @@ func TestOrgInfoManagedSettingsEmptyWhenStandalone(t *testing.T) {
 	}
 	t.Cleanup(app.Cleanup)
 
-	syscfg.SetResolver(func(string) string { return "" })
+	syscfg.ResetForTesting()
+	t.Cleanup(syscfg.ResetForTesting)
 	RegisterOrgInfoEndpoint(app)
 
 	scenario := &tests.ApiScenario{

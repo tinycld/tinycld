@@ -149,19 +149,29 @@ func TestSystemConfigRecordHooksSync(t *testing.T) {
 	}
 }
 
-// PublicValues exposes non-secret keys and withholds secret ones — the gate that
-// keeps tokens/private keys out of anything sent to a client.
-func TestSystemConfigPublicValues(t *testing.T) {
+// isSecret reports a locally-stored row's flag — the second gate before a
+// whitelisted key is injected into the page. It speaks only for rows THIS
+// deployment stores; see publicConfigScript for why the whitelist, not this
+// flag, is what actually keeps the page safe.
+func TestSystemConfigIsSecret(t *testing.T) {
 	cfg := &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
 	cfg.set("sentry.dsn", "https://public.dsn", false)
 	cfg.set("sentry.auth_token", "secret-token", true)
 
-	pub := cfg.PublicValues()
-	if pub["sentry.dsn"] != "https://public.dsn" {
-		t.Errorf("non-secret value missing from PublicValues: %v", pub)
+	// isSecret is the gate publishableValue consults before injecting a
+	// whitelisted key into the page.
+	if cfg.isSecret("sentry.dsn") {
+		t.Error("a non-secret row was reported secret; its value would be withheld from the page")
 	}
-	if _, present := pub["sentry.auth_token"]; present {
-		t.Error("secret value must NOT appear in PublicValues")
+	if !cfg.isSecret("sentry.auth_token") {
+		t.Error("a secret row was not reported secret; were it ever whitelisted it would reach the page")
+	}
+	// A key with no local row — every value a supervisor supplies — is not
+	// secret by omission. It is not ours to judge, which is exactly why the
+	// whitelist in publicConfigScript, not this flag, is what keeps the page
+	// safe.
+	if cfg.isSecret("vapid.private_key") {
+		t.Error("a key with no local row should not be reported secret")
 	}
 }
 
@@ -173,8 +183,9 @@ func TestInjectPublicConfig(t *testing.T) {
 	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
 	// The injector resolves values through the syscfg seam, so point it at the
 	// config this test drives.
+	syscfg.ResetForTesting()
 	syscfg.SetResolver(systemConfig.Get)
-	t.Cleanup(func() { syscfg.SetResolver(prev.Get) })
+	t.Cleanup(syscfg.ResetForTesting)
 	systemConfig.set("sentry.dsn", "https://abc@o1.ingest.sentry.io/1", false)
 	systemConfig.set("sentry.auth_token", "super-secret", true)
 
@@ -268,8 +279,9 @@ func TestInjectPublicConfigPublishesVapidPublicKey(t *testing.T) {
 	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
 	// The injector resolves values through the syscfg seam, so point it at the
 	// config this test drives.
+	syscfg.ResetForTesting()
 	syscfg.SetResolver(systemConfig.Get)
-	t.Cleanup(func() { syscfg.SetResolver(prev.Get) })
+	t.Cleanup(syscfg.ResetForTesting)
 	systemConfig.set("vapid.public_key", "BPublicKey123", false)
 	systemConfig.set("vapid.private_key", "PrivateKeyNeverLeak", true)
 
@@ -349,7 +361,7 @@ func TestManagedKeysRefuseWrites(t *testing.T) {
 	app.OnRecordUpdateRequest("system_settings").BindFunc(refuseManagedWrite)
 
 	syscfg.SetProvider(managedProvider{prefixes: []string{"mail.", "vapid.", "sentry."}})
-	t.Cleanup(func() { syscfg.SetResolver(prev.Get) })
+	t.Cleanup(syscfg.ResetForTesting)
 
 	if err := updateSettingAsRequest(t, app, managed, "smtp"); err == nil {
 		t.Error("a write to a managed key was permitted; it must be refused")
@@ -373,8 +385,9 @@ func TestUnmanagedDeploymentKeepsWritingEverySetting(t *testing.T) {
 	prev := systemConfig
 	t.Cleanup(func() { systemConfig = prev })
 	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	syscfg.ResetForTesting()
 	syscfg.SetResolver(systemConfig.Get)
-	t.Cleanup(func() { syscfg.SetResolver(prev.Get) })
+	t.Cleanup(syscfg.ResetForTesting)
 
 	app.OnRecordUpdateRequest("system_settings").BindFunc(refuseManagedWrite)
 

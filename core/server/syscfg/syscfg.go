@@ -42,6 +42,16 @@ type Provider interface {
 var (
 	mu      sync.RWMutex
 	current Provider = unmanaged{}
+	// claimed records that a SUPERVISING composition installed the provider,
+	// as opposed to this deployment pointing the seam at its own collection.
+	//
+	// Tracked explicitly rather than inferred from ManagedPrefixes() being
+	// non-empty, because those are different questions and conflating them is
+	// a security bug: a supervisor whose config failed to load installs a
+	// provider that manages nothing yet, and core would then take the seam
+	// back and hand the deployment its own settings — exactly the fallback the
+	// supervisor exists to prevent.
+	claimed bool
 )
 
 // unmanaged is the zero provider: it resolves nothing and manages nothing. It
@@ -61,18 +71,36 @@ type resolverProvider struct{ get func(string) string }
 func (r resolverProvider) Get(key string) string   { return r.get(key) }
 func (resolverProvider) ManagedPrefixes() []string { return nil }
 
-// SetResolver installs a plain value lookup that manages no namespace — what
+// SetResolver points the seam at this deployment's own settings — what
 // coreserver calls with SystemConfig.Get once the collection is loadable.
+//
+// Ignored once a supervising composition has claimed the seam. Core's wiring
+// runs after a supervisor's, so without this the deployment would silently
+// reclaim settings its operator owns.
 func SetResolver(get func(key string) string) {
 	if get == nil {
 		return
 	}
-	SetProvider(resolverProvider{get: get})
+	mu.RLock()
+	taken := claimed
+	mu.RUnlock()
+	if taken {
+		return
+	}
+	mu.Lock()
+	current = resolverProvider{get: get}
+	mu.Unlock()
 }
 
 // SetProvider installs the process-wide provider. A supervising composition
 // calls this BEFORE any package registers, so that every consumer's first read
 // already resolves through it.
+//
+// This CLAIMS the seam: SetResolver becomes a no-op afterwards, so core's own
+// wiring cannot later point these reads back at this deployment's collection.
+// That matters most in the failure case — a supervisor whose config would not
+// load still owns these settings, and the correct degraded state is "no mail,
+// no push, no error reporting", never "the deployment supplies its own".
 //
 // A nil provider is ignored rather than installed: losing the resolver would
 // turn every subsequent read into "" — silently disabling mail, push and error
@@ -83,7 +111,28 @@ func SetProvider(p Provider) {
 	}
 	mu.Lock()
 	current = p
+	claimed = true
 	mu.Unlock()
+}
+
+// ResetForTesting restores the zero state: no provider, no claim. Tests that
+// install a provider must call it (t.Cleanup) so the claim does not leak into
+// the next test and make SetResolver inert there.
+//
+// Mirrors the Reset*ForTesting escape hatch every other core registry exposes.
+func ResetForTesting() {
+	mu.Lock()
+	current, claimed = unmanaged{}, false
+	mu.Unlock()
+}
+
+// IsClaimed reports whether a supervising composition installed the provider.
+// Core's own wiring consults this before pointing the seam at the deployment's
+// settings collection.
+func IsClaimed() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return claimed
 }
 
 // Get resolves a key through the current provider. Unset keys return "".

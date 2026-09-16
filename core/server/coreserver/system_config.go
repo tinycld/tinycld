@@ -43,28 +43,6 @@ func (c *SystemConfig) Get(key string) string {
 	return c.values[key]
 }
 
-// PublicValues returns a copy of every NON-secret key→value pair. This is the
-// only set of values allowed to be injected into the web HTML. Secret values
-// (tokens, the VAPID private key, IMAP password) are never included here.
-//
-// NOTE: this gates HTML INJECTION only. It is NOT a confidentiality boundary for
-// the secret values themselves — those still live in the admin-readable
-// system_settings collection, so an admin's client reads them over the wire
-// (the admin UI just renders them write-only). The trust boundary is "super
-// admin"; "secret" here means "never embedded in the public page served to every
-// visitor".
-func (c *SystemConfig) PublicValues() map[string]string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	out := make(map[string]string)
-	for k, v := range c.values {
-		if !c.secret[k] {
-			out[k] = v
-		}
-	}
-	return out
-}
-
 // publicValue returns the value for key ONLY if it is non-secret; a secret (or
 // unset) key returns "". Per-key gate for the HTML injector so a single
 // whitelisted key can't leak even if a row were mis-flagged.
@@ -164,14 +142,16 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	// OnServe load — Get returns "" until then, and sends only happen well
 	// after boot.
 	//
-	// Only when nothing has claimed the seam already: a supervising composition
-	// installs its own provider before any package registers, and it owns these
-	// values precisely because this deployment must not. Overwriting it here
-	// would hand administration back to the deployment — silently, since reads
-	// would still succeed against its own (empty) collection.
-	if len(syscfg.ManagedPrefixes()) == 0 {
-		syscfg.SetResolver(systemConfig.Get)
-	}
+	// SetResolver is inert once a supervising composition has claimed the seam,
+	// so this cannot hand administration back to a deployment whose operator
+	// owns these values. Called unconditionally because the claim, not the
+	// caller, is what decides.
+	//
+	// Do NOT reintroduce a "does it manage anything" check here. A supervisor
+	// whose config failed to load claims the seam managing nothing yet, and
+	// treating that as unclaimed would silently restore the org's own
+	// collection — the precise fallback the supervisor exists to prevent.
+	syscfg.SetResolver(systemConfig.Get)
 	// syscfg, not systemConfig.Get, is what keeps the mailer out of an import
 	// cycle with this package (mailer can't import coreserver).
 	mailer.ConfigResolver = syscfg.Get

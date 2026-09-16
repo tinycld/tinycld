@@ -16,11 +16,11 @@ func (f fakeProvider) ManagedPrefixes() []string { return f.prefixes }
 func restore(t *testing.T) {
 	t.Helper()
 	mu.RLock()
-	prev := current
+	prev, prevClaimed := current, claimed
 	mu.RUnlock()
 	t.Cleanup(func() {
 		mu.Lock()
-		current = prev
+		current, claimed = prev, prevClaimed
 		mu.Unlock()
 	})
 }
@@ -115,5 +115,56 @@ func TestEmptyPrefixDoesNotManageEverything(t *testing.T) {
 	}
 	if !IsManaged("mail.provider") {
 		t.Error("a real prefix alongside an empty one stopped matching")
+	}
+}
+
+// emptySupervisor is a supervising composition whose config failed to load: it
+// installed a provider, but has no values and manages nothing YET.
+type emptySupervisor struct{}
+
+func (emptySupervisor) Get(string) string         { return "" }
+func (emptySupervisor) ManagedPrefixes() []string { return nil }
+
+// The claim must not be inferred from "does it manage anything". A supervisor
+// whose syscfg.json was truncated or unreadable still OWNS these settings, and
+// the correct degraded state is "mail, push and error reporting are off" — never
+// "the deployment supplies its own", which is the fallback the supervisor exists
+// to prevent.
+//
+// Core's own wiring runs after a supervisor's, so without an explicit claim it
+// would point these reads straight back at the deployment's collection.
+func TestSupervisorWithNoPrefixesStillOwnsTheSeam(t *testing.T) {
+	restore(t)
+	SetProvider(emptySupervisor{})
+
+	if !IsClaimed() {
+		t.Fatal("a supervisor's provider did not claim the seam")
+	}
+
+	// What coreserver.RegisterSystemConfig does moments later.
+	SetResolver(func(string) string { return "the deployment's own value" })
+
+	if got := Get("mail.provider"); got != "" {
+		t.Fatalf("core reclaimed the seam: Get returned %q — the deployment is now "+
+			"supplying settings its operator owns", got)
+	}
+	if IsManaged("mail.provider") {
+		t.Error("nothing is managed yet, so IsManaged should be false; only the CLAIM persists")
+	}
+}
+
+// An unclaimed deployment must still be able to point the seam at its own
+// settings — the standalone path, which is every self-hosted install.
+func TestUnclaimedSeamAcceptsTheDeploymentsOwnResolver(t *testing.T) {
+	restore(t)
+	mu.Lock()
+	current, claimed = unmanaged{}, false
+	mu.Unlock()
+
+	SetResolver(func(key string) string {
+		return map[string]string{"mail.provider": "smtp"}[key]
+	})
+	if got := Get("mail.provider"); got != "smtp" {
+		t.Fatalf("a standalone deployment could not supply its own settings: %q", got)
 	}
 }

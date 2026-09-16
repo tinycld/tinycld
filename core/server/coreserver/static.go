@@ -32,13 +32,17 @@ import (
 // guard against "</script>" appearing in a value, which would otherwise close the
 // tag early — JSON-encodes "<" as-is, so a malicious DSN could break out.
 func publicConfigScript() string {
-	// Two independent gates keep secrets out of the HTML: (1) PublicValues()
-	// returns only non-secret rows, and (2) the explicit whitelist below names the
-	// exact keys the client may consume, under their client-facing names. Adding a
-	// public client value is a deliberate edit here, not an automatic passthrough.
-	// The whitelist is also asserted non-secret at injection time (the one place a
-	// leak is unrecoverable) so a row mis-flagged is_secret=false elsewhere still
-	// can't slip a credential into the page.
+	// Two gates keep secrets out of the HTML, and the FIRST is the load-bearing
+	// one: (1) the explicit whitelist below names the exact keys the client may
+	// consume, under their client-facing names — adding a public client value is
+	// a deliberate edit here, never an automatic passthrough; and (2)
+	// publishableValue withholds any key a locally-stored row flags is_secret.
+	//
+	// Gate (2) alone is NOT sufficient any more, which is why (1) is stated
+	// first. The is_secret flag lives on a row in this deployment's collection,
+	// and a supervising composition supplies its values from memory with no row
+	// to carry a flag. So a value from a supervisor arrives unflagged, and only
+	// the whitelist stands between it and the page.
 	const sentryDSNKey = "sentry.dsn"
 	// The VAPID PUBLIC key is the applicationServerKey the browser must pass to
 	// pushManager.subscribe(), so the web client genuinely needs it. It is public
