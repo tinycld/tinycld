@@ -53,11 +53,17 @@ export async function fetchOrgInfo(): Promise<{
     }
 }
 
+// A stable empty list, so `managedSettings` keeps its identity across renders
+// while the query is pending. A fresh `[]` each render would defeat every
+// useMemo keyed on it — including the help filter's, which recomputes over every
+// topic body.
+const NO_MANAGED_SETTINGS: string[] = []
+
 export function useOrgInfo() {
     // Branding changes only when an operator renames the deployment, so cache
     // it for the session; a transient fetch blip renders the same fallbacks as
     // "no branding".
-    const { data } = useQuery({
+    const { data, isPending } = useQuery({
         queryKey: ORG_INFO_QUERY_KEY,
         queryFn: fetchOrgInfo,
         staleTime: Number.POSITIVE_INFINITY,
@@ -80,6 +86,11 @@ export function useOrgInfo() {
         : null
     // Deliberately outside `org`: that is null until the deployment has a name,
     // and whether a setting is administered here has nothing to do with branding.
-    const managedSettings = data?.managedSettings ?? []
-    return { org, managedSettings }
+    //
+    // isPending is exposed because "we do not know yet" is NOT the same as
+    // "nothing is managed". A screen that renders an editable form during the
+    // pending window lets a hosted owner act on it before the managed banner
+    // arrives; callers that gate on it wait instead.
+    const managedSettings = data?.managedSettings ?? NO_MANAGED_SETTINGS
+    return { org, managedSettings, isManagedSettingsPending: isPending }
 }

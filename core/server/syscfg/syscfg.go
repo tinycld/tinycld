@@ -36,6 +36,8 @@ import (
 // deployment fully self-administered.
 type Provider interface {
 	Get(key string) string
+	// ManagedPrefixes may return an internal slice; callers must not retain or
+	// mutate it. The package-level ManagedPrefixes copies before handing it out.
 	ManagedPrefixes() []string
 }
 
@@ -145,11 +147,19 @@ func Get(key string) string {
 
 // ManagedPrefixes reports the key namespaces the current provider owns.
 // Empty on a standalone deployment.
+//
+// The result is a copy: callers range over it outside the lock, and a Provider
+// that returned its live backing array would race with its own next update.
+// Copying here rather than trusting each implementation makes that impossible
+// to get wrong from outside this package.
 func ManagedPrefixes() []string {
 	mu.RLock()
 	p := current
 	mu.RUnlock()
-	return p.ManagedPrefixes()
+	prefixes := p.ManagedPrefixes()
+	out := make([]string, len(prefixes))
+	copy(out, prefixes)
+	return out
 }
 
 // IsManaged reports whether key falls in a namespace the provider owns, and so

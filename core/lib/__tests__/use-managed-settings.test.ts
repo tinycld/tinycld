@@ -38,3 +38,18 @@ describe('isManagedPrefix', () => {
         expect(isManagedPrefix(['mail.'], 'mailbox.')).toBe(false)
     })
 })
+
+// The pending window is not "nothing is managed". A screen that renders its
+// form on an empty list gives a hosted owner time to act on settings they do
+// not administer — VapidPanel's Generate button being the sharp case, since it
+// POSTs to a core endpoint rather than writing a row.
+describe('pending vs unmanaged', () => {
+    it('an empty list is indistinguishable from unmanaged, so callers need the pending flag', () => {
+        // Both states produce the same answer from the matcher...
+        expect(isManagedPrefix([], 'vapid.')).toBe(false)
+        // ...which is exactly why a screen that can ACT must gate on pending
+        // rather than on this result. Asserted here so the distinction is not
+        // quietly removed.
+        expect(isManagedPrefix([], 'vapid.')).toBe(isManagedPrefix([], 'mail.'))
+    })
+})

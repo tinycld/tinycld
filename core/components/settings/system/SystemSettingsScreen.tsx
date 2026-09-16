@@ -9,7 +9,10 @@ import { openHelp } from '@tinycld/core/lib/help/open-help'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
-import { useIsSettingManaged } from '@tinycld/core/lib/use-managed-settings'
+import {
+    useIsManagedSettingsPending,
+    useIsSettingManaged,
+} from '@tinycld/core/lib/use-managed-settings'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
 import { ArrowLeft } from 'lucide-react-native'
 import type { ReactNode } from 'react'
@@ -40,10 +43,19 @@ export function SystemSettingsScreen({
     const { isOwner, isReady } = useCurrentRole()
     const fgColor = useThemeColor('foreground')
     const isManaged = useIsSettingManaged(keyPrefix)
+    const isManagedPending = useIsManagedSettingsPending()
 
     // Gated on isReady too, so a cold-load owner isn't bounced by the
     // transient null role.
+    //
+    // And on the managed answer, for a screen that declares a namespace: until
+    // it arrives the list is empty, which reads as "nothing is managed" and
+    // would render the editable form. On a cold deep link — a bookmark, or a
+    // restored tab — a hosted owner could reach VapidPanel's Generate button in
+    // that window. Role readiness does not cover it: role resolves from the
+    // cached auth store while this is a network fetch.
     if (!isReady) return null
+    if (keyPrefix && isManagedPending) return null
 
     if (isManaged) {
         return (

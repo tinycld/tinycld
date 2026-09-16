@@ -17,6 +17,19 @@ export function useManagedSettingPrefixes(): string[] {
 }
 
 /**
+ * Whether the managed-settings answer has not arrived yet.
+ *
+ * Distinct from "nothing is managed": before the fetch resolves the list is
+ * empty, and a screen that renders its form on that basis gives a hosted owner
+ * a window in which to act on settings they do not administer. Screens that can
+ * ACT (a form, a generate button) should wait; a settings index that merely
+ * lists links can render and let the link disappear.
+ */
+export function useIsManagedSettingsPending(): boolean {
+    return useOrgInfo().isManagedSettingsPending
+}
+
+/**
  * Whether `keyPrefix` names settings administered elsewhere.
  *
  * Pass the dotted namespace the screen edits (`'mail.'`, `'vapid.'`). A screen
