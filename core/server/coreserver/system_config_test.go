@@ -318,24 +318,14 @@ type managedProvider struct{ prefixes []string }
 func (managedProvider) Get(string) string           { return "" }
 func (m managedProvider) ManagedPrefixes() []string { return m.prefixes }
 
-// updateSettingAsRequest drives the OnRecordUpdateRequest chain — the path a
-// client save takes. app.Save alone bypasses request hooks entirely, so a test
-// that used it would pass no matter what the guard does.
-func updateSettingAsRequest(t *testing.T, app core.App, rec *core.Record, value string) error {
+// updateSetting saves through app.Save — deliberately the LOWEST-level write
+// path. The guard is bound on the model hooks, which fire here; binding only the
+// request hooks would leave this path (and every other in-process writer) open,
+// so this is the case worth asserting.
+func updateSetting(t *testing.T, app core.App, rec *core.Record, value string) error {
 	t.Helper()
-	col, err := app.FindCollectionByNameOrId("system_settings")
-	if err != nil {
-		t.Fatal(err)
-	}
 	rec.Set("value", value)
-	e := &core.RecordRequestEvent{
-		RequestEvent: &core.RequestEvent{App: app},
-		Record:       rec,
-	}
-	e.Collection = col
-	return app.OnRecordUpdateRequest("system_settings").Trigger(e, func(_ *core.RecordRequestEvent) error {
-		return app.Save(rec)
-	})
+	return app.Save(rec)
 }
 
 // A deployment must not edit a value its operator owns. Hiding the UI is not
@@ -358,16 +348,16 @@ func TestManagedKeysRefuseWrites(t *testing.T) {
 	ownKey := saveSetting(t, app, "storage_limit_bytes", "100")
 
 	// Bind the REAL guard RegisterSystemConfig installs, not a copy of it.
-	app.OnRecordUpdateRequest("system_settings").BindFunc(refuseManagedWrite)
+	app.OnRecordUpdate("system_settings").BindFunc(refuseManagedWrite)
 
 	syscfg.SetProvider(managedProvider{prefixes: []string{"mail.", "vapid.", "sentry."}})
 	t.Cleanup(syscfg.ResetForTesting)
 
-	if err := updateSettingAsRequest(t, app, managed, "smtp"); err == nil {
+	if err := updateSetting(t, app, managed, "smtp"); err == nil {
 		t.Error("a write to a managed key was permitted; it must be refused")
 	}
 	// A key outside every managed namespace stays this deployment's own.
-	if err := updateSettingAsRequest(t, app, ownKey, "200"); err != nil {
+	if err := updateSetting(t, app, ownKey, "200"); err != nil {
 		t.Errorf("a write to an unmanaged key was refused: %v", err)
 	}
 }
@@ -389,10 +379,10 @@ func TestUnmanagedDeploymentKeepsWritingEverySetting(t *testing.T) {
 	syscfg.SetResolver(systemConfig.Get)
 	t.Cleanup(syscfg.ResetForTesting)
 
-	app.OnRecordUpdateRequest("system_settings").BindFunc(refuseManagedWrite)
+	app.OnRecordUpdate("system_settings").BindFunc(refuseManagedWrite)
 
 	rec := saveSetting(t, app, "mail.provider", "postmark")
-	if err := updateSettingAsRequest(t, app, rec, "smtp"); err != nil {
+	if err := updateSetting(t, app, rec, "smtp"); err != nil {
 		t.Errorf("standalone deployment could not edit its own mail settings: %v", err)
 	}
 }

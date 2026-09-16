@@ -124,7 +124,13 @@ func (c *SystemConfig) set(key, value string, isSecret bool) {
 // refuseManagedWrite rejects a write to any key a supervising composition owns.
 // A package-level function, not a closure, so tests bind exactly what production
 // binds — a copy in a test would keep passing after this guard was deleted.
-func refuseManagedWrite(e *core.RecordRequestEvent) error {
+//
+// Bound on the MODEL-level hooks, which fire for app.Save() as well as for a
+// request. The request hooks alone left every in-process writer unguarded —
+// upsertSystemSetting in vapid_admin.go is one, and any future one would inherit
+// no protection at all. A hand-placed check at each call site is not a boundary;
+// this is.
+func refuseManagedWrite(e *core.RecordEvent) error {
 	if syscfg.IsManaged(e.Record.GetString("key")) {
 		return apis.NewForbiddenError(
 			"This setting is managed by your hosting provider and cannot be changed here.", nil)
@@ -186,14 +192,14 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	// at the stored row: the form would save, report success, and change
 	// nothing. Refusing is both safer and more honest.
 	//
-	// On *Request hooks rather than the *Success hooks below: this must run
-	// before the row is persisted, not react to it afterwards.
-	app.OnRecordCreateRequest("system_settings").BindFunc(refuseManagedWrite)
-	app.OnRecordUpdateRequest("system_settings").BindFunc(refuseManagedWrite)
+	// On the create/update/delete hooks rather than the *Success ones below:
+	// this must run before the row is persisted, not react to it afterwards.
+	app.OnRecordCreate("system_settings").BindFunc(refuseManagedWrite)
+	app.OnRecordUpdate("system_settings").BindFunc(refuseManagedWrite)
 	// Delete too: removing a managed row cannot unmanage the value (reads never
 	// consult the row) but it would desynchronize the collection from what the
 	// deployment actually runs on, which is how a confusing support case starts.
-	app.OnRecordDeleteRequest("system_settings").BindFunc(refuseManagedWrite)
+	app.OnRecordDelete("system_settings").BindFunc(refuseManagedWrite)
 
 	syncRow := func(e *core.RecordEvent) error {
 		systemConfig.set(
