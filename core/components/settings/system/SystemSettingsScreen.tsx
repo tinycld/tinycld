@@ -5,6 +5,7 @@
 // keep the UI tighter than the rule rather than widening the rule.
 
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
+import { openHelp } from '@tinycld/core/lib/help/open-help'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
@@ -51,6 +52,9 @@ export function SystemSettingsScreen({
                 <Text className="text-muted-foreground text-base text-center" testID={testID}>
                     {title} is configured by your hosting provider.
                 </Text>
+                <Pressable className="mt-3" onPress={() => openHelp('core:managed-settings')}>
+                    <Text className="text-primary text-base">Why can't I change this?</Text>
+                </Pressable>
             </View>
         )
     }
