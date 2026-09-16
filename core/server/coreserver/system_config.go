@@ -4,9 +4,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/mrz1836/postmark"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/maildomains"
 	"tinycld.org/core/mailer"
 	"tinycld.org/core/syscfg"
 )
@@ -158,6 +161,7 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	// treating that as unclaimed would silently restore the org's own
 	// collection — the precise fallback the supervisor exists to prevent.
 	syscfg.SetResolver(systemConfig.Get)
+	wireMailDomains()
 	// syscfg, not systemConfig.Get, is what keeps the mailer out of an import
 	// cycle with this package (mailer can't import coreserver).
 	mailer.ConfigResolver = syscfg.Get
@@ -211,4 +215,21 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	}
 	app.OnRecordAfterCreateSuccess("system_settings").BindFunc(syncRow)
 	app.OnRecordAfterUpdateSuccess("system_settings").BindFunc(syncRow)
+}
+
+// wireMailDomains points the maildomains seam at this deployment's own
+// Postmark account — the standalone shape, where the deployment holds its own
+// account token.
+//
+// A no-op once a supervising composition has claimed the seam. Core's wiring
+// runs after a supervisor's, and reclaiming would hand a tenant the account
+// credentials the supervisor exists to keep from it. SetResolver enforces this
+// itself; the early return is so we do not build a client we will discard.
+func wireMailDomains() {
+	if maildomains.IsClaimed() {
+		return
+	}
+	accountToken := syscfg.Get("mail.postmark_account_token")
+	client := postmark.NewClient(syscfg.Get("mail.postmark_server_token"), accountToken)
+	maildomains.SetResolver(maildomains.NewPostmarkRegistrar(accountToken, client))
 }
