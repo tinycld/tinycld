@@ -13,7 +13,9 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+
 	"github.com/pocketbase/pocketbase/tools/router"
+	"tinycld.org/core/syscfg"
 )
 
 // RegisterSentry binds the router middleware that captures returned handler
@@ -37,9 +39,13 @@ func RegisterSentry(app *pocketbase.PocketBase) {
 // initSentryFromConfig (re)initializes the global Sentry client from the current
 // system settings. Safe to call repeatedly: sentry.Init swaps the active client,
 // so a DSN change applied here takes effect immediately for subsequent captures.
-func initSentryFromConfig(cfg *SystemConfig) {
+//
+// Reads through syscfg rather than SystemConfig directly: on a deployment whose
+// operator owns error reporting, the DSN is theirs and never reaches this
+// deployment's own collection.
+func initSentryFromConfig() {
 	if err := sentry.Init(sentry.ClientOptions{
-		Dsn:              cfg.Get("sentry.dsn"),
+		Dsn:              syscfg.Get("sentry.dsn"),
 		Environment:      GetEnvironment(),
 		TracesSampleRate: 0.2,
 		AttachStacktrace: true,

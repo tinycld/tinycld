@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"tinycld.org/core/syscfg"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
@@ -94,5 +95,32 @@ func TestUpsertSystemSetting(t *testing.T) {
 	}
 	if recs[0].GetString("value") != "https://b/2" {
 		t.Errorf("upsert did not update value, got %q", recs[0].GetString("value"))
+	}
+}
+
+// upsertSystemSetting writes with app.Save, which bypasses the REQUEST hooks
+// entirely. The guard is bound on the model hooks precisely so this path is
+// closed too — the endpoint's own IsManaged check is a courtesy that returns a
+// clear error, not the boundary.
+func TestUpsertSystemSettingRefusesAManagedKey(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+	createSystemSettingsCollection(t, app)
+	app.OnRecordCreate("system_settings").BindFunc(refuseManagedWrite)
+	app.OnRecordUpdate("system_settings").BindFunc(refuseManagedWrite)
+
+	syscfg.ResetForTesting()
+	t.Cleanup(syscfg.ResetForTesting)
+	syscfg.SetProvider(managedProvider{prefixes: []string{"vapid."}})
+
+	if err := upsertSystemSetting(app, "vapid.private_key", "org-supplied", true); err == nil {
+		t.Fatal("a managed key was written through app.Save; the model hook did not fire")
+	}
+	// An unmanaged key still writes, so the guard is not blanket-refusing.
+	if err := upsertSystemSetting(app, "storage_limit_bytes", "100", false); err != nil {
+		t.Fatalf("an unmanaged key was refused: %v", err)
 	}
 }

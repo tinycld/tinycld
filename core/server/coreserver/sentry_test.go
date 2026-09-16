@@ -8,9 +8,11 @@ import (
 	"testing"
 
 	"github.com/getsentry/sentry-go"
+
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/router"
+	"tinycld.org/core/syscfg"
 )
 
 // captureSentry installs a Sentry client that records events into a slice
@@ -261,11 +263,16 @@ func TestSentryMiddlewareCapturesDirectWriteServerError(t *testing.T) {
 func TestInitSentryFromConfig(t *testing.T) {
 	t.Cleanup(func() { _ = sentry.Init(sentry.ClientOptions{}) }) // reset global client
 
+	// The DSN now arrives through the syscfg seam, so drive it from there.
 	cfg := &SystemConfig{values: map[string]string{}}
-	initSentryFromConfig(cfg) // empty DSN — no-op, no panic
+	syscfg.ResetForTesting()
+	syscfg.SetResolver(cfg.Get)
+	t.Cleanup(syscfg.ResetForTesting)
+
+	initSentryFromConfig() // empty DSN — no-op, no panic
 
 	cfg.set("sentry.dsn", "https://abc@o1.ingest.sentry.io/1", false)
-	initSentryFromConfig(cfg) // valid-shaped DSN — swaps the client, no panic
+	initSentryFromConfig() // valid-shaped DSN — swaps the client, no panic
 }
 
 // The re-init wiring fires ONLY for sentry.* keys: a sentry.dsn change re-inits,

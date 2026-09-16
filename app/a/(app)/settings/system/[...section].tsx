@@ -46,6 +46,7 @@ export default function PackageSystemSettingsSection() {
         <SystemSettingsScreen
             title={`${group.packageName} — ${panel.label}`}
             testID={`settings-system-${pkgSlug}-${panelSlug}`}
+            keyPrefix={panel.keyPrefix}
         >
             <Suspense fallback={null}>
                 <View className="gap-4 p-5 rounded-2xl bg-surface-secondary border border-border">

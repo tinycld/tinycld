@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/syscfg"
 )
 
 // RegisterOrgInfoEndpoint serves the deployment's branding to the client,
@@ -19,10 +21,23 @@ func RegisterOrgInfoEndpoint(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/api/org-info", func(re *core.RequestEvent) error {
 			logoURL, logoCrop := orgLogo(app)
-			return re.JSON(http.StatusOK, map[string]string{
-				"name":     app.Settings().Meta.AppName,
-				"logoUrl":  logoURL,
-				"logoCrop": logoCrop,
+			// managedSettings names the system-settings key namespaces this
+			// deployment does not administer, so the client can hide the
+			// settings screens and help topics that would edit them. It is the
+			// namespace NAMES only — never a value — which is why it is safe on
+			// this unauthenticated endpoint, and why it is here rather than in
+			// the injected page config: a native client connects to a server it
+			// only learns about at runtime, so this cannot be a build constant.
+			// Empty on a standalone deployment, where nothing is managed.
+			managed := syscfg.ManagedPrefixes()
+			if managed == nil {
+				managed = []string{}
+			}
+			return re.JSON(http.StatusOK, map[string]any{
+				"name":            app.Settings().Meta.AppName,
+				"logoUrl":         logoURL,
+				"logoCrop":        logoCrop,
+				"managedSettings": managed,
 			})
 		})
 		return e.Next()

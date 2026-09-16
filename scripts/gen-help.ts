@@ -3,6 +3,15 @@ export interface Frontmatter {
     summary: string
     tags: string[]
     order: number | null
+    /**
+     * The system_settings namespace this topic documents (e.g. `mail.`).
+     *
+     * A topic that explains how to configure a setting is wrong on a deployment
+     * whose operator owns that setting — it walks the reader to a screen that
+     * is not there. Declaring the namespace hides the topic exactly where the
+     * matching settings panel is hidden. Omit it and the topic always shows.
+     */
+    keyPrefix: string | null
     body: string
 }
 
@@ -10,13 +19,14 @@ export interface Frontmatter {
 export function parseFrontmatter(raw: string): Frontmatter {
     const match = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
     if (!match) {
-        return { title: '', summary: '', tags: [], order: null, body: raw }
+        return { title: '', summary: '', tags: [], order: null, keyPrefix: null, body: raw }
     }
     const [, head, body] = match
     let title = ''
     let summary = ''
     let tags: string[] = []
     let order: number | null = null
+    let keyPrefix: string | null = null
     for (const line of head.split('\n')) {
         const kv = line.match(/^(\w+):\s*(.*)$/)
         if (!kv) continue
@@ -26,8 +36,9 @@ export function parseFrontmatter(raw: string): Frontmatter {
         else if (key === 'summary') summary = stripQuotes(val)
         else if (key === 'order') order = val === '' ? null : Number(val)
         else if (key === 'tags') tags = parseInlineArray(val)
+        else if (key === 'keyPrefix') keyPrefix = val === '' ? null : stripQuotes(val)
     }
-    return { title, summary, tags, order, body }
+    return { title, summary, tags, order, keyPrefix, body }
 }
 
 function stripQuotes(s: string): string {
@@ -65,6 +76,7 @@ export function buildHelpSource(groups: HelpGroupInput[]): string {
         '    title: string',
         '    summary: string',
         '    tags: string[]',
+        '    keyPrefix?: string',
         '    body: string',
         '}',
         '',
@@ -97,6 +109,9 @@ export function buildHelpSource(groups: HelpGroupInput[]): string {
                 title: t.frontmatter.title,
                 summary: t.frontmatter.summary,
                 tags: t.frontmatter.tags,
+                // Emitted only when declared, so a topic that opts out stays
+                // byte-identical to what it generated before.
+                ...(t.frontmatter.keyPrefix ? { keyPrefix: t.frontmatter.keyPrefix } : {}),
                 body: t.frontmatter.body,
             }
             lines.push(`            ${JSON.stringify(entry)},`)

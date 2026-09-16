@@ -3,6 +3,7 @@ package coreserver
 import (
 	"net/http"
 	"testing"
+	"tinycld.org/core/syscfg"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
@@ -102,6 +103,79 @@ func TestOrgInfoServesUploadedLogo(t *testing.T) {
 			`"logoCrop":"{\"x\":0.5,\"y\":0.5,\"zoom\":1}"`,
 		},
 		TestAppFactory: func(_ testing.TB) *tests.TestApp { return app },
+	}
+	scenario.DisableTestAppCleanup = true
+	scenario.Test(t)
+}
+
+// secretfulProvider owns namespaces AND holds real values, so the test can
+// assert the endpoint publishes the namespace names without ever publishing
+// what is in them.
+type secretfulProvider struct{}
+
+func (secretfulProvider) Get(key string) string {
+	return map[string]string{
+		"vapid.private_key":          "PRIVATE-KEY-MUST-NOT-LEAK",
+		"mail.postmark_server_token": "TOKEN-MUST-NOT-LEAK",
+	}[key]
+}
+func (secretfulProvider) ManagedPrefixes() []string {
+	return []string{"sentry.", "vapid.", "mail."}
+}
+
+// The client needs to know WHICH settings it does not administer, so it can hide
+// the screens that would edit them. It must never learn their values from this
+// endpoint — org-info is unauthenticated and served before login.
+func TestOrgInfoPublishesManagedNamespacesNeverValues(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+
+	syscfg.SetProvider(secretfulProvider{})
+	t.Cleanup(syscfg.ResetForTesting)
+
+	RegisterOrgInfoEndpoint(app)
+
+	scenario := &tests.ApiScenario{
+		Name:           "org-info publishes managed namespaces",
+		Method:         http.MethodGet,
+		URL:            "/api/org-info",
+		ExpectedStatus: http.StatusOK,
+		ExpectedContent: []string{
+			`"managedSettings"`, `"sentry."`, `"vapid."`, `"mail."`,
+		},
+		NotExpectedContent: []string{
+			"PRIVATE-KEY-MUST-NOT-LEAK", "TOKEN-MUST-NOT-LEAK",
+		},
+		TestAppFactory: func(_ testing.TB) *tests.TestApp { return app },
+	}
+	scenario.DisableTestAppCleanup = true
+	scenario.Test(t)
+}
+
+// A standalone deployment administers everything, so the list is present and
+// empty — the client must be able to tell "nothing is managed" apart from a
+// response that predates this field.
+func TestOrgInfoManagedSettingsEmptyWhenStandalone(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+
+	syscfg.ResetForTesting()
+	t.Cleanup(syscfg.ResetForTesting)
+	RegisterOrgInfoEndpoint(app)
+
+	scenario := &tests.ApiScenario{
+		Name:            "standalone org-info",
+		Method:          http.MethodGet,
+		URL:             "/api/org-info",
+		ExpectedStatus:  http.StatusOK,
+		ExpectedContent: []string{`"managedSettings":[]`},
+		TestAppFactory:  func(_ testing.TB) *tests.TestApp { return app },
 	}
 	scenario.DisableTestAppCleanup = true
 	scenario.Test(t)

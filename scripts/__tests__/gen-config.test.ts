@@ -65,6 +65,52 @@ describe('buildConfigSource', () => {
         expect(src).toContain('export type MergedPackageSchema = Record<string, never>')
     })
 
+    it('emits keyPrefix on a systemSettings panel that declares one', () => {
+        const withPrefix: ConfigPkg = {
+            ...takeout,
+            systemSettings: [
+                {
+                    slug: 'provider',
+                    label: 'Provider',
+                    component: 'system-settings/provider',
+                    keyPrefix: 'mail.',
+                },
+            ],
+        }
+        expect(buildConfigSource([withPrefix])).toContain('keyPrefix: "mail."')
+    })
+
+    it('omits keyPrefix entirely when a panel does not declare one', () => {
+        const noPrefix: ConfigPkg = {
+            ...takeout,
+            systemSettings: [
+                { slug: 'provider', label: 'Provider', component: 'system-settings/provider' },
+            ],
+        }
+        // A package that opts out must generate exactly what it did before.
+        expect(buildConfigSource([noPrefix])).not.toContain('keyPrefix')
+    })
+
+    // Mail declares the slug `provider` in BOTH trees: the system panel picks
+    // the provider, the org panel manages domains. Only the system one may
+    // carry a prefix — emitting one here would hide the org panel with it.
+    it('never emits keyPrefix on an org-scoped settings panel', () => {
+        const orgScoped = {
+            ...takeout,
+            settings: [
+                {
+                    slug: 'provider',
+                    label: 'Domains',
+                    component: 'settings/provider',
+                    keyPrefix: 'mail.',
+                },
+            ],
+        } as unknown as ConfigPkg
+        const src = buildConfigSource([orgScoped])
+        expect(src).toContain('label: "Domains"')
+        expect(src).not.toContain('keyPrefix')
+    })
+
     it('emits systemSettings as a lazy-loaded array (system-scoped panels)', () => {
         const withSystem: ConfigPkg = {
             ...takeout,

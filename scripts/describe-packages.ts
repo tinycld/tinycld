@@ -35,6 +35,7 @@ export function manifestToConfigPkg(packageName: string, manifest: PackageManife
             slug: s.slug,
             label: s.label,
             component: s.component,
+            keyPrefix: s.keyPrefix,
         })),
         slots,
         sidebarContributions: (manifest.sidebarContributions ?? []).map(c => ({

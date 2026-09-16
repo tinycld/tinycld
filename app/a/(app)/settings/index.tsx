@@ -6,6 +6,7 @@ import {
 } from '@tinycld/core/lib/packages/derive-components'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
+import { isManagedPrefix, useManagedSettingPrefixes } from '@tinycld/core/lib/use-managed-settings'
 import { useSavedServers } from '@tinycld/core/lib/use-saved-servers'
 import { useRouter } from 'expo-router'
 import {
@@ -165,46 +166,66 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
 // settings/system/<pkgSlug>/<panelSlug> — a separate tree from the org-scoped
 // packageSettings above, because a package may declare the same slug in both
 // (mail declares `provider` twice) and one route could not address both.
+// The three core system screens, each tagged with the system_settings namespace
+// it edits. The tag is what lets a deployment whose operator owns that namespace
+// hide the screen: it could not save there, because those values never reach
+// this deployment's database.
+const CORE_SYSTEM_LINKS = [
+    {
+        label: 'Error Reporting',
+        route: 'settings/error-reporting',
+        keyPrefix: 'sentry.',
+        Icon: Bug,
+    },
+    { label: 'Web Push', route: 'settings/web-push', keyPrefix: 'vapid.', Icon: Bell },
+    { label: 'Mail Sending', route: 'settings/mail-sending', keyPrefix: 'mail.', Icon: Send },
+] as const
+
 function SystemSettings({ isVisible }: { isVisible: boolean }) {
     const foregroundColor = useThemeColor('foreground')
     const orgHref = useOrgHref()
     const router = useRouter()
+    const managed = useManagedSettingPrefixes()
 
-    if (!isVisible) return null
+    const coreLinks = CORE_SYSTEM_LINKS.filter(link => !isManagedPrefix(managed, link.keyPrefix))
+    // A package panel is hidden by the namespace ITS OWN manifest declares, so
+    // core filters it without knowing which package it belongs to. A panel that
+    // declares no namespace is never hidden.
+    const packagePanels = packageSystemSettings.flatMap(group =>
+        group.panels
+            .filter(panel => !isManagedPrefix(managed, panel.keyPrefix))
+            .map(panel => ({ group, panel }))
+    )
+
+    // With every entry managed there is nothing left to administer here, and a
+    // bare "System" heading over an empty list is the dead end this group would
+    // otherwise become.
+    if (!isVisible || coreLinks.length + packagePanels.length === 0) return null
 
     return (
         <SettingsGroup label="System">
-            <SettingsLink
-                label="Error Reporting"
-                onPress={() => router.push(orgHref('settings/error-reporting'))}
-                icon={<Bug size={20} color={foregroundColor} />}
-            />
-            <SettingsLink
-                label="Web Push"
-                onPress={() => router.push(orgHref('settings/web-push'))}
-                icon={<Bell size={20} color={foregroundColor} />}
-            />
-            <SettingsLink
-                label="Mail Sending"
-                onPress={() => router.push(orgHref('settings/mail-sending'))}
-                icon={<Send size={20} color={foregroundColor} />}
-            />
-            {packageSystemSettings.map(group =>
-                group.panels.map(panel => (
-                    <SettingsLink
-                        key={`${group.pkgSlug}:${panel.slug}`}
-                        label={`${group.packageName} — ${panel.label}`}
-                        onPress={() =>
-                            router.push(
-                                orgHref('settings/system/[...section]', {
-                                    section: [group.pkgSlug, panel.slug],
-                                })
-                            )
-                        }
-                        icon={<Sliders size={20} color={foregroundColor} />}
-                    />
-                ))
-            )}
+            {coreLinks.map(({ label, route, Icon }) => (
+                <SettingsLink
+                    key={route}
+                    label={label}
+                    onPress={() => router.push(orgHref(route))}
+                    icon={<Icon size={20} color={foregroundColor} />}
+                />
+            ))}
+            {packagePanels.map(({ group, panel }) => (
+                <SettingsLink
+                    key={`${group.pkgSlug}:${panel.slug}`}
+                    label={`${group.packageName} — ${panel.label}`}
+                    onPress={() =>
+                        router.push(
+                            orgHref('settings/system/[...section]', {
+                                section: [group.pkgSlug, panel.slug],
+                            })
+                        )
+                    }
+                    icon={<Sliders size={20} color={foregroundColor} />}
+                />
+            ))}
         </SettingsGroup>
     )
 }

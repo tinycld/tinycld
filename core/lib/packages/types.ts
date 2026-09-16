@@ -60,6 +60,19 @@ export interface PackageManifest {
         slug: string
         component: string
         label: string
+        /**
+         * The system-settings key namespace this panel edits, dotted and
+         * trailing-dot terminated (e.g. `'mail.'`).
+         *
+         * Declaring it lets the app hide this panel on a deployment whose
+         * operator owns those values — the panel could not save there, because
+         * the values never reach this deployment's database. Core matches on the
+         * namespace rather than on the package, which is what lets it hide a
+         * package's panel without knowing the package exists.
+         *
+         * Omit it and the panel is never hidden.
+         */
+        keyPrefix?: string
     }[]
 
     /**

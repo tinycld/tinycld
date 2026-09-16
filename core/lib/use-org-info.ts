@@ -29,28 +29,41 @@ export async function fetchOrgInfo(): Promise<{
     name: string
     logoUrl: string
     logoCrop: string
+    managedSettings: string[]
 }> {
     const addr = getResolvedAddress()
-    if (!addr) return { name: '', logoUrl: '', logoCrop: '' }
+    if (!addr) return { name: '', logoUrl: '', logoCrop: '', managedSettings: [] }
     const res = await fetch(`${addr}/api/org-info`, { cache: 'no-store' })
-    if (!res.ok) return { name: '', logoUrl: '', logoCrop: '' }
+    if (!res.ok) return { name: '', logoUrl: '', logoCrop: '', managedSettings: [] }
     const body = (await res.json()) as Partial<{
         name: string
         logoUrl: string
         logoCrop: string
+        managedSettings: string[]
     }>
     return {
         name: body.name ?? '',
         logoUrl: body.logoUrl ?? '',
         logoCrop: body.logoCrop ?? '',
+        // A server that predates this field sends nothing, which reads the same
+        // as a standalone deployment: nothing is managed, so nothing is hidden.
+        // Failing open is right here — hiding a settings screen because a fetch
+        // blipped would be a worse outcome than showing one that saves nothing.
+        managedSettings: Array.isArray(body.managedSettings) ? body.managedSettings : [],
     }
 }
+
+// A stable empty list, so `managedSettings` keeps its identity across renders
+// while the query is pending. A fresh `[]` each render would defeat every
+// useMemo keyed on it — including the help filter's, which recomputes over every
+// topic body.
+const NO_MANAGED_SETTINGS: string[] = []
 
 export function useOrgInfo() {
     // Branding changes only when an operator renames the deployment, so cache
     // it for the session; a transient fetch blip renders the same fallbacks as
     // "no branding".
-    const { data } = useQuery({
+    const { data, isPending } = useQuery({
         queryKey: ORG_INFO_QUERY_KEY,
         queryFn: fetchOrgInfo,
         staleTime: Number.POSITIVE_INFINITY,
@@ -71,5 +84,13 @@ export function useOrgInfo() {
               logoCrop: data?.logoCrop ?? '',
           }
         : null
-    return { org }
+    // Deliberately outside `org`: that is null until the deployment has a name,
+    // and whether a setting is administered here has nothing to do with branding.
+    //
+    // isPending is exposed because "we do not know yet" is NOT the same as
+    // "nothing is managed". A screen that renders an editable form during the
+    // pending window lets a hosted owner act on it before the managed banner
+    // arrives; callers that gate on it wait instead.
+    const managedSettings = data?.managedSettings ?? NO_MANAGED_SETTINGS
+    return { org, managedSettings, isManagedSettingsPending: isPending }
 }

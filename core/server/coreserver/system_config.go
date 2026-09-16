@@ -5,8 +5,10 @@ import (
 	"sync"
 
 	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/mailer"
+	"tinycld.org/core/syscfg"
 )
 
 // SystemConfig is the single source of truth for system-wide configuration —
@@ -41,28 +43,6 @@ func (c *SystemConfig) Get(key string) string {
 	return c.values[key]
 }
 
-// PublicValues returns a copy of every NON-secret key→value pair. This is the
-// only set of values allowed to be injected into the web HTML. Secret values
-// (tokens, the VAPID private key, IMAP password) are never included here.
-//
-// NOTE: this gates HTML INJECTION only. It is NOT a confidentiality boundary for
-// the secret values themselves — those still live in the admin-readable
-// system_settings collection, so an admin's client reads them over the wire
-// (the admin UI just renders them write-only). The trust boundary is "super
-// admin"; "secret" here means "never embedded in the public page served to every
-// visitor".
-func (c *SystemConfig) PublicValues() map[string]string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	out := make(map[string]string)
-	for k, v := range c.values {
-		if !c.secret[k] {
-			out[k] = v
-		}
-	}
-	return out
-}
-
 // publicValue returns the value for key ONLY if it is non-secret; a secret (or
 // unset) key returns "". Per-key gate for the HTML injector so a single
 // whitelisted key can't leak even if a row were mis-flagged.
@@ -73,6 +53,17 @@ func (c *SystemConfig) publicValue(key string) string {
 		return ""
 	}
 	return c.values[key]
+}
+
+// isSecret reports whether a LOCALLY STORED row for key is flagged secret. A
+// key with no local row is not secret by omission — it simply isn't ours to
+// judge, which is the case for every value a supervisor supplies. Callers that
+// publish anything must therefore establish publishability by whitelist and use
+// this only to honour a local row's flag.
+func (c *SystemConfig) isSecret(key string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.secret[key]
 }
 
 // OnChange registers a callback fired whenever a key's value changes (via the
@@ -130,17 +121,46 @@ func (c *SystemConfig) set(key, value string, isSecret bool) {
 	}
 }
 
+// refuseManagedWrite rejects a write to any key a supervising composition owns.
+// A package-level function, not a closure, so tests bind exactly what production
+// binds — a copy in a test would keep passing after this guard was deleted.
+//
+// Bound on the MODEL-level hooks, which fire for app.Save() as well as for a
+// request. The request hooks alone left every in-process writer unguarded —
+// upsertSystemSetting in vapid_admin.go is one, and any future one would inherit
+// no protection at all. A hand-placed check at each call site is not a boundary;
+// this is.
+func refuseManagedWrite(e *core.RecordEvent) error {
+	if syscfg.IsManaged(e.Record.GetString("key")) {
+		return apis.NewForbiddenError(
+			"This setting is managed by your hosting provider and cannot be changed here.", nil)
+	}
+	return e.Next()
+}
+
 // RegisterSystemConfig constructs the system config lifecycle: load all values
 // once the server starts, init the consumers that depend on them, and keep the
 // in-memory map in sync as rows are created or updated. Edits take effect without
 // a restart — re-init handlers registered via OnChange run on each change.
 func RegisterSystemConfig(app *pocketbase.PocketBase) {
-	// Point the core transactional mailer at system config. The resolver reads
-	// lazily (per-send), so it's safe to set here before the OnServe load —
-	// Get returns "" until then, and sends only happen well after boot. This is
-	// the single seam that keeps the mailer out of an import cycle with this
-	// package (mailer can't import coreserver).
-	mailer.ConfigResolver = systemConfig.Get
+	// Point the syscfg seam at this collection, and the mailer at the seam.
+	// The resolver reads lazily (per-send), so it's safe to set here before the
+	// OnServe load — Get returns "" until then, and sends only happen well
+	// after boot.
+	//
+	// SetResolver is inert once a supervising composition has claimed the seam,
+	// so this cannot hand administration back to a deployment whose operator
+	// owns these values. Called unconditionally because the claim, not the
+	// caller, is what decides.
+	//
+	// Do NOT reintroduce a "does it manage anything" check here. A supervisor
+	// whose config failed to load claims the seam managing nothing yet, and
+	// treating that as unclaimed would silently restore the org's own
+	// collection — the precise fallback the supervisor exists to prevent.
+	syscfg.SetResolver(systemConfig.Get)
+	// syscfg, not systemConfig.Get, is what keeps the mailer out of an import
+	// cycle with this package (mailer can't import coreserver).
+	mailer.ConfigResolver = syscfg.Get
 
 	// Re-init Sentry whenever a sentry.* value changes. Registered before the
 	// initial load so no early change is missed. Sentry is the only stateful
@@ -148,7 +168,7 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	// so both pick up changes via Get without a re-init handler.
 	systemConfig.OnChange(func(key, _ string) {
 		if strings.HasPrefix(key, "sentry.") {
-			initSentryFromConfig(systemConfig)
+			initSentryFromConfig()
 		}
 	})
 
@@ -158,9 +178,28 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	// bound (RegisterSentry); this supplies the client the middleware reports to.
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		systemConfig.load(app)
-		initSentryFromConfig(systemConfig)
+		initSentryFromConfig()
 		return e.Next()
 	})
+
+	// Refuse writes to keys a supervising composition owns.
+	//
+	// Without this the hidden UI would be the only thing stopping a write, and
+	// hiding a form is not access control: the collection's rules authorize any
+	// owner or admin, and a PB superuser bypasses them entirely — and every
+	// deployment has its own superusers. Worse, a permitted write would be
+	// SILENTLY INERT, because reads resolve through syscfg and would never look
+	// at the stored row: the form would save, report success, and change
+	// nothing. Refusing is both safer and more honest.
+	//
+	// On the create/update/delete hooks rather than the *Success ones below:
+	// this must run before the row is persisted, not react to it afterwards.
+	app.OnRecordCreate("system_settings").BindFunc(refuseManagedWrite)
+	app.OnRecordUpdate("system_settings").BindFunc(refuseManagedWrite)
+	// Delete too: removing a managed row cannot unmanage the value (reads never
+	// consult the row) but it would desynchronize the collection from what the
+	// deployment actually runs on, which is how a confusing support case starts.
+	app.OnRecordDelete("system_settings").BindFunc(refuseManagedWrite)
 
 	syncRow := func(e *core.RecordEvent) error {
 		systemConfig.set(

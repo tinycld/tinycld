@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"tinycld.org/core/syscfg"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
@@ -148,19 +149,29 @@ func TestSystemConfigRecordHooksSync(t *testing.T) {
 	}
 }
 
-// PublicValues exposes non-secret keys and withholds secret ones — the gate that
-// keeps tokens/private keys out of anything sent to a client.
-func TestSystemConfigPublicValues(t *testing.T) {
+// isSecret reports a locally-stored row's flag — the second gate before a
+// whitelisted key is injected into the page. It speaks only for rows THIS
+// deployment stores; see publicConfigScript for why the whitelist, not this
+// flag, is what actually keeps the page safe.
+func TestSystemConfigIsSecret(t *testing.T) {
 	cfg := &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
 	cfg.set("sentry.dsn", "https://public.dsn", false)
 	cfg.set("sentry.auth_token", "secret-token", true)
 
-	pub := cfg.PublicValues()
-	if pub["sentry.dsn"] != "https://public.dsn" {
-		t.Errorf("non-secret value missing from PublicValues: %v", pub)
+	// isSecret is the gate publishableValue consults before injecting a
+	// whitelisted key into the page.
+	if cfg.isSecret("sentry.dsn") {
+		t.Error("a non-secret row was reported secret; its value would be withheld from the page")
 	}
-	if _, present := pub["sentry.auth_token"]; present {
-		t.Error("secret value must NOT appear in PublicValues")
+	if !cfg.isSecret("sentry.auth_token") {
+		t.Error("a secret row was not reported secret; were it ever whitelisted it would reach the page")
+	}
+	// A key with no local row — every value a supervisor supplies — is not
+	// secret by omission. It is not ours to judge, which is exactly why the
+	// whitelist in publicConfigScript, not this flag, is what keeps the page
+	// safe.
+	if cfg.isSecret("vapid.private_key") {
+		t.Error("a key with no local row should not be reported secret")
 	}
 }
 
@@ -170,6 +181,11 @@ func TestInjectPublicConfig(t *testing.T) {
 	prev := systemConfig
 	t.Cleanup(func() { systemConfig = prev })
 	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	// The injector resolves values through the syscfg seam, so point it at the
+	// config this test drives.
+	syscfg.ResetForTesting()
+	syscfg.SetResolver(systemConfig.Get)
+	t.Cleanup(syscfg.ResetForTesting)
 	systemConfig.set("sentry.dsn", "https://abc@o1.ingest.sentry.io/1", false)
 	systemConfig.set("sentry.auth_token", "super-secret", true)
 
@@ -261,6 +277,11 @@ func TestInjectPublicConfigPublishesVapidPublicKey(t *testing.T) {
 	prev := systemConfig
 	t.Cleanup(func() { systemConfig = prev })
 	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	// The injector resolves values through the syscfg seam, so point it at the
+	// config this test drives.
+	syscfg.ResetForTesting()
+	syscfg.SetResolver(systemConfig.Get)
+	t.Cleanup(syscfg.ResetForTesting)
 	systemConfig.set("vapid.public_key", "BPublicKey123", false)
 	systemConfig.set("vapid.private_key", "PrivateKeyNeverLeak", true)
 
@@ -287,5 +308,81 @@ func TestInjectPublicConfigSkipsSecretVapidPublicKey(t *testing.T) {
 
 	if out := string(injectPublicConfig([]byte("<head></head>"))); out != "<head></head>" {
 		t.Errorf("a secret-flagged vapid.public_key must not be injected, got %q", out)
+	}
+}
+
+// managedProvider is a supervising composition's provider: it owns the listed
+// namespaces and supplies their values from memory, never from a row here.
+type managedProvider struct{ prefixes []string }
+
+func (managedProvider) Get(string) string           { return "" }
+func (m managedProvider) ManagedPrefixes() []string { return m.prefixes }
+
+// updateSetting saves through app.Save — deliberately the LOWEST-level write
+// path. The guard is bound on the model hooks, which fire here; binding only the
+// request hooks would leave this path (and every other in-process writer) open,
+// so this is the case worth asserting.
+func updateSetting(t *testing.T, app core.App, rec *core.Record, value string) error {
+	t.Helper()
+	rec.Set("value", value)
+	return app.Save(rec)
+}
+
+// A deployment must not edit a value its operator owns. Hiding the UI is not
+// enough: the collection's rules authorize any owner or admin, a superuser
+// bypasses them, and — because reads resolve through syscfg — a permitted write
+// would be silently inert rather than effective.
+func TestManagedKeysRefuseWrites(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+	createSystemSettingsCollection(t, app)
+
+	prev := systemConfig
+	t.Cleanup(func() { systemConfig = prev })
+	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+
+	managed := saveSetting(t, app, "mail.provider", "postmark")
+	ownKey := saveSetting(t, app, "storage_limit_bytes", "100")
+
+	// Bind the REAL guard RegisterSystemConfig installs, not a copy of it.
+	app.OnRecordUpdate("system_settings").BindFunc(refuseManagedWrite)
+
+	syscfg.SetProvider(managedProvider{prefixes: []string{"mail.", "vapid.", "sentry."}})
+	t.Cleanup(syscfg.ResetForTesting)
+
+	if err := updateSetting(t, app, managed, "smtp"); err == nil {
+		t.Error("a write to a managed key was permitted; it must be refused")
+	}
+	// A key outside every managed namespace stays this deployment's own.
+	if err := updateSetting(t, app, ownKey, "200"); err != nil {
+		t.Errorf("a write to an unmanaged key was refused: %v", err)
+	}
+}
+
+// The same collection stays fully editable where nothing is managed — the
+// standalone guarantee.
+func TestUnmanagedDeploymentKeepsWritingEverySetting(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+	createSystemSettingsCollection(t, app)
+
+	prev := systemConfig
+	t.Cleanup(func() { systemConfig = prev })
+	systemConfig = &SystemConfig{values: map[string]string{}, secret: map[string]bool{}}
+	syscfg.ResetForTesting()
+	syscfg.SetResolver(systemConfig.Get)
+	t.Cleanup(syscfg.ResetForTesting)
+
+	app.OnRecordUpdate("system_settings").BindFunc(refuseManagedWrite)
+
+	rec := saveSetting(t, app, "mail.provider", "postmark")
+	if err := updateSetting(t, app, rec, "smtp"); err != nil {
+		t.Errorf("standalone deployment could not edit its own mail settings: %v", err)
 	}
 }

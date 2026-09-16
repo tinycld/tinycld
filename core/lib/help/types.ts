@@ -7,6 +7,12 @@ export interface HelpTopic {
     title: string
     summary: string
     tags: string[]
+    /**
+     * System-settings namespace this topic documents, when it documents one.
+     * Topics whose namespace is administered elsewhere are hidden: the screen
+     * they describe is not present on this deployment.
+     */
+    keyPrefix?: string
     body: string
 }
 
