@@ -306,7 +306,11 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 	// system_settings collection into the in-memory SystemConfig once the DB is
 	// ready and keeps it in sync on edits, so subsystems read current values
 	// without env vars and stateful ones (Sentry) re-init on change. In a
-	// tenant this reads the org's own DB, so creds are per-org.
+	// tenant this reads the org's own DB, so creds are per-org — UNLESS a
+	// supervising composition claimed the syscfg seam first, in which case
+	// those values are the operator's and this deployment's writes to them
+	// are refused. Shared (not Register's tail) because the refusal matters
+	// most in the tenant: it is the composition that has an operator.
 	RegisterSystemConfig(app)
 }
 

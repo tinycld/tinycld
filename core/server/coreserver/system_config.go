@@ -5,8 +5,10 @@ import (
 	"sync"
 
 	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/mailer"
+	"tinycld.org/core/syscfg"
 )
 
 // SystemConfig is the single source of truth for system-wide configuration —
@@ -75,6 +77,17 @@ func (c *SystemConfig) publicValue(key string) string {
 	return c.values[key]
 }
 
+// isSecret reports whether a LOCALLY STORED row for key is flagged secret. A
+// key with no local row is not secret by omission — it simply isn't ours to
+// judge, which is the case for every value a supervisor supplies. Callers that
+// publish anything must therefore establish publishability by whitelist and use
+// this only to honour a local row's flag.
+func (c *SystemConfig) isSecret(key string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.secret[key]
+}
+
 // OnChange registers a callback fired whenever a key's value changes (via the
 // system_settings record hooks). Used by stateful consumers that must re-init —
 // e.g. Sentry re-runs sentry.Init on a sentry.* change. Consumers that read
@@ -130,17 +143,38 @@ func (c *SystemConfig) set(key, value string, isSecret bool) {
 	}
 }
 
+// refuseManagedWrite rejects a write to any key a supervising composition owns.
+// A package-level function, not a closure, so tests bind exactly what production
+// binds — a copy in a test would keep passing after this guard was deleted.
+func refuseManagedWrite(e *core.RecordRequestEvent) error {
+	if syscfg.IsManaged(e.Record.GetString("key")) {
+		return apis.NewForbiddenError(
+			"This setting is managed by your hosting provider and cannot be changed here.", nil)
+	}
+	return e.Next()
+}
+
 // RegisterSystemConfig constructs the system config lifecycle: load all values
 // once the server starts, init the consumers that depend on them, and keep the
 // in-memory map in sync as rows are created or updated. Edits take effect without
 // a restart — re-init handlers registered via OnChange run on each change.
 func RegisterSystemConfig(app *pocketbase.PocketBase) {
-	// Point the core transactional mailer at system config. The resolver reads
-	// lazily (per-send), so it's safe to set here before the OnServe load —
-	// Get returns "" until then, and sends only happen well after boot. This is
-	// the single seam that keeps the mailer out of an import cycle with this
-	// package (mailer can't import coreserver).
-	mailer.ConfigResolver = systemConfig.Get
+	// Point the syscfg seam at this collection, and the mailer at the seam.
+	// The resolver reads lazily (per-send), so it's safe to set here before the
+	// OnServe load — Get returns "" until then, and sends only happen well
+	// after boot.
+	//
+	// Only when nothing has claimed the seam already: a supervising composition
+	// installs its own provider before any package registers, and it owns these
+	// values precisely because this deployment must not. Overwriting it here
+	// would hand administration back to the deployment — silently, since reads
+	// would still succeed against its own (empty) collection.
+	if len(syscfg.ManagedPrefixes()) == 0 {
+		syscfg.SetResolver(systemConfig.Get)
+	}
+	// syscfg, not systemConfig.Get, is what keeps the mailer out of an import
+	// cycle with this package (mailer can't import coreserver).
+	mailer.ConfigResolver = syscfg.Get
 
 	// Re-init Sentry whenever a sentry.* value changes. Registered before the
 	// initial load so no early change is missed. Sentry is the only stateful
@@ -148,7 +182,7 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	// so both pick up changes via Get without a re-init handler.
 	systemConfig.OnChange(func(key, _ string) {
 		if strings.HasPrefix(key, "sentry.") {
-			initSentryFromConfig(systemConfig)
+			initSentryFromConfig()
 		}
 	})
 
@@ -158,9 +192,28 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	// bound (RegisterSentry); this supplies the client the middleware reports to.
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		systemConfig.load(app)
-		initSentryFromConfig(systemConfig)
+		initSentryFromConfig()
 		return e.Next()
 	})
+
+	// Refuse writes to keys a supervising composition owns.
+	//
+	// Without this the hidden UI would be the only thing stopping a write, and
+	// hiding a form is not access control: the collection's rules authorize any
+	// owner or admin, and a PB superuser bypasses them entirely — and every
+	// deployment has its own superusers. Worse, a permitted write would be
+	// SILENTLY INERT, because reads resolve through syscfg and would never look
+	// at the stored row: the form would save, report success, and change
+	// nothing. Refusing is both safer and more honest.
+	//
+	// On *Request hooks rather than the *Success hooks below: this must run
+	// before the row is persisted, not react to it afterwards.
+	app.OnRecordCreateRequest("system_settings").BindFunc(refuseManagedWrite)
+	app.OnRecordUpdateRequest("system_settings").BindFunc(refuseManagedWrite)
+	// Delete too: removing a managed row cannot unmanage the value (reads never
+	// consult the row) but it would desynchronize the collection from what the
+	// deployment actually runs on, which is how a confusing support case starts.
+	app.OnRecordDeleteRequest("system_settings").BindFunc(refuseManagedWrite)
 
 	syncRow := func(e *core.RecordEvent) error {
 		systemConfig.set(

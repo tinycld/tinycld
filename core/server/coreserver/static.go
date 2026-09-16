@@ -17,6 +17,8 @@ import (
 	"tinycld.org/core/embedpolicy"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/syscfg"
 )
 
 // publicConfigScript builds the inline <script> that publishes NON-secret system
@@ -44,10 +46,10 @@ func publicConfigScript() string {
 	// is stored is_secret=false. The private key is never whitelisted here.
 	const vapidPublicKeyKey = "vapid.public_key"
 	out := map[string]string{}
-	if v := systemConfig.publicValue(sentryDSNKey); v != "" {
+	if v := publishableValue(sentryDSNKey); v != "" {
 		out["sentryDsn"] = v
 	}
-	if v := systemConfig.publicValue(vapidPublicKeyKey); v != "" {
+	if v := publishableValue(vapidPublicKeyKey); v != "" {
 		out["vapidPublicKey"] = v
 	}
 	if len(out) == 0 {
@@ -60,6 +62,30 @@ func publicConfigScript() string {
 	// Defense-in-depth against early tag termination from a "</script>" substring.
 	safe := bytes.ReplaceAll(payload, []byte("</"), []byte("<\\/"))
 	return "<script>window.__TINYCLD_PUBLIC_CONFIG__=" + string(safe) + "</script>"
+}
+
+// publishableValue resolves a whitelisted key for injection into the page.
+//
+// Values are read through syscfg so that a deployment whose operator owns these
+// services publishes THEIR values — a supervisor keeps them in memory and never
+// writes a row here, so reading the collection would publish nothing and the
+// browser would silently lose Sentry and web push.
+//
+// That bypasses publicValue's is_secret gate, which can only speak for rows this
+// deployment stores. The gate is replaced, not dropped: only the two constants
+// above ever reach this function, both public by construction (a Sentry DSN is
+// embedded in every page by design; the VAPID PUBLIC key is what the browser
+// must pass to pushManager.subscribe()). A locally-stored row is still checked,
+// so a row mis-flagged is_secret=true is still withheld.
+//
+// The rule for anyone adding a key here: it must be publishable on its face.
+// Never widen this to a loop over provider values — that is how a private key
+// ends up in the page.
+func publishableValue(key string) string {
+	if systemConfig.isSecret(key) {
+		return ""
+	}
+	return syscfg.Get(key)
 }
 
 // injectPublicConfig inserts the public-config <script> just before </head> in

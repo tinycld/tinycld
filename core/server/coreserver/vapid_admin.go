@@ -8,6 +8,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/push"
+	"tinycld.org/core/syscfg"
 )
 
 // RegisterVapidAdminEndpoints exposes "generate a VAPID keypair" for the /admin
@@ -32,6 +33,15 @@ func RegisterVapidAdminEndpoints(app *pocketbase.PocketBase) {
 // returns ONLY the public key. Split out so it's unit-testable against a
 // tests.TestApp without standing up the router.
 func handleGenerateVapid(app core.App, re *core.RequestEvent) error {
+	// Where a supervising composition owns web push, the keypair is theirs and
+	// is shared by every deployment they run — minting a new one here would both
+	// be overwritten at the next config push and, if it were not, invalidate
+	// every existing browser subscription. The record hook below already refuses
+	// the write; refusing here too gives the caller a reason rather than an
+	// opaque save failure.
+	if syscfg.IsManaged("vapid.public_key") {
+		return re.ForbiddenError("Web push is configured by your hosting provider.", nil)
+	}
 	privateKey, publicKey, err := push.GenerateVAPIDKeys()
 	if err != nil {
 		return re.InternalServerError("Failed to generate VAPID keys", err)

@@ -8,21 +8,10 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/logging"
+	"tinycld.org/core/syscfg"
 )
 
 var log = logging.ForPackage("push")
-
-// systemSetting reads a value from the system_settings collection — the
-// system-wide config store (the same one coreserver.SystemConfig loads). push
-// reads it directly from the app (not via coreserver) to avoid an import cycle;
-// VAPID keys are needed per-send and rarely, so a direct lookup is fine.
-func systemSetting(app core.App, key string) string {
-	rec, err := app.FindFirstRecordByFilter("system_settings", "key = {:key}", map[string]any{"key": key})
-	if err != nil {
-		return ""
-	}
-	return rec.GetString("value")
-}
 
 // GenerateVAPIDKeys mints a fresh VAPID keypair (ECDSA P-256, base64url). The
 // public key derives from the private, so they must be generated together — this
@@ -66,9 +55,14 @@ func SendToUser(app core.App, userID string, payload Payload) {
 		return
 	}
 
-	vapidPublicKey := systemSetting(app, "vapid.public_key")
-	vapidPrivateKey := systemSetting(app, "vapid.private_key")
-	vapidSubject := systemSetting(app, "vapid.subject")
+	// Read through syscfg, never the system_settings collection directly: where
+	// a supervising composition owns web push, the keys live in that supervisor's
+	// memory and were never written to this deployment's database. A direct
+	// lookup would find nothing, and every send would sign with an empty key —
+	// silently, since a push failure is only logged.
+	vapidPublicKey := syscfg.Get("vapid.public_key")
+	vapidPrivateKey := syscfg.Get("vapid.private_key")
+	vapidSubject := syscfg.Get("vapid.subject")
 	if vapidSubject == "" {
 		vapidSubject = "mailto:admin@tinycld.com"
 	}
