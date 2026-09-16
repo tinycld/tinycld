@@ -35,6 +35,22 @@ const serverListLimit = 100
 // server than the account being managed yields a deployment where sending
 // works and domain verification silently does not, with no error naming the
 // mismatch. Deriving one from the other makes that unrepresentable.
+//
+// # Construct this ONLY from a router/supervisor composition, never inside a tenant
+//
+// NewTokenResolver requires the account token in-process to call GetServers.
+// On a hosting deployment that token authenticates every domain on the
+// account, not just this org's, so a tenant process holding it is a
+// cross-tenant credential leak — the exact leak hosting/syscfg's
+// TenantSyscfg filter exists to close (see hosting/cmd/serve-router/hooks.go's
+// resolveServerToken, which is the one legitimate caller today). Do not wire
+// this from coreserver's wireMailDomains or any other code path that runs
+// inside a tenant: that composition only ever legitimately holds the SERVER
+// token (syscfg's "mail.postmark_server_token", already filtered/derived
+// upstream), never the account token, and reading
+// syscfg.Get("mail.postmark_account_token") tenant-side will simply return
+// empty on a hosted deployment — which looks like a bug to debug rather than
+// the boundary working as intended.
 type TokenResolver struct {
 	accountToken    string
 	configuredToken string
@@ -47,6 +63,10 @@ type TokenResolver struct {
 
 // NewTokenResolver builds a resolver. configuredServerToken, when non-empty,
 // short-circuits derivation entirely.
+//
+// Call this only from a router/supervisor composition that legitimately holds
+// the account token — see the "Construct this ONLY..." note on TokenResolver
+// above.
 func NewTokenResolver(accountToken, configuredServerToken, serverName string, client PostmarkServers) *TokenResolver {
 	return &TokenResolver{
 		accountToken:    strings.TrimSpace(accountToken),
