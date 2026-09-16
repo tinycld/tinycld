@@ -69,7 +69,12 @@ export function HelpDrawer() {
                     </View>
                 </DrawerHeader>
                 <DrawerBody>
-                    <DrawerBodyContent mode={mode} topic={topic} pkgSlug={pkgSlug} />
+                    <DrawerBodyContent
+                        mode={mode}
+                        topicId={topicId}
+                        topic={topic}
+                        pkgSlug={pkgSlug}
+                    />
                 </DrawerBody>
                 <DrawerFooter>
                     <Pressable onPress={onReadAll} accessibilityRole="link">
@@ -85,16 +90,30 @@ export function HelpDrawer() {
 
 interface BodyProps {
     mode: 'topic' | 'package'
+    /** The requested id, so an unresolved topic can be told from none at all. */
+    topicId: string | null
     topic: ReturnType<typeof useHelpTopic>
     pkgSlug: string | null
 }
 
-function DrawerBodyContent({ mode, topic, pkgSlug }: BodyProps) {
+function DrawerBodyContent({ mode, topicId, topic, pkgSlug }: BodyProps) {
     if (mode === 'package' && pkgSlug) {
         return <PackageTopicList pkgSlug={pkgSlug} />
     }
     if (topic) {
         return <HelpTopicView topic={topic} showTitle={false} />
+    }
+    // A topic WAS asked for but did not resolve — it documents a setting this
+    // deployment does not administer, so it is filtered out. Saying "none
+    // selected" here would be a lie the reader cannot act on; a link from
+    // another topic is the usual way to arrive.
+    if (topicId) {
+        return (
+            <Text className="text-sm text-muted-foreground">
+                That topic covers a setting your hosting provider manages, so it does not apply to
+                this deployment.
+            </Text>
+        )
     }
     return <Text className="text-sm text-muted-foreground">No help topic selected.</Text>
 }
