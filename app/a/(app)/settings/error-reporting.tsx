@@ -3,7 +3,11 @@ import { SystemSettingsScreen } from '@tinycld/core/components/settings/system/S
 
 export default function ErrorReportingSettings() {
     return (
-        <SystemSettingsScreen title="Error Reporting" testID="settings-section-error-reporting">
+        <SystemSettingsScreen
+            title="Error Reporting"
+            testID="settings-section-error-reporting"
+            keyPrefix="sentry."
+        >
             <SentryPanel />
         </SystemSettingsScreen>
     )

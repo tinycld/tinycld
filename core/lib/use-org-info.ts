@@ -29,20 +29,27 @@ export async function fetchOrgInfo(): Promise<{
     name: string
     logoUrl: string
     logoCrop: string
+    managedSettings: string[]
 }> {
     const addr = getResolvedAddress()
-    if (!addr) return { name: '', logoUrl: '', logoCrop: '' }
+    if (!addr) return { name: '', logoUrl: '', logoCrop: '', managedSettings: [] }
     const res = await fetch(`${addr}/api/org-info`, { cache: 'no-store' })
-    if (!res.ok) return { name: '', logoUrl: '', logoCrop: '' }
+    if (!res.ok) return { name: '', logoUrl: '', logoCrop: '', managedSettings: [] }
     const body = (await res.json()) as Partial<{
         name: string
         logoUrl: string
         logoCrop: string
+        managedSettings: string[]
     }>
     return {
         name: body.name ?? '',
         logoUrl: body.logoUrl ?? '',
         logoCrop: body.logoCrop ?? '',
+        // A server that predates this field sends nothing, which reads the same
+        // as a standalone deployment: nothing is managed, so nothing is hidden.
+        // Failing open is right here — hiding a settings screen because a fetch
+        // blipped would be a worse outcome than showing one that saves nothing.
+        managedSettings: Array.isArray(body.managedSettings) ? body.managedSettings : [],
     }
 }
 
@@ -71,5 +78,8 @@ export function useOrgInfo() {
               logoCrop: data?.logoCrop ?? '',
           }
         : null
-    return { org }
+    // Deliberately outside `org`: that is null until the deployment has a name,
+    // and whether a setting is administered here has nothing to do with branding.
+    const managedSettings = data?.managedSettings ?? []
+    return { org, managedSettings }
 }

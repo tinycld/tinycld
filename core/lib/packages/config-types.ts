@@ -45,6 +45,8 @@ export interface PackageSystemSettingsPanel {
     slug: string
     label: string
     Component: ComponentType | LazyExoticComponent<ComponentType>
+    /** System-settings namespace this panel edits; hidden where it is managed. */
+    keyPrefix?: string
 }
 export interface SidebarContribution {
     target: string

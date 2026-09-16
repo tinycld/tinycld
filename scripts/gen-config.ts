@@ -8,6 +8,7 @@ export interface ConfigSystemSettingsPanel {
     slug: string
     label: string
     component: string // subpath e.g. 'system-settings/provider'
+    keyPrefix?: string // system-settings namespace this panel edits, e.g. 'mail.'
 }
 
 export interface ConfigSidebarContribution {
@@ -96,6 +97,15 @@ function pushEventSourceLines(lines: string[], p: ConfigPkg): void {
     lines.push('        ],')
 }
 
+// One systemSettings entry. Extracted from buildConfigSource so that function
+// stays under the complexity ceiling, and so the keyPrefix rule lives in one
+// place: emitted only when the manifest declares it, leaving a panel that opts
+// out byte-identical to what it generated before.
+function systemSettingsPanelLine(packageName: string, s: ConfigSystemSettingsPanel): string {
+    const keyPrefix = s.keyPrefix ? `, keyPrefix: ${jsonLiteral(s.keyPrefix)}` : ''
+    return `            { slug: ${jsonLiteral(s.slug)}, label: ${jsonLiteral(s.label)}${keyPrefix}, Component: lazy(() => import('${packageName}/${s.component}')) },`
+}
+
 export function buildConfigSource(pkgs: ConfigPkg[]): string {
     for (const p of pkgs) {
         validateConfigPkg(p)
@@ -149,6 +159,12 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
         if (p.settings.length > 0) {
             lines.push('        settings: [')
             for (const s of p.settings) {
+                // No keyPrefix here, deliberately: these panels are ORG-scoped
+                // and stay editable wherever the deployment runs. Mail declares
+                // the slug `provider` in both trees — its system panel picks the
+                // provider (the operator's), its org panel manages domains (the
+                // org's). Emitting a prefix here would hide the second with the
+                // first.
                 lines.push(
                     `            { slug: ${jsonLiteral(s.slug)}, label: ${jsonLiteral(s.label)}, Component: lazy(() => import('${p.packageName}/${s.component}')) },`
                 )
@@ -158,9 +174,7 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
         if (p.systemSettings.length > 0) {
             lines.push('        systemSettings: [')
             for (const s of p.systemSettings) {
-                lines.push(
-                    `            { slug: ${jsonLiteral(s.slug)}, label: ${jsonLiteral(s.label)}, Component: lazy(() => import('${p.packageName}/${s.component}')) },`
-                )
+                lines.push(systemSettingsPanelLine(p.packageName, s))
             }
             lines.push('        ],')
         }

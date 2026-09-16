@@ -3,7 +3,11 @@ import { SystemSettingsScreen } from '@tinycld/core/components/settings/system/S
 
 export default function MailSendingSettings() {
     return (
-        <SystemSettingsScreen title="Mail Sending" testID="settings-section-mail-sending">
+        <SystemSettingsScreen
+            title="Mail Sending"
+            testID="settings-section-mail-sending"
+            keyPrefix="mail."
+        >
             <MailSendingPanel />
         </SystemSettingsScreen>
     )

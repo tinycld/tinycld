@@ -3,7 +3,11 @@ import { VapidPanel } from '@tinycld/core/components/settings/system/VapidPanel'
 
 export default function WebPushSettings() {
     return (
-        <SystemSettingsScreen title="Web Push" testID="settings-section-web-push">
+        <SystemSettingsScreen
+            title="Web Push"
+            testID="settings-section-web-push"
+            keyPrefix="vapid."
+        >
             <VapidPanel />
         </SystemSettingsScreen>
     )
