@@ -53,3 +53,18 @@ describe('pending vs unmanaged', () => {
         expect(isManagedPrefix([], 'vapid.')).toBe(isManagedPrefix([], 'mail.'))
     })
 })
+
+// An operator may manage only the provider CREDENTIALS, leaving the org its own
+// From address. The Mail Sending screen declares 'mail.', so it correctly stays
+// VISIBLE under that narrower set — the org still administers what it owns.
+describe('narrower-than-namespace prefixes', () => {
+    const credentialsOnly = ['mail.provider', 'mail.postmark_', 'mail.smtp_']
+
+    it('does not hide the whole mail namespace', () => {
+        expect(isManagedPrefix(credentialsOnly, 'mail.')).toBe(false)
+    })
+
+    it('still hides a panel scoped to a managed key', () => {
+        expect(isManagedPrefix(credentialsOnly, 'mail.postmark_server_token')).toBe(true)
+    })
+})
