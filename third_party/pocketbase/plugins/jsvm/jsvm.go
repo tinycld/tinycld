@@ -148,6 +148,19 @@ type Config struct {
 	// back to MigrationsDir, so path-based deployments are unaffected.
 	MigrationsFS fs.FS
 
+	// MigrationsList, when non-nil, receives the loaded migrations instead of
+	// the process-global core.AppMigrations.
+	//
+	// It exists for reading a DIFFERENT build's migrations without disturbing
+	// the running one. core.AppMigrations is process-global and has no remove,
+	// so loading a second set into it would permanently shadow the migrations
+	// this process actually booted with. A deploy that must run the INCOMING
+	// build's down migrations — the revert always executes before the new
+	// binary does — loads them into a private list and resolves against that.
+	//
+	// When nil the loader registers into core.AppMigrations exactly as before.
+	MigrationsList *core.MigrationsList
+
 	// TypesDir specifies the directory where to store the embedded
 	// TypeScript declarations file.
 	//
@@ -353,8 +366,12 @@ func (p *plugin) registerMigrations() error {
 				return runBudgeted(vm, budget, func() error { return fn(txApp) })
 			}
 		}
+		target := p.config.MigrationsList
+		if target == nil {
+			target = &core.AppMigrations
+		}
 		vm.Set("migrate", func(up, down func(txApp core.App) error) {
-			core.AppMigrations.Register(wrapMigration(up), wrapMigration(down), file)
+			target.Register(wrapMigration(up), wrapMigration(down), file)
 		})
 
 		if p.config.OnInit != nil {

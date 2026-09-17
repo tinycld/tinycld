@@ -141,9 +141,13 @@ func RegisteredOnly(files []string) []string { return registeredOnly(files) }
 // SubtractStrings returns the entries of a not present in b.
 func SubtractStrings(a, b []string) []string { return subtractStrings(a, b) }
 
-// SyncMigrations brings the database in line with the new package set.
-func SyncMigrations(app core.App, applied, newSet []string) (SyncResult, error) {
-	return syncMigrations(app, applied, newSet)
+// SyncMigrations brings the database in line with the new package set, running
+// the down migrations resolved by resolver — which should read the INCOMING
+// build's migrations, since a revert always runs before the new binary does
+// (see MigrationResolver). nil falls back to this process's own migrations,
+// which is the wrong source for any caller that CAN read the incoming build.
+func SyncMigrations(app core.App, applied, newSet []string, resolver MigrationResolver) (SyncResult, error) {
+	return syncMigrations(app, applied, newSet, resolver)
 }
 
 // LogSyncResult records a migration sync's outcome onto the job.
@@ -151,9 +155,11 @@ func LogSyncResult(job *installjob.Job, res SyncResult) { logSyncResult(job, res
 
 // DryRevertNamedMigrations reports what reverting these migrations WOULD drop,
 // without doing it — the gate that stops a version change silently destroying
-// data.
-func DryRevertNamedMigrations(app core.App, files []string) (DropReport, error) {
-	return dryRevertNamedMigrations(app, files)
+// data. resolver must be the one the real revert will use, or the report
+// describes a different revert than the one about to happen; nil means this
+// process's own migrations.
+func DryRevertNamedMigrations(app core.App, files []string, resolver MigrationResolver) (DropReport, error) {
+	return dryRevertNamedMigrations(app, files, resolver)
 }
 
 // RecoverLiveDBAfterExternalWrite re-bootstraps the live app's DB pools after

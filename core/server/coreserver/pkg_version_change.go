@@ -133,7 +133,13 @@ func handleDropReport(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 		}
 	}
 
-	report, err := dryRevertNamedMigrations(app, files)
+	// nil resolver — this runs BEFORE any build exists, so there is no incoming
+	// migration set to read. The report therefore predicts the drop using the
+	// running build's downs; the real revert will use the target build's. That
+	// is acceptable for a warning (the set of files is the same either way, and
+	// what a down DROPS rarely differs between versions of the same file) but it
+	// is why this report is advisory and the revert is authoritative.
+	report, err := dryRevertNamedMigrations(app, files, nil)
 	if err != nil {
 		return re.InternalServerError("Failed to compute drop report", err)
 	}

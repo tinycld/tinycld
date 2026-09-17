@@ -281,7 +281,20 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installjob.Job, m Re
 			if err != nil {
 				return SyncResult{}, err
 			}
-			res, err := syncMigrations(app, applied, newSet)
+			// Run the NEW build's down migrations, not this process's. The
+			// symlink swap (activateBuild) happens AFTER this step and only
+			// renames a path — the old binary is still executing here, so its
+			// core.AppMigrations holds the OUTGOING downs. A release that fixes
+			// a broken down migration would otherwise never be able to run it.
+			// sandboxed=false: a self-hosted deployment loads its own migrations
+			// unsandboxed (tinycld/server/main.go sets no Sandboxed flag), so the
+			// incoming downs must run with the capabilities the ups had.
+			incoming, err := LoadIncomingMigrations(buildMigrationsDir(bd), false, BuildJsvmOnInit(app))
+			if err != nil {
+				return SyncResult{}, err
+			}
+			jobLogf(job, "loaded %d down migration(s) from the incoming build (%s)", incoming.Len(), incoming.Dir())
+			res, err := syncMigrations(app, applied, newSet, incoming.Resolve)
 			if err != nil {
 				return res, err
 			}

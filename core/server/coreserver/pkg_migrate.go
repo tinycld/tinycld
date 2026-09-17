@@ -33,6 +33,60 @@ import (
 // See core/migrations_runner.go (Up/Down/saveAppliedMigration/saveRevertedMigration)
 // in the pinned PocketBase for the patterns mirrored here.
 
+// MigrationResolver maps a migration filename to the migration whose Up/Down
+// should run for it. It exists because core.AppMigrations is NOT the right
+// source for a REVERT, and the difference is load-bearing:
+//
+// core.AppMigrations is populated once, at process start, from the migrations
+// the RUNNING build carries. A revert, however, always runs in the OUTGOING
+// process — every deploy path reverts before the new binary is executing:
+//
+//   - self-hosted: rebuildWith is backup -> syncMig -> activate -> restart, and
+//     activateBuild only renames a symlink. The old binary is still the one
+//     running when the downs execute.
+//   - hosted: the tenant runs the downs and then waits to be killed; the
+//     replacement artifact only starts afterwards.
+//
+// So a Down resolved from core.AppMigrations is the OUTGOING build's Down. When
+// a release FIXES a broken down migration, that fix can never run its own
+// down — the only copy that executes is the broken one already in memory. It
+// fails silently, too: reverting proceeds, the _migrations row is deleted, and
+// the operation reports success while the schema change was never reverted.
+// (That is the bug behind the boards comment_mentions branch surviving an
+// uninstall: two corrected migrations were merged, and neither could run.)
+//
+// A caller that knows where the INCOMING build's migrations live therefore
+// supplies a resolver reading them from there. Callers that genuinely want the
+// running build's own migrations — applyNamedMigrations, whose Up belongs to
+// the build being installed, which IS this one — pass nil and get
+// pkgMigrationByFile.
+type MigrationResolver func(file string) (*core.Migration, bool)
+
+// resolveWith returns the resolver to use: the caller's, or the running
+// binary's global registry when none was supplied.
+//
+// A caller-supplied resolver is tried FIRST and the running binary SECOND. The
+// fallback is not a convenience — an uninstall depends on it. The incoming
+// build is by definition the one WITHOUT the removed package, so its
+// pb_migrations does not contain that package's files at all; only the
+// outgoing build still carries them. Preferring the incoming set gets the
+// corrected Down wherever the incoming build ships that file (the bug this
+// resolver exists to fix), while falling back keeps a departing package
+// revertable at all. Without the fallback every uninstall silently
+// reclassifies the package's migrations as unrevertable and leaves its
+// collections in place.
+func resolveWith(resolver MigrationResolver) MigrationResolver {
+	if resolver == nil {
+		return pkgMigrationByFile
+	}
+	return func(file string) (*core.Migration, bool) {
+		if m, ok := resolver(file); ok {
+			return m, true
+		}
+		return pkgMigrationByFile(file)
+	}
+}
+
 // pkgMigrationByFile returns the registered migration with the given filename.
 func pkgMigrationByFile(file string) (*core.Migration, bool) {
 	for _, m := range core.AppMigrations.Items() {
@@ -130,7 +184,11 @@ func applyNamedMigrations(app core.App, files []string) ([]string, error) {
 // deleting each from the _migrations table. Mirrors MigrationsRunner.Down over a
 // named subset. An applied file with no registered migration is an error — we
 // never silently drop a history row while leaving its schema behind.
-func revertNamedMigrations(app core.App, files []string) ([]string, error) {
+//
+// resolver decides WHICH build's Down runs; see MigrationResolver for why that
+// is not simply core.AppMigrations. Pass nil for the running binary's registry.
+func revertNamedMigrations(app core.App, files []string, resolver MigrationResolver) ([]string, error) {
+	resolve := resolveWith(resolver)
 	ordered := sortedCopy(files)
 	// descending: revert newest first
 	for i, j := 0, len(ordered)-1; i < j; i, j = i+1, j-1 {
@@ -148,14 +206,30 @@ func revertNamedMigrations(app core.App, files []string) ([]string, error) {
 				if !applied {
 					continue // nothing to revert for this file
 				}
-				m, ok := pkgMigrationByFile(file)
+				m, ok := resolve(file)
 				if !ok {
 					return fmt.Errorf("revert: migration %q is not registered", file)
 				}
-				if m.Down != nil {
-					if downErr := m.Down(txApp); downErr != nil {
-						return fmt.Errorf("revert migration %s: %w", file, downErr)
-					}
+				// A nil Down cannot revert anything, so deleting its history row
+				// would assert a revert that never happened: the schema stays, the
+				// row says otherwise, and a later reinstall skips the Up because
+				// history claims it was never applied. Refuse instead of recording
+				// a lie.
+				//
+				// Reachable in principle: upstream PocketBase's own Go migrations
+				// register nil Downs (e.g. migrations/1778828400_normalize_indexes.go).
+				// They do not reach here in practice — they are .go files, so a
+				// resolver reading a build's pb_migrations never resolves them, and
+				// the nil-resolver callers are dry-run drop reports whose file sets
+				// come from a package's pb-migrations listing rather than from
+				// _migrations. Every JS migration in the ecosystem registers a
+				// callable down. So this is a tripwire for a future migration that
+				// ships without one, not a live path.
+				if m.Down == nil {
+					return fmt.Errorf("revert: migration %q has no down function — its schema change cannot be reverted", file)
+				}
+				if downErr := m.Down(txApp); downErr != nil {
+					return fmt.Errorf("revert migration %s: %w", file, downErr)
 				}
 				if delErr := deleteMigrationRow(txApp, file); delErr != nil {
 					return delErr
@@ -228,7 +302,11 @@ var errDryRollback = errors.New("pkg_migrate: dry-run rollback")
 // Diffing the whole collection set (rather than only slug-prefixed collections)
 // keeps the report correct for packages whose collections don't share a naming
 // prefix — we compare the actual before/after worlds.
-func dryRevertNamedMigrations(app core.App, files []string) (DropReport, error) {
+//
+// resolver must be the SAME one the real revert will use, or the report
+// describes a revert that is not the one about to run.
+func dryRevertNamedMigrations(app core.App, files []string, resolver MigrationResolver) (DropReport, error) {
+	resolve := resolveWith(resolver)
 	var report DropReport
 
 	ordered := sortedCopy(files)
@@ -251,14 +329,18 @@ func dryRevertNamedMigrations(app core.App, files []string) (DropReport, error) 
 				if !applied {
 					continue
 				}
-				m, ok := pkgMigrationByFile(file)
+				m, ok := resolve(file)
 				if !ok {
 					return fmt.Errorf("dry-revert: migration %q is not registered", file)
 				}
-				if m.Down != nil {
-					if downErr := m.Down(txApp); downErr != nil {
-						return fmt.Errorf("dry-revert migration %s: %w", file, downErr)
-					}
+				// Mirrors the real revert's refusal, so the drop report surfaces
+				// an unrevertable migration at report time rather than letting the
+				// operator confirm a downgrade that will then abort.
+				if m.Down == nil {
+					return fmt.Errorf("dry-revert: migration %q has no down function — its schema change cannot be reverted", file)
+				}
+				if downErr := m.Down(txApp); downErr != nil {
+					return fmt.Errorf("dry-revert migration %s: %w", file, downErr)
 				}
 			}
 

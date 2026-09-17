@@ -240,7 +240,18 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 		failRevert("migrate", err)
 		return
 	}
-	syncRes, err := syncMigrations(app, applied, newSet)
+	// The retained build we are reverting TO owns the downs that run here — the
+	// symlink still points at the outgoing build at this point, so this
+	// process's own migrations are the wrong set (see MigrationResolver).
+	// sandboxed=false — see rebuild.go's syncMig.
+	incoming, err := LoadIncomingMigrations(buildMigrationsDir(filepath.Join(stateBuildsDir(), targetID)), false, BuildJsvmOnInit(app))
+	if err != nil {
+		restoreAndRecover()
+		failRevert("migrate", err)
+		return
+	}
+	jobLogf(job, "loaded %d down migration(s) from the target build (%s)", incoming.Len(), incoming.Dir())
+	syncRes, err := syncMigrations(app, applied, newSet, incoming.Resolve)
 	if err != nil {
 		restoreAndRecover()
 		failRevert("migrate", err)

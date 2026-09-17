@@ -92,7 +92,7 @@ func TestSyncMigrations_RevertsDroppedSet(t *testing.T) {
 
 	// The new build drops addFieldFile — sync must revert exactly that one.
 	newSet := []string{createFile}
-	res, err := syncMigrations(app, applied, newSet)
+	res, err := syncMigrations(app, applied, newSet, nil)
 	if err != nil {
 		t.Fatalf("syncMigrations: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestSyncMigrations_RevertsDroppedSet(t *testing.T) {
 func TestSyncMigrations_NoChange(t *testing.T) {
 	app := newMigrateTestApp(t)
 	set := []string{"100_a.js", "200_b.js"}
-	res, err := syncMigrations(app, set, set)
+	res, err := syncMigrations(app, set, set, nil)
 	if err != nil {
 		t.Fatalf("syncMigrations: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestSyncMigrations_SkipsUnregisteredDrop(t *testing.T) {
 	// SKIPPED, not error — mirroring core's compiled-in Go migrations.
 	applied := []string{"100_core.go", "200_pkg.js"}
 	newSet := []string{"200_pkg.js"} // 100_core.go "dropped" but unregistered
-	res, err := syncMigrations(app, applied, newSet)
+	res, err := syncMigrations(app, applied, newSet, nil)
 	if err != nil {
 		t.Fatalf("syncMigrations should skip unregistered drops, got: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestSyncMigrations_SkipsUnregisteredDrop(t *testing.T) {
 func TestSyncMigrations_RefusesEmptyNewSet(t *testing.T) {
 	app := newMigrateTestApp(t)
 	applied := []string{"100_a.js", "200_b.js"}
-	if _, err := syncMigrations(app, applied, nil); err == nil {
+	if _, err := syncMigrations(app, applied, nil, nil); err == nil {
 		t.Fatal("expected error: empty newSet with applied migrations must not revert everything")
 	}
 }
