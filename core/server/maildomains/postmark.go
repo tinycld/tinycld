@@ -105,6 +105,20 @@ func (p *PostmarkRegistrar) GetDomain(ctx context.Context, domain string, provid
 			}
 			return nil, fmt.Errorf("postmark get domain: %w", err)
 		}
+		// The id is an ACCOUNT-GLOBAL handle, not proof of ownership. On a
+		// hosted deployment one Postmark account is shared by every org, so an
+		// id supplied by a caller may name ANOTHER org's domain — and the
+		// response carries that domain's name, DKIM public key and return-path
+		// host. Requiring the fetched name to match the requested one demotes
+		// the id from a capability to a cache key: it can only ever speed up a
+		// lookup the caller could already perform by name.
+		//
+		// This check must live HERE, below the seam, rather than in the caller:
+		// the tenant that supplies the id is exactly the party a caller-side
+		// check would be trusting.
+		if !strings.EqualFold(details.Name, domain) {
+			return nil, fmt.Errorf("%w: %s", ErrDomainNotEnrolled, domain)
+		}
 		return toDomainRecords(details), nil
 	}
 	return p.findByName(ctx, domain)

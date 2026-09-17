@@ -3,6 +3,7 @@ package maildomains
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/mrz1836/postmark"
@@ -174,5 +175,89 @@ func TestGetDomainStaleIDIsNotEnrolled(t *testing.T) {
 
 	if _, err := r.GetDomain(context.Background(), "acme.com", 999); !errors.Is(err, ErrDomainNotEnrolled) {
 		t.Fatalf("err = %v, want ErrDomainNotEnrolled for a stale id", err)
+	}
+}
+
+// A provider id is an account-global handle, and on a shared hosting account
+// it may name a DIFFERENT org's domain. GetDomain must refuse to hand back a
+// domain whose name is not the one the caller asked for, because the caller
+// supplying the id is exactly the party that would be attacking.
+//
+// This is the cross-tenant disclosure this check exists to stop: without the
+// name comparison the victim's DKIMHost / DKIMTextValue / return-path host
+// come back to the attacker verbatim.
+func TestGetDomainByIDRejectsMismatchedName(t *testing.T) {
+	f := &fakeDomains{details: map[int64]postmark.DomainDetails{
+		// The VICTIM's domain, enrolled by another org on the shared account.
+		42: {
+			ID: 42, Name: "victim.example",
+			DKIMHost: "20260916._domainkey.victim.example", DKIMTextValue: "k=rsa;p=VICTIMKEY",
+			ReturnPathDomain: "pm-bounces.victim.example", ReturnPathDomainCNAMEValue: "pm.mtasv.net",
+			DKIMVerified: true, SPFVerified: true, ReturnPathDomainVerified: true,
+		},
+	}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	// The attacker owns attacker.example and points its stored id at 42.
+	rec, err := r.GetDomain(context.Background(), "attacker.example", 42)
+
+	if !errors.Is(err, ErrDomainNotEnrolled) {
+		t.Fatalf("err = %v, want ErrDomainNotEnrolled for an id naming another domain", err)
+	}
+	if rec != nil {
+		t.Fatalf("rec = %+v, want nil — no records may cross the tenant boundary", rec)
+	}
+	// The error text must name the REQUESTED domain, never the victim's.
+	if strings.Contains(err.Error(), "victim.example") {
+		t.Errorf("error %q leaks the victim's domain name", err)
+	}
+}
+
+// Belt-and-braces on the same defect, asserting on the DATA rather than the
+// error: a mismatch must not surface the victim's DNS records under any
+// field, since those are what an attacker iterating ids is harvesting.
+func TestGetDomainByIDMismatchLeaksNoRecords(t *testing.T) {
+	f := &fakeDomains{details: map[int64]postmark.DomainDetails{
+		42: {
+			ID: 42, Name: "victim.example",
+			DKIMHost: "20260916._domainkey.victim.example", DKIMTextValue: "k=rsa;p=VICTIMKEY",
+			ReturnPathDomain: "pm-bounces.victim.example",
+		},
+	}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	rec, err := r.GetDomain(context.Background(), "attacker.example", 42)
+	if err == nil {
+		t.Fatal("GetDomain returned no error for a mismatched id")
+	}
+	if rec == nil {
+		return
+	}
+	for name, got := range map[string]string{
+		"Domain":           rec.Domain,
+		"DKIMHost":         rec.DKIMHost,
+		"DKIMTextValue":    rec.DKIMTextValue,
+		"ReturnPathDomain": rec.ReturnPathDomain,
+	} {
+		if got != "" {
+			t.Errorf("rec.%s = %q, want empty — the victim's records must not cross orgs", name, got)
+		}
+	}
+}
+
+// Case is not ownership: Postmark normalises names, so a stored id whose name
+// differs only in case is still the caller's own domain and must resolve.
+func TestGetDomainByIDMatchesCaseInsensitively(t *testing.T) {
+	f := &fakeDomains{details: map[int64]postmark.DomainDetails{
+		7: {ID: 7, Name: "Acme.COM", DKIMVerified: true},
+	}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	rec, err := r.GetDomain(context.Background(), "acme.com", 7)
+	if err != nil {
+		t.Fatalf("GetDomain: %v", err)
+	}
+	if rec.ID != 7 {
+		t.Fatalf("rec.ID = %d, want 7", rec.ID)
 	}
 }
