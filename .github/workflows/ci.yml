@@ -81,6 +81,15 @@ jobs:
       - name: Install (workspace root)
         working-directory: ws
         run: corepack enable && pnpm install --no-frozen-lockfile --store-dir=.pnpm-store
+      # All three jobs share ONE setup-go cache key (same go.sum files), and a
+      # key is written once, by whichever job finishes first — this one. The
+      # install above pulls only the ~48 modules schema generation needs, so
+      # without this step it saves a partial module cache that the Go jobs then
+      # top up from proxy.golang.org on every run, failing on any proxy error.
+      # Download the full set so the cache is complete no matter who saves it.
+      - name: Go mod download
+        working-directory: ws/tinycld/server
+        run: go mod download
       - name: Check (lint + typecheck + unit)
         working-directory: ws/tinycld
         run: pnpm exec tinycld-pkg check
