@@ -47,7 +47,7 @@ func TestAddDomainReturnsRecords(t *testing.T) {
 		DKIMHost: "20260916._domainkey.acme.com", DKIMTextValue: "k=rsa;p=MIIB",
 		ReturnPathDomain: "pm-bounces.acme.com", ReturnPathDomainCNAMEValue: "pm.mtasv.net",
 	}}
-	r := NewPostmarkRegistrar("acct", f)
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
 
 	rec, err := r.AddDomain(context.Background(), "acme.com")
 	if err != nil {
@@ -69,7 +69,7 @@ func TestAddDomainReturnsRecords(t *testing.T) {
 // the UI can phrase, not an opaque 422.
 func TestAddDomainDuplicateIsDistinct(t *testing.T) {
 	f := &fakeDomains{createErr: postmark.APIError{ErrorCode: 504, Message: "A domain with this name already exists."}}
-	r := NewPostmarkRegistrar("acct", f)
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
 
 	if _, err := r.AddDomain(context.Background(), "acme.com"); !errors.Is(err, ErrDomainAlreadyEnrolled) {
 		t.Fatalf("err = %v, want ErrDomainAlreadyEnrolled", err)
@@ -81,7 +81,7 @@ func TestGetDomainFindsByName(t *testing.T) {
 		list:    []postmark.Domain{{ID: 7, Name: "acme.com"}},
 		details: map[int64]postmark.DomainDetails{7: {ID: 7, Name: "acme.com", SPFVerified: true, DKIMVerified: true}},
 	}
-	r := NewPostmarkRegistrar("acct", f)
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
 
 	rec, err := r.GetDomain(context.Background(), "acme.com", 0)
 	if err != nil {
@@ -98,7 +98,7 @@ func TestGetDomainMatchesCaseInsensitively(t *testing.T) {
 		list:    []postmark.Domain{{ID: 7, Name: "acme.com"}},
 		details: map[int64]postmark.DomainDetails{7: {ID: 7, Name: "acme.com"}},
 	}
-	r := NewPostmarkRegistrar("acct", f)
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
 
 	if _, err := r.GetDomain(context.Background(), "ACME.com", 0); err != nil {
 		t.Fatalf("GetDomain: %v", err)
@@ -108,7 +108,7 @@ func TestGetDomainMatchesCaseInsensitively(t *testing.T) {
 // A domain the account has never heard of is its own error: the caller shows
 // "not enrolled", which is actionable, rather than "lookup failed".
 func TestGetDomainUnknownIsDistinct(t *testing.T) {
-	r := NewPostmarkRegistrar("acct", &fakeDomains{})
+	r := NewPostmarkRegistrar(StaticToken("acct"), &fakeDomains{})
 
 	if _, err := r.GetDomain(context.Background(), "nope.com", 0); !errors.Is(err, ErrDomainNotEnrolled) {
 		t.Fatalf("err = %v, want ErrDomainNotEnrolled", err)
@@ -116,7 +116,7 @@ func TestGetDomainUnknownIsDistinct(t *testing.T) {
 }
 
 func TestNoAccountTokenIsNotConfigured(t *testing.T) {
-	r := NewPostmarkRegistrar("", &fakeDomains{})
+	r := NewPostmarkRegistrar(StaticToken(""), &fakeDomains{})
 
 	if _, err := r.AddDomain(context.Background(), "acme.com"); !errors.Is(err, ErrNotConfigured) {
 		t.Fatalf("err = %v, want ErrNotConfigured", err)
@@ -130,7 +130,7 @@ func TestGetDomainByIDSkipsListing(t *testing.T) {
 	f := &fakeDomains{details: map[int64]postmark.DomainDetails{
 		7: {ID: 7, Name: "acme.com", DKIMVerified: true},
 	}}
-	r := NewPostmarkRegistrar("acct", f)
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
 
 	rec, err := r.GetDomain(context.Background(), "acme.com", 7)
 	if err != nil {
@@ -151,7 +151,7 @@ func TestGetDomainZeroIDFallsBackToScan(t *testing.T) {
 		list:    []postmark.Domain{{ID: 7, Name: "acme.com"}},
 		details: map[int64]postmark.DomainDetails{7: {ID: 7, Name: "acme.com"}},
 	}
-	r := NewPostmarkRegistrar("acct", f)
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
 
 	rec, err := r.GetDomain(context.Background(), "acme.com", 0)
 	if err != nil {
@@ -168,7 +168,7 @@ func TestGetDomainZeroIDFallsBackToScan(t *testing.T) {
 // A stored id that Postmark no longer knows (the domain was deleted in their
 // dashboard) must read as not-enrolled, not as an opaque API error.
 func TestGetDomainStaleIDIsNotEnrolled(t *testing.T) {
-	r := NewPostmarkRegistrar("acct", &fakeDomains{getErr: postmark.APIError{
+	r := NewPostmarkRegistrar(StaticToken("acct"), &fakeDomains{getErr: postmark.APIError{
 		ErrorCode: 701, Message: "The domain does not exist.",
 	}})
 

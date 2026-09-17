@@ -38,8 +38,13 @@ var ErrNotConfigured = errors.New("maildomains: no registrar configured")
 // of the delegating implementation, so everything on it crosses a process
 // boundary into a tenant that must not be trusted with the account token.
 type DomainRecords struct {
-	Domain               string `json:"domain"`
-	ID                   int64  `json:"id"`
+	Domain string `json:"domain"`
+	ID     int64  `json:"id"`
+	// SPFVerified is DEPRECATED by postmark@v1.9.0: Postmark no longer asks
+	// senders to publish an SPF record, so this is expected to stay false on
+	// every domain going forward. It is carried here for wire compatibility
+	// (existing callers/consumers of this struct) and for any non-Postmark
+	// provider that might still report it meaningfully.
 	SPFVerified          bool   `json:"spf_verified"`
 	DKIMVerified         bool   `json:"dkim_verified"`
 	ReturnPathVerified   bool   `json:"return_path_verified"`
