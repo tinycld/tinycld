@@ -72,7 +72,13 @@ func logSyncResult(job *installjob.Job, res SyncResult) {
 // unregistered file from DOWN rather than error on it. (A genuine package
 // downgrade's reverted migrations ARE registered — the running binary still has
 // their Down closures — so they pass the filter.)
-func syncMigrations(app core.App, applied, newSet []string) (SyncResult, error) {
+//
+// resolver supplies the Down closures (see MigrationResolver): the correct
+// source is the INCOMING build's migrations, not the running process's, because
+// the revert always happens before the new binary executes. Pass nil to use the
+// running binary's registry — correct only when there is no incoming build to
+// read from.
+func syncMigrations(app core.App, applied, newSet []string, resolver MigrationResolver) (SyncResult, error) {
 	// A real build always carries core's migrations, so an empty newSet means the
 	// build dir's pb_migrations wasn't populated (generator didn't run / wrong
 	// path). Treat it as a build failure — NOT a signal to revert every applied
@@ -81,13 +87,16 @@ func syncMigrations(app core.App, applied, newSet []string) (SyncResult, error) 
 		return SyncResult{}, fmt.Errorf("new build carries no migrations (empty pb_migrations) — refusing to revert %d applied migrations", len(applied))
 	}
 	candidates := migrationsToRevert(applied, newSet)
-	down := registeredOnly(candidates)
-	skipped := unregisteredOnly(candidates)
+	// Resolvability is judged against the SAME resolver that will run the downs,
+	// so a migration the incoming build can revert is not skipped merely because
+	// the outgoing binary lacks it, and vice versa.
+	down := registeredOnlyWith(candidates, resolver)
+	skipped := unregisteredOnlyWith(candidates, resolver)
 	up := migrationsToApply(applied, newSet)
 
 	var reverted []string
 	if len(down) > 0 {
-		r, err := revertNamedMigrations(app, down)
+		r, err := revertNamedMigrations(app, down, resolver)
 		if err != nil {
 			return SyncResult{Reverted: r, Pending: up, SkippedUnregistered: skipped}, err
 		}
@@ -208,10 +217,14 @@ func packageCollectionsPresent(app core.App, slug string) ([]string, error) {
 // unregisteredOnly is the complement of registeredOnly: the files NOT resolvable
 // in the running binary's core.AppMigrations. For an uninstall these are the
 // dropped package's migrations whose Down can't run — diagnostic only.
-func unregisteredOnly(files []string) []string {
+func unregisteredOnly(files []string) []string { return unregisteredOnlyWith(files, nil) }
+
+// unregisteredOnlyWith is unregisteredOnly against a specific resolver.
+func unregisteredOnlyWith(files []string, resolver MigrationResolver) []string {
+	resolve := resolveWith(resolver)
 	var out []string
 	for _, f := range files {
-		if _, ok := pkgMigrationByFile(f); !ok {
+		if _, ok := resolve(f); !ok {
 			out = append(out, f)
 		}
 	}
@@ -221,20 +234,32 @@ func unregisteredOnly(files []string) []string {
 // registeredOnly keeps only the migration files registered in the running
 // binary (core.AppMigrations via pkgMigrationByFile). Unregistered files can't
 // be reverted by this binary and are not this operation's concern.
-func registeredOnly(files []string) []string {
+func registeredOnly(files []string) []string { return registeredOnlyWith(files, nil) }
+
+// registeredOnlyWith is registeredOnly against a specific resolver — the
+// incoming build's migration set, when the caller can read it.
+func registeredOnlyWith(files []string, resolver MigrationResolver) []string {
+	resolve := resolveWith(resolver)
 	out := files[:0:0]
 	for _, f := range files {
-		if _, ok := pkgMigrationByFile(f); ok {
+		if _, ok := resolve(f); ok {
 			out = append(out, f)
 		}
 	}
 	return out
 }
 
+// buildMigrationsDir is where a built workspace keeps its JS migrations. Both
+// the new-set listing and the incoming-migration load must agree on this path,
+// so it has exactly one definition.
+func buildMigrationsDir(buildDir string) string {
+	return filepath.Join(buildDir, "tinycld", "server", "pb_migrations")
+}
+
 // buildMigrationFiles returns the sorted *.js migration filenames a built
 // workspace carries, read from <buildDir>/tinycld/server/pb_migrations.
 func buildMigrationFiles(buildDir string) ([]string, error) {
-	migDir := filepath.Join(buildDir, "tinycld", "server", "pb_migrations")
+	migDir := buildMigrationsDir(buildDir)
 	entries, err := os.ReadDir(migDir)
 	if err != nil {
 		return nil, err

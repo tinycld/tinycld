@@ -130,7 +130,7 @@ func TestApplyAndRevertNamedMigrations(t *testing.T) {
 	}
 
 	// Revert both — collection gone, both rows removed.
-	reverted, err := revertNamedMigrations(app, files)
+	reverted, err := revertNamedMigrations(app, files, nil)
 	if err != nil {
 		t.Fatalf("revertNamedMigrations: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestRevertOnlyNamedLeavesOthersUntouched(t *testing.T) {
 
 	// Revert ONLY mail, even though drive's migration is newer (the case where a
 	// count-based `down 1` would wrongly hit drive).
-	if _, err := revertNamedMigrations(app, []string{mailFile}); err != nil {
+	if _, err := revertNamedMigrations(app, []string{mailFile}, nil); err != nil {
 		t.Fatalf("revert mail only: %v", err)
 	}
 
@@ -272,7 +272,7 @@ func TestDryRevertReportsDropsWithoutCommitting(t *testing.T) {
 	}
 
 	// Dry-revert the color field + the whole dropCol (keep keepCol itself).
-	report, err := dryRevertNamedMigrations(app, []string{addColorFile, dropColFile})
+	report, err := dryRevertNamedMigrations(app, []string{addColorFile, dropColFile}, nil)
 	if err != nil {
 		t.Fatalf("dryRevertNamedMigrations: %v", err)
 	}
