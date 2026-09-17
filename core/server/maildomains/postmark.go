@@ -31,22 +31,53 @@ type PostmarkDomains interface {
 	GetDomain(ctx context.Context, domainID int64) (postmark.DomainDetails, error)
 }
 
-// PostmarkRegistrar is the DIRECT implementation: it holds the account token
-// and calls Postmark in-process. This is the standalone path, where the
-// deployment legitimately owns its own account.
+// PostmarkRegistrar is the DIRECT implementation: it calls Postmark
+// in-process, authenticated with the account token its accessor returns.
+// This is the standalone path, where the deployment legitimately owns its
+// own account.
 type PostmarkRegistrar struct {
-	accountToken string
+	// accountToken is read PER CALL, not captured at construction. At the
+	// production call site (coreserver.wireMailDomains) construction happens
+	// synchronously inside RegisterSystemConfig, before systemConfig.load(app)
+	// has run in the later OnServe hook — so a value captured once here would
+	// be permanently "" and every call would return ErrNotConfigured forever,
+	// even after the settings row loads. Reading it lazily on each call is the
+	// same pattern syscfg itself documents (system_config.go: "resolver reads
+	// lazily... so it's safe to set here before the OnServe load") and matches
+	// how mailer already reads syscfg per-send rather than once at wiring
+	// time. It also means a later operator edit to the token takes effect
+	// immediately, with no re-wiring required.
+	accountToken func() string
 	client       PostmarkDomains
 }
 
-// NewPostmarkRegistrar builds the direct registrar. An empty accountToken
-// yields one that reports ErrNotConfigured rather than failing at the API.
-func NewPostmarkRegistrar(accountToken string, client PostmarkDomains) *PostmarkRegistrar {
-	return &PostmarkRegistrar{accountToken: strings.TrimSpace(accountToken), client: client}
+// NewPostmarkRegistrar builds the direct registrar from a token accessor. An
+// accessor that returns "" (checked per call, after TrimSpace) yields
+// ErrNotConfigured rather than a failing API call.
+//
+// Takes a func() string rather than a plain string so the token can resolve
+// from a seam that populates after construction (syscfg, in core's wiring)
+// without becoming stale. A caller that already holds a concrete token
+// up front (hosting's mailDomainRegistrar) can still use one: wrap it with
+// StaticToken.
+func NewPostmarkRegistrar(accountToken func() string, client PostmarkDomains) *PostmarkRegistrar {
+	return &PostmarkRegistrar{accountToken: accountToken, client: client}
+}
+
+// StaticToken wraps an already-known token as a func() string, for a caller
+// that holds a concrete value up front rather than a seam to read lazily
+// (e.g. hosting's mailDomainRegistrar, which reads the token once from its
+// own control-plane config on each request).
+func StaticToken(token string) func() string {
+	return func() string { return token }
+}
+
+func (p *PostmarkRegistrar) token() string {
+	return strings.TrimSpace(p.accountToken())
 }
 
 func (p *PostmarkRegistrar) AddDomain(ctx context.Context, domain string) (*DomainRecords, error) {
-	if p.accountToken == "" {
+	if p.token() == "" {
 		return nil, ErrNotConfigured
 	}
 	details, err := p.client.CreateDomain(ctx, postmark.DomainCreateRequest{Name: domain})
@@ -60,7 +91,7 @@ func (p *PostmarkRegistrar) AddDomain(ctx context.Context, domain string) (*Doma
 }
 
 func (p *PostmarkRegistrar) GetDomain(ctx context.Context, domain string, providerDomainID int64) (*DomainRecords, error) {
-	if p.accountToken == "" {
+	if p.token() == "" {
 		return nil, ErrNotConfigured
 	}
 	if providerDomainID != 0 {
