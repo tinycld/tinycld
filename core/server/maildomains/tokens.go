@@ -77,6 +77,19 @@ func NewTokenResolver(accountToken, configuredServerToken, serverName string, cl
 }
 
 // ServerToken returns the server token, resolving and caching it on first need.
+//
+// The cache lives for the life of the resolver and there is NO invalidation
+// path, deliberately: no caller in this ecosystem is positioned to detect that
+// the cached token went stale. The only composition that derives a token
+// (hosting's router) ships it to tenants and never calls Postmark with it, so
+// it never sees the auth failure a rotation would produce. An operator who
+// rotates the server token inside Postmark must therefore restart the router,
+// or change an input the caller's own cache keys on (hosting's resolverCache
+// keys on the account token and server name). A resolver-level Invalidate()
+// existed here for a while with no caller at all, which read as if that
+// recovery were wired when it was not — a dead method is worse than an absent
+// one. If a composition that USES the derived token ever appears, reintroduce
+// invalidation together with that call site, not before it.
 func (r *TokenResolver) ServerToken(ctx context.Context) (string, error) {
 	if r.configuredToken != "" {
 		return r.configuredToken, nil
@@ -101,14 +114,6 @@ func (r *TokenResolver) ServerToken(ctx context.Context) (string, error) {
 	}
 	r.cached = token
 	return token, nil
-}
-
-// Invalidate drops the cached token so the next call re-resolves. Called after
-// a Postmark auth failure, which is what a rotated token looks like from here.
-func (r *TokenResolver) Invalidate() {
-	r.mu.Lock()
-	r.cached = ""
-	r.mu.Unlock()
 }
 
 // selectServerToken picks the server and returns its first API token.

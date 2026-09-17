@@ -71,26 +71,6 @@ func TestServerTokenCached(t *testing.T) {
 	}
 }
 
-// Invalidate forces a re-resolve — the recovery path after a Postmark auth
-// failure (a rotated token).
-func TestInvalidateForcesReresolve(t *testing.T) {
-	f := &fakeServers{list: postmark.ServersList{Servers: []postmark.Server{srv("only", "tok-1")}}}
-	r := NewTokenResolver("acct", "", "", f)
-
-	if _, err := r.ServerToken(context.Background()); err != nil {
-		t.Fatalf("ServerToken: %v", err)
-	}
-	r.Invalidate()
-	f.list = postmark.ServersList{Servers: []postmark.Server{srv("only", "tok-2")}}
-	got, err := r.ServerToken(context.Background())
-	if err != nil {
-		t.Fatalf("ServerToken after Invalidate: %v", err)
-	}
-	if got != "tok-2" {
-		t.Fatalf("token = %q, want the re-resolved %q", got, "tok-2")
-	}
-}
-
 // Multiple servers with no name configured is a CONFIGURATION ERROR, never a
 // silent pick: choosing the wrong server sends mail from the wrong place.
 func TestAmbiguousServerIsAnError(t *testing.T) {
