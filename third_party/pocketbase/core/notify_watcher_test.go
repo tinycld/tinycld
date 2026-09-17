@@ -50,13 +50,18 @@ func TestNotifyWatcher_SettingsUpdate(t *testing.T) {
 
 	app2.OnSettingsReload().BindFunc(func(e *core.SettingsReloadEvent) error {
 		testEvents.SetFunc(app2, func(old int) int {
-			defer func() {
-				done <- struct{}{}
-			}()
-
 			return old + 1
 		})
-		return e.Next()
+		// Signal AFTER e.Next(), not from inside SetFunc. ReloadSettings runs
+		// the bound hooks first and loadParam — which actually populates the
+		// settings — as Trigger's FINAL func, so a hook that signals before
+		// calling Next wakes the assertion while app2.Settings() is still
+		// being written. That is a real data race (`go test -race` reports it
+		// on this line against loadParam) and it read as a flaky
+		// "got [127.0.0.1]" / "got []" failure.
+		err := e.Next()
+		done <- struct{}{}
+		return err
 	})
 
 	// updating app1 settings should trigger a reload in app2
