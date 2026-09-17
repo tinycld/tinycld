@@ -66,9 +66,16 @@ then `pnpm install` again.
 7100, the Go PocketBase server on 7101, and the Expo bundler on 7102. The proxy routes
 `/api` and `/_` to PB and everything else to Expo, so the app talks to PB same-origin.
 
-If `assets/localhost.pem` + `assets/localhost-key.pem` are present, the proxy serves
-TLS — visit `https://localhost:7100`. Otherwise it's plain HTTP at `http://localhost:7100`.
-SSL is needed for developing on the iOS simulator; trust the certs via the Settings app.
+SSL is **off by default** — the proxy serves cleartext at `http://localhost:7100`
+regardless of whether the certs exist. Every dev target works over plain HTTP: the
+Android emulator can't trust the mkcert cert and reaches the host over cleartext,
+the iOS simulator reaches localhost over HTTP via the ATS `NSAllowsLocalNetworking`
+exception, and web works over HTTP on localhost.
+
+Use `pnpm run dev:ssl` when you specifically want TLS in dev — visit
+`https://localhost:7100`. It errors if `assets/localhost.pem` +
+`assets/localhost-key.pem` are missing, so generate them first and trust the local
+CA:
 
 ```sh
 brew install mkcert     # macOS — see mkcert docs for other platforms
