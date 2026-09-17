@@ -3,6 +3,7 @@ package maildomains
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -259,5 +260,128 @@ func TestGetDomainByIDMatchesCaseInsensitively(t *testing.T) {
 	}
 	if rec.ID != 7 {
 		t.Fatalf("rec.ID = %d, want 7", rec.ID)
+	}
+}
+
+// pagedDomains is a fakeDomains that actually HONOURS count/offset, unlike
+// the fake above, which discards both and always returns the full list. That
+// shortcut means no existing test ever sees a second page, so the pagination
+// loop in findByName — its offset advance and its termination condition — is
+// unexercised. A real account past domainListLimit domains is the only place
+// either mistake shows up, and it shows up as "your domain is not enrolled".
+type pagedDomains struct {
+	all     []postmark.Domain
+	details map[int64]postmark.DomainDetails
+	// pageCalls records the (count, offset) of every GetDomains call, so a
+	// test can assert the offset advanced rather than merely that the right
+	// answer eventually came back.
+	pageCalls [][2]int
+}
+
+func (p *pagedDomains) CreateDomain(context.Context, postmark.DomainCreateRequest) (postmark.DomainDetails, error) {
+	return postmark.DomainDetails{}, errors.New("not implemented")
+}
+
+func (p *pagedDomains) GetDomains(_ context.Context, count, offset int) (postmark.DomainsList, error) {
+	p.pageCalls = append(p.pageCalls, [2]int{count, offset})
+	// A caller that never advances offset would otherwise loop forever
+	// against this fake, exactly as it would against a real account. Bound it
+	// so the mutation fails the test instead of hanging the suite.
+	if len(p.pageCalls) > 20 {
+		return postmark.DomainsList{}, errors.New("GetDomains called with no progress: offset never advanced")
+	}
+	if offset >= len(p.all) {
+		return postmark.DomainsList{Domains: nil, TotalCount: len(p.all)}, nil
+	}
+	end := min(offset+count, len(p.all))
+	return postmark.DomainsList{Domains: p.all[offset:end], TotalCount: len(p.all)}, nil
+}
+
+func (p *pagedDomains) GetDomain(_ context.Context, id int64) (postmark.DomainDetails, error) {
+	d, ok := p.details[id]
+	if !ok {
+		return postmark.DomainDetails{}, errors.New("not found")
+	}
+	return d, nil
+}
+
+// newPagedAccount builds an account of n domains named d<i>.example, with the
+// target planted at index target so it lands on a later page.
+func newPagedAccount(n, target int) (*pagedDomains, string) {
+	f := &pagedDomains{details: map[int64]postmark.DomainDetails{}}
+	for i := range n {
+		name := "d" + strconv.Itoa(i) + ".example"
+		id := int64(i + 1)
+		f.all = append(f.all, postmark.Domain{ID: id, Name: name})
+		f.details[id] = postmark.DomainDetails{ID: id, Name: name, DKIMVerified: true}
+	}
+	return f, f.all[target].Name
+}
+
+// The by-name fallback must page past the first page. On a shared hosting
+// account one Postmark account holds every org's domains, so a domain beyond
+// domainListLimit is ordinary — and reporting it unenrolled tells the admin
+// their working domain is broken.
+//
+// Fails if the offset never advances (the fake refuses to make progress
+// forever) and fails if the loop stops after page one (not found).
+func TestFindByNameFindsADomainOnASecondPage(t *testing.T) {
+	f, target := newPagedAccount(domainListLimit+10, domainListLimit+5)
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	rec, err := r.GetDomain(context.Background(), target, 0)
+	if err != nil {
+		t.Fatalf("GetDomain(%s): %v — a domain past the first page must still be found", target, err)
+	}
+	if rec.Domain != target {
+		t.Fatalf("rec.Domain = %q, want %q", rec.Domain, target)
+	}
+
+	if len(f.pageCalls) < 2 {
+		t.Fatalf("GetDomains called %d time(s), want at least 2 to reach the second page", len(f.pageCalls))
+	}
+	if got := f.pageCalls[0]; got != [2]int{domainListLimit, 0} {
+		t.Errorf("first page = (count %d, offset %d), want (%d, 0)", got[0], got[1], domainListLimit)
+	}
+	if got := f.pageCalls[1]; got != [2]int{domainListLimit, domainListLimit} {
+		t.Errorf("second page = (count %d, offset %d), want (%d, %d) — the offset must advance by a full page",
+			got[0], got[1], domainListLimit, domainListLimit)
+	}
+}
+
+// The termination condition: a domain that is on NO page must end the scan at
+// the last one and report not-enrolled. Without the offset+len >= TotalCount
+// check the loop runs until a page comes back empty — which it does here, so
+// the answer is still right but the account is walked one page further than
+// needed; the pageCalls assertion is what pins the early stop.
+func TestFindByNameStopsAtTheLastPage(t *testing.T) {
+	f, _ := newPagedAccount(domainListLimit+10, 0)
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if _, err := r.GetDomain(context.Background(), "absent.example", 0); !errors.Is(err, ErrDomainNotEnrolled) {
+		t.Fatalf("err = %v, want ErrDomainNotEnrolled", err)
+	}
+	// Two pages cover the whole account (100 + 10 == TotalCount), so the scan
+	// must stop there rather than requesting a third, empty page.
+	if len(f.pageCalls) != 2 {
+		t.Fatalf("GetDomains called %d times, want exactly 2 — the scan must stop once "+
+			"offset+len(page) reaches TotalCount, not run on until a page comes back empty: %v",
+			len(f.pageCalls), f.pageCalls)
+	}
+}
+
+// An account whose size is an exact multiple of the page size is the edge the
+// termination condition exists for: the last full page is followed by nothing,
+// and offset+len == TotalCount is the only signal that it was the last one.
+func TestFindByNameStopsOnAnExactPageBoundary(t *testing.T) {
+	f, _ := newPagedAccount(domainListLimit, 0)
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if _, err := r.GetDomain(context.Background(), "absent.example", 0); !errors.Is(err, ErrDomainNotEnrolled) {
+		t.Fatalf("err = %v, want ErrDomainNotEnrolled", err)
+	}
+	if len(f.pageCalls) != 1 {
+		t.Fatalf("GetDomains called %d times, want exactly 1 — a full page that already "+
+			"accounts for TotalCount is the last page: %v", len(f.pageCalls), f.pageCalls)
 	}
 }
