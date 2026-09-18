@@ -1,3 +1,4 @@
+import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { SortableDragHandle, SortableList } from '@tinycld/core/components/SortableList'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
@@ -35,7 +36,11 @@ import {
     View,
 } from 'react-native'
 import { PageHeader, SectionLabel, SlugTag } from './console-ui'
-import { InstallProgressModal, type ProgressAction } from './InstallProgressModal'
+import {
+    InstallProgressModal,
+    type ProgressAction,
+    progressActionFor,
+} from './InstallProgressModal'
 import { PackageStatusBadge } from './PackageStatusBadge'
 import {
     type CompatViolation,
@@ -99,7 +104,10 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     // realtime, so client mutations (reorder/toggle/edit/register/delete) AND the
     // server-side build jobs (install/uninstall/version-apply, which write
     // pkg_registry from Go) both propagate here automatically — no manual refetch.
-    const [pkgRegistryCollection] = useStore('pkg_registry')
+    const [pkgRegistryCollection, pkgInstallLogCollection] = useStore(
+        'pkg_registry',
+        'pkg_install_log'
+    )
     const { data: rows = [], isLoading } = useLiveQuery(
         query => query.from({ pkg_registry: pkgRegistryCollection }),
         []
@@ -125,6 +133,26 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     // refreshes itself via pbtsdb realtime, so these callbacks only dismiss the
     // progress panel and refresh the version-discovery view (a separate server
     // query, not a pbtsdb store).
+    // A job already RUNNING when this screen is opened — started by another
+    // admin, or by this one before a page reload — is adopted from the install
+    // log, so the panel shows it rather than leaving the screen looking idle
+    // while the deployment is mid-rebuild. The SSE stream backfills the steps
+    // so far, so a late subscriber sees the same bar. The row's status flips
+    // off `running` when the job ends; the panel keeps the job in local state
+    // so it can still show the terminal result until it is closed.
+    const { data: runningLogs = [] } = useLiveQuery(
+        query =>
+            query
+                .from({ log: pkgInstallLogCollection })
+                .where(({ log }) => eq(log.status, 'running'))
+                .orderBy(({ log }) => log.created, 'desc'),
+        []
+    )
+    const runningJob = runningLogs[0]
+    if (runningJob && !installJob && !vm.applyJobId) {
+        setInstallJob({ jobId: runningJob.job_id, action: progressActionFor(runningJob.action) })
+    }
+
     const activeProgress = installJob
         ? {
               jobId: installJob.jobId,

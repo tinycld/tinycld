@@ -120,6 +120,14 @@ const TITLES: Record<ProgressAction, Record<OperationStatus, string>> = {
     },
 }
 
+// The install log records a job's kind under its own vocabulary; the panel
+// titles by the four kinds it distinguishes.
+export function progressActionFor(logAction: string): ProgressAction {
+    if (logAction === 'uninstall' || logAction === 'revert') return logAction
+    if (logAction === 'version_change') return 'apply'
+    return 'install'
+}
+
 export function titleFor(action: ProgressAction, status: OperationStatus): string {
     return TITLES[action][status]
 }
