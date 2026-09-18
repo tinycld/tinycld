@@ -4,9 +4,15 @@ import { useEffect, useRef } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { type OperationStatus, type ProgressStep, useInstallProgress } from './use-install-progress'
 
+// The job the panel is tracking, which decides its title: a background job is
+// the same shape whichever way it was started, and the progress stream does not
+// say which, so the caller that started it tells the panel.
+export type ProgressAction = 'install' | 'uninstall' | 'apply' | 'revert'
+
 interface InstallProgressModalProps {
     isVisible: boolean
     jobId: string | null
+    action: ProgressAction
     authToken: string
     onClose: () => void
     onComplete: () => void
@@ -15,6 +21,7 @@ interface InstallProgressModalProps {
 export function InstallProgressModal({
     isVisible,
     jobId,
+    action,
     authToken,
     onClose,
     onComplete,
@@ -44,7 +51,7 @@ export function InstallProgressModal({
             <View className="p-4 gap-4">
                 <View className="flex-row justify-between items-center">
                     <Text className="text-base font-semibold text-foreground">
-                        {titleForStatus(status)}
+                        {titleFor(action, status)}
                     </Text>
                     <StatusIcon
                         status={status}
@@ -90,10 +97,39 @@ export function InstallProgressModal({
     )
 }
 
-function titleForStatus(status: OperationStatus): string {
-    if (status === 'success') return 'Installation Complete'
-    if (status === 'failed') return 'Installation Failed'
-    return 'Installing Package...'
+const TITLES: Record<ProgressAction, Record<OperationStatus, string>> = {
+    install: {
+        running: 'Installing Package...',
+        success: 'Installation Complete',
+        failed: 'Installation Failed',
+    },
+    uninstall: {
+        running: 'Uninstalling Package...',
+        success: 'Uninstall Complete',
+        failed: 'Uninstall Failed',
+    },
+    apply: {
+        running: 'Applying Version Changes...',
+        success: 'Version Changes Applied',
+        failed: 'Version Change Failed',
+    },
+    revert: {
+        running: 'Reverting Build...',
+        success: 'Revert Complete',
+        failed: 'Revert Failed',
+    },
+}
+
+// The install log records a job's kind under its own vocabulary; the panel
+// titles by the four kinds it distinguishes.
+export function progressActionFor(logAction: string): ProgressAction {
+    if (logAction === 'uninstall' || logAction === 'revert') return logAction
+    if (logAction === 'version_change') return 'apply'
+    return 'install'
+}
+
+export function titleFor(action: ProgressAction, status: OperationStatus): string {
+    return TITLES[action][status]
 }
 
 function StatusIcon({
