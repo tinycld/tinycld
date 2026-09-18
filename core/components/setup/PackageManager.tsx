@@ -35,7 +35,7 @@ import {
     View,
 } from 'react-native'
 import { PageHeader, SectionLabel, SlugTag } from './console-ui'
-import { InstallProgressModal } from './InstallProgressModal'
+import { InstallProgressModal, type ProgressAction } from './InstallProgressModal'
 import { PackageStatusBadge } from './PackageStatusBadge'
 import {
     type CompatViolation,
@@ -85,7 +85,9 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     const [showRegister, setShowRegister] = useState(false)
     const [showInstall, setShowInstall] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
-    const [installJobId, setInstallJobId] = useState<string | null>(null)
+    const [installJob, setInstallJob] = useState<{ jobId: string; action: ProgressAction } | null>(
+        null
+    )
     const [confirmOpen, setConfirmOpen] = useState(false)
 
     // Version discovery + the staging/compat/apply solver. Lives alongside the
@@ -109,11 +111,11 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
 
     const handleInstallStarted = useCallback((jobId: string) => {
         setShowInstall(false)
-        setInstallJobId(jobId)
+        setInstallJob({ jobId, action: 'install' })
     }, [])
 
     const handleUninstallStarted = useCallback((jobId: string) => {
-        setInstallJobId(jobId)
+        setInstallJob({ jobId, action: 'uninstall' })
     }, [])
 
     // Install/uninstall and apply (upgrade/downgrade) each start a background job,
@@ -123,15 +125,17 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     // refreshes itself via pbtsdb realtime, so these callbacks only dismiss the
     // progress panel and refresh the version-discovery view (a separate server
     // query, not a pbtsdb store).
-    const activeProgress = installJobId
+    const activeProgress = installJob
         ? {
-              jobId: installJobId,
-              onClose: () => setInstallJobId(null),
+              jobId: installJob.jobId,
+              action: installJob.action,
+              onClose: () => setInstallJob(null),
               onComplete: () => {},
           }
         : vm.applyJobId
           ? {
                 jobId: vm.applyJobId,
+                action: 'apply' as const,
                 onClose: () => vm.onApplyComplete(),
                 onComplete: () => vm.refresh(),
             }
@@ -166,6 +170,7 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
             <InstallProgressModal
                 isVisible={activeProgress !== null}
                 jobId={activeProgress?.jobId ?? null}
+                action={activeProgress?.action ?? 'install'}
                 authToken={pb.authStore.token}
                 onClose={() => activeProgress?.onClose()}
                 onComplete={() => activeProgress?.onComplete()}

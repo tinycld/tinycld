@@ -70,6 +70,7 @@ export function BuildHistoryTab({ isVisible, pb }: { isVisible: boolean; pb: Poc
             <InstallProgressModal
                 isVisible={jobId !== null}
                 jobId={jobId}
+                action="revert"
                 authToken={pb.authStore.token}
                 onClose={() => setJobId(null)}
                 onComplete={() => {}}
