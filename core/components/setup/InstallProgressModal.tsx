@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Check, CircleAlert, Loader2 } from 'lucide-react-native'
 import { useEffect, useRef } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
 import { type OperationStatus, type ProgressStep, useInstallProgress } from './use-install-progress'
 
 // The job the panel is tracking, which decides its title: a background job is
@@ -91,7 +91,11 @@ export function InstallProgressModal({
 
                 <ErrorDisplay error={error} />
 
-                <CloseButton isVisible={status !== 'running'} onPress={onClose} />
+                <ProgressFooter
+                    isVisible={status !== 'running'}
+                    needsReload={status === 'success'}
+                    onClose={onClose}
+                />
             </View>
         </View>
     )
@@ -239,11 +243,68 @@ function ErrorDisplay({ error }: { error: string | null }) {
     )
 }
 
-function CloseButton({ isVisible, onPress }: { isVisible: boolean; onPress: () => void }) {
+// A completed install/uninstall swapped the deployment onto a NEW build, so the
+// running app is on the previous one: its bundle has no screens, nav entry or
+// route chunks for a package that was just added. The package registry arrives
+// over realtime so the list below updates, but the app itself cannot until it
+// picks up the new bundle — leaving a sidebar that silently omits the package,
+// which reads as a failed install.
+//
+// How that happens differs by platform, so the footer says which:
+//
+//   web     nothing fetches a new bundle on its own. Offer a reload — offered,
+//           not forced, because the admin may be mid-task elsewhere;
+//           useChunkLoadRecovery still catches a stale chunk if they carry on.
+//   native  useAppUpdates already downloads and stages the org's new bundle and
+//           reloads onto it on the next foreground, so there is nothing to
+//           press. Say when it lands instead of offering a dead button.
+//
+// NOT reloadJsContext(): that helper restarts the NATIVE JS context for a
+// server switch and throws on web ("web has no JS context to restart"), which
+// is the only platform with a button here. The two are complements.
+function ProgressFooter({
+    isVisible,
+    needsReload,
+    onClose,
+}: {
+    isVisible: boolean
+    needsReload: boolean
+    onClose: () => void
+}) {
+    if (!isVisible) return null
+    const isWeb = Platform.OS === 'web' && typeof window !== 'undefined'
+    return (
+        <View className="gap-2">
+            <NewBuildHint isVisible={needsReload} isWeb={isWeb} />
+            <View className="flex-row justify-end gap-2">
+                <Pressable onPress={onClose} className="px-3 py-2 rounded-lg bg-border">
+                    <Text className="text-[13px] font-semibold text-muted-foreground">Close</Text>
+                </Pressable>
+                <ReloadButton isVisible={needsReload && isWeb} />
+            </View>
+        </View>
+    )
+}
+
+function NewBuildHint({ isVisible, isWeb }: { isVisible: boolean; isWeb: boolean }) {
     if (!isVisible) return null
     return (
-        <Pressable onPress={onPress} className="self-end px-3 py-2 rounded-lg bg-border">
-            <Text className="text-[13px] font-semibold text-muted-foreground">Close</Text>
+        <Text className="text-[13px] text-muted-foreground">
+            {isWeb
+                ? 'Reload to finish — this tab is still running the previous build.'
+                : 'The new build is applied the next time you reopen the app.'}
+        </Text>
+    )
+}
+
+function ReloadButton({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return (
+        <Pressable
+            onPress={() => window.location.reload()}
+            className="px-3 py-2 rounded-lg bg-primary"
+        >
+            <Text className="text-[13px] font-semibold text-primary-foreground">Reload</Text>
         </Pressable>
     )
 }

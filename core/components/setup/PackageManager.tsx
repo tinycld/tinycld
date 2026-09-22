@@ -26,7 +26,7 @@ import {
 } from 'lucide-react-native'
 import { newRecordId } from 'pbtsdb/core'
 import type PocketBase from 'pocketbase'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
     ActivityIndicator,
     Pressable,
@@ -35,6 +35,7 @@ import {
     Text,
     View,
 } from 'react-native'
+import { shouldAdoptRunningJob } from './adopt-running-job'
 import { PageHeader, SectionLabel, SlugTag } from './console-ui'
 import {
     InstallProgressModal,
@@ -148,8 +149,21 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
                 .orderBy(({ log }) => log.created, 'desc'),
         []
     )
+    // Jobs the admin has already closed. Without this, closing the panel sets
+    // installJob to null and the adoption below immediately re-adopts the same
+    // job on the very next render — the Close button looks dead. A ref, not
+    // state: dismissing must not itself schedule a render.
+    const dismissedJobs = useRef<Set<string>>(new Set())
+
     const runningJob = runningLogs[0]
-    if (runningJob && !installJob && !vm.applyJobId) {
+    if (
+        shouldAdoptRunningJob({
+            runningJobId: runningJob?.job_id,
+            hasPanelJob: installJob !== null,
+            hasApplyJob: vm.applyJobId != null,
+            isDismissed: id => dismissedJobs.current.has(id),
+        })
+    ) {
         setInstallJob({ jobId: runningJob.job_id, action: progressActionFor(runningJob.action) })
     }
 
@@ -157,7 +171,10 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
         ? {
               jobId: installJob.jobId,
               action: installJob.action,
-              onClose: () => setInstallJob(null),
+              onClose: () => {
+                  dismissedJobs.current.add(installJob.jobId)
+                  setInstallJob(null)
+              },
               onComplete: () => {},
           }
         : vm.applyJobId
