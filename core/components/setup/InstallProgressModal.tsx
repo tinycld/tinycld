@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Check, CircleAlert, Loader2 } from 'lucide-react-native'
 import { useEffect, useRef } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
 import { type OperationStatus, type ProgressStep, useInstallProgress } from './use-install-progress'
 
 // The job the panel is tracking, which decides its title: a background job is
@@ -91,7 +91,11 @@ export function InstallProgressModal({
 
                 <ErrorDisplay error={error} />
 
-                <CloseButton isVisible={status !== 'running'} onPress={onClose} />
+                <ProgressFooter
+                    isVisible={status !== 'running'}
+                    needsReload={status === 'success'}
+                    onClose={onClose}
+                />
             </View>
         </View>
     )
@@ -239,11 +243,57 @@ function ErrorDisplay({ error }: { error: string | null }) {
     )
 }
 
-function CloseButton({ isVisible, onPress }: { isVisible: boolean; onPress: () => void }) {
+// A completed install/uninstall swapped the deployment onto a NEW build, so
+// this tab is running the previous one: its bundle has no screens, nav entry
+// or route chunks for a package that was just added, and the chunk hashes it
+// does hold may no longer be served. The package registry arrives over
+// realtime, so the list below updates — but the app itself cannot until it
+// reloads. Offer that rather than leaving a tab that silently omits the
+// package (or fails to open it) and looks like a failed install.
+//
+// Reload is offered, not forced: the admin may be mid-task elsewhere.
+// useChunkLoadRecovery still catches a stale chunk if they keep working.
+function ProgressFooter({
+    isVisible,
+    needsReload,
+    onClose,
+}: {
+    isVisible: boolean
+    needsReload: boolean
+    onClose: () => void
+}) {
+    if (!isVisible) return null
+    const canReload = Platform.OS === 'web' && typeof window !== 'undefined'
+    return (
+        <View className="gap-2">
+            <ReloadHint isVisible={needsReload && canReload} />
+            <View className="flex-row justify-end gap-2">
+                <Pressable onPress={onClose} className="px-3 py-2 rounded-lg bg-border">
+                    <Text className="text-[13px] font-semibold text-muted-foreground">Close</Text>
+                </Pressable>
+                <ReloadButton isVisible={needsReload && canReload} />
+            </View>
+        </View>
+    )
+}
+
+function ReloadHint({ isVisible }: { isVisible: boolean }) {
     if (!isVisible) return null
     return (
-        <Pressable onPress={onPress} className="self-end px-3 py-2 rounded-lg bg-border">
-            <Text className="text-[13px] font-semibold text-muted-foreground">Close</Text>
+        <Text className="text-[13px] text-muted-foreground">
+            Reload to finish — this tab is still running the previous build.
+        </Text>
+    )
+}
+
+function ReloadButton({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return (
+        <Pressable
+            onPress={() => window.location.reload()}
+            className="px-3 py-2 rounded-lg bg-primary"
+        >
+            <Text className="text-[13px] font-semibold text-primary-foreground">Reload</Text>
         </Pressable>
     )
 }
