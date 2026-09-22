@@ -243,16 +243,25 @@ function ErrorDisplay({ error }: { error: string | null }) {
     )
 }
 
-// A completed install/uninstall swapped the deployment onto a NEW build, so
-// this tab is running the previous one: its bundle has no screens, nav entry
-// or route chunks for a package that was just added, and the chunk hashes it
-// does hold may no longer be served. The package registry arrives over
-// realtime, so the list below updates — but the app itself cannot until it
-// reloads. Offer that rather than leaving a tab that silently omits the
-// package (or fails to open it) and looks like a failed install.
+// A completed install/uninstall swapped the deployment onto a NEW build, so the
+// running app is on the previous one: its bundle has no screens, nav entry or
+// route chunks for a package that was just added. The package registry arrives
+// over realtime so the list below updates, but the app itself cannot until it
+// picks up the new bundle — leaving a sidebar that silently omits the package,
+// which reads as a failed install.
 //
-// Reload is offered, not forced: the admin may be mid-task elsewhere.
-// useChunkLoadRecovery still catches a stale chunk if they keep working.
+// How that happens differs by platform, so the footer says which:
+//
+//   web     nothing fetches a new bundle on its own. Offer a reload — offered,
+//           not forced, because the admin may be mid-task elsewhere;
+//           useChunkLoadRecovery still catches a stale chunk if they carry on.
+//   native  useAppUpdates already downloads and stages the org's new bundle and
+//           reloads onto it on the next foreground, so there is nothing to
+//           press. Say when it lands instead of offering a dead button.
+//
+// NOT reloadJsContext(): that helper restarts the NATIVE JS context for a
+// server switch and throws on web ("web has no JS context to restart"), which
+// is the only platform with a button here. The two are complements.
 function ProgressFooter({
     isVisible,
     needsReload,
@@ -263,25 +272,27 @@ function ProgressFooter({
     onClose: () => void
 }) {
     if (!isVisible) return null
-    const canReload = Platform.OS === 'web' && typeof window !== 'undefined'
+    const isWeb = Platform.OS === 'web' && typeof window !== 'undefined'
     return (
         <View className="gap-2">
-            <ReloadHint isVisible={needsReload && canReload} />
+            <NewBuildHint isVisible={needsReload} isWeb={isWeb} />
             <View className="flex-row justify-end gap-2">
                 <Pressable onPress={onClose} className="px-3 py-2 rounded-lg bg-border">
                     <Text className="text-[13px] font-semibold text-muted-foreground">Close</Text>
                 </Pressable>
-                <ReloadButton isVisible={needsReload && canReload} />
+                <ReloadButton isVisible={needsReload && isWeb} />
             </View>
         </View>
     )
 }
 
-function ReloadHint({ isVisible }: { isVisible: boolean }) {
+function NewBuildHint({ isVisible, isWeb }: { isVisible: boolean; isWeb: boolean }) {
     if (!isVisible) return null
     return (
         <Text className="text-[13px] text-muted-foreground">
-            Reload to finish — this tab is still running the previous build.
+            {isWeb
+                ? 'Reload to finish — this tab is still running the previous build.'
+                : 'The new build is applied the next time you reopen the app.'}
         </Text>
     )
 }
