@@ -51,7 +51,7 @@ func GenerateOwnerPassword() (string, error) {
 // Idempotent: provisioning may be retried, and a retry must not fail because
 // one or both records already exist.
 func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
-	var password string
+	var password, passwordHash, name string
 
 	cmd := &cobra.Command{
 		Use:   "create-owner <email>",
@@ -63,7 +63,10 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 			"backup, an automated provisioner — runs this instead, or it would serve " +
 			"correctly with nobody able to log in. Pair with PB's --dir flag pointing at " +
 			"the data directory. Without --password a random one is generated and " +
-			"printed. Re-running for an existing email is a no-op.",
+			"printed. Pass --password-hash instead of --password to mint both identities " +
+			"from a bcrypt hash computed elsewhere; nothing is printed but the " +
+			"confirmation line. --name sets the owner's display name. Re-running for an " +
+			"existing email is a no-op.",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -71,8 +74,18 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 			if email == "" {
 				return fmt.Errorf("create-owner: email is required")
 			}
+			if password != "" && passwordHash != "" {
+				return fmt.Errorf("create-owner: pass --password or --password-hash, not both")
+			}
+			// Validate before touching either record: a bad hash written into
+			// the superuser succeeds (raw password fields skip validation when
+			// Plain is empty), and only the users side would then refuse it —
+			// leaving a corrupt, permanent superuser behind.
+			if passwordHash != "" && !IsBcryptHash(passwordHash) {
+				return fmt.Errorf("create-owner: --password-hash must be a bcrypt hash")
+			}
 
-			if password == "" {
+			if password == "" && passwordHash == "" {
 				generated, err := GenerateOwnerPassword()
 				if err != nil {
 					return fmt.Errorf("create-owner: %w", err)
@@ -93,19 +106,26 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 				return fmt.Errorf("create-owner: run migrations: %w", err)
 			}
 
-			created, err := createOperatorIdentities(app, email, password)
+			created, err := createOperatorIdentities(app, email, name, password, passwordHash)
 			if err != nil {
 				return fmt.Errorf("create-owner: %w", err)
 			}
 
-			// Report the password ONLY when this run actually set it. On a
-			// no-op re-run the records already exist with their original
-			// secret, and printing the freshly generated one would hand the
-			// operator a password that does not work.
 			if !created {
 				cmd.Printf("owner: %s\nunchanged: account already exists (password not modified)\n", email)
 				return nil
 			}
+			// A hash run must never print a password: the caller already holds
+			// the plaintext (it produced the hash) and printing it here would
+			// be the exact process-boundary crossing this flag exists to avoid.
+			if passwordHash != "" {
+				cmd.Printf("owner: %s\n", email)
+				return nil
+			}
+			// Report the password ONLY when this run actually set it. On a
+			// no-op re-run the records already exist with their original
+			// secret, and printing the freshly generated one would hand the
+			// operator a password that does not work.
 			cmd.Printf("owner: %s\npassword: %s\n", email, password)
 			return nil
 		},
@@ -113,6 +133,10 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 
 	cmd.Flags().StringVar(&password, "password", "",
 		"password for both identities; omit to generate a random one")
+	cmd.Flags().StringVar(&passwordHash, "password-hash", "",
+		"bcrypt hash to use for both identities instead of a password")
+	cmd.Flags().StringVar(&name, "name", "",
+		"display name for the owner account (default: the email local-part)")
 	return cmd
 }
 
@@ -121,10 +145,13 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 // retry after a partial failure completes the missing half rather than
 // erroring on the half that succeeded.
 //
-// Reports whether it created anything, so the caller knows if `password` was
-// actually applied — on a full no-op the existing records keep their original
-// secret.
-func createOperatorIdentities(app core.App, email, password string) (created bool, err error) {
+// Exactly one of password/passwordHash is set (the caller enforces that);
+// whichever is present is what both identities are minted from.
+//
+// Reports whether it created anything, so the caller knows if the
+// password/hash was actually applied — on a full no-op the existing records
+// keep their original secret.
+func createOperatorIdentities(app core.App, email, name, password, passwordHash string) (created bool, err error) {
 	if existing, _ := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, email); existing == nil {
 		superusers, ferr := app.FindCollectionByNameOrId(core.CollectionNameSuperusers)
 		if ferr != nil {
@@ -132,7 +159,12 @@ func createOperatorIdentities(app core.App, email, password string) (created boo
 		}
 		su := core.NewRecord(superusers)
 		su.SetEmail(email)
-		su.SetPassword(password)
+		if passwordHash != "" {
+			su.SetRaw(core.FieldNamePassword, &core.PasswordFieldValue{Hash: passwordHash})
+			su.RefreshTokenKey()
+		} else {
+			su.SetPassword(password)
+		}
 		su.SetVerified(true)
 		if serr := app.Save(su); serr != nil {
 			return created, fmt.Errorf("create superuser: %w", serr)
@@ -143,7 +175,13 @@ func createOperatorIdentities(app core.App, email, password string) (created boo
 	if existing, _ := app.FindAuthRecordByEmail("users", email); existing != nil {
 		return created, nil
 	}
-	if _, cerr := CreateOwnerAccount(app, email, password); cerr != nil {
+	if passwordHash != "" {
+		if _, cerr := CreateOwnerAccountWithHash(app, email, name, passwordHash); cerr != nil {
+			return created, fmt.Errorf("create owner account: %w", cerr)
+		}
+		return true, nil
+	}
+	if _, cerr := CreateOwnerAccountNamed(app, email, name, password); cerr != nil {
 		return created, fmt.Errorf("create owner account: %w", cerr)
 	}
 	return true, nil
