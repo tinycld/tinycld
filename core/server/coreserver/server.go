@@ -25,6 +25,7 @@ import (
 	"tinycld.org/core/realtime"
 	"tinycld.org/core/search"
 	"tinycld.org/core/sharelink"
+	"tinycld.org/core/sharequota"
 	"tinycld.org/core/webhookin"
 )
 
@@ -166,6 +167,17 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	if err := quota.Register(app, quotaSources, quotaLimits); err != nil {
 		log.Fatalf("coreserver: quota config: %v", err)
 	}
+
+	// Per-link download ceilings on publicly served files. Bound here for the
+	// same reason as the storage ceilings above, and after RegisterExtras for
+	// the same reason too: a package declares what to meter while it
+	// registers, so there is nothing to bind until it has.
+	//
+	// Nobody claims the ceilings in a standalone deployment, so this binds
+	// meters that resolve to unlimited and refuse nothing. It still binds
+	// them: the counters they keep are what a deployment reads to see how a
+	// link is being used, whether or not a ceiling ever applies.
+	sharequota.BindMeters(app)
 
 	jsvm.MustRegister(app, jsvm.Config{
 		MigrationsDir: opts.MigrationsDir,
