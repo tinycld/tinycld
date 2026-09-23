@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/pocketbase/pocketbase/tests"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // The first operator must end up as a regular `users` record with role=owner —
@@ -19,7 +20,7 @@ func TestCreateOwnerOperator(t *testing.T) {
 	}
 	t.Cleanup(func() { app.Cleanup() })
 
-	operator, err := createOwnerOperator(app, "operator@example.com", "BootstrapPass1234!")
+	operator, err := createOwnerOperator(app, "operator@example.com", "", "BootstrapPass1234!")
 	if err != nil {
 		t.Fatalf("createOwnerOperator returned error: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestCreateOwnerOperator_IsOwner(t *testing.T) {
 	}
 	t.Cleanup(func() { app.Cleanup() })
 
-	operator, err := createOwnerOperator(app, "operator@example.com", "BootstrapPass1234!")
+	operator, err := createOwnerOperator(app, "operator@example.com", "", "BootstrapPass1234!")
 	if err != nil {
 		t.Fatalf("createOwnerOperator returned error: %v", err)
 	}
@@ -79,5 +80,71 @@ func TestCreateOwnerOperator_IsOwner(t *testing.T) {
 	if !isOwner(operator) {
 		t.Error("operator must satisfy isOwner, or /api/admin/packages/* returns 403 " +
 			"to the only account that exists")
+	}
+}
+
+// A hosted org is minted from the signup's bcrypt hash so the password is never
+// plaintext outside the browser. The record must authenticate with the original
+// password and carry the supplied display name.
+func TestCreateOwnerAccountWithHash(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("correct horse battery"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator, err := CreateOwnerAccountWithHash(app, "owner@example.com", "Ada Lovelace", string(hash))
+	if err != nil {
+		t.Fatalf("CreateOwnerAccountWithHash: %v", err)
+	}
+	if !operator.ValidatePassword("correct horse battery") {
+		t.Fatal("the original password must validate against the copied hash")
+	}
+	if operator.ValidatePassword("wrong") {
+		t.Fatal("a wrong password must not validate")
+	}
+	if got := operator.GetString("name"); got != "Ada Lovelace" {
+		t.Fatalf("name = %q, want Ada Lovelace", got)
+	}
+	if got := operator.GetString("role"); got != "owner" {
+		t.Fatalf("role = %q, want owner", got)
+	}
+	if !operator.Verified() {
+		t.Fatal("owner must be verified")
+	}
+}
+
+// An empty name falls back to the email local-part, the same default the
+// plaintext path uses, so both paths mint the same shape of account.
+func TestCreateOwnerAccountWithHash_DefaultName(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pw-1234567890"), bcrypt.MinCost)
+	operator, err := CreateOwnerAccountWithHash(app, "grace@example.com", "", string(hash))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := operator.GetString("name"); got != "grace" {
+		t.Fatalf("name = %q, want grace", got)
+	}
+}
+
+// A value that is not a bcrypt hash must be refused: SetRaw would store it as
+// the hash verbatim and the account could never authenticate.
+func TestCreateOwnerAccountWithHash_RejectsPlaintext(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { app.Cleanup() })
+	if _, err := CreateOwnerAccountWithHash(app, "x@example.com", "X", "not-a-hash"); err == nil {
+		t.Fatal("expected an error for a non-bcrypt value")
 	}
 }
