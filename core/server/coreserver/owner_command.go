@@ -77,6 +77,13 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 			if password != "" && passwordHash != "" {
 				return fmt.Errorf("create-owner: pass --password or --password-hash, not both")
 			}
+			// Validate before touching either record: a bad hash written into
+			// the superuser succeeds (raw password fields skip validation when
+			// Plain is empty), and only the users side would then refuse it —
+			// leaving a corrupt, permanent superuser behind.
+			if passwordHash != "" && !IsBcryptHash(passwordHash) {
+				return fmt.Errorf("create-owner: --password-hash must be a bcrypt hash")
+			}
 
 			if password == "" && passwordHash == "" {
 				generated, err := GenerateOwnerPassword()
@@ -174,7 +181,7 @@ func createOperatorIdentities(app core.App, email, name, password, passwordHash 
 		}
 		return true, nil
 	}
-	if _, cerr := CreateOwnerAccount(app, email, password); cerr != nil {
+	if _, cerr := CreateOwnerAccountNamed(app, email, name, password); cerr != nil {
 		return created, fmt.Errorf("create owner account: %w", cerr)
 	}
 	return true, nil

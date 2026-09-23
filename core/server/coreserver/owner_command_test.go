@@ -97,3 +97,45 @@ func TestCreateOwnerCommand_RefusesBothSecrets(t *testing.T) {
 		t.Fatal("expected an error when both --password and --password-hash are given")
 	}
 }
+
+// --name must reach the plaintext path too, not just the hash path — the
+// command documents --name unconditionally.
+func TestCreateOwnerCommand_PasswordWithName(t *testing.T) {
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir(), HideStartBanner: true})
+	ensureUsersCollection(t, app)
+	cmd := NewCreateOwnerCommand(app)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"ada@example.com", "--password", "pw-1234567890", "--name", "Ada"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	user, err := app.FindAuthRecordByEmail("users", "ada@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := user.GetString("name"); got != "Ada" {
+		t.Fatalf("name = %q, want Ada: --name must be honored on the plaintext path too", got)
+	}
+}
+
+// A non-bcrypt --password-hash must be refused before either record is
+// touched. Validating only on the users side (after the superuser is already
+// written) would leave a permanently corrupt superuser: the idempotency check
+// finds that record on retry and skips it, so it never gets a valid password.
+func TestCreateOwnerCommand_RejectsBadHash_NoSuperuserLeftBehind(t *testing.T) {
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir(), HideStartBanner: true})
+	ensureUsersCollection(t, app)
+	cmd := NewCreateOwnerCommand(app)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"ada@example.com", "--password-hash", "not-a-hash"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected an error for a non-bcrypt --password-hash")
+	}
+	if su, _ := app.FindAuthRecordByEmail("_superusers", "ada@example.com"); su != nil {
+		t.Fatal("a rejected hash must not leave a corrupt superuser record behind")
+	}
+	if u, _ := app.FindAuthRecordByEmail("users", "ada@example.com"); u != nil {
+		t.Fatal("a rejected hash must not leave a users record behind")
+	}
+}

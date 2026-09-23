@@ -191,14 +191,26 @@ func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	})
 }
 
+// IsBcryptHash reports whether v looks like a bcrypt hash ("$2" prefix, the
+// same check PocketBase's own password field uses to recognise one). Callers
+// that will write a hash into more than one record (a superuser and a users
+// record sharing one credential) must validate it once, up front, before
+// touching either — writing an unchecked value into a raw password field
+// succeeds (ValidateValue skips its checks when Plain is empty), so the
+// invalid value would otherwise land permanently in whichever record is
+// written first.
+func IsBcryptHash(v string) bool {
+	return strings.HasPrefix(v, "$2")
+}
+
 // CreateOwnerAccountWithHash mints the owner from an already-computed bcrypt
-// hash instead of a plaintext password. An automated provisioner that holds
-// only the hash of the password the person chose elsewhere (a signup form on
-// another host) uses this, so the plaintext never crosses a process boundary.
+// hash instead of a plaintext password. A caller that holds only the hash of
+// a password chosen elsewhere — never the plaintext itself — uses this, so
+// the plaintext never crosses a process boundary.
 // name is the display name; empty falls back to the email local-part, the
 // same default the plaintext path uses.
 func CreateOwnerAccountWithHash(app core.App, email, name, passwordHash string) (*core.Record, error) {
-	if !strings.HasPrefix(passwordHash, "$2") {
+	if !IsBcryptHash(passwordHash) {
 		return nil, fmt.Errorf("password hash must be a bcrypt hash")
 	}
 	operator, err := newOwnerRecord(app, email, name)
@@ -223,6 +235,13 @@ func CreateOwnerAccountWithHash(app core.App, email, name, passwordHash string) 
 // they share this one implementation rather than each assembling the record.
 func CreateOwnerAccount(app core.App, email, password string) (*core.Record, error) {
 	return createOwnerOperator(app, email, "", password)
+}
+
+// CreateOwnerAccountNamed is CreateOwnerAccount with an explicit display
+// name. Kept as a separate export, rather than changing CreateOwnerAccount's
+// signature, so existing callers of the two-arg form keep compiling.
+func CreateOwnerAccountNamed(app core.App, email, name, password string) (*core.Record, error) {
+	return createOwnerOperator(app, email, name, password)
 }
 
 // createOwnerOperator creates the first operator as a regular `users` record

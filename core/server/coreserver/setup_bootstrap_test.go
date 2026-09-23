@@ -83,9 +83,9 @@ func TestCreateOwnerOperator_IsOwner(t *testing.T) {
 	}
 }
 
-// A hosted org is minted from the signup's bcrypt hash so the password is never
-// plaintext outside the browser. The record must authenticate with the original
-// password and carry the supplied display name.
+// An owner is minted from a bcrypt hash computed elsewhere so the plaintext
+// password never crosses a process boundary. The record must authenticate
+// with the original password and carry the supplied display name.
 func TestCreateOwnerAccountWithHash(t *testing.T) {
 	app, err := tests.NewTestApp()
 	if err != nil {
