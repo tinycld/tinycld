@@ -21,7 +21,11 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"tinycld.org/core/logging"
 )
+
+var log = logging.ForPackage("ratelimit")
 
 // Limiter allows up to `limit` events per `window` for each key, on a sliding
 // window. The zero value is not usable — build one with New.
@@ -80,6 +84,34 @@ func (l *Limiter) Allow(key string) bool {
 
 	l.requests[key] = append(valid, now)
 	return true
+}
+
+// AllowOrLog is Allow, plus a record of the refusal.
+//
+// Prefer it at every endpoint. A 429 is one of the clearest abuse signals a
+// deployment produces — a caller repeatedly bouncing off a ceiling looks
+// nothing like one using the endpoint normally — and a bare Allow returns
+// that signal to the caller and discards it, leaving no way to answer "who
+// was hammering this?" afterwards.
+//
+// The logging lives here rather than inside Allow because Allow is called per
+// request on hot public paths and does not know which endpoint it is guarding;
+// a record without that label is noise. `endpoint` is a short stable string
+// ("drive.share.download"), not a formatted message.
+//
+// Warn so a spike reaches Sentry without anyone querying _logs. A refused
+// event is still not recorded against the key — see Allow.
+//
+// A caller that wants the request's Sentry hub attached (so the refusal is
+// attributed to a user) should keep using Allow and log it itself with
+// WarnContext — webhookin/receive.go does exactly that.
+func (l *Limiter) AllowOrLog(key string, endpoint string) bool {
+	if l.Allow(key) {
+		return true
+	}
+	log.Warn("rate limit refused a request",
+		"endpoint", endpoint, "key", key, "limit", l.limit, "window", l.window)
+	return false
 }
 
 // ClientIP is the key most callers want.

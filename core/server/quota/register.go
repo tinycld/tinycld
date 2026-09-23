@@ -6,7 +6,11 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/router"
+
+	"tinycld.org/core/logging"
 )
+
+var log = logging.ForPackage("quota")
 
 // Register binds the enforcement hooks for the given sources.
 //
@@ -80,7 +84,7 @@ func check(app core.App, all []Source, src Source, record *core.Record, delta in
 			return err
 		}
 		if used+delta > lim.PerOrg {
-			return apiErr(&ExceededError{
+			return apiErr(src.Collection, record.GetString(src.OwnerField), &ExceededError{
 				Scope: "organization", Used: used, Limit: lim.PerOrg, Requested: delta,
 			})
 		}
@@ -97,7 +101,7 @@ func check(app core.App, all []Source, src Source, record *core.Record, delta in
 			return err
 		}
 		if used+delta > lim.PerUser {
-			return apiErr(&ExceededError{
+			return apiErr(src.Collection, owner, &ExceededError{
 				Scope: "user", Used: used, Limit: lim.PerUser, Requested: delta,
 			})
 		}
@@ -108,6 +112,25 @@ func check(app core.App, all []Source, src Source, record *core.Record, delta in
 
 // apiErr surfaces a refusal as 413, which is the status both the REST API and
 // x/net/webdav's PUT path map sensibly.
-func apiErr(err *ExceededError) error {
+//
+// It also records the refusal. A refusal is the clearest abuse signal there
+// is — an account repeatedly hitting a ceiling looks nothing like one working
+// normally — and until now it was returned to the caller and forgotten, so
+// there was no way to answer "who has been hammering this limit?" after the
+// fact. Warn (not Info) so it reaches Sentry, where a spike is visible
+// without anyone querying _logs.
+//
+// The enforcement hooks are OnRecordCreate/OnRecordUpdate, not their
+// ...Request variants — that is what makes the ceiling unskippable, and it is
+// also why there is no request here to name the acting user or IP. Owner is
+// the best attribution available; for a shared row there is none.
+func apiErr(collection string, owner string, err *ExceededError) error {
+	log.Warn("quota refused a write",
+		"collection", collection,
+		"scope", err.Scope,
+		"owner", owner,
+		"used", err.Used,
+		"limit", err.Limit,
+		"requested", err.Requested)
 	return router.NewApiError(http.StatusRequestEntityTooLarge, err.Error(), nil)
 }
