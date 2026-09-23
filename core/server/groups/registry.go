@@ -21,6 +21,12 @@ import (
 // and `group` relation fields. ResourceField names the column that points at
 // the shared resource (e.g. "project"), which is how a grant's derived rows
 // are told apart from another grant's on the same group.
+//
+// The table's migration MUST add a unique index on (ResourceField, user,
+// group) — e.g. `zoo_keepers` uses `zoo, user, group`. Without it, concurrent
+// or repeated expansion can insert more than one derived row for the same
+// (resource, group, user), since the expander's find-then-write is not itself
+// atomic against another writer.
 type GrantTable struct {
 	Collection    string
 	ResourceField string

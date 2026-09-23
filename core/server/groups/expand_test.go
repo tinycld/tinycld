@@ -1,6 +1,7 @@
 package groups
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -106,8 +107,8 @@ func zooGrant(t *testing.T, app core.App, zoo string, group *core.Record, role s
 	return r
 }
 
-// derivedRows lists derived rows (user AND group set) for one zoo, keyed
-// "userId:role".
+// derivedRows lists derived rows (user AND group set) for one zoo, keyed by
+// user id with the row's role as the value.
 func derivedRows(t *testing.T, app core.App, zoo string) map[string]string {
 	t.Helper()
 	rows, err := app.FindRecordsByFilter("zoo_keepers", `zoo = {:zoo} && user != "" && group != ""`, "", 0, 0, map[string]any{"zoo": zoo})
@@ -267,6 +268,75 @@ func TestMembershipListenerFiresAfterCommit(t *testing.T) {
 	}
 	if len(events) != 2 || !events[0].Joined || events[1].Joined || events[0].UserID != alice.Id || events[1].GroupID != g.Id {
 		t.Fatalf("events = %+v", events)
+	}
+}
+
+// TestMemberDeleteCleanupIsAtomicWithTheDelete proves the group_members
+// delete hook shares one transaction with its derived-row cleanup: if the
+// cleanup fails, the membership delete itself must roll back too, rather
+// than leaving the membership gone and the derived rows orphaned.
+func TestMemberDeleteCleanupIsAtomicWithTheDelete(t *testing.T) {
+	app := newZooApp(t)
+	alice := zooUser(t, app, "alice@x.test")
+	g := zooGroup(t, app, "keepers")
+	m := zooMember(t, app, g, alice)
+	zooGrant(t, app, "bronx", g, "viewer")
+
+	if len(derivedRows(t, app, "bronx")) != 1 {
+		t.Fatal("setup: expected one derived row before the failing delete")
+	}
+
+	failDerivedDeletes := true
+	app.OnRecordDelete("zoo_keepers").BindFunc(func(e *core.RecordEvent) error {
+		if failDerivedDeletes && isDerived(e.Record) {
+			return errors.New("simulated derived-row delete failure")
+		}
+		return e.Next()
+	})
+
+	if err := app.Delete(m); err == nil {
+		t.Fatal("expected the membership delete to fail when derived cleanup fails")
+	}
+
+	if _, err := app.FindRecordById("group_members", m.Id); err != nil {
+		t.Fatalf("membership row should still exist after rollback: %v", err)
+	}
+	if len(derivedRows(t, app, "bronx")) != 1 {
+		t.Fatal("derived row should still exist after rollback")
+	}
+}
+
+// TestGrantDeleteCleanupIsAtomicWithTheDelete is the grant-table analogue of
+// TestMemberDeleteCleanupIsAtomicWithTheDelete: deleting a grant must roll
+// back if removing its derived rows fails.
+func TestGrantDeleteCleanupIsAtomicWithTheDelete(t *testing.T) {
+	app := newZooApp(t)
+	alice := zooUser(t, app, "alice@x.test")
+	g := zooGroup(t, app, "keepers")
+	zooMember(t, app, g, alice)
+	grant := zooGrant(t, app, "bronx", g, "viewer")
+
+	if len(derivedRows(t, app, "bronx")) != 1 {
+		t.Fatal("setup: expected one derived row before the failing delete")
+	}
+
+	failDerivedDeletes := true
+	app.OnRecordDelete("zoo_keepers").BindFunc(func(e *core.RecordEvent) error {
+		if failDerivedDeletes && isDerived(e.Record) {
+			return errors.New("simulated derived-row delete failure")
+		}
+		return e.Next()
+	})
+
+	if err := app.Delete(grant); err == nil {
+		t.Fatal("expected the grant delete to fail when derived cleanup fails")
+	}
+
+	if _, err := app.FindRecordById("zoo_keepers", grant.Id); err != nil {
+		t.Fatalf("grant row should still exist after rollback: %v", err)
+	}
+	if len(derivedRows(t, app, "bronx")) != 1 {
+		t.Fatal("derived row should still exist after rollback")
 	}
 }
 

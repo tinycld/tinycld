@@ -1,6 +1,8 @@
 package groups
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -48,7 +50,10 @@ func findDerived(app core.App, t GrantTable, grant *core.Record, userID string) 
 		map[string]any{"g": grant.GetString("group"), "u": userID, "r": grant.GetString(t.ResourceField)},
 	)
 	if err != nil {
-		return nil, nil // not found is the normal miss
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("groups: find derived %s row for user %s: %w", t.Collection, userID, err)
 	}
 	return rec, nil
 }
@@ -56,7 +61,10 @@ func findDerived(app core.App, t GrantTable, grant *core.Record, userID string) 
 // upsertDerived ensures one derived row for (grant, user) that mirrors the
 // grant's fields.
 func upsertDerived(app core.App, t GrantTable, grant *core.Record, userID string) error {
-	existing, _ := findDerived(app, t, grant, userID)
+	existing, err := findDerived(app, t, grant, userID)
+	if err != nil {
+		return err
+	}
 	if existing == nil {
 		existing = core.NewRecord(grant.Collection())
 	}
