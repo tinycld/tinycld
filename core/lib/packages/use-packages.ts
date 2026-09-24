@@ -12,15 +12,14 @@ type PackageEntry = PackageManifest & { packageName: string }
 export function usePackages(): PackageEntry[] {
     const [pkgRegistryCollection] = useStore('pkg_registry')
 
-    const { data: dbRecords } = useLiveQuery(
-        query =>
+    const { data: dbRecords } = useLiveQuery({
+        query: query =>
             query
                 .from({ pkg_registry: pkgRegistryCollection })
                 .where(({ pkg_registry }) =>
                     or(eq(pkg_registry.status, 'installed'), eq(pkg_registry.status, 'bundled'))
                 ),
-        []
-    )
+    })
 
     return useMemo(() => {
         const staticSlugs = new Set(packageRegistry.map(p => p.slug))

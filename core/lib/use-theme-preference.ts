@@ -18,8 +18,8 @@ export function useThemePreference() {
     const { user, isLoggedIn } = useAuth({ throwIfAnon: false })
     const [userPreferencesCollection] = useStore('user_preferences')
 
-    const { data: rows } = useLiveQuery(
-        query =>
+    const { data: rows } = useLiveQuery({
+        query: query =>
             query
                 .from({ user_preferences: userPreferencesCollection })
                 .where(({ user_preferences }) =>
@@ -29,8 +29,7 @@ export function useThemePreference() {
                         eq(user_preferences.user, user?.id ?? '')
                     )
                 ),
-        [user?.id]
-    )
+    })
 
     const existing = rows?.[0]
     const preference: ThemePreference =

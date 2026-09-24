@@ -25,31 +25,28 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
     const [pkgRegistryCollection] = useStore('pkg_registry')
 
     // Global registry: which packages are active (bundled or installed)
-    const { data: registryRecords, isReady: registryReady } = useLiveQuery(
-        query =>
+    const { data: registryRecords, isReady: registryReady } = useLiveQuery({
+        query: query =>
             query
                 .from({ pkg_registry: pkgRegistryCollection })
                 .where(({ pkg_registry }) => eq(pkg_registry.status, 'bundled')),
-        []
-    )
+    })
 
     // Also include 'installed' status packages
-    const { data: installedRecords, isReady: installedReady } = useLiveQuery(
-        query =>
+    const { data: installedRecords, isReady: installedReady } = useLiveQuery({
+        query: query =>
             query
                 .from({ pkg_registry: pkgRegistryCollection })
                 .where(({ pkg_registry }) => eq(pkg_registry.status, 'installed')),
-        []
-    )
+    })
 
     // User-level access overrides
-    const { data: overrides, isReady: overridesReady } = useLiveQuery(
-        query =>
+    const { data: overrides, isReady: overridesReady } = useLiveQuery({
+        query: query =>
             query
                 .from({ org_pkg_access: orgPkgAccessCollection })
                 .where(({ org_pkg_access }) => eq(org_pkg_access.user, userId)),
-        [userId]
-    )
+    })
 
     // Build set of globally active package slugs from registry
     const allActiveRecords = [...(registryRecords ?? []), ...(installedRecords ?? [])]

@@ -21,13 +21,12 @@ interface RunActionResult {
 
 function useRuleRuns(ruleId: string | null) {
     const [runsCollection] = useStore('rule_runs')
-    return useLiveQuery(
-        query => {
+    return useLiveQuery({
+        query: query => {
             if (!ruleId) return null
             return query.from({ r: runsCollection }).where(({ r }) => eq(r.rule, ruleId))
         },
-        [ruleId]
-    )
+    })
 }
 
 function sortRunsDesc(runs: RuleRuns[] | undefined): RuleRuns[] {

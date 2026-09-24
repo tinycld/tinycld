@@ -34,18 +34,16 @@ export function useLabels() {
 export function useLabelsForRecord(recordId: string, collection: string) {
     const [assignmentsCollection, labelsCollection] = useStore('label_assignments', 'labels')
 
-    const { data: assignments } = useMyLiveQuery(
-        (query, { userId }) =>
-            query
-                .from({ label_assignments: assignmentsCollection })
-                .where(({ label_assignments }) =>
-                    and(
-                        eq(label_assignments.record_id, recordId),
-                        eq(label_assignments.collection, collection),
-                        eq(label_assignments.user, userId)
-                    )
-                ),
-        [recordId, collection]
+    const { data: assignments } = useMyLiveQuery((query, { userId }) =>
+        query
+            .from({ label_assignments: assignmentsCollection })
+            .where(({ label_assignments }) =>
+                and(
+                    eq(label_assignments.record_id, recordId),
+                    eq(label_assignments.collection, collection),
+                    eq(label_assignments.user, userId)
+                )
+            )
     )
 
     const { data: allLabels } = useLiveQuery(query => query.from({ labels: labelsCollection }))

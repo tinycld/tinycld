@@ -45,10 +45,9 @@ export function BuildHistoryTab({ isVisible, pb }: { isVisible: boolean; pb: Poc
     // pipeline, and pbtsdb's realtime subscription propagates those here — so a
     // revert or delete reflects without a manual refetch.
     const [pkgBuildCollection] = useStore('pkg_build')
-    const { data: rows = [], isLoading } = useLiveQuery(
-        query => query.from({ pkg_build: pkgBuildCollection }),
-        []
-    )
+    const { data: rows = [], isLoading } = useLiveQuery({
+        query: query => query.from({ pkg_build: pkgBuildCollection }),
+    })
     const builds = [...(rows as BuildRecord[])].sort((a, b) =>
         (b.created ?? '').localeCompare(a.created ?? '')
     )

@@ -14,13 +14,12 @@ export function useCurrentRole() {
     const { user, isLoggedIn, isInitializing } = useAuth({ throwIfAnon: false })
     const [usersCollection] = useStore('users')
 
-    const { data: rows, isReady: queryReady } = useLiveQuery(
-        query =>
+    const { data: rows, isReady: queryReady } = useLiveQuery({
+        query: query =>
             query
                 .from({ users: usersCollection })
                 .where(({ users }) => eq(users.id, user?.id ?? '')),
-        [user?.id]
-    )
+    })
 
     const role = rows?.[0]?.role ?? null
     return {

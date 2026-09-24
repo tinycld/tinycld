@@ -32,17 +32,14 @@ export interface RulesPanelProps {
 
 function useScopedRules(scope: 'personal' | 'org') {
     const [rulesCollection] = useStore('rules')
-    return useMyLiveQuery(
-        (query, { userId }) => {
-            if (scope === 'personal') {
-                return query
-                    .from({ r: rulesCollection })
-                    .where(({ r }) => and(eq(r.scope, 'personal'), eq(r.owner, userId)))
-            }
-            return query.from({ r: rulesCollection }).where(({ r }) => eq(r.scope, 'org'))
-        },
-        [scope]
-    )
+    return useMyLiveQuery((query, { userId }) => {
+        if (scope === 'personal') {
+            return query
+                .from({ r: rulesCollection })
+                .where(({ r }) => and(eq(r.scope, 'personal'), eq(r.owner, userId)))
+        }
+        return query.from({ r: rulesCollection }).where(({ r }) => eq(r.scope, 'org'))
+    })
 }
 
 // A single last-run-per-rule query for the whole visible set — never one
@@ -61,17 +58,15 @@ function useLastRunByRule(rules: Rules[], scope: 'personal' | 'org') {
     const [rulesCollection, runsCollection] = useStore('rules', 'rule_runs')
     const ruleIds = useMemo(() => new Set(rules.map(r => r.id)), [rules])
 
-    const { data: rows } = useMyLiveQuery(
-        (query, { userId }) =>
-            query
-                .from({ run: runsCollection })
-                .innerJoin({ rule: rulesCollection }, ({ run, rule }) => eq(run.rule, rule.id))
-                .where(({ rule }) =>
-                    scope === 'personal'
-                        ? and(eq(rule.scope, 'personal'), eq(rule.owner, userId))
-                        : eq(rule.scope, 'org')
-                ),
-        [scope]
+    const { data: rows } = useMyLiveQuery((query, { userId }) =>
+        query
+            .from({ run: runsCollection })
+            .innerJoin({ rule: rulesCollection }, ({ run, rule }) => eq(run.rule, rule.id))
+            .where(({ rule }) =>
+                scope === 'personal'
+                    ? and(eq(rule.scope, 'personal'), eq(rule.owner, userId))
+                    : eq(rule.scope, 'org')
+            )
     )
 
     return useMemo(() => {
