@@ -317,3 +317,61 @@ func TestAnonymizeUser(t *testing.T) {
 		t.Error("expected verified=false after anonymize")
 	}
 }
+
+// TestOffboardUser_RemovesGroupMemberships proves OffboardUser's call to
+// groups.RemoveUserMemberships actually runs: a leaver's group_members rows
+// must be gone once offboarding completes. This registers no groups grant
+// table and binds none of groups' hooks — offboard only needs
+// group_members itself to be droppable, the same tolerance
+// RemoveUserMemberships extends to a lean-shell install missing the
+// collection entirely (see TestOffboardUser_EmptyRegistry's registry-less
+// counterpart in spirit: this proves the collection-present path instead).
+func TestOffboardUser_RemovesGroupMemberships(t *testing.T) {
+	app := setupTestApp(t)
+
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	groupsCol := core.NewBaseCollection("groups")
+	groupsCol.Fields.Add(&core.TextField{Name: "name", Required: true})
+	if err := app.Save(groupsCol); err != nil {
+		t.Fatalf("save groups: %v", err)
+	}
+
+	membersCol := core.NewBaseCollection("group_members")
+	membersCol.Fields.Add(&core.RelationField{Name: "group", Required: true, CollectionId: groupsCol.Id, CascadeDelete: true, MaxSelect: 1})
+	membersCol.Fields.Add(&core.RelationField{Name: "user", Required: true, CollectionId: users.Id, CascadeDelete: true, MaxSelect: 1})
+	membersCol.AddIndex("idx_gm_unique", true, "`group`, `user`", "")
+	if err := app.Save(membersCol); err != nil {
+		t.Fatalf("save group_members: %v", err)
+	}
+
+	alice := makeUser(t, app, "alice@test.local")
+
+	group := core.NewRecord(groupsCol)
+	group.Set("name", "keepers")
+	if err := app.Save(group); err != nil {
+		t.Fatalf("save group: %v", err)
+	}
+
+	membership := core.NewRecord(membersCol)
+	membership.Set("group", group.Id)
+	membership.Set("user", alice.Id)
+	if err := app.Save(membership); err != nil {
+		t.Fatalf("save membership: %v", err)
+	}
+
+	if _, err := OffboardUser(app, alice.Id, Plan{Mode: ModeDeleteMyData}, ""); err != nil {
+		t.Fatalf("OffboardUser: %v", err)
+	}
+
+	n, err := app.CountRecords("group_members")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("want no group_members rows left for the offboarded user, got %d", n)
+	}
+}

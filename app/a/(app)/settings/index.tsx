@@ -25,6 +25,7 @@ import {
     Tag,
     User,
     Users,
+    UsersRound,
     Workflow,
 } from 'lucide-react-native'
 import { Pressable, ScrollView, Text, View } from 'react-native'
@@ -112,6 +113,11 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
                     label="Members"
                     onPress={() => router.push(orgHref('settings/members'))}
                     icon={<Users size={20} color={foregroundColor} />}
+                />
+                <SettingsLink
+                    label="Groups"
+                    onPress={() => router.push(orgHref('settings/groups'))}
+                    icon={<UsersRound size={20} color={foregroundColor} />}
                 />
                 <SettingsLink
                     label="Labels"

@@ -28,6 +28,7 @@ import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 import { InviteLinkPanel } from './InviteLinkPanel'
 import { PendingBadge, RoleBadge, YouBadge } from './MemberBadges'
+import { MemberGroupChips } from './MemberGroupChips'
 import { PackageAccessPanel } from './PackageAccessPanel'
 import { RemoveMemberFlow } from './RemoveMemberFlow'
 import {
@@ -262,6 +263,8 @@ function ViewMember({
                     />
 
                     {showPackageAccess && <PackageAccessPanel userId={member.userId} />}
+
+                    <MemberGroupChips userId={member.userId} />
                 </View>
             </DrawerBody>
 

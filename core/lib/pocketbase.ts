@@ -239,6 +239,17 @@ const users = newCollection('users', {
     ...indexing,
 })
 
+const groups = newCollection('groups', {
+    omitOnInsert: ['created', 'updated'],
+    ...indexing,
+})
+
+const group_members = newCollection('group_members', {
+    omitOnInsert: ['created', 'updated'],
+    relations: { group: groups, user: users },
+    ...indexing,
+})
+
 const settings = newCollection('settings', {
     omitOnInsert: ['created', 'updated'],
     ...indexing,
@@ -364,6 +375,8 @@ const comment_mentions = newCollection('comment_mentions', {
 
 const coreStores = {
     users,
+    groups,
+    group_members,
     settings,
     user_preferences,
     labels,

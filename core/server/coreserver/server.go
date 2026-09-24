@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 
 	"tinycld.org/core/automation"
+	"tinycld.org/core/groups"
 	"tinycld.org/core/logging"
 	"tinycld.org/core/notify"
 	"tinycld.org/core/oauth"
@@ -371,6 +372,7 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	RegisterUsersDemoAuditHook(app)
 	RegisterDisabledUserGuard(app)
 	pkgaccess.Register(app)
+	groups.Register(app)
 
 	// OAuth 2.1 authorization server: the device grant the tinycld CLI logs in
 	// with, and authorization-code + PKCE for third-party integrations. Shared

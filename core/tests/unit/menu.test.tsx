@@ -121,6 +121,23 @@ describe('Menu (web)', () => {
         expect(slot.style.left).toBe('0px')
     })
 
+    it('keeps a submenu open when its hover-opened trigger is then clicked', () => {
+        const { getByText, queryByTestId } = render(
+            <Menu isOpen onOpenChange={() => {}} anchor={{ x: 10, y: 10 }} presentation="popover">
+                <Menu.Sub label="Status">
+                    <Menu.Item label="Backlog" onSelect={() => {}} testID="sub-item" />
+                </Menu.Sub>
+            </Menu>
+        )
+        // A real pointer enters the row before it clicks it. The hover opens
+        // the submenu; the click that follows must not close it again.
+        fireEvent.mouseEnter(getByText('Status').closest('[role="menuitem"]') as HTMLElement)
+        expect(queryByTestId('sub-item')).not.toBeNull()
+
+        fireEvent.click(getByText('Status'))
+        expect(queryByTestId('sub-item')).not.toBeNull()
+    })
+
     it('closes on a press outside the surface and its trigger, and toggles on the trigger', () => {
         const onOpenChange = vi.fn()
         const { getByText, queryByText } = render(

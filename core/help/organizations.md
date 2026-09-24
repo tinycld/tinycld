@@ -44,7 +44,9 @@ make someone else an owner.
 
 Everything administrative lives in **Settings**, reached from the gear icon in
 the nav rail. Owners and admins see an **Organization** group there — storage,
-members, labels and the audit log — that members and guests don't.
+members, groups, labels and the audit log — that members and guests don't.
+
+Groups let you share with a whole team at once; see [Groups](help://core:groups).
 
 Two entries are **owner-only**, because they change what everyone on the
 deployment runs rather than how one organization is configured:

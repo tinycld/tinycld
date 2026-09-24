@@ -10,6 +10,7 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
+	"tinycld.org/core/groups"
 	"tinycld.org/core/logging"
 )
 
@@ -121,6 +122,12 @@ func OffboardUser(app core.App, userID string, plan Plan, actorUserID string) (*
 			// anonymization below run.
 		default:
 			return fmt.Errorf("%w: unknown mode %q", ErrInvalidPlan, plan.Mode)
+		}
+
+		// A departing user leaves every group. The membership hooks drop the
+		// derived rows, so a successor never inherits a group-granted share.
+		if err := groups.RemoveUserMemberships(txApp, userID); err != nil {
+			return err
 		}
 
 		for _, h := range registeredHandlers() {

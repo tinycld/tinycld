@@ -22,4 +22,11 @@ func RegisterAuditHooks(app *pocketbase.PocketBase) {
 		ExtractLabel: audit.LabelFromField("name"),
 	})
 	audit.RegisterCollections(app, []string{"label_assignments", "org_pkg_access"}, nil)
+
+	// Group membership is an access-control change: who can see what moves
+	// with every row here, so both land in the audit log.
+	audit.RegisterCollection(app, "groups", &audit.CollectionConfig{
+		ExtractLabel: audit.LabelFromField("name"),
+	})
+	audit.RegisterCollections(app, []string{"group_members"}, nil)
 }
