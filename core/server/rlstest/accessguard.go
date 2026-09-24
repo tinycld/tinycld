@@ -33,12 +33,6 @@ func CorePublicPaths() []PublicPath {
 	return []PublicPath{
 		{"org_branding", "list", "the login screen shows the org's branding before anyone signs in"},
 		{"org_branding", "view", "the login screen shows the org's branding before anyone signs in"},
-		// A KNOWN HOLE, not a design choice: PocketBase's init migration leaves
-		// users.createRule = "" and no tinycld migration closes it, so anyone
-		// can sign up with any role. The fix (a new core migration that sets it
-		// to null) is on branch fix/anon-rule-guards. Once that merges, this
-		// entry goes stale and the scan fails until it is deleted.
-		{"users", "create", "KNOWN HOLE: open sign-up; closed on fix/anon-rule-guards — delete this entry when that merges"},
 	}
 }
 
