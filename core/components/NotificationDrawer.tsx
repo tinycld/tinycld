@@ -120,11 +120,10 @@ function NotificationContent() {
     const close = useWorkspaceStore(s => s.setNotificationsOpen)
     const router = useRouter()
 
-    const { data: rawNotifications } = useLiveQuery(
-        query =>
+    const { data: rawNotifications } = useLiveQuery({
+        query: query =>
             query.from({ n: notificationsCollection }).where(({ n }) => eq(n.dismissed, false)),
-        []
-    )
+    })
 
     const notifications = useMemo(
         () => [...(rawNotifications ?? [])].sort((a, b) => (b.created > a.created ? 1 : -1)),

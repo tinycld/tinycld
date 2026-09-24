@@ -21,17 +21,25 @@ import { useAuth } from '@tinycld/core/lib/auth'
  * can render outside the auth gate (a /p/* share route), where anonymous is the
  * normal case and throwing would turn the screen into an error boundary.
  *
- * Use plain `useLiveQuery` when a query does not filter by the caller.
+ * Use plain `useLiveQuery`, in its object form, when a query does not filter
+ * by the caller.
  */
 export function useMyLiveQuery<TContext extends Context>(
     queryFn: (
         q: InitialQueryBuilder,
         me: { userId: string }
     ) => QueryBuilder<TContext> | undefined | null,
-    deps: unknown[] = []
+    /**
+     * @deprecated Has no effect; omit it. The query re-runs when any value it
+     * captures changes, because react-db derives the query's identity from the
+     * built query (the values in `eq(...)` and friends), not from a deps list.
+     * Kept only so packages that still pass it compile unchanged — they
+     * release separately from core.
+     */
+    _deps?: unknown[]
 ) {
     const { user } = useAuth({ throwIfAnon: false })
     const userId = user?.id ?? ''
 
-    return useLiveQuery(q => (userId ? queryFn(q, { userId }) : null), [userId, ...deps])
+    return useLiveQuery({ query: q => (userId ? queryFn(q, { userId }) : null) })
 }

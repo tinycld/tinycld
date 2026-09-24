@@ -39,8 +39,8 @@ const VISIBLE_LIMIT = 50
 
 function useRelationRecords(target: string) {
     const collection = collectionByName(target)
-    const { data } = useLiveQuery(
-        q => {
+    const { data } = useLiveQuery({
+        query: q => {
             if (!collection) return null
             // No LIMIT here: the cap has to be applied AFTER filtering, or the
             // filter only ever searches the first N rows. Ordering by id is
@@ -48,8 +48,7 @@ function useRelationRecords(target: string) {
             // so both are handled below against the display field.
             return q.from({ record: collection })
         },
-        [collection]
-    )
+    })
     return { isRegistered: Boolean(collection), records: (data ?? []) as Record<string, unknown>[] }
 }
 

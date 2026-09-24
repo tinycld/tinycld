@@ -116,6 +116,33 @@ func TestOffboardUser_ReassignRewritesOwnedFKs(t *testing.T) {
 	}
 }
 
+// TestOffboardUser_KeepLeavesContent is the no-plan account delete: authored
+// records stay attributed to the anonymized account.
+func TestOffboardUser_KeepLeavesContent(t *testing.T) {
+	app := setupTestApp(t)
+	alice := makeUser(t, app, "alice@test.local")
+	event := makeEvent(t, app, "Standup", alice.Id)
+
+	result, err := OffboardUser(app, alice.Id, Plan{Mode: ModeKeep}, alice.Id)
+	if err != nil {
+		t.Fatalf("OffboardUser: %v", err)
+	}
+	if result.RecordsReassigned != 0 || result.RecordsDeleted != 0 || !result.UserAnonymized {
+		t.Errorf("result = %+v, want only user_anonymized", result)
+	}
+	kept, err := app.FindRecordById("test_events", event.Id)
+	if err != nil {
+		t.Fatalf("event gone: %v", err)
+	}
+	if kept.GetString("created_by") != alice.Id {
+		t.Errorf("created_by = %q, want %q", kept.GetString("created_by"), alice.Id)
+	}
+	scrubbed, _ := app.FindRecordById("users", alice.Id)
+	if scrubbed.GetString("name") != "Deleted user" {
+		t.Errorf("name = %q, want %q", scrubbed.GetString("name"), "Deleted user")
+	}
+}
+
 // TestOffboardUser_DeleteMyData removes the user's owned records instead of
 // reassigning them, then anonymizes.
 func TestOffboardUser_DeleteMyData(t *testing.T) {

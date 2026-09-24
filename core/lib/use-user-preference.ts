@@ -20,8 +20,8 @@ export function useUserPreference<T>(
     const userId = user?.id ?? ''
     const [userPreferencesCollection] = useStore('user_preferences')
 
-    const { data: rows } = useLiveQuery(
-        query =>
+    const { data: rows } = useLiveQuery({
+        query: query =>
             query
                 .from({ user_preferences: userPreferencesCollection })
                 .where(({ user_preferences }) =>
@@ -31,8 +31,7 @@ export function useUserPreference<T>(
                         eq(user_preferences.user, userId)
                     )
                 ),
-        [app, key, userId]
-    )
+    })
 
     const existing = isLoggedIn ? rows?.[0] : undefined
     const value = existing ? (existing.value as T) : defaultValue

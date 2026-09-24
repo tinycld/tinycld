@@ -14,12 +14,10 @@ export function useLabelMutations() {
     // This user's assignments, so unassignLabel can resolve a (label,
     // record, collection) tuple to its row id through pbtsdb instead of a raw
     // pb.collection(...).getFirstListItem/delete.
-    const { data: myAssignments = [] } = useMyLiveQuery(
-        (query, { userId: uid }) =>
-            query
-                .from({ label_assignments: assignmentsCollection })
-                .where(({ label_assignments }) => eq(label_assignments.user, uid)),
-        []
+    const { data: myAssignments = [] } = useMyLiveQuery((query, { userId: uid }) =>
+        query
+            .from({ label_assignments: assignmentsCollection })
+            .where(({ label_assignments }) => eq(label_assignments.user, uid))
     )
 
     const onError = (error: unknown) => {
@@ -107,18 +105,16 @@ export function useLabelMutations() {
 export function useAssignmentsForRecord(recordId: string, collection: string) {
     const [assignmentsCollection] = useStore('label_assignments')
 
-    const { data: assignments } = useMyLiveQuery(
-        (query, { userId }) =>
-            query
-                .from({ label_assignments: assignmentsCollection })
-                .where(({ label_assignments }) =>
-                    and(
-                        eq(label_assignments.record_id, recordId),
-                        eq(label_assignments.collection, collection),
-                        eq(label_assignments.user, userId)
-                    )
-                ),
-        [recordId, collection]
+    const { data: assignments } = useMyLiveQuery((query, { userId }) =>
+        query
+            .from({ label_assignments: assignmentsCollection })
+            .where(({ label_assignments }) =>
+                and(
+                    eq(label_assignments.record_id, recordId),
+                    eq(label_assignments.collection, collection),
+                    eq(label_assignments.user, userId)
+                )
+            )
     )
 
     return assignments ?? []

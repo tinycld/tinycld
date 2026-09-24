@@ -11,15 +11,14 @@ export function useUserPreferences(app: string) {
     const userId = user?.id ?? ''
     const [userPreferencesCollection] = useStore('user_preferences')
 
-    const { data: preferences } = useLiveQuery(
-        query =>
+    const { data: preferences } = useLiveQuery({
+        query: query =>
             query
                 .from({ user_preferences: userPreferencesCollection })
                 .where(({ user_preferences }) =>
                     and(eq(user_preferences.app, app), eq(user_preferences.user, userId))
                 ),
-        [app, userId]
-    )
+    })
 
     return isLoggedIn ? (preferences ?? []) : []
 }

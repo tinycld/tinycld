@@ -26,13 +26,12 @@ export interface Peer {
 // someone's whole library.
 export function usePeers(excludeUserId: string): Peer[] {
     const [usersCollection] = useStore('users')
-    const { data } = useLiveQuery(
-        query =>
+    const { data } = useLiveQuery({
+        query: query =>
             query
                 .from({ users: usersCollection })
                 .where(({ users }) => not(eq(users.id, excludeUserId))),
-        [excludeUserId]
-    )
+    })
     return (data ?? [])
         .filter(u => u.role !== 'guest' && !u.disabled)
         .map(u => ({ id: u.id, name: u.name, email: u.email, role: u.role }))

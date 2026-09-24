@@ -20,13 +20,12 @@ export function PackageAccessPanel({ userId }: { userId: string }) {
     const packages = usePackages()
     const [orgPkgAccessCollection] = useStore('org_pkg_access')
 
-    const { data: overrides } = useLiveQuery(
-        query =>
+    const { data: overrides } = useLiveQuery({
+        query: query =>
             query
                 .from({ org_pkg_access: orgPkgAccessCollection })
                 .where(({ org_pkg_access }) => eq(org_pkg_access.user, userId)),
-        [userId]
-    )
+    })
 
     const overrideMap = new Map(
         (overrides ?? []).map(o => [o.pkg, { id: o.id, access: o.access as PackageAccessLevel }])

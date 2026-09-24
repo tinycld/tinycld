@@ -20,15 +20,14 @@ export function usePkgAccessResult(pkgSlug: string): PkgAccessResult {
     const userId = user.id
     const [orgPkgAccessCollection] = useStore('org_pkg_access')
 
-    const { data: overrides, isReady } = useLiveQuery(
-        query =>
+    const { data: overrides, isReady } = useLiveQuery({
+        query: query =>
             query
                 .from({ org_pkg_access: orgPkgAccessCollection })
                 .where(({ org_pkg_access }) =>
                     and(eq(org_pkg_access.user, userId), eq(org_pkg_access.pkg, pkgSlug))
                 ),
-        [userId, pkgSlug]
-    )
+    })
 
     // Owners/admins always have full access — no override row to wait for.
     if (role === 'owner' || role === 'admin') return { access: 'full', isReady: true }
