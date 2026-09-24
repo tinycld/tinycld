@@ -64,13 +64,11 @@ function ActiveContactSuggestions({ children }: ContactSuggestionsProps) {
         Collection<ContactRecord>,
     ]
 
-    const { data } = useMyLiveQuery(
-        (query, { userId }) =>
-            query
-                .from({ contacts: contactsCollection })
-                .where(({ contacts }) => eq(contacts.owner, userId))
-                .orderBy(({ contacts }) => contacts.first_name, 'asc'),
-        []
+    const { data } = useMyLiveQuery((query, { userId }) =>
+        query
+            .from({ contacts: contactsCollection })
+            .where(({ contacts }) => eq(contacts.owner, userId))
+            .orderBy(({ contacts }) => contacts.first_name, 'asc')
     )
 
     return <>{children((data as ContactSuggestion[] | undefined) ?? [])}</>

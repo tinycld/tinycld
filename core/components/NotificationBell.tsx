@@ -10,13 +10,12 @@ export function NotificationBell({ color }: { color: string }) {
     const isOpen = useWorkspaceStore(s => s.isNotificationsOpen)
     const setOpen = useWorkspaceStore(s => s.setNotificationsOpen)
 
-    const { data: unread } = useLiveQuery(
-        query =>
+    const { data: unread } = useLiveQuery({
+        query: query =>
             query
                 .from({ n: notificationsCollection })
                 .where(({ n }) => and(eq(n.read, false), eq(n.dismissed, false))),
-        []
-    )
+    })
 
     const unreadCount = unread?.length ?? 0
 

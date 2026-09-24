@@ -173,8 +173,8 @@ function AuditLogList({
 }) {
     const [auditLogsCollection, usersCollection] = useStore('audit_logs', 'users')
 
-    const { data: logs } = useLiveQuery(
-        query => {
+    const { data: logs } = useLiveQuery({
+        query: query => {
             let q = query.from({ audit_logs: auditLogsCollection })
             if (actionFilter || resourceFilter) {
                 q = q.where(({ audit_logs }) => {
@@ -204,8 +204,7 @@ function AuditLogList({
                     actorEmail: actor?.email,
                 }))
         },
-        [actionFilter, resourceFilter, usersCollection]
-    )
+    })
 
     if (!logs || logs.length === 0) {
         return (

@@ -36,13 +36,12 @@ export interface RuleBuilderProps {
 // it, and only actually queries `rules` when a ruleId is present.
 function useEditingRecord(ruleId: string | undefined) {
     const [rulesCollection] = useStore('rules')
-    const { data, isReady } = useLiveQuery(
-        query => {
+    const { data, isReady } = useLiveQuery({
+        query: query => {
             if (!ruleId) return null
             return query.from({ r: rulesCollection }).where(({ r }) => eq(r.id, ruleId))
         },
-        [ruleId]
-    )
+    })
     if (!ruleId) return { record: null, isReady: true }
     return { record: data?.[0] ?? null, isReady }
 }

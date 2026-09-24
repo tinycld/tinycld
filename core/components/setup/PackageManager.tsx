@@ -109,10 +109,9 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
         'pkg_registry',
         'pkg_install_log'
     )
-    const { data: rows = [], isLoading } = useLiveQuery(
-        query => query.from({ pkg_registry: pkgRegistryCollection }),
-        []
-    )
+    const { data: rows = [], isLoading } = useLiveQuery({
+        query: query => query.from({ pkg_registry: pkgRegistryCollection }),
+    })
     const packages = [...(rows as PkgRecord[])].sort(
         (a, b) =>
             (a.nav_order ?? 0) - (b.nav_order ?? 0) || (a.name ?? '').localeCompare(b.name ?? '')
@@ -141,14 +140,13 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     // so far, so a late subscriber sees the same bar. The row's status flips
     // off `running` when the job ends; the panel keeps the job in local state
     // so it can still show the terminal result until it is closed.
-    const { data: runningLogs = [] } = useLiveQuery(
-        query =>
+    const { data: runningLogs = [] } = useLiveQuery({
+        query: query =>
             query
                 .from({ log: pkgInstallLogCollection })
                 .where(({ log }) => eq(log.status, 'running'))
                 .orderBy(({ log }) => log.created, 'desc'),
-        []
-    )
+    })
     // Jobs the admin has already closed. Without this, closing the panel sets
     // installJob to null and the adoption below immediately re-adopts the same
     // job on the very next render — the Close button looks dead. A ref, not
