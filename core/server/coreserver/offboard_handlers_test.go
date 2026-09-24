@@ -134,3 +134,69 @@ func TestAccountDelete_HandlerRefusalIsBadRequest(t *testing.T) {
 		t.Error("account anonymized despite the handler refusal")
 	}
 }
+
+// With no plan the delete still runs the handlers, in ModeKeep, so a package
+// can refuse while the user solely owns something other people use.
+func TestAccountDelete_NoPlanRunsHandlersInKeepMode(t *testing.T) {
+	app, calls := setupOffboardHandlerApp(t)
+	makeUserWithRole(t, app, "owner@test.local", "owner")
+	leaver := makeUserWithRole(t, app, "leaver@test.local", "member")
+
+	scenario := &tests.ApiScenario{
+		Name:                  "no-plan delete runs handlers",
+		Method:                http.MethodPost,
+		URL:                   "/api/account/delete",
+		Body:                  strings.NewReader(`{"email":"leaver@test.local"}`),
+		Headers:               map[string]string{"Authorization": authToken(t, leaver)},
+		ExpectedStatus:        http.StatusNoContent,
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}
+	scenario.Test(t)
+
+	want := widgetsCall{
+		leaverID:    leaver.Id,
+		plan:        offboard.Plan{Mode: offboard.ModeKeep},
+		actorUserID: leaver.Id,
+	}
+	if len(*calls) != 1 || (*calls)[0] != want {
+		t.Errorf("handler calls = %+v, want [%+v]", *calls, want)
+	}
+	gone, _ := app.FindRecordById("users", leaver.Id)
+	if gone.GetString("name") != "Deleted user" {
+		t.Error("account not anonymized")
+	}
+}
+
+// A no-plan delete is refused while a handler reports a sole-owned shared
+// resource: 400 with the handler's instructions, account untouched.
+func TestAccountDelete_NoPlanRefusedBySoleOwnership(t *testing.T) {
+	app, _ := setupOffboardHandlerApp(t)
+	makeUserWithRole(t, app, "owner@test.local", "owner")
+	leaver := makeUserWithRole(t, app, "leaver@test.local", "member")
+	offboard.RegisterHandler("widgets-guard", func(_ core.App, l *core.Record, plan offboard.Plan, actor string) error {
+		if plan.SuccessorUserID == "" && actor == l.Id {
+			return fmt.Errorf("%w: you are the only owner of the widget %q, which other people use. "+
+				"Transfer ownership or delete it first", offboard.ErrInvalidPlan, "Gear")
+		}
+		return nil
+	})
+
+	scenario := &tests.ApiScenario{
+		Name:                  "no-plan delete refused",
+		Method:                http.MethodPost,
+		URL:                   "/api/account/delete",
+		Body:                  strings.NewReader(`{"email":"leaver@test.local"}`),
+		Headers:               map[string]string{"Authorization": authToken(t, leaver)},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{`Transfer ownership or delete it first`, `Gear`},
+		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}
+	scenario.Test(t)
+
+	still, _ := app.FindRecordById("users", leaver.Id)
+	if still.GetString("name") == "Deleted user" || still.Email() != "leaver@test.local" {
+		t.Error("account anonymized despite the refusal")
+	}
+}

@@ -49,7 +49,7 @@ func recordingHandler(calls *[]handlerCall) Handler {
 }
 
 func TestRegisterHandler_CalledWithPlanAndActor(t *testing.T) {
-	for _, mode := range []Mode{ModeReassign, ModeDeleteMyData} {
+	for _, mode := range []Mode{ModeReassign, ModeDeleteMyData, ModeKeep} {
 		t.Run(string(mode), func(t *testing.T) {
 			app := setupHandlerApp(t)
 			alice := makeUser(t, app, "alice@test.local")

@@ -17,17 +17,24 @@ import (
 //
 // OffboardUser calls every registered Handler inside its transaction, after
 // the reassignable refs are settled and before the users record is
-// anonymized, in both ModeReassign and ModeDeleteMyData:
+// anonymized, in every mode (ModeReassign, ModeDeleteMyData and ModeKeep):
 //
 //   - txApp is the transaction app. Use it for every read and write, so a
 //     failure rolls back the whole offboard.
 //   - leaver is the users record being offboarded, not yet anonymized.
 //   - plan is the validated plan. In ModeReassign, plan.SuccessorUserID names
-//     an existing users record other than the leaver.
+//     an existing users record other than the leaver. In the other modes
+//     there is no successor.
 //   - actorUserID is the user who started the offboard: an admin on
 //     /api/admin/users/offboard, the leaver on /api/account/delete, or "" for
 //     system use. actorUserID == leaver.Id therefore means a self-delete, with
 //     nobody else to hand ownership to.
+//
+// A Handler must not assume a heir exists. With no successor and no actor
+// other than the leaver (a self-delete in ModeDeleteMyData or ModeKeep), a
+// resource the leaver solely owns and other people use has nobody to go to:
+// refuse with a wrapped ErrInvalidPlan that tells the user to transfer
+// ownership or delete the resource first.
 //
 // A non-nil error aborts the offboard and rolls back every write, including
 // the other handlers' writes. Wrap ErrInvalidPlan to reject the plan for this

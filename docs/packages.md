@@ -815,16 +815,24 @@ offboard.RegisterHandler("calendar", func(txApp core.App, leaver *core.Record, p
 })
 ```
 
-`OffboardUser` calls every handler inside its transaction, in both
-`reassign` and `delete_my_data` mode, after the reassignable FKs are settled
+`OffboardUser` calls every handler inside its transaction, in every mode
+(`reassign`, `delete_my_data` and `keep`), after the reassignable FKs are settled
 and before the user is anonymized. Use `txApp` for every read and write.
 `actorUserID` is the admin on `/api/admin/users/offboard`, the leaver on
 `/api/account/delete`, or `""` for system use. Any error rolls back the whole
 offboard. Wrap `offboard.ErrInvalidPlan` to refuse the plan; both endpoints
 return that as a 400 with your message. A second registration under the same
 name is a no-op, and handlers run in name order. A self-delete with no plan
-(`/api/account/delete` without `plan`) only anonymizes the user, and does not
-run handlers.
+(`/api/account/delete` without `plan`) runs in `keep` mode: reassignable
+records stay attributed to the anonymized account, but the handlers still run.
+
+A handler must not assume a heir. In `delete_my_data` or `keep` mode with the
+leaver as the actor, there is no successor and no admin. If the leaver is the
+only owner of a resource other people use, refuse with a wrapped
+`ErrInvalidPlan` that tells the user to transfer ownership or delete the
+resource first. This is how a no-plan delete is refused while the user solely
+owns shared resources; core itself names no package. A handler can also delete
+what must not outlive the account (mail deletes the leaver's personal mailbox).
 
 The OAuth registry is the reference shape. A package declares its scopes with
 consent copy, the collections each scope reads and writes, its bespoke
