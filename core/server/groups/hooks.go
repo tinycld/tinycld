@@ -24,22 +24,26 @@ func Register(app *pocketbase.PocketBase) {
 }
 
 // registerCore is the core.App-typed body so tests can bind it on a
-// *tests.TestApp. Create/update hooks run inside the write's transaction and
-// hand the handler that transactional e.App directly, so a failed derived
-// write fails the client's request and nothing half-expanded is ever visible.
-// Delete is different: the fork's onRecordDeleteExecute runs e.Next() inside
-// its own RunInTransaction, then restores e.App to the non-transactional app
-// before returning control here — so by the time a delete hook's code after
-// e.Next() runs, the parent delete has already committed. The delete hooks
-// below therefore open their own transaction around e.Next() plus the derived
-// cleanup, so a failed cleanup rolls back the parent delete too instead of
-// orphaning derived rows.
+// *tests.TestApp. None of the model save/delete hooks give the handler a
+// transaction the caller did not already open — the REST save path
+// (apis/record_crud.go, forms/record_upsert.go) calls SaveWithContext on the
+// plain app with no wrapping transaction, and core.App's onRecordSaveExecute
+// opens none either. So every handler below that writes derived rows after
+// e.Next() opens its own transaction around e.Next() plus that write:
+// RunInTransaction nests onto an outer transaction when the caller happens to
+// already be in one (see third_party/pocketbase/core/db_tx.go), and starts a
+// fresh one otherwise. Either way, a failed derived write rolls back the
+// parent row's save/delete too, instead of leaving it committed with nothing
+// (or half of the expansion) expanded.
 func registerCore(app core.App) {
 	app.OnRecordCreate("group_members").BindFunc(func(e *core.RecordEvent) error {
-		if err := e.Next(); err != nil {
-			return err
-		}
-		return deriveForMember(e.App, e.Record.GetString("group"), e.Record.GetString("user"))
+		return e.App.RunInTransaction(func(txApp core.App) error {
+			e.App = txApp
+			if err := e.Next(); err != nil {
+				return err
+			}
+			return deriveForMember(txApp, e.Record.GetString("group"), e.Record.GetString("user"))
+		})
 	})
 	app.OnRecordDelete("group_members").BindFunc(func(e *core.RecordEvent) error {
 		return e.App.RunInTransaction(func(txApp core.App) error {
@@ -64,13 +68,16 @@ func registerCore(app core.App) {
 
 	// A user demoted to guest leaves every group: guests are never members.
 	app.OnRecordUpdate("users").BindFunc(func(e *core.RecordEvent) error {
-		if err := e.Next(); err != nil {
-			return err
-		}
-		if e.Record.GetString("role") != "guest" || e.Record.Original().GetString("role") == "guest" {
-			return nil
-		}
-		return RemoveUserMemberships(e.App, e.Record.Id)
+		return e.App.RunInTransaction(func(txApp core.App) error {
+			e.App = txApp
+			if err := e.Next(); err != nil {
+				return err
+			}
+			if e.Record.GetString("role") != "guest" || e.Record.Original().GetString("role") == "guest" {
+				return nil
+			}
+			return RemoveUserMemberships(txApp, e.Record.Id)
+		})
 	})
 
 	for _, t := range RegisteredGrantTables() {
@@ -80,22 +87,28 @@ func registerCore(app core.App) {
 
 func bindGrantTable(app core.App, t GrantTable) {
 	app.OnRecordCreate(t.Collection).BindFunc(func(e *core.RecordEvent) error {
-		if err := e.Next(); err != nil {
-			return err
-		}
-		if !isGrant(e.Record) {
-			return nil
-		}
-		return expandGrant(e.App, t, e.Record)
+		return e.App.RunInTransaction(func(txApp core.App) error {
+			e.App = txApp
+			if err := e.Next(); err != nil {
+				return err
+			}
+			if !isGrant(e.Record) {
+				return nil
+			}
+			return expandGrant(txApp, t, e.Record)
+		})
 	})
 	app.OnRecordUpdate(t.Collection).BindFunc(func(e *core.RecordEvent) error {
-		if err := e.Next(); err != nil {
-			return err
-		}
-		if !isGrant(e.Record) {
-			return nil
-		}
-		return syncDerived(e.App, t, e.Record)
+		return e.App.RunInTransaction(func(txApp core.App) error {
+			e.App = txApp
+			if err := e.Next(); err != nil {
+				return err
+			}
+			if !isGrant(e.Record) {
+				return nil
+			}
+			return syncDerived(txApp, t, e.Record)
+		})
 	})
 	app.OnRecordDelete(t.Collection).BindFunc(func(e *core.RecordEvent) error {
 		return e.App.RunInTransaction(func(txApp core.App) error {

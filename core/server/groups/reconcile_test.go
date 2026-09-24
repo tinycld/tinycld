@@ -126,3 +126,51 @@ func TestReconcileReportsErrorsButFinishesOtherTables(t *testing.T) {
 		t.Fatalf("zoo_keepers should be fully repaired, got %v", got)
 	}
 }
+
+// TestStaleCandidatesSkipsFailedPairs is a direct, deterministic unit test of
+// the phase-2 filter: a (group, resource) pair whose membership lookup failed
+// must be excluded from deletion entirely, even though it has no entry in
+// expected — which is exactly what a healthy pair with zero members also
+// looks like. Without the failed set, reconcile cannot tell "this grant has
+// no members" apart from "we couldn't find out," and a transient read error
+// on one grant would wipe out every derived row of that grant.
+func TestStaleCandidatesSkipsFailedPairs(t *testing.T) {
+	app := newZooApp(t)
+	col, err := app.FindCollectionByNameOrId("zoo_keepers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRow := func(group, resource, user string) *core.Record {
+		r := core.NewRecord(col)
+		r.Set("group", group)
+		r.Set("zoo", resource)
+		r.Set("user", user)
+		r.Set("role", "viewer")
+		return r
+	}
+
+	// g1/bronx: lookup failed — its row must survive untouched even though it
+	// has no entry in expected.
+	// g2/bronx: lookup succeeded and alice is expected — her row survives.
+	// g2/bronx: lookup succeeded and bob is not expected — his row is stale.
+	rows := []*core.Record{
+		newRow("g1", "bronx", "unreachable-user"),
+		newRow("g2", "bronx", "alice"),
+		newRow("g2", "bronx", "bob"),
+	}
+	expected := map[string]map[string]map[string]bool{
+		"g2": {"bronx": {"alice": true}},
+	}
+	failed := map[groupResource]bool{
+		{group: "g1", resource: "bronx"}: true,
+	}
+
+	stale := staleCandidates(expected, failed, rows, "zoo")
+	if len(stale) != 1 || stale[0].GetString("user") != "bob" {
+		got := make([]string, len(stale))
+		for i, r := range stale {
+			got[i] = r.GetString("user")
+		}
+		t.Fatalf("stale = %v, want only bob", got)
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"github.com/pocketbase/pocketbase/tools/types"
 
@@ -74,5 +73,4 @@ func TestGroupsShippedRules(t *testing.T) {
 	if groupsCol.Id != "pbc_groups_01" || col.Id != "pbc_group_members_01" {
 		t.Fatalf("collection ids are load-bearing for package migrations: %s %s", groupsCol.Id, col.Id)
 	}
-	_ = core.NewRecord
 }

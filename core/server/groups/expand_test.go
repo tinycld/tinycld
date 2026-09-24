@@ -25,6 +25,14 @@ func newZooApp(t *testing.T) *tests.TestApp {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The bundled test fixture's users collection has no role field; the
+	// guest-demotion guard needs one to test against.
+	if users.Fields.GetByName("role") == nil {
+		users.Fields.Add(&core.SelectField{Name: "role", MaxSelect: 1, Values: []string{"owner", "admin", "member", "guest"}})
+		if err := a.Save(users); err != nil {
+			t.Fatalf("add role field to users: %v", err)
+		}
+	}
 
 	groups := core.NewBaseCollection("groups")
 	groups.Id = "pbc_groups_01"
@@ -340,6 +348,119 @@ func TestGrantDeleteCleanupIsAtomicWithTheDelete(t *testing.T) {
 	}
 }
 
+// TestGrantCreateExpansionIsAtomic proves a grant create shares one
+// transaction with its expansion into derived rows: if the expansion fails,
+// the grant row itself must not persist either. Unlike delete, the REST save
+// path holds no transaction of its own, so this only passes if the create
+// hook opens one.
+func TestGrantCreateExpansionIsAtomic(t *testing.T) {
+	app := newZooApp(t)
+	alice := zooUser(t, app, "alice@x.test")
+	g := zooGroup(t, app, "keepers")
+	zooMember(t, app, g, alice)
+
+	// Bound after newZooApp (i.e. after registerCore), so it observes the
+	// derived save registerCore's own create hook makes; it must not fire for
+	// the grant row itself.
+	app.OnRecordCreate("zoo_keepers").BindFunc(func(e *core.RecordEvent) error {
+		if isDerived(e.Record) {
+			return errors.New("simulated derived-row create failure")
+		}
+		return e.Next()
+	})
+
+	col, _ := app.FindCollectionByNameOrId("zoo_keepers")
+	grant := core.NewRecord(col)
+	grant.Set("zoo", "bronx")
+	grant.Set("group", g.Id)
+	grant.Set("role", "viewer")
+
+	if err := app.Save(grant); err == nil {
+		t.Fatal("expected the grant create to fail when derived expansion fails")
+	}
+
+	n, err := app.CountRecords("zoo_keepers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("want no zoo_keepers rows after rollback, got %d", n)
+	}
+}
+
+// TestGrantUpdateSyncIsAtomic proves a grant update (e.g. a role change)
+// shares one transaction with re-syncing its derived rows: if the sync fails,
+// the grant's own stored role must roll back too, and the derived rows must
+// be left untouched.
+func TestGrantUpdateSyncIsAtomic(t *testing.T) {
+	app := newZooApp(t)
+	alice := zooUser(t, app, "alice@x.test")
+	g := zooGroup(t, app, "keepers")
+	zooMember(t, app, g, alice)
+	grant := zooGrant(t, app, "bronx", g, "viewer")
+
+	if derivedRows(t, app, "bronx")[alice.Id] != "viewer" {
+		t.Fatal("setup: expected alice's derived row at viewer")
+	}
+
+	app.OnRecordUpdate("zoo_keepers").BindFunc(func(e *core.RecordEvent) error {
+		if isDerived(e.Record) {
+			return errors.New("simulated derived-row sync failure")
+		}
+		return e.Next()
+	})
+
+	grant.Set("role", "editor")
+	if err := app.Save(grant); err == nil {
+		t.Fatal("expected the grant update to fail when derived sync fails")
+	}
+
+	stored, err := app.FindRecordById("zoo_keepers", grant.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.GetString("role") != "viewer" {
+		t.Fatalf("grant role should be unchanged after rollback, got %q", stored.GetString("role"))
+	}
+	if got := derivedRows(t, app, "bronx")[alice.Id]; got != "viewer" {
+		t.Fatalf("derived row should be unchanged after rollback, got %q", got)
+	}
+}
+
+// TestMemberJoinExpansionIsAtomic proves a group_members create shares one
+// transaction with expanding it into derived rows for that group's existing
+// grants: if the expansion fails, the membership row itself must not persist.
+func TestMemberJoinExpansionIsAtomic(t *testing.T) {
+	app := newZooApp(t)
+	alice := zooUser(t, app, "alice@x.test")
+	g := zooGroup(t, app, "keepers")
+	zooGrant(t, app, "bronx", g, "viewer")
+
+	app.OnRecordCreate("zoo_keepers").BindFunc(func(e *core.RecordEvent) error {
+		if isDerived(e.Record) {
+			return errors.New("simulated derived-row create failure")
+		}
+		return e.Next()
+	})
+
+	membersCol, _ := app.FindCollectionByNameOrId("group_members")
+	membership := core.NewRecord(membersCol)
+	membership.Set("group", g.Id)
+	membership.Set("user", alice.Id)
+
+	if err := app.Save(membership); err == nil {
+		t.Fatal("expected the membership create to fail when derived expansion fails")
+	}
+
+	n, err := app.CountRecords("group_members")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("want no group_members rows after rollback, got %d", n)
+	}
+}
+
 func TestRemoveUserMemberships(t *testing.T) {
 	app := newZooApp(t)
 	alice := zooUser(t, app, "alice@x.test")
@@ -357,5 +478,37 @@ func TestRemoveUserMemberships(t *testing.T) {
 	}
 	if len(derivedRows(t, app, "bronx")) != 0 {
 		t.Fatal("derived rows left after membership removal")
+	}
+}
+
+// TestGuestDemotionRemovesMembershipsAndDerivedRows covers the users update
+// guard directly: a user with a membership and a derived row who is demoted
+// to guest must lose both, and the guard must fire only on the actual
+// guest transition (not on every save, and not on a save that stays guest).
+func TestGuestDemotionRemovesMembershipsAndDerivedRows(t *testing.T) {
+	app := newZooApp(t)
+	alice := zooUser(t, app, "alice@x.test")
+	g := zooGroup(t, app, "keepers")
+	zooMember(t, app, g, alice)
+	zooGrant(t, app, "bronx", g, "viewer")
+
+	if len(derivedRows(t, app, "bronx")) != 1 {
+		t.Fatal("setup: expected alice's derived row before demotion")
+	}
+
+	alice.Set("role", "guest")
+	if err := app.Save(alice); err != nil {
+		t.Fatalf("demote alice to guest: %v", err)
+	}
+
+	n, err := app.CountRecords("group_members")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("want no group_members rows after guest demotion, got %d", n)
+	}
+	if len(derivedRows(t, app, "bronx")) != 0 {
+		t.Fatal("derived row left after guest demotion")
 	}
 }
