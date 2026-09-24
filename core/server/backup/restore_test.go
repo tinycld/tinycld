@@ -1,14 +1,18 @@
 package backup
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -399,7 +403,8 @@ func TestRestoreWaitsForSourceAndSwaps(t *testing.T) {
 	if err := SwapSource(jobID, good.URL); err != nil {
 		t.Fatal(err)
 	}
-	for time.Now().Before(time.Now().Add(20 * time.Second)) {
+	staged := time.Now().Add(20 * time.Second)
+	for time.Now().Before(staged) {
 		if _, err := os.Stat(filepath.Join(pendingDir(app, jobID), "data.db")); err == nil {
 			return
 		}
@@ -409,6 +414,143 @@ func TestRestoreWaitsForSourceAndSwaps(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatal("restore did not complete after the swap")
+}
+
+// archiveWithSymlinkMember hand-builds the age → zstd → tar pipeline, because
+// format.Writer only ever emits regular files and the point of this fixture is a
+// member that is not one. A symlink named storage/x passes the name check — the
+// name lands inside the staging directory — so only the type check can refuse it.
+func archiveWithSymlinkMember(t *testing.T) ([]byte, age.Identity) {
+	t.Helper()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	ageW, err := age.Encrypt(&buf, id.Recipient())
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw, err := zstd.NewWriter(ageW, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tw := tar.NewWriter(zw)
+
+	writeReg := func(name string, body []byte) string {
+		hdr := &tar.Header{
+			Name: name, Mode: 0o600, Size: int64(len(body)),
+			ModTime: time.Now().UTC(), Typeflag: tar.TypeReg,
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(body)
+		return hex.EncodeToString(sum[:])
+	}
+
+	manifest, err := json.MarshalIndent(format.Manifest{
+		Format: format.FormatV1, Created: time.Now().UTC(), Source: "docker", Kind: "manual",
+		Core: "1.2.3", Lockfile: format.Lockfile{"tinycld": "tinycld@1.2.3"},
+		Packages: map[string]string{"widgets": "1.0.0"},
+	}, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestSum := writeReg(format.MemberManifest, manifest)
+
+	// The member under test: a symlink that points at somewhere it has no
+	// business reaching.
+	if err := tw.WriteHeader(&tar.Header{
+		Name: format.StoragePrefix + "x", Mode: 0o777, Typeflag: tar.TypeSymlink,
+		Linkname: "/etc/passwd", ModTime: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The symlink IS listed in checksums.txt, with the hash of the empty body a
+	// symlink member carries. Without the type check the archive therefore
+	// verifies cleanly and the entry is judged only on its name — so this fixture
+	// proves the type check is the only thing refusing it, not the checksums.
+	empty := sha256.Sum256(nil)
+	sums := manifestSum + "  " + format.MemberManifest + "\n" +
+		hex.EncodeToString(empty[:]) + "  " + format.StoragePrefix + "x\n"
+	writeReg(format.MemberChecksums, []byte(sums))
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ageW.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes(), id
+}
+
+// A backup contains regular files and nothing else. An archive carrying a
+// symlink is either a different format or an attempt to make a later write land
+// outside the staging directory, so staging must refuse it outright.
+func TestRestoreRefusesANonRegularMember(t *testing.T) {
+	data, id := archiveWithSymlinkMember(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+
+	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id})
+	if err == nil {
+		t.Fatal("a symlink member was accepted")
+	}
+	if !errors.Is(err, format.ErrFormat) {
+		t.Fatalf("want ErrFormat, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("error does not name the reason: %v", err)
+	}
+	// Nothing was followed: the staging directory holds no such entry, by any
+	// kind, and the link target was never touched.
+	if _, err := os.Lstat(filepath.Join(pendingDir(app, jobID), "storage", "x")); !os.IsNotExist(err) {
+		t.Fatalf("the symlink member reached the staging directory: %v", err)
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if row.GetString("status") != "failed" {
+		t.Fatalf("status %q", row.GetString("status"))
+	}
+	if _, err := os.Stat(armedPath(app)); !os.IsNotExist(err) {
+		t.Fatal("still armed")
+	}
+	if Restoring() {
+		t.Fatal("a failed restore must clear the restoring flag")
+	}
+}
+
+// Force is the operator saying "this binary, that data". A rebuild would
+// silently overrule them, so Force restarts onto the current package set even
+// when a rebuilder is registered.
+func TestRestoreForceSkipsTheRebuilder(t *testing.T) {
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	RegisterRebuilder(func(context.Context, format.Lockfile) error {
+		t.Error("Force must not call the rebuilder")
+		return nil
+	})
+
+	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(pendingDir(app, jobID), "data.db")); err != nil {
+		t.Fatal("force did not stage")
+	}
+	if !restartRequested() {
+		t.Fatal("Force must restart the process itself rather than rebuild")
+	}
 }
 
 // A staged database that is not a valid SQLite file must be refused before the

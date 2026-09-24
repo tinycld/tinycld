@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"archive/tar"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -216,6 +217,9 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 		if ferr := finishRow(app, row, "failed", 0, "", err.Error(), manifest); ferr != nil {
 			log.Error("could not finalize restore row", "id", id, "err", ferr)
 		}
+		// Failure is the only outcome this process can announce. Success is
+		// announced by the post-boot finalizer, because a restore that worked
+		// ends by replacing the process that ran it.
 		announceRestore(app, req, row, false, err.Error())
 	}()
 
@@ -308,6 +312,12 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 
 	// Phase 4: arm. From here the process is on its way out, and the marker is
 	// what tells whoever boots next that there is staged data to swap in.
+	//
+	// The marker is written BEFORE the archive is staged, so it can name a
+	// pending directory that is empty or half-written: a process killed during
+	// phase 5 leaves exactly that. The boot swap must therefore never trust the
+	// marker alone — it has to confirm pending/<id>/data.db is there before it
+	// moves anything aside.
 	pending := pendingDir(app, id)
 	if err = os.MkdirAll(pending, 0o700); err != nil {
 		return err
@@ -460,6 +470,14 @@ func stage(r *format.Reader, dir string) error {
 		if err != nil {
 			return err
 		}
+		// A backup writes regular files and nothing else. Refusing every other
+		// type here is the check that matters: a symlink member named
+		// storage/x pointing at /etc or at the live pb_data would otherwise be
+		// judged solely on where its own name lands, and a later write through
+		// that name would leave the staging directory entirely.
+		if hdr.Typeflag != tar.TypeReg {
+			return fmt.Errorf("%w: member %q is not a regular file", format.ErrFormat, hdr.Name)
+		}
 		if hdr.Name != format.MemberDB && !strings.HasPrefix(hdr.Name, format.StoragePrefix) {
 			return fmt.Errorf("%w: unexpected member %q", format.ErrFormat, hdr.Name)
 		}
@@ -530,6 +548,11 @@ func integrityCheck(path string) error {
 
 // announceRestore tells the people who can act, and records the outcome. Neither
 // failure fails the restore: by the time this runs the decision is already made.
+//
+// Only the failure branch is reachable from this file. A restore that got as far
+// as arming ends by replacing the process, so this process is never the one that
+// can say it worked — the post-boot finalizer calls this with ok=true once it has
+// booted on the staged data.
 func announceRestore(app core.App, req RestoreRequest, row *core.Record, ok bool, errMsg string) {
 	typ, title, body, action := "core.restore.succeeded", "Restore completed",
 		"This organization was restored from a backup.", "restore.succeeded"

@@ -2,6 +2,7 @@ package backup
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"tinycld.org/core/backup/format"
@@ -46,19 +47,10 @@ func TestMismatchErrorIsSentinelAndListsTheDiff(t *testing.T) {
 	}
 	msg := err.Error()
 	for _, want := range []string{"widgets", "sprockets", "gadgets", "1.0.0", "2.0.0"} {
-		if !contains(msg, want) {
+		if !strings.Contains(msg, want) {
 			t.Fatalf("error %q does not mention %q", msg, want)
 		}
 	}
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
 
 // installedPackages reads the registry the manifest check compares against, and

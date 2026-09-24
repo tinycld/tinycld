@@ -75,7 +75,9 @@ func compareEmbedded(m format.Manifest, installed map[string]string) Diff {
 // core is left out: its version is a manifest field of its own, so counting it
 // here would report a mismatch on every core upgrade.
 func installedPackages(app core.App) (map[string]string, error) {
-	regs, err := app.FindRecordsByFilter("pkg_registry", "status = 'installed' || status = 'bundled'", "slug", 0, 0)
+	// No sort: the result is a map, so ordering the query would cost a sort
+	// nothing reads.
+	regs, err := app.FindRecordsByFilter("pkg_registry", "status = 'installed' || status = 'bundled'", "", 0, 0)
 	if err != nil {
 		return nil, err
 	}
