@@ -632,12 +632,11 @@ function OpenableSub({ label, icon, leading, isDisabled = false, testID, childre
                 label={label}
                 leading={<RowLeading icon={icon} leading={leading} />}
                 trailing={<ChevronRight size={14} color={mutedColor} style={TRAILING_STYLE} />}
+                // Open, never toggle: a pointer hovers the row open before it
+                // clicks, so a toggling click would close what the hover opened.
                 onActivate={() => {
-                    if (isOpen) close()
-                    else {
-                        open()
-                        focusFirstRow()
-                    }
+                    open()
+                    focusFirstRow()
                 }}
                 isDisabled={isDisabled}
                 isExpanded={isOpen}
