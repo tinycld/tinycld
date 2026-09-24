@@ -15,6 +15,11 @@ const ACTION_OPTIONS = [
     { label: 'Created', value: 'created' },
     { label: 'Updated', value: 'updated' },
     { label: 'Deleted', value: 'deleted' },
+    { label: 'Backup created', value: 'backup.created' },
+    { label: 'Backup failed', value: 'backup.failed' },
+    { label: 'Restore started', value: 'restore.started' },
+    { label: 'Restore succeeded', value: 'restore.succeeded' },
+    { label: 'Restore failed', value: 'restore.failed' },
 ] as const
 
 const RESOURCE_TYPE_OPTIONS = [
@@ -43,11 +48,21 @@ const ACTION_BADGE_CLASS = {
     created: 'bg-success-soft',
     updated: 'bg-accent',
     deleted: 'bg-danger-soft',
+    'backup.created': 'bg-success-soft',
+    'backup.failed': 'bg-danger-soft',
+    'restore.started': 'bg-accent',
+    'restore.succeeded': 'bg-success-soft',
+    'restore.failed': 'bg-danger-soft',
 } as const
 const ACTION_TEXT_CLASS = {
     created: 'text-success-soft-foreground',
     updated: 'text-accent-foreground',
     deleted: 'text-danger-soft-foreground',
+    'backup.created': 'text-success-soft-foreground',
+    'backup.failed': 'text-danger-soft-foreground',
+    'restore.started': 'text-accent-foreground',
+    'restore.succeeded': 'text-success-soft-foreground',
+    'restore.failed': 'text-danger-soft-foreground',
 } as const
 
 type AuditAction = keyof typeof ACTION_BADGE_CLASS
@@ -223,7 +238,7 @@ function AuditLogList({
 
 interface AuditEntry {
     id: string
-    action: 'created' | 'updated' | 'deleted'
+    action: AuditAction
     resource_type: string
     resource_id: string
     resource_label: string
