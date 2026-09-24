@@ -5,11 +5,31 @@
 // membership table: `group` set, `user` empty. This package expands every grant
 // into one DERIVED row per member (`group` and `user` both set), keeps those
 // rows in sync as membership and grants change, and repairs them at boot. The
-// package's existing rules, which test `user`, then work unchanged.
+// package's existing rules, which test `user`, then keep their logic; each one
+// only gains the login guard described below.
 //
 // Packages declare their membership tables with RegisterGrantTable from their
 // Register(app), the same way they declare offboard.RegisterReassignable. Core
 // never names a package; tests use a fictional zoo_keepers table.
+//
+// # Every rule that tests `user` on a grant table must require a login
+//
+// A grant row stores `user` as "". For a request with no login, PocketBase
+// resolves `@request.auth.id` to NULL and rewrites `x = NULL` as
+// `(x = "" OR x IS NULL)`. So a rule such as
+// `project.zoo_keepers_via_zoo.user ?= @request.auth.id` MATCHES the grant
+// row, and a caller with no token gets whatever the grant's role allows: read,
+// write and delete. `@request.auth.disabled != true` does not stop it, because
+// NULL is not true either.
+//
+// Therefore every rule, in any collection, that tests the grant table's
+// `user` (through a `<table>_via_<field>` back-relation, a relation field, an
+// `@collection.<table>` join, or the table's own `user`) must also require
+// `@request.auth.id != ""`, conjoined with that test. On a rule that also
+// admits anonymous callers another way (a share-link token), put the guard
+// inside the member branch only. Call rlstest.RequireAuthGuardOnGrantRules
+// from the package's rule tests after its migrations apply; it fails on any
+// rule that forgets the guard.
 package groups
 
 import (
