@@ -67,12 +67,11 @@ sudo setcap cap_net_bind_service=+ep ./tinycld
 
 ## Backups
 
-Everything is under the data directory. Stop the server and copy it, or
-snapshot the database alone while it runs:
-
-```sh
-sqlite3 ./tinycld-data/pb_data/data.db "VACUUM INTO './backup.db'"
-```
+Use `tinycld backup create --out ./backup.age` from the CLI, or Settings →
+Backups in the app. Restoring into the single binary works when the backup's
+package set matches the binary's; otherwise `tinycld backup restore --force`
+restores the data without reconciling packages. See the in-app topic
+"Backups & restore".
 
 ## Upgrading
 
