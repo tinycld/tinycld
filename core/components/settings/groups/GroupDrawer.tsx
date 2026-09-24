@@ -194,7 +194,7 @@ function Header({
                     {subtitle}
                 </Text>
             </View>
-            <DrawerCloseButton onPress={onClose}>
+            <DrawerCloseButton onPress={onClose} accessibilityLabel="Close">
                 <X size={18} color={mutedColor} />
             </DrawerCloseButton>
         </DrawerHeader>
