@@ -22,6 +22,7 @@ require (
 	github.com/emersion/go-smtp v0.24.0
 	github.com/emersion/go-vcard v0.0.0-20260618161152-d854b7e0e2d3
 	github.com/emersion/go-webdav v0.7.0
+	github.com/ganigeorgiev/fexpr v0.5.0
 	github.com/getsentry/sentry-go v0.44.1
 	github.com/google/uuid v1.6.0
 	github.com/grafana/sobek v0.0.0-20260722203707-64fef69693b6
@@ -57,7 +58,6 @@ require (
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
-	github.com/ganigeorgiev/fexpr v0.5.0 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.4+incompatible // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/pprof v0.0.0-20260604005048-7023385849c0 // indirect
