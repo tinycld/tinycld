@@ -149,6 +149,13 @@ func (app *BaseApp) delete(ctx context.Context, model Model, isForAuxDB bool) er
 		return deleteErr
 	}
 
+	// A hook may have swapped event.App for a transaction that it opened
+	// around e.Next() and that has ended by now (e.App = txApp). Run the
+	// after hooks with the app that started the write, as the error path
+	// above does. Otherwise they (realtime access checks among them) query
+	// through a finished transaction and silently fail.
+	event.App = app
+
 	if app.txInfo != nil {
 		// execute later after the transaction has completed
 		app.txInfo.OnComplete(func(txErr error) error {
@@ -340,6 +347,13 @@ func (app *BaseApp) create(ctx context.Context, model Model, withValidations boo
 		return saveErr
 	}
 
+	// A hook may have swapped event.App for a transaction that it opened
+	// around e.Next() and that has ended by now (e.App = txApp). Run the
+	// after hooks with the app that started the write, as the error path
+	// above does. Otherwise they (realtime access checks among them) query
+	// through a finished transaction and silently fail.
+	event.App = app
+
 	if app.txInfo != nil {
 		// execute later after the transaction has completed
 		app.txInfo.OnComplete(func(txErr error) error {
@@ -423,6 +437,13 @@ func (app *BaseApp) update(ctx context.Context, model Model, withValidations boo
 
 		return saveErr
 	}
+
+	// A hook may have swapped event.App for a transaction that it opened
+	// around e.Next() and that has ended by now (e.App = txApp). Run the
+	// after hooks with the app that started the write, as the error path
+	// above does. Otherwise they (realtime access checks among them) query
+	// through a finished transaction and silently fail.
+	event.App = app
 
 	if app.txInfo != nil {
 		// execute later after the transaction has completed
