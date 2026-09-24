@@ -67,3 +67,19 @@ func TestLogWritesSystemRowWithoutRequest(t *testing.T) {
 		t.Fatalf("unexpected metadata %v", meta)
 	}
 }
+
+func TestLogReturnsErrorWhenAuditLogsCollectionMissing(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+	// Deliberately not calling createAuditLogsCollection: a fresh test app has
+	// no audit_logs collection, exercising the same "table unavailable" path
+	// as a deployment where the migration hasn't run.
+
+	err = Log(app, "backup.created", "backup", "bk_1", "manual backup", nil, nil)
+	if err == nil {
+		t.Fatal("want error when audit_logs collection is missing, got nil")
+	}
+}
