@@ -9,12 +9,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"filippo.io/age"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
 	_ "modernc.org/sqlite"
 
 	"tinycld.org/core/backup/format"
@@ -460,5 +463,192 @@ func TestProgressTickerDoesNotRaceTheFinalSave(t *testing.T) {
 	}
 	if row.GetInt("bytes") != sink.Len() {
 		t.Fatalf("bytes %d, want the final %d", row.GetInt("bytes"), sink.Len())
+	}
+}
+
+// panicSink panics partway through the archive, standing in for any panic in
+// the walk or the pipeline: a nil map in a collection count, a storage driver
+// that trips over a key, a bug in a future member writer.
+type panicSink struct {
+	bytes.Buffer
+	after int
+}
+
+func (p *panicSink) Write(b []byte) (int, error) {
+	if p.Len() >= p.after {
+		panic("storage exploded")
+	}
+	return p.Buffer.Write(b)
+}
+
+func (p *panicSink) Close() error { return nil }
+
+func TestRunRecordsAPanicAsFailure(t *testing.T) {
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+	id, _ := age.GenerateX25519Identity()
+	rowID, err := Run(app, Request{Kind: KindManual, Recipient: id.Recipient(), Sink: &panicSink{after: 64}})
+	if err == nil {
+		t.Fatal("a panic must surface as an error, not a silent success")
+	}
+	row, ferr := app.FindRecordById("backups", rowID)
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	if row.GetString("status") != "failed" {
+		t.Fatalf("status %q, want failed", row.GetString("status"))
+	}
+	if !strings.Contains(row.GetString("error"), "storage exploded") {
+		t.Fatalf("error %q, want the panic value", row.GetString("error"))
+	}
+	if ok, _ := app.FindRecordsByFilter("notifications", "type = 'core.backup.succeeded'", "", 0, 0); len(ok) != 0 {
+		t.Fatalf("a panicking run must not announce success: %d notifications", len(ok))
+	}
+	if bad, _ := app.FindRecordsByFilter("notifications", "type = 'core.backup.failed'", "", 0, 0); len(bad) != 1 {
+		t.Fatalf("want 1 failure notification, got %d", len(bad))
+	}
+	if installjob.Running() {
+		t.Fatal("the interlock must be released after a panic")
+	}
+}
+
+func TestFailedRunKeepsTheBytesItActuallyWrote(t *testing.T) {
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+	id, _ := age.GenerateX25519Identity()
+	sink := &failingSink{}
+	rowID, err := Run(app, Request{Kind: KindScheduled, Recipient: id.Recipient(), Sink: sink})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	row, ferr := app.FindRecordById("backups", rowID)
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	// The sink accepted bytes before it refused; reporting 0 would tell an
+	// administrator nothing was written when something was.
+	if got := row.GetInt("bytes"); got == 0 || got > sink.n {
+		t.Fatalf("bytes %d, want what reached the sink (0 < n <= %d)", got, sink.n)
+	}
+}
+
+func TestManifestRoundTripsThroughTheLedgerColumn(t *testing.T) {
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+	id, _ := age.GenerateX25519Identity()
+	rowID, err := Run(app, Request{Kind: KindScheduled, Recipient: id.Recipient(), Sink: &closeBuffer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := app.FindRecordById("backups", rowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m format.Manifest
+	if err := row.UnmarshalJSONField("manifest", &m); err != nil {
+		t.Fatalf("the ledger's manifest column must hold the manifest: %v", err)
+	}
+	if m.Core != "1.2.3" || m.Lockfile["tinycld"] != "tinycld@1.2.3" || m.Lockfile["widgets"] != "@example/widgets@1.0.0" {
+		t.Fatalf("stored manifest %+v", m)
+	}
+	if m.Counts.Files != 1 || m.Counts.Collections["users"] != 1 {
+		t.Fatalf("stored counts %+v", m.Counts)
+	}
+}
+
+func TestRunFailingInBuildManifestStoresNoManifest(t *testing.T) {
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+	// buildManifest reads pkg_registry first, so removing it fails the run
+	// before any manifest exists.
+	reg, err := app.FindCollectionByNameOrId("pkg_registry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Delete(reg); err != nil {
+		t.Fatal(err)
+	}
+	id, _ := age.GenerateX25519Identity()
+	rowID, err := Run(app, Request{Kind: KindScheduled, Recipient: id.Recipient(), Sink: &closeBuffer{}})
+	if err == nil {
+		t.Fatal("expected the run to fail without pkg_registry")
+	}
+	row, ferr := app.FindRecordById("backups", rowID)
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	if row.GetString("status") != "failed" {
+		t.Fatalf("status %q", row.GetString("status"))
+	}
+	// A manifest that was never built must not be fabricated into the ledger:
+	// a zero-valued one reads as a real backup of nothing.
+	var raw types.JSONRaw
+	if err := row.UnmarshalJSONField("manifest", &raw); err == nil && len(raw) > 0 && string(raw) != "null" {
+		t.Fatalf("manifest column must stay empty, got %s", raw)
+	}
+}
+
+func TestErrBusyDoesNotBurnAManualSlot(t *testing.T) {
+	app := newTestApp(t)
+	t.Cleanup(resetDailyLimitForTesting)
+	resetDailyLimitForTesting()
+	SetDailyLimit(func(core.App) int { return 1 })
+	id, _ := age.GenerateX25519Identity()
+
+	other := installjob.New("install", "x", "x")
+	if _, ok := installjob.Claim(other); !ok {
+		t.Fatal("claim")
+	}
+	if _, err := Run(app, Request{Kind: KindManual, Recipient: id.Recipient(), Sink: &closeBuffer{}}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("want ErrBusy, got %v", err)
+	}
+	installjob.Release(other)
+
+	// The refused run did no work, so it must not have consumed the day's slot.
+	if _, err := Run(app, Request{Kind: KindManual, Recipient: id.Recipient(), Sink: &closeBuffer{}}); err != nil {
+		t.Fatalf("a refused run burned the manual slot: %v", err)
+	}
+}
+
+// TestFailedRunClosesTheArchiveWriter guards the writer's close on the failure
+// paths. A zstd.Encoder owns worker goroutines until Close, so a run that
+// returns early without closing the writer leaks them for the life of the
+// process.
+//
+// The leak is not observable from outside: -race does not see it, the count is
+// too small to assert on (zstd starts workers lazily and reuses them), and once
+// a sink has refused a write nothing further reaches it, so the bytes Close
+// would emit cannot be watched either. The hook is therefore the only honest
+// way to assert the close happened at all.
+func TestFailedRunClosesTheArchiveWriter(t *testing.T) {
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+	id, _ := age.GenerateX25519Identity()
+	var closes atomic.Int64
+	writerClosedForTesting = func() { closes.Add(1) }
+	t.Cleanup(func() { writerClosedForTesting = nil })
+
+	if _, err := Run(app, Request{Kind: KindScheduled, Recipient: id.Recipient(), Sink: &failingSink{}}); err == nil {
+		t.Fatal("expected error")
+	}
+	if closes.Load() == 0 {
+		t.Fatal("a failed run abandoned the archive writer unclosed, leaking its zstd workers")
+	}
+}
+
+func TestTruncateDoesNotSplitARune(t *testing.T) {
+	// "é" is two bytes, so a cut at 3 would leave half of it and make the
+	// stored error message invalid UTF-8.
+	if got := truncate("aaé", 3); got != "aa" {
+		t.Fatalf("truncate = %q, want %q", got, "aa")
+	}
+	if got := truncate("aaé", 4); got != "aaé" {
+		t.Fatalf("truncate = %q, want the whole string", got)
+	}
+	if got := truncate("short", 100); got != "short" {
+		t.Fatalf("truncate = %q", got)
+	}
+	if !utf8.ValidString(truncate("日本語です", 7)) {
+		t.Fatal("truncate produced invalid UTF-8")
 	}
 }

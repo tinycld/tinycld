@@ -136,10 +136,6 @@ func makeUser(t *testing.T, app core.App, email, role string) *core.Record {
 	return u
 }
 
-// stripFixture removes the PB fixture's demo collections, its demo users and
-// its stored files. The engine's manifest counts every non-system collection
-// and every stored file, so the tests can only assert on exact numbers if the
-// only rows and files present are the ones a test put there.
 // newEmptyApp boots a PocketBase app on an EMPTY data dir rather than the
 // tests fixture. The fixture ships demo collections, demo users and 28 stored
 // files, and the engine's manifest counts every non-system collection and

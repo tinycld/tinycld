@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -102,12 +103,16 @@ func Run(app core.App, req Request) (string, error) {
 // begin refuses before it writes: a run turned away by the ceiling or the
 // interlock leaves no ledger row, because nothing was attempted.
 func begin(app core.App, req Request) (*core.Record, *installjob.Job, error) {
-	if req.Kind == KindManual && !allowManual(app) {
-		return nil, nil, ErrRateLimit
-	}
 	job := installjob.New("backup", "", "")
 	if _, ok := installjob.Claim(job); !ok {
 		return nil, nil, ErrBusy
+	}
+	// The ceiling is checked AFTER the interlock, because allowManual records
+	// the slot as it checks: a run turned away as busy did no work and must not
+	// spend one.
+	if req.Kind == KindManual && !allowManual(app) {
+		installjob.Release(job)
+		return nil, nil, ErrRateLimit
 	}
 	row := newRow(app, req.Kind, req.Initiator, req.TargetHost)
 	if err := app.Save(row); err != nil {
@@ -120,13 +125,28 @@ func begin(app core.App, req Request) (*core.Record, *installjob.Job, error) {
 
 func run(app core.App, req Request, row *core.Record, job *installjob.Job) (err error) {
 	defer installjob.Release(job)
-	var written int64
 	var sha string
 	var sinkClosed bool
-	var manifest format.Manifest
+	// counter is nil until the pipeline exists; the terminal defer reads it for
+	// the byte count, so a failed run reports what it actually wrote.
+	var counter *countingWriter
+	// manifest is a pointer so "never built" is distinguishable from "built and
+	// empty". A zero-valued manifest in the ledger reads as a real backup of
+	// nothing, which is worse than no manifest at all.
+	var manifest *format.Manifest
 	// Named-return err: this closure is the single place a run becomes
 	// terminal, whichever return below got here.
 	defer func() {
+		// A panic leaves err nil, so without this the row would finalize as
+		// succeeded with zero bytes and administrators would be told a backup
+		// they do not have is fine. The run reports the panic as its error
+		// rather than re-panicking: the archive is lost either way, and a
+		// crashed process cannot finish the ledger row.
+		if p := recover(); p != nil {
+			err = fmt.Errorf("backup: panic: %v", p)
+			log.Error("backup panicked", "id", row.Id, "kind", req.Kind, "panic", p,
+				"stack", string(debug.Stack()))
+		}
 		// A failed run still owns the sink. An HTTP PUT sink holds a pipe and
 		// the goroutine reading it, so leaving it open leaks both for the life
 		// of the process.
@@ -134,6 +154,10 @@ func run(app core.App, req Request, row *core.Record, job *installjob.Job) (err 
 			if cerr := req.Sink.Close(); cerr != nil && err == nil {
 				err = cerr
 			}
+		}
+		var written int64
+		if counter != nil {
+			written = counter.total()
 		}
 		status, errMsg := "succeeded", ""
 		if err != nil {
@@ -147,10 +171,11 @@ func run(app core.App, req Request, row *core.Record, job *installjob.Job) (err 
 		postCallback(req.Callback, row)
 	}()
 
-	manifest, err = buildManifest(app, req.Kind)
+	built, err := buildManifest(app, req.Kind)
 	if err != nil {
 		return err
 	}
+	manifest = &built
 
 	if err = os.MkdirAll(tmpDir(app), 0o700); err != nil {
 		return err
@@ -175,22 +200,36 @@ func run(app core.App, req Request, row *core.Record, job *installjob.Job) (err 
 		return err
 	}
 	// Counts go in the manifest, so they must be known before it is written.
-	manifest.Counts.Files = len(files)
+	built.Counts.Files = len(files)
 	for _, f := range files {
-		manifest.Counts.Bytes += f.Size
+		built.Counts.Bytes += f.Size
 	}
 
-	counter := &countingWriter{w: req.Sink}
+	counter = &countingWriter{w: req.Sink}
 	w, err := format.NewWriter(counter, req.Recipient, zstd.SpeedDefault)
 	if err != nil {
 		return err
 	}
+	// The zstd encoder owns worker goroutines until it is closed, so a run that
+	// returns early must still close the writer. Close is idempotent and
+	// returns the first error, so the success path below closes it for real and
+	// this only catches the abandoned case — and never overwrites the error
+	// that caused the run to unwind.
+	defer func() {
+		cerr := w.Close()
+		if writerClosedForTesting != nil {
+			writerClosedForTesting()
+		}
+		if cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 	progress := newProgress(app, row, counter)
 	// stop() runs before the outer defer finalizes the row, so the ticker
 	// cannot save a stale byte count over the terminal one.
 	defer progress.stop()
 
-	if err = w.WriteManifest(manifest); err != nil {
+	if err = w.WriteManifest(built); err != nil {
 		return err
 	}
 	if err = writeSnapshot(w, snap); err != nil {
@@ -209,7 +248,7 @@ func run(app core.App, req Request, row *core.Record, job *installjob.Job) (err 
 	if err != nil {
 		return err
 	}
-	written, sha = counter.total(), w.Sha256()
+	sha = w.Sha256()
 	return nil
 }
 
@@ -347,6 +386,11 @@ func (c *countingWriter) total() int64 {
 	defer c.mu.Unlock()
 	return c.n
 }
+
+// writerClosedForTesting reports that the archive writer was closed. Only the
+// package's own tests set it: an abandoned zstd encoder leaks worker goroutines
+// silently, and nothing observable from the sink can show the close happened.
+var writerClosedForTesting func()
 
 // progressTickForTesting reports that the ticker fired. Only the package's own
 // tests set it: a test that means to exercise the progress writer has to know

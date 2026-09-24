@@ -5,9 +5,12 @@ import (
 	"net/url"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
+
+	"tinycld.org/core/backup/format"
 )
 
 const collection = "backups"
@@ -45,21 +48,29 @@ func newRow(app core.App, kind Kind, initiator, targetHost string) *core.Record 
 	return r
 }
 
-func finishRow(app core.App, r *core.Record, status string, written int64, sha, errMsg string, manifest any) error {
+// finishRow writes a run's terminal state. manifest is nil for a run that
+// failed before it had one; the column is then left alone rather than filled
+// with a zero-valued manifest, which would read as a real backup of nothing.
+func finishRow(app core.App, r *core.Record, status string, written int64, sha, errMsg string, manifest *format.Manifest) error {
 	r.Set("status", status)
 	r.Set("finished", types.NowDateTime())
 	r.Set("bytes", written)
 	r.Set("sha256", sha)
 	r.Set("error", truncate(errMsg, 2000))
 	if manifest != nil {
-		r.Set("manifest", manifest)
+		r.Set("manifest", *manifest)
 	}
 	return app.Save(r)
 }
 
+// truncate cuts to at most n bytes without splitting a rune. The error column
+// has a byte limit, and a half-rune would make the message invalid UTF-8.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n]
 }
