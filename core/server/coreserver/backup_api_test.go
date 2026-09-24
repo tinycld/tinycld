@@ -365,11 +365,25 @@ func TestBackupToTargetReturns202AndRecordsHostOnly(t *testing.T) {
 		DisableTestAppCleanup: true,
 		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, _ *http.Response) {
 			waitFor(t, func() bool { return len(received) > 0 })
-			var rows []*core.Record
+			// The engine's terminal defer writes the row, THEN announces (a
+			// notification and an audit row), THEN posts any callback. So
+			// "status = succeeded" is NOT the end of the goroutine: waiting only
+			// for it let the test return while announce was still running, the
+			// fixture's app was torn down under it, and audit.Log dereferenced a
+			// closed database — a data race against app.Cleanup and a SIGSEGV.
+			// The audit row is written last of the DB work, so it is the signal
+			// that the goroutine is done with the app.
 			waitFor(t, func() bool {
-				rows, _ = app.FindRecordsByFilter("backups", "status = 'succeeded'", "", 0, 0)
-				return len(rows) == 1
+				logs, _ := app.FindRecordsByFilter("audit_logs", "action = 'backup.created'", "", 0, 0)
+				return len(logs) == 1
 			})
+			rows, err := app.FindRecordsByFilter("backups", "status = 'succeeded'", "", 0, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 1 {
+				t.Fatalf("succeeded backup rows = %d, want 1", len(rows))
+			}
 			// Only the hostname is kept: the target URL carries its own
 			// credentials in the query string.
 			if host := rows[0].GetString("target_host"); host != "127.0.0.1" {
