@@ -70,7 +70,8 @@ type Result struct {
 //  1. Validate the plan (reassign requires an existing successor users record).
 //  2. Reassign (bulk UPDATE, hook-free) or delete (per record, hooks fire) the
 //     registered reassignable FKs from the offboarded user.
-//  3. Anonymize the users record.
+//  3. Run every registered Handler (see RegisterHandler).
+//  4. Anonymize the users record.
 func OffboardUser(app core.App, userID string, plan Plan, actorUserID string) (*Result, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("%w: empty user id", ErrInvalidPlan)
@@ -79,7 +80,8 @@ func OffboardUser(app core.App, userID string, plan Plan, actorUserID string) (*
 	result := &Result{}
 
 	err := app.RunInTransaction(func(txApp core.App) error {
-		if _, err := txApp.FindRecordById("users", userID); err != nil {
+		leaver, err := txApp.FindRecordById("users", userID)
+		if err != nil {
 			return fmt.Errorf("load user %s: %w", userID, err)
 		}
 
@@ -107,6 +109,18 @@ func OffboardUser(app core.App, userID string, plan Plan, actorUserID string) (*
 			result.RecordsDeleted = n
 		default:
 			return fmt.Errorf("%w: unknown mode %q", ErrInvalidPlan, plan.Mode)
+		}
+
+		for _, h := range registeredHandlers() {
+			if err := h.handler(txApp, leaver, plan, actorUserID); err != nil {
+				// A plan refusal carries a message meant for the user, so it
+				// passes through unprefixed; anything else names the handler
+				// for the server log.
+				if errors.Is(err, ErrInvalidPlan) {
+					return err
+				}
+				return fmt.Errorf("offboard handler %s: %w", h.name, err)
+			}
 		}
 
 		if err := anonymizeUser(txApp, userID); err != nil {

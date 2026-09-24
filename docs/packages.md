@@ -796,11 +796,35 @@ runtime. The registries that exist:
 | its contribution to the federated search | `search.RegisterSources` |
 | its storage-bearing collections | `quota.RegisterSources` |
 | which authorship FKs to reassign on offboarding | `offboard.RegisterReassignable` |
+| how to move ownership a flat FK rewrite cannot settle on offboarding | `offboard.RegisterHandler` |
 | which collections to audit-log | `audit.RegisterCollection` |
 | its full-text index | `fts.Register` / `fts.RegisterSync` |
 | a CalDAV / CardDAV / WebDAV source | `caldav.Register` / `carddav.Register` / `webdav.Register` |
 | a native automation action | `automation.RegisterAction` |
 | version snapshot/restore hooks for its drive item type | `versionhooks.Register` |
+
+`offboard.RegisterReassignable` rewrites every matching row to the successor in
+one `UPDATE`. That is wrong for a membership table: the successor inherits every
+role the leaver held, and a unique `(resource, user)` index fails the `UPDATE`
+when the successor is already a member. For those tables, register a handler:
+
+```go
+offboard.RegisterHandler("calendar", func(txApp core.App, leaver *core.Record, plan offboard.Plan, actorUserID string) error {
+    // Move only what the leaver solely owns; merge into an existing membership.
+    return nil
+})
+```
+
+`OffboardUser` calls every handler inside its transaction, in both
+`reassign` and `delete_my_data` mode, after the reassignable FKs are settled
+and before the user is anonymized. Use `txApp` for every read and write.
+`actorUserID` is the admin on `/api/admin/users/offboard`, the leaver on
+`/api/account/delete`, or `""` for system use. Any error rolls back the whole
+offboard. Wrap `offboard.ErrInvalidPlan` to refuse the plan; both endpoints
+return that as a 400 with your message. A second registration under the same
+name is a no-op, and handlers run in name order. A self-delete with no plan
+(`/api/account/delete` without `plan`) only anonymizes the user, and does not
+run handlers.
 
 The OAuth registry is the reference shape. A package declares its scopes with
 consent copy, the collections each scope reads and writes, its bespoke
