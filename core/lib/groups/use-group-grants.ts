@@ -41,10 +41,9 @@ export function useGroupGrants<
     isForResource,
     buildRow,
 }: UseGroupGrantsOptions<Role, Row, TKey, TUtils, TInsert>) {
-    const { data: rows, isReady } = useLiveQuery(
-        query => query.from({ grant: collection }).where(({ grant }) => eq(grant.user, '')),
-        [collection]
-    )
+    const { data: rows, isReady } = useLiveQuery({
+        query: query => query.from({ grant: collection }).where(({ grant }) => eq(grant.user, '')),
+    })
 
     const grants: GroupGrant<Role>[] = (rows ?? [])
         .filter(row => isForResource(row))
