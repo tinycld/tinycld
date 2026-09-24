@@ -1,0 +1,258 @@
+package backup
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// layout builds the on-disk shape a restore leaves behind at phase 4/5: a live
+// pb_data, a fully staged pending directory, and the armed marker beside them.
+func layout(t *testing.T) (dataDir string) {
+	t.Helper()
+	root := t.TempDir()
+	dataDir = filepath.Join(root, "pb_data")
+	mk := func(p, content string) {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk(filepath.Join(dataDir, "data.db"), "old")
+	mk(filepath.Join(dataDir, "storage", "a", "b", "old.txt"), "old")
+	mk(filepath.Join(dataDir, "auxiliary.db"), "aux")
+	pending := filepath.Join(root, "restore", "pending", "r1")
+	mk(filepath.Join(pending, "data.db"), "new")
+	mk(filepath.Join(pending, "storage", "c", "d", "new.txt"), "new")
+	raw, err := json.Marshal(armed{ID: "r1", Pending: pending, Pre: filepath.Join(root, "restore", "pre", "r1.age")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk(armedPathOf(dataDir), string(raw))
+	return dataDir
+}
+
+func read(t *testing.T, p string) string {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "<missing>"
+	}
+	return string(b)
+}
+
+func TestApplyPendingRestoreSwaps(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "new" {
+		t.Fatal("db not swapped")
+	}
+	if read(t, filepath.Join(dataDir, "storage", "c", "d", "new.txt")) != "new" {
+		t.Fatal("files not swapped")
+	}
+	if read(t, filepath.Join(dataDir, "storage", "a", "b", "old.txt")) != "<missing>" {
+		t.Fatal("old files still present")
+	}
+	// auxiliary.db went aside with the rest of pb_data; PocketBase recreates it.
+	if _, err := os.Stat(filepath.Join(dataDir, "auxiliary.db")); !os.IsNotExist(err) {
+		t.Fatal("the discarded auxiliary database was left behind")
+	}
+	if _, err := os.Stat(armedPathOf(dataDir)); !os.IsNotExist(err) {
+		t.Fatal("armed marker not cleared")
+	}
+	prev := filepath.Join(filepath.Dir(dataDir), "restore", "previous", "r1")
+	if read(t, filepath.Join(prev, "data.db")) != "old" {
+		t.Fatal("previous not kept")
+	}
+	if read(t, filepath.Join(prev, "auxiliary.db")) != "aux" {
+		t.Fatal("previous must carry everything pb_data held")
+	}
+	if read(t, swappedPathOf(dataDir)) == "<missing>" {
+		t.Fatal("swapped marker missing")
+	}
+	if !Restoring() {
+		t.Fatal("Restoring() must be true until finalize")
+	}
+}
+
+func TestApplyPendingRestoreNoop(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := filepath.Join(t.TempDir(), "pb_data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if Restoring() {
+		t.Fatal("a boot with nothing staged must not enter maintenance mode")
+	}
+}
+
+// A first boot on a data dir that does not exist yet must not fail: the swap
+// runs before PocketBase creates it.
+func TestApplyPendingRestoreMissingDataDir(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := filepath.Join(t.TempDir(), "pb_data")
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The armed marker is written before staging finishes, so it can name a pending
+// directory that was never completed. That is an aborted stage, not a restore.
+func TestApplyPendingRestoreDiscardsAnUnstagedPending(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	pending := filepath.Join(filepath.Dir(dataDir), "restore", "pending", "r1")
+	if err := os.Remove(filepath.Join(pending, "data.db")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "old" {
+		t.Fatal("the live database must be left alone")
+	}
+	if _, err := os.Stat(armedPathOf(dataDir)); !os.IsNotExist(err) {
+		t.Fatal("armed marker not cleared")
+	}
+	if _, err := os.Stat(pending); !os.IsNotExist(err) {
+		t.Fatal("the half-staged directory was kept")
+	}
+	if Restoring() {
+		t.Fatal("an aborted stage must not enter maintenance mode")
+	}
+}
+
+func TestApplyPendingRestoreRecoversFromHalfSwap(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	// Simulate a crash after pb_data was moved aside but before pending moved in.
+	prev := filepath.Join(filepath.Dir(dataDir), "restore", "previous", "r1")
+	if err := os.MkdirAll(filepath.Dir(prev), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dataDir, prev); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "new" {
+		t.Fatal("did not complete the swap")
+	}
+	if read(t, filepath.Join(prev, "data.db")) != "old" {
+		t.Fatal("the previous copy must survive the completed swap")
+	}
+}
+
+func TestApplyPendingRestoreRollsBackAfterFailedBoot(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	// The process boots, fails before FinalizeRestore, and is relaunched:
+	// the swapped marker is still there, so the next boot must swap back.
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "old" {
+		t.Fatal("did not roll back")
+	}
+	if read(t, filepath.Join(dataDir, "auxiliary.db")) != "aux" {
+		t.Fatal("the rolled-back pb_data lost a member")
+	}
+	if _, err := os.Stat(swappedPathOf(dataDir)); !os.IsNotExist(err) {
+		t.Fatal("swapped marker not cleared after rollback")
+	}
+	if read(t, filepath.Join(filepath.Dir(dataDir), "restore", "failed", "r1", "data.db")) != "new" {
+		t.Fatal("failed restore data not kept for inspection")
+	}
+	if Restoring() {
+		t.Fatal("a rolled-back boot serves the previous data, so it is not restoring")
+	}
+}
+
+// A second failed boot must not trip over the failed/<id> directory the first
+// one left behind.
+func TestApplyPendingRestoreRollsBackTwice(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	// Re-arm and fail again with the same id.
+	raw, err := json.Marshal(armed{ID: "r1", Pending: filepath.Join(filepath.Dir(dataDir), "restore", "failed", "r1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(armedPathOf(dataDir), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "old" {
+		t.Fatal("did not roll back the second attempt")
+	}
+}
+
+// The two markers overlap for one instant. A crash inside that window leaves
+// both, and swapped must win: the data is already restored.
+func TestApplyPendingRestorePrefersTheSwappedMarker(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	// Put the armed marker back, as a crash between the two writes would.
+	raw, err := json.Marshal(armed{ID: "r1", Pending: filepath.Join(filepath.Dir(dataDir), "restore", "pending", "r1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(armedPathOf(dataDir), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "old" {
+		t.Fatal("the swapped marker must decide: the data was already restored")
+	}
+	if _, err := os.Stat(armedPathOf(dataDir)); !os.IsNotExist(err) {
+		t.Fatal("the stale armed marker would re-restore on the next boot")
+	}
+}
+
+// A rollback exists to get the previous copy back. It must still do that if
+// something removed pb_data between the two boots.
+func TestApplyPendingRestoreRollsBackWithoutPbData(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "old" {
+		t.Fatal("the previous copy was not restored")
+	}
+}

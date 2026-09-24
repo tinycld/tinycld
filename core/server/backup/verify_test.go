@@ -1,0 +1,322 @@
+package backup
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/backup/format"
+)
+
+func TestVerifyWithoutARestoreRow(t *testing.T) {
+	app := newTestApp(t)
+	rep, err := Verify(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.IntegrityOK || !rep.OK {
+		t.Fatalf("report %+v", rep)
+	}
+	if len(rep.Collections) != 0 {
+		t.Fatalf("nothing to compare, got %+v", rep.Collections)
+	}
+}
+
+func TestVerifyComparesTheRestoredManifest(t *testing.T) {
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+
+	row := newRow(app, KindRestore, "", "")
+	row.Set("status", "succeeded")
+	row.Set("manifest", format.Manifest{Counts: format.Counts{Collections: map[string]int{"users": 5}, Files: 9}})
+	if err := app.Save(row); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Verify(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.IntegrityOK {
+		t.Fatal("the live database failed its integrity check")
+	}
+	if rep.OK {
+		t.Fatalf("a mismatched count must not report OK: %+v", rep)
+	}
+	got, ok := rep.Collections["users"]
+	if !ok {
+		t.Fatalf("collections %+v", rep.Collections)
+	}
+	if got[0] != 5 || got[1] != 1 {
+		t.Fatalf("users %v, want [5 1]", got)
+	}
+	if rep.Files[0] != 9 || rep.Files[1] != 1 {
+		t.Fatalf("files %v, want [9 1]", rep.Files)
+	}
+}
+
+func TestVerifyAgreesWithTheRealCounts(t *testing.T) {
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+
+	// The manifest builder is the reference, so a passing verify proves the
+	// report agrees with what a backup of this app would have recorded. The row
+	// is saved first: it lands in the backups collection the manifest counts.
+	row := newRow(app, KindRestore, "", "")
+	row.Set("status", "succeeded")
+	if err := app.Save(row); err != nil {
+		t.Fatal(err)
+	}
+	m, err := buildManifest(app, KindManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Counts.Files = 1
+	row.Set("manifest", m)
+	if err := app.Save(row); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := Verify(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.OK {
+		t.Fatalf("report %+v", rep)
+	}
+}
+
+// An unknown collection cannot be counted. It must show as a mismatch rather
+// than fail the whole report, so the operator sees which one is missing.
+func TestVerifyReportsAMissingCollection(t *testing.T) {
+	app := newTestApp(t)
+	row := newRow(app, KindRestore, "", "")
+	row.Set("status", "succeeded")
+	row.Set("manifest", format.Manifest{Counts: format.Counts{Collections: map[string]int{"gone": 2}}})
+	if err := app.Save(row); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Verify(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.OK {
+		t.Fatal("a collection the restored data does not have must not report OK")
+	}
+	if rep.Collections["gone"] != [2]int{2, -1} {
+		t.Fatalf("gone %v, want [2 -1]", rep.Collections["gone"])
+	}
+}
+
+func TestMaintenanceMiddlewareServesWhileIdle(t *testing.T) {
+	resetRestoreState(t)
+	rec, re := requestEvent("/api/collections/users/records")
+	if err := MaintenanceMiddleware()(re); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("an idle server must pass the request on, wrote %q", rec.Body.String())
+	}
+}
+
+func TestMaintenanceMiddlewareRefusesWhileRestoring(t *testing.T) {
+	resetRestoreState(t)
+	restoring.Store(true)
+	rec, re := requestEvent("/api/collections/users/records")
+	if err := MaintenanceMiddleware()(re); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := map[string]any{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "restoring" {
+		t.Fatalf("body %v", body)
+	}
+}
+
+func TestMaintenanceMiddlewareKeepsHealthReachable(t *testing.T) {
+	resetRestoreState(t)
+	restoring.Store(true)
+	rec, re := requestEvent("/api/health")
+	if err := MaintenanceMiddleware()(re); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || rec.Body.Len() != 0 {
+		t.Fatalf("health must stay reachable so a supervisor can probe: %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestFinalizeRestoreWithoutASwap(t *testing.T) {
+	resetRestoreState(t)
+	app := newTestApp(t)
+	if err := FinalizeRestore(app); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := app.FindRecordsByFilter(collection, "kind = 'restore'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("an ordinary boot must not write a restore row, got %d", len(rows))
+	}
+}
+
+func TestFinalizeRestoreRecordsTheRestoredArchive(t *testing.T) {
+	resetRestoreState(t)
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+	restoring.Store(true)
+
+	prev := previousDir(app, "r1")
+	if err := os.MkdirAll(prev, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prev, "data.db"), []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pre := preBackupPath(app, "r1")
+	if err := os.MkdirAll(filepath.Dir(pre), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pre, []byte("pre"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := format.Manifest{Core: "1.2.3", Counts: format.Counts{Collections: map[string]int{"users": 4}, Files: 7}}
+	raw, err := json.Marshal(armed{ID: "r1", Pending: pendingDir(app, "r1"), Pre: pre, Manifest: manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(swappedPath(app), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := FinalizeRestore(app); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := app.FindRecordsByFilter(collection, "kind = 'restore' && status = 'succeeded'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("succeeded restore rows %d", len(rows))
+	}
+	var got format.Manifest
+	if err := rows[0].UnmarshalJSONField("manifest", &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Core != "1.2.3" || got.Counts.Collections["users"] != 4 {
+		t.Fatalf("manifest %+v — Verify has nothing to compare without it", got)
+	}
+	if rows[0].GetDateTime("finished").IsZero() {
+		t.Fatal("the finalized row has no finish time")
+	}
+
+	if _, err := os.Stat(prev); !os.IsNotExist(err) {
+		t.Fatal("the previous data was not dropped")
+	}
+	if _, err := os.Stat(pre); !os.IsNotExist(err) {
+		t.Fatal("the pre-restore backup was not dropped")
+	}
+	if _, err := os.Stat(swappedPath(app)); !os.IsNotExist(err) {
+		t.Fatal("the swapped marker was not cleared")
+	}
+	if Restoring() {
+		t.Fatal("maintenance mode must end once the restore is finalized")
+	}
+
+	notifs, err := app.FindRecordsByFilter("notifications", "type = 'core.restore.succeeded'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notifs) == 0 {
+		t.Fatal("nobody was told the restore worked")
+	}
+	logs, err := app.FindRecordsByFilter("audit_logs", "action = 'restore.succeeded'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("audit rows %d", len(logs))
+	}
+
+	// Verify now has a manifest to compare against.
+	rep, err := Verify(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Collections["users"][0] != 4 {
+		t.Fatalf("verify %+v", rep)
+	}
+}
+
+// requestEvent builds a RequestEvent with no next handler: Next() is then a
+// no-op that writes nothing, so an empty response body means the middleware
+// passed the request on rather than answering it.
+func requestEvent(path string) (*httptest.ResponseRecorder, *core.RequestEvent) {
+	rec := httptest.NewRecorder()
+	re := &core.RequestEvent{}
+	re.Request = httptest.NewRequest(http.MethodGet, path, nil)
+	re.Response = rec
+	return rec, re
+}
+
+// The whole chain on real output: an archive built by Run, staged and armed by
+// Restore, then swapped in by the boot-time helper. FinalizeRestore itself is
+// asserted separately — it needs a process booted on the swapped data, and this
+// app still holds the replaced database open.
+func TestApplyPendingRestoreCompletesARealRestore(t *testing.T) {
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	SetRestart(func() {})
+
+	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// LedgerPath is overridden in tests, so the boot helper — which derives its
+	// paths from the data dir alone — is pointed at the same state directory.
+	dataDir := filepath.Join(ledgerPathOverride, "pb_data")
+	if err := os.Rename(app.DataDir(), dataDir); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	// The archive's own storage file is what the restored data dir now carries.
+	if _, err := os.Stat(filepath.Join(dataDir, "storage", "col1", "rec1", "hello.txt")); err != nil {
+		t.Fatalf("the archive's files were not swapped in: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "data.db")); err != nil {
+		t.Fatalf("the archive's database was not swapped in: %v", err)
+	}
+	if _, err := os.Stat(previousDir(app, jobID)); err != nil {
+		t.Fatalf("the previous data was not kept: %v", err)
+	}
+	if _, err := os.Stat(pendingDir(app, jobID)); !os.IsNotExist(err) {
+		t.Fatal("the staging directory was not consumed")
+	}
+
+	var a armed
+	if err := readArmed(swappedPath(app), &a); err != nil {
+		t.Fatalf("no swapped marker: %v", err)
+	}
+	if a.ID != jobID || a.Manifest.Core == "" {
+		t.Fatalf("the marker the finalizer reads is incomplete: %+v", a)
+	}
+	if !Restoring() {
+		t.Fatal("the swapped-in process serves 503 until it finalizes")
+	}
+}
