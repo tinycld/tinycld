@@ -52,3 +52,7 @@ Before confirming, choose what happens to your files, documents and comments:
 
 If there's nobody to reassign to, your content stays in place attributed to
 "Deleted user". Type your email to confirm the deletion.
+
+If you are the only owner of something that other people use, and you do not
+reassign your content, the deletion is refused. The message names the item. Make another member an owner,
+or delete the item, then delete your account again.

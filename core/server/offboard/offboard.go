@@ -27,13 +27,21 @@ const (
 	// the offboarded user. Used when the user wants their stuff gone, not
 	// handed over.
 	ModeDeleteMyData Mode = "delete_my_data"
+
+	// ModeKeep leaves every reassignable record where it is, attributed to the
+	// anonymized account. It is what /api/account/delete does when the caller
+	// sends no plan. The registered Handlers still run: a package can refuse
+	// (a resource the leaver solely owns and other people use would be stuck
+	// with an owner nobody can sign in as) or clean up what must not outlive
+	// the account.
+	ModeKeep Mode = "keep"
 )
 
 // Plan captures the user's offboarding decision.
 //
 // SuccessorUserID is meaningful only when Mode == ModeReassign: it must be the
 // id of another (non-deleted) users record that inherits the offboarded user's
-// content. In ModeDeleteMyData the field is ignored.
+// content. In ModeDeleteMyData and ModeKeep the field is ignored.
 //
 // Single-org: there is exactly one org (the process). "Leaving the org" is no
 // longer a distinct action — an account is either kept or deleted. Offboarding
@@ -69,8 +77,10 @@ type Result struct {
 // Steps:
 //  1. Validate the plan (reassign requires an existing successor users record).
 //  2. Reassign (bulk UPDATE, hook-free) or delete (per record, hooks fire) the
-//     registered reassignable FKs from the offboarded user.
-//  3. Anonymize the users record.
+//     registered reassignable FKs from the offboarded user. ModeKeep skips
+//     this step.
+//  3. Run every registered Handler (see RegisterHandler).
+//  4. Anonymize the users record.
 func OffboardUser(app core.App, userID string, plan Plan, actorUserID string) (*Result, error) {
 	if userID == "" {
 		return nil, fmt.Errorf("%w: empty user id", ErrInvalidPlan)
@@ -79,7 +89,8 @@ func OffboardUser(app core.App, userID string, plan Plan, actorUserID string) (*
 	result := &Result{}
 
 	err := app.RunInTransaction(func(txApp core.App) error {
-		if _, err := txApp.FindRecordById("users", userID); err != nil {
+		leaver, err := txApp.FindRecordById("users", userID)
+		if err != nil {
 			return fmt.Errorf("load user %s: %w", userID, err)
 		}
 
@@ -105,8 +116,23 @@ func OffboardUser(app core.App, userID string, plan Plan, actorUserID string) (*
 				return err
 			}
 			result.RecordsDeleted = n
+		case ModeKeep:
+			// Authored content stays put; only the handlers and the
+			// anonymization below run.
 		default:
 			return fmt.Errorf("%w: unknown mode %q", ErrInvalidPlan, plan.Mode)
+		}
+
+		for _, h := range registeredHandlers() {
+			if err := h.handler(txApp, leaver, plan, actorUserID); err != nil {
+				// A plan refusal carries a message meant for the user, so it
+				// passes through unprefixed; anything else names the handler
+				// for the server log.
+				if errors.Is(err, ErrInvalidPlan) {
+					return err
+				}
+				return fmt.Errorf("offboard handler %s: %w", h.name, err)
+			}
 		}
 
 		if err := anonymizeUser(txApp, userID); err != nil {
@@ -224,6 +250,8 @@ func writeOffboardAudit(app core.App, leaverUserID, actorUserID string, mode Mod
 		verb += ".delete_data"
 	case ModeReassign:
 		verb += ".reassign"
+	case ModeKeep:
+		verb += ".keep"
 	}
 	r := core.NewRecord(collection)
 	r.Set("action", verb)
@@ -241,9 +269,9 @@ func writeOffboardAudit(app core.App, leaverUserID, actorUserID string, mode Mod
 }
 
 // AnonymizeUser overwrites PII on the users record and invalidates the session
-// (sentinel email, random password, refreshed token key). Exported so the
-// account-delete orchestrator can call it directly when the user owns no
-// reassignable records and a full OffboardUser pass isn't needed.
+// (sentinel email, random password, refreshed token key). It skips the
+// registered Handlers, so it is not an account delete: use OffboardUser with
+// ModeKeep for that.
 func AnonymizeUser(app core.App, userID string) error {
 	return anonymizeUser(app, userID)
 }

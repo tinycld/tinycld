@@ -15,13 +15,18 @@
 //     hold users ids directly (the former user_org junction is gone). The
 //     offboarding transaction walks the registry to either rewrite those fields
 //     to the successor user or delete the owning records, depending on the plan.
+//   - A RegisterHandler hook for ownership a flat FK rewrite cannot express
+//     (membership tables with roles and a unique (resource, user) index). Each
+//     Handler runs inside the offboarding transaction and moves or refuses
+//     ownership row by row. Core names no package: packages register from
+//     their own Register().
 //   - OffboardUser(app, userID, plan, actorUserID) — the canonical transaction.
 //     Called by the delete-account flow (coreserver).
 //   - AnonymizeUser(app, userID) — anonymize a users record directly.
 //
 // The reassignable registry is process-global (one app instance per process)
-// and is meant to be populated at startup. Tests can reset it with
-// ResetReassignableForTesting.
+// and is meant to be populated at startup, like the handler registry. Tests can
+// reset them with ResetReassignableForTesting and ResetHandlersForTesting.
 package offboard
 
 import (

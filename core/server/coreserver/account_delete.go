@@ -100,22 +100,20 @@ func handleAccountDelete(app core.App, re *core.RequestEvent) error {
 		return err
 	}
 
-	// An omitted plan means "just anonymize me, leave what I authored" — the
-	// long-standing behavior, and the safe default: a malformed or truncated
-	// request must never be read as "delete everything I ever wrote".
-	// Reassign and delete_my_data stay explicit opt-ins.
-	if strings.TrimSpace(string(req.Plan.Mode)) == "" {
-		if err := offboard.AnonymizeUser(app, authRecord.Id); err != nil {
-			return re.InternalServerError("anonymize", err)
-		}
-		return re.NoContent(204)
+	// An omitted plan means "leave what I authored in place": a malformed or
+	// truncated request must never be read as "delete everything I ever
+	// wrote". It still goes through OffboardUser, so the package handlers run:
+	// they refuse while the user is the only owner of something other people
+	// use, and they clean up what must not outlive the account.
+	omittedPlan := strings.TrimSpace(string(req.Plan.Mode)) == ""
+	if omittedPlan {
+		req.Plan = offboard.Plan{Mode: offboard.ModeKeep}
 	}
 
-	// Route through OffboardUser rather than anonymizing directly: it settles
-	// authored content (reassign to a successor, or delete it) AND anonymizes
-	// in one transaction, so a failure part-way leaves no orphaned rows. The
-	// previous implementation called anonymizeUser unconditionally, so a
-	// caller's choice was silently ignored and content always stayed behind.
+	// OffboardUser settles authored content (reassign, delete or keep), runs
+	// the package handlers AND anonymizes in one transaction, so a failure
+	// part-way leaves no orphaned rows and a handler refusal leaves the
+	// account untouched.
 	result, err := offboard.OffboardUser(app, authRecord.Id, req.Plan, authRecord.Id)
 	if err != nil {
 		if errors.Is(err, offboard.ErrInvalidPlan) {
@@ -124,6 +122,11 @@ func handleAccountDelete(app core.App, re *core.RequestEvent) error {
 		return re.InternalServerError("offboard", err)
 	}
 
+	// Kept at 204: callers that send no plan have always got an empty
+	// response, and there is nothing reassigned or deleted to report.
+	if omittedPlan {
+		return re.NoContent(204)
+	}
 	return re.JSON(200, result)
 }
 
