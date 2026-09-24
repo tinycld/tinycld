@@ -26,8 +26,15 @@ import (
 
 // archiveFor builds a real archive from a source test app so the restore tests
 // run against genuine output of Run rather than a hand-assembled stream.
+//
+// The manual-run ceiling is counted in a package-level slice, so every archive a
+// test builds spends one of a real deployment's ten daily runs. Fixture setup is
+// not a person clicking "Back up now", so the counter is cleared first: without
+// this the suite fails once it holds ten tests that build an archive, whichever
+// one happens to run eleventh.
 func archiveFor(t *testing.T) ([]byte, age.Identity) {
 	t.Helper()
+	resetDailyLimitForTesting()
 	src := newTestApp(t)
 	makeUser(t, src, "owner@example.com", "owner")
 	id, err := age.GenerateX25519Identity()
@@ -574,5 +581,84 @@ func TestIntegrityCheckAcceptsARealSnapshot(t *testing.T) {
 	}
 	if err := integrityCheck(snap); err != nil {
 		t.Fatalf("a real snapshot failed the integrity check: %v", err)
+	}
+}
+
+// The staged tree becomes pb_data, so its permissions must be the ones
+// PocketBase itself writes. Staging at 0o600/0o700 would leave a restored
+// deployment with a storage tree no other process or user could read.
+func TestRestoreStagesWithPocketBasePermissions(t *testing.T) {
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	SetRestart(func() {})
+
+	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := pendingDir(app, jobID)
+
+	fi, err := os.Stat(filepath.Join(pending, "data.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o644 {
+		t.Fatalf("data.db mode %o, want 644", got)
+	}
+	fi, err = os.Stat(filepath.Join(pending, "storage", "col1", "rec1", "hello.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o644 {
+		t.Fatalf("stored file mode %o, want 644", got)
+	}
+	fi, err = os.Stat(filepath.Join(pending, "storage", "col1", "rec1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fi.Mode().Perm(); got != 0o755 {
+		t.Fatalf("storage dir mode %o, want 755", got)
+	}
+}
+
+// Phase 5 marks a staging directory complete only after the archive verified and
+// the staged database passed its integrity check. The boot swap relies on that
+// sentinel to tell an unfinished stage from a swap already under way.
+func TestRestoreMarksAStagingDirectoryComplete(t *testing.T) {
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	SetRestart(func() {})
+
+	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(pendingDir(app, jobID), stagedSentinel)); err != nil {
+		t.Fatalf("a fully staged directory carries no sentinel: %v", err)
+	}
+}
+
+// A staging directory whose archive failed verification must NOT be marked
+// complete, or the next boot would swap in data nothing checked.
+func TestRestoreLeavesAFailedStageUnmarked(t *testing.T) {
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	SetRestart(func() {})
+
+	// Corrupt the tail so the archive's own checksums fail at Verify, after the
+	// members are already on disk.
+	tampered := make([]byte, len(data))
+	copy(tampered, data)
+	tampered[len(tampered)-1] ^= 0xff
+
+	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(tampered)}, Identity: id, Force: true})
+	if err == nil {
+		t.Fatal("a tampered archive must not stage successfully")
+	}
+	if _, serr := os.Stat(filepath.Join(pendingDir(app, jobID), stagedSentinel)); !os.IsNotExist(serr) {
+		t.Fatal("a failed stage was marked complete")
 	}
 }

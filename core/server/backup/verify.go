@@ -41,6 +41,14 @@ func Verify(app core.App) (VerifyReport, error) {
 		return rep, err
 	}
 	for name, want := range m.Counts.Collections {
+		// The ledger cannot be compared with itself. The archive's manifest
+		// counted it as it was when the backup ran, and finalizing the restore
+		// then inserts the succeeded row into that very collection — so the live
+		// count is always at least one higher and every restore would report a
+		// mismatch it caused itself.
+		if name == collection {
+			continue
+		}
 		var n int
 		// A collection name is an identifier, not a parameter, so it is quoted
 		// rather than bound.

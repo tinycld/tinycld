@@ -27,6 +27,7 @@ func layout(t *testing.T) (dataDir string) {
 	pending := filepath.Join(root, "restore", "pending", "r1")
 	mk(filepath.Join(pending, "data.db"), "new")
 	mk(filepath.Join(pending, "storage", "c", "d", "new.txt"), "new")
+	mk(filepath.Join(pending, stagedSentinel), "")
 	raw, err := json.Marshal(armed{ID: "r1", Pending: pending, Pre: filepath.Join(root, "restore", "pre", "r1.age")})
 	if err != nil {
 		t.Fatal(err)
@@ -106,11 +107,16 @@ func TestApplyPendingRestoreMissingDataDir(t *testing.T) {
 }
 
 // The armed marker is written before staging finishes, so it can name a pending
-// directory that was never completed. That is an aborted stage, not a restore.
+// directory that was never completed. Staging removes nothing, so the sentinel's
+// absence is the only sound evidence: a missing data.db can equally mean the
+// swap already moved it in.
 func TestApplyPendingRestoreDiscardsAnUnstagedPending(t *testing.T) {
 	resetRestoreState(t)
 	dataDir := layout(t)
 	pending := filepath.Join(filepath.Dir(dataDir), "restore", "pending", "r1")
+	if err := os.Remove(filepath.Join(pending, stagedSentinel)); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(filepath.Join(pending, "data.db")); err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +198,17 @@ func TestApplyPendingRestoreRollsBackTwice(t *testing.T) {
 	if err := ApplyPendingRestore(dataDir); err != nil {
 		t.Fatal(err)
 	}
-	// Re-arm and fail again with the same id.
-	raw, err := json.Marshal(armed{ID: "r1", Pending: filepath.Join(filepath.Dir(dataDir), "restore", "failed", "r1")})
+	// Re-arm with a freshly staged pending directory and fail again with the
+	// same id, so the second rollback meets the failed/<id> the first one left.
+	pending := filepath.Join(filepath.Dir(dataDir), "restore", "pending", "r1")
+	if err := os.MkdirAll(filepath.Join(pending, "storage"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pending, "data.db"), []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	markStaged(t, pending)
+	raw, err := json.Marshal(armed{ID: "r1", Pending: pending})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +234,8 @@ func TestApplyPendingRestorePrefersTheSwappedMarker(t *testing.T) {
 	if err := ApplyPendingRestore(dataDir); err != nil {
 		t.Fatal(err)
 	}
-	// Put the armed marker back, as a crash between the two writes would.
+	// Put the armed marker back, as a crash between the two writes would. It
+	// names the pending directory the swap already consumed.
 	raw, err := json.Marshal(armed{ID: "r1", Pending: filepath.Join(filepath.Dir(dataDir), "restore", "pending", "r1")})
 	if err != nil {
 		t.Fatal(err)
@@ -254,5 +270,124 @@ func TestApplyPendingRestoreRollsBackWithoutPbData(t *testing.T) {
 	}
 	if read(t, filepath.Join(dataDir, "data.db")) != "old" {
 		t.Fatal("the previous copy was not restored")
+	}
+}
+
+// stagePending completes a staged directory the way phase 5 does, so a test's
+// layout is one the boot swap accepts.
+func markStaged(t *testing.T, pending string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(pending, stagedSentinel), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A crash between swapIn's two member renames leaves data.db in the new pb_data
+// and storage/ still in pending. The staged database is gone from pending, but
+// previous/<id> exists — the swap started, so the next boot must finish it. The
+// old code read a missing <pending>/data.db as an aborted stage and deleted the
+// staged storage tree, losing every attachment in the archive.
+func TestApplyPendingRestoreResumesAfterTheDatabaseMoved(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	root := filepath.Dir(dataDir)
+	pending := filepath.Join(root, "restore", "pending", "r1")
+	prev := filepath.Join(root, "restore", "previous", "r1")
+
+	// Replay swapIn up to and including the data.db rename, then stop.
+	if err := os.MkdirAll(filepath.Dir(prev), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dataDir, prev); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(pending, "data.db"), filepath.Join(dataDir, "data.db")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "new" {
+		t.Fatal("the database that was already moved in was discarded")
+	}
+	if read(t, filepath.Join(dataDir, "storage", "c", "d", "new.txt")) != "new" {
+		t.Fatal("the staged attachments were lost")
+	}
+	if read(t, swappedPathOf(dataDir)) == "<missing>" {
+		t.Fatal("the resumed swap left no marker, so a failed boot could not roll back")
+	}
+	if _, err := os.Stat(armedPathOf(dataDir)); !os.IsNotExist(err) {
+		t.Fatal("armed marker not cleared")
+	}
+	if !Restoring() {
+		t.Fatal("a resumed swap is still a restore awaiting finalize")
+	}
+}
+
+// A crash after both members moved but before the swapped marker was written.
+// Pending is empty, previous/<id> exists: finish by writing the marker.
+func TestApplyPendingRestoreResumesAfterBothMembersMoved(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	root := filepath.Dir(dataDir)
+	pending := filepath.Join(root, "restore", "pending", "r1")
+	prev := filepath.Join(root, "restore", "previous", "r1")
+
+	if err := os.MkdirAll(filepath.Dir(prev), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(dataDir, prev); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"data.db", "storage"} {
+		if err := os.Rename(filepath.Join(pending, name), filepath.Join(dataDir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "new" || read(t, filepath.Join(dataDir, "storage", "c", "d", "new.txt")) != "new" {
+		t.Fatal("the restored data was disturbed")
+	}
+	if read(t, swappedPathOf(dataDir)) == "<missing>" {
+		t.Fatal("the swap was never marked, so a failed boot could not roll back")
+	}
+	if !Restoring() {
+		t.Fatal("a resumed swap is still a restore awaiting finalize")
+	}
+}
+
+// An armed marker whose pending directory has no sentinel and no previous/<id>
+// beside it: staging never finished and the swap never started. Discard.
+func TestApplyPendingRestoreDiscardsAStageWithoutItsSentinel(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	pending := filepath.Join(filepath.Dir(dataDir), "restore", "pending", "r1")
+	if err := os.Remove(filepath.Join(pending, stagedSentinel)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "old" {
+		t.Fatal("a stage that never finished must not be swapped in")
+	}
+	if _, err := os.Stat(pending); !os.IsNotExist(err) {
+		t.Fatal("the half-staged directory was kept")
+	}
+	if _, err := os.Stat(armedPathOf(dataDir)); !os.IsNotExist(err) {
+		t.Fatal("armed marker not cleared")
+	}
+	if Restoring() {
+		t.Fatal("an aborted stage must not enter maintenance mode")
 	}
 }

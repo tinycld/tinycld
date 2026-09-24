@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/types"
 )
@@ -42,9 +43,21 @@ func ApplyPendingRestore(dataDir string) error {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return fmt.Errorf("backup: armed marker unreadable: %w", err)
 	}
-	if _, err := os.Stat(filepath.Join(a.Pending, "data.db")); err != nil {
-		// Armed but never fully staged: the restore was killed during phase 5,
-		// before it could disarm. The marker alone is not evidence of a restore.
+	// Two questions, and both have to be asked. "Is pending complete?" is
+	// answered by the sentinel alone: staging writes it last and removes
+	// nothing, whereas the swap moves members OUT of pending, so a missing
+	// data.db means "never staged" before the swap starts and "already moved in"
+	// after. "Did the swap already start?" is answered by previous/<id>, which
+	// only swapIn creates. Reading a missing data.db as an unfinished stage is
+	// what discarded a staged storage tree — every attachment in the archive —
+	// when a crash landed between the two member renames.
+	_, sentinelErr := os.Stat(filepath.Join(a.Pending, stagedSentinel))
+	prev := filepath.Join(restoreDirOf(dataDir), "previous", a.ID)
+	_, prevErr := os.Stat(prev)
+	if sentinelErr != nil && prevErr != nil {
+		// Armed, never fully staged, and never swapped: the restore was killed
+		// during phase 5 before it could disarm. The marker alone is not
+		// evidence of a restore.
 		if rerr := os.RemoveAll(a.Pending); rerr != nil {
 			return rerr
 		}
@@ -63,13 +76,21 @@ func swapIn(dataDir string, a armed) error {
 	if err := os.MkdirAll(filepath.Dir(prev), 0o700); err != nil {
 		return err
 	}
-	if _, err := os.Stat(dataDir); err == nil {
-		if err := os.Rename(dataDir, prev); err != nil {
-			return fmt.Errorf("backup: move pb_data aside: %w", err)
+	// previous/<id> already existing means an earlier attempt got this far, so
+	// whatever is at dataDir now is the half-restored tree that attempt built,
+	// not the organization's data. Moving it aside would bury the members already
+	// swapped in and destroy the one copy of what came before.
+	if _, err := os.Stat(prev); errors.Is(err, os.ErrNotExist) {
+		if _, err := os.Stat(dataDir); err == nil {
+			if err := os.Rename(dataDir, prev); err != nil {
+				return fmt.Errorf("backup: move pb_data aside: %w", err)
+			}
 		}
+	} else if err != nil {
+		return err
 	}
-	// pb_data is gone, either just now or because a crashed earlier attempt had
-	// already moved it. Either way prev holds what this organization had.
+	// pb_data is gone, or holds what an interrupted attempt already moved in.
+	// Either way prev holds what this organization had.
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err
 	}
@@ -161,6 +182,22 @@ func FinalizeRestore(app core.App) error {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return fmt.Errorf("backup: swapped marker unreadable: %w", err)
 	}
+	// The marker is cleared last, so a crash between the insert and its removal
+	// brings this function back on the next boot with the same marker. Keying on
+	// the job id rather than "any succeeded restore" lets a later restore of a
+	// different archive still be recorded.
+	done, err := app.FindRecordsByFilter(
+		collection,
+		"kind = 'restore' && status = 'succeeded' && metadata.restored_from_job = {:id}",
+		"", 1, 0, dbx.Params{"id": a.ID},
+	)
+	if err != nil {
+		return err
+	}
+	if len(done) > 0 {
+		return finishFinalize(app, a)
+	}
+
 	row := newRow(app, KindRestore, "", "")
 	row.Set("status", "succeeded")
 	row.Set("finished", types.NowDateTime())
@@ -174,6 +211,22 @@ func FinalizeRestore(app core.App) error {
 	if err := app.Save(row); err != nil {
 		return err
 	}
+	if err := finishFinalize(app, a); err != nil {
+		return err
+	}
+	announceRestore(app, RestoreRequest{}, row, true, "")
+	return nil
+}
+
+// finishFinalize drops the safety copies and leaves maintenance mode. It runs
+// both after a fresh insert and on a repeat pass whose row is already there, so
+// a finalize interrupted after its insert still completes.
+//
+// A marker that will not go is logged rather than returned: the data is correct
+// and the row is written, so refusing to serve would be worse than serving with
+// a stale marker. The next boot re-runs this and, because the insert is keyed on
+// the job id, writes no second row.
+func finishFinalize(app core.App, a armed) error {
 	if err := os.RemoveAll(previousDir(app, a.ID)); err != nil {
 		log.Warn("could not remove the pre-restore copy of pb_data", "id", a.ID, "err", err)
 	}
@@ -182,10 +235,10 @@ func FinalizeRestore(app core.App) error {
 			log.Warn("could not remove a pre-restore backup", "id", a.ID, "err", err)
 		}
 	}
-	if err := os.Remove(swappedPath(app)); err != nil {
-		return err
+	if err := os.Remove(swappedPath(app)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Error("could not clear the restore marker; the next boot will retry the finalize",
+			"id", a.ID, "err", err)
 	}
 	restoring.Store(false)
-	announceRestore(app, RestoreRequest{}, row, true, "")
 	return nil
 }

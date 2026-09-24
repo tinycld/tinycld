@@ -339,6 +339,13 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	if err = integrityCheck(filepath.Join(pending, format.MemberDB)); err != nil {
 		return err
 	}
+	// The sentinel is the boot swap's only sound evidence that staging finished.
+	// It cannot infer that from the members themselves: once the swap starts
+	// moving them into pb_data, a staged member's absence from pending means the
+	// opposite of what it means before the swap starts.
+	if err = os.WriteFile(filepath.Join(pending, stagedSentinel), nil, 0o644); err != nil {
+		return err
+	}
 	row.Set("status", "running")
 	if err = app.Save(row); err != nil {
 		return err
@@ -492,11 +499,15 @@ func stage(r *format.Reader, dir string) error {
 	return r.Verify()
 }
 
+// writeMember stages one member with the permissions PocketBase itself writes
+// under pb_data. The staged tree BECOMES pb_data, so staging it tighter would
+// leave a restored deployment with a database and a storage tree no other
+// process or user on the host could read.
 func writeMember(target string, body io.Reader) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}

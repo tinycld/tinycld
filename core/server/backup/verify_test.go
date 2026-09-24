@@ -65,19 +65,18 @@ func TestVerifyAgreesWithTheRealCounts(t *testing.T) {
 	app := newTestApp(t)
 	makeUser(t, app, "owner@example.com", "owner")
 
-	// The manifest builder is the reference, so a passing verify proves the
-	// report agrees with what a backup of this app would have recorded. The row
-	// is saved first: it lands in the backups collection the manifest counts.
-	row := newRow(app, KindRestore, "", "")
-	row.Set("status", "succeeded")
-	if err := app.Save(row); err != nil {
-		t.Fatal(err)
-	}
+	// Production order: the archive's manifest is built while the backup runs,
+	// and the succeeded restore row is inserted afterwards, by the finalizer.
+	// That insert lands in the ledger collection the manifest counted, so a
+	// Verify that compares the ledger with itself can never agree.
 	m, err := buildManifest(app, KindManual)
 	if err != nil {
 		t.Fatal(err)
 	}
 	m.Counts.Files = 1
+
+	row := newRow(app, KindRestore, "", "")
+	row.Set("status", "succeeded")
 	row.Set("manifest", m)
 	if err := app.Save(row); err != nil {
 		t.Fatal(err)
@@ -89,6 +88,9 @@ func TestVerifyAgreesWithTheRealCounts(t *testing.T) {
 	}
 	if !rep.OK {
 		t.Fatalf("report %+v", rep)
+	}
+	if _, ok := rep.Collections[collection]; ok {
+		t.Fatalf("the ledger must not be compared with itself: %+v", rep.Collections)
 	}
 }
 
@@ -318,5 +320,96 @@ func TestApplyPendingRestoreCompletesARealRestore(t *testing.T) {
 	}
 	if !Restoring() {
 		t.Fatal("the swapped-in process serves 503 until it finalizes")
+	}
+}
+
+// FinalizeRestore can die between saving the row and clearing the marker. The
+// next boot sees the marker again and must not insert a second succeeded row or
+// notify a second time.
+func TestFinalizeRestoreIsIdempotent(t *testing.T) {
+	resetRestoreState(t)
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+	restoring.Store(true)
+
+	marker, err := json.Marshal(armed{
+		ID:       "r1",
+		Pending:  pendingDir(app, "r1"),
+		Manifest: format.Manifest{Core: "1.2.3"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func() {
+		if err := os.MkdirAll(filepath.Dir(swappedPath(app)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(swappedPath(app), marker, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	write()
+	if err := FinalizeRestore(app); err != nil {
+		t.Fatal(err)
+	}
+	// The marker is back, as a crash before its removal would leave it.
+	write()
+	restoring.Store(true)
+	if err := FinalizeRestore(app); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := app.FindRecordsByFilter(collection, "kind = 'restore' && status = 'succeeded'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("succeeded restore rows %d, want 1", len(rows))
+	}
+	notifs, err := app.FindRecordsByFilter("notifications", "type = 'core.restore.succeeded'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notifs) != 1 {
+		t.Fatalf("notifications %d, want 1", len(notifs))
+	}
+	if _, err := os.Stat(swappedPath(app)); !os.IsNotExist(err) {
+		t.Fatal("the second pass left the marker behind")
+	}
+	if Restoring() {
+		t.Fatal("the second pass must still end maintenance mode")
+	}
+}
+
+// A restore of a DIFFERENT archive after an earlier one must still be recorded:
+// idempotence keys on the job id, not on "any succeeded restore exists".
+func TestFinalizeRestoreRecordsASecondRestore(t *testing.T) {
+	resetRestoreState(t)
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+
+	for _, id := range []string{"r1", "r2"} {
+		raw, err := json.Marshal(armed{ID: id, Pending: pendingDir(app, id)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(swappedPath(app)), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(swappedPath(app), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		restoring.Store(true)
+		if err := FinalizeRestore(app); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := app.FindRecordsByFilter(collection, "kind = 'restore' && status = 'succeeded'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("succeeded restore rows %d, want 2", len(rows))
 	}
 }

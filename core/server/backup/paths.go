@@ -28,6 +28,13 @@ func restoreDirOf(dataDir string) string  { return filepath.Join(filepath.Dir(da
 func armedPathOf(dataDir string) string   { return filepath.Join(restoreDirOf(dataDir), "armed") }
 func swappedPathOf(dataDir string) string { return filepath.Join(restoreDirOf(dataDir), "swapped") }
 
+// stagedSentinel is written into a staging directory once the archive verified
+// and the staged database passed its integrity check. It is what tells the boot
+// swap that staging FINISHED, which cannot be inferred from the staged members:
+// the swap moves them out of pending one at a time, so after it starts their
+// absence means the opposite of what it means before.
+const stagedSentinel = ".staged"
+
 // armed is the marker a restore leaves behind for the process that boots next.
 // It carries the manifest because that process finalizes the ledger row and has
 // no other way to know what it is now running.
