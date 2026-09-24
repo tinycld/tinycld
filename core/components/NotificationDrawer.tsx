@@ -1,5 +1,6 @@
 import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
+import { formatTimeAgo } from '@tinycld/core/lib/format-utils'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
@@ -267,7 +268,7 @@ function NotificationItem({
                 </Text>
                 <NotificationBody body={notification.body} color={mutedColor} />
                 <Text className="text-[11px] text-muted-foreground">
-                    {formatRelativeTime(notification.created)}
+                    {formatTimeAgo(notification.created)}
                 </Text>
             </View>
 
@@ -308,23 +309,4 @@ function UnreadDot({ isVisible, color }: { isVisible: boolean; color: string }) 
             }}
         />
     )
-}
-
-// Exported so other panels (RunHistory) needing a relative timestamp reuse
-// this rather than re-implementing the same seconds/minutes/hours/days ladder.
-export function formatRelativeTime(dateStr: string | undefined): string {
-    if (!dateStr) return 'just now'
-    const date = new Date(dateStr.replace(' ', 'T'))
-    const now = Date.now()
-    const diff = now - date.getTime()
-    const seconds = Math.floor(diff / 1000)
-    const minutes = Math.floor(seconds / 60)
-    const hours = Math.floor(minutes / 60)
-    const days = Math.floor(hours / 24)
-
-    if (seconds < 60) return 'just now'
-    if (minutes < 60) return `${minutes}m ago`
-    if (hours < 24) return `${hours}h ago`
-    if (days < 7) return `${days}d ago`
-    return date.toLocaleDateString()
 }
