@@ -29,7 +29,7 @@ import (
 // RegisterSharedCore instead of Register's own tail. If it should not, record
 // the divergence in the embedder's parity allowlist with a reason.
 var hostHookCounts = map[string]int{
-	"OnBootstrap":                     6,
+	"OnBootstrap":                     7,
 	"OnCollectionAfterCreateError":    1,
 	"OnCollectionAfterCreateSuccess":  1,
 	"OnCollectionAfterDeleteError":    1,
@@ -77,7 +77,7 @@ var hostHookCounts = map[string]int{
 	"OnRecordUpdateExecute":           4,
 	"OnRecordUpdateRequest":           11,
 	"OnRecordValidate":                6,
-	"OnServe":                         24,
+	"OnServe":                         26,
 	"OnSettingsReload":                1,
 	"OnTerminate":                     2,
 }

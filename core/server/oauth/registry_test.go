@@ -81,17 +81,22 @@ func withEmptyRegistry(t *testing.T) {
 }
 
 // The guard this registry exists for: with nothing registered, core grants
-// exactly the identity scope and classifies exactly the identity routes.
-// Every other scope, collection and route is a package's to declare. If this
-// test starts failing, someone has put package knowledge back into core.
+// exactly its OWN scopes — the identity scope and the deployment-wide backup
+// scope, neither of which names a package — and classifies exactly its own
+// routes. Every other scope, collection and route is a package's to declare. If
+// this test starts failing with a slug-prefixed scope or a /api/<slug>/ route,
+// someone has put package knowledge back into core.
 func TestCoreDeclaresNoPackageScopes(t *testing.T) {
 	withEmptyRegistry(t)
 
-	if got := AllScopes(); len(got) != 1 || got[0] != ScopeProfile {
-		t.Fatalf("an empty registry must expose only %q, got %v", ScopeProfile, got)
+	coreScopes := []string{ScopeProfile, ScopeBackups}
+	if got := AllScopes(); strings.Join(got, " ") != strings.Join(coreScopes, " ") {
+		t.Fatalf("an empty registry must expose only %v, got %v", coreScopes, got)
 	}
-	if got := ScopeLabels(); len(got) != 1 || got[ScopeProfile] != ProfileScopeLabel {
-		t.Fatalf("an empty registry must label only %q, got %v", ScopeProfile, got)
+	labels := ScopeLabels()
+	if len(labels) != len(coreScopes) || labels[ScopeProfile] != ProfileScopeLabel ||
+		labels[ScopeBackups] != BackupsScopeLabel {
+		t.Fatalf("an empty registry must label only core's own scopes, got %v", labels)
 	}
 	if got := ScopeForRoute("GET", "/api/collections/users/records"); !onlyScope(got, ScopeProfile) {
 		t.Errorf("users read = %v, want %q", got, ScopeProfile)
@@ -114,7 +119,7 @@ func TestCoreDeclaresNoPackageScopes(t *testing.T) {
 }
 
 func TestRegisterPackageBuildsCatalog(t *testing.T) {
-	want := []string{ScopeProfile, scopeNotesRead, scopeNotesWrite, scopeTasksRead, scopeTasksWrite}
+	want := []string{ScopeProfile, ScopeBackups, scopeNotesRead, scopeNotesWrite, scopeTasksRead, scopeTasksWrite}
 	if got := AllScopes(); strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("AllScopes = %v, want %v (profile first, packages by slug, scopes in declaration order)", got, want)
 	}
@@ -139,8 +144,8 @@ func TestRegisterPackageIsIdempotentPerSlug(t *testing.T) {
 	delete(narrowed.Collections, "notes_folder_counts")
 	RegisterPackage(narrowed)
 
-	if got := AllScopes(); len(got) != 3 {
-		t.Errorf("AllScopes after re-registration = %v, want profile + 2", got)
+	if got := AllScopes(); len(got) != 4 {
+		t.Errorf("AllScopes after re-registration = %v, want core's two + notes' two", got)
 	}
 	if got := ScopeForRoute("GET", "/api/collections/notes_folder_counts/records"); len(got) != 0 {
 		t.Errorf("a collection dropped by the re-registration must no longer be classified, got %v", got)
@@ -207,7 +212,7 @@ func TestRegisterPackageRejectsMalformedRegistrations(t *testing.T) {
 			RegisterPackage(c.pkg)
 		})
 	}
-	if got := AllScopes(); len(got) != 1 {
+	if got := AllScopes(); len(got) != 2 {
 		t.Errorf("a rejected registration must leave the registry untouched, got %v", got)
 	}
 }
@@ -260,5 +265,28 @@ func TestRegisterSharedEndpointRejectsMalformedRoutes(t *testing.T) {
 			}()
 			RegisterSharedEndpoint(c.method, c.path, func() []string { return nil })
 		}()
+	}
+}
+
+// Core's own backup routes must be classified by core, including the two whose
+// path carries a record id — an exact-match table cannot express those, so they
+// are covered by a core prefix rule. A route that fell into default-deny would
+// 403 the CLI only, which is how this kind of gap stays hidden.
+func TestBackupRoutesCarryTheBackupsScope(t *testing.T) {
+	withEmptyRegistry(t)
+	for _, r := range []struct{ method, path string }{
+		{"POST", "/api/org-backups"},
+		{"GET", "/api/org-backups/abc123"},
+		{"GET", "/api/org-backups/verify"},
+		{"POST", "/api/org-backups/restore"},
+		{"PATCH", "/api/org-backups/restore/abc123"},
+	} {
+		if got := ScopeForRoute(r.method, r.path); !onlyScope(got, ScopeBackups) {
+			t.Errorf("%s %s = %v, want %q", r.method, r.path, got, ScopeBackups)
+		}
+	}
+	// A write verb the API does not serve is not opened by the read prefix.
+	if got := ScopeForRoute("DELETE", "/api/org-backups/abc123"); len(got) != 0 {
+		t.Errorf("DELETE /api/org-backups/{id} = %v, want default-deny", got)
 	}
 }

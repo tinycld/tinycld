@@ -30,11 +30,19 @@ const (
 	grantsCollection  = "oauth_grants"
 )
 
-// ScopeProfile is the baseline identity scope every grant gets. It is the
-// only scope core defines: every other scope is "<package>:<capability>",
-// registered by the package that owns it (see registry.go), so the catalog
-// grows as packages are installed and core never names one.
+// ScopeProfile is the baseline identity scope every grant gets. Every scope
+// core defines is unprefixed and names a capability of the deployment itself;
+// every other scope is "<package>:<capability>", registered by the package that
+// owns it (see registry.go), so the catalog grows as packages are installed and
+// core never names one.
 const ScopeProfile = "profile"
+
+// ScopeBackups lets a token create backups, read the ledger and start
+// restores. It is core's own capability, not a package's: the archive spans
+// the whole deployment. The role gate on each route still applies — admin to
+// back up and read, owner to restore — so this scope widens nothing a signed-in
+// session could not already do.
+const ScopeBackups = "backups"
 
 var (
 	// ErrInvalidGrant covers a missing, malformed, or expired grant. Maps to 401.

@@ -103,9 +103,11 @@ var (
 	merged          = rebuild()
 )
 
-// ProfileScopeLabel is the consent copy for the baseline identity scope,
-// the one scope core itself defines.
+// ProfileScopeLabel is the consent copy for the baseline identity scope.
 const ProfileScopeLabel = "See your name and email address"
+
+// BackupsScopeLabel is the consent copy for ScopeBackups.
+const BackupsScopeLabel = "Create and restore backups"
 
 var (
 	slugPattern       = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -287,6 +289,15 @@ func rebuild() tables {
 			"users": {read: ScopeRule{ScopeProfile}},
 		},
 		endpoints: map[string]ScopeRule{
+			// The deployment's own backup API. Core-owned, so it is spelled
+			// here rather than registered: no package owns an archive of the
+			// whole organization. The role gate on each route is separate and
+			// still applies. The paths are "/api/org-backups", not
+			// "/api/backups" — PocketBase owns the latter (see
+			// coreserver/backup_api.go's orgBackupsPrefix).
+			"POST /api/org-backups":         {ScopeBackups},
+			"POST /api/org-backups/restore": {ScopeBackups},
+			"GET /api/org-backups/verify":   {ScopeBackups},
 			// Advertised in the discovery document as userinfo_endpoint, so
 			// an integration following the well-known metadata calls it
 			// with an ordinary access token. It needs an explicit entry: it
@@ -296,7 +307,18 @@ func rebuild() tables {
 			// tells clients to make.
 			"GET /oauth/userinfo": {ScopeProfile},
 		},
-		scopes: []Scope{{ID: ScopeProfile, Label: ProfileScopeLabel}},
+		// The two backup routes that carry a record id cannot be spelled as
+		// exact paths. A prefix is broader than it looks, so each one names a
+		// route family and ends at a segment boundary; the bare prefix itself
+		// is a different route and stays default-denied.
+		prefixes: []prefixRule{
+			{method: "GET", prefix: "/api/org-backups/", scopes: ScopeRule{ScopeBackups}},
+			{method: "PATCH", prefix: "/api/org-backups/restore/", scopes: ScopeRule{ScopeBackups}},
+		},
+		scopes: []Scope{
+			{ID: ScopeProfile, Label: ProfileScopeLabel},
+			{ID: ScopeBackups, Label: BackupsScopeLabel},
+		},
 	}
 	slugs := make([]string, 0, len(packages))
 	for slug := range packages {

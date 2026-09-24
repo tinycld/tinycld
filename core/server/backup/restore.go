@@ -316,8 +316,10 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	// The marker is written BEFORE the archive is staged, so it can name a
 	// pending directory that is empty or half-written: a process killed during
 	// phase 5 leaves exactly that. The boot swap must therefore never trust the
-	// marker alone — it has to confirm pending/<id>/data.db is there before it
-	// moves anything aside.
+	// marker alone. What it confirms is the .staged sentinel phase 5 writes last,
+	// or an existing previous/<id> showing the swap already began — NOT
+	// pending/<id>/data.db, whose absence means "never staged" before the swap
+	// starts and "already moved in" after it.
 	pending := pendingDir(app, id)
 	if err = os.MkdirAll(pending, 0o700); err != nil {
 		return err

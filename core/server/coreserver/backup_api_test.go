@@ -1,0 +1,754 @@
+package coreserver
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"filippo.io/age"
+	"github.com/pocketbase/pocketbase/apis"
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tests"
+	"github.com/pocketbase/pocketbase/tools/hook"
+	"github.com/pocketbase/pocketbase/tools/types"
+
+	"tinycld.org/core/backup"
+	"tinycld.org/core/backup/format"
+)
+
+const testPassphrase = "correct horse battery"
+
+// setupBackupCollections boots a PocketBase app on an EMPTY data dir and adds
+// the tinycld collections the backup engine touches. It is a copy of
+// backup/testapp_test.go's newTestApp: a _test file is not importable from
+// another package, and the engine's manifest counts every non-system
+// collection and every stored file, so the PB demo fixture would make an exact
+// count impossible to assert.
+//
+// The registry's feature row uses a fictional slug: core must not name a
+// feature package, in its tests no less than its code.
+func setupBackupCollections(t *testing.T) *tests.TestApp {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "pb_data")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	app, err := tests.NewTestAppWithConfig(core.BaseAppConfig{DataDir: dir, EncryptionEnv: "pb_test_env"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	relaxUsernameMinLength(users)
+	if users.Fields.GetByName("role") == nil {
+		users.Fields.Add(&core.SelectField{Name: "role", Values: []string{"owner", "admin", "member", "guest"}, MaxSelect: 1})
+		users.Fields.Add(&core.BoolField{Name: "disabled"})
+	}
+	if err := app.Save(users); err != nil {
+		t.Fatal(err)
+	}
+
+	mustCreate := func(c *core.Collection) {
+		if err := app.Save(c); err != nil {
+			t.Fatalf("create %s: %v", c.Name, err)
+		}
+	}
+	backups := core.NewBaseCollection("backups")
+	backups.Fields.Add(
+		&core.SelectField{Name: "kind", Required: true, MaxSelect: 1, Values: []string{"manual", "scheduled", "pre_restore", "restore"}},
+		&core.SelectField{Name: "status", Required: true, MaxSelect: 1, Values: []string{"running", "waiting_for_source", "succeeded", "failed", "interrupted"}},
+		&core.RelationField{Name: "initiated_by", CollectionId: users.Id, MaxSelect: 1},
+		&core.DateField{Name: "started", Required: true},
+		&core.DateField{Name: "finished"},
+		&core.NumberField{Name: "bytes"},
+		&core.TextField{Name: "sha256", Max: 64},
+		&core.JSONField{Name: "manifest", MaxSize: 200000},
+		&core.TextField{Name: "target_host", Max: 253},
+		&core.TextField{Name: "error", Max: 2000},
+		&core.JSONField{Name: "metadata", MaxSize: 20000},
+		&core.AutodateField{Name: "created", OnCreate: true},
+		&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true},
+	)
+	mustCreate(backups)
+
+	reg := core.NewBaseCollection("pkg_registry")
+	reg.Fields.Add(
+		&core.TextField{Name: "name"}, &core.TextField{Name: "slug", Required: true},
+		&core.TextField{Name: "npm_package"}, &core.TextField{Name: "version"},
+		&core.SelectField{Name: "status", MaxSelect: 1, Values: []string{"bundled", "available", "installed", "disabled"}},
+	)
+	mustCreate(reg)
+	addRegistry := func(slug, version, spec, status string) {
+		r := core.NewRecord(reg)
+		r.Set("name", slug)
+		r.Set("slug", slug)
+		r.Set("version", version)
+		r.Set("npm_package", spec)
+		r.Set("status", status)
+		if err := app.Save(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addRegistry("core", "1.2.3", "tinycld@1.2.3", "bundled")
+	addRegistry("widgets", "1.0.0", "@example/widgets@1.0.0", "installed")
+
+	notifs := core.NewBaseCollection("notifications")
+	notifs.Fields.Add(
+		&core.RelationField{Name: "user", CollectionId: users.Id, MaxSelect: 1},
+		&core.TextField{Name: "type"}, &core.TextField{Name: "package"}, &core.TextField{Name: "title"},
+		&core.TextField{Name: "body"}, &core.TextField{Name: "url"}, &core.JSONField{Name: "metadata", MaxSize: 20000},
+		&core.BoolField{Name: "read"}, &core.BoolField{Name: "dismissed"},
+	)
+	mustCreate(notifs)
+
+	audit := core.NewBaseCollection("audit_logs")
+	audit.Fields.Add(
+		&core.TextField{Name: "action"}, &core.TextField{Name: "resource_type"}, &core.TextField{Name: "resource_id"},
+		&core.TextField{Name: "resource_label"}, &core.RelationField{Name: "actor", CollectionId: users.Id, MaxSelect: 1},
+		&core.TextField{Name: "ip_address"}, &core.TextField{Name: "user_agent"}, &core.JSONField{Name: "metadata", MaxSize: 20000},
+	)
+	mustCreate(audit)
+
+	// A file in local storage so the backup walk has something to copy.
+	storageDir := filepath.Join(app.DataDir(), "storage", "col1", "rec1")
+	if err := os.MkdirAll(storageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(storageDir, "hello.txt"), []byte("hello file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return app
+}
+
+// backupTestApp is the app plus the routes under test, with the restore's
+// process-ending seams stubbed: a real rebuilder would try to build a binary
+// and a real restart would kill the test process.
+func backupTestApp(t *testing.T) *tests.TestApp {
+	t.Helper()
+	app := setupBackupCollections(t)
+	restoreSeams(t)
+	RegisterBackupEndpoints(app)
+	return app
+}
+
+// restoreSeams stubs the two process-ending seams a restore reaches at phase 6.
+// A real rebuilder would try to build a binary and a real restart would kill the
+// test process, so every restore test replaces both and puts them back after.
+func restoreSeams(t *testing.T) {
+	t.Helper()
+	backup.RegisterRebuilder(func(context.Context, format.Lockfile) error { return nil })
+	backup.SetRestart(func() {})
+	t.Cleanup(func() { backup.RegisterRebuilder(nil) })
+}
+
+func makeBackupUser(t *testing.T, app core.App, email, role string) *core.Record {
+	t.Helper()
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := core.NewRecord(users)
+	u.SetEmail(email)
+	u.SetPassword("password12345")
+	u.Set("role", role)
+	u.Set("username", strings.Split(email, "@")[0])
+	if err := app.Save(u); err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+func authFor(t *testing.T, app core.App, email, role string) string {
+	t.Helper()
+	token, err := tokenForUser(app, makeBackupUser(t, app, email, role))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
+// waitFor polls cond for up to 5 s. A backup started with POST /api/org-backups
+// runs on its own goroutine, so the assertion has to wait for it rather than
+// read the ledger the instant the 202 lands.
+func waitFor(t testing.TB, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition was never met within 5s")
+}
+
+// closeBuffer lets a test hand backup.Run a sink it can read afterwards.
+type closeBuffer struct{ buf *bytes.Buffer }
+
+func (c closeBuffer) Write(p []byte) (int, error) { return c.buf.Write(p) }
+func (c closeBuffer) Close() error                { return nil }
+
+func streamBackupForTest(t *testing.T, app core.App, out *bytes.Buffer) {
+	t.Helper()
+	rcpt, err := age.NewScryptRecipient(testPassphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backup.Run(app, backup.Request{
+		Kind: backup.KindManual, Recipient: rcpt, Sink: closeBuffer{buf: out},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func multipartArchive(t *testing.T, data []byte, fields map[string]string) ([]byte, string) {
+	t.Helper()
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	// Fields go before the file part: the handler reads them in stream order so
+	// the archive never has to be buffered.
+	for k, v := range fields {
+		if err := w.WriteField(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	part, err := w.CreateFormFile("archive", "backup.age")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return body.Bytes(), w.FormDataContentType()
+}
+
+func TestBackupStreamAsAdmin(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "admin@example.com", "admin")
+	scenario := &tests.ApiScenario{
+		Name:   "stream a backup to the client",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups",
+		Body:   strings.NewReader(`{"stream":true,"passphrase":"` + testPassphrase + `"}`),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  "application/json",
+		},
+		ExpectedStatus: http.StatusOK,
+		// The age header is the first thing an archive writes. Asserting it also
+		// satisfies ApiScenario, which demands an empty body when nothing is
+		// expected — and a streamed archive is the opposite of an empty body.
+		ExpectedContent:       []string{"age-encryption.org/v1"},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
+			body, err := io.ReadAll(res.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity, err := age.NewScryptIdentity(testPassphrase)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, rep, err := format.Inspect(bytes.NewReader(body), identity)
+			if err != nil || !rep.OK {
+				t.Fatalf("streamed archive unreadable: %v (report ok=%v)", err, rep.OK)
+			}
+			if ct := res.Header.Get("Content-Type"); ct != "application/octet-stream" {
+				t.Fatalf("content-type %q, want application/octet-stream", ct)
+			}
+		},
+	}
+	scenario.Test(t)
+}
+
+func TestBackupToTargetReturns202AndRecordsHostOnly(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "admin@example.com", "admin")
+
+	received := make(chan int, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		select {
+		case received <- len(b):
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	scenario := &tests.ApiScenario{
+		Name:   "PUT a backup at a target URL",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups",
+		Body: strings.NewReader(`{"target":"` + srv.URL + `/x.age?sig=secret","passphrase":"` +
+			testPassphrase + `"}`),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  "application/json",
+		},
+		ExpectedStatus:        http.StatusAccepted,
+		ExpectedContent:       []string{`"id":`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, _ *http.Response) {
+			waitFor(t, func() bool { return len(received) > 0 })
+			var rows []*core.Record
+			waitFor(t, func() bool {
+				rows, _ = app.FindRecordsByFilter("backups", "status = 'succeeded'", "", 0, 0)
+				return len(rows) == 1
+			})
+			// Only the hostname is kept: the target URL carries its own
+			// credentials in the query string.
+			if host := rows[0].GetString("target_host"); host != "127.0.0.1" {
+				t.Fatalf("target_host = %q, want the hostname only", host)
+			}
+		},
+	}
+	scenario.Test(t)
+}
+
+func TestBackupRejectsShortPassphrase(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "admin@example.com", "admin")
+	(&tests.ApiScenario{
+		Name:   "a short passphrase is refused before any work",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups",
+		Body:   strings.NewReader(`{"stream":true,"passphrase":"short"}`),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  "application/json",
+		},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{"12 characters"},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+func TestBackupRejectsNonHTTPTarget(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "admin@example.com", "admin")
+	(&tests.ApiScenario{
+		Name:   "a file:// target is refused",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups",
+		Body:   strings.NewReader(`{"target":"file:///tmp/x.age","passphrase":"` + testPassphrase + `"}`),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  "application/json",
+		},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{"http"},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+func TestBackupForbiddenForMember(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "member@example.com", "member")
+	(&tests.ApiScenario{
+		Name:   "a member cannot start a backup",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups",
+		Body:   strings.NewReader(`{"stream":true,"passphrase":"` + testPassphrase + `"}`),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  "application/json",
+		},
+		ExpectedStatus:        http.StatusForbidden,
+		ExpectedContent:       []string{`"status":403`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+func TestBackupGetReturnsTheLedgerRow(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "admin@example.com", "admin")
+
+	col, err := app.FindCollectionByNameOrId("backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := core.NewRecord(col)
+	row.Set("kind", "manual")
+	row.Set("status", "succeeded")
+	row.Set("started", types.NowDateTime())
+	if err := app.Save(row); err != nil {
+		t.Fatal(err)
+	}
+
+	(&tests.ApiScenario{
+		Name:                  "an admin reads one ledger row",
+		Method:                http.MethodGet,
+		URL:                   "/api/org-backups/" + row.Id,
+		Headers:               map[string]string{"Authorization": token},
+		ExpectedStatus:        http.StatusOK,
+		ExpectedContent:       []string{`"status":"succeeded"`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+func TestRestoreRefusesAnAdminAndAcceptsAnOwner(t *testing.T) {
+	app := backupTestApp(t)
+	adminTok := authFor(t, app, "admin@example.com", "admin")
+	ownerTok := authFor(t, app, "owner@example.com", "owner")
+
+	var archive bytes.Buffer
+	streamBackupForTest(t, app, &archive)
+
+	body, contentType := multipartArchive(t, archive.Bytes(), map[string]string{"passphrase": testPassphrase})
+	(&tests.ApiScenario{
+		Name:   "an admin cannot restore",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups/restore",
+		Body:   bytes.NewReader(body),
+		Headers: map[string]string{
+			"Authorization": adminTok,
+			"Content-Type":  contentType,
+		},
+		ExpectedStatus:        http.StatusForbidden,
+		ExpectedContent:       []string{`"status":403`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+
+	body, contentType = multipartArchive(t, archive.Bytes(), map[string]string{"passphrase": testPassphrase})
+	(&tests.ApiScenario{
+		Name:   "an owner restores from an upload",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups/restore",
+		Body:   bytes.NewReader(body),
+		Headers: map[string]string{
+			"Authorization": ownerTok,
+			"Content-Type":  contentType,
+		},
+		ExpectedStatus:        http.StatusAccepted,
+		ExpectedContent:       []string{`"jobId":`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+func TestRestoreRejectsShortPassphrase(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "owner@example.com", "owner")
+
+	body, contentType := multipartArchive(t, []byte("not an archive"), map[string]string{"passphrase": "short"})
+	(&tests.ApiScenario{
+		Name:   "an upload with a short passphrase is refused",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups/restore",
+		Body:   bytes.NewReader(body),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  contentType,
+		},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{"12 characters"},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+// A multipart restore runs synchronously, so a package-set mismatch surfaces as
+// the HTTP status rather than only on the ledger row.
+func TestRestoreMismatchReturns409WithDiff(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "owner@example.com", "owner")
+	// No rebuilder: a deployment that cannot rebuild itself refuses a restore of
+	// a package set it does not carry.
+	backup.RegisterRebuilder(nil)
+
+	var archive bytes.Buffer
+	streamBackupForTest(t, app, &archive)
+
+	regs, err := app.FindRecordsByFilter("pkg_registry", "slug = 'widgets'", "", 0, 0)
+	if err != nil || len(regs) != 1 {
+		t.Fatalf("registry rows for the fictional package: %v, %v", regs, err)
+	}
+	if err := app.Delete(regs[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	body, contentType := multipartArchive(t, archive.Bytes(), map[string]string{"passphrase": testPassphrase})
+	(&tests.ApiScenario{
+		Name:   "a package set this binary cannot run is refused with the diff",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups/restore",
+		Body:   bytes.NewReader(body),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  contentType,
+		},
+		ExpectedStatus:        http.StatusConflict,
+		ExpectedContent:       []string{`"missing":["widgets"]`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+// force skips the package-set check and the rebuild, so its VALUE has to decide.
+// A handler that read the field's mere presence would let force=false through as
+// force=true — and this test's archive names a package the registry no longer
+// has, so a wrongly-forced restore would be accepted instead of refused.
+func TestRestoreForceFalseIsNotForce(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "owner@example.com", "owner")
+	backup.RegisterRebuilder(nil)
+
+	var archive bytes.Buffer
+	streamBackupForTest(t, app, &archive)
+
+	regs, err := app.FindRecordsByFilter("pkg_registry", "slug = 'widgets'", "", 0, 0)
+	if err != nil || len(regs) != 1 {
+		t.Fatalf("registry rows for the fictional package: %v, %v", regs, err)
+	}
+	if err := app.Delete(regs[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	body, contentType := multipartArchive(t, archive.Bytes(), map[string]string{
+		"passphrase": testPassphrase,
+		"force":      "false",
+	})
+	(&tests.ApiScenario{
+		Name:   "force=false still refuses a package set this binary cannot run",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups/restore",
+		Body:   bytes.NewReader(body),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  contentType,
+		},
+		ExpectedStatus:        http.StatusConflict,
+		ExpectedContent:       []string{`"missing":["widgets"]`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+func TestRestoreSwapSourceRequiresAWaitingRestore(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "owner@example.com", "owner")
+	(&tests.ApiScenario{
+		Name:   "swapping a source nothing is waiting for is a 404",
+		Method: http.MethodPatch,
+		URL:    "/api/org-backups/restore/nosuchjob",
+		Body:   strings.NewReader(`{"source":"https://example.test/a.age"}`),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  "application/json",
+		},
+		ExpectedStatus:        http.StatusNotFound,
+		ExpectedContent:       []string{`"status":404`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+func TestVerifyEndpoint(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "admin@example.com", "admin")
+	(&tests.ApiScenario{
+		Name:                  "verify reports the live integrity check",
+		Method:                http.MethodGet,
+		URL:                   "/api/org-backups/verify",
+		Headers:               map[string]string{"Authorization": token},
+		ExpectedStatus:        http.StatusOK,
+		ExpectedContent:       []string{`"integrityOk":true`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+// The obligation Tasks 8 and 9 carry into the boot hook: FinalizeRestore
+// inserts the successful restore's row, and MarkInterrupted closes rows a dead
+// process left running. Run in the wrong order, MarkInterrupted would close the
+// row FinalizeRestore just inserted and an operator would be told the restore
+// that just worked was interrupted.
+//
+// The layout is the one a boot after a staged restore really finds: an armed
+// marker plus a fully staged pending directory. The hook's own
+// ApplyPendingRestore swaps that in and writes the swapped marker, and
+// FinalizeRestore then acts on it — the same single boot, in the same order
+// production runs them.
+func TestBootHookFinalizesBeforeMarkingInterrupted(t *testing.T) {
+	app := setupBackupCollections(t)
+	restoreSeams(t)
+	makeBackupUser(t, app, "owner@example.com", "owner")
+
+	// A row left running by the process that armed the restore. It is the row
+	// MarkInterrupted exists for, and it must not be confused with the one the
+	// finalize inserts.
+	col, err := app.FindCollectionByNameOrId("backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	abandoned := core.NewRecord(col)
+	abandoned.Set("kind", "manual")
+	abandoned.Set("status", "running")
+	abandoned.Set("started", types.NowDateTime().Add(-time.Hour))
+	if err := app.Save(abandoned); err != nil {
+		t.Fatal(err)
+	}
+
+	dataDir := app.DataDir()
+	restoreDir := filepath.Join(filepath.Dir(dataDir), "restore")
+	pending := filepath.Join(restoreDir, "pending", "r1")
+	if err := os.MkdirAll(pending, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The staged database is a copy of the live one, so the app can still read
+	// it after the swap renames pb_data. What is under test is the ORDER of the
+	// two post-bootstrap steps, not what the archive contained.
+	live, err := os.ReadFile(filepath.Join(dataDir, "data.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pending, "data.db"), live, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The sentinel is the boot swap's only sound evidence that staging finished.
+	if err := os.WriteFile(filepath.Join(pending, ".staged"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pre := filepath.Join(restoreDir, "pre", "r1.age")
+	if err := os.MkdirAll(filepath.Dir(pre), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pre, []byte("pre"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := json.Marshal(map[string]any{
+		"id":       "r1",
+		"pending":  pending,
+		"pre":      pre,
+		"manifest": format.Manifest{Core: "1.2.3"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(restoreDir, "armed"), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	RegisterBackupBoot(app)
+	if err := app.OnBootstrap().Trigger(&core.BootstrapEvent{App: app}, func(*core.BootstrapEvent) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := app.FindRecordsByFilter("backups", "kind = 'restore'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("restore rows = %d, want the one the finalize inserted", len(rows))
+	}
+	if got := rows[0].GetString("status"); got != "succeeded" {
+		t.Fatalf("the finalized restore row is %q; FinalizeRestore must run BEFORE "+
+			"MarkInterrupted, or the row it just inserted is closed as interrupted", got)
+	}
+	// The same hook still closes the row the dead process left behind, so the
+	// ordering fix cannot have been made by simply dropping MarkInterrupted.
+	reread, err := app.FindRecordById("backups", abandoned.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reread.GetString("status"); got != "interrupted" {
+		t.Fatalf("the abandoned run is %q, want interrupted", got)
+	}
+}
+
+// A row a previous process left running is still closed by the same hook.
+func TestBootHookMarksAnAbandonedRunInterrupted(t *testing.T) {
+	app := setupBackupCollections(t)
+	restoreSeams(t)
+
+	col, err := app.FindCollectionByNameOrId("backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := core.NewRecord(col)
+	row.Set("kind", "manual")
+	row.Set("status", "running")
+	row.Set("started", types.NowDateTime().Add(-time.Hour))
+	if err := app.Save(row); err != nil {
+		t.Fatal(err)
+	}
+
+	RegisterBackupBoot(app)
+	if err := app.OnBootstrap().Trigger(&core.BootstrapEvent{App: app}, func(*core.BootstrapEvent) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	reread, err := app.FindRecordById("backups", row.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reread.GetString("status"); got != "interrupted" {
+		t.Fatalf("an abandoned run is %q, want interrupted", got)
+	}
+}
+
+// The maintenance middleware must sit ahead of record CRUD, so a write cannot
+// land in a pb_data the next process is about to replace.
+func TestMaintenanceMiddlewareBindsBeforeAuthLoading(t *testing.T) {
+	app := setupBackupCollections(t)
+	restoreSeams(t)
+	RegisterBackupBoot(app)
+
+	pbRouter, err := apis.NewRouter(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &core.ServeEvent{App: app, Router: pbRouter}
+	if err := app.OnServe().Trigger(e, func(*core.ServeEvent) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	var maintenance, loadAuth *hook.Handler[*core.RequestEvent]
+	for _, mw := range e.Router.Middlewares {
+		switch mw.Id {
+		case maintenanceMiddlewareID:
+			maintenance = mw
+		case apis.DefaultLoadAuthTokenMiddlewareId:
+			loadAuth = mw
+		}
+	}
+	if maintenance == nil {
+		t.Fatalf("no %q middleware bound", maintenanceMiddlewareID)
+	}
+	if loadAuth == nil {
+		t.Fatal("PocketBase's load-auth-token middleware is not on the router")
+	}
+	if maintenance.Priority >= loadAuth.Priority {
+		t.Fatalf("the maintenance middleware's priority is %d; it must run before "+
+			"the load-auth-token middleware at %d, or a record write reaches a "+
+			"pb_data the next process replaces", maintenance.Priority, loadAuth.Priority)
+	}
+}
