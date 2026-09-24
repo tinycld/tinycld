@@ -29,7 +29,15 @@ import (
 // package set, and ends the process so the supervisor launches the new one. A
 // deployment that cannot rebuild itself registers nothing, and a restore of a
 // different package set is refused instead.
-type Rebuilder func(ctx context.Context, lockfile format.Lockfile) error
+//
+// job is the interlock claim the restore is already holding, handed over rather
+// than released and re-taken. The restore has by this point spent a pre-restore
+// backup and staged the whole archive; releasing first left a window in which an
+// install could claim the interlock and the rebuilder would get ErrBusy, throwing
+// all of that away. From the call onward the rebuilder OWNS the job and is
+// responsible for releasing it — on success it never returns (the process ends),
+// and on error it must release before returning.
+type Rebuilder func(ctx context.Context, job *installjob.Job, lockfile format.Lockfile) error
 
 var (
 	rebuilderMu sync.RWMutex
@@ -172,9 +180,10 @@ func beginRestore(app core.App, req RestoreRequest) (*core.Record, *installjob.J
 
 func runRestore(app core.App, req RestoreRequest, row *core.Record, job *installjob.Job) (err error) {
 	id := row.Id
-	// The pre-restore backup claims the interlock itself, so ownership passes
-	// back and forth. released tracks who holds it, and release is idempotent so
-	// the unwind cannot hand it back twice.
+	// The interlock changes hands twice: the pre-restore backup claims it itself,
+	// and phase 6 hands it to the rebuilder. released tracks whether THIS
+	// function still owes a release, so the unwind can neither release twice nor
+	// take the claim back from the rebuilder.
 	released := false
 	release := func() {
 		if !released {
@@ -360,8 +369,20 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	fn := rebuilder
 	rebuilderMu.RUnlock()
 	if fn != nil && !req.Force {
-		release()
-		return fn(context.Background(), read.Lockfile)
+		// The claim is handed over, NOT released: see Rebuilder. released is set
+		// first so the success path — where the rebuilder ends the process and
+		// never returns — cannot have this function's deferred release take the
+		// claim back from it.
+		released = true
+		rerr := fn(context.Background(), job, read.Lockfile)
+		if rerr != nil {
+			// A rebuilder that failed is expected to have released the job, but
+			// the interlock is process-wide: if it did not, nothing else could
+			// ever run again. Release compares identity before clearing, so this
+			// cannot evict a different holder, and a double release is a no-op.
+			installjob.Release(job)
+		}
+		return rerr
 	}
 	requestRestart()
 	return nil

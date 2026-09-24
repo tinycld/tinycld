@@ -3,6 +3,7 @@ package coreserver
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/pocketbase/pocketbase"
 
@@ -10,6 +11,21 @@ import (
 	"tinycld.org/core/backup/format"
 	"tinycld.org/core/installjob"
 )
+
+// nameRestoreJob gives a restore's job a package slug.
+//
+// beginRestore builds the job with no slug — a restore is not about one package —
+// but pkg_install_log.pkg_slug is REQUIRED, and createInstallLog's fallback is
+// job.NpmPkg, which a restore also leaves empty. The row therefore failed to save
+// on every restore rebuild, logging "failed to create install log" and leaving the
+// operator's install history with no trace of the rebuild that replaced their
+// deployment. The base member is the honest slug: a restore rebuild replaces the
+// whole package set, not one member of it.
+func nameRestoreJob(job *installjob.Job) {
+	if job.Slug == "" {
+		job.Slug = baseRegistrySlug
+	}
+}
 
 // RegisterBackupSelfRebuild plugs this deployment's own rebuild pipeline in as
 // the restore's rebuilder, so an archive whose package set differs from this
@@ -22,12 +38,15 @@ import (
 // phase 2), which is the correct outcome there — restoring rows that belong to
 // packages the binary does not carry leaves data no screen can reach.
 func RegisterBackupSelfRebuild(app *pocketbase.PocketBase) {
-	backup.RegisterRebuilder(func(_ context.Context, lf format.Lockfile) error {
-		job := installjob.New("restore", "", "")
-		if _, ok := installjob.Claim(job); !ok {
-			return backup.ErrBusy
-		}
+	backup.RegisterRebuilder(func(_ context.Context, job *installjob.Job, lf format.Lockfile) error {
+		// The restore hands its own claim over rather than releasing it, so there
+		// is nothing to claim here: an install slipping into a release/re-claim
+		// window would have wasted a pre-restore backup and a fully staged
+		// archive. From here this function owns the job, and finishJob releases
+		// it on every path that returns.
 		defer finishJob(job)
+
+		nameRestoreJob(job)
 
 		m := RebuildManifest{BuildID: newBuildID()}
 		for slug, spec := range lf {
@@ -37,6 +56,9 @@ func RegisterBackupSelfRebuild(app *pocketbase.PocketBase) {
 			// if that ever changes.
 			m.Members = append(m.Members, MemberSpec{Slug: registrySlugToMember(slug), Spec: spec})
 		}
+		// Map iteration is random; a build's manifest is its rollback record and
+		// its log line, so the member order must not change run to run.
+		sort.Slice(m.Members, func(i, j int) bool { return m.Members[i].Slug < m.Members[j].Slug })
 		logRecord := createInstallLog(app, job, "install")
 		deps := productionRebuildDeps(app, job, m, logRecord)
 		// No migration sync. The live database is about to be replaced by the

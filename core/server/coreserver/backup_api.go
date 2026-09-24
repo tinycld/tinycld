@@ -37,8 +37,14 @@ const maintenanceMiddlewareID = "tinycldBackupMaintenance"
 // loadAuthToken, and therefore before every record CRUD handler. A write that
 // got through while a restore was staging would land in a pb_data the next
 // process replaces, so the caller would be told it succeeded and the row would
-// be gone after the restart. Lower number = earlier; the same offset the OAuth
-// grant middleware uses, for the same reason.
+// be gone after the restart. Lower number = earlier.
+//
+// The offset is the same one oauth/middleware.go's middlewarePriority uses, for
+// the same reason — which makes the two a TIE. That is deliberate: they are
+// independent and either order is correct. A 503 before the grant check tells a
+// token-authenticated caller the server is restoring rather than whether its
+// token is good, and a grant check first refuses an invalid token during a
+// restore — both are honest answers, and neither lets a write through.
 var maintenancePriority = apis.DefaultLoadAuthTokenMiddlewarePriority - 10
 
 type backupBody struct {
@@ -69,7 +75,9 @@ func RegisterBackupEndpoints(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		g := e.Router.Group(orgBackupsPrefix)
 		g.POST("", func(re *core.RequestEvent) error { return handleBackupCreate(app, re) }).BindFunc(requireAdmin)
-		// verify is registered before the "/{id}" route so the literal path wins.
+		// "/verify" and "/{id}" both match GET /api/org-backups/verify. Go's
+		// ServeMux picks the MORE SPECIFIC pattern, not the first registered, so
+		// the literal wins wherever it sits in this list.
 		g.GET("/verify", func(re *core.RequestEvent) error { return handleBackupVerify(app, re) }).BindFunc(requireAdmin)
 		g.POST("/restore", func(re *core.RequestEvent) error { return handleRestore(app, re) }).BindFunc(requireOwner)
 		g.PATCH("/restore/{id}", handleRestoreSwap).BindFunc(requireOwner)
@@ -81,12 +89,17 @@ func RegisterBackupEndpoints(app core.App) {
 // RegisterBackupBoot wires the two things a boot has to do about backups.
 //
 // Before the database is opened: swap in data a restore staged before the last
-// restart. After bootstrap, in ONE hook and in this order: finalize a swapped-in
-// restore, then close rows a dead process left running. The order is
-// load-bearing. FinalizeRestore INSERTS the successful restore's row into the
-// restored database, and MarkInterrupted closes every row still marked running —
-// including, if it ran first, the row the finalize is about to write. An operator
-// would then be told the restore that just worked was interrupted.
+// restart. After bootstrap, in ONE hook: finalize a swapped-in restore, then
+// close rows a dead process left running.
+//
+// FinalizeRestore goes FIRST, defensively. The two cannot collide as they stand
+// — the finalize inserts its row already "succeeded" with started = now, and
+// MarkInterrupted only rewrites "running" rows started before bootedAt — so the
+// order is not load-bearing today and no test can pin it. It is still the right
+// order, because either half could change: a finalize that inserted "running"
+// first, or a MarkInterrupted that stopped filtering on bootedAt, would close the
+// row the finalize had just written and report a restore that worked as
+// interrupted. Keep them adjacent and in this order so that change stays safe.
 func RegisterBackupBoot(app core.App) {
 	bootedAt := time.Now()
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
@@ -306,6 +319,7 @@ func readUploadedArchive(re *core.RequestEvent, req *backup.RestoreRequest) erro
 		return re.BadRequestError("invalid multipart body", err)
 	}
 	var passphrase string
+	seenPassphrase := false
 	for {
 		part, err := mr.NextPart()
 		if err != nil {
@@ -313,11 +327,17 @@ func readUploadedArchive(re *core.RequestEvent, req *backup.RestoreRequest) erro
 		}
 		switch part.FormName() {
 		case "passphrase":
-			raw, err := io.ReadAll(io.LimitReader(part, maxPassphraseField))
+			// One byte over the cap is read so a too-long value is REFUSED rather
+			// than silently truncated to a different passphrase, which would fail
+			// to decrypt with a message about the archive instead of the field.
+			raw, err := io.ReadAll(io.LimitReader(part, maxPassphraseField+1))
 			if err != nil {
 				return re.BadRequestError("could not read the passphrase", err)
 			}
-			passphrase = string(raw)
+			if len(raw) > maxPassphraseField {
+				return re.BadRequestError("The passphrase is too long.", nil)
+			}
+			passphrase, seenPassphrase = string(raw), true
 			continue
 		case "force":
 			// The VALUE decides, not the field's presence. Force skips the
@@ -330,6 +350,14 @@ func readUploadedArchive(re *core.RequestEvent, req *backup.RestoreRequest) erro
 			req.Force = isTruthyFormValue(string(raw))
 			continue
 		case "archive":
+			// "No passphrase yet" and "too short" are different mistakes: the
+			// first means the parts arrived in the wrong order (the archive must
+			// come last so it can be streamed), the second is a bad value. One
+			// message for both sends a client hunting the wrong problem.
+			if !seenPassphrase {
+				return re.BadRequestError(
+					"The passphrase field must come before the archive part.", nil)
+			}
 			if len(passphrase) < minPassphrase {
 				return re.BadRequestError(passphraseTooShort, nil)
 			}
@@ -395,8 +423,15 @@ func handleRestoreSwap(re *core.RequestEvent) error {
 	if !strings.HasPrefix(body.Source, "https://") && !strings.HasPrefix(body.Source, "http://") {
 		return re.BadRequestError("The source must be an http(s) URL.", nil)
 	}
-	if err := backup.SwapSource(re.Request.PathValue("id"), body.Source); err != nil {
+	err := backup.SwapSource(re.Request.PathValue("id"), body.Source)
+	switch {
+	case err == nil:
+		return re.NoContent(http.StatusNoContent)
+	case errors.Is(err, backup.ErrNotWaiting):
 		return re.NotFoundError("No restore is waiting for a source.", nil)
+	default:
+		// Anything else is this deployment's fault, not the caller's; a 404 here
+		// would send an operator looking for a job that does exist.
+		return re.InternalServerError("could not hand the restore a new source", err)
 	}
-	return re.NoContent(http.StatusNoContent)
 }

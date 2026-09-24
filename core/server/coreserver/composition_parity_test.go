@@ -6,6 +6,7 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 
+	"tinycld.org/core/backup"
 	"tinycld.org/core/quota"
 	"tinycld.org/core/rlstest"
 )
@@ -86,6 +87,10 @@ func TestRegisterBindsTheRecordedHandlerCounts(t *testing.T) {
 	// Register falls back to quota.RegisteredSources() (a process global other
 	// tests may have populated) when Options.QuotaSources is empty.
 	quota.ResetSourcesForTesting()
+	// Register installs the REAL restart function, which ends the process. Left
+	// in place it would kill the test binary the next time any test in this
+	// package reached a restore's phase 6.
+	t.Cleanup(backup.ResetForTesting)
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
 	Register(app, Options{

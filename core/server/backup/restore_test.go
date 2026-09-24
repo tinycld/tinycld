@@ -22,6 +22,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/installjob"
 )
 
 // archiveFor builds a real archive from a source test app so the restore tests
@@ -96,6 +97,82 @@ func readArmed(path string, out *armed) error {
 	return json.Unmarshal(raw, out)
 }
 
+// The restore hands its interlock claim to the rebuilder instead of releasing it
+// and letting the rebuilder take a fresh one. That window was real: by phase 6 a
+// restore has already spent a pre-restore backup and staged the entire archive,
+// so an install claiming the interlock in between made the rebuilder fail with
+// ErrBusy and threw all of that away.
+//
+// Two things are asserted, and both matter. The job the rebuilder receives is the
+// one the restore claimed (same pointer, and it is the CURRENT holder while the
+// rebuilder runs), so nothing could have claimed the interlock in between. And it
+// is released exactly once afterwards.
+func TestRestoreHandsItsClaimToTheRebuilder(t *testing.T) {
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+
+	var gotJob *installjob.Job
+	var heldDuringRebuild *installjob.Job
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		gotJob = job
+		heldDuringRebuild = installjob.Current()
+		installjob.Release(job)
+		return nil
+	})
+
+	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotJob == nil {
+		t.Fatal("the rebuilder was never called")
+	}
+	if heldDuringRebuild != gotJob {
+		t.Fatalf("the interlock holder during the rebuild was %v, want the job the "+
+			"rebuilder was handed — a release/re-claim window would let an install "+
+			"in and cost a staged archive", heldDuringRebuild)
+	}
+	// The claim is keyed to the restore's own ledger row, so a busy response
+	// elsewhere names the restore rather than an anonymous job.
+	if gotJob.ID != jobID {
+		t.Fatalf("the rebuilder's job id is %q, want the restore's row id %q", gotJob.ID, jobID)
+	}
+	if gotJob.Action != "restore" {
+		t.Fatalf("the rebuilder's job action is %q, want restore", gotJob.Action)
+	}
+	// Released exactly once: the rebuilder released it, and runRestore's own
+	// unwind must not have taken it back or released a second time.
+	if installjob.Running() {
+		t.Fatal("the interlock is still held after the rebuilder released it")
+	}
+}
+
+// The interlock is process-wide, so a rebuilder that fails WITHOUT releasing
+// would wedge the whole deployment: no backup, restore or package job could ever
+// claim it again. The handover contract says the rebuilder releases, but the cost
+// of one implementer forgetting is total, so runRestore releases on the error
+// return too. Release compares identity, so the belt and braces cannot evict a
+// later holder.
+func TestRestoreReleasesTheClaimWhenTheRebuilderFailsWithoutIt(t *testing.T) {
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+
+	boom := errors.New("rebuild exploded")
+	RegisterRebuilder(func(_ context.Context, _ *installjob.Job, _ format.Lockfile) error {
+		return boom // deliberately does NOT release
+	})
+
+	if _, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id}); !errors.Is(err, boom) {
+		t.Fatalf("Restore err = %v, want the rebuilder's error", err)
+	}
+	if installjob.Running() {
+		t.Fatal("the interlock is still held after a rebuilder failed without " +
+			"releasing it — nothing could ever claim it again")
+	}
+}
+
 func TestRestoreStagesAndCallsRebuilder(t *testing.T) {
 	data, id := archiveFor(t)
 	app := newTestApp(t)
@@ -103,7 +180,11 @@ func TestRestoreStagesAndCallsRebuilder(t *testing.T) {
 	resetRestoreState(t)
 
 	var gotLock format.Lockfile
-	RegisterRebuilder(func(_ context.Context, lf format.Lockfile) error { gotLock = lf; return nil })
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, lf format.Lockfile) error {
+		gotLock = lf
+		installjob.Release(job)
+		return nil
+	})
 
 	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id, Initiator: owner.Id})
 	if err != nil {
@@ -295,7 +376,8 @@ func TestRestoreTamperedArchiveNeverReachesTheRebuilder(t *testing.T) {
 	data[len(data)-10] ^= 0xff
 	app := newTestApp(t)
 	resetRestoreState(t)
-	RegisterRebuilder(func(context.Context, format.Lockfile) error {
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		defer installjob.Release(job)
 		t.Error("rebuilder must not run for a tampered archive")
 		return nil
 	})
@@ -357,7 +439,10 @@ func TestRestoreWaitsForSourceAndSwaps(t *testing.T) {
 	data, id := archiveFor(t)
 	app := newTestApp(t)
 	resetRestoreState(t)
-	RegisterRebuilder(func(context.Context, format.Lockfile) error { return nil })
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		installjob.Release(job)
+		return nil
+	})
 
 	// The first server delivers half the archive then dies, and rejects every
 	// retry as expired, so the restore has to block for a fresh URL.
@@ -543,7 +628,8 @@ func TestRestoreForceSkipsTheRebuilder(t *testing.T) {
 	data, id := archiveFor(t)
 	app := newTestApp(t)
 	resetRestoreState(t)
-	RegisterRebuilder(func(context.Context, format.Lockfile) error {
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		defer installjob.Release(job)
 		t.Error("Force must not call the rebuilder")
 		return nil
 	})

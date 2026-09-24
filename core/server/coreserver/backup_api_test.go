@@ -23,6 +23,7 @@ import (
 
 	"tinycld.org/core/backup"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/installjob"
 )
 
 const testPassphrase = "correct horse battery"
@@ -38,6 +39,24 @@ const testPassphrase = "correct horse battery"
 // feature package, in its tests no less than its code.
 func setupBackupCollections(t *testing.T) *tests.TestApp {
 	t.Helper()
+
+	// LedgerPath(app) is filepath.Dir(app.DataDir()), and the backup engine keeps
+	// its scratch directory there — which RegisterBackupBoot clears at boot. So
+	// the app's data dir MUST have a parent this test owns.
+	//
+	// Passing DataDir is not enough: NewTestAppWithConfig CLONES it with
+	// TempDirClone, which is os.MkdirTemp("", "pb_test_*") — the system temp root.
+	// LedgerPath would then be $TMPDIR itself, shared by every test process on the
+	// machine, and this package's boot hook would delete $TMPDIR/backup-tmp out
+	// from under a backup running in a parallel `go test` process. That really
+	// happened: a concurrent run failed with
+	// "open .../T/backup-tmp/<id>.db: no such file or directory".
+	//
+	// MkdirTemp honours TMPDIR, so pointing TMPDIR at this test's own directory
+	// puts the clone — and therefore LedgerPath — inside it.
+	sharedTemp := os.TempDir() // read BEFORE the override, or it reports the override
+	t.Setenv("TMPDIR", t.TempDir())
+
 	dir := filepath.Join(t.TempDir(), "pb_data")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -47,6 +66,15 @@ func setupBackupCollections(t *testing.T) *tests.TestApp {
 		t.Fatal(err)
 	}
 	t.Cleanup(app.Cleanup)
+
+	// The guard for the above: if a future change makes the data dir land in a
+	// shared root again, this fails here rather than by corrupting another
+	// process's backup.
+	if parent := filepath.Clean(filepath.Dir(app.DataDir())); parent == filepath.Clean(sharedTemp) {
+		t.Fatalf("the test app's data dir is directly in the shared temp root (%s), so "+
+			"LedgerPath is shared by every test process and the boot hook would wipe "+
+			"another run's backup-tmp", parent)
+	}
 
 	users, err := app.FindCollectionByNameOrId("users")
 	if err != nil {
@@ -122,6 +150,23 @@ func setupBackupCollections(t *testing.T) *tests.TestApp {
 	)
 	mustCreate(audit)
 
+	// The install log the restore rebuild writes its row into. Only the subset
+	// createInstallLog touches; pkg_slug is REQUIRED, which is the point.
+	installLog := core.NewBaseCollection("pkg_install_log")
+	installLog.Fields.Add(
+		&core.SelectField{Name: "action", Required: true, MaxSelect: 1,
+			Values: []string{"install", "uninstall", "enable", "disable"}},
+		&core.TextField{Name: "pkg_slug", Required: true},
+		&core.TextField{Name: "npm_package"},
+		&core.SelectField{Name: "status", Required: true, MaxSelect: 1,
+			Values: []string{"pending", "running", "success", "failed", "rolled_back"}},
+		&core.TextField{Name: "error", Max: 5000},
+		&core.TextField{Name: "job_id"},
+		&core.DateField{Name: "started_at"},
+		&core.DateField{Name: "completed_at"},
+	)
+	mustCreate(installLog)
+
 	// A file in local storage so the backup walk has something to copy.
 	storageDir := filepath.Join(app.DataDir(), "storage", "col1", "rec1")
 	if err := os.MkdirAll(storageDir, 0o755); err != nil {
@@ -146,12 +191,23 @@ func backupTestApp(t *testing.T) *tests.TestApp {
 
 // restoreSeams stubs the two process-ending seams a restore reaches at phase 6.
 // A real rebuilder would try to build a binary and a real restart would kill the
-// test process, so every restore test replaces both and puts them back after.
+// test process, so every restore test replaces both.
+//
+// The no-op rebuilder releases the job it is handed: the restore hands its claim
+// over rather than releasing it, so a rebuilder that dropped it would leave the
+// interlock held and every later test would see ErrBusy.
+//
+// Cleanup goes through backup.ResetForTesting rather than unsetting one seam,
+// because the package holds more process-wide state than the rebuilder — a left
+// restoring flag would put every later request behind the maintenance 503.
 func restoreSeams(t *testing.T) {
 	t.Helper()
-	backup.RegisterRebuilder(func(context.Context, format.Lockfile) error { return nil })
+	backup.RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		installjob.Release(job)
+		return nil
+	})
 	backup.SetRestart(func() {})
-	t.Cleanup(func() { backup.RegisterRebuilder(nil) })
+	t.Cleanup(backup.ResetForTesting)
 }
 
 func makeBackupUser(t *testing.T, app core.App, email, role string) *core.Record {
@@ -548,6 +604,72 @@ func TestRestoreForceFalseIsNotForce(t *testing.T) {
 	}).Test(t)
 }
 
+// The archive must be the LAST part so it can be streamed into the restore
+// instead of buffered. A client that sends it first gets told exactly that,
+// rather than the "too short" message the passphrase check would otherwise
+// produce for an empty passphrase it never saw.
+func TestRestoreRejectsAnArchiveBeforeItsPassphrase(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "owner@example.com", "owner")
+
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	part, err := w.CreateFormFile("archive", "backup.age")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("archive bytes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteField("passphrase", testPassphrase); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	(&tests.ApiScenario{
+		Name:   "the archive part before the passphrase field is refused by order",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups/restore",
+		Body:   bytes.NewReader(body.Bytes()),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  w.FormDataContentType(),
+		},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{"must come before the archive"},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
+// A passphrase longer than the field cap is refused, not truncated. Truncating
+// would silently change the passphrase and then fail to decrypt, reporting a
+// problem with the archive instead of with the field.
+func TestRestoreRejectsAnOverlongPassphrase(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "owner@example.com", "owner")
+
+	body, contentType := multipartArchive(t, []byte("archive bytes"), map[string]string{
+		"passphrase": strings.Repeat("x", maxPassphraseField+1),
+	})
+	(&tests.ApiScenario{
+		Name:   "a passphrase over the field cap is refused",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups/restore",
+		Body:   bytes.NewReader(body),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  contentType,
+		},
+		ExpectedStatus:        http.StatusBadRequest,
+		ExpectedContent:       []string{"too long"},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+}
+
 func TestRestoreSwapSourceRequiresAWaitingRestore(t *testing.T) {
 	app := backupTestApp(t)
 	token := authFor(t, app, "owner@example.com", "owner")
@@ -582,25 +704,32 @@ func TestVerifyEndpoint(t *testing.T) {
 	}).Test(t)
 }
 
-// The obligation Tasks 8 and 9 carry into the boot hook: FinalizeRestore
-// inserts the successful restore's row, and MarkInterrupted closes rows a dead
-// process left running. Run in the wrong order, MarkInterrupted would close the
-// row FinalizeRestore just inserted and an operator would be told the restore
-// that just worked was interrupted.
+// Both post-bootstrap steps run, on the layout a boot after a staged restore
+// really finds: an armed marker plus a fully staged pending directory. The
+// hook's own ApplyPendingRestore swaps that in and writes the swapped marker,
+// then FinalizeRestore records it and MarkInterrupted closes what a dead process
+// left behind.
 //
-// The layout is the one a boot after a staged restore really finds: an armed
-// marker plus a fully staged pending directory. The hook's own
-// ApplyPendingRestore swaps that in and writes the swapped marker, and
-// FinalizeRestore then acts on it — the same single boot, in the same order
-// production runs them.
-func TestBootHookFinalizesBeforeMarkingInterrupted(t *testing.T) {
+// This does NOT prove the ordering. Tasks 8 and 9 require FinalizeRestore to run
+// before MarkInterrupted, and the code does that, but the two implementations
+// cannot currently collide: FinalizeRestore inserts its row already set to
+// "succeeded" and with started = now, while MarkInterrupted only rewrites rows
+// that are "running" AND started before bootedAt. Reversing the two calls keeps
+// this test green — verified by doing it.
+//
+// The order is therefore DEFENSIVE, and the reason it is worth keeping is that
+// either half could change: a finalize that inserted "running" first, or a
+// MarkInterrupted that stopped filtering on bootedAt, would immediately close
+// the row the finalize had just written and report a restore that worked as
+// interrupted. What this test pins is that both steps ran and neither undid the
+// other — not the sequence.
+func TestBootHookFinalizesAndMarksInterrupted(t *testing.T) {
 	app := setupBackupCollections(t)
 	restoreSeams(t)
 	makeBackupUser(t, app, "owner@example.com", "owner")
 
-	// A row left running by the process that armed the restore. It is the row
-	// MarkInterrupted exists for, and it must not be confused with the one the
-	// finalize inserts.
+	// A row left running by the process that armed the restore, started before
+	// this boot. It is the row MarkInterrupted exists for.
 	col, err := app.FindCollectionByNameOrId("backups")
 	if err != nil {
 		t.Fatal(err)
@@ -620,8 +749,8 @@ func TestBootHookFinalizesBeforeMarkingInterrupted(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The staged database is a copy of the live one, so the app can still read
-	// it after the swap renames pb_data. What is under test is the ORDER of the
-	// two post-bootstrap steps, not what the archive contained.
+	// it after the swap renames pb_data. What is under test is the two
+	// post-bootstrap steps, not what the archive contained.
 	live, err := os.ReadFile(filepath.Join(dataDir, "data.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -660,6 +789,8 @@ func TestBootHookFinalizesBeforeMarkingInterrupted(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// FinalizeRestore ran: the restore is on record as succeeded, with the
+	// manifest Verify compares against.
 	rows, err := app.FindRecordsByFilter("backups", "kind = 'restore'", "", 0, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -668,11 +799,19 @@ func TestBootHookFinalizesBeforeMarkingInterrupted(t *testing.T) {
 		t.Fatalf("restore rows = %d, want the one the finalize inserted", len(rows))
 	}
 	if got := rows[0].GetString("status"); got != "succeeded" {
-		t.Fatalf("the finalized restore row is %q; FinalizeRestore must run BEFORE "+
-			"MarkInterrupted, or the row it just inserted is closed as interrupted", got)
+		t.Fatalf("the finalized restore row is %q, want succeeded", got)
 	}
-	// The same hook still closes the row the dead process left behind, so the
-	// ordering fix cannot have been made by simply dropping MarkInterrupted.
+	var manifest format.Manifest
+	if err := rows[0].UnmarshalJSONField("manifest", &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Core != "1.2.3" {
+		t.Fatalf("the finalized row's manifest is %+v; Verify has nothing to "+
+			"compare without it", manifest)
+	}
+
+	// MarkInterrupted ran: the dead process's row is closed, and the finalize did
+	// not leave it running.
 	reread, err := app.FindRecordById("backups", abandoned.Id)
 	if err != nil {
 		t.Fatal(err)
@@ -750,5 +889,38 @@ func TestMaintenanceMiddlewareBindsBeforeAuthLoading(t *testing.T) {
 		t.Fatalf("the maintenance middleware's priority is %d; it must run before "+
 			"the load-auth-token middleware at %d, or a record write reaches a "+
 			"pb_data the next process replaces", maintenance.Priority, loadAuth.Priority)
+	}
+}
+
+// A restore's job carries no slug and no npm spec, and pkg_install_log.pkg_slug
+// is required — so createInstallLog's save failed on every restore rebuild and
+// the operator's install history had no trace of the rebuild that replaced their
+// whole deployment. The row must persist, and it must name something.
+func TestRestoreRebuildWritesAnInstallLogRow(t *testing.T) {
+	app := setupBackupCollections(t)
+
+	// The job exactly as beginRestore builds it: action only.
+	job := installjob.New("restore", "", "")
+	job.ID = "restore-job-1"
+	nameRestoreJob(job)
+
+	row := createInstallLog(app, job, "install")
+	if row == nil {
+		t.Fatal("createInstallLog returned nil — the row did not save, so a restore " +
+			"rebuild leaves no trace in the install history")
+	}
+	if got := row.GetString("pkg_slug"); got != baseRegistrySlug {
+		t.Fatalf("pkg_slug = %q, want %q — a restore rebuild replaces the whole "+
+			"package set, not one member", got, baseRegistrySlug)
+	}
+	if got := row.GetString("job_id"); got != job.ID {
+		t.Fatalf("job_id = %q, want the restore's job id %q", got, job.ID)
+	}
+	rows, err := app.FindRecordsByFilter("pkg_install_log", "job_id = 'restore-job-1'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("persisted install-log rows = %d, want 1", len(rows))
 	}
 }
