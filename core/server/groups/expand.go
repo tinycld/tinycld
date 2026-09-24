@@ -158,7 +158,15 @@ func removeDerivedForMember(app core.App, groupID, userID string) error {
 // RemoveUserMemberships deletes every group_members row of a user. Each delete
 // runs the membership hooks, so derived rows go with it. Called when a user
 // becomes a guest and when a user is offboarded.
+//
+// Tolerates a missing group_members collection: offboard runs against any
+// core-backed app, including narrow test fixtures that never applied the
+// groups migration, and a boot-order composition where offboard runs before
+// groups has registered its collections.
 func RemoveUserMemberships(app core.App, userID string) error {
+	if _, err := app.FindCollectionByNameOrId("group_members"); err != nil {
+		return nil
+	}
 	rows, err := app.FindRecordsByFilter("group_members", "user = {:u}", "", 0, 0, map[string]any{"u": userID})
 	if err != nil {
 		return fmt.Errorf("groups: list memberships of %s: %w", userID, err)
