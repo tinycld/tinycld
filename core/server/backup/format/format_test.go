@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -109,8 +110,8 @@ func TestReadManifestStopsEarly(t *testing.T) {
 	if _, err := r.ReadManifest(); err != nil {
 		t.Fatal(err)
 	}
-	if counting.n >= len(data) {
-		t.Fatalf("read whole stream (%d of %d) just for the manifest", counting.n, len(data))
+	if n := counting.count(); n >= len(data) {
+		t.Fatalf("read whole stream (%d of %d) just for the manifest", n, len(data))
 	}
 }
 
@@ -255,13 +256,26 @@ func TestInspect(t *testing.T) {
 	}
 }
 
+// countingReader tracks bytes read. zstd's decoder prefetches from the
+// underlying reader on a background goroutine while the caller consumes
+// already-decoded output on its own goroutine, so n needs synchronization
+// even though nothing in this test looks concurrent.
 type countingReader struct {
-	r io.Reader
-	n int
+	mu sync.Mutex
+	r  io.Reader
+	n  int
 }
 
 func (c *countingReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
+	c.mu.Lock()
 	c.n += n
+	c.mu.Unlock()
 	return n, err
+}
+
+func (c *countingReader) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
 }
