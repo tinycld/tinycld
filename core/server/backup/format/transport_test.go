@@ -176,6 +176,54 @@ func TestPutSinkReportsNon2xx(t *testing.T) {
 	}
 }
 
+// repeatedDropServer serves payload with Range support and drops the
+// connection after chunk bytes on every request until the remaining body
+// fits in one chunk, forcing more than maxRetries reconnects over the whole
+// transfer. The retry budget must therefore reset on progress, not accumulate
+// across the whole transfer.
+func repeatedDropServer(t *testing.T, chunk int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"v1"`)
+		start := 0
+		if rh := r.Header.Get("Range"); rh != "" {
+			start, _ = strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(rh, "bytes="), "-"))
+			w.Header().Set("Content-Range", "bytes "+strconv.Itoa(start)+"-"+strconv.Itoa(len(payload)-1)+"/"+strconv.Itoa(len(payload)))
+			w.WriteHeader(http.StatusPartialContent)
+		}
+		body := payload[start:]
+		if chunk < len(body) {
+			_, _ = w.Write(body[:chunk])
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			if hj, ok := w.(http.Hijacker); ok {
+				conn, _, _ := hj.Hijack()
+				_ = conn.Close()
+			}
+			return
+		}
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestRangeSourceResetsRetryBudgetOnProgress(t *testing.T) {
+	// 64 KiB payload dropped every 6 KiB needs > 8 reconnects (maxRetries),
+	// so this only succeeds if the retry counter resets on progress instead
+	// of being a lifetime budget for the whole transfer.
+	srv := repeatedDropServer(t, 6*1024)
+	src := NewRangeSource(context.Background(), srv.URL)
+	got, err := io.ReadAll(src)
+	if err != nil {
+		t.Fatalf("expected transfer to succeed despite >maxRetries drops, got: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("payload mismatch: %d vs %d bytes", len(got), len(payload))
+	}
+}
+
 func TestRangeSourceBlockedDuringExpiryWait(t *testing.T) {
 	var calls int32
 	good, _ := rangeServer(t, 0, true)

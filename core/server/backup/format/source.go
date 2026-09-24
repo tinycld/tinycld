@@ -85,6 +85,12 @@ func (s *RangeSource) Read(p []byte) (int, error) {
 		s.offset += int64(n)
 		s.mu.Unlock()
 		if err == nil || err == io.EOF {
+			if n > 0 {
+				// Progress made: the retry budget is per outage, not per
+				// transfer, so a long transfer isn't penalized for drops
+				// separated by megabytes of successfully delivered data.
+				s.retries = 0
+			}
 			return n, err
 		}
 		// Connection dropped mid-body: close and let the next loop reopen.
