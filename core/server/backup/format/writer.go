@@ -26,6 +26,7 @@ type Writer struct {
 	order     []string
 	started   bool
 	closed    bool
+	closeErr  error
 }
 
 func NewWriter(w io.Writer, recipient age.Recipient, level zstd.EncoderLevel) (*Writer, error) {
@@ -75,11 +76,20 @@ func (w *Writer) WriteFile(name string, size int64, r io.Reader) error {
 	return nil
 }
 
+// Close writes checksums.txt and closes the tar/zstd/age pipeline. It is
+// idempotent: a second call returns the same error the first call produced
+// (or nil, if the first call succeeded) rather than silently reporting
+// success on a call that never re-runs the writes.
 func (w *Writer) Close() error {
 	if w.closed {
-		return nil
+		return w.closeErr
 	}
 	w.closed = true
+	w.closeErr = w.close()
+	return w.closeErr
+}
+
+func (w *Writer) close() error {
 	var b strings.Builder
 	for _, name := range w.order {
 		fmt.Fprintf(&b, "%s  %s\n", w.sums[name], name)
@@ -106,3 +116,15 @@ func (w *Writer) Sha256() string { return hex.EncodeToString(w.outerHash.Sum(nil
 // tamperChecksum corrupts a recorded hash. Test-only; keeps the tamper test
 // honest without a second code path for writing archives.
 func (w *Writer) tamperChecksum(name string) { w.sums[name] = strings.Repeat("0", 64) }
+
+// dropChecksum removes a member's line from checksums.txt. Test-only; lets
+// a test produce an archive whose checksums.txt is missing a member's
+// entry without a second code path for writing archives.
+func (w *Writer) dropChecksum(name string) {
+	for i, n := range w.order {
+		if n == name {
+			w.order = append(w.order[:i], w.order[i+1:]...)
+			break
+		}
+	}
+}

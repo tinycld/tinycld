@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"strings"
 
 	"filippo.io/age"
 	"github.com/klauspost/compress/zstd"
@@ -106,21 +105,30 @@ func (r *Reader) finishCurrent() {
 	r.current = nil
 }
 
+// sha256HexLen is the fixed width of a hex-encoded sha256 digest. Parsing
+// checksums.txt by this fixed prefix (rather than cutting on the first
+// "  ") keeps a storage/ key containing two consecutive spaces from being
+// misparsed into the hash.
+const sha256HexLen = 64
+
 func (r *Reader) parseChecksums() error {
 	r.recorded = map[string]string{}
 	sc := bufio.NewScanner(r.tarR)
 	for sc.Scan() {
-		sum, name, ok := strings.Cut(sc.Text(), "  ")
-		if !ok {
+		line := sc.Text()
+		if len(line) < sha256HexLen+2 || line[sha256HexLen:sha256HexLen+2] != "  " {
 			return fmt.Errorf("%w: bad checksum line", ErrFormat)
 		}
-		r.recorded[name] = sum
+		r.recorded[line[sha256HexLen+2:]] = line[:sha256HexLen]
 	}
 	return sc.Err()
 }
 
-// Verify compares every member read against checksums.txt. Valid only after
-// Next returned io.EOF.
+// Verify compares every member read against checksums.txt in both
+// directions: every recorded hash must match what was actually read, and
+// every member actually read must have a recorded line — a checksums.txt
+// silently missing a member's entry is a failure, not a pass. Valid only
+// after Next returned io.EOF.
 func (r *Reader) Verify() error {
 	if !r.done {
 		return fmt.Errorf("backup: verify called before end of stream")
@@ -132,6 +140,11 @@ func (r *Reader) Verify() error {
 		}
 		if got != want {
 			return fmt.Errorf("%w: %s", ErrChecksum, name)
+		}
+	}
+	for name := range r.sums {
+		if _, ok := r.recorded[name]; !ok {
+			return fmt.Errorf("%w: %s not in checksums", ErrChecksum, name)
 		}
 	}
 	return nil
