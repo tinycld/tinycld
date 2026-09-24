@@ -14,7 +14,7 @@ func Reconcile(app core.App) error {
 	var firstErr error
 	for _, t := range RegisteredGrantTables() {
 		if err := reconcileTable(app, t); err != nil {
-			log.Warn("reconcile: table skipped", "collection", t.Collection, "err", err)
+			log.Warn("reconcile: table finished with errors", "collection", t.Collection, "err", err)
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -23,6 +23,12 @@ func Reconcile(app core.App) error {
 	return firstErr
 }
 
+// reconcileTable repairs one table's derived rows in two phases (insert
+// missing, then delete stale). A single bad grant or row must not stop the
+// rest of the phase from being repaired, but the function must still report
+// that something failed — so each phase remembers its first error and keeps
+// going, and the remembered errors (if any) are returned once both phases
+// have run to completion.
 func reconcileTable(app core.App, t GrantTable) error {
 	grants, err := app.FindRecordsByFilter(t.Collection, `user = "" && group != ""`, "", 0, 0, nil)
 	if err != nil {
@@ -30,11 +36,15 @@ func reconcileTable(app core.App, t GrantTable) error {
 	}
 	// expected[group][resource][user] = true
 	expected := map[string]map[string]map[string]bool{}
+	var firstErr error
 	for _, grant := range grants {
 		groupID, resource := grant.GetString("group"), grant.GetString(t.ResourceField)
 		members, err := memberUserIDs(app, groupID)
 		if err != nil {
-			return err
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
 		}
 		if expected[groupID] == nil {
 			expected[groupID] = map[string]map[string]bool{}
@@ -48,12 +58,18 @@ func reconcileTable(app core.App, t GrantTable) error {
 		// upsertDerived also repairs field drift on rows that exist.
 		if err := expandGrant(app, t, grant); err != nil {
 			log.Warn("reconcile: repaired grant expansion failed", "collection", t.Collection, "grant", grant.Id, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 
 	derived, err := app.FindRecordsByFilter(t.Collection, `user != "" && group != ""`, "", 0, 0, nil)
 	if err != nil {
-		return fmt.Errorf("list derived rows: %w", err)
+		if firstErr == nil {
+			firstErr = fmt.Errorf("list derived rows: %w", err)
+		}
+		return firstErr
 	}
 	for _, row := range derived {
 		groupID, resource, userID := row.GetString("group"), row.GetString(t.ResourceField), row.GetString("user")
@@ -62,8 +78,12 @@ func reconcileTable(app core.App, t GrantTable) error {
 		}
 		log.Warn("reconcile: removing stale derived row", "collection", t.Collection, "row", row.Id)
 		if err := app.Delete(row); err != nil {
-			return fmt.Errorf("delete stale row %s: %w", row.Id, err)
+			log.Warn("reconcile: failed to delete stale row", "collection", t.Collection, "row", row.Id, "err", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("delete stale row %s: %w", row.Id, err)
+			}
+			continue
 		}
 	}
-	return nil
+	return firstErr
 }
