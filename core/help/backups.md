@@ -34,9 +34,32 @@ aws s3 presign --expires-in 3600 s3://my-bucket/tinycld/backup.age --method PUT
 
 ## With the command line
 
-`tinycld backup create --out ./backup.age` streams the backup to a file on
-your computer. See [Command line](help://core:command-line) to install and
-sign in. The CLI prompts for the passphrase.
+See [Command line](help://core:command-line) to install the CLI and sign in.
+
+- `tinycld backup create --out ./backup.age` streams the backup to a file on
+  your computer. `--out -` writes to standard output, for piping to another
+  tool:
+
+  ```
+  tinycld backup create --out - | aws s3 cp - s3://my-bucket/backup.age
+  ```
+
+- `tinycld backup create --to '<presigned PUT URL>'` has the server upload the
+  backup directly, the same as Settings → Backups.
+- `tinycld backup inspect <file or URL>` reads an archive and checks every
+  file inside it, without restoring anything. Use it to confirm a backup is
+  good before you rely on it.
+- `tinycld backup list` shows the ledger: every backup and restore this
+  server has run, newest first.
+
+The passphrase is never a flag — a flag would show up in `ps` output and
+shell history. Give it one of these ways:
+
+- Type it when the command asks (the default).
+- `--passphrase-file <path>` reads it from a file.
+- The `TINYCLD_BACKUP_PASSPHRASE` environment variable.
+
+Without the passphrase, nobody can read the backup — not even us.
 
 ## Restore
 
@@ -60,7 +83,10 @@ supervisor to start it again, restart it yourself — the History row then says
 If the download URL expires during a long restore, the History row asks for a
 fresh URL and continues where it stopped.
 
-With the command line: `tinycld backup restore --from ./backup.age`.
+With the command line: `tinycld backup restore --from ./backup.age`, or
+`--from '<presigned GET URL>'` to have the server fetch it. The command asks
+for the passphrase, then confirms before it replaces any data — skip the
+confirmation with `--yes` for scripts.
 
 ## Self-hosted servers
 
