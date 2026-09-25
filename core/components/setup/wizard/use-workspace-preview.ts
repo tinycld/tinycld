@@ -11,10 +11,13 @@ export interface PreviewModel {
     name: string
     initial: string
     logoUrl: string
+    logoCrop: string
     apps: { slug: string; icon: string }[]
     memberInitials: string[]
     isMailOn: boolean
     isEmpty: boolean
+    /** Before the server is claimed: nothing about the org is shown yet. */
+    isGhost: boolean
 }
 
 function initialsOf(name: string): string {
@@ -30,6 +33,7 @@ export function buildPreviewModel(input: {
     orgName: string
     draftName: string | null
     logoUrl: string
+    logoCrop: string
     apps: { slug: string; icon: string }[]
     memberInitials: string[]
     isMailOn: boolean
@@ -39,10 +43,31 @@ export function buildPreviewModel(input: {
         name,
         initial: name.charAt(0).toUpperCase(),
         logoUrl: input.logoUrl,
+        logoCrop: input.logoCrop,
         apps: input.apps,
         memberInitials: input.memberInitials,
         isMailOn: input.isMailOn,
         isEmpty: !name && input.apps.length === 0 && input.memberInitials.length === 0,
+        isGhost: false,
+    }
+}
+
+/**
+ * The preview on pre-auth screens. It must not read live org data: before the
+ * server is claimed the name is PocketBase's default, not the person's.
+ */
+export function ghostPreviewModel(initials: string | undefined): PreviewModel {
+    const memberInitials = initials ? [initials] : []
+    return {
+        name: '',
+        initial: '',
+        logoUrl: '',
+        logoCrop: '',
+        apps: [],
+        memberInitials,
+        isMailOn: false,
+        isEmpty: memberInitials.length === 0,
+        isGhost: true,
     }
 }
 
@@ -74,6 +99,7 @@ export function useWorkspacePreview(): PreviewModel {
         orgName: org?.name ?? '',
         draftName,
         logoUrl: org?.logoUrl ?? '',
+        logoCrop: org?.logoCrop ?? '',
         apps,
         memberInitials: people.slice(0, MAX_AVATARS).map(p => initialsOf(p.name)),
         isMailOn: isDeliveryEnabled(byKey.get('mail.delivery_enabled')?.value),

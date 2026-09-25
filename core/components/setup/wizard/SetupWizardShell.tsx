@@ -4,13 +4,18 @@ import type { ReactNode } from 'react'
 import { ScrollView, Text, useWindowDimensions, View } from 'react-native'
 import { ProgressSegments } from './ProgressSegments'
 import { ServerLogPreview } from './ServerLogPreview'
-import { type PreviewModel, useWorkspacePreview } from './use-workspace-preview'
+import { ghostPreviewModel, useWorkspacePreview } from './use-workspace-preview'
 import { WorkspacePreview } from './WorkspacePreview'
 import { WorkspacePreviewStrip } from './WorkspacePreviewStrip'
 
 type PreviewKind = 'workspace' | 'server-log' | 'ghost'
 
 export interface SetupWizardShellProps {
+    /**
+     * 'claim' is the pre-auth code + owner-account pair; its progress comes
+     * from a synthetic summary and its label is always "Claim this server".
+     */
+    phase: 'claim' | 'setup'
     summary: WizardSummary | null
     currentStepId: string | null
     onFinishLater: (() => void) | null
@@ -34,30 +39,30 @@ const EMPTY_SUMMARY: WizardSummary = {
     isSettled: true,
 }
 
-function stepLabelOf(summary: WizardSummary | null, currentStepId: string | null): string {
-    if (!summary) return 'Claim this server'
+// Apps chosen on this step are shown as "new" so each toggle is visible on the
+// rail; on every other step they are part of the settled workspace.
+const APPS_STEP_ID = 'core:apps'
+
+function stepLabelOf(props: SetupWizardShellProps): string {
+    const { phase, summary, currentStepId } = props
+    if (phase === 'claim' || !summary) return 'Claim this server'
     const index = summary.steps.findIndex(s => s.id === currentStepId)
     if (index === -1) return `${Math.min(summary.doneCount + 1, summary.total)} of ${summary.total}`
     return `${summary.steps[index].label} · ${index + 1} of ${summary.total}`
-}
-
-function previewModelFor(
-    model: PreviewModel,
-    preview: PreviewKind,
-    ghostInitials: string | undefined
-): PreviewModel {
-    if (preview !== 'ghost') return model
-    return { ...model, memberInitials: ghostInitials ? [ghostInitials] : [] }
 }
 
 function useSetupWizardLayout(props: SetupWizardShellProps) {
     const live = useWorkspacePreview()
     const { width } = useWindowDimensions()
     const isPhone = width < PHONE_MAX_WIDTH
+    // Pre-auth screens never show live org data (the name there is the server
+    // default), on the pane and on the phone strip alike.
+    const isPreAuth = props.preview !== 'workspace'
     return {
-        model: previewModelFor(live, props.preview, props.ghostInitials),
+        model: isPreAuth ? ghostPreviewModel(props.ghostInitials) : live,
+        isNewApps: props.currentStepId === APPS_STEP_ID,
         summary: props.summary ?? EMPTY_SUMMARY,
-        stepLabel: stepLabelOf(props.summary, props.currentStepId),
+        stepLabel: stepLabelOf(props),
         showStrip: isPhone,
         formClassName: isPhone ? 'w-full' : 'w-[52%]',
         preview: props.preview,
@@ -91,7 +96,7 @@ function SkipButton({ onPress }: { onPress: (() => void) | null }) {
 
 function PreviewBody({ layout, code }: { layout: SetupWizardLayout; code: string }) {
     if (layout.preview === 'server-log') return <ServerLogPreview code={code} />
-    return <WorkspacePreview model={layout.model} isGhost={layout.preview === 'ghost'} />
+    return <WorkspacePreview model={layout.model} isNewApps={layout.isNewApps} />
 }
 
 function PreviewPane({ layout, code }: { layout: SetupWizardLayout; code: string }) {
@@ -111,7 +116,11 @@ export function SetupWizardShell(props: SetupWizardShellProps) {
     const layout = useSetupWizardLayout(props)
     return (
         <View className="flex-1 bg-background">
-            <WorkspacePreviewStrip model={layout.model} isVisible={layout.showStrip} />
+            <WorkspacePreviewStrip
+                model={layout.model}
+                isNewApps={layout.isNewApps}
+                isVisible={layout.showStrip}
+            />
             <View className="flex-row items-center gap-3 border-b border-border px-4 py-2.5">
                 <ProgressSegments summary={layout.summary} currentStepId={props.currentStepId} />
                 <Text className="text-[11px] text-muted-foreground">{layout.stepLabel}</Text>

@@ -1,17 +1,19 @@
 import { Text, View } from 'react-native'
 import type { PreviewModel } from './use-workspace-preview'
-import { OrgMark, RailApp } from './WorkspacePreview'
+import { OrgMark, railAppsOf } from './WorkspacePreview'
 
 /** The phone form of the workspace preview: the rail laid out as one dark row. */
 export function WorkspacePreviewStrip({
     model,
+    isNewApps,
     isVisible,
 }: {
     model: PreviewModel
+    isNewApps: boolean
     isVisible: boolean
 }) {
+    const rail = railAppsOf(model, isNewApps)
     if (!isVisible) return null
-    const rail = model.apps.map(a => <RailApp key={a.slug} icon={a.icon} />)
     return (
         <View
             className="flex-row items-center gap-2 bg-rail-background px-3 py-2.5"
