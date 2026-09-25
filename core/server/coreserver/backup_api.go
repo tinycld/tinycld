@@ -133,6 +133,14 @@ func RegisterBackupBoot(app core.App) {
 		if err := os.RemoveAll(filepath.Join(backup.LedgerPath(app), "backup-tmp")); err != nil {
 			srvLog.Warn("could not clear the backup scratch directory", "err", err)
 		}
+		// Likewise a spooled upload. runRestore closes its source before phase 6,
+		// which removes the spool — but a process killed between the spool and
+		// that point leaves the whole organization sitting in a file nothing else
+		// will ever read. The restore it belonged to died with the process, so
+		// there is never a spool worth keeping across a boot.
+		if err := os.RemoveAll(uploadSpoolDir(app)); err != nil {
+			srvLog.Warn("could not clear the restore upload spool", "err", err)
+		}
 		if err := backup.FinalizeRestore(app); err != nil {
 			srvLog.Error("could not finalize a restore", "err", err)
 		}
@@ -400,11 +408,18 @@ func (s *spooledSource) Close() error {
 	return err
 }
 
+// uploadSpoolDir is where an uploaded archive waits while its restore reads it.
+// Named once, because two places need it: spoolUpload writes into it and the boot
+// hook clears it.
+func uploadSpoolDir(app core.App) string {
+	return filepath.Join(backup.LedgerPath(app), "restore", "upload")
+}
+
 // spoolUpload streams a multipart archive part to a file beside the rest of the
 // restore's scratch state, so it shares that directory's free-space budget and
 // its cleanup.
 func spoolUpload(app core.App, part io.Reader) (*spooledSource, error) {
-	dir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
+	dir := uploadSpoolDir(app)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}

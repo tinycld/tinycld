@@ -1268,8 +1268,16 @@ func TestUploadedRestoreAnswers202BeforeTheProcessEnds(t *testing.T) {
 
 	restarted := make(chan struct{})
 	var once sync.Once
+	// The spool is checked from INSIDE the restart seam, because that is the last
+	// moment a real process still exists: requestRestart is an os.Exit, so a check
+	// after Restore returned would pass on code that leaks the spool in production
+	// and only cleans it up because this stub returns.
+	uploadDir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
+	var spoolAtRestart int
 	backup.SetRestart(func() bool {
 		once.Do(func() {
+			entries, _ := os.ReadDir(uploadDir)
+			spoolAtRestart = len(entries)
 			api.CloseClientConnections()
 			close(restarted)
 		})
@@ -1318,8 +1326,12 @@ func TestUploadedRestoreAnswers202BeforeTheProcessEnds(t *testing.T) {
 	}
 
 	// The spool file is the whole organization on disk, so it must not outlive
-	// the restore that read it.
-	uploadDir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
+	// the restore that read it — and it has to be gone BEFORE the restart, which
+	// in production never returns.
+	if spoolAtRestart != 0 {
+		t.Fatalf("%d spooled file(s) still present when the process was asked to "+
+			"restart; in production os.Exit follows and they leak forever", spoolAtRestart)
+	}
 	waitFor(t, func() bool {
 		entries, err := os.ReadDir(uploadDir)
 		return err != nil || len(entries) == 0
@@ -1372,5 +1384,77 @@ func TestUploadedMismatchLeavesNoSpoolFile(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("a refusal before the restore started must write no ledger row, got %d", len(rows))
+	}
+}
+
+// The spool file an upload leaves behind is the whole organization on disk, so
+// nothing may outlive the restore that read it. runRestore closes its source
+// before phase 6, which removes it — but a process killed between the spool and
+// that point leaves the file with nothing to clear it, and the restore it
+// belonged to died with the process. The boot clears it, next to the backup
+// scratch directory and for the same reason.
+func TestBootClearsAStrandedUploadSpool(t *testing.T) {
+	app := setupBackupCollections(t)
+	restoreSeams(t)
+
+	spoolDir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
+	if err := os.MkdirAll(spoolDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stranded := filepath.Join(spoolDir, "x.age")
+	if err := os.WriteFile(stranded, []byte("a whole organization"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Alongside it: the scratch directory whose cleanup this one sits next to, so
+	// a change that drops either is caught here.
+	scratch := filepath.Join(backup.LedgerPath(app), "backup-tmp")
+	if err := os.MkdirAll(scratch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	RegisterBackupBoot(app)
+	if err := app.OnBootstrap().Trigger(&core.BootstrapEvent{App: app}, func(*core.BootstrapEvent) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(stranded); !os.IsNotExist(err) {
+		t.Fatalf("the boot must remove a stranded upload spool: %v", err)
+	}
+	if _, err := os.Stat(spoolDir); !os.IsNotExist(err) {
+		t.Fatalf("the spool directory should be gone with its contents: %v", err)
+	}
+	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
+		t.Fatalf("the backup scratch directory must still be cleared too: %v", err)
+	}
+}
+
+// A boot probe runs on the real data directory and is then killed, so it must
+// leave every piece of restore state alone — including a spool file belonging to
+// a restore the REAL boot is about to carry on with.
+func TestBootProbeLeavesAnUploadSpoolAlone(t *testing.T) {
+	t.Setenv("TINYCLD_BOOT_PROBE", "1")
+	app := setupBackupCollections(t)
+	restoreSeams(t)
+
+	spoolDir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
+	if err := os.MkdirAll(spoolDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	spool := filepath.Join(spoolDir, "x.age")
+	if err := os.WriteFile(spool, []byte("a whole organization"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	RegisterBackupBoot(app)
+	if err := app.OnBootstrap().Trigger(&core.BootstrapEvent{App: app}, func(*core.BootstrapEvent) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(spool); err != nil {
+		t.Fatalf("a probe must not touch a spool the real boot will handle: %v", err)
 	}
 }

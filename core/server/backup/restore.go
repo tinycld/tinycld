@@ -213,11 +213,28 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 		}
 	}
 	defer release()
-	defer func() {
+
+	// The source is closed the same guarded way as the interlock, and for a
+	// harder reason: phase 6 ENDS THE PROCESS. A rebuilder that succeeds never
+	// returns, and requestRestart is an os.Exit in every real composition, so a
+	// deferred close alone never runs in production. An uploaded archive's Close
+	// is what removes its spool file, so the spool leaked on every restore that
+	// worked — the whole organization, left in restore/upload, for good.
+	//
+	// Closing early is safe because the archive has already been staged into
+	// pending/ by then. The boot swap reads the staged copy; nothing after
+	// phase 5 reads the source again.
+	sourceClosed := false
+	closeSource := func() {
+		if sourceClosed {
+			return
+		}
+		sourceClosed = true
 		if cerr := req.Source.Close(); cerr != nil {
 			log.Warn("could not close a restore source", "id", id, "err", cerr)
 		}
-	}()
+	}
+	defer closeSource()
 
 	if aerr := audit.Log(app, "restore.started", "backup", id, "restore", req.Request, nil); aerr != nil {
 		log.Warn("could not audit the start of a restore", "id", id, "err", aerr)
@@ -404,6 +421,10 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	// Phase 6: rebuild, or restart onto the package set this binary already has.
 	// Force skips the rebuild too: it is the operator saying "this binary, that
 	// data", and a rebuild would silently overrule them.
+	//
+	// The source goes FIRST, before anything that can end the process. See
+	// closeSource above: the deferred call cannot be relied on past this point.
+	closeSource()
 	rebuilderMu.RLock()
 	fn := rebuilder
 	rebuilderMu.RUnlock()

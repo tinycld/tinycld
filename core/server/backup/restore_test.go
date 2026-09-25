@@ -995,3 +995,113 @@ func TestRestoreRebuilderThatRestartsStaysInMaintenanceMode(t *testing.T) {
 		t.Fatal("a restore handed to a rebuilder must stay in maintenance mode")
 	}
 }
+
+// orderedSource records when its Close ran relative to the restart, so a test can
+// prove the source is released BEFORE anything that ends the process.
+type orderedSource struct {
+	r      *bytes.Reader
+	closed bool
+}
+
+func (o *orderedSource) Read(p []byte) (int, error) { return o.r.Read(p) }
+
+func (o *orderedSource) Close() error {
+	o.closed = true
+	return nil
+}
+
+// Phase 6 ends the process: a successful rebuilder never returns, and
+// requestRestart is an os.Exit in every real composition. So runRestore's
+// DEFERRED Source.Close never runs in production — and for an uploaded archive
+// that close is the only thing that removes the spool file, which means the whole
+// organization was left in restore/upload on every restore that worked.
+//
+// The source must therefore be closed before the hand-off. Asserted on ordering,
+// not on the close alone: a test that only checked "closed by the end" passes on
+// the broken code, because the fake restart here DOES return.
+func TestRestoreClosesItsSourceBeforeTheRestart(t *testing.T) {
+	resetRestoreState(t)
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+
+	src := &orderedSource{r: bytes.NewReader(data)}
+	closedBeforeRestart := false
+	SetRestart(func() bool {
+		closedBeforeRestart = src.closed
+		return true
+	})
+
+	if _, err := Restore(app, RestoreRequest{Source: src, Identity: id}); err != nil {
+		t.Fatal(err)
+	}
+	if !closedBeforeRestart {
+		t.Fatal("the source must be closed BEFORE the restart: phase 6 ends the process, " +
+			"so the deferred close never runs and an uploaded archive's spool file leaks")
+	}
+	if !src.closed {
+		t.Fatal("the source was never closed at all")
+	}
+}
+
+// The same for the rebuilder path: a rebuilder that succeeds ends the process, so
+// it too must be handed control only after the source is released.
+func TestRestoreClosesItsSourceBeforeTheRebuilder(t *testing.T) {
+	resetRestoreState(t)
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+
+	src := &orderedSource{r: bytes.NewReader(data)}
+	closedBeforeRebuild := false
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		closedBeforeRebuild = src.closed
+		installjob.Release(job)
+		return nil
+	})
+
+	if _, err := Restore(app, RestoreRequest{Source: src, Identity: id}); err != nil {
+		t.Fatal(err)
+	}
+	if !closedBeforeRebuild {
+		t.Fatal("the source must be closed before the rebuilder takes over: a rebuilder " +
+			"that succeeds never returns")
+	}
+}
+
+// Closing early must not close twice. The deferred close still runs on every
+// path — including the failure paths, where phase 6 is never reached — so the
+// guard has to make the second call a no-op rather than double-closing a file.
+func TestRestoreClosesItsSourceExactlyOnce(t *testing.T) {
+	resetRestoreState(t)
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+
+	src := &countingSource{r: bytes.NewReader(data)}
+	if _, err := Restore(app, RestoreRequest{Source: src, Identity: id}); err != nil {
+		t.Fatal(err)
+	}
+	if src.closes != 1 {
+		t.Fatalf("Close called %d times, want exactly 1", src.closes)
+	}
+
+	// A restore that FAILS never reaches phase 6, so only the defer closes it —
+	// and it must still be closed exactly once.
+	failing := &countingSource{r: bytes.NewReader([]byte("not an archive"))}
+	if _, err := Restore(app, RestoreRequest{Source: failing, Identity: id}); err == nil {
+		t.Fatal("a corrupt archive must fail")
+	}
+	if failing.closes != 1 {
+		t.Fatalf("a failed restore closed its source %d times, want exactly 1", failing.closes)
+	}
+}
+
+type countingSource struct {
+	r      *bytes.Reader
+	closes int
+}
+
+func (c *countingSource) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+func (c *countingSource) Close() error {
+	c.closes++
+	return nil
+}
