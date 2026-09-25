@@ -132,7 +132,7 @@ func (s *RangeSource) open() error {
 		}
 		res, err := s.client.Do(req)
 		if err != nil {
-			return err
+			return redactURLError(err)
 		}
 		switch {
 		case offset == 0 && res.StatusCode == http.StatusOK:

@@ -2,6 +2,7 @@ package backup
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"io"
@@ -650,5 +651,49 @@ func TestTruncateDoesNotSplitARune(t *testing.T) {
 	}
 	if !utf8.ValidString(truncate("日本語です", 7)) {
 		t.Fatal("truncate produced invalid UTF-8")
+	}
+}
+
+// The sink's dial failure is the one error path that carries a presigned URL.
+// The engine copies whatever the sink reports into the ledger's error column, so
+// a signature reaching that column is a signature an operator can read off the
+// panel — and that Sentry already has.
+func TestFailedRunRecordsNoSignedURLInTheLedger(t *testing.T) {
+	app := newTestApp(t)
+	id, _ := age.GenerateX25519Identity()
+	target := "https://127.0.0.1:1/bucket/backup.age?X-Amz-Signature=DEADBEEF"
+	rowID, err := Run(app, Request{
+		Kind:       KindManual,
+		Recipient:  id.Recipient(),
+		Sink:       format.NewPutSink(context.Background(), target),
+		TargetHost: HostOnly(target),
+	})
+	if err == nil {
+		t.Fatal("a backup to a closed port must fail")
+	}
+	row, rerr := app.FindRecordById("backups", rowID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	assertNoSignature(t, row.GetString("error"))
+	if host := row.GetString("target_host"); host != "127.0.0.1" {
+		t.Fatalf("target_host %q", host)
+	}
+}
+
+// assertNoSignature is the ledger-side half of format's redaction: the column
+// names a host and carries no query string.
+func assertNoSignature(t *testing.T, msg string) {
+	t.Helper()
+	if msg == "" {
+		t.Fatal("a failed run must say why")
+	}
+	for _, leak := range []string{"?", "X-Amz", "DEADBEEF", "bucket"} {
+		if strings.Contains(msg, leak) {
+			t.Errorf("the ledger error leaks %q: %q", leak, msg)
+		}
+	}
+	if !strings.Contains(msg, "127.0.0.1") {
+		t.Errorf("the ledger error should still name the host: %q", msg)
 	}
 }

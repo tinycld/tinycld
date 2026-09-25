@@ -748,3 +748,27 @@ func TestRestoreLeavesAFailedStageUnmarked(t *testing.T) {
 		t.Fatal("a failed stage was marked complete")
 	}
 }
+
+// The restore path reads through a RangeSource, whose dial failure carries the
+// presigned source URL. The failure defer copies it into the row's error column.
+func TestFailedRestoreRecordsNoSignedURLInTheLedger(t *testing.T) {
+	app := newTestApp(t)
+	resetRestoreState(t)
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := "https://127.0.0.1:1/bucket/backup.age?X-Amz-Signature=DEADBEEF"
+	src := format.NewRangeSource(context.Background(), source)
+	jobID, rerr := Restore(app, RestoreRequest{
+		Source: src, Ranged: src, Identity: id, SourceHost: HostOnly(source),
+	})
+	if rerr == nil {
+		t.Fatal("a restore from a closed port must fail")
+	}
+	row, ferr := app.FindRecordById("backups", jobID)
+	if ferr != nil {
+		t.Fatal(ferr)
+	}
+	assertNoSignature(t, row.GetString("error"))
+}
