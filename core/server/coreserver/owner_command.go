@@ -148,6 +148,12 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 // Exactly one of password/passwordHash is set (the caller enforces that);
 // whichever is present is what both identities are minted from.
 //
+// On every successful run (whether it created anything or not), it starts the
+// setup wizard if no wizard row exists. This allows a deployment that was
+// provisioned without the wizard (no `setup.wizard` row) to opt in via a
+// create-owner re-run. The no-op when the row exists keeps wizard progress
+// intact across re-runs.
+//
 // Reports whether it created anything, so the caller knows if the
 // password/hash was actually applied — on a full no-op the existing records
 // keep their original secret.
@@ -172,20 +178,22 @@ func createOperatorIdentities(app core.App, email, name, password, passwordHash 
 		created = true
 	}
 
-	if existing, _ := app.FindAuthRecordByEmail("users", email); existing != nil {
-		return created, nil
-	}
-	if passwordHash != "" {
-		if _, cerr := CreateOwnerAccountWithHash(app, email, name, passwordHash); cerr != nil {
+	if existing, _ := app.FindAuthRecordByEmail("users", email); existing == nil {
+		if passwordHash != "" {
+			if _, cerr := CreateOwnerAccountWithHash(app, email, name, passwordHash); cerr != nil {
+				return created, fmt.Errorf("create owner account: %w", cerr)
+			}
+		} else if _, cerr := CreateOwnerAccountNamed(app, email, name, password); cerr != nil {
 			return created, fmt.Errorf("create owner account: %w", cerr)
 		}
-	} else if _, cerr := CreateOwnerAccountNamed(app, email, name, password); cerr != nil {
-		return created, fmt.Errorf("create owner account: %w", cerr)
+		created = true
 	}
+
 	// The wizard is a convenience; a deployment whose owner exists but whose
-	// wizard row failed to write must still be provisioned.
+	// wizard row failed to write must still be provisioned. On re-run of an
+	// existing deployment, this starts the wizard if it was never begun.
 	if werr := MarkSetupWizardStarted(app); werr != nil {
 		srvLog.Warn("create-owner: could not start the setup wizard", "err", werr)
 	}
-	return true, nil
+	return created, nil
 }

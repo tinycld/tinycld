@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 )
 
@@ -63,5 +64,59 @@ func TestCreateOperatorIdentitiesStartsWizard(t *testing.T) {
 	}
 	if _, err := app.FindFirstRecordByFilter("system_settings", "key = {:k}", map[string]any{"k": setupWizardKey}); err != nil {
 		t.Fatalf("wizard state row missing: %v", err)
+	}
+}
+
+// When an existing deployment (one with an owner but no wizard row) re-runs
+// create-owner, the wizard should start. created is false because the owner
+// already existed.
+func TestCreateOperatorIdentitiesStartsWizardOnRerun(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+	createSystemSettingsCollection(t, app)
+
+	// Ensure users collection has the fields we need.
+	if err := app.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
+	usersCol, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usersCol.Fields.GetByName("role") == nil {
+		usersCol.Fields.Add(&core.TextField{Name: "role"})
+		if err := app.Save(usersCol); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Create the owner without the wizard row (simulate a pre-wizard deployment).
+	if _, err := createOperatorIdentities(app, "owner@example.com", "", "OwnerPass1234!", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Delete the wizard row to simulate a deployment that never had one.
+	wizardRec, err := app.FindFirstRecordByFilter("system_settings", "key = {:k}", map[string]any{"k": setupWizardKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Delete(wizardRec); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-run create-owner (the idempotent path — owner already exists).
+	created, err := createOperatorIdentities(app, "owner@example.com", "", "OwnerPass1234!", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("created should be false when owner already existed")
+	}
+
+	// Wizard row should now exist.
+	if _, err := app.FindFirstRecordByFilter("system_settings", "key = {:k}", map[string]any{"k": setupWizardKey}); err != nil {
+		t.Fatalf("wizard state row missing after re-run: %v", err)
 	}
 }
