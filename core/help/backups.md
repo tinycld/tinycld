@@ -70,3 +70,10 @@ after restoring onto a different server.
 
 One backup or restore runs at a time, and never during a package install.
 Manual backups are limited to a daily number per organization.
+
+The server refuses a backup or a restore that does not fit on the disk, and
+tells you how much space it needs. A restore needs room for the backup file,
+a safety copy of the current data, and the current data itself.
+
+The safety copy from the most recent failed restore is kept until the next
+restore starts. Copies from earlier failed restores are removed then.

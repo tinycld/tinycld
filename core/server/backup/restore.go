@@ -282,9 +282,27 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 		}
 	}
 
-	// Phase 3: the pre-restore safety copy, keyed to a throwaway identity the
-	// owner reads off the row. The identity lives only in the row's metadata, so
-	// it is never logged and never leaves the database.
+	// Phase 3 starts by clearing what the LAST failed restore kept. Both the
+	// pre-restore copy and the rolled-back pb_data are kept on failure by design
+	// — they are the only way back — but nothing removed them, so a deployment
+	// that had three failed restores carried three whole copies of itself
+	// forever. The rule is one generation: the copies from the most recent failed
+	// restore live until the next restore starts.
+	sweepSafetyCopies(app, id)
+
+	// The peak this restore will hold on disk: the archive's own bytes staged,
+	// plus a pre-restore copy of the live database, plus the space the swap needs
+	// to keep the previous pb_data beside the restored one. Refused here rather
+	// than in the middle of staging, where a full disk leaves a half-written
+	// staging tree and a live database already copied.
+	staged := read.Counts.Bytes
+	if err = requireFreeSpace(restoreDir(app), staged+staged+liveDatabaseBytes(app)); err != nil {
+		return err
+	}
+
+	// The pre-restore safety copy, keyed to a throwaway identity the owner reads
+	// off the row. The identity lives only in the row's metadata, so it is never
+	// logged and never leaves the database.
 	preID, err := age.GenerateX25519Identity()
 	if err != nil {
 		return err
@@ -620,3 +638,41 @@ func SetShutdown(ctx context.Context) { format.SetShutdown(ctx) }
 // CancelAll cancels every transfer in flight, so a graceful stop releases the
 // interlock instead of leaving it held by a goroutine that is going away.
 func CancelAll() { format.CancelAll() }
+
+// sweepSafetyCopies removes every safety copy except the ones this restore is
+// about to create. Both kinds are kept on failure on purpose, so the sweep is at
+// the START of the next restore rather than at the end of the failed one: until
+// an operator asks for another restore, the copy from the last failure is the
+// only way back.
+//
+// It never fails a restore. A copy that will not go is dead weight; refusing to
+// restore over it would be worse.
+func sweepSafetyCopies(app core.App, keepID string) {
+	for _, group := range []struct{ dir, what string }{
+		{filepath.Join(restoreDir(app), "pre"), "pre-restore backup"},
+		{filepath.Join(restoreDir(app), "failed"), "rolled-back copy of pb_data"},
+	} {
+		entries, err := os.ReadDir(group.dir)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			log.Warn("could not list old safety copies", "dir", group.dir, "err", err)
+			continue
+		}
+		for _, e := range entries {
+			// keepID cannot be in there yet — the row was inserted moments ago —
+			// but comparing is what makes a re-entry of this function harmless.
+			if e.Name() == keepID || e.Name() == keepID+".age" {
+				continue
+			}
+			path := filepath.Join(group.dir, e.Name())
+			if rerr := os.RemoveAll(path); rerr != nil {
+				log.Warn("could not remove an old safety copy", "path", path, "err", rerr)
+				continue
+			}
+			log.Info("removed a safety copy from an earlier failed restore",
+				"what", group.what, "path", path)
+		}
+	}
+}

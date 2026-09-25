@@ -180,6 +180,12 @@ func run(app core.App, req Request, row *core.Record, job *installjob.Job) (err 
 	if err = os.MkdirAll(tmpDir(app), 0o700); err != nil {
 		return err
 	}
+	// Refused before the snapshot rather than after: a VACUUM INTO that runs out
+	// of space leaves a truncated file behind and reports a SQLite error an
+	// operator cannot act on.
+	if err = requireFreeSpace(tmpDir(app), liveDatabaseBytes(app)); err != nil {
+		return err
+	}
 	snap := filepath.Join(tmpDir(app), row.Id+".db")
 	if err = vacuumInto(app, snap); err != nil {
 		return err
