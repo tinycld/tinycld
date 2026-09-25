@@ -16,7 +16,7 @@ export type { SettingRow }
 export function useSystemSettings() {
     const [systemSettings] = useStore('system_settings')
 
-    const { data: rows = [] } = useLiveQuery(query => query.from({ s: systemSettings }))
+    const { data: rows = [], isReady } = useLiveQuery(query => query.from({ s: systemSettings }))
 
     const byKey = rowsToMap(rows)
 
@@ -38,5 +38,5 @@ export function useSystemSettings() {
         }),
     })
 
-    return { byKey, upsert }
+    return { byKey, upsert, isReady }
 }
