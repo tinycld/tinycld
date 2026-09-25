@@ -73,6 +73,10 @@ const orgBackupsPrefix = "/api/org-backups"
 // of their own data. An embedder that wants to trigger a backup from outside the
 // HTTP surface calls the backup package directly.
 func RegisterBackupEndpoints(app core.App) {
+	// Read at registration rather than per request: an operator who changes it
+	// must restart, and a per-request read would let a stray environment write
+	// loosen the check mid-flight.
+	refreshBackupTargetPolicy()
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		g := e.Router.Group(orgBackupsPrefix)
 		g.POST("", func(re *core.RequestEvent) error { return handleBackupCreate(app, re) }).BindFunc(requireAdmin)
@@ -204,8 +208,11 @@ func handleBackupCreate(app core.App, re *core.RequestEvent) error {
 	}
 	// Anything but http(s) is refused rather than handed to the sink: the sink
 	// would try it, fail, and record a run that never had a chance.
-	if !strings.HasPrefix(body.Target, "https://") && !strings.HasPrefix(body.Target, "http://") {
+	if !httpScheme(body.Target) {
 		return re.BadRequestError("The target must be an http(s) URL.", nil)
+	}
+	if err := checkBackupTarget(body.Target); err != nil {
+		return re.BadRequestError(err.Error(), nil)
 	}
 	id, err := backup.Start(app, backup.Request{
 		Kind:      backup.KindManual,
@@ -427,8 +434,11 @@ func readRemoteArchive(re *core.RequestEvent, req *backup.RestoreRequest) error 
 	if err != nil {
 		return re.BadRequestError("invalid passphrase", err)
 	}
-	if !strings.HasPrefix(body.Source, "https://") && !strings.HasPrefix(body.Source, "http://") {
+	if !httpScheme(body.Source) {
 		return re.BadRequestError("The source must be an http(s) URL.", nil)
+	}
+	if err := checkBackupTarget(body.Source); err != nil {
+		return re.BadRequestError(err.Error(), nil)
 	}
 	// The source is registered for a URL swap, so an expiring presigned link can
 	// be replaced mid-transfer instead of restarting from zero.
@@ -452,8 +462,11 @@ func handleRestoreSwap(re *core.RequestEvent) error {
 	if err := json.NewDecoder(re.Request.Body).Decode(&body); err != nil || body.Source == "" {
 		return re.BadRequestError("A source URL is required.", err)
 	}
-	if !strings.HasPrefix(body.Source, "https://") && !strings.HasPrefix(body.Source, "http://") {
+	if !httpScheme(body.Source) {
 		return re.BadRequestError("The source must be an http(s) URL.", nil)
+	}
+	if err := checkBackupTarget(body.Source); err != nil {
+		return re.BadRequestError(err.Error(), nil)
 	}
 	err := backup.SwapSource(re.Request.PathValue("id"), body.Source)
 	switch {

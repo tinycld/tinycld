@@ -184,10 +184,28 @@ func setupBackupCollections(t *testing.T) *tests.TestApp {
 // and a real restart would kill the test process.
 func backupTestApp(t *testing.T) *tests.TestApp {
 	t.Helper()
+	// Every target in these tests is an httptest server on loopback, which the
+	// API refuses by default (see backup_target.go). The override is what the e2e
+	// harness and local development use for the same reason. The tests that
+	// exercise the refusal itself set it to something else.
+	allowLoopbackBackupTargets(t, true)
 	app := setupBackupCollections(t)
 	restoreSeams(t)
 	RegisterBackupEndpoints(app)
 	return app
+}
+
+// allowLoopbackBackupTargets pins the loopback override for one test. The flag is
+// read at registration, so the variable is set before RegisterBackupEndpoints.
+func allowLoopbackBackupTargets(t *testing.T, allow bool) {
+	t.Helper()
+	value := ""
+	if allow {
+		value = "1"
+	}
+	t.Setenv("TINYCLD_BACKUP_ALLOW_LOOPBACK", value)
+	refreshBackupTargetPolicy()
+	t.Cleanup(refreshBackupTargetPolicy)
 }
 
 // restoreSeams stubs the two process-ending seams a restore reaches at phase 6.
@@ -1118,5 +1136,87 @@ func TestBootProbeLeavesRestoreStateForTheRealBoot(t *testing.T) {
 	}
 	if len(rows) != 0 {
 		t.Fatalf("the probe finalized a restore: %d rows", len(rows))
+	}
+}
+
+// The server PUTs to, and GETs from, a URL the caller supplies. Only an admin or
+// the owner can ask, and no response body is ever surfaced — but the loopback
+// interface and link-local addresses are reachable ONLY from the server and are
+// never a legitimate backup target, so they are refused.
+func TestBackupRefusesAnUnroutableTarget(t *testing.T) {
+	allowLoopbackBackupTargets(t, false)
+	app := setupBackupCollections(t)
+	restoreSeams(t)
+	RegisterBackupEndpoints(app)
+	admin := authFor(t, app, "admin@example.com", "admin")
+	owner := authFor(t, app, "owner@example.com", "owner")
+
+	for _, tc := range []struct{ name, path, body, token string }{
+		{"a backup to loopback", "/api/org-backups",
+			`{"target":"http://127.0.0.1:9/x","passphrase":"` + testPassphrase + `"}`, admin},
+		{"a backup to the metadata service", "/api/org-backups",
+			`{"target":"http://169.254.169.254/latest","passphrase":"` + testPassphrase + `"}`, admin},
+		{"a restore from loopback", "/api/org-backups/restore",
+			`{"source":"http://127.0.0.1:9/x","passphrase":"` + testPassphrase + `"}`, owner},
+		{"a restore from the metadata service", "/api/org-backups/restore",
+			`{"source":"http://169.254.169.254/latest","passphrase":"` + testPassphrase + `"}`, owner},
+	} {
+		scenario := tests.ApiScenario{
+			Name:   tc.name,
+			Method: http.MethodPost,
+			URL:    tc.path,
+			Body:   strings.NewReader(tc.body),
+			Headers: map[string]string{
+				"Authorization": tc.token,
+				"Content-Type":  "application/json",
+			},
+			ExpectedStatus:        http.StatusBadRequest,
+			ExpectedContent:       []string{"not loopback or link-local"},
+			TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+			DisableTestAppCleanup: true,
+		}
+		scenario.Test(t)
+	}
+}
+
+// The override exists for local development and the e2e harness, whose sink is
+// always on loopback. TestBackupToTargetReturns202AndRecordsHostOnly is the
+// end-to-end proof: it PUTs to an httptest server (loopback) through
+// backupTestApp, which sets the override, and gets 202.
+func TestBackupTargetCheckAllowsLoopbackWithTheOverride(t *testing.T) {
+	allowLoopbackBackupTargets(t, true)
+	if err := checkBackupTarget("http://127.0.0.1:9/x"); err != nil {
+		t.Fatalf("the override did not take: %v", err)
+	}
+}
+
+// A private LAN address is a normal target: an operator's own MinIO box.
+func TestBackupTargetCheckAllowsPrivateRanges(t *testing.T) {
+	allowLoopbackBackupTargets(t, false)
+	for _, raw := range []string{
+		"https://10.0.0.5/bucket/x",
+		"https://192.168.1.10:9000/bucket/x",
+		"https://172.16.4.4/bucket/x",
+		"https://203.0.113.7/bucket/x",
+	} {
+		if err := checkBackupTarget(raw); err != nil {
+			t.Errorf("%s was refused: %v", raw, err)
+		}
+	}
+}
+
+func TestBackupTargetCheckRefusesTheUnreachableClasses(t *testing.T) {
+	allowLoopbackBackupTargets(t, false)
+	for _, raw := range []string{
+		"http://127.0.0.1:9/x",
+		"http://[::1]:9/x",
+		"http://169.254.169.254/latest",
+		"http://[fe80::1]/x",
+		"http://0.0.0.0/x",
+		"http://239.1.2.3/x",
+	} {
+		if err := checkBackupTarget(raw); err == nil {
+			t.Errorf("%s was allowed", raw)
+		}
 	}
 }
