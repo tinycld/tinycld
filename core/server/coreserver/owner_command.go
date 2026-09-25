@@ -179,10 +179,13 @@ func createOperatorIdentities(app core.App, email, name, password, passwordHash 
 		if _, cerr := CreateOwnerAccountWithHash(app, email, name, passwordHash); cerr != nil {
 			return created, fmt.Errorf("create owner account: %w", cerr)
 		}
-		return true, nil
-	}
-	if _, cerr := CreateOwnerAccountNamed(app, email, name, password); cerr != nil {
+	} else if _, cerr := CreateOwnerAccountNamed(app, email, name, password); cerr != nil {
 		return created, fmt.Errorf("create owner account: %w", cerr)
+	}
+	// The wizard is a convenience; a deployment whose owner exists but whose
+	// wizard row failed to write must still be provisioned.
+	if werr := MarkSetupWizardStarted(app); werr != nil {
+		srvLog.Warn("create-owner: could not start the setup wizard", "err", werr)
 	}
 	return true, nil
 }
