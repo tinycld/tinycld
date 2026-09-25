@@ -33,5 +33,9 @@ func ResetForTesting() {
 	waiting = map[string]*format.RangeSource{}
 	waitingMu.Unlock()
 
+	// Register binds the process's lifetime to every transfer. A cancelled one
+	// left bound would kill every later transfer in the binary.
+	format.ResetShutdownForTesting()
+
 	resetDailyLimitForTesting()
 }

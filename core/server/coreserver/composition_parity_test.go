@@ -80,7 +80,7 @@ var hostHookCounts = map[string]int{
 	"OnRecordValidate":                6,
 	"OnServe":                         26,
 	"OnSettingsReload":                1,
-	"OnTerminate":                     2,
+	"OnTerminate":                     3,
 }
 
 func TestRegisterBindsTheRecordedHandlerCounts(t *testing.T) {

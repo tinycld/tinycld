@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -771,4 +772,47 @@ func TestFailedRestoreRecordsNoSignedURLInTheLedger(t *testing.T) {
 		t.Fatal(ferr)
 	}
 	assertNoSignature(t, row.GetString("error"))
+}
+
+// The restore side of the same hazard: a source that sends its headers and then
+// stops sending parks the reader inside the transport, where the retry budget
+// cannot reach it, holding the interlock with it.
+func TestRestoreGivesUpOnAStalledSourceAndReleasesTheInterlock(t *testing.T) {
+	prev := format.StallDeadline
+	format.StallDeadline = 150 * time.Millisecond
+	t.Cleanup(func() { format.StallDeadline = prev })
+
+	data, identity := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.WriteHeader(http.StatusOK)
+		// Enough for age's header, then silence.
+		_, _ = w.Write(data[:64])
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-block
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(block) })
+
+	src := format.NewRangeSource(context.Background(), srv.URL+"/x")
+	jobID, err := Restore(app, RestoreRequest{Source: src, Ranged: src, Identity: identity})
+	if err == nil {
+		t.Fatal("a stalled source must fail the restore")
+	}
+	if installjob.Running() {
+		t.Fatal("a stalled restore must release the interlock")
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if got := row.GetString("status"); got != "failed" {
+		t.Fatalf("status %q", got)
+	}
 }

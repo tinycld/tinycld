@@ -16,20 +16,13 @@ var (
 	ErrNoResume      = errors.New("backup: source does not support resume")
 )
 
-// NoRedirectClient never follows a redirect: a presigned URL that redirects
-// would leak its signature to the next host.
-func NoRedirectClient() *http.Client {
-	return &http.Client{
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-}
-
 // RangeSource reads a URL as one continuous stream and transparently resumes
 // with Range requests after a dropped connection. When the URL has expired
 // (401/403 on a retry) Read blocks until SwapURL provides a fresh one or the
 // expiry wait elapses.
 type RangeSource struct {
 	ctx        context.Context
+	guard      *stallGuard
 	client     *http.Client
 	mu         sync.Mutex
 	url        string
@@ -45,7 +38,11 @@ type RangeSource struct {
 const maxRetries = 8
 
 func NewRangeSource(ctx context.Context, url string) *RangeSource {
-	return &RangeSource{ctx: ctx, client: NoRedirectClient(), url: url, swapped: make(chan struct{}, 1), expiryWait: 15 * time.Minute}
+	// The guard's context is what every request is made on, so a stall cancels
+	// the request the reader is parked in rather than waiting for a peer that
+	// will never answer. Close stops it.
+	guarded, guard := newStallGuard(ctx)
+	return &RangeSource{ctx: guarded, guard: guard, client: NoRedirectClient(), url: url, swapped: make(chan struct{}, 1), expiryWait: 15 * time.Minute}
 }
 
 func (s *RangeSource) SetExpiryWait(d time.Duration) { s.expiryWait = d }
@@ -81,6 +78,9 @@ func (s *RangeSource) Read(p []byte) (int, error) {
 			}
 		}
 		n, err := s.body.Read(p)
+		if n > 0 {
+			s.guard.progressed()
+		}
 		s.mu.Lock()
 		s.offset += int64(n)
 		s.mu.Unlock()
@@ -97,6 +97,14 @@ func (s *RangeSource) Read(p []byte) (int, error) {
 		_ = s.body.Close()
 		s.body = nil
 		s.retries++
+		if serr := s.guard.classify(nil); serr != nil {
+			return n, serr
+		}
+		if errors.Is(err, context.Canceled) {
+			// Cancelled, not dropped: retrying would spin through the whole
+			// backoff budget against a context that will never recover.
+			return n, s.guard.classify(err)
+		}
 		if s.retries > maxRetries {
 			return n, fmt.Errorf("backup: source gave up after %d retries: %w", maxRetries, err)
 		}
@@ -132,7 +140,7 @@ func (s *RangeSource) open() error {
 		}
 		res, err := s.client.Do(req)
 		if err != nil {
-			return redactURLError(err)
+			return s.guard.classify(redactURLError(err))
 		}
 		switch {
 		case offset == 0 && res.StatusCode == http.StatusOK:
@@ -183,6 +191,7 @@ func (s *RangeSource) waitForSwap() error {
 }
 
 func (s *RangeSource) Close() error {
+	s.guard.stop()
 	if s.body != nil {
 		return s.body.Close()
 	}

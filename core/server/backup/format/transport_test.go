@@ -275,3 +275,125 @@ func TestRangeSourceBlockedDuringExpiryWait(t *testing.T) {
 		t.Fatal("expected Blocked() to be false after swap")
 	}
 }
+
+// shortStallDeadline shortens the idle-progress deadline for one test.
+func shortStallDeadline(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := StallDeadline
+	StallDeadline = d
+	t.Cleanup(func() { StallDeadline = prev })
+}
+
+// A target that accepts the connection and then never reads the body is the
+// worst case: at the socket level it is indistinguishable from a slow one, so
+// without a progress deadline the transfer goroutine parks forever and takes the
+// installjob interlock with it.
+func TestPutSinkGivesUpOnAStalledTarget(t *testing.T) {
+	shortStallDeadline(t, 150*time.Millisecond)
+	accepted := make(chan struct{})
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(accepted)
+		<-block // never read the body, never answer
+	}))
+	// LIFO: the handler is released BEFORE the server is closed, or Close waits
+	// on a handler that is waiting on the channel.
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(block) })
+
+	sink := NewPutSink(context.Background(), srv.URL+"/x")
+	var err error
+	for i := 0; i < 64 && err == nil; i++ {
+		_, err = sink.Write(payload)
+	}
+	if err == nil {
+		err = sink.Close()
+	} else {
+		_ = sink.Close()
+	}
+	if !errors.Is(err, ErrStalled) {
+		t.Fatalf("want ErrStalled, got %v", err)
+	}
+	<-accepted
+}
+
+// A source that sends its headers and then stops sending bytes parks the reader
+// inside the transport, where no retry budget can reach it.
+func TestRangeSourceGivesUpOnAStalledSource(t *testing.T) {
+	shortStallDeadline(t, 150*time.Millisecond)
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload[:16])
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-block
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(block) })
+
+	src := NewRangeSource(context.Background(), srv.URL+"/x")
+	t.Cleanup(func() { _ = src.Close() })
+	_, err := io.ReadAll(src)
+	if !errors.Is(err, ErrStalled) {
+		t.Fatalf("want ErrStalled, got %v", err)
+	}
+}
+
+// A graceful stop must reach a transfer that is already in flight.
+func TestCancelAllEndsATransferInFlight(t *testing.T) {
+	t.Cleanup(ResetShutdownForTesting)
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-block
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(block) })
+
+	SetShutdown(context.Background())
+	sink := NewPutSink(context.Background(), srv.URL+"/x")
+	done := make(chan error, 1)
+	go func() {
+		var err error
+		for i := 0; i < 64 && err == nil; i++ {
+			_, err = sink.Write(payload)
+		}
+		if err == nil {
+			err = sink.Close()
+		} else {
+			_ = sink.Close()
+		}
+		done <- err
+	}()
+	CancelAll()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a cancelled transfer must report an error")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("CancelAll did not release the transfer")
+	}
+}
+
+// The transport's budgets are what stop a peer that never answers from holding a
+// connection open indefinitely.
+func TestNoRedirectClientHasPhaseTimeouts(t *testing.T) {
+	tr, ok := NoRedirectClient().Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("the client must carry its own transport")
+	}
+	if tr.ResponseHeaderTimeout == 0 || tr.TLSHandshakeTimeout == 0 || tr.ExpectContinueTimeout == 0 {
+		t.Fatalf("a phase timeout is unset: %+v", tr)
+	}
+	if tr.DialContext == nil {
+		t.Fatal("the dialer must have its own timeout")
+	}
+	// No overall Timeout: a backup of a large organization legitimately runs for
+	// hours and must not be cut off for taking them.
+	if NoRedirectClient().Timeout != 0 {
+		t.Fatal("an overall client timeout would cut a long transfer off")
+	}
+}

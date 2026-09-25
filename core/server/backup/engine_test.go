@@ -697,3 +697,42 @@ func assertNoSignature(t *testing.T, msg string) {
 		t.Errorf("the ledger error should still name the host: %q", msg)
 	}
 }
+
+// The whole point of the idle-progress deadline: a target that accepts and never
+// reads used to park the run's goroutine AND the installjob interlock for the
+// life of the process, so no backup, restore or package install could run again.
+func TestRunGivesUpOnAStalledTargetAndReleasesTheInterlock(t *testing.T) {
+	prev := format.StallDeadline
+	format.StallDeadline = 150 * time.Millisecond
+	t.Cleanup(func() { format.StallDeadline = prev })
+
+	block := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		<-block
+	}))
+	// LIFO: the handler is released BEFORE the server is closed, or Close waits
+	// on a handler that is waiting on the channel.
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(block) })
+
+	app := newTestApp(t)
+	id, _ := age.GenerateX25519Identity()
+	rowID, err := Run(app, Request{
+		Kind:      KindManual,
+		Recipient: id.Recipient(),
+		Sink:      format.NewPutSink(context.Background(), srv.URL+"/x"),
+	})
+	if !errors.Is(err, format.ErrStalled) {
+		t.Fatalf("want ErrStalled, got %v", err)
+	}
+	if installjob.Running() {
+		t.Fatal("a stalled run must release the interlock")
+	}
+	row, rerr := app.FindRecordById("backups", rowID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if got := row.GetString("status"); got != "failed" {
+		t.Fatalf("status %q", got)
+	}
+}

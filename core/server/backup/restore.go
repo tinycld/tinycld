@@ -607,3 +607,16 @@ func announceRestore(app core.App, req RestoreRequest, row *core.Record, ok bool
 		log.Warn("could not audit a restore", "err", err)
 	}
 }
+
+// SetShutdown and CancelAll bind the process's lifetime to every in-flight
+// transfer. Without them a target that accepts a connection and never reads
+// holds the transfer goroutine — and the installjob interlock behind it — until
+// the process is killed, so no backup, restore or package install can run again.
+//
+// They are re-exported from this package rather than reached through format,
+// which is an implementation detail of the archive shape.
+func SetShutdown(ctx context.Context) { format.SetShutdown(ctx) }
+
+// CancelAll cancels every transfer in flight, so a graceful stop releases the
+// interlock instead of leaving it held by a goroutine that is going away.
+func CancelAll() { format.CancelAll() }

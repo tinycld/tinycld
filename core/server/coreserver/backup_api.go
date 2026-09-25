@@ -143,6 +143,16 @@ func RegisterBackupBoot(app core.App) {
 			Priority: maintenancePriority,
 			Func:     backup.MaintenanceMiddleware(),
 		})
+		// A transfer is started from an HTTP handler but outlives it, so its
+		// only other bound lifetime is the process. Without this a target that
+		// accepts and never reads holds the transfer goroutine — and the
+		// installjob interlock behind it — until the process is killed, so no
+		// backup, restore or package install can run again.
+		backup.SetShutdown(context.Background())
+		return e.Next()
+	})
+	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
+		backup.CancelAll()
 		return e.Next()
 	})
 }
