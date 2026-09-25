@@ -14,6 +14,7 @@ const mockRefreshAuth = vi.fn()
 const mockGetUser = vi.fn()
 const mockSeedUser = vi.fn()
 const mockPreloadStores = vi.fn()
+const mockLogError = vi.fn()
 
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
     PB_SERVER_ADDR: 'http://localhost:8090',
@@ -27,6 +28,10 @@ vi.mock('@tinycld/core/lib/pocketbase', () => ({
 }))
 
 vi.mock('@tinycld/core/lib/errors', () => ({ captureException: vi.fn() }))
+
+vi.mock('@tinycld/core/lib/logger', () => ({
+    log: { error: mockLogError, warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}))
 
 vi.mock('@tinycld/core/lib/store', () => ({
     create: () => (fn: unknown) => {
@@ -106,5 +111,17 @@ describe('auth-store signInWithToken', () => {
         expect(result.user).toBeNull()
         expect(result.error).toBeTruthy()
         expect(mockPreloadStores).not.toHaveBeenCalled()
+    })
+
+    // The owner exists by now, so a failure here strands the person on the
+    // sign-in screen; it must reach the log to be diagnosable.
+    it('logs a failure to adopt the token', async () => {
+        const failure = new Error('network down')
+        mockRefreshAuth.mockRejectedValue(failure)
+
+        const result = await signInWithToken('tok', { id: 'x', email: 'x@example.com' })
+
+        expect(result.error).toBe('network down')
+        expect(mockLogError).toHaveBeenCalledWith('core.setup', failure)
     })
 })

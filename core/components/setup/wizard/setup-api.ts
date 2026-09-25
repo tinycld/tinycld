@@ -40,6 +40,17 @@ export async function postSetup<T>(path: 'verify' | 'init', payload: object): Pr
     return (await res.json()) as T
 }
 
+/**
+ * What the account screen does with a failed owner creation. `sign-in`:
+ * someone already claimed the server, so the code screen would be a dead end.
+ */
+export function ownerFailureOf(error: unknown): 'sign-in' | 'code-rejected' | 'offline' | 'form' {
+    if (!(error instanceof SetupRequestError)) return 'form'
+    if (error.status === null) return 'offline'
+    if (error.status !== 403) return 'form'
+    return error.body?.reason === 'done' ? 'sign-in' : 'code-rejected'
+}
+
 export function formatSetupCode(code: string): string {
     const chars = code.replace(/[^A-Z0-9]/gi, '').toUpperCase()
     if (chars.length !== 8) return ''

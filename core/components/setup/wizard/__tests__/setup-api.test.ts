@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { refusalBodyOf } from '../ClaimServerStep'
 import { claimSummary } from '../claim-summary'
-import { formatSetupCode, postSetup, SetupRequestError } from '../setup-api'
+import { formatSetupCode, ownerFailureOf, postSetup, SetupRequestError } from '../setup-api'
 
 vi.mock('@tinycld/core/lib/config', () => ({ PB_SERVER_ADDR: 'http://server' }))
 
@@ -75,5 +75,26 @@ describe('claimSummary', () => {
         const done = claimSummary(true)
         expect(done.steps.map(s => s.phase)).toEqual(['done', 'todo'])
         expect(done.doneCount).toBe(1)
+    })
+})
+
+describe('ownerFailureOf', () => {
+    it('sends the person to sign in when someone else already claimed the server', () => {
+        expect(ownerFailureOf(new SetupRequestError(403, { reason: 'done' }))).toBe('sign-in')
+    })
+    it('returns to the code screen when the code is refused', () => {
+        expect(ownerFailureOf(new SetupRequestError(403, { reason: 'mismatch' }))).toBe(
+            'code-rejected'
+        )
+        expect(ownerFailureOf(new SetupRequestError(403, { reason: 'locked' }))).toBe(
+            'code-rejected'
+        )
+    })
+    it('tells an unreachable server apart from a form error', () => {
+        expect(ownerFailureOf(new SetupRequestError(null, null))).toBe('offline')
+        expect(ownerFailureOf(new SetupRequestError(400, { error: 'name: Too long.' }))).toBe(
+            'form'
+        )
+        expect(ownerFailureOf(new Error('boom'))).toBe('form')
     })
 })

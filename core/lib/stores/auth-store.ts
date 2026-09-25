@@ -1,5 +1,6 @@
 import { captureException } from '@tinycld/core/lib/errors'
 import { unregisterExpoPushToken } from '@tinycld/core/lib/expo-push'
+import { log } from '@tinycld/core/lib/logger'
 import { clearPendingRoute } from '@tinycld/core/lib/pending-route'
 import {
     authStoreReady,
@@ -349,6 +350,9 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
             await preloadStores()
             return { user, error: null }
         } catch (error) {
+            // The owner already exists, so the caller sends the person to sign
+            // in; without this the reason they had to is lost.
+            log.error('core.setup', error)
             const message = error instanceof Error ? error.message : 'Failed to sign in'
             return { user: null, error: message }
         }

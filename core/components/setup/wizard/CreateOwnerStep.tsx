@@ -11,7 +11,7 @@ import { useRouter } from 'expo-router'
 import { useState } from 'react'
 import { Platform, Pressable, Text, View } from 'react-native'
 import { claimErrorMessage, refusalBodyOf } from './ClaimServerStep'
-import { postSetup, SetupRequestError } from './setup-api'
+import { ownerFailureOf, postSetup } from './setup-api'
 import { initialsOf } from './use-workspace-preview'
 
 const ownerSchema = z
@@ -28,6 +28,8 @@ const ownerSchema = z
     })
 
 type OwnerForm = z.infer<typeof ownerSchema>
+
+const SETUP_NEXT_HREF = appHref('setup/next')
 
 interface InitResult {
     authToken: string
@@ -74,24 +76,32 @@ function useCreateOwner(code: string, onCodeRejected: (message: string) => void)
                 password: data.password,
                 appUrl: data.appUrl,
             })
+            // The owner exists from here on, whether or not the sign-in below
+            // works, so the claim screens must not come back.
+            await queryClient.invalidateQueries({ queryKey: NEEDS_SETUP_QUERY_KEY })
             // signInWithToken, not a bare authStore.save: it also refetches
-            // the stores these signed-out screens synced as nobody.
-            const signedIn = await signInWithToken(result.authToken, {
+            // the stores these signed-out screens synced as nobody. A failure
+            // is logged there; the wizard route then asks the person to sign
+            // in with the account they just created.
+            await signInWithToken(result.authToken, {
                 id: result.userId,
                 email: result.email,
             })
-            if (signedIn.error) throw new Error(signedIn.error)
         },
-        onSuccess: async () => {
-            await queryClient.invalidateQueries({ queryKey: NEEDS_SETUP_QUERY_KEY })
-            router.replace(appHref('setup/next'))
-        },
-        onError: error => {
-            if (error instanceof SetupRequestError && error.status === 403) {
+        // Signed in: the wizard. Not signed in: that route shows sign-in.
+        onSuccess: () => router.replace(SETUP_NEXT_HREF),
+        onError: async error => {
+            const failure = ownerFailureOf(error)
+            if (failure === 'sign-in') {
+                await queryClient.invalidateQueries({ queryKey: NEEDS_SETUP_QUERY_KEY })
+                router.replace(SETUP_NEXT_HREF)
+                return
+            }
+            if (failure === 'code-rejected') {
                 onCodeRejected(claimErrorMessage(refusalBodyOf(error)))
                 return
             }
-            if (error instanceof SetupRequestError && error.status === null) {
+            if (failure === 'offline') {
                 form.setError('root', { type: 'server', message: claimErrorMessage(null) })
                 return
             }
