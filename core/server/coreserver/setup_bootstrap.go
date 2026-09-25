@@ -2,14 +2,17 @@ package coreserver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"tinycld.org/core/approutes"
 
+	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -119,7 +122,7 @@ func runSetupInit(app core.App, guard *setupGuard, ip string, req setupInitReque
 	}
 	if err != nil {
 		srvLog.Error("setup: owner creation failed", "err", err)
-		return map[string]string{"error": err.Error()}, http.StatusBadRequest
+		return map[string]string{"error": setupInitFailureMessage(err)}, http.StatusBadRequest
 	}
 	authToken, err := operator.NewAuthToken()
 	if err != nil {
@@ -147,31 +150,67 @@ func runSetupInit(app core.App, guard *setupGuard, ip string, req setupInitReque
 //     token from the `users` record and the client saves it onto the shared
 //     pb instance.
 func createSetupOwner(app core.App, req setupInitRequest) (*core.Record, error) {
-	superusers, err := app.FindCollectionByNameOrId(core.CollectionNameSuperusers)
-	if err != nil {
-		return nil, fmt.Errorf("find superusers collection: %w", err)
-	}
-	superuser := core.NewRecord(superusers)
-	superuser.SetEmail(req.Email)
-	superuser.SetPassword(req.Password)
-	superuser.SetVerified(true)
-	if err := app.Save(superuser); err != nil {
-		return nil, fmt.Errorf("create superuser: %w", err)
-	}
-	operator, err := createOwnerOperator(app, req.Email, req.Name, req.Password)
-	if err != nil {
-		return nil, fmt.Errorf("create owner: %w", err)
-	}
-	if req.AppURL != "" {
-		app.Settings().Meta.AppURL = req.AppURL
-		if err := app.Save(app.Settings()); err != nil {
-			srvLog.Warn("setup: failed to save app URL", "err", err)
+	// One transaction: a users save that fails after the superuser was saved
+	// would otherwise leave that superuser behind, so a retry with the same
+	// code fails on its duplicate email, and after a restart PocketBase's
+	// installer (which only runs while no superuser exists) no longer prints a
+	// code at all — the server could never be claimed.
+	var operator *core.Record
+	err := app.RunInTransaction(func(txApp core.App) error {
+		superusers, err := txApp.FindCollectionByNameOrId(core.CollectionNameSuperusers)
+		if err != nil {
+			return fmt.Errorf("find superusers collection: %w", err)
 		}
-	}
-	if err := MarkSetupWizardStarted(app); err != nil {
-		srvLog.Warn("setup: could not start the setup wizard", "err", err)
+		superuser := core.NewRecord(superusers)
+		superuser.SetEmail(req.Email)
+		superuser.SetPassword(req.Password)
+		superuser.SetVerified(true)
+		if err := txApp.Save(superuser); err != nil {
+			return fmt.Errorf("create superuser: %w", err)
+		}
+		created, err := createOwnerOperator(txApp, req.Email, req.Name, req.Password)
+		if err != nil {
+			return fmt.Errorf("create owner: %w", err)
+		}
+		operator = created
+		if req.AppURL != "" {
+			txApp.Settings().Meta.AppURL = req.AppURL
+			if err := txApp.Save(txApp.Settings()); err != nil {
+				srvLog.Warn("setup: failed to save app URL", "err", err)
+			}
+		}
+		if err := MarkSetupWizardStarted(txApp); err != nil {
+			srvLog.Warn("setup: could not start the setup wizard", "err", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return operator, nil
+}
+
+// setupInitFailureMessage is what the person sees when the owner could not be
+// created. A validation message (a name that is too long, a weak password)
+// tells them what to change; anything else is a server fault whose detail
+// belongs in the log, not on the form.
+func setupInitFailureMessage(err error) string {
+	var verrs validation.Errors
+	if !errors.As(err, &verrs) {
+		return "Could not create the owner account."
+	}
+	// validation.Errors.Error() adds its own full stop after each message,
+	// which already ends in one; build the text from the parts instead.
+	fields := make([]string, 0, len(verrs))
+	for field := range verrs {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		parts = append(parts, field+": "+verrs[field].Error())
+	}
+	return strings.Join(parts, " ")
 }
 
 // IsBcryptHash reports whether v looks like a bcrypt hash ("$2" prefix, the

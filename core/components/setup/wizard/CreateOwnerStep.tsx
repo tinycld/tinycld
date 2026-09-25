@@ -16,7 +16,7 @@ import { initialsOf } from './use-workspace-preview'
 
 const ownerSchema = z
     .object({
-        name: z.string().trim().min(1, 'Enter your name'),
+        name: z.string().trim().min(1, 'Enter your name').max(255),
         email: z.string().email('Enter a valid email address'),
         password: z.string().min(10, 'Use at least 10 characters'),
         confirmPassword: z.string(),

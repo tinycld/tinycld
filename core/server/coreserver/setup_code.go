@@ -147,7 +147,9 @@ func (g *setupGuard) isLockedLocked(ip string) bool {
 
 // Consume checks the code and, on a match, runs create while still holding
 // the lock. The code is cleared only when create succeeds, so a failed
-// create (bad email, weak password) can be retried with the same code.
+// create (bad email, weak password) can be retried with the same code. That
+// retry works only because create leaves nothing behind when it fails
+// (createSetupOwner runs in one transaction).
 func (g *setupGuard) Consume(ip, input string, create func() error) (checkResult, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

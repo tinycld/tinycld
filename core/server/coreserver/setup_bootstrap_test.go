@@ -1,10 +1,14 @@
 package coreserver
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"golang.org/x/crypto/bcrypt"
@@ -219,5 +223,78 @@ func TestSetupInitCreatesOwnerAndStartsWizard(t *testing.T) {
 	_, again := runSetupInit(app, guard, "1.1.1.1", req)
 	if again != http.StatusForbidden {
 		t.Fatalf("second init status = %d, want 403", again)
+	}
+}
+
+// A users save that fails after the superuser was saved must leave nothing
+// behind: a kept superuser makes the retry fail on its duplicate email, and
+// after a restart PocketBase's installer no longer runs, so the server could
+// never be claimed.
+func TestSetupInitFailedOwnerLeavesServerClaimable(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+	createSystemSettingsCollection(t, app)
+	ensureUsersRoleAndNameFields(t, app)
+	limitUsersNameLength(t, app, 255)
+
+	var announced []string
+	guard := newSetupGuard(time.Now, func(c string) { announced = append(announced, c) })
+	if err := guard.Issue(); err != nil {
+		t.Fatal(err)
+	}
+	req := setupInitRequest{
+		Code: formatSetupCode(announced[0]), Name: strings.Repeat("n", 256),
+		Email: "dana@example.com", Password: "OwnerPass1234!",
+	}
+
+	res, status := runSetupInit(app, guard, "1.1.1.1", req)
+	if status != http.StatusBadRequest {
+		t.Fatalf("status = %d (%v), want 400", status, res)
+	}
+	body, _ := res.(map[string]string)
+	if body["error"] != "name: Must be no more than 255 character(s)." {
+		t.Fatalf("error = %q, want the name validation message", body["error"])
+	}
+	if su, _ := app.FindAuthRecordByEmail(core.CollectionNameSuperusers, "dana@example.com"); su != nil {
+		t.Fatal("a superuser was kept after the owner failed")
+	}
+	if _, err := app.FindFirstRecordByFilter("system_settings", "key = {:k}", map[string]any{"k": setupWizardKey}); err == nil {
+		t.Fatal("the wizard started although no owner exists")
+	}
+
+	req.Name = "Dana Reyes"
+	if res, status := runSetupInit(app, guard, "1.1.1.1", req); status != http.StatusOK {
+		t.Fatalf("retry with the same code: status = %d (%v)", status, res)
+	}
+}
+
+// Only a validation message reaches the form; anything else is logged and
+// replaced, so a server fault does not leak its detail to the person.
+func TestSetupInitFailureMessage(t *testing.T) {
+	verr := fmt.Errorf("create owner: %w", validation.Errors{"name": validation.NewError("x", "Too long.")})
+	if got := setupInitFailureMessage(verr); got != "name: Too long." {
+		t.Fatalf("validation message = %q", got)
+	}
+	if got := setupInitFailureMessage(errors.New("disk I/O error")); got != "Could not create the owner account." {
+		t.Fatalf("other message = %q", got)
+	}
+}
+
+func limitUsersNameLength(t *testing.T, app core.App, max int) {
+	t.Helper()
+	users, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	field, ok := users.Fields.GetByName("name").(*core.TextField)
+	if !ok {
+		t.Fatal("users.name is not a text field")
+	}
+	field.Max = max
+	if err := app.Save(users); err != nil {
+		t.Fatal(err)
 	}
 }
