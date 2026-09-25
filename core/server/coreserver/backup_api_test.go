@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -936,5 +937,96 @@ func TestRestoreRebuildWritesAnInstallLogRow(t *testing.T) {
 	}
 	if len(rows) != 1 {
 		t.Fatalf("persisted install-log rows = %d, want 1", len(rows))
+	}
+}
+
+// A target-URL backup runs on a goroutine that OUTLIVES its HTTP request, so it
+// must not hold the request's context: net/http cancels that context the instant
+// the handler returns, which aborted the PUT after its first bytes and finalized
+// the row as "failed: io: read/write on closed pipe".
+//
+// The ApiScenario tests above cannot catch this. They invoke the handler
+// directly and never cancel the request context, so the PUT survives there no
+// matter what context it was given — which is exactly why the bug shipped with
+// TestBackupToTargetReturns202AndRecordsHostOnly already asserting "succeeded".
+// This test serves the route over a real net/http listener, so the cancellation
+// is the real one rather than a simulated one.
+func TestBackupToTargetSurvivesTheRequestEnding(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "admin@example.com", "admin")
+
+	var mu sync.Mutex
+	var got []byte
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		got = b
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(sink.Close)
+
+	// The app's own router, served by net/http — so the request context is
+	// cancelled by the transport when the handler returns, as in production.
+	router, err := apis.NewRouter(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.OnServe().Trigger(&core.ServeEvent{App: app, Router: router}); err != nil {
+		t.Fatal(err)
+	}
+	mux, err := router.BuildMux()
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(mux)
+	t.Cleanup(api.Close)
+
+	body := `{"target":"` + sink.URL + `/x.age","passphrase":"` + testPassphrase + `"}`
+	req, err := http.NewRequest(http.MethodPost, api.URL+"/api/org-backups", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, res.Body)
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", res.StatusCode)
+	}
+
+	// The audit row is the last DB write the run's terminal defer makes, so it
+	// is the signal that the goroutine is finished with the app.
+	waitFor(t, func() bool {
+		logs, _ := app.FindRecordsByFilter("audit_logs", "action = 'backup.created'", "", 0, 0)
+		return len(logs) == 1
+	})
+
+	rows, err := app.FindRecordsByFilter("backups", "", "-started", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("backup rows = %d, want 1", len(rows))
+	}
+	if status := rows[0].GetString("status"); status != "succeeded" {
+		t.Fatalf("status = %q (error %q), want succeeded",
+			status, rows[0].GetString("error"))
+	}
+
+	mu.Lock()
+	archive := got
+	mu.Unlock()
+	identity, err := age.NewScryptIdentity(testPassphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rep, err := format.Inspect(bytes.NewReader(archive), identity)
+	if err != nil || !rep.OK {
+		t.Fatalf("archive at the target unreadable: %v (report ok=%v)", err, rep.OK)
 	}
 }

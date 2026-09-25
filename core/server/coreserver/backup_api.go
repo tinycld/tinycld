@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -187,7 +188,12 @@ func handleBackupCreate(app core.App, re *core.RequestEvent) error {
 	id, err := backup.Start(app, backup.Request{
 		Kind:      backup.KindManual,
 		Recipient: rcpt,
-		Sink:      format.NewPutSink(re.Request.Context(), body.Target),
+		// NOT re.Request.Context(): Start runs the backup on a goroutine that
+		// outlives this handler, and net/http cancels the request context the
+		// moment the handler returns — which killed the PUT after its first
+		// bytes ("io: read/write on closed pipe"). The streamed branch above is
+		// synchronous, so it is the only one that may use the request context.
+		Sink:      format.NewPutSink(context.WithoutCancel(re.Request.Context()), body.Target),
 		Initiator: initiator,
 		// Only the hostname reaches the ledger: a presigned target URL carries
 		// its own credentials in the query string.
@@ -404,7 +410,11 @@ func readRemoteArchive(re *core.RequestEvent, req *backup.RestoreRequest) error 
 	}
 	// The source is registered for a URL swap, so an expiring presigned link can
 	// be replaced mid-transfer instead of restarting from zero.
-	src := format.NewRangeSource(re.Request.Context(), body.Source)
+	//
+	// WithoutCancel for the same reason the backup sink uses it: the URL branch
+	// of handleRestore calls StartRestore, which reads the archive on a
+	// goroutine after this handler has returned and its context is cancelled.
+	src := format.NewRangeSource(context.WithoutCancel(re.Request.Context()), body.Source)
 	req.Identity, req.Source, req.Ranged = identity, src, src
 	req.Force, req.SourceHost = body.Force, backup.HostOnly(body.Source)
 	return nil
