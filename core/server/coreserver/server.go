@@ -334,6 +334,7 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 // single-org composition; the users hooks in particular bind in
 // guard → demo-audit → disabled order.
 func RegisterSharedCore(app *pocketbase.PocketBase) {
+	RegisterPkgEnableHook(app)
 	notify.Register(app)
 	notify.RegisterCommentMentionHooks(app)
 	// Teach the realtime broker how to verify anonymous share-session

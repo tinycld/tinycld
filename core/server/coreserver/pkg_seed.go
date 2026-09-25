@@ -2,6 +2,7 @@ package coreserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -25,22 +26,45 @@ type bundledPackage struct {
 	Source string `json:"source"`
 }
 
-func SyncBundledPackages(app core.App) {
+// loadBundledPackages reads bundled-packages.json. A missing file is not an
+// error: a dev tree before the first generate has none.
+func loadBundledPackages() ([]bundledPackage, error) {
 	jsonPath := findBundledPackagesJSON()
 	if jsonPath == "" {
-		srvLog.Info("bundled-packages.json not found, skipping sync")
-		return
+		return nil, nil
 	}
-
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
-		srvLog.Error("failed to read bundled-packages.json", "path", jsonPath, "err", err)
-		return
+		return nil, fmt.Errorf("read %s: %w", jsonPath, err)
 	}
-
 	var packages []bundledPackage
 	if err := json.Unmarshal(data, &packages); err != nil {
-		srvLog.Error("failed to parse bundled-packages.json", "err", err)
+		return nil, fmt.Errorf("parse %s: %w", jsonPath, err)
+	}
+	return packages, nil
+}
+
+// bundledSlugSet is the set of slugs compiled into this build.
+func bundledSlugSet() map[string]bool {
+	packages, err := loadBundledPackages()
+	if err != nil {
+		srvLog.Error("failed to load bundled packages", "err", err)
+	}
+	set := make(map[string]bool, len(packages))
+	for _, pkg := range packages {
+		set[pkg.Slug] = true
+	}
+	return set
+}
+
+func SyncBundledPackages(app core.App) {
+	packages, err := loadBundledPackages()
+	if err != nil {
+		srvLog.Error("failed to load bundled packages", "err", err)
+		return
+	}
+	if packages == nil {
+		srvLog.Info("bundled-packages.json not found, skipping sync")
 		return
 	}
 
@@ -113,10 +137,6 @@ func SyncBundledPackages(app core.App) {
 		}
 		if pkg.ManifestJSON != "" {
 			existing.Set("manifest_json", pkg.ManifestJSON)
-		}
-		if existing.GetString("status") == "disabled" {
-			// Re-enable if it was disabled but is still bundled
-			existing.Set("status", "bundled")
 		}
 		if err := app.Save(existing); err != nil {
 			srvLog.Error("failed to update bundled package registry row", "slug", pkg.Slug, "err", err)
