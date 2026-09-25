@@ -4,7 +4,7 @@ import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useSetupPreviewStore } from '@tinycld/core/lib/setup/setup-preview-store'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
-import { isDeliverySwitchedOn } from '../../setup/system-settings-logic'
+import { isDeliveryEnabled } from '../../setup/system-settings-logic'
 import { useSystemSettings } from '../../setup/system-settings-store'
 
 export interface PreviewModel {
@@ -108,6 +108,6 @@ export function useWorkspacePreview(): PreviewModel {
         apps,
         memberInitials: people.slice(0, MAX_AVATARS).map(p => initialsOf(p.name)),
         memberCount: people.length,
-        isMailOn: isDeliverySwitchedOn(byKey.get('mail.delivery_enabled')?.value),
+        isMailOn: isDeliveryEnabled(byKey.get('mail.delivery_enabled')?.value),
     })
 }

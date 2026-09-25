@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { emailIsDone } from '../EmailStep'
+import * as EmailStep from '../EmailStep'
 import { teamIsDone } from '../TeamStep'
 import { workspaceIsDone } from '../WorkspaceStep'
 
@@ -13,8 +13,7 @@ describe('derived step state', () => {
         expect(teamIsDone(1)).toBe(false)
         expect(teamIsDone(2)).toBe(true)
     })
-    it('email is done once delivery is on', () => {
-        expect(emailIsDone(undefined)).toBe(false)
-        expect(emailIsDone('true')).toBe(true)
+    it('email is done once acknowledged, not from a stored setting', () => {
+        expect('useIsStepDone' in EmailStep).toBe(false)
     })
 })

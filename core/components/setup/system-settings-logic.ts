@@ -59,12 +59,3 @@ export function deliveryEnabledValue(enabled: boolean): string {
 export function isDeliveryEnabled(stored: string | undefined): boolean {
     return stored !== 'false'
 }
-
-/**
- * Whether someone has saved delivery as on. Unlike isDeliveryEnabled, an absent
- * row is off: the server's default-on does not mean mail was set up, and setup
- * should not report it as done or show it as on.
- */
-export function isDeliverySwitchedOn(stored: string | undefined): boolean {
-    return stored !== undefined && isDeliveryEnabled(stored)
-}

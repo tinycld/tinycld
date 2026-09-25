@@ -4,26 +4,25 @@ import {
     packageSystemSettings,
 } from '@tinycld/core/lib/packages/derive-components'
 import type { SetupStepProps } from '@tinycld/core/lib/setup/types'
-import { useIsSettingManaged } from '@tinycld/core/lib/use-managed-settings'
+import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
+import {
+    useIsManagedSettingsPending,
+    useIsSettingManaged,
+} from '@tinycld/core/lib/use-managed-settings'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { Suspense } from 'react'
 import { Text, View } from 'react-native'
-import { isDeliverySwitchedOn } from '../../../setup/system-settings-logic'
-import { useSystemSettings } from '../../../setup/system-settings-store'
 
 const MAIL_PREFIX = 'mail.'
 
-export function emailIsDone(value: string | undefined): boolean {
-    return isDeliverySwitchedOn(value)
-}
-
-export function useIsStepDone() {
-    const { byKey, isReady } = useSystemSettings()
-    return isReady ? emailIsDone(byKey.get('mail.delivery_enabled')?.value) : undefined
-}
-
+// Acknowledged-only: the server treats unset delivery as on, so a stored value
+// cannot tell whether anyone set mail up. The owner's Continue does.
+//
+// Owner-only, like these panels in Settings.
 export function useIsStepVisible() {
-    return !useIsSettingManaged(MAIL_PREFIX)
+    const { isOwner } = useCurrentRole()
+    const isManaged = useIsSettingManaged(MAIL_PREFIX)
+    return isOwner && !isManaged
 }
 
 /**
@@ -41,6 +40,12 @@ export function mailPanelsOf(groups: readonly PackageSystemSettingsGroup[]) {
 const MAIL_PANELS = mailPanelsOf(packageSystemSettings)
 
 export default function EmailStep({ next }: SetupStepProps) {
+    const isManaged = useIsSettingManaged(MAIL_PREFIX)
+    // Until the managed answer arrives an empty list reads as "nothing is
+    // managed"; rendering the panels then would let a hosted owner act on
+    // settings they do not administer.
+    const isPending = useIsManagedSettingsPending()
+    if (isPending || isManaged) return null
     const panels = MAIL_PANELS.map(({ key, Component }) => (
         <Suspense key={key} fallback={null}>
             <Component />

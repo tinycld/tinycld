@@ -28,14 +28,15 @@ export function appChoicesOf(
     const rowBySlug = new Map(rows.map(r => [r.slug, r]))
     return bundled.flatMap(pkg => {
         const row = rowBySlug.get(pkg.slug)
-        if (!row || pkg.slug === CORE_SLUG) return []
+        // A package without nav has no rail icon: it is a library, not an app.
+        if (!row || !pkg.nav || pkg.slug === CORE_SLUG) return []
         return [
             {
                 id: row.id,
                 slug: pkg.slug,
                 name: pkg.name,
                 description: pkg.description,
-                icon: pkg.nav?.icon ?? '',
+                icon: pkg.nav.icon ?? '',
                 isOn: row.status !== 'disabled',
             },
         ]

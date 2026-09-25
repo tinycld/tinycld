@@ -3,7 +3,6 @@ import {
     deliveryEnabledValue,
     fromAddressSchema,
     isDeliveryEnabled,
-    isDeliverySwitchedOn,
     rowsToMap,
     sentryDsnSchema,
     shouldPersistSecret,
@@ -72,13 +71,5 @@ describe('delivery-enabled mapping', () => {
         expect(isDeliveryEnabled('true')).toBe(true)
         expect(isDeliveryEnabled('')).toBe(true)
         expect(isDeliveryEnabled('false')).toBe(false)
-    })
-})
-
-describe('isDeliverySwitchedOn', () => {
-    it('is on only once someone has turned delivery on', () => {
-        expect(isDeliverySwitchedOn(undefined)).toBe(false)
-        expect(isDeliverySwitchedOn('false')).toBe(false)
-        expect(isDeliverySwitchedOn('true')).toBe(true)
     })
 })

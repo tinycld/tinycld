@@ -49,6 +49,7 @@ function useTeamInvite() {
     const invite = useInviteMember({
         setError: form.setError,
         getValues: form.getValues,
+        errorsOnForm: true,
         onInvited: result => {
             form.reset()
             setInvited(result)

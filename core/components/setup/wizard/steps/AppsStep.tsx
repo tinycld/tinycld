@@ -1,8 +1,9 @@
 import { and, eq, inArray, not } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
-import { captureException } from '@tinycld/core/lib/errors'
+import { captureException, errorToString } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
+import { notify } from '@tinycld/core/lib/notify'
 import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { enabledStatusFor } from '@tinycld/core/lib/setup/set-package-enabled'
@@ -43,7 +44,15 @@ function useAppChoices() {
                 draft.status = enabledStatusFor(!choice.isOn)
             })
         }),
-        onError: err => captureException('setup.apps', err),
+        onError: err => {
+            captureException('setup.apps', err)
+            notify.emit({
+                event: 'mutation.error',
+                title: 'Could not change the app',
+                body: errorToString(err),
+                data: { operation: 'setup.apps', error: errorToString(err) },
+            })
+        },
     })
     return { choices: appChoicesOf(rows, packageRegistry), toggle: toggle.mutate }
 }

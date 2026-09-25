@@ -3,7 +3,7 @@ import { appChoicesOf } from '../app-choices'
 
 const bundled = [
     { slug: 'alpha', name: 'Alpha', description: 'First app', nav: { icon: 'mail' } },
-    { slug: 'beta', name: 'Beta', description: 'Second app' },
+    { slug: 'beta', name: 'Beta', description: 'Second app', nav: { icon: 'calendar' } },
 ]
 
 describe('appChoicesOf', () => {
@@ -26,7 +26,7 @@ describe('appChoicesOf', () => {
                 slug: 'beta',
                 name: 'Beta',
                 description: 'Second app',
-                icon: '',
+                icon: 'calendar',
                 isOn: false,
             },
         ])
@@ -39,6 +39,10 @@ describe('appChoicesOf', () => {
         expect(
             appChoicesOf(rows, [...bundled, { slug: 'core', name: 'Core', description: '' }])
         ).toEqual([])
+    })
+    it('leaves out a bundled package with no nav entry, which is not an app people open', () => {
+        const rows = [{ id: 'l', slug: 'lib', status: 'bundled' }]
+        expect(appChoicesOf(rows, [{ slug: 'lib', name: 'Lib', description: '' }])).toEqual([])
     })
     it('leaves out a bundled app that has no registry row yet', () => {
         expect(appChoicesOf([], bundled)).toEqual([])
