@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local runner for the todo-install integration test. Builds a TinyCld
 # image from the CURRENT working tree (so the git-spec validation change is
-# present), boots it, scrapes the first-run /admin bootstrap token, runs the
+# present), boots it, scrapes the first-run setup code, runs the
 # Playwright spec straight from this directory against the assembled local
 # workspace, and tears the container down.
 #
@@ -186,12 +186,12 @@ MOUNT_ROOT="${MOUNT_ROOT:-$(mktemp -d -t tinycld-todo-mounts.XXXXXX)}"
 PB_DATA_DIR="${MOUNT_ROOT}/pb_data"
 BUILDS_DIR="${MOUNT_ROOT}/builds"
 RELEASES_DIR="${MOUNT_ROOT}/releases"
-# The first-run setup token (which we scrape to drive the /admin wizard) is only
+# The first-run setup code (which we scrape to drive the setup wizard) is only
 # printed by PocketBase's InstallerFunc when the DB has NO superusers — i.e. a
 # truly empty pb_data. A fresh mktemp MOUNT_ROOT is already empty, but if the
 # caller reuses MOUNT_ROOT (the `:-` default above) a stale DB from a prior run
-# would suppress the token and the bootstrap scrape would fail. Wipe the mounts
-# before boot so an empty-DB first run — and thus the printed token — is
+# would suppress the code and the bootstrap scrape would fail. Wipe the mounts
+# before boot so an empty-DB first run — and thus the printed code — is
 # guaranteed regardless of how MOUNT_ROOT was chosen.
 rm -rf "${PB_DATA_DIR}" "${BUILDS_DIR}" "${RELEASES_DIR}"
 mkdir -p "${PB_DATA_DIR}" "${BUILDS_DIR}" "${RELEASES_DIR}"
@@ -216,26 +216,26 @@ start_live_log
 # on a loaded host, so give it a wider budget — a slow boot here is not a failure.
 wait_healthy "first boot" 300
 
-# 4. Scrape the first-run bootstrap token from logs. The server prints a
-#    `${url}/admin?token=…` line on first boot; the path doesn't matter here —
-#    we match the `token=` query param, so this is unaffected by /setup→/admin.
+# 4. Scrape the first-run setup code from logs. The server prints a
+#    `${url}/setup?code=…` line on first boot; we match the `code=` query
+#    param, so this is unaffected by any further path renames.
 #
-#    The setup-token banner is printed AFTER /api/health starts answering (the
+#    The setup-code banner is printed AFTER /api/health starts answering (the
 #    banner comes near the very end of boot, once PocketBase finishes the
 #    InstallerFunc check), so a one-shot grep right after wait_healthy races the
 #    banner and can find nothing. Poll the logs for up to 30s instead.
-TOKEN=""
+CODE=""
 for i in $(seq 1 30); do
-    TOKEN=$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'token=[a-f0-9]+' | head -1 | cut -d= -f2 || true)
-    [ -n "${TOKEN}" ] && break
+    CODE=$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'code=[A-Z0-9]{8}' | head -1 | cut -d= -f2 || true)
+    [ -n "${CODE}" ] && break
     sleep 1
 done
-if [ -z "${TOKEN}" ]; then
-    echo "[runner] ERROR: no bootstrap token printed in logs after 30s" >&2
+if [ -z "${CODE}" ]; then
+    echo "[runner] ERROR: no setup code printed in logs after 30s" >&2
     dump_logs
     exit 1
 fi
-echo "[runner] scraped bootstrap token (${#TOKEN} chars)"
+echo "[runner] scraped setup code (${#CODE} chars)"
 
 # 5. Ensure the Playwright browser binary is present. The spec and its config
 #    run in place from ${SCRIPT_DIR} via the workspace's own `playwright`; the
@@ -245,23 +245,23 @@ echo "[runner] ensuring chromium is installed for playwright"
 (cd "${APP_DIR}" && pnpm exec playwright install chromium >/dev/null)
 
 # Runs a subset of the serial spec, selected by a title grep. The first phase
-# needs the bootstrap token (for the first-run /admin wizard); later phases
+# needs the setup code (for the first-run wizard at /a/setup); later phases
 # don't. Each call shares the container's persisted state from the prior phase.
 # $1 is the title grep, $2 a human label for failure messages. Runs from
 # ${SCRIPT_DIR} so the config's `testDir: '.'` resolves to this directory.
 #
 # The spec is passed by filename as a positional filter so ONLY todo-install.spec
 # is loaded — the sibling setup-and-packages.spec.ts in this dir shares a
-# 'bootstrap superuser via /admin wizard' test title, and without this filter the
+# 'bootstrap owner via /setup wizard' test title, and without this filter the
 # `bootstrap` grep in phase 1 would also select it and run it against the same
-# container with the wrong setup token.
+# container with the wrong setup code.
 run_phase() {
     local grep_expr="$1" label="$2"
     echo "[runner] running ${label}"
     (
         cd "${SCRIPT_DIR}"
         PW_BASE_URL="${BASE_URL}" \
-        PW_TODO_SETUP_TOKEN="${TOKEN}" \
+        PW_TODO_SETUP_CODE="${CODE}" \
         PW_CORE_CUR="${CORE_CUR:-}" \
         PW_CORE_NEXT="${CORE_NEXT:-}" \
         ADMIN_USER_LOGIN="${ADMIN_USER_LOGIN:-}" \

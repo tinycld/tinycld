@@ -551,7 +551,7 @@ bash tests/install/run-todo-install.sh
 ```
 
 The runner builds the image from the current working tree, boots it, scrapes the
-setup token from the container logs, and drives the Playwright spec in a
+setup code from the container logs, and drives the Playwright spec in a
 standalone sandbox. Env knobs:
 
 | Var | Effect |

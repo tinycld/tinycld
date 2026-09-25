@@ -18,7 +18,7 @@ import { expect, type Page, test } from '@playwright/test'
 
 const RUN_INSTALL_TEST = process.env.RUN_CALSLOTS_INSTALL_TEST === '1'
 
-const SETUP_TOKEN = process.env.PW_CALSLOTS_SETUP_TOKEN
+const SETUP_CODE = process.env.PW_CALSLOTS_SETUP_CODE
 
 // The superuser this spec bootstraps + logs in as. Read from the workspace .env
 // (ADMIN_USER_LOGIN / ADMIN_USER_PW, forwarded by the driver), falling back to
@@ -38,10 +38,11 @@ const PKG_SPEC = process.env.PW_CALSLOTS_SPEC ?? 'github:stefnnn/tinycld-calenda
 // assembly.
 
 async function loginAsSuperuser(page: Page, timeoutMs?: number) {
-    // /setup, not /admin: the superuser-login console moved there in the
-    // single-org migration. /admin is now behind AuthGate and shows the app's
-    // LoginModal instead of the 'Superuser Login' form asserted below.
-    await page.goto('/a/setup', timeoutMs ? { timeout: timeoutMs } : undefined)
+    // /setup/recovery, not /admin: the raw-superuser recovery console moved
+    // there once /setup itself became the first-run wizard door. /admin is
+    // behind AuthGate and shows the app's LoginModal instead of the
+    // 'Superuser Login' form asserted below.
+    await page.goto('/a/setup/recovery', timeoutMs ? { timeout: timeoutMs } : undefined)
     await expect(page.getByText('Superuser Login')).toBeVisible(
         timeoutMs ? { timeout: timeoutMs } : undefined
     )
@@ -425,31 +426,29 @@ test.describe('calendar-slots install', () => {
         )
     })
 
-    test('bootstrap superuser via /admin wizard', async ({ page }) => {
+    test('bootstrap owner via /setup wizard', async ({ page }) => {
         test.skip(
-            !SETUP_TOKEN,
-            'PW_CALSLOTS_SETUP_TOKEN not set — the runner scrapes it from `docker logs`'
+            !SETUP_CODE,
+            'PW_CALSLOTS_SETUP_CODE not set — the runner scrapes it from `docker logs`'
         )
 
-        await page.goto(`/a/setup?token=${SETUP_TOKEN}`)
-        await expect(page.getByText('Welcome to TinyCld')).toBeVisible()
+        await page.goto(`/a/setup?code=${SETUP_CODE}`)
+        await expect(page.getByText('Create your owner account')).toBeVisible()
 
-        await page
-            .getByRole('textbox', { name: 'Application Name', exact: true })
-            .fill('Calendar Slots TinyCld')
+        await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Calendar Slots Owner')
         await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
         await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
         await page
-            .getByRole('textbox', { name: 'Confirm Password', exact: true })
+            .getByRole('textbox', { name: 'Confirm password', exact: true })
             .fill(SUPERUSER_PASSWORD)
-        await page
-            .getByRole('textbox', { name: 'App URL', exact: true })
-            .fill('http://localhost:7090')
 
-        await page.getByRole('button', { name: 'Create Account & Continue' }).click()
-        // Single-org: the dashboard lands on Packages, and the Organizations
-        // tab is a static "managed by the router" explainer, not an empty list.
-        await expect(page.getByText('Packages', { exact: true }).first()).toBeVisible()
+        await page.getByRole('button', { name: 'Create account' }).click()
+        // The owner is created and signed in; the signed-in wizard opens on its
+        // first step. Dismiss it so later phases' navigations (which expect the
+        // superuser recovery console / in-app dashboard) aren't redirected back
+        // into the wizard.
+        await expect(page.getByText('Your workspace')).toBeVisible()
+        await page.getByRole('button', { name: 'Finish later' }).click()
     })
 
     test('installing calendar-slots WITHOUT calendar is rejected by the compat gate', async ({

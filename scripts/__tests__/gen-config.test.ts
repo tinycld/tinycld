@@ -15,6 +15,7 @@ const contacts: ConfigPkg = {
     sidebarContributions: [],
     eventSources: [],
     eventSourceHost: false,
+    setupSteps: [],
     manifest: { name: 'Contacts', slug: 'contacts', version: '0.1.0', description: 'd' },
 }
 const takeout: ConfigPkg = {
@@ -31,12 +32,33 @@ const takeout: ConfigPkg = {
     sidebarContributions: [],
     eventSources: [],
     eventSourceHost: false,
+    setupSteps: [],
     manifest: {
         name: 'Takeout',
         slug: 'google-takeout-import',
         version: '0.1.0',
         description: 'd',
     },
+}
+
+function emptyPkg(packageName: string, slug: string): ConfigPkg {
+    return {
+        packageName,
+        slug,
+        schemaType: '',
+        hasRegister: false,
+        hasSidebar: false,
+        hasProvider: false,
+        hasSeed: false,
+        settings: [],
+        systemSettings: [],
+        slots: [],
+        sidebarContributions: [],
+        eventSources: [],
+        eventSourceHost: false,
+        setupSteps: [],
+        manifest: { name: slug, slug, version: '0.1.0', description: 'd' },
+    }
 }
 
 describe('buildConfigSource', () => {
@@ -160,6 +182,7 @@ describe('buildConfigSource', () => {
             sidebarContributions: [],
             eventSources: [],
             eventSourceHost: false,
+            setupSteps: [],
             manifest: { name: 'Drive', slug: 'drive', version: '0.1.0', description: 'd' },
         }
         const src = buildConfigSource([withProvider])
@@ -183,6 +206,7 @@ describe('buildConfigSource', () => {
             sidebarContributions: [],
             eventSources: [],
             eventSourceHost: false,
+            setupSteps: [],
             manifest: { name: 'Mail', slug: 'mail', version: '0.1.0', description: 'd' },
         }
         const src = buildConfigSource([contacts, mail])
@@ -307,6 +331,18 @@ describe('buildConfigSource', () => {
         const src = buildConfigSource([contacts])
         expect(src).not.toContain('automation:')
         expect(src).not.toContain('Automation from')
+    })
+
+    it('emits setup steps as load thunks', () => {
+        const src = buildConfigSource([
+            {
+                ...emptyPkg('@acme/acme', 'acme'),
+                setupSteps: [{ id: 'plan', label: 'Plan', module: 'setup/plan', order: 'Zz' }],
+            },
+        ])
+        expect(src).toContain(
+            `{ id: "plan", label: "Plan", order: "Zz", load: () => import('@acme/acme/setup/plan') },`
+        )
     })
 })
 

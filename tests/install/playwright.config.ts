@@ -8,8 +8,8 @@ import { defineConfig, devices } from '@playwright/test'
 // instructions on tinycld.org/docs/installation.
 //
 // BASE_URL: where the container's HTTP listener is reachable.
-// SETUP_TOKEN: scraped from `docker logs <container>` and exported as
-//   PW_SETUP_TOKEN before invoking playwright.
+// SETUP_CODE: scraped from `docker logs <container>` and exported as
+//   PW_SETUP_CODE before invoking playwright.
 
 // Pull workspace .env (ADMIN_USER_LOGIN / ADMIN_USER_PW, …) into process.env for
 // a DIRECT local run of this config (`npx playwright test` from tests/install/),

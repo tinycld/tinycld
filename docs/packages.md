@@ -277,7 +277,8 @@ export default manifest
 | `sidebar` / `provider` | A package may contribute a sidebar component **or** a context provider that wraps app children. The provider is emitted as a `{ load: () => import(...) }` thunk — not `lazy()` — and core resolves every provider before the route tree mounts (`core/lib/packages/provider-loader.ts`), so the package area never suspends on it. |
 | `settings[]` | Personal Settings panel contributions (`slug`, `label`, `component`). See [Extension points](#extension-points-settings-panels-and-sidebar-slots) below. |
 | `slots[]` | Names of sidebar slots this package exposes for *other* packages to render into. Free-form strings; duplicates within one manifest are a generator error. Render with `<SidebarSlot target="<this-slug>" slot="<name>" />` from `@tinycld/core/components/sidebar-primitives`. |
-| `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order? }` is generator-validated. |
+| `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order? }` is generator-validated. `target: 'core'` renders into a slot core owns (see [Setup wizard steps](#setup-wizard-steps-setupsteps)). |
+| `setupSteps[]` | Steps this package adds to the first-run setup wizard (`id`, `label`, `module`, `order?`). See [Setup wizard steps](#setup-wizard-steps-setupsteps) below. |
 | `help.directory` | `<id>.md` topics surfaced in the in-app help hub. |
 | `seed.script` | Dev sample-data function. |
 | `server` | Go server extension: `package` is the subdir, `module` is its Go module path. The module exports ONE entry point, `Register(app *pocketbase.PocketBase)`, called by the generated registrar — the same call in every composition. Optional `mailListeners: true` declares that this package serves mail protocols. A self-hosted deployment binds its own ports; where the process is embedded in a supervisor that owns the public ports, the supervisor injects pre-bound sockets and `Register` discovers them through core's embedded-context seam instead of binding anything itself. |
@@ -658,6 +659,42 @@ The contributor must add an `exports` wildcard matching the `component` subpath 
 The host can also declare slots and never render them: the generator will allow that, but no contribution targeting that slot will appear — typically a sign the host's sidebar JSX is out of sync with its manifest.
 
 For author-facing prose, link readers to the website pages: [Settings](https://tinycld.org/docs/anatomy/settings) and [Sidebar slots](https://tinycld.org/docs/anatomy/sidebar-slots).
+
+### Setup wizard steps (`setupSteps`)
+
+The first-run setup wizard opens for an owner or admin after the server is claimed. Core supplies four steps. A package can add its own steps with `manifest.setupSteps`:
+
+```ts
+setupSteps: [
+    { id: 'address', label: 'Mail address', module: 'setup/address', order: 'a1V' },
+]
+```
+
+| Field | Rule |
+|---|---|
+| `id` | Must match `[a-z0-9-]+`, because it appears in the URL (`/a/setup/<slug>.<id>`). The wizard stores the step as `<slug>:<id>`. |
+| `label` | The name in the progress bar. Keep it short. |
+| `module` | A `package.json` `exports` subpath, like `component` in `settings`. |
+| `order` | Optional. A fractional-indexing key (the `fractional-indexing` library). The generator refuses a key that is not valid. Steps without `order` come last. |
+
+**Order keys.** Core's steps use `a0` (Workspace), `a1` (Apps), `a2` (Email sending) and `a3` (Your team). Keys sort by plain character order, so `a0V` comes after `a0` and before `a1`, and `Zz` comes before `a0`. To put a step between two steps, use a key between their keys. You do not have to change other keys. If two steps have the same key, the step id decides the order.
+
+**Module contract.** The module must default-export the step component. The component gets one prop, `next`. Call `next()` after the step saves its data. The wizard then marks the step as done and opens the next step. The module can also export these hooks. The wizard calls them on every render of every step, so keep them cheap and free of side effects:
+
+- `useIsStepDone(): boolean | undefined` — Tells the wizard that the step is done because of real data (for example, a record exists). Return `undefined` while the data loads. If the module does not export it, the step is done only after the person clicks Continue (`next()`). Do not derive "done" from a value that a new server already has.
+- `useIsStepVisible(): boolean | undefined` — Tells the wizard to show or hide the step (for example, owner-only steps). Return `undefined` while the answer loads: the wizard then does not show the step and waits before it opens the next step, so it does not skip past it. If the module does not export it, the step is always visible.
+
+When the person skips a step, the progress bar shows it as skipped, and the wizard does not open it again when it resumes.
+
+**The `setup-team` slot.** Core renders a sidebar slot on the Team step, above the invite form. A package can add content there (for example, a link to import people from another service) with a `sidebarContributions` entry that targets core:
+
+```ts
+sidebarContributions: [
+    { target: 'core', slot: 'setup-team', component: 'setup/team-import' },
+]
+```
+
+Core's slot names are listed in `core/lib/setup/core-slots.ts`. The generator uses that list to validate contributions with `target: 'core'`, so a wrong slot name stops the build.
 
 ---
 

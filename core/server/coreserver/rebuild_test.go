@@ -89,6 +89,64 @@ func TestBuildCurrentMemberSet_MapsCoreToTinycld(t *testing.T) {
 	}
 }
 
+// A bundled app the owner hid is "disabled" but its code is still part of
+// the build: an install, upgrade or uninstall of another package must keep
+// it, or re-enabling it later points at code the rebuild dropped.
+func TestBuildCurrentMemberSet_KeepsHiddenBundledApp(t *testing.T) {
+	app := newMigrateTestApp(t)
+	addPkgRegistryCollection(t, app)
+	dir := t.TempDir()
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Widgets", Slug: "widgets", Version: "1.0.0"}})
+	withCwd(t, dir)
+	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
+	setRegistryRow(t, app, "widgets", "disabled", "1.0.0", "@acme/widgets@1.0.0")
+	setRegistryRow(t, app, "gadgets", "disabled", "0.1.0", "@acme/gadgets@0.1.0")
+
+	set, err := buildCurrentMemberSet(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySlug := map[string]MemberSpec{}
+	for _, ms := range set {
+		bySlug[ms.Slug] = ms
+	}
+	if _, ok := bySlug["widgets"]; !ok {
+		t.Fatal("hidden bundled widgets was dropped from the member set")
+	}
+	if _, ok := bySlug["gadgets"]; ok {
+		t.Fatal("a disabled row that is not bundled has no code in the build")
+	}
+}
+
+// Rebuilding with a hidden bundled app in the manifest must not show it again.
+func TestCommitRegistry_KeepsHiddenBundledAppHidden(t *testing.T) {
+	app := newMigrateTestApp(t)
+	addPkgRegistryCollection(t, app)
+	dir := t.TempDir()
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Widgets", Slug: "widgets", Version: "1.0.0"}})
+	withCwd(t, dir)
+	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
+	setRegistryRow(t, app, "widgets", "disabled", "1.0.0", "@acme/widgets@1.0.0")
+
+	m := RebuildManifest{
+		BuildID: "build-h",
+		Members: []MemberSpec{
+			{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld", FromCurrent: true},
+			{Slug: "widgets", Version: "1.0.0", Spec: "@acme/widgets@1.0.0", FromCurrent: true},
+		},
+	}
+	if err := commitRegistry(app, m, t.TempDir(), ""); err != nil {
+		t.Fatal(err)
+	}
+	widgets, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'widgets'", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := widgets.GetString("status"); got != "disabled" {
+		t.Fatalf("widgets status = %s, want disabled", got)
+	}
+}
+
 func TestCommitRegistry_MirrorsManifest(t *testing.T) {
 	app := newMigrateTestApp(t)
 	addPkgRegistryCollection(t, app)

@@ -1,3 +1,4 @@
+import { CORE_SLOT_TARGET } from '@tinycld/core/lib/setup/core-slots'
 import { describe, expect, it } from 'vitest'
 import {
     deriveProviders,
@@ -144,6 +145,23 @@ describe('derive-components', () => {
                 },
             ] as never)
             expect(Object.keys(r)).toEqual(['calendar'])
+        })
+
+        it('files contributions that target core under the core slot target', () => {
+            const r = deriveSidebarContributions([
+                {
+                    manifest: { slug: 'seats' },
+                    sidebarContributions: [
+                        {
+                            target: CORE_SLOT_TARGET,
+                            slot: 'setup-team',
+                            order: 0,
+                            Component: C1,
+                        },
+                    ],
+                },
+            ] as never)
+            expect(r[CORE_SLOT_TARGET]['setup-team'][0].Component).toBe(C1)
         })
     })
 })

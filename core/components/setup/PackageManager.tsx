@@ -5,6 +5,7 @@ import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
+import { enabledStatusFor } from '@tinycld/core/lib/setup/set-package-enabled'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
 import { Dialog } from '@tinycld/core/ui/dialog'
@@ -504,10 +505,8 @@ function PackageActions({
 
     const toggle = useMutation({
         mutationFn: mutation(function* () {
-            const isBundled = pkg.status === 'bundled'
-            const newStatus = isEnabled ? 'disabled' : isBundled ? 'bundled' : 'installed'
             yield pkgRegistryCollection.update(pkg.id, draft => {
-                draft.status = newStatus
+                draft.status = enabledStatusFor(!isEnabled)
             })
         }),
         onError: err => captureException('Failed to toggle package status', err),

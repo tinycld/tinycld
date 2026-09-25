@@ -61,7 +61,6 @@ export function GluestackUIProvider({
         <>
             <script
                 suppressHydrationWarning
-                // biome-ignore lint/security/noDangerouslySetInnerHtml: static, self-authored theme-init script (serialized local function) that must run before first paint to prevent a theme flash; mode/colorTheme are allowlist-validated and JSON.stringify-escaped, so no user input reaches the markup
                 dangerouslySetInnerHTML={{
                     __html: `(${script.toString()})(${JSON.stringify(validMode)},${JSON.stringify(validColorTheme)})`,
                 }}
