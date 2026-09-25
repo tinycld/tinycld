@@ -13,7 +13,7 @@ export function RestoreForm({ isVisible, isBusy }: Props) {
     if (!isVisible) return null
 
     return (
-        <View className="rounded-xl border border-danger p-4 gap-3">
+        <View className="rounded-xl border border-danger p-4 gap-3" testID="restore-form">
             <Text className="text-foreground font-semibold">Restore from a backup</Text>
             <Text className="text-xs text-muted-foreground">
                 A restore replaces everything in this organization with the contents of the archive.

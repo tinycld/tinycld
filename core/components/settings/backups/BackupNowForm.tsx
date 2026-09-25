@@ -11,7 +11,10 @@ export function BackupNowForm({ isBusy }: Props) {
     const isDisabled = isBusy || start.isPending || !formState.isValid
 
     return (
-        <View className="rounded-xl border border-border bg-surface-secondary p-4 gap-3">
+        <View
+            className="rounded-xl border border-border bg-surface-secondary p-4 gap-3"
+            testID="backup-now-form"
+        >
             <Text className="text-foreground font-semibold">Back up now</Text>
             <Text className="text-xs text-muted-foreground">
                 The backup is streamed to a URL you provide (a presigned PUT to S3, R2, B2 or any
