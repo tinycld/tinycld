@@ -1,6 +1,40 @@
 package backup
 
-import "tinycld.org/core/backup/format"
+import (
+	"sync"
+
+	"tinycld.org/core/backup/format"
+)
+
+// restoreWatcher lets a test outside this package bound the lifetime of a restore
+// goroutine. StartRestore calls it before the goroutine starts and calls what it
+// returns when the goroutine ends, so a test can wait for every restore it began
+// before its app's database is closed under one.
+//
+// It is a seam rather than an exported WaitGroup because nothing in production
+// waits: a restore's whole point is to outlive the request that asked for it.
+var (
+	watcherMu      sync.RWMutex
+	restoreWatcher func() func()
+)
+
+// SetRestoreWatcher installs the seam. Pass nil to remove it.
+func SetRestoreWatcher(fn func() func()) {
+	watcherMu.Lock()
+	defer watcherMu.Unlock()
+	restoreWatcher = fn
+}
+
+// watchRestore reports the goroutine's start and returns its completion callback.
+func watchRestore() func() {
+	watcherMu.RLock()
+	fn := restoreWatcher
+	watcherMu.RUnlock()
+	if fn == nil {
+		return func() {}
+	}
+	return fn()
+}
 
 // ResetForTesting returns every process-wide seam in this package to its
 // zero state.
@@ -17,6 +51,10 @@ import "tinycld.org/core/backup/format"
 // a restore.
 func ResetForTesting() {
 	restoring.Store(false)
+
+	watcherMu.Lock()
+	restoreWatcher = nil
+	watcherMu.Unlock()
 
 	rebuilderMu.Lock()
 	rebuilder = nil

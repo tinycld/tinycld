@@ -219,14 +219,26 @@ func allowLoopbackBackupTargets(t *testing.T, allow bool) {
 // Cleanup goes through backup.ResetForTesting rather than unsetting one seam,
 // because the package holds more process-wide state than the rebuilder — a left
 // restoring flag would put every later request behind the maintenance 503.
+// A restore now ALWAYS runs on a goroutine (the upload branch used to be
+// synchronous), so the seams also count restores in flight: a test that asserted
+// its 202 and returned would otherwise let app.Cleanup close the database under a
+// running restore, which panics in whichever test happens to be next.
 func restoreSeams(t *testing.T) {
 	t.Helper()
+	var done sync.WaitGroup
+	backup.SetRestoreWatcher(func() func() {
+		done.Add(1)
+		return done.Done
+	})
 	backup.RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
 		installjob.Release(job)
 		return nil
 	})
 	backup.SetRestart(func() bool { return true })
+	// Before ResetForTesting, so the wait happens while the seams are still the
+	// ones the restore is using.
 	t.Cleanup(backup.ResetForTesting)
+	t.Cleanup(done.Wait)
 }
 
 func makeBackupUser(t *testing.T, app core.App, email, role string) *core.Record {
@@ -1218,5 +1230,147 @@ func TestBackupTargetCheckRefusesTheUnreachableClasses(t *testing.T) {
 		if err := checkBackupTarget(raw); err == nil {
 			t.Errorf("%s was allowed", raw)
 		}
+	}
+}
+
+// A multipart restore has to answer 202 with a job id BEFORE phase 6 ends the
+// process. The upload branch used to call backup.Restore synchronously, so the
+// rebuilder (or the restart) ran inside the handler and the response was never
+// written: the CLI saw a dropped connection and had no job id to poll, which is
+// the only way it can learn the outcome after the restart.
+//
+// The restart seam here CLOSES THE LISTENER, which is the closest a test can come
+// to the process ending. If the 202 does not precede it, the client's Do returns
+// a transport error instead of a response — so this test cannot pass by accident.
+func TestUploadedRestoreAnswers202BeforeTheProcessEnds(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "owner@example.com", "owner")
+	// No rebuilder: this deployment restarts onto its own package set, so phase 6
+	// is the restart seam rather than a rebuild.
+	backup.RegisterRebuilder(nil)
+
+	var archive bytes.Buffer
+	streamBackupForTest(t, app, &archive)
+
+	router, err := apis.NewRouter(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.OnServe().Trigger(&core.ServeEvent{App: app, Router: router}); err != nil {
+		t.Fatal(err)
+	}
+	mux, err := router.BuildMux()
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(mux)
+	t.Cleanup(api.Close)
+
+	restarted := make(chan struct{})
+	var once sync.Once
+	backup.SetRestart(func() bool {
+		once.Do(func() {
+			api.CloseClientConnections()
+			close(restarted)
+		})
+		return true
+	})
+
+	body, contentType := multipartArchive(t, archive.Bytes(), map[string]string{"passphrase": testPassphrase})
+	req, err := http.NewRequest(http.MethodPost, api.URL+"/api/org-backups/restore", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", token)
+	req.Header.Set("Content-Type", contentType)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("the 202 must reach the client before the process ends: %v", err)
+	}
+	payload, err := io.ReadAll(res.Body)
+	_ = res.Body.Close()
+	if err != nil {
+		t.Fatalf("read the 202 body: %v", err)
+	}
+	if res.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d (%s), want 202", res.StatusCode, payload)
+	}
+	var got struct {
+		JobID string `json:"jobId"`
+	}
+	if err := json.Unmarshal(payload, &got); err != nil || got.JobID == "" {
+		t.Fatalf("the 202 must carry a jobId to poll: %s (%v)", payload, err)
+	}
+
+	select {
+	case <-restarted:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the restore never reached its restart")
+	}
+
+	// The job id is the row the CLI polls, and the row must be the restore.
+	row, err := app.FindRecordById("backups", got.JobID)
+	if err != nil {
+		t.Fatalf("the jobId must name a ledger row: %v", err)
+	}
+	if kind := row.GetString("kind"); kind != "restore" {
+		t.Fatalf("row kind = %q, want restore", kind)
+	}
+
+	// The spool file is the whole organization on disk, so it must not outlive
+	// the restore that read it.
+	uploadDir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
+	waitFor(t, func() bool {
+		entries, err := os.ReadDir(uploadDir)
+		return err != nil || len(entries) == 0
+	})
+}
+
+// The mismatch 409 has to survive the move to an asynchronous restore: it is now
+// decided by CheckManifest before the 202, and a refusal must leave no spool file
+// and no ledger row, because nothing was started.
+func TestUploadedMismatchLeavesNoSpoolFile(t *testing.T) {
+	app := backupTestApp(t)
+	token := authFor(t, app, "owner@example.com", "owner")
+	backup.RegisterRebuilder(nil)
+
+	var archive bytes.Buffer
+	streamBackupForTest(t, app, &archive)
+
+	regs, err := app.FindRecordsByFilter("pkg_registry", "slug = 'widgets'", "", 0, 0)
+	if err != nil || len(regs) != 1 {
+		t.Fatalf("registry rows for the fictional package: %v, %v", regs, err)
+	}
+	if err := app.Delete(regs[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	body, contentType := multipartArchive(t, archive.Bytes(), map[string]string{"passphrase": testPassphrase})
+	(&tests.ApiScenario{
+		Name:   "a refused upload leaves nothing spooled",
+		Method: http.MethodPost,
+		URL:    "/api/org-backups/restore",
+		Body:   bytes.NewReader(body),
+		Headers: map[string]string{
+			"Authorization": token,
+			"Content-Type":  contentType,
+		},
+		ExpectedStatus:        http.StatusConflict,
+		ExpectedContent:       []string{`"missing":["widgets"]`},
+		TestAppFactory:        func(testing.TB) *tests.TestApp { return app },
+		DisableTestAppCleanup: true,
+	}).Test(t)
+
+	uploadDir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
+	entries, err := os.ReadDir(uploadDir)
+	if err == nil && len(entries) != 0 {
+		t.Fatalf("a refused upload left %d spooled file(s) in %s", len(entries), uploadDir)
+	}
+	rows, err := app.FindRecordsByFilter("backups", "kind = 'restore'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("a refusal before the restore started must write no ledger row, got %d", len(rows))
 	}
 }

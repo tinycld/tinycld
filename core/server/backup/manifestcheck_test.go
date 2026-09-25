@@ -1,11 +1,15 @@
 package backup
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/installjob"
 )
 
 func TestCompareEmbedded(t *testing.T) {
@@ -67,5 +71,67 @@ func TestInstalledPackagesSkipsCore(t *testing.T) {
 	}
 	if got["widgets"] != "1.0.0" {
 		t.Fatalf("installed = %v", got)
+	}
+}
+
+// CheckManifest is what lets the upload branch of the restore API answer 409
+// BEFORE it answers 202 and starts an asynchronous restore. It must therefore
+// reach the same verdict as phase 2 while writing NOTHING: a check that staged
+// or armed anything would turn a refusal into a half-started restore.
+func TestCheckManifestDecidesWithoutSideEffects(t *testing.T) {
+	resetRestoreState(t)
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+
+	m, err := CheckManifest(app, bytes.NewReader(data), id)
+	if err != nil {
+		t.Fatalf("an equal package set must be accepted: %v", err)
+	}
+	if m.Format == "" {
+		t.Fatalf("the manifest must be returned: %+v", m)
+	}
+	if _, err := os.Stat(restoreDir(app)); !os.IsNotExist(err) {
+		t.Fatalf("CheckManifest must write nothing under restore/: %v", err)
+	}
+
+	// Drop the fictional package the archive names, so this binary can no longer
+	// run the archive's package set.
+	regs, err := app.FindRecordsByFilter("pkg_registry", "slug = 'widgets'", "", 0, 0)
+	if err != nil || len(regs) != 1 {
+		t.Fatalf("registry rows: %v, %v", regs, err)
+	}
+	if err := app.Delete(regs[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = CheckManifest(app, bytes.NewReader(data), id)
+	var mismatch *MismatchError
+	if !errors.As(err, &mismatch) {
+		t.Fatalf("a missing package must be a *MismatchError, got %v", err)
+	}
+	if len(mismatch.Diff.Missing) != 1 || mismatch.Diff.Missing[0] != "widgets" {
+		t.Fatalf("diff = %+v", mismatch.Diff)
+	}
+	if _, err := os.Stat(restoreDir(app)); !os.IsNotExist(err) {
+		t.Fatalf("a refusal must write nothing under restore/: %v", err)
+	}
+}
+
+// A deployment that can rebuild itself has nothing to refuse: it becomes whatever
+// the archive names, so the check must pass a set this binary does not carry.
+func TestCheckManifestAcceptsAnyoneWithARebuilder(t *testing.T) {
+	resetRestoreState(t)
+	data, id := archiveFor(t)
+	app := newTestApp(t)
+	regs, err := app.FindRecordsByFilter("pkg_registry", "slug = 'widgets'", "", 0, 0)
+	if err != nil || len(regs) != 1 {
+		t.Fatalf("registry rows: %v, %v", regs, err)
+	}
+	if err := app.Delete(regs[0]); err != nil {
+		t.Fatal(err)
+	}
+	RegisterRebuilder(func(context.Context, *installjob.Job, format.Lockfile) error { return nil })
+	if _, err := CheckManifest(app, bytes.NewReader(data), id); err != nil {
+		t.Fatalf("a rebuilder must make any package set acceptable: %v", err)
 	}
 }

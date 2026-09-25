@@ -288,21 +288,26 @@ type restoreBody struct {
 	Force      bool   `json:"force"`
 }
 
-// handleRestore takes an archive two ways, and they differ in more than shape.
+// handleRestore takes an archive two ways, and BOTH now run the restore
+// asynchronously and answer 202 with the job id. They have to: phase 6 ends the
+// process (the rebuilder, or the restart), so a restore run inside the handler
+// never gets to write a response and the caller is left with a dropped
+// connection and no job id to poll.
 //
-// An upload IS the request body, so it cannot outlive the request: the restore
-// runs synchronously and a package-set mismatch surfaces as the 409 below. The
-// connection then drops when the rebuilder ends the process, which the CLI
-// expects — after reconnecting it reads the outcome from GET /api/org-backups/{id},
-// because the row is the only thing that survives the restart.
+// An upload IS the request body, which cannot outlive the request — so it is
+// spooled to a file under restore/upload first and the restore reads from there.
+// Spooling also makes the archive re-readable, which is what lets the upload
+// branch keep its 409-on-mismatch contract: CheckManifest reads the manifest off
+// the spool file with no side effects, and only then is the 202 sent.
 //
-// A URL can be re-read, so that branch starts the restore on a goroutine and
-// answers with the job id. A mismatch there lands on the row instead.
+// A URL source cannot be pre-checked that way (re-reading it means a second
+// transfer), so that branch answers 202 first and a mismatch lands on the ledger
+// row instead of the response. That asymmetry is deliberate.
 func handleRestore(app core.App, re *core.RequestEvent) error {
 	req := backup.RestoreRequest{Initiator: initiatorOf(re), Request: re}
 	upload := strings.HasPrefix(re.Request.Header.Get("Content-Type"), "multipart/")
 	if upload {
-		if err := readUploadedArchive(re, &req); err != nil {
+		if err := readUploadedArchive(app, re, &req); err != nil {
 			return err
 		}
 	} else if err := readRemoteArchive(re, &req); err != nil {
@@ -312,12 +317,22 @@ func handleRestore(app core.App, re *core.RequestEvent) error {
 		return re.BadRequestError("No archive was supplied.", nil)
 	}
 
-	var jobID string
-	var err error
-	if upload {
-		jobID, err = backup.Restore(app, req)
-	} else {
-		jobID, err = backup.StartRestore(app, req)
+	if spool, ok := req.Source.(*spooledSource); ok && !req.Force {
+		// answered is separate from the error: re.JSON returns nil once it has
+		// written the refusal, so a handler that keyed on the error alone would
+		// send the 409 and then start the restore anyway.
+		if answered, err := checkSpooledManifest(app, re, spool, &req); answered {
+			return err
+		}
+	}
+
+	jobID, err := backup.StartRestore(app, req)
+	if err != nil {
+		// StartRestore refused before it started the goroutine, so its deferred
+		// Source.Close never runs and nothing else would clear the spool.
+		if spool, ok := req.Source.(*spooledSource); ok {
+			_ = spool.Close()
+		}
 	}
 	var mismatch *backup.MismatchError
 	switch {
@@ -340,6 +355,82 @@ func handleRestore(app core.App, re *core.RequestEvent) error {
 	}
 }
 
+// checkSpooledManifest answers the package-set question before the 202. It
+// reports whether it ANSWERED the request, because re.JSON returns nil once the
+// refusal is written and the error alone cannot tell the two apart.
+//
+// On a refusal it removes the spool file itself: StartRestore is never called, so
+// nothing else would.
+func checkSpooledManifest(app core.App, re *core.RequestEvent, spool *spooledSource, req *backup.RestoreRequest) (bool, error) {
+	_, err := backup.CheckManifest(app, spool, req.Identity)
+	// The read is rewound whatever the outcome: the restore reads the same file
+	// from byte zero.
+	if _, serr := spool.Seek(0, io.SeekStart); serr != nil && err == nil {
+		err = serr
+	}
+	var mismatch *backup.MismatchError
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.As(err, &mismatch):
+		_ = spool.Close()
+		return true, re.JSON(http.StatusConflict, map[string]any{
+			"message": err.Error(), "diff": mismatch.Diff,
+		})
+	default:
+		_ = spool.Close()
+		return true, re.JSON(http.StatusUnprocessableEntity, map[string]string{"message": err.Error()})
+	}
+}
+
+// spooledSource is an uploaded archive on disk. Close removes the file, so the
+// spool is cleared by whoever finishes with it — runRestore's own deferred
+// Source.Close on the happy path, and the handler when it refuses before
+// starting one.
+type spooledSource struct {
+	*os.File
+	path string
+}
+
+func (s *spooledSource) Close() error {
+	err := s.File.Close()
+	if rerr := os.Remove(s.path); rerr != nil && !os.IsNotExist(rerr) {
+		srvLog.Warn("could not remove a spooled restore upload", "path", s.path, "err", rerr)
+	}
+	return err
+}
+
+// spoolUpload streams a multipart archive part to a file beside the rest of the
+// restore's scratch state, so it shares that directory's free-space budget and
+// its cleanup.
+func spoolUpload(app core.App, part io.Reader) (*spooledSource, error) {
+	dir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.CreateTemp(dir, "*.age")
+	if err != nil {
+		return nil, err
+	}
+	// CreateTemp opens 0600 already; the chmod is belt and braces against a
+	// future change to it, because the file is the whole organization.
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return nil, err
+	}
+	src := &spooledSource{File: f, path: f.Name()}
+	if _, err := io.Copy(f, part); err != nil {
+		src.Close()
+		return nil, err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		src.Close()
+		return nil, err
+	}
+	return src, nil
+}
+
 // maxPassphraseField bounds what is read from the passphrase form field. A
 // passphrase is a phrase; anything longer is a client sending the archive under
 // the wrong field name, and reading it all would buffer the whole upload.
@@ -347,8 +438,8 @@ const maxPassphraseField = 1024
 
 // readUploadedArchive walks the multipart stream to the file part. The fields
 // must arrive BEFORE it — the CLI writes them in that order — so the archive is
-// streamed into the restore rather than buffered in memory.
-func readUploadedArchive(re *core.RequestEvent, req *backup.RestoreRequest) error {
+// streamed to a spool file rather than buffered in memory.
+func readUploadedArchive(app core.App, re *core.RequestEvent, req *backup.RestoreRequest) error {
 	mr, err := re.Request.MultipartReader()
 	if err != nil {
 		return re.BadRequestError("invalid multipart body", err)
@@ -401,7 +492,14 @@ func readUploadedArchive(re *core.RequestEvent, req *backup.RestoreRequest) erro
 				return re.BadRequestError("invalid passphrase", err)
 			}
 			req.Identity = identity
-			req.Source = part
+			// The upload is spooled here, inside the handler, because the part is
+			// only readable while the request is: the restore runs on a goroutine
+			// that outlives it.
+			spool, err := spoolUpload(app, part)
+			if err != nil {
+				return re.InternalServerError("could not spool the uploaded archive", err)
+			}
+			req.Source = spool
 			// Not a hostname: an upload has no origin this deployment can name.
 			req.SourceHost = "upload"
 			return nil

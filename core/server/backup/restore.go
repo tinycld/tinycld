@@ -158,12 +158,23 @@ func StartRestore(app core.App, req RestoreRequest) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	go func() { _ = runRestore(app, req, row, job) }()
+	finished := watchRestore()
+	go func() {
+		defer finished()
+		_ = runRestore(app, req, row, job)
+	}()
 	return row.Id, nil
 }
 
 // Restore is StartRestore without the goroutine: it returns once the archive is
 // staged and the rebuild or restart has been asked for.
+//
+// No HTTP handler may use it. Phase 6 ends the process, so a handler that ran a
+// restore synchronously would never write its response: the caller would see a
+// dropped connection and no job id to poll, which is the only thing that survives
+// the restart. It is here for callers that ARE the process's last act — the
+// package's own tests, which stub the restart seam, and an embedder driving a
+// restore from outside the HTTP surface.
 func Restore(app core.App, req RestoreRequest) (string, error) {
 	row, job, err := beginRestore(app, req)
 	if err != nil {

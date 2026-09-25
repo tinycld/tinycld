@@ -3,9 +3,11 @@ package backup
 import (
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
+	"filippo.io/age"
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/backup/format"
@@ -88,4 +90,39 @@ func installedPackages(app core.App) (map[string]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// CheckManifest reads only an archive's manifest and answers phase 2's question
+// — can this deployment run that package set? — with NO side effects: nothing is
+// staged, no ledger row is written, and the interlock is not claimed.
+//
+// It exists for the upload branch of the restore API, which must decide the
+// 409-on-mismatch BEFORE it answers 202 and hands the archive to an asynchronous
+// restore. runRestore repeats the same comparison; that duplication is deliberate
+// rather than shared state, because a URL source cannot be re-read and must
+// still be checked once the transfer is under way.
+//
+// A deployment with a rebuilder registered can become whatever the archive names,
+// so it has nothing to refuse and the answer is nil.
+func CheckManifest(app core.App, r io.Reader, identity age.Identity) (format.Manifest, error) {
+	reader, err := format.NewReader(r, identity)
+	if err != nil {
+		return format.Manifest{}, err
+	}
+	defer reader.Close()
+	m, err := reader.ReadManifest()
+	if err != nil {
+		return format.Manifest{}, err
+	}
+	if HasRebuilder() {
+		return m, nil
+	}
+	installed, err := installedPackages(app)
+	if err != nil {
+		return m, err
+	}
+	if d := compareEmbedded(m, installed); !d.Empty() {
+		return m, &MismatchError{Diff: d}
+	}
+	return m, nil
 }
