@@ -23,7 +23,7 @@ func ResetForTesting() {
 	rebuilderMu.Unlock()
 
 	restartMu.Lock()
-	restartFn = func() {}
+	restartFn = func() bool { return true }
 	restarted = false
 	restartMu.Unlock()
 

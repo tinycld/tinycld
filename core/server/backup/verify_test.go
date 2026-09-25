@@ -282,7 +282,7 @@ func TestApplyPendingRestoreCompletesARealRestore(t *testing.T) {
 	data, id := archiveFor(t)
 	app := newTestApp(t)
 	resetRestoreState(t)
-	SetRestart(func() {})
+	SetRestart(func() bool { return true })
 
 	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id, Force: true})
 	if err != nil {

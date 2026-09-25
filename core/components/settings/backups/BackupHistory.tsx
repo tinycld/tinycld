@@ -2,7 +2,7 @@ import { formatBytes, formatTimeAgo } from '@tinycld/core/lib/format-utils'
 import * as Clipboard from 'expo-clipboard'
 import { Pressable, Text, View } from 'react-native'
 import { SwapSourceForm } from './SwapSourceForm'
-import { type BackupRow, useDismissPreRestoreKey } from './useBackups'
+import { type BackupRow, isAwaitingRestart, useDismissPreRestoreKey } from './useBackups'
 
 type Props = { rows: BackupRow[] }
 
@@ -50,9 +50,19 @@ function HistoryRow({ row }: { row: BackupRow }) {
                 {formatTimeAgo(row.started)} · {who} · {size}
             </Text>
             <ErrorLine message={row.error} />
+            <AwaitingRestartLine isVisible={isAwaitingRestart(row)} />
             <SwapSourceForm isVisible={row.status === 'waiting_for_source'} jobId={row.id} />
             <PreRestoreKey row={row} />
         </View>
+    )
+}
+
+// A staged restore nothing is going to restart for. The status badge already
+// says "Running", which is true and useless on its own: nothing will move it.
+function AwaitingRestartLine({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return (
+        <Text className="text-xs text-warning">Restart the server to complete this restore.</Text>
     )
 }
 

@@ -207,7 +207,7 @@ func restoreSeams(t *testing.T) {
 		installjob.Release(job)
 		return nil
 	})
-	backup.SetRestart(func() {})
+	backup.SetRestart(func() bool { return true })
 	t.Cleanup(backup.ResetForTesting)
 }
 

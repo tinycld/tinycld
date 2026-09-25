@@ -73,6 +73,15 @@ package set matches the binary's; otherwise `tinycld backup restore --force`
 restores the data without reconciling packages. See the in-app topic
 "Backups & restore".
 
+A restore does not apply the restored data itself. It stages every byte beside
+the data directory, then stops the server process. The restored data is applied
+on the NEXT start, so the binary must be under a supervisor that relaunches it
+(systemd, a container restart policy, or your own script) — or you restart it
+yourself. Settings → Backups shows "Restart the server to complete this
+restore." while a restart is still owed.
+
+If you run the binary under systemd, `Restart=always` is enough.
+
 ## Upgrading
 
 Download the new binary, replace the old one, and restart. Migrations apply

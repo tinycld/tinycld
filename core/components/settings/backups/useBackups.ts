@@ -129,6 +129,24 @@ export function useSwapSource(jobId: string) {
     return { form, swap }
 }
 
+/** Read one flag off a row's metadata column, which the server writes as JSON. */
+function metadataOf(row: Pick<BackupRow, 'metadata'>): Record<string, unknown> {
+    const { metadata } = row
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {}
+    return metadata as Record<string, unknown>
+}
+
+/**
+ * A restore the server staged but could not restart for (a dev-mode server has
+ * no supervisor to relaunch it) is still owed a restart. The row stays running,
+ * so without this flag the panel says "in progress" about something that will
+ * never move on its own.
+ */
+export function isAwaitingRestart(row: Pick<BackupRow, 'kind' | 'status' | 'metadata'>) {
+    if (row.kind !== 'restore' || row.status !== 'running') return false
+    return metadataOf(row).awaiting_restart === true
+}
+
 /**
  * The pre-restore identity is written into the row's metadata by the server, so
  * there is nothing to acknowledge server-side — the dismissal only hides the
@@ -136,11 +154,7 @@ export function useSwapSource(jobId: string) {
  */
 export function useDismissPreRestoreKey(row: Pick<BackupRow, 'metadata'>) {
     const [isDismissed, setIsDismissed] = useState(false)
-    const metadata = row.metadata
-    const identity =
-        metadata && typeof metadata === 'object' && !Array.isArray(metadata)
-            ? (metadata as Record<string, unknown>).pre_restore_identity
-            : undefined
+    const identity = metadataOf(row).pre_restore_identity
     return {
         identity: typeof identity === 'string' && identity ? identity : undefined,
         isDismissed,

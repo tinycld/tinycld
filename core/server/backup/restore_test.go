@@ -678,7 +678,7 @@ func TestRestoreStagesWithPocketBasePermissions(t *testing.T) {
 	data, id := archiveFor(t)
 	app := newTestApp(t)
 	resetRestoreState(t)
-	SetRestart(func() {})
+	SetRestart(func() bool { return true })
 
 	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id, Force: true})
 	if err != nil {
@@ -716,7 +716,7 @@ func TestRestoreMarksAStagingDirectoryComplete(t *testing.T) {
 	data, id := archiveFor(t)
 	app := newTestApp(t)
 	resetRestoreState(t)
-	SetRestart(func() {})
+	SetRestart(func() bool { return true })
 
 	jobID, err := Restore(app, RestoreRequest{Source: readCloser{bytes.NewReader(data)}, Identity: id, Force: true})
 	if err != nil {
@@ -733,7 +733,7 @@ func TestRestoreLeavesAFailedStageUnmarked(t *testing.T) {
 	data, id := archiveFor(t)
 	app := newTestApp(t)
 	resetRestoreState(t)
-	SetRestart(func() {})
+	SetRestart(func() bool { return true })
 
 	// Corrupt the tail so the archive's own checksums fail at Verify, after the
 	// members are already on disk.
@@ -814,5 +814,64 @@ func TestRestoreGivesUpOnAStalledSourceAndReleasesTheInterlock(t *testing.T) {
 	}
 	if got := row.GetString("status"); got != "failed" {
 		t.Fatalf("status %q", got)
+	}
+}
+
+// A composition with no supervisor cannot end the process. A restore that
+// believed otherwise left `restoring` set, so every request afterwards met the
+// maintenance 503 with nothing coming to clear it — the whole deployment wedged
+// behind a restore that could not complete.
+func TestRestoreThatCannotRestartLeavesTheDeploymentServing(t *testing.T) {
+	data, identity := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	SetRestart(func() bool { return false })
+
+	jobID, err := Restore(app, RestoreRequest{
+		Source: readCloser{bytes.NewReader(data)}, Identity: identity, Force: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Restoring() {
+		t.Fatal("a restore nothing will restart must not leave the deployment behind the 503")
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	// The row stays running: the restore IS still owed, and only the process that
+	// boots on the staged data can say it worked.
+	if got := row.GetString("status"); got != "running" {
+		t.Fatalf("status %q, want running", got)
+	}
+	var meta map[string]any
+	if err := row.UnmarshalJSONField("metadata", &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["awaiting_restart"] != true {
+		t.Fatalf("metadata %+v — the panel has no way to say a restart is owed", meta)
+	}
+	// The staged data is still there for the restart to pick up.
+	if _, serr := os.Stat(armedPath(app)); serr != nil {
+		t.Fatalf("the armed marker must survive: %v", serr)
+	}
+}
+
+// The restart that WILL happen leaves the restore in maintenance mode: the
+// staged copy is what boots next, so a write landing here would be discarded.
+func TestRestoreThatWillRestartStaysInMaintenanceMode(t *testing.T) {
+	data, identity := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	SetRestart(func() bool { return true })
+
+	if _, err := Restore(app, RestoreRequest{
+		Source: readCloser{bytes.NewReader(data)}, Identity: identity, Force: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !Restoring() {
+		t.Fatal("a restore on its way out must keep serving 503")
 	}
 }

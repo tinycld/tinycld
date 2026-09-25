@@ -59,29 +59,39 @@ func HasRebuilder() bool {
 // restartFn ends the process so the supervisor relaunches it onto the staged
 // data. It is a seam rather than an os.Exit so the package's own tests can
 // observe the request instead of killing the test binary.
+//
+// It REPORTS whether it will restart. A composition that cannot end the process
+// — a dev-mode server, which has no supervisor to relaunch it — must say so,
+// because the restore's own state depends on the answer: a restore that returns
+// believing the process is on its way out leaves `restoring` set, and every
+// request after it meets the maintenance 503 with nothing coming to clear it.
 var (
 	restartMu sync.Mutex
-	restartFn = func() {}
+	restartFn = func() bool { return true }
 	restarted bool
 )
 
 // SetRestart names the function that ends the process so the supervisor
-// relaunches it.
-func SetRestart(fn func()) {
+// relaunches it. It returns false when it will NOT restart, so the restore can
+// leave the deployment serving instead of waiting behind the 503 forever.
+func SetRestart(fn func() (restarted bool)) {
 	restartMu.Lock()
 	defer restartMu.Unlock()
 	if fn == nil {
-		fn = func() {}
+		fn = func() bool { return true }
 	}
 	restartFn = fn
 }
 
-func requestRestart() {
+// requestRestart reports whether the process is on its way out. A function that
+// returns normally AND said true is a composition whose restart is asynchronous;
+// one that returns false has declined.
+func requestRestart() bool {
 	restartMu.Lock()
 	fn := restartFn
 	restarted = true
 	restartMu.Unlock()
-	fn()
+	return fn()
 }
 
 func restartRequested() bool {
@@ -402,7 +412,19 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 		}
 		return rerr
 	}
-	requestRestart()
+	if requestRestart() {
+		return nil
+	}
+	// Nothing is going to end this process, so the staged restore cannot be
+	// applied until an operator restarts the server by hand. Leaving `restoring`
+	// set would put every request behind the maintenance 503 with nothing coming
+	// to clear it, so this deployment goes back to serving its CURRENT data and
+	// the row says what is still owed.
+	restoring.Store(false)
+	row.Set("metadata", mergeMeta(row, map[string]any{"awaiting_restart": true}))
+	if serr := app.Save(row); serr != nil {
+		log.Error("could not record that a restore is awaiting a restart", "id", id, "err", serr)
+	}
 	return nil
 }
 

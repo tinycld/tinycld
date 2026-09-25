@@ -21,7 +21,7 @@ vi.mock('@tinycld/core/lib/pocketbase', () => ({
 }))
 
 import { BackupsSection } from '../../components/settings/backups/BackupsSection'
-import { lastBackedUp } from '../../components/settings/backups/useBackups'
+import { isAwaitingRestart, lastBackedUp } from '../../components/settings/backups/useBackups'
 
 afterEach(() => {
     cleanup()
@@ -84,6 +84,52 @@ describe('BackupsSection', () => {
         })
         renderSection()
         expect(screen.getByText('Waiting for source')).toBeTruthy()
+    })
+})
+
+describe('a restore awaiting a restart', () => {
+    const row = (metadata: unknown) => ({
+        id: 'r2',
+        kind: 'restore' as const,
+        status: 'running' as const,
+        started: new Date().toISOString(),
+        finished: '',
+        bytes: 0,
+        error: '',
+        metadata,
+        initiatorName: 'Ada',
+    })
+
+    it('tells the operator a restart is owed', () => {
+        rowsMock.mockReturnValue({ data: [row({ awaiting_restart: true })] })
+        renderSection()
+        expect(screen.getByText('Restart the server to complete this restore.')).toBeTruthy()
+    })
+
+    it('says nothing about a restart for a restore that is simply running', () => {
+        rowsMock.mockReturnValue({ data: [row(null)] })
+        renderSection()
+        expect(screen.queryByText('Restart the server to complete this restore.')).toBeNull()
+    })
+
+    it('is false for a finished restore that once carried the flag', () => {
+        expect(
+            isAwaitingRestart({
+                kind: 'restore',
+                status: 'succeeded',
+                metadata: { awaiting_restart: true },
+            } as never)
+        ).toBe(false)
+    })
+
+    it('is false for a backup row', () => {
+        expect(
+            isAwaitingRestart({
+                kind: 'manual',
+                status: 'running',
+                metadata: { awaiting_restart: true },
+            } as never)
+        ).toBe(false)
     })
 })
 

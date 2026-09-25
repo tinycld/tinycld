@@ -48,9 +48,13 @@ and shows you its key in **History** until the restore succeeds.
 3. Confirm that current data is replaced and choose **Restore**.
 
 The app is unavailable while the restore runs: it rebuilds the packages the
-backup lists, then restarts with the restored data. If the download URL
-expires during a long restore, the History row asks for a fresh URL and
-continues where it stopped.
+backup lists, then stops the server so it starts again with the restored
+data. The restored data is applied on that next start. If your server has no
+supervisor to start it again, restart it yourself — the History row then says
+"Restart the server to complete this restore."
+
+If the download URL expires during a long restore, the History row asks for a
+fresh URL and continues where it stopped.
 
 With the command line: `tinycld backup restore --from ./backup.age`.
 

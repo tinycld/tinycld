@@ -74,8 +74,19 @@ func RegisterBackupSelfRebuild(app *pocketbase.PocketBase) {
 	// A restore that needs no rebuild still has to end the process: the staged
 	// data is what the next one boots on. The WAL checkpoint first, or the new
 	// process reads a data.db missing this one's last writes.
-	backup.SetRestart(func() {
+	//
+	// In dev mode there is no supervisor to relaunch anything, so requestRestart
+	// is a no-op — and a restore that believed it had been honoured left the
+	// deployment behind the maintenance 503 for good. Say so instead: the restore
+	// then goes back to serving the current data and its row records that a
+	// restart is still owed.
+	backup.SetRestart(func() bool {
+		if isDevelopment() {
+			srvLog.Error("restart skipped in dev mode — restart the server manually to apply the restore")
+			return false
+		}
 		checkpointWAL(app)
 		requestRestart("")
+		return true
 	})
 }
