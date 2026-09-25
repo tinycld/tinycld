@@ -22,7 +22,6 @@ function useDoneStep(complete: () => Promise<void>) {
         summary: doneSummaryOf({
             appCount: model.apps.length,
             memberCount: model.memberCount,
-            isMailOn: model.isMailOn,
         }),
         onOpen: () => open.mutate(),
         isPending: open.isPending,

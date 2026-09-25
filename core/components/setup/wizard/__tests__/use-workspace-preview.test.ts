@@ -9,7 +9,6 @@ const base = {
     apps: [],
     memberInitials: [],
     memberCount: 0,
-    isMailOn: false,
 }
 
 describe('buildPreviewModel', () => {

@@ -4,8 +4,6 @@ import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useSetupPreviewStore } from '@tinycld/core/lib/setup/setup-preview-store'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
-import { isDeliveryEnabled } from '../../setup/system-settings-logic'
-import { useSystemSettings } from '../../setup/system-settings-store'
 
 export interface PreviewModel {
     name: string
@@ -16,7 +14,6 @@ export interface PreviewModel {
     memberInitials: string[]
     /** Everyone in the workspace; `memberInitials` is capped for the avatars. */
     memberCount: number
-    isMailOn: boolean
     isEmpty: boolean
     /** Before the server is claimed: nothing about the org is shown yet. */
     isGhost: boolean
@@ -39,7 +36,6 @@ export function buildPreviewModel(input: {
     apps: { slug: string; icon: string }[]
     memberInitials: string[]
     memberCount: number
-    isMailOn: boolean
 }): PreviewModel {
     const name = (input.draftName ?? input.orgName).trim()
     return {
@@ -50,7 +46,6 @@ export function buildPreviewModel(input: {
         apps: input.apps,
         memberInitials: input.memberInitials,
         memberCount: input.memberCount,
-        isMailOn: input.isMailOn,
         isEmpty: !name && input.apps.length === 0 && input.memberInitials.length === 0,
         isGhost: false,
     }
@@ -70,7 +65,6 @@ export function ghostPreviewModel(initials: string | undefined): PreviewModel {
         apps: [],
         memberInitials,
         memberCount: memberInitials.length,
-        isMailOn: false,
         isEmpty: memberInitials.length === 0,
         isGhost: true,
     }
@@ -83,7 +77,6 @@ export function useWorkspacePreview(): PreviewModel {
     const draftName = useSetupPreviewStore(s => s.draftName)
     const [pkgRegistry, users] = useStore('pkg_registry', 'users')
     const packages = usePackages()
-    const { byKey } = useSystemSettings()
 
     const { data: enabled = [] } = useLiveQuery(query =>
         query
@@ -108,6 +101,5 @@ export function useWorkspacePreview(): PreviewModel {
         apps,
         memberInitials: people.slice(0, MAX_AVATARS).map(p => initialsOf(p.name)),
         memberCount: people.length,
-        isMailOn: isDeliveryEnabled(byKey.get('mail.delivery_enabled')?.value),
     })
 }
