@@ -61,7 +61,9 @@ test('a new server is claimed, set up, paused and resumed', async ({ page }) => 
     try {
         await claimServer(page, server)
 
-        await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Harbor Dental')
+        await page
+            .getByRole('textbox', { name: 'Workspace name', exact: true })
+            .fill('Harbor Dental')
         await page.getByRole('button', { name: 'Continue' }).click()
 
         await expect(page.getByText('Choose your apps')).toBeVisible()

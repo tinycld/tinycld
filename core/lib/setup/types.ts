@@ -43,4 +43,6 @@ export interface WizardState {
     skipped: string[]
     dismissedAt?: string
     completedAt?: string
+    /** Set by `create-owner --org-name`: the saved workspace name was chosen, not PocketBase's default. */
+    orgNameSeeded?: boolean
 }

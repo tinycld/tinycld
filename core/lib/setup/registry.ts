@@ -2,6 +2,7 @@ import { tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import type { PackageSetupStep } from '@tinycld/core/lib/packages/config-types'
 import { compareStepOrder } from '@tinycld/core/lib/setup/order'
 import type { SetupStepEntry, SetupStepModule } from '@tinycld/core/lib/setup/types'
+import { WORKSPACE_STEP_ID } from '@tinycld/core/lib/setup/wizard-logic'
 
 type Loader = () => Promise<SetupStepModule>
 
@@ -9,7 +10,7 @@ type Loader = () => Promise<SetupStepModule>
 // sides for package steps (see docs/packages.md "setupSteps").
 const CORE_STEPS: SetupStepEntry[] = [
     {
-        id: 'core:workspace',
+        id: WORKSPACE_STEP_ID,
         label: 'Workspace',
         order: 'a0',
         load: () => import('@tinycld/core/components/setup/wizard/steps/WorkspaceStep'),

@@ -3,6 +3,8 @@ import { useLiveQuery } from '@tanstack/react-db'
 import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useSetupPreviewStore } from '@tinycld/core/lib/setup/setup-preview-store'
+import { useSetupWizardState } from '@tinycld/core/lib/setup/use-setup-wizard-state'
+import { chosenOrgName } from '@tinycld/core/lib/setup/wizard-logic'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
 
 export interface PreviewModel {
@@ -72,8 +74,16 @@ export function ghostPreviewModel(initials: string | undefined): PreviewModel {
 
 const MAX_AVATARS = 4
 
+/** The workspace name as the wizard shows it; see chosenOrgName. */
+export function useChosenOrgName(): string {
+    const { org } = useOrgInfo()
+    const { state } = useSetupWizardState()
+    return chosenOrgName(org?.name ?? '', state)
+}
+
 export function useWorkspacePreview(): PreviewModel {
     const { org } = useOrgInfo()
+    const orgName = useChosenOrgName()
     const draftName = useSetupPreviewStore(s => s.draftName)
     const [pkgRegistry, users] = useStore('pkg_registry', 'users')
     const packages = usePackages()
@@ -94,7 +104,7 @@ export function useWorkspacePreview(): PreviewModel {
         .map(p => ({ slug: p.slug, icon: p.nav?.icon ?? '' }))
 
     return buildPreviewModel({
-        orgName: org?.name ?? '',
+        orgName,
         draftName,
         logoUrl: org?.logoUrl ?? '',
         logoCrop: org?.logoCrop ?? '',

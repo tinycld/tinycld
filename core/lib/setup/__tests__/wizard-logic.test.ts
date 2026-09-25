@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { StepStatus, WizardState } from '../types'
-import { parseWizardState, shouldOpenWizard, summarizeWizard } from '../wizard-logic'
+import { chosenOrgName, parseWizardState, shouldOpenWizard, summarizeWizard } from '../wizard-logic'
 
 const state = (patch: Partial<WizardState> = {}): WizardState => ({
     startedAt: '2026-09-25T00:00:00Z',
@@ -21,6 +21,11 @@ describe('parseWizardState', () => {
         expect(parseWizardState(undefined)).toBeNull()
         expect(parseWizardState('{nope')).toBeNull()
         expect(parseWizardState('{"acknowledged":[]}')).toBeNull()
+    })
+    it('keeps orgNameSeeded, which create-owner --org-name writes', () => {
+        expect(
+            parseWizardState(JSON.stringify(state({ orgNameSeeded: true })))?.orgNameSeeded
+        ).toBe(true)
     })
     it('parses a valid row', () => {
         expect(
@@ -74,5 +79,24 @@ describe('shouldOpenWizard', () => {
         expect(open('owner', state({ dismissedAt: 'x' }))).toBe(false)
         expect(open('owner', state({ completedAt: 'x' }))).toBe(false)
         expect(shouldOpenWizard({ role: 'owner', state: state(), isSettled: false })).toBe(false)
+    })
+})
+
+describe('chosenOrgName', () => {
+    // PocketBase names every new server "Acme"; that is not the person's choice.
+    it('hides the saved name until the workspace step is acknowledged', () => {
+        expect(chosenOrgName('Acme', state())).toBe('')
+        expect(chosenOrgName('Acme', state({ skipped: ['core:workspace'] }))).toBe('')
+    })
+    it('shows the saved name once the workspace step is acknowledged', () => {
+        expect(chosenOrgName('Harbor Dental', state({ acknowledged: ['core:workspace'] }))).toBe(
+            'Harbor Dental'
+        )
+    })
+    it('shows a name the provisioner set with create-owner --org-name', () => {
+        expect(chosenOrgName('Harbor Dental', state({ orgNameSeeded: true }))).toBe('Harbor Dental')
+    })
+    it('shows nothing while the wizard state is unknown', () => {
+        expect(chosenOrgName('Acme', null)).toBe('')
     })
 })

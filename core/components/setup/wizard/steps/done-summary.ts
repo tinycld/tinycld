@@ -12,3 +12,9 @@ export function doneSummaryOf(input: { appCount: number; memberCount: number }):
     if (input.memberCount > 0) parts.push(countOf(input.memberCount, 'person', 'people'))
     return parts.join(' · ')
 }
+
+/** A skipped workspace step leaves no chosen name, so the heading stays neutral. */
+export function doneHeadingOf(name: string): { heading: string; buttonLabel: string } {
+    if (!name) return { heading: 'Your workspace is ready', buttonLabel: 'Open your workspace' }
+    return { heading: `${name} is ready`, buttonLabel: `Open ${name}` }
+}

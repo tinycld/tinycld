@@ -7,7 +7,10 @@ const wizardStateSchema = z.object({
     skipped: z.array(z.string()),
     dismissedAt: z.string().optional(),
     completedAt: z.string().optional(),
+    orgNameSeeded: z.boolean().optional(),
 })
+
+export const WORKSPACE_STEP_ID = 'core:workspace'
 
 export function parseWizardState(raw: string | undefined): WizardState | null {
     if (!raw) return null
@@ -59,4 +62,16 @@ export function shouldOpenWizard(input: {
     if (!input.isSettled || !input.state) return false
     if (input.role !== 'owner' && input.role !== 'admin') return false
     return !input.state.dismissedAt && !input.state.completedAt
+}
+
+/**
+ * The saved workspace name, or '' while nobody has chosen one. PocketBase
+ * names every new server "Acme", so the saved name counts only once the
+ * workspace step was acknowledged or the provisioner set it
+ * (`create-owner --org-name`). Unknown state reads as unchosen.
+ */
+export function chosenOrgName(orgName: string, state: WizardState | null): string {
+    if (!state) return ''
+    const isChosen = state.acknowledged.includes(WORKSPACE_STEP_ID) || state.orgNameSeeded === true
+    return isChosen ? orgName : ''
 }

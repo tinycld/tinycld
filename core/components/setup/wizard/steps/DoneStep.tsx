@@ -5,7 +5,7 @@ import { useRouter } from 'expo-router'
 import { Text, View } from 'react-native'
 import { useWorkspacePreview } from '../use-workspace-preview'
 import { WorkspacePreview } from '../WorkspacePreview'
-import { doneSummaryOf } from './done-summary'
+import { doneHeadingOf, doneSummaryOf } from './done-summary'
 
 function useDoneStep(complete: () => Promise<void>) {
     const router = useRouter()
@@ -14,11 +14,9 @@ function useDoneStep(complete: () => Promise<void>) {
         mutationFn: complete,
         onSuccess: () => router.replace(appHref('')),
     })
-    const name = model.name || 'Your workspace'
     return {
         model,
-        heading: `${name} is ready`,
-        buttonLabel: `Open ${name}`,
+        ...doneHeadingOf(model.name),
         summary: doneSummaryOf({
             appCount: model.apps.length,
             memberCount: model.memberCount,
