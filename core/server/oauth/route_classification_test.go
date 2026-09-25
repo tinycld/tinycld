@@ -32,6 +32,8 @@ func TestEveryRegisteredRouteIsClassified(t *testing.T) {
 		{"GET", "/api/org-backups/verify", "post-restore verification"},
 		{"POST", "/api/org-backups/restore", "the CLI's restore command"},
 		{"PATCH", "/api/org-backups/restore/abc123", "a fresh URL for an expired presigned source"},
+		{"GET", "/api/collections/backups/records", "`tinycld backup list` reads the ledger"},
+		{"GET", "/api/collections/backups/records/abc123", "one ledger row by id"},
 		// A package's routes: its record collections, its stored files, its
 		// bespoke endpoints. Each real package pins its own CLI-reachable
 		// routes in its own tests; these are the fixture package's.

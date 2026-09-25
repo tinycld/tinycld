@@ -135,6 +135,7 @@ func newRootCmd(d *deps) *cobra.Command {
 		newContextCmd(d),
 		newAuthCmd(d),
 		newSearchCmd(d),
+		newBackupCmd(d),
 	)
 	return root
 }

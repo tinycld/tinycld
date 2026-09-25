@@ -31,6 +31,10 @@ func TestScopeForRouteMapsRegisteredRoutes(t *testing.T) {
 		// Core's own identity entries.
 		{"GET", "/api/collections/users/records", ScopeProfile},
 		{"GET", "/oauth/userinfo", ScopeProfile},
+		// The backup ledger, which `tinycld backup list` reads through the
+		// records API rather than a second endpoint rendering the same rows.
+		{"GET", "/api/collections/backups/records", ScopeBackups},
+		{"GET", "/api/collections/backups/records/abc123", ScopeBackups},
 	}
 	for _, c := range cases {
 		if got := ScopeForRoute(c.method, c.path); !onlyScope(got, c.want) {
@@ -47,6 +51,8 @@ func TestScopeForRouteDefaultDenies(t *testing.T) {
 		{"GET", "/api/collections/pkg_registry/records", "uncovered collection"},
 		{"POST", "/api/collections/notes_folder_counts/records", "read-only collection"},
 		{"PATCH", "/api/collections/users/records/abc", "identity is read-only"},
+		{"POST", "/api/collections/backups/records", "the ledger is written by the server, never by a token"},
+		{"DELETE", "/api/collections/backups/records/abc", "the ledger is written by the server, never by a token"},
 		{"POST", "/api/notes/items/", "bare prefix of a per-record family"},
 		{"GET", "/api/notes/items/abc123/move", "prefix family is method-specific"},
 		{"GET", "/api/notes/send", "exact endpoints are method-specific"},

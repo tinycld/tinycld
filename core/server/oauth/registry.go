@@ -287,6 +287,15 @@ func rebuild() tables {
 			// The caller's own identity. Read-only: a token edits nobody's
 			// account.
 			"users": {read: ScopeRule{ScopeProfile}},
+			// The backup ledger. Read-only: every row is written by the server
+			// itself, and `tinycld backup list` reads the history through the
+			// records API rather than a second endpoint that would re-render
+			// the same rows. Core-owned for the same reason the endpoints
+			// above are: no package owns an archive of the whole organization.
+			// The collection's own list/view rule (owner or admin) still
+			// applies — this only stops the grant middleware default-denying
+			// the read.
+			"backups": {read: ScopeRule{ScopeBackups}},
 		},
 		endpoints: map[string]ScopeRule{
 			// The deployment's own backup API. Core-owned, so it is spelled
