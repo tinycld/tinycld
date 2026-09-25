@@ -18,7 +18,7 @@
 #   1. Pre-flight: docker running, sim UDID, Xcode, free Docker disk.
 #   2. Build the server image (the install-harness Dockerfile) unless reused.
 #   3. Boot the container; wait for first-boot health.
-#   4. Scrape the first-run /admin bootstrap token from the container logs.
+#   4. Scrape the first-run setup code from the container logs.
 #   5. Install @tinycld/calendar-slots (mints a `build-<ts>-ios` bundle).
 #   6. Precheck: GET /api/app/update?platform=ios must now return 200 (not 204).
 #   7. Build + boot the Release sim (scripts/ios-simulator.sh --prod).
@@ -181,14 +181,14 @@ boot_container() {
 
 scrape_token() {
     local i
-    TOKEN=""
+    CODE=""
     for i in $(seq 1 30); do
-        TOKEN="$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'token=[a-f0-9]+' | head -1 | cut -d= -f2 || true)"
-        [ -n "${TOKEN}" ] && break
+        CODE="$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'code=[A-Z0-9]{8}' | head -1 | cut -d= -f2 || true)"
+        [ -n "${CODE}" ] && break
         sleep 1
     done
-    [ -n "${TOKEN}" ] || die "no first-run /admin bootstrap token printed within 30s"
-    log "scraped bootstrap token (${#TOKEN} chars)"
+    [ -n "${CODE}" ] || die "no first-run setup code printed within 30s"
+    log "scraped setup code (${#CODE} chars)"
 }
 
 # ---------------------------------------------------------------------------
@@ -212,8 +212,8 @@ mint_ios_bundle() {
     log "ensuring chromium for playwright"
     (cd "${APP_DIR}" && pnpm exec playwright install chromium >/dev/null 2>&1) || true
 
-    # The /admin?token= setup wizard only renders while pb_data has NO superuser,
-    # and the token is one-shot. On a fresh container we run bootstrap+install; on a
+    # The /setup?code= wizard only renders while pb_data has NO superuser, and
+    # the code is one-shot. On a fresh container we run bootstrap+install; on a
     # reused (already-bootstrapped) container we run install-only. Pick the right
     # test set by probing for the user.
     # The install spec is a serial lifecycle: prove the compat gate rejects
@@ -228,14 +228,14 @@ mint_ios_bundle() {
         grep_expr="${lifecycle}"
     else
         log "fresh container — running bootstrap + install"
-        grep_expr="bootstrap superuser via /admin wizard|${lifecycle}"
+        grep_expr="bootstrap owner via /setup wizard|${lifecycle}"
     fi
 
     log "installing ${PKG_SPEC} (mints the ios bundle via expo export — several minutes)…"
     (
         cd "${APP_DIR}/tests/install"
         PW_BASE_URL="${SERVER_URL}" \
-        PW_CALSLOTS_SETUP_TOKEN="${TOKEN}" \
+        PW_CALSLOTS_SETUP_CODE="${CODE}" \
         PW_CALSLOTS_SPEC="${PKG_SPEC}" \
         ADMIN_USER_LOGIN="${ADMIN_USER_LOGIN}" \
         ADMIN_USER_PW="${ADMIN_USER_PW}" \

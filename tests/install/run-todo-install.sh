@@ -216,26 +216,26 @@ start_live_log
 # on a loaded host, so give it a wider budget — a slow boot here is not a failure.
 wait_healthy "first boot" 300
 
-# 4. Scrape the first-run bootstrap token from logs. The server prints a
-#    `${url}/admin?token=…` line on first boot; the path doesn't matter here —
-#    we match the `token=` query param, so this is unaffected by /setup→/admin.
+# 4. Scrape the first-run setup code from logs. The server prints a
+#    `${url}/setup?code=…` line on first boot; we match the `code=` query
+#    param, so this is unaffected by any further path renames.
 #
-#    The setup-token banner is printed AFTER /api/health starts answering (the
+#    The setup-code banner is printed AFTER /api/health starts answering (the
 #    banner comes near the very end of boot, once PocketBase finishes the
 #    InstallerFunc check), so a one-shot grep right after wait_healthy races the
 #    banner and can find nothing. Poll the logs for up to 30s instead.
-TOKEN=""
+CODE=""
 for i in $(seq 1 30); do
-    TOKEN=$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'token=[a-f0-9]+' | head -1 | cut -d= -f2 || true)
-    [ -n "${TOKEN}" ] && break
+    CODE=$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'code=[A-Z0-9]{8}' | head -1 | cut -d= -f2 || true)
+    [ -n "${CODE}" ] && break
     sleep 1
 done
-if [ -z "${TOKEN}" ]; then
-    echo "[runner] ERROR: no bootstrap token printed in logs after 30s" >&2
+if [ -z "${CODE}" ]; then
+    echo "[runner] ERROR: no setup code printed in logs after 30s" >&2
     dump_logs
     exit 1
 fi
-echo "[runner] scraped bootstrap token (${#TOKEN} chars)"
+echo "[runner] scraped setup code (${#CODE} chars)"
 
 # 5. Ensure the Playwright browser binary is present. The spec and its config
 #    run in place from ${SCRIPT_DIR} via the workspace's own `playwright`; the
@@ -261,7 +261,7 @@ run_phase() {
     (
         cd "${SCRIPT_DIR}"
         PW_BASE_URL="${BASE_URL}" \
-        PW_TODO_SETUP_TOKEN="${TOKEN}" \
+        PW_TODO_SETUP_CODE="${CODE}" \
         PW_CORE_CUR="${CORE_CUR:-}" \
         PW_CORE_NEXT="${CORE_NEXT:-}" \
         ADMIN_USER_LOGIN="${ADMIN_USER_LOGIN:-}" \

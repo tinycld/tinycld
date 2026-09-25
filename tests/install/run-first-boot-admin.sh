@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test for the first-boot /admin console: builds (or reuses) a TinyCld
-# image, boots it on a FRESH blank DB so the first-run setup token is printed,
-# scrapes that token, and runs setup-and-packages.spec.ts against the live
+# image, boots it on a FRESH blank DB so the first-run setup code is printed,
+# scrapes that code, and runs setup-and-packages.spec.ts against the live
 # container — the bootstrap wizard, the package list, and the system-settings
 # panels (Sentry DSN injection + VAPID generate).
 #
@@ -104,20 +104,20 @@ TAIL_PID=$!
 # 3. Wait for first-boot health (cold boot does schema-gen + seeding).
 wait_healthy 300
 
-# 4. Scrape the first-run token. It's printed near the end of boot (after health
-#    answers), so poll the logs for up to 30s.
-TOKEN=""
+# 4. Scrape the first-run setup code. It's printed near the end of boot (after
+#    health answers), so poll the logs for up to 30s.
+CODE=""
 for i in $(seq 1 30); do
-    TOKEN=$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'token=[a-f0-9]+' | head -1 | cut -d= -f2 || true)
-    [ -n "${TOKEN}" ] && break
+    CODE=$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'code=[A-Z0-9]{8}' | head -1 | cut -d= -f2 || true)
+    [ -n "${CODE}" ] && break
     sleep 1
 done
-if [ -z "${TOKEN}" ]; then
-    echo "[runner] ERROR: no bootstrap token printed in logs after 30s" >&2
+if [ -z "${CODE}" ]; then
+    echo "[runner] ERROR: no setup code printed in logs after 30s" >&2
     dump_logs
     exit 1
 fi
-echo "[runner] scraped bootstrap token (${#TOKEN} chars)"
+echo "[runner] scraped setup code (${#CODE} chars)"
 
 # 5. Ensure chromium is present (no-op once cached), then run the spec in place
 #    against the live container.
@@ -128,7 +128,7 @@ echo "[runner] running setup-and-packages.spec.ts"
 (
     cd "${SCRIPT_DIR}"
     PW_BASE_URL="${BASE_URL}" \
-    PW_SETUP_TOKEN="${TOKEN}" \
+    PW_SETUP_CODE="${CODE}" \
     CI=true FORCE_COLOR=0 \
     pnpm exec playwright test setup-and-packages.spec.ts --reporter=line,list
 ) || { echo "[runner] spec failed"; dump_logs; exit 1; }
