@@ -361,7 +361,11 @@ func postCallback(url string, row *core.Record) {
 	}
 	res, err := format.NoRedirectClient().Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Warn("backup callback failed", "host", HostOnly(url), "err", err)
+		// The host attribute alone is not enough: Go's *url.Error prints the
+		// WHOLE callback URL, and a callback URL carries a token as often as a
+		// target URL carries a signature. Every log call becomes a Sentry
+		// breadcrumb, so the unredacted error was a credential in Sentry.
+		log.Warn("backup callback failed", "host", HostOnly(url), "err", format.RedactURLError(err))
 		return
 	}
 	_, _ = io.Copy(io.Discard, res.Body)

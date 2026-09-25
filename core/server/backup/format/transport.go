@@ -110,6 +110,16 @@ func (g *stallGuard) stop() {
 	g.cancel()
 }
 
+// fired reports whether this guard is what ended the transfer. A read cancelled
+// mid-body does NOT come back as context.Canceled — the transport wraps it in
+// its own error type — so errors.Is on the read's error is not a usable test for
+// "was this a stall". The guard's own state is.
+func (g *stallGuard) fired() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.stalled
+}
+
 // classify turns the cancellation the guard caused back into ErrStalled. Without
 // it the caller sees "context canceled" and cannot tell a stalled transfer from
 // a shutdown or an operator's cancel.
@@ -117,10 +127,7 @@ func (g *stallGuard) classify(err error) error {
 	if err == nil {
 		return nil
 	}
-	g.mu.Lock()
-	stalled := g.stalled
-	g.mu.Unlock()
-	if stalled {
+	if g.fired() {
 		return ErrStalled
 	}
 	return err

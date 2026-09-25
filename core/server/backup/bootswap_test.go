@@ -424,3 +424,68 @@ func TestApplyPendingRestoreLeavesARollbackMarker(t *testing.T) {
 		t.Fatal("the marker must say when the rollback happened")
 	}
 }
+
+// A crash after the two renames but before the swapped marker is removed brings
+// the next boot straight back into rollBack. Re-running the renames was
+// destructive: RemoveAll wiped the kept failed copy, the RECOVERED pb_data was
+// renamed into its place, and the final rename then failed on the missing
+// previous/<id> — leaving no pb_data at all.
+func TestRollBackTwiceKeepsTheRecoveredData(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	// The failed boot: the data goes back and the marker is cleared.
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(dataDir, "data.db")) != "old" {
+		t.Fatal("the first rollback did not restore the previous data")
+	}
+
+	// The crash window: swapped is still there, previous/<id> is already gone.
+	raw, err := os.ReadFile(filepath.Join(rolledBackDirOf(dataDir), "r1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rb rolledBack
+	if err := json.Unmarshal(raw, &rb); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := json.Marshal(rb.Armed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(swappedPathOf(dataDir), marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prev := filepath.Join(restoreDirOf(dataDir), "previous", "r1")
+	if _, serr := os.Stat(prev); !os.IsNotExist(serr) {
+		t.Fatal("this test is only meaningful with previous/<id> already consumed")
+	}
+
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatalf("re-entering the rollback must not fail: %v", err)
+	}
+	if got := read(t, filepath.Join(dataDir, "data.db")); got != "old" {
+		t.Fatalf("the recovered data.db is %q, want the organization's own data", got)
+	}
+	if got := read(t, filepath.Join(dataDir, "auxiliary.db")); got != "aux" {
+		t.Fatalf("the recovered pb_data lost a member: auxiliary.db is %q", got)
+	}
+	if got := read(t, filepath.Join(dataDir, "storage", "a", "b", "old.txt")); got != "old" {
+		t.Fatalf("the recovered storage tree is %q", got)
+	}
+	// The failed restore's data is still set aside for inspection, not buried
+	// under the recovered copy.
+	if got := read(t, filepath.Join(restoreDirOf(dataDir), "failed", "r1", "data.db")); got != "new" {
+		t.Fatalf("the failed restore's data is %q; the re-entry overwrote it", got)
+	}
+	if _, serr := os.Stat(swappedPathOf(dataDir)); !os.IsNotExist(serr) {
+		t.Fatal("the swapped marker was not cleared on the second pass")
+	}
+	if Restoring() {
+		t.Fatal("a rolled-back boot serves the previous data, so it is not restoring")
+	}
+}

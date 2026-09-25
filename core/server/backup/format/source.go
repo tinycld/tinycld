@@ -97,13 +97,23 @@ func (s *RangeSource) Read(p []byte) (int, error) {
 		_ = s.body.Close()
 		s.body = nil
 		s.retries++
-		if serr := s.guard.classify(nil); serr != nil {
-			return n, serr
+		// A stall or a cancellation, not a dropped connection: there is nothing to
+		// retry against. This asks the guard and the context directly because the
+		// obvious spelling — errors.Is(err, context.Canceled) on the read's error
+		// — is DEAD: a read cancelled mid-body comes back wrapped in the
+		// transport's own error type and the context error is not reachable
+		// through it.
+		//
+		// No test can tell the two spellings apart, because the loop's next act is
+		// to re-open and client.Do fails instantly on the same cancelled context,
+		// returning the same ErrStalled with no sleep and no request. This is here
+		// to say what the loop means, and so that a future change to the re-open
+		// path cannot silently turn a stall into eight backoff rounds.
+		if s.guard.fired() {
+			return n, ErrStalled
 		}
-		if errors.Is(err, context.Canceled) {
-			// Cancelled, not dropped: retrying would spin through the whole
-			// backoff budget against a context that will never recover.
-			return n, s.guard.classify(err)
+		if s.ctx.Err() != nil {
+			return n, s.ctx.Err()
 		}
 		if s.retries > maxRetries {
 			return n, fmt.Errorf("backup: source gave up after %d retries: %w", maxRetries, err)

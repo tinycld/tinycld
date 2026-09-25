@@ -397,3 +397,21 @@ func TestNoRedirectClientHasPhaseTimeouts(t *testing.T) {
 		t.Fatal("an overall client timeout would cut a long transfer off")
 	}
 }
+
+// fired() is the reliable signal the loop uses, and it is worth pinning directly:
+// the errors.Is spelling it replaced was silently dead.
+func TestStallGuardReportsThatItFired(t *testing.T) {
+	shortStallDeadline(t, 20*time.Millisecond)
+	_, g := newStallGuard(context.Background())
+	t.Cleanup(g.stop)
+	if g.fired() {
+		t.Fatal("a fresh guard has not fired")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !g.fired() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !g.fired() {
+		t.Fatal("the guard never reported firing")
+	}
+}

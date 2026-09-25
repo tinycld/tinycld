@@ -211,9 +211,13 @@ func TestRestoreStagesAndCallsRebuilder(t *testing.T) {
 	if a.Manifest.Core == "" {
 		t.Fatal("the armed marker must carry the manifest the restored process reports")
 	}
-	if !Restoring() {
-		t.Fatal("Restoring must report true once the restore is armed")
-	}
+	// Restoring() is deliberately NOT asserted here. This stub rebuilder returns
+	// nil without ending the process, which is the same shape the production
+	// rebuilder has when its requestRestart is a no-op (dev mode) — so the restore
+	// correctly treats it as "staged, nothing will apply it" and leaves
+	// maintenance mode rather than wedging every later request behind the 503.
+	// TestRestoreRebuilderThatCannotRestartLeavesTheDeploymentServing covers that.
+	// The arming itself is asserted by the armed marker above.
 
 	// The pre-restore backup is readable with the identity stored on the row.
 	row, err := app.FindRecordById("backups", jobID)
@@ -873,5 +877,121 @@ func TestRestoreThatWillRestartStaysInMaintenanceMode(t *testing.T) {
 	}
 	if !Restoring() {
 		t.Fatal("a restore on its way out must keep serving 503")
+	}
+}
+
+// A rebuilder that SUCCEEDED ends the process and never returns, so a rebuilder
+// returning nil means it built the binary and then found nothing would restart —
+// a dev-mode server, whose requestRestart is a no-op. The staged restore is then
+// as unapplied as on the no-rebuild path, and leaving `restoring` set wedged the
+// whole deployment behind the maintenance 503 with nothing coming to clear it.
+func TestRestoreRebuilderThatCannotRestartLeavesTheDeploymentServing(t *testing.T) {
+	data, identity := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	// Returns nil WITHOUT ending the process: exactly what the production
+	// rebuilder does when requestRestart is a no-op.
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		installjob.Release(job)
+		return nil
+	})
+
+	jobID, err := Restore(app, RestoreRequest{
+		Source: readCloser{bytes.NewReader(data)}, Identity: identity,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Restoring() {
+		t.Fatal("a rebuild nothing restarted must not leave the deployment behind the 503")
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	var meta map[string]any
+	if err := row.UnmarshalJSONField("metadata", &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["awaiting_restart"] != true {
+		t.Fatalf("metadata %+v — the panel has no way to say a restart is owed", meta)
+	}
+	// The staged data is still there for the restart to pick up.
+	if _, serr := os.Stat(armedPath(app)); serr != nil {
+		t.Fatalf("the armed marker must survive: %v", serr)
+	}
+}
+
+// A rebuilder that FAILED is a different outcome: the restore failed, the
+// terminal defer records it, and awaiting_restart would be a lie.
+func TestRestoreRebuilderFailureIsNotAnAwaitedRestart(t *testing.T) {
+	data, identity := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		installjob.Release(job)
+		return errors.New("toolchain is missing")
+	})
+
+	jobID, err := Restore(app, RestoreRequest{
+		Source: readCloser{bytes.NewReader(data)}, Identity: identity,
+	})
+	if err == nil {
+		t.Fatal("a failed rebuild must fail the restore")
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if got := row.GetString("status"); got != "failed" {
+		t.Fatalf("status %q, want failed", got)
+	}
+	var meta map[string]any
+	if err := row.UnmarshalJSONField("metadata", &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["awaiting_restart"] == true {
+		t.Fatal("a failed rebuild is not a restore awaiting a restart")
+	}
+}
+
+// A rebuilder that ends the process never returns, so the restore stays in
+// maintenance mode: the staged copy is what boots next and a write landing here
+// would be discarded. Modelled by a rebuilder that blocks rather than returning,
+// which is what "never returns" looks like from runRestore's side.
+func TestRestoreRebuilderThatRestartsStaysInMaintenanceMode(t *testing.T) {
+	data, identity := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		close(entered)
+		<-release // the production rebuilder os.Exit()s here and never returns
+		installjob.Release(job)
+		return nil
+	})
+	t.Cleanup(func() { close(release) })
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Restore(app, RestoreRequest{
+			Source: readCloser{bytes.NewReader(data)}, Identity: identity,
+		})
+		done <- err
+	}()
+
+	select {
+	case <-entered:
+	case err := <-done:
+		t.Fatalf("the restore finished without reaching the rebuilder: %v", err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("the rebuilder was never called")
+	}
+	// Inside the rebuilder, which in production is the last thing this process
+	// does: the restore is armed and serving 503.
+	if !Restoring() {
+		t.Fatal("a restore handed to a rebuilder must stay in maintenance mode")
 	}
 }

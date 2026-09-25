@@ -409,23 +409,39 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 			// ever run again. Release compares identity before clearing, so this
 			// cannot evict a different holder, and a double release is a no-op.
 			installjob.Release(job)
+			return rerr
 		}
-		return rerr
+		// A rebuilder that SUCCEEDED ends the process and never returns. Reaching
+		// this line therefore means it built the binary and then found nothing
+		// would restart — a dev-mode server, whose requestRestart is a no-op. The
+		// staged restore is as unapplied as on the no-rebuild path below, and for
+		// the same reason, so it is recorded the same way.
+		restartSkipped(app, row)
+		return nil
 	}
 	if requestRestart() {
 		return nil
 	}
-	// Nothing is going to end this process, so the staged restore cannot be
-	// applied until an operator restarts the server by hand. Leaving `restoring`
-	// set would put every request behind the maintenance 503 with nothing coming
-	// to clear it, so this deployment goes back to serving its CURRENT data and
-	// the row says what is still owed.
+	restartSkipped(app, row)
+	return nil
+}
+
+// restartSkipped records a restore that is staged and armed but that nothing is
+// going to apply, because nothing will end this process.
+//
+// Leaving `restoring` set would put every request behind the maintenance 503 with
+// nothing coming to clear it — the whole deployment wedged behind a restore that
+// cannot complete. So this process goes back to serving its CURRENT data, and the
+// row says what is still owed. The staged data and the armed marker stay put for
+// whenever the operator does restart.
+func restartSkipped(app core.App, row *core.Record) {
+	log.Error("a restore is staged but nothing will restart this process; "+
+		"restart the server manually to apply the restore", "id", row.Id)
 	restoring.Store(false)
 	row.Set("metadata", mergeMeta(row, map[string]any{"awaiting_restart": true}))
-	if serr := app.Save(row); serr != nil {
-		log.Error("could not record that a restore is awaiting a restart", "id", id, "err", serr)
+	if err := app.Save(row); err != nil {
+		log.Error("could not record that a restore is awaiting a restart", "id", row.Id, "err", err)
 	}
-	return nil
 }
 
 // expiryWatcher reports a stalled remote source on the ledger row, so an

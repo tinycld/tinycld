@@ -134,6 +134,9 @@ const rollbackReason = "the restored data did not boot; the previous data was pu
 // kept under restore/failed/<id> rather than deleted: it booted far enough to
 // swap in, so whatever stopped it is worth looking at.
 //
+// It is idempotent, keyed on previous/<id>: whether the data has already been put
+// back is a fact on disk, not something the caller can be trusted to know.
+//
 // It also leaves a marker, because a silent rollback is the worst outcome of
 // all: the organization serves its old data, the restore's ledger row stays
 // "running", and nobody is told the restore was undone. The marker is written
@@ -141,24 +144,39 @@ const rollbackReason = "the restored data did not boot; the previous data was pu
 // back rather than losing the news; the finalizer keys on the job id and writes
 // one row per rollback.
 func rollBack(dataDir string, a armed) error {
-	failed := filepath.Join(restoreDirOf(dataDir), "failed", a.ID)
-	if err := os.MkdirAll(filepath.Dir(failed), 0o700); err != nil {
-		return err
-	}
-	if err := os.RemoveAll(failed); err != nil {
-		return err
-	}
-	// pb_data can already be gone if something removed it between the two boots.
-	// The point of the rollback is getting the previous copy back, so a missing
-	// pb_data is not a reason to refuse it.
-	if _, err := os.Stat(dataDir); err == nil {
-		if err := os.Rename(dataDir, failed); err != nil {
-			return fmt.Errorf("backup: set the failed restore aside: %w", err)
-		}
-	}
 	prev := filepath.Join(restoreDirOf(dataDir), "previous", a.ID)
-	if err := os.Rename(prev, dataDir); err != nil {
-		return fmt.Errorf("backup: move previous data back: %w", err)
+	_, prevErr := os.Stat(prev)
+	// previous/<id> gone means the two renames below ALREADY ran and the
+	// organization's data is what is at dataDir right now. Re-entry gets here
+	// whenever a crash lands after those renames and before the swapped marker is
+	// removed — and running them again was destructive: RemoveAll wiped the kept
+	// failed copy, the RECOVERED pb_data was renamed into its place, and the final
+	// rename then failed on the missing previous/<id>, leaving no pb_data at all.
+	// So the renames are skipped and only the bookkeeping is finished.
+	alreadyBack := errors.Is(prevErr, os.ErrNotExist)
+	if prevErr != nil && !alreadyBack {
+		return prevErr
+	}
+
+	if !alreadyBack {
+		failed := filepath.Join(restoreDirOf(dataDir), "failed", a.ID)
+		if err := os.MkdirAll(filepath.Dir(failed), 0o700); err != nil {
+			return err
+		}
+		if err := os.RemoveAll(failed); err != nil {
+			return err
+		}
+		// pb_data can already be gone if something removed it between the two
+		// boots. The point of the rollback is getting the previous copy back, so a
+		// missing pb_data is not a reason to refuse it.
+		if _, err := os.Stat(dataDir); err == nil {
+			if err := os.Rename(dataDir, failed); err != nil {
+				return fmt.Errorf("backup: set the failed restore aside: %w", err)
+			}
+		}
+		if err := os.Rename(prev, dataDir); err != nil {
+			return fmt.Errorf("backup: move previous data back: %w", err)
+		}
 	}
 	if err := os.Remove(armedPathOf(dataDir)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

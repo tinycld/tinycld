@@ -6,6 +6,12 @@ import (
 	"net/url"
 )
 
+// RedactURLError is redactURLError for callers outside this package. The engine
+// posts a caller-supplied callback URL of its own, which is signed just as often
+// as a target is, and nothing else in the tree knows the shape of the error Go
+// returns for it.
+func RedactURLError(err error) error { return redactURLError(err) }
+
 // redactURLError strips the URL out of Go's *url.Error.
 //
 // Every transfer in this package runs against a presigned URL, whose signature

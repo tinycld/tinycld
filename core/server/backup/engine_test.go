@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -734,5 +735,51 @@ func TestRunGivesUpOnAStalledTargetAndReleasesTheInterlock(t *testing.T) {
 	}
 	if got := row.GetString("status"); got != "failed" {
 		t.Fatalf("status %q", got)
+	}
+}
+
+// captureLog swaps the package logger for one writing into a buffer, so a test
+// can assert on what a log line actually carries. Every log call becomes a Sentry
+// breadcrumb, so a credential in a log line is a credential in Sentry.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := log
+	log = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	t.Cleanup(func() { log = prev })
+	return &buf
+}
+
+// The callback URL is caller-supplied and carries a token as often as a target
+// URL carries a signature. The host attribute was redacted; the error attribute
+// beside it was Go's *url.Error, which prints the WHOLE URL.
+func TestCallbackFailureLogsNoCredential(t *testing.T) {
+	buf := captureLog(t)
+	app := newTestApp(t)
+	col, err := app.FindCollectionByNameOrId("backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := core.NewRecord(col)
+	row.Set("kind", "manual")
+	row.Set("status", "succeeded")
+	row.Set("started", types.NowDateTime())
+	if err := app.Save(row); err != nil {
+		t.Fatal(err)
+	}
+
+	postCallback("http://127.0.0.1:1/cb?token=SECRET", row)
+
+	line := buf.String()
+	if !strings.Contains(line, "backup callback failed") {
+		t.Fatalf("the failure was not logged: %q", line)
+	}
+	for _, leak := range []string{"token=SECRET", "SECRET", "/cb"} {
+		if strings.Contains(line, leak) {
+			t.Errorf("the log line leaks %q: %s", leak, line)
+		}
+	}
+	if !strings.Contains(line, "127.0.0.1") {
+		t.Errorf("the log line should still name the host: %s", line)
 	}
 }
