@@ -47,12 +47,19 @@ describe('buildCliExtensionsSource', () => {
 })
 
 describe('buildCliGoWork', () => {
-    it('includes . and each cli package use, but no core line', () => {
+    it('includes ., the format module, and each cli package use', () => {
         const work = buildCliGoWork([mail])
         expect(work).toContain('use (')
         expect(work).toContain('    .')
         expect(work).toContain('    ../../mail/cli')
-        expect(work).not.toContain('core/server')
+    })
+
+    // The CLI reads backup archives, so it uses core's nested archive-format
+    // module — but NOT core proper, whose graph drags in the PocketBase fork.
+    it('uses the nested format module and never core proper', () => {
+        const work = buildCliGoWork([mail])
+        expect(work).toContain('    ../core/server/backup/format')
+        expect(work).not.toContain('    ../core/server\n')
     })
 
     // Members require tinycld.org/cli v0.0.0; without a versioned workspace
@@ -67,6 +74,8 @@ describe('buildCliGoWork', () => {
         const work = buildCliGoWork([])
         expect(work).toContain('use (')
         expect(work).toContain('    .')
+        // still the format module — the CLI itself requires it on every assembly
+        expect(work).toContain('    ../core/server/backup/format')
         expect(work).not.toContain('replace')
     })
 })
@@ -95,5 +104,15 @@ describe('buildMemberCliGoWork', () => {
         const work = buildMemberCliGoWork('../../tinycld/cli')
         expect(work).toContain('use .')
         expect(work).toContain('replace tinycld.org/cli => ../../tinycld/cli')
+    })
+
+    // tinycld.org/cli requires the format module at v0.0.0, so a standalone
+    // member cli build needs it replaced too — versioned, and with the path
+    // normalized (never `.../cli/../core/...`).
+    it('replaces the format module at a normalized path', () => {
+        const work = buildMemberCliGoWork('../../tinycld/cli')
+        expect(work).toContain(
+            'replace tinycld.org/core/backup/format v0.0.0 => ../../tinycld/core/server/backup/format'
+        )
     })
 })

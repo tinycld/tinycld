@@ -10,6 +10,10 @@ go 1.26.3
 // (tinycld/server) carries the matching replace for the assembled build.
 replace github.com/pocketbase/pocketbase => ../../third_party/pocketbase
 
+// The archive format is a nested module so the CLI can read backup archives
+// without depending on core (or the PocketBase fork).
+replace tinycld.org/core/backup/format => ./backup/format
+
 require (
 	filippo.io/age v1.3.2
 	github.com/Masterminds/semver/v3 v3.5.0
@@ -40,6 +44,7 @@ require (
 	golang.org/x/net v0.57.0
 	golang.org/x/text v0.41.0
 	modernc.org/sqlite v1.54.0
+	tinycld.org/core/backup/format v0.0.0
 )
 
 require (

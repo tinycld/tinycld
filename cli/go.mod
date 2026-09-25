@@ -9,7 +9,14 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/term v0.45.0
+	tinycld.org/core/backup/format v0.0.0
 )
+
+// core's archive format is a nested, dependency-light module (no core, no
+// PocketBase fork), so the CLI can inspect a backup archive locally. The
+// require above is resolved through this local replace, so it needs no go.sum
+// entry.
+replace tinycld.org/core/backup/format => ../core/server/backup/format
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

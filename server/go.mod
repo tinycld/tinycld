@@ -10,6 +10,8 @@ require (
 
 replace tinycld.org/core => ../core/server
 
+replace tinycld.org/core/backup/format => ../core/server/backup/format
+
 // Build against the multi-org PocketBase fork, vendored at
 // tinycld/third_party/pocketbase: sobek engine + jsvm ProgramSource/OnInit +
 // BuildServeMux seams. Same module path and base tag (v0.39.8) as upstream, so no
