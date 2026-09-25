@@ -1,11 +1,41 @@
 package coreserver
 
 import (
+	"net/http"
 	"testing"
+	"time"
 
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// ensureUsersRoleAndNameFields patches a tests.NewTestApp app's `users`
+// collection with the fields createOwnerOperator sets (role, name). A test
+// app built from tests.NewTestApp has no JS migrations dir, so the
+// PocketBase-system `users` collection it creates lacks these — see
+// ensureUsersCollection above for the same gap on a from-scratch app.
+func ensureUsersRoleAndNameFields(t *testing.T, app core.App) {
+	t.Helper()
+	usersCol, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := false
+	if usersCol.Fields.GetByName("role") == nil {
+		usersCol.Fields.Add(&core.TextField{Name: "role"})
+		changed = true
+	}
+	if usersCol.Fields.GetByName("name") == nil {
+		usersCol.Fields.Add(&core.TextField{Name: "name"})
+		changed = true
+	}
+	if changed {
+		if err := app.Save(usersCol); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 // The first operator must end up as a regular `users` record with role=owner —
 // that is the identity the /admin console runs as, and the one whose token
@@ -146,5 +176,48 @@ func TestCreateOwnerAccountWithHash_RejectsPlaintext(t *testing.T) {
 	t.Cleanup(func() { app.Cleanup() })
 	if _, err := CreateOwnerAccountWithHash(app, "x@example.com", "X", "not-a-hash"); err == nil {
 		t.Fatal("expected an error for a non-bcrypt value")
+	}
+}
+
+func TestSetupInitCreatesOwnerAndStartsWizard(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+	createSystemSettingsCollection(t, app)
+	ensureUsersRoleAndNameFields(t, app)
+
+	var announced []string
+	guard := newSetupGuard(time.Now, func(c string) { announced = append(announced, c) })
+	if err := guard.Issue(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := setupInitRequest{
+		Code: formatSetupCode(announced[0]), Name: "Dana Reyes",
+		Email: "dana@example.com", Password: "OwnerPass1234!", AppURL: "https://cloud.example.com",
+	}
+	res, status := runSetupInit(app, guard, "1.1.1.1", req)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d (%v)", status, res)
+	}
+	owner, err := app.FindAuthRecordByEmail("users", "dana@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner.GetString("name") != "Dana Reyes" || owner.GetString("role") != "owner" {
+		t.Fatalf("owner = name %q role %q", owner.GetString("name"), owner.GetString("role"))
+	}
+	if _, err := app.FindFirstRecordByFilter("system_settings", "key = {:k}", map[string]any{"k": setupWizardKey}); err != nil {
+		t.Fatal("wizard state row missing")
+	}
+	if guard.NeedsSetup() {
+		t.Fatal("code still active after init")
+	}
+
+	_, again := runSetupInit(app, guard, "1.1.1.1", req)
+	if again != http.StatusForbidden {
+		t.Fatalf("second init status = %d, want 403", again)
 	}
 }
