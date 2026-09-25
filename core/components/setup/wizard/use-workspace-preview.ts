@@ -4,7 +4,7 @@ import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useSetupPreviewStore } from '@tinycld/core/lib/setup/setup-preview-store'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
-import { isDeliveryEnabled } from '../../setup/system-settings-logic'
+import { isDeliverySwitchedOn } from '../../setup/system-settings-logic'
 import { useSystemSettings } from '../../setup/system-settings-store'
 
 export interface PreviewModel {
@@ -14,6 +14,8 @@ export interface PreviewModel {
     logoCrop: string
     apps: { slug: string; icon: string }[]
     memberInitials: string[]
+    /** Everyone in the workspace; `memberInitials` is capped for the avatars. */
+    memberCount: number
     isMailOn: boolean
     isEmpty: boolean
     /** Before the server is claimed: nothing about the org is shown yet. */
@@ -36,6 +38,7 @@ export function buildPreviewModel(input: {
     logoCrop: string
     apps: { slug: string; icon: string }[]
     memberInitials: string[]
+    memberCount: number
     isMailOn: boolean
 }): PreviewModel {
     const name = (input.draftName ?? input.orgName).trim()
@@ -46,6 +49,7 @@ export function buildPreviewModel(input: {
         logoCrop: input.logoCrop,
         apps: input.apps,
         memberInitials: input.memberInitials,
+        memberCount: input.memberCount,
         isMailOn: input.isMailOn,
         isEmpty: !name && input.apps.length === 0 && input.memberInitials.length === 0,
         isGhost: false,
@@ -65,6 +69,7 @@ export function ghostPreviewModel(initials: string | undefined): PreviewModel {
         logoCrop: '',
         apps: [],
         memberInitials,
+        memberCount: memberInitials.length,
         isMailOn: false,
         isEmpty: memberInitials.length === 0,
         isGhost: true,
@@ -102,6 +107,7 @@ export function useWorkspacePreview(): PreviewModel {
         logoCrop: org?.logoCrop ?? '',
         apps,
         memberInitials: people.slice(0, MAX_AVATARS).map(p => initialsOf(p.name)),
-        isMailOn: isDeliveryEnabled(byKey.get('mail.delivery_enabled')?.value),
+        memberCount: people.length,
+        isMailOn: isDeliverySwitchedOn(byKey.get('mail.delivery_enabled')?.value),
     })
 }

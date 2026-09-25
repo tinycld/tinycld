@@ -8,7 +8,9 @@ import { ghostPreviewModel, type PreviewModel, useWorkspacePreview } from './use
 import { WorkspacePreview } from './WorkspacePreview'
 import { WorkspacePreviewStrip } from './WorkspacePreviewStrip'
 
-type PreviewKind = 'workspace' | 'server-log' | 'ghost'
+// 'filled': the Done screen, where the step itself shows the workspace across
+// the whole pane, so there is no side preview or phone strip.
+type PreviewKind = 'workspace' | 'server-log' | 'ghost' | 'filled'
 
 export interface SetupWizardShellProps {
     /**
@@ -51,16 +53,26 @@ function stepLabelOf(props: SetupWizardShellProps): string {
     return `${summary.steps[index].label} · ${index + 1} of ${summary.total}`
 }
 
+function formClassNameOf(isPhone: boolean, isFilled: boolean): string {
+    if (isFilled) return 'w-full bg-surface-secondary'
+    return isPhone ? 'w-full' : 'w-[52%]'
+}
+
 function useSetupWizardLayout(props: SetupWizardShellProps, model: PreviewModel) {
     const { width } = useWindowDimensions()
     const isPhone = width < PHONE_MAX_WIDTH
+    const isFilled = props.preview === 'filled'
     return {
         model,
         isNewApps: props.currentStepId === APPS_STEP_ID,
         summary: props.summary ?? EMPTY_SUMMARY,
         stepLabel: stepLabelOf(props),
-        showStrip: isPhone,
-        formClassName: isPhone ? 'w-full' : 'w-[52%]',
+        showStrip: isPhone && !isFilled,
+        showPane: !isPhone && !isFilled,
+        formClassName: formClassNameOf(isPhone, isFilled),
+        contentClassName: isFilled
+            ? 'flex-grow items-center justify-center p-6 gap-4'
+            : 'p-6 gap-4',
         preview: props.preview,
     }
 }
@@ -96,7 +108,7 @@ function PreviewBody({ layout, code }: { layout: SetupWizardLayout; code: string
 }
 
 function PreviewPane({ layout, code }: { layout: SetupWizardLayout; code: string }) {
-    if (layout.showStrip) return null
+    if (!layout.showPane) return null
     return (
         <View className="flex-1 items-center justify-center border-l border-border bg-surface-secondary p-5">
             <PreviewBody layout={layout} code={code} />
@@ -109,7 +121,9 @@ function PreviewPane({ layout, code }: { layout: SetupWizardLayout; code: string
  * left and a live miniature of the workspace on the right (a strip on phones).
  */
 export function SetupWizardShell(props: SetupWizardShellProps) {
-    if (props.preview === 'workspace') return <LiveShell {...props} />
+    if (props.preview === 'workspace' || props.preview === 'filled') {
+        return <LiveShell {...props} />
+    }
     // Pre-auth screens never show live org data (the name there is the server
     // default), and there is nobody signed in to read it as, so they do not
     // subscribe to it at all.
@@ -136,7 +150,10 @@ function ShellFrame({ props, model }: { props: SetupWizardShellProps; model: Pre
                 <FinishLaterButton onPress={props.onFinishLater} />
             </View>
             <View className="flex-1 flex-row">
-                <ScrollView className={layout.formClassName} contentContainerClassName="p-6 gap-4">
+                <ScrollView
+                    className={layout.formClassName}
+                    contentContainerClassName={layout.contentClassName}
+                >
                     {props.children}
                     <SkipButton onPress={props.onSkip} />
                 </ScrollView>

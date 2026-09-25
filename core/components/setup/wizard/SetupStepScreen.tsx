@@ -92,7 +92,7 @@ function StepScreenBody({
                 currentStepId={null}
                 onFinishLater={null}
                 onSkip={null}
-                preview="workspace"
+                preview="filled"
                 code=""
             >
                 <DoneStep complete={screen.complete} />

@@ -8,6 +8,7 @@ const base = {
     logoCrop: '',
     apps: [],
     memberInitials: [],
+    memberCount: 0,
     isMailOn: false,
 }
 
@@ -25,6 +26,10 @@ describe('buildPreviewModel', () => {
         const m = buildPreviewModel({ ...base, logoUrl: 'https://x/logo.png', logoCrop: '{"x":1}' })
         expect(m.logoCrop).toBe('{"x":1}')
         expect(m.isGhost).toBe(false)
+    })
+    it('counts every member, not just the avatars shown', () => {
+        const m = buildPreviewModel({ ...base, memberInitials: ['A', 'B'], memberCount: 7 })
+        expect(m.memberCount).toBe(7)
     })
 })
 
