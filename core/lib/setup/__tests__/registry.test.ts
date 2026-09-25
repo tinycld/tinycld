@@ -16,7 +16,7 @@ describe('buildSetupStepEntries', () => {
                     setupSteps: [{ id: 'plan', label: 'Plan', order: 'Zz', load }],
                 },
                 {
-                    manifest: { slug: 'mail' },
+                    manifest: { slug: 'widgets' },
                     setupSteps: [{ id: 'address', label: 'Address', order: 'a0s', load }],
                 },
                 { manifest: { slug: 'none' } },
@@ -25,7 +25,7 @@ describe('buildSetupStepEntries', () => {
         expect(entries.map(e => e.id)).toEqual([
             'acme:plan',
             'core:workspace',
-            'mail:address',
+            'widgets:address',
             'core:apps',
         ])
     })
@@ -33,7 +33,7 @@ describe('buildSetupStepEntries', () => {
 
 describe('step URL params', () => {
     it('round-trips ids through a URL-safe param', () => {
-        expect(stepIdToParam('hosting-ui:web-address')).toBe('hosting-ui.web-address')
-        expect(paramToStepId('hosting-ui.web-address')).toBe('hosting-ui:web-address')
+        expect(stepIdToParam('acme-extra:web-address')).toBe('acme-extra.web-address')
+        expect(paramToStepId('acme-extra.web-address')).toBe('acme-extra:web-address')
     })
 })

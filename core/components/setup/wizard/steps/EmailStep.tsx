@@ -42,7 +42,7 @@ const MAIL_PANELS = mailPanelsOf(packageSystemSettings)
 export default function EmailStep({ next }: SetupStepProps) {
     const isManaged = useIsSettingManaged(MAIL_PREFIX)
     // Until the managed answer arrives an empty list reads as "nothing is
-    // managed"; rendering the panels then would let a hosted owner act on
+    // managed"; rendering the panels then would let an owner act on
     // settings they do not administer.
     const isPending = useIsManagedSettingsPending()
     if (isPending || isManaged) return null

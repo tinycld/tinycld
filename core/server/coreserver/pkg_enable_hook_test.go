@@ -28,13 +28,13 @@ func saveRegistryRow(t *testing.T, app core.App, slug, status string) *core.Reco
 func TestPkgEnableHookRestoresSource(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	dir := t.TempDir()
-	writeBundledJSON(t, dir, []bundledPackage{{Name: "Drive", Slug: "drive", Version: "1.0.0"}})
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Widgets", Slug: "widgets", Version: "1.0.0"}})
 	withCwd(t, dir)
 	RegisterPkgEnableHook(app)
 
 	cases := []struct{ slug, want string }{
-		{"drive", "bundled"},
-		{"todo", "installed"},
+		{"widgets", "bundled"},
+		{"gadgets", "installed"},
 	}
 	for _, c := range cases {
 		rec := saveRegistryRow(t, app, c.slug, "disabled")
@@ -60,11 +60,11 @@ func TestPkgEnableHookRestoresSource(t *testing.T) {
 func TestPkgEnableHookLeavesOtherWritesAlone(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	dir := t.TempDir()
-	writeBundledJSON(t, dir, []bundledPackage{{Name: "Drive", Slug: "drive", Version: "1.0.0"}})
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Widgets", Slug: "widgets", Version: "1.0.0"}})
 	withCwd(t, dir)
 	RegisterPkgEnableHook(app)
 
-	rec := saveRegistryRow(t, app, "drive", "bundled")
+	rec := saveRegistryRow(t, app, "widgets", "bundled")
 	fetched, err := app.FindRecordById("pkg_registry", rec.Id)
 	if err != nil {
 		t.Fatal(err)

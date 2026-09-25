@@ -96,11 +96,11 @@ func TestBuildCurrentMemberSet_KeepsHiddenBundledApp(t *testing.T) {
 	app := newMigrateTestApp(t)
 	addPkgRegistryCollection(t, app)
 	dir := t.TempDir()
-	writeBundledJSON(t, dir, []bundledPackage{{Name: "Drive", Slug: "drive", Version: "1.0.0"}})
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Widgets", Slug: "widgets", Version: "1.0.0"}})
 	withCwd(t, dir)
 	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
-	setRegistryRow(t, app, "drive", "disabled", "1.0.0", "@tinycld/drive@1.0.0")
-	setRegistryRow(t, app, "calc", "disabled", "0.1.0", "@tinycld/calc@0.1.0")
+	setRegistryRow(t, app, "widgets", "disabled", "1.0.0", "@acme/widgets@1.0.0")
+	setRegistryRow(t, app, "gadgets", "disabled", "0.1.0", "@acme/gadgets@0.1.0")
 
 	set, err := buildCurrentMemberSet(app)
 	if err != nil {
@@ -110,10 +110,10 @@ func TestBuildCurrentMemberSet_KeepsHiddenBundledApp(t *testing.T) {
 	for _, ms := range set {
 		bySlug[ms.Slug] = ms
 	}
-	if _, ok := bySlug["drive"]; !ok {
-		t.Fatal("hidden bundled drive was dropped from the member set")
+	if _, ok := bySlug["widgets"]; !ok {
+		t.Fatal("hidden bundled widgets was dropped from the member set")
 	}
-	if _, ok := bySlug["calc"]; ok {
+	if _, ok := bySlug["gadgets"]; ok {
 		t.Fatal("a disabled row that is not bundled has no code in the build")
 	}
 }
@@ -123,27 +123,27 @@ func TestCommitRegistry_KeepsHiddenBundledAppHidden(t *testing.T) {
 	app := newMigrateTestApp(t)
 	addPkgRegistryCollection(t, app)
 	dir := t.TempDir()
-	writeBundledJSON(t, dir, []bundledPackage{{Name: "Drive", Slug: "drive", Version: "1.0.0"}})
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Widgets", Slug: "widgets", Version: "1.0.0"}})
 	withCwd(t, dir)
 	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
-	setRegistryRow(t, app, "drive", "disabled", "1.0.0", "@tinycld/drive@1.0.0")
+	setRegistryRow(t, app, "widgets", "disabled", "1.0.0", "@acme/widgets@1.0.0")
 
 	m := RebuildManifest{
 		BuildID: "build-h",
 		Members: []MemberSpec{
 			{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld", FromCurrent: true},
-			{Slug: "drive", Version: "1.0.0", Spec: "@tinycld/drive@1.0.0", FromCurrent: true},
+			{Slug: "widgets", Version: "1.0.0", Spec: "@acme/widgets@1.0.0", FromCurrent: true},
 		},
 	}
 	if err := commitRegistry(app, m, t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
-	drive, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'drive'", nil)
+	widgets, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'widgets'", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := drive.GetString("status"); got != "disabled" {
-		t.Fatalf("drive status = %s, want disabled", got)
+	if got := widgets.GetString("status"); got != "disabled" {
+		t.Fatalf("widgets status = %s, want disabled", got)
 	}
 }
 

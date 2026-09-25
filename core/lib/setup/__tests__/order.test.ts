@@ -18,16 +18,16 @@ describe('compareStepOrder', () => {
         expect(
             sort([
                 { id: 'core:apps', order: 'a1' },
-                { id: 'hosting-ui:plan', order: 'Zz' },
-                { id: 'hosting-ui:domain', order: 'a0k' },
+                { id: 'acme-extra:plan', order: 'Zz' },
+                { id: 'acme-extra:domain', order: 'a0k' },
                 { id: 'core:workspace', order: 'a0' },
-                { id: 'hosting-ui:web', order: 'a0V' },
+                { id: 'acme-extra:web', order: 'a0V' },
             ])
         ).toEqual([
-            'hosting-ui:plan',
+            'acme-extra:plan',
             'core:workspace',
-            'hosting-ui:web',
-            'hosting-ui:domain',
+            'acme-extra:web',
+            'acme-extra:domain',
             'core:apps',
         ])
     })

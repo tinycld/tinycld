@@ -1,10 +1,9 @@
 import { generateKeyBetween } from 'fractional-indexing'
 
 /**
- * Setup steps use the same fractional-indexing keys as boards
- * (boards/tinycld/boards/lib/rank.ts), so a package can place a step between
- * two others without renumbering anything. A key is valid when the library
- * accepts it as a lower bound.
+ * Setup steps use fractional-indexing keys, so a package can place a step
+ * between two others without renumbering anything. A key is valid when the
+ * library accepts it as a lower bound.
  */
 export function isValidOrderKey(key: string): boolean {
     try {
