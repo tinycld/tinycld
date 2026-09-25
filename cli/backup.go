@@ -73,9 +73,9 @@ func passphraseSource(d *deps, file string) ui.PassphraseSource {
 
 const (
 	pollInterval = 2 * time.Second
-	// reconnectWindow is how long a poll tolerates an unreachable server. A
-	// restore ends by replacing the process, and the ledger row is the only
-	// record of the outcome that survives it, so the poll has to outlive the
+	// reconnectWindow is how long a poll tolerates an unreachable or restoring
+	// server. A restore ends by replacing the process, and the ledger row is the
+	// only record of the outcome that survives it, so the poll has to outlive the
 	// restart rather than report the disconnect as the result.
 	reconnectWindow = 5 * time.Minute
 )
@@ -110,6 +110,7 @@ func pollRow(ctx context.Context, d *deps, c *client.Client, id string, o output
 	if now == nil {
 		now = time.Now
 	}
+	window := reconnectWindow
 	for {
 		var row ledgerRow
 		err := c.GetJSON(ctx, backupsPath+"/"+id, &row)
@@ -147,12 +148,24 @@ func pollRow(ctx context.Context, d *deps, c *client.Client, id string, o output
 			}
 		case errors.Is(err, client.ErrAuthExpired):
 			return last, err
+		case isRestoringError(err):
+			// The server is up but is staging a restore, so every request
+			// outside the exempt list meets a 503. That is the restore working,
+			// not a failure — and this poll may be following THAT restore. It
+			// shares the reconnect window with an unreachable server, because it
+			// is the same wait for the same event.
+			if downSince.IsZero() {
+				downSince = now()
+				o.Info(d.stderr, "server is restoring — waiting")
+			} else if now().Sub(downSince) > window {
+				return last, Failed(fmt.Errorf("the server was still restoring after %s: %w", window, err))
+			}
 		case isConnectionError(err):
 			if downSince.IsZero() {
 				downSince = now()
 				o.Info(d.stderr, "server unreachable — waiting for it to come back")
-			} else if now().Sub(downSince) > reconnectWindow {
-				return last, Failed(fmt.Errorf("the server did not come back within %s: %w", reconnectWindow, err))
+			} else if now().Sub(downSince) > window {
+				return last, Failed(fmt.Errorf("the server did not come back within %s: %w", window, err))
 			}
 		default:
 			// A 404 after the row has been read at least once means the restore
@@ -206,6 +219,27 @@ func outcomeAfterSwap(ctx context.Context, c *client.Client, jobID string, last 
 			"restore %s: the server replaced its database and recorded no outcome — run `tinycld backup list`", jobID))
 	}
 	return rows[0], nil
+}
+
+// isRestoringError reports whether err is the maintenance 503 a server answers
+// while it stages a restore.
+//
+// Both halves have to match. The status alone is any temporary refusal, and a
+// poll that waited out every 503 would sit through a genuine overload for the
+// whole window; the body's {"status":"restoring"} is what says the server is
+// deliberately not serving, which is the state the poll is waiting for.
+func isRestoringError(err error) bool {
+	var api *client.APIError
+	if !errors.As(err, &api) || api.Status != http.StatusServiceUnavailable {
+		return false
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if jerr := json.Unmarshal(api.Body, &body); jerr != nil {
+		return false
+	}
+	return body.Status == "restoring"
 }
 
 // isConnectionError reports whether err means the server could not be reached

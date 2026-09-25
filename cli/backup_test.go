@@ -140,6 +140,11 @@ type backupServer struct {
 	// notFoundAfter makes the ledger GET answer 404 once it has served this
 	// many rows — the restore replaced the database the row lived in.
 	notFoundAfter int
+	// restoringPolls makes the next N ledger GETs answer the maintenance 503
+	// with {"status":"restoring"} — the server is up and staging a restore.
+	restoringPolls int
+	// restoringSeen counts the 503s actually served.
+	restoringSeen int
 }
 
 func newBackupServer(t *testing.T) *backupServer {
@@ -164,6 +169,12 @@ func (s *backupServer) record(what string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests = append(s.requests, what)
+}
+
+func (s *backupServer) restoringCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.restoringSeen
 }
 
 func (s *backupServer) pollCount(id string) int {
@@ -219,6 +230,20 @@ func (s *backupServer) handleGet(w http.ResponseWriter, r *http.Request) {
 		if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
 			conn.Close()
 		}
+		return
+	}
+	if s.restoringPolls > 0 {
+		s.restoringPolls--
+		// Counted in restoringSeen, not in polls: polls indexes the scripted row
+		// sequence, and a 503 served no row — advancing it would skip one.
+		s.restoringSeen++
+		s.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status":  "restoring",
+			"message": "Restoring from a backup. Try again in a minute.",
+		})
 		return
 	}
 	seq := s.rows[id]
@@ -1013,6 +1038,86 @@ func TestBackupRestoreBusyConflictDoesNotSuggestForce(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Another backup") {
 		t.Errorf("error = %v, want the server's reason", err)
+	}
+}
+
+// While a server stages a restore, every request outside the maintenance
+// exemptions meets 503 {"status":"restoring"}. That is the restore working — and
+// this poll may be following THAT restore — so it must keep polling within the
+// reconnect window rather than report the 503 as the result.
+func TestBackupRestoreKeepsPollingThroughARestoring503(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	s.restoringPolls = 3
+	s.rows["r1"] = []ledgerRow{{ID: "r1", Kind: "restore", Status: "succeeded", Bytes: 11}}
+
+	path := writeArchiveFile(t, s.archive)
+	_, stderr, err := runCLI(t, d, "backup", "restore", "--from", path, "--yes")
+	if err != nil {
+		t.Fatalf("a restoring 503 must not fail the poll: %v\n%s", err, stderr)
+	}
+	if got := s.restoringCount(); got != 3 {
+		t.Errorf("served %d restoring 503s, want 3", got)
+	}
+	if !strings.Contains(stderr, "server is restoring") {
+		t.Errorf("the wait should be announced once:\n%s", stderr)
+	}
+	// Announced ONCE, not per poll: three lines of the same news is noise.
+	if n := strings.Count(stderr, "server is restoring"); n != 1 {
+		t.Errorf("announced the restoring wait %d times, want 1:\n%s", n, stderr)
+	}
+	if !strings.Contains(stderr, "succeeded") {
+		t.Errorf("the poll should have gone on to read the outcome:\n%s", stderr)
+	}
+}
+
+// …and it must still END. A server stuck restoring past the window is reported,
+// not waited on forever, and the message names the restoring state rather than
+// claiming the server never came back.
+func TestBackupRestoreGivesUpOnAnEndlessRestoring503(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	s.restoringPolls = 100000
+	s.rows["r1"] = []ledgerRow{{ID: "r1", Kind: "restore", Status: "running"}}
+
+	clock := time.Now()
+	d.now = func() time.Time { return clock }
+	d.sleep = func(time.Duration) { clock = clock.Add(pollInterval) }
+
+	path := writeArchiveFile(t, s.archive)
+	_, _, err := runCLI(t, d, "backup", "restore", "--from", path, "--yes")
+	wantExitCode(t, err, 1)
+	if !strings.Contains(err.Error(), "still restoring after 5m0s") {
+		t.Errorf("error = %v, want the restoring state and the flag's window named", err)
+	}
+}
+
+// A 503 that is NOT the maintenance answer is a plain failure: a poll that waited
+// out every 503 would sit through a real overload for the whole window instead of
+// reporting it.
+func TestPollTreatsAnOrdinary503AsAFailure(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"the maintenance answer", `{"status":"restoring","message":"Restoring from a backup."}`, true},
+		{"an overload", `{"message":"Service Unavailable"}`, false},
+		{"another status", `{"status":"draining"}`, false},
+		{"not JSON", `<html>503</html>`, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := &client.APIError{Status: http.StatusServiceUnavailable, Body: []byte(c.body)}
+			if got := isRestoringError(err); got != c.want {
+				t.Errorf("isRestoringError = %v, want %v", got, c.want)
+			}
+		})
+	}
+	// Only a 503 counts: a 409 carrying the same body is a different refusal.
+	other := &client.APIError{Status: http.StatusConflict, Body: []byte(`{"status":"restoring"}`)}
+	if isRestoringError(other) {
+		t.Error("only a 503 is the maintenance answer")
 	}
 }
 
