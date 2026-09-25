@@ -31,6 +31,14 @@ type deps struct {
 	// sleep is nil in production (real time.Sleep); tests inject a no-op so
 	// device-flow polling doesn't stall the suite.
 	sleep func(time.Duration)
+	// readPassword reads a line without echoing it; term.ReadPassword in
+	// production, stubbed in tests so no real terminal is needed.
+	readPassword func(fd int) ([]byte, error)
+	// getenv reads an environment variable; os.Getenv in production.
+	getenv func(string) string
+	// stdinFile supplies the fd for readPassword; os.Stdin in production,
+	// nil in tests where readPassword is stubbed and ignores it.
+	stdinFile *os.File
 	// slugs overrides the generated searchable-package list. Nil in
 	// production, where searchSlugs() falls back to the generated var; tests
 	// set it so they do not depend on which packages this checkout assembled.
@@ -54,6 +62,9 @@ func defaultDeps() *deps {
 		isTTY:         term.IsTerminal(int(os.Stdout.Fd())),
 		isInteractive: term.IsTerminal(int(os.Stdin.Fd())),
 		openStore:     keychain.Open,
+		readPassword:  term.ReadPassword,
+		getenv:        os.Getenv,
+		stdinFile:     os.Stdin,
 	}
 }
 
