@@ -121,6 +121,11 @@ type backupServer struct {
 	restore recordedRestore
 	// mismatch makes the restore endpoint answer 409 with a package diff.
 	mismatch bool
+	// mismatchWithoutDiff answers 409 with the message only — an older server
+	// that has no structured diff to send.
+	mismatchWithoutDiff bool
+	// conflictMessage overrides that bare 409's message.
+	conflictMessage string
 	// swapped is the source PATCHed into a waiting restore.
 	swapped string
 	// list is what the records API returns for an unfiltered read.
@@ -161,6 +166,12 @@ func (s *backupServer) record(what string) {
 	s.requests = append(s.requests, what)
 }
 
+func (s *backupServer) pollCount(id string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.polls[id]
+}
+
 func (s *backupServer) seen() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -199,6 +210,9 @@ func (s *backupServer) handleGet(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if s.deadPolls > 0 {
 		s.deadPolls--
+		// Counted like any other poll: a test asserting how many times the CLI
+		// asked must see the attempts that never got an answer.
+		s.polls[id]++
 		s.mu.Unlock()
 		// Hijack and close: the client sees a connection error, which is what
 		// a restarting server looks like from the CLI's side.
@@ -257,10 +271,19 @@ func (s *backupServer) handleRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	s.restore = rec
-	mismatch := s.mismatch
+	mismatch, bare, bareMessage := s.mismatch, s.mismatchWithoutDiff, s.conflictMessage
 	s.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
+	if bare {
+		message := bareMessage
+		if message == "" {
+			message = "backup: archive does not match this binary's package set (missing: widgets)"
+		}
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": message})
+		return
+	}
 	if mismatch {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -870,4 +893,125 @@ func TestBackupRestoreFailsWhenTheRowNeverAppears(t *testing.T) {
 
 	_, _, err := runCLI(t, d, "backup", "restore", "--from", path, "--yes")
 	wantExitCode(t, err, 1)
+	if !strings.Contains(err.Error(), "HTTP 404") {
+		t.Errorf("error = %v, want the server's refusal, not a guessed outcome", err)
+	}
+}
+
+// A server that cannot restart itself (dev mode) stages the restore, arms it on
+// disk, and goes back to serving its CURRENT data: the row keeps status
+// "running" and sets metadata.awaiting_restart. It never becomes terminal, so a
+// poll that waits for a terminal status waits forever — this asserts the poll
+// stops and the operator is told what is left to do.
+func TestBackupRestoreStopsWhenStagedAwaitingARestart(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	s.rows["r1"] = []ledgerRow{
+		{ID: "r1", Kind: "restore", Status: "running"},
+		{ID: "r1", Kind: "restore", Status: "running", Metadata: map[string]any{"awaiting_restart": true}},
+	}
+	path := writeArchiveFile(t, s.archive)
+
+	_, stderr, err := runCLI(t, d, "backup", "restore", "--from", path, "--yes")
+	// Nothing failed: the data is staged and one restart away.
+	if err != nil {
+		t.Fatalf("%v\nstderr: %s", err, stderr)
+	}
+	if !strings.Contains(stderr, "restore staged; restart the server to apply it") {
+		t.Errorf("stderr = %q, want the staged-awaiting-restart message", stderr)
+	}
+	// The poll must STOP. Without the check it would keep asking forever, which
+	// a passing exit code alone would not catch.
+	if got := s.pollCount("r1"); got != 2 {
+		t.Errorf("polled the row %d times, want 2 — the poll did not stop at the staged row", got)
+	}
+}
+
+// pollRow is shared with `create --to`, and only a restore replaces the database
+// its own row lives in. A backup whose row 404s has simply lost the row, so
+// chasing a follow-up row that cannot exist would report the wrong thing.
+func TestBackupCreateReportsAVanishedRowWithoutChasingASwap(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	s.rows["b1"] = []ledgerRow{{ID: "b1", Kind: "manual", Status: "running", Bytes: 10}}
+	s.notFoundAfter = 1
+
+	_, _, err := runCLI(t, d, "backup", "create", "--to", "https://store.example/put")
+	wantExitCode(t, err, 1)
+	if !strings.Contains(err.Error(), "disappeared") {
+		t.Errorf("error = %v, want it to say the row went away", err)
+	}
+	// The records API is the restore-only swap lookup. A backup must not touch it.
+	for _, r := range s.seen() {
+		if strings.Contains(r, "/api/collections/backups/records") {
+			t.Errorf("create chased the restore-only swap lookup: %q", r)
+		}
+	}
+}
+
+// The reconnect window exists so a restore survives the restart it causes. It
+// must also END: a server that never comes back has to be reported, not waited
+// on forever. Driven by an injected clock — the real window is five minutes.
+func TestBackupRestoreGivesUpAfterTheReconnectWindow(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	// Every poll after the first finds nothing listening.
+	s.deadPolls = 1000
+	s.rows["r1"] = []ledgerRow{{ID: "r1", Kind: "restore", Status: "running"}}
+
+	clock := time.Now()
+	d.now = func() time.Time { return clock }
+	// Advance past the window on the same schedule the poll sleeps on, so the
+	// loop reaches the deadline instead of spinning on a frozen clock.
+	d.sleep = func(time.Duration) { clock = clock.Add(pollInterval) }
+
+	path := writeArchiveFile(t, s.archive)
+	_, _, err := runCLI(t, d, "backup", "restore", "--from", path, "--yes")
+	wantExitCode(t, err, 1)
+	if !strings.Contains(err.Error(), "did not come back within") {
+		t.Errorf("error = %v, want the reconnect window to be named", err)
+	}
+	// It gave up at the deadline rather than after some other number of tries.
+	if got := s.pollCount("r1"); got < 2 {
+		t.Errorf("polled %d times, want the window's worth of retries", got)
+	}
+}
+
+// A server that sends the refusal as prose with no structured diff still gets
+// the operator the way out. Dropping the hint on that path would leave the
+// mismatch looking like a dead end on exactly the older servers most likely to
+// hit it.
+func TestBackupRestoreMismatchWithoutADiffStillPrintsTheForceHint(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	s.mismatchWithoutDiff = true
+	path := writeArchiveFile(t, s.archive)
+
+	_, stderr, err := runCLI(t, d, "backup", "restore", "--from", path, "--yes")
+	wantExitCode(t, err, 1)
+	if !strings.Contains(stderr, "--force") {
+		t.Errorf("stderr should still say how to proceed anyway:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "missing: widgets") {
+		t.Errorf("stderr should carry the server's own message:\n%s", stderr)
+	}
+}
+
+// …and a 409 that is NOT a package mismatch (another job holds the lock) must
+// not get the --force hint: forcing would not help and the operator would try it.
+func TestBackupRestoreBusyConflictDoesNotSuggestForce(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	s.mismatchWithoutDiff = true
+	s.conflictMessage = "Another backup, restore or package job is running."
+	path := writeArchiveFile(t, s.archive)
+
+	_, stderr, err := runCLI(t, d, "backup", "restore", "--from", path, "--yes")
+	wantExitCode(t, err, 1)
+	if strings.Contains(stderr, "--force") {
+		t.Errorf("a busy conflict is not a mismatch; --force would not help:\n%s", stderr)
+	}
+	if !strings.Contains(err.Error(), "Another backup") {
+		t.Errorf("error = %v, want the server's reason", err)
+	}
 }

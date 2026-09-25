@@ -31,6 +31,10 @@ type deps struct {
 	// sleep is nil in production (real time.Sleep); tests inject a no-op so
 	// device-flow polling doesn't stall the suite.
 	sleep func(time.Duration)
+	// now is nil in production (real time.Now). Tests advance it so a wait
+	// bounded by wall-clock time — the backup poll's reconnect window — can be
+	// driven to its limit without the suite waiting that long.
+	now func() time.Time
 	// readPassword reads a line without echoing it; term.ReadPassword in
 	// production, stubbed in tests so no real terminal is needed.
 	readPassword func(fd int) ([]byte, error)

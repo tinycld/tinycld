@@ -103,11 +103,16 @@ func newBackupRestoreCmd(d *deps) *cobra.Command {
 			}
 			o.Info(d.stderr, "restore %s started", res.JobID)
 
-			row, err := pollRow(ctx, d, c, res.JobID, o, freshSourcePrompt(d, stdin))
+			row, err := pollRow(ctx, d, c, res.JobID, o, pollOptions{
+				onWaiting:  freshSourcePrompt(d, stdin),
+				followSwap: true,
+			})
 			if err != nil {
 				return err
 			}
-			if awaiting, _ := row.Metadata["awaiting_restart"].(bool); awaiting && !row.terminal() {
+			if awaitingRestart(row) && !row.terminal() {
+				// The data is staged and armed on disk; only a restart applies
+				// it. Exit 0: nothing failed, and the operator has one step left.
 				o.Info(d.stderr, "restore staged; restart the server to apply it")
 				return nil
 			}
@@ -164,6 +169,13 @@ func freshSourcePrompt(d *deps, stdin *bufio.Reader) func(ledgerRow) (string, er
 	}
 }
 
+const (
+	// mismatchMessage is the substring core's *MismatchError carries. Matched
+	// only on the fallback path, where there is no structured diff to read.
+	mismatchMessage = "does not match this binary's package set"
+	forceHint       = "Rerun with --force to restore the data anyway (single binary only)."
+)
+
 // restoreStartError renders the server's package-set refusal as the diff an
 // operator can act on. The 409 body carries the diff as structure; the message
 // text is the fallback for a server that predates it.
@@ -181,6 +193,15 @@ func restoreStartError(err error, stderr io.Writer) error {
 		} `json:"diff"`
 	}
 	if jerr := json.Unmarshal(api.Body, &body); jerr != nil || body.Diff == nil {
+		// No structured diff: either an older server, or a refusal of another
+		// kind. The message still says which it was, and a mismatch still has
+		// the same way out, so the hint is worth printing without the breakdown.
+		if strings.Contains(api.Message, mismatchMessage) {
+			fmt.Fprintln(stderr, "The archive's package set does not match the server:")
+			fmt.Fprintln(stderr, "  "+api.Message)
+			fmt.Fprintln(stderr, forceHint)
+			return Failed(errors.New("package set mismatch"))
+		}
 		return Failed(err)
 	}
 	fmt.Fprintln(stderr, "The archive's package set does not match the server:")
@@ -201,7 +222,7 @@ func restoreStartError(err error, stderr io.Writer) error {
 		v := body.Diff.VersionDelta[slug]
 		fmt.Fprintf(stderr, "  %s: archive %s, binary %s\n", slug, v[0], v[1])
 	}
-	fmt.Fprintln(stderr, "Rerun with --force to restore the data anyway (single binary only).")
+	fmt.Fprintln(stderr, forceHint)
 	return Failed(errors.New("package set mismatch"))
 }
 

@@ -80,17 +80,35 @@ const (
 	reconnectWindow = 5 * time.Minute
 )
 
-// pollRow follows a ledger row to its terminal status, reporting progress to
-// stderr. onWaiting, when set, supplies a fresh source URL for a restore that
-// stalled on an expired presigned link; a nil onWaiting makes that state an
-// error, because nothing will move it along.
-func pollRow(ctx context.Context, d *deps, c *client.Client, id string, o output.Options, onWaiting func(ledgerRow) (string, error)) (ledgerRow, error) {
+// pollOptions carries the two things that differ between following a backup
+// and following a restore. A restore can stall on an expired source URL and can
+// end by replacing the database its own row lives in; a backup does neither, and
+// must not be given either behaviour by accident.
+type pollOptions struct {
+	// onWaiting supplies a fresh source URL for a restore that stalled on an
+	// expired presigned link. Nil makes that state an error, because nothing
+	// else will move it along.
+	onWaiting func(ledgerRow) (string, error)
+	// followSwap chases a vanished row into the restored database. Only a
+	// restore replaces the database, so only a restore sets it: on a backup a
+	// 404 means the row is simply gone, and looking for a follow-up row that
+	// cannot exist would report a confusing error for a plain data loss.
+	followSwap bool
+}
+
+// pollRow follows a ledger row until it reaches a terminal status, is staged
+// awaiting a manual restart, or disappears with the database it lived in.
+func pollRow(ctx context.Context, d *deps, c *client.Client, id string, o output.Options, opts pollOptions) (ledgerRow, error) {
 	var last ledgerRow
 	lastBytes := int64(-1)
 	var downSince time.Time
 	sleep := d.sleep
 	if sleep == nil {
 		sleep = time.Sleep
+	}
+	now := d.now
+	if now == nil {
+		now = time.Now
 	}
 	for {
 		var row ledgerRow
@@ -103,10 +121,10 @@ func pollRow(ctx context.Context, d *deps, c *client.Client, id string, o output
 				lastBytes = row.Bytes
 			}
 			if row.Status == "waiting_for_source" && last.Status != "waiting_for_source" {
-				if onWaiting == nil {
+				if opts.onWaiting == nil {
 					return row, Failed(errors.New("the restore is waiting for a fresh source URL"))
 				}
-				fresh, werr := onWaiting(row)
+				fresh, werr := opts.onWaiting(row)
 				if werr != nil {
 					return row, werr
 				}
@@ -118,13 +136,22 @@ func pollRow(ctx context.Context, d *deps, c *client.Client, id string, o output
 			if row.terminal() {
 				return row, nil
 			}
+			// Staged but unapplied: the server built the restore, found nothing
+			// would end its own process (a dev-mode server's restart request is
+			// a no-op) and went back to serving its CURRENT data. The row stays
+			// "running" and never becomes terminal, so without this the poll
+			// would loop until the context died — a hang on the one outcome
+			// that needs the operator to act.
+			if awaitingRestart(row) {
+				return row, nil
+			}
 		case errors.Is(err, client.ErrAuthExpired):
 			return last, err
 		case isConnectionError(err):
 			if downSince.IsZero() {
-				downSince = time.Now()
+				downSince = now()
 				o.Info(d.stderr, "server unreachable — waiting for it to come back")
-			} else if time.Since(downSince) > reconnectWindow {
+			} else if now().Sub(downSince) > reconnectWindow {
 				return last, Failed(fmt.Errorf("the server did not come back within %s: %w", reconnectWindow, err))
 			}
 		default:
@@ -137,7 +164,11 @@ func pollRow(ctx context.Context, d *deps, c *client.Client, id string, o output
 			// reword.
 			var api *client.APIError
 			if errors.As(err, &api) && api.Status == http.StatusNotFound && last.ID != "" {
-				return outcomeAfterSwap(ctx, c, id, last)
+				if opts.followSwap {
+					return outcomeAfterSwap(ctx, c, id, last)
+				}
+				return last, Failed(fmt.Errorf(
+					"%s %s: its ledger row disappeared mid-run — run `tinycld backup list`", last.Kind, id))
 			}
 			return last, Failed(err)
 		}
@@ -146,6 +177,13 @@ func pollRow(ctx context.Context, d *deps, c *client.Client, id string, o output
 		}
 		sleep(pollInterval)
 	}
+}
+
+// awaitingRestart reports whether the server staged this restore and then found
+// nothing would restart it, so it is armed but unapplied.
+func awaitingRestart(row ledgerRow) bool {
+	staged, _ := row.Metadata["awaiting_restart"].(bool)
+	return staged
 }
 
 // outcomeAfterSwap finds the row the restored database recorded for jobID. The

@@ -55,7 +55,7 @@ func newBackupCreateCmd(d *deps) *cobra.Command {
 					return Failed(err)
 				}
 				o.Info(d.stderr, "backup %s started", res.ID)
-				row, err := pollRow(ctx, d, c, res.ID, o, nil)
+				row, err := pollRow(ctx, d, c, res.ID, o, pollOptions{})
 				if err != nil {
 					return err
 				}
