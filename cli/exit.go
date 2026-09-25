@@ -1,6 +1,10 @@
 package main
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/spf13/cobra"
+)
 
 // ExitError carries the process exit code main should use. Usage errors
 // (bad flags/arguments) exit 2; a run that failed exits 1. An error that
@@ -27,4 +31,22 @@ func exitCode(err error) int {
 		return ee.Code
 	}
 	return 1
+}
+
+// usageArgs wraps a cobra positional-argument validator so a wrong number of
+// arguments exits 2 rather than 1.
+//
+// cobra's own validators return a plain error, which main exits 1 on — the same
+// code a command that RAN and failed uses. Every command in this tree goes
+// through this wrapper so a script can always tell "I called it wrong" from "it
+// did not work". The root's SetFlagErrorFunc does the same for flag parsing,
+// which cobra DOES inherit; Args is set per command, so it needs the wrapper at
+// each one.
+func usageArgs(fn cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(c *cobra.Command, args []string) error {
+		if err := fn(c, args); err != nil {
+			return Usage(err)
+		}
+		return nil
+	}
 }

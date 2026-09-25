@@ -42,7 +42,7 @@ func newBackupRestoreCmd(d *deps) *cobra.Command {
 			"one expires mid-transfer.",
 		Example: "  tinycld backup restore --from ./backup.age\n" +
 			"  tinycld backup restore --from 'https://…presigned GET…'",
-		Args: cobra.NoArgs,
+		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if from == "" {
 				return Usage(errors.New("--from is required"))

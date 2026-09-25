@@ -29,7 +29,7 @@ func newBackupCreateCmd(d *deps) *cobra.Command {
 		Example: "  tinycld backup create --out ./backup.age\n" +
 			"  tinycld backup create --out - | aws s3 cp - s3://bucket/backup.age\n" +
 			"  tinycld backup create --to 'https://…presigned PUT…'",
-		Args: cobra.NoArgs,
+		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if (out == "") == (to == "") {
 				return Usage(errors.New("pass exactly one of --out or --to"))

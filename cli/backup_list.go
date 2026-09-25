@@ -13,7 +13,7 @@ func newBackupListCmd(d *deps) *cobra.Command {
 		Short: "List backup and restore runs",
 		Long: "Shows the ledger: every backup and restore this deployment has run,\n" +
 			"newest first, with its outcome.",
-		Args: cobra.NoArgs,
+		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, _, err := d.apiClient()
 			if err != nil {

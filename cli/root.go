@@ -104,6 +104,12 @@ func newRootCmd(d *deps) *cobra.Command {
 	}
 	root.SetOut(d.stdout)
 	root.SetErr(d.stderr)
+	// Cobra's own flag parsing returns a plain error, which main would exit 1 on
+	// — the same code a command that RAN and failed uses. A misspelled flag is a
+	// misuse, so it exits 2, and a script can tell "I called it wrong" from "it
+	// did not work". Set at the root: cobra inherits the func into every
+	// subcommand, so one line covers the whole tree.
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return Usage(err) })
 
 	pf := root.PersistentFlags()
 	pf.String("output", string(output.Table), "output format: table|json|csv")

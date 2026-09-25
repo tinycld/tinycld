@@ -25,7 +25,7 @@ func newBackupInspectCmd(d *deps) *cobra.Command {
 			"contacted: the archive is decrypted on this machine.\n\n" +
 			"A URL is read with range requests, so inspecting a remote archive still\n" +
 			"downloads all of it.",
-		Args: cobra.ExactArgs(1),
+		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := d.out
 			pp, err := passphraseSource(d, ppFile).Read(false)

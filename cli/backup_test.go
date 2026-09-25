@@ -1015,3 +1015,25 @@ func TestBackupRestoreBusyConflictDoesNotSuggestForce(t *testing.T) {
 		t.Errorf("error = %v, want the server's reason", err)
 	}
 }
+
+// A misused command exits 2, a command that ran and failed exits 1. Without the
+// distinction a script cannot tell "I called it wrong" from "it did not work",
+// and cobra's own flag and argument errors are plain errors that would exit 1.
+func TestUsageErrorsExitTwo(t *testing.T) {
+	cases := [][]string{
+		{"--no-such-flag"},
+		{"backup", "--no-such-flag"},
+		{"backup", "restore", "--no-such-flag"},
+		{"backup", "inspect"},
+		{"backup", "inspect", "one", "two"},
+		{"backup", "list", "unexpected-arg"},
+		{"context", "use"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			d, _ := testDeps(t)
+			_, _, err := runCLI(t, d, args...)
+			wantExitCode(t, err, 2)
+		})
+	}
+}
