@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"filippo.io/age"
 	"github.com/spf13/cobra"
@@ -30,6 +31,7 @@ type restoreResponse struct {
 func newBackupRestoreCmd(d *deps) *cobra.Command {
 	var from, ppFile string
 	var force bool
+	var restartTimeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "restore --from <file|url>",
 		Short: "Replace this organization's data with a backup",
@@ -104,8 +106,9 @@ func newBackupRestoreCmd(d *deps) *cobra.Command {
 			o.Info(d.stderr, "restore %s started", res.JobID)
 
 			row, err := pollRow(ctx, d, c, res.JobID, o, pollOptions{
-				onWaiting:  freshSourcePrompt(d, stdin),
-				followSwap: true,
+				onWaiting:      freshSourcePrompt(d, stdin),
+				followSwap:     true,
+				restartTimeout: restartTimeout,
 			})
 			if err != nil {
 				return err
@@ -122,6 +125,8 @@ func newBackupRestoreCmd(d *deps) *cobra.Command {
 	cmd.Flags().StringVar(&from, "from", "", "archive file, or a presigned GET URL the server fetches")
 	cmd.Flags().StringVar(&ppFile, "passphrase-file", "", "read the passphrase from this file")
 	cmd.Flags().BoolVar(&force, "force", false, "restore the data even if the package set differs (single binary only)")
+	cmd.Flags().DurationVar(&restartTimeout, "restart-timeout", 0,
+		"how long to wait for the server to come back after it restarts (default "+reconnectWindow.String()+")")
 	return cmd
 }
 

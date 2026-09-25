@@ -77,7 +77,13 @@ const (
 	// server. A restore ends by replacing the process, and the ledger row is the
 	// only record of the outcome that survives it, so the poll has to outlive the
 	// restart rather than report the disconnect as the result.
-	reconnectWindow = 5 * time.Minute
+	//
+	// Thirty minutes, because on a deployment with a rebuilder the restart is a
+	// REBUILD: it resolves the archive's package set, fetches it and links a new
+	// binary before the supervisor can start it. Five minutes was shorter than
+	// that on any real archive, so the poll reported a working restore as a
+	// server that never came back. Override it with --restart-timeout.
+	reconnectWindow = 30 * time.Minute
 )
 
 // pollOptions carries the two things that differ between following a backup
@@ -94,6 +100,9 @@ type pollOptions struct {
 	// 404 means the row is simply gone, and looking for a follow-up row that
 	// cannot exist would report a confusing error for a plain data loss.
 	followSwap bool
+	// restartTimeout overrides reconnectWindow for this poll, from
+	// --restart-timeout. Zero means the default.
+	restartTimeout time.Duration
 }
 
 // pollRow follows a ledger row until it reaches a terminal status, is staged
@@ -110,7 +119,10 @@ func pollRow(ctx context.Context, d *deps, c *client.Client, id string, o output
 	if now == nil {
 		now = time.Now
 	}
-	window := reconnectWindow
+	window := opts.restartTimeout
+	if window <= 0 {
+		window = reconnectWindow
+	}
 	for {
 		var row ledgerRow
 		err := c.GetJSON(ctx, backupsPath+"/"+id, &row)

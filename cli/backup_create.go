@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -15,6 +16,7 @@ import (
 
 func newBackupCreateCmd(d *deps) *cobra.Command {
 	var out, to, ppFile string
+	var restartTimeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a backup and stream it to a file, or have the server upload it to a URL",
@@ -55,7 +57,7 @@ func newBackupCreateCmd(d *deps) *cobra.Command {
 					return Failed(err)
 				}
 				o.Info(d.stderr, "backup %s started", res.ID)
-				row, err := pollRow(ctx, d, c, res.ID, o, pollOptions{})
+				row, err := pollRow(ctx, d, c, res.ID, o, pollOptions{restartTimeout: restartTimeout})
 				if err != nil {
 					return err
 				}
@@ -67,6 +69,10 @@ func newBackupCreateCmd(d *deps) *cobra.Command {
 	cmd.Flags().StringVar(&out, "out", "", "write the archive to this file ('-' for stdout)")
 	cmd.Flags().StringVar(&to, "to", "", "have the server upload the archive to this presigned PUT URL")
 	cmd.Flags().StringVar(&ppFile, "passphrase-file", "", "read the passphrase from this file")
+	// --to polls the ledger, so it meets the same waits a restore does: a restore
+	// started elsewhere puts this server behind the maintenance 503.
+	cmd.Flags().DurationVar(&restartTimeout, "restart-timeout", 0,
+		"how long to wait for an unreachable or restoring server (default "+reconnectWindow.String()+")")
 	return cmd
 }
 

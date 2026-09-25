@@ -1085,9 +1085,10 @@ func TestBackupRestoreGivesUpOnAnEndlessRestoring503(t *testing.T) {
 	d.sleep = func(time.Duration) { clock = clock.Add(pollInterval) }
 
 	path := writeArchiveFile(t, s.archive)
-	_, _, err := runCLI(t, d, "backup", "restore", "--from", path, "--yes")
+	_, _, err := runCLI(t, d, "backup", "restore", "--from", path, "--yes",
+		"--restart-timeout", "20s")
 	wantExitCode(t, err, 1)
-	if !strings.Contains(err.Error(), "still restoring after 5m0s") {
+	if !strings.Contains(err.Error(), "still restoring after 20s") {
 		t.Errorf("error = %v, want the restoring state and the flag's window named", err)
 	}
 }
@@ -1121,6 +1122,56 @@ func TestPollTreatsAnOrdinary503AsAFailure(t *testing.T) {
 	}
 }
 
+// --restart-timeout overrides the reconnect window. The default is 30 minutes,
+// which is what a rebuild-and-restart needs, so every test that drives the window
+// to its end uses the flag rather than a fake clock's worth of 30 minutes.
+func TestRestartTimeoutFlagOverridesTheReconnectWindow(t *testing.T) {
+	if reconnectWindow != 30*time.Minute {
+		t.Fatalf("reconnectWindow = %s, want 30m — a rebuild takes longer than five minutes", reconnectWindow)
+	}
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	s.deadPolls = 1000
+	s.rows["r1"] = []ledgerRow{{ID: "r1", Kind: "restore", Status: "running"}}
+
+	clock := time.Now()
+	d.now = func() time.Time { return clock }
+	d.sleep = func(time.Duration) { clock = clock.Add(pollInterval) }
+
+	path := writeArchiveFile(t, s.archive)
+	_, _, err := runCLI(t, d, "backup", "restore", "--from", path, "--yes",
+		"--restart-timeout", "10s")
+	wantExitCode(t, err, 1)
+	if !strings.Contains(err.Error(), "did not come back within 10s") {
+		t.Errorf("error = %v, want the flag's window rather than the default", err)
+	}
+	// The flag really shortened the wait: the default would take 900 polls.
+	if got := s.pollCount("r1"); got > 20 {
+		t.Errorf("polled %d times for a 10s window — the flag was ignored", got)
+	}
+}
+
+// The help text has to name the default, or an operator watching a long restore
+// cannot tell whether the poll is about to give up.
+func TestRestartTimeoutHelpNamesTheDefault(t *testing.T) {
+	for _, args := range [][]string{
+		{"backup", "restore", "--help"},
+		{"backup", "create", "--help"},
+	} {
+		d, _ := testDeps(t)
+		stdout, _, err := runCLI(t, d, args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if !strings.Contains(stdout, "--restart-timeout") {
+			t.Errorf("%v: help does not mention --restart-timeout:\n%s", args, stdout)
+		}
+		if !strings.Contains(stdout, reconnectWindow.String()) {
+			t.Errorf("%v: help does not name the %s default:\n%s", args, reconnectWindow, stdout)
+		}
+	}
+}
+
 // A misused command exits 2, a command that ran and failed exits 1. Without the
 // distinction a script cannot tell "I called it wrong" from "it did not work",
 // and cobra's own flag and argument errors are plain errors that would exit 1.
@@ -1133,6 +1184,7 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 		{"backup", "inspect", "one", "two"},
 		{"backup", "list", "unexpected-arg"},
 		{"context", "use"},
+		{"backup", "restore", "--restart-timeout", "not-a-duration"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
