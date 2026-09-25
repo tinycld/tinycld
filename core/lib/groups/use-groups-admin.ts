@@ -67,8 +67,8 @@ export function useGroupsAdmin() {
 export function useGroupMembersAdmin(groupId: string) {
     const [membersCollection, usersCollection] = useStore('group_members', 'users')
 
-    const { data: memberRows } = useLiveQuery(
-        query =>
+    const { data: memberRows } = useLiveQuery({
+        query: query =>
             query
                 .from({ m: membersCollection })
                 .innerJoin({ u: usersCollection }, ({ m, u }) => eq(m.user, u.id))
@@ -79,8 +79,7 @@ export function useGroupMembersAdmin(groupId: string) {
                     name: u.name,
                     email: u.email,
                 })),
-        [groupId]
-    )
+    })
     const { data: eligible } = useLiveQuery(query =>
         query
             .from({ u: usersCollection })
