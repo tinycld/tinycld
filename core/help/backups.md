@@ -53,11 +53,16 @@ See [Command line](help://core:command-line) to install the CLI and sign in.
   server has run, newest first.
 
 The passphrase is never a flag — a flag would show up in `ps` output and
-shell history. Give it one of these ways:
+shell history. Give it one of these ways. The command uses the first one it
+finds, in this order:
 
-- Type it when the command asks (the default).
-- `--passphrase-file <path>` reads it from a file.
-- The `TINYCLD_BACKUP_PASSPHRASE` environment variable.
+1. `--passphrase-file <path>` reads it from a file.
+2. The `TINYCLD_BACKUP_PASSPHRASE` environment variable.
+3. The command asks you to type it.
+
+The order matters on a machine that has more than one of them: a
+`TINYCLD_BACKUP_PASSPHRASE` left in the environment is ignored if you also pass
+`--passphrase-file`, and neither one makes the command ask.
 
 Without the passphrase, nobody can read the backup — not even us.
 
