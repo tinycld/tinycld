@@ -61,6 +61,8 @@ pnpm run packages:unlink <package-name>
 
 Removing a package hides its UI and stops registering its collections, but **does not delete data** — relinking the package restores everything.
 
+To hide an app from everyone without removing it, clear its switch in Settings → Packages. A hidden app stays hidden after the server restarts. Turn the switch on to show it again.
+
 ## Checking which versions are installed
 
 To see exactly which version of each package your app is running, open **Settings → About**. Below the app version, an **Included packages** list shows every bundled package with its released version and the short commit it was built from, plus the date the release was assembled.
