@@ -22,6 +22,7 @@ import (
 
 	"tinycld.org/cli/client"
 	"tinycld.org/cli/internal/config"
+	"tinycld.org/cli/ui"
 	"tinycld.org/core/backup/format"
 )
 
@@ -1192,5 +1193,54 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 			_, _, err := runCLI(t, d, args...)
 			wantExitCode(t, err, 2)
 		})
+	}
+}
+
+// Every place that names the passphrase sources has to name them in the order
+// PassphraseSource.Read actually checks them: --passphrase-file, then the
+// environment variable, then the prompt. `backup create`'s help listed the
+// environment variable first, so a reader who had set both was told the wrong one
+// would win.
+//
+// Asserted by position, not by presence: a help string can mention all three and
+// still mislead about which one takes effect.
+func TestPassphraseSourceOrderIsConsistentEverywhere(t *testing.T) {
+	for _, args := range [][]string{
+		{"backup", "create", "--help"},
+		{"backup", "restore", "--help"},
+		{"backup", "inspect", "--help"},
+	} {
+		d, _ := testDeps(t)
+		stdout, _, err := runCLI(t, d, args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		file := strings.Index(stdout, "--passphrase-file")
+		env := strings.Index(stdout, ui.PassphraseEnv)
+		if file < 0 {
+			t.Errorf("%v: help never mentions --passphrase-file:\n%s", args, stdout)
+			continue
+		}
+		// Not every command's prose lists all three; the rule is only that where
+		// both appear, the file comes first.
+		if env >= 0 && env < file {
+			t.Errorf("%v: names %s before --passphrase-file, but the file wins:\n%s",
+				args, ui.PassphraseEnv, stdout)
+		}
+	}
+}
+
+// The error raised when NO source is available has to read in the same order, or
+// it sends an operator to the wrong one first.
+func TestNoPassphraseErrorNamesTheSourcesInOrder(t *testing.T) {
+	msg := ui.ErrNoPassphrase.Error()
+	file := strings.Index(msg, "--passphrase-file")
+	env := strings.Index(msg, ui.PassphraseEnv)
+	prompt := strings.Index(msg, "interactively")
+	if file < 0 || env < 0 || prompt < 0 {
+		t.Fatalf("the error should name all three sources: %q", msg)
+	}
+	if !(file < env && env < prompt) {
+		t.Fatalf("the error names the sources out of order: %q", msg)
 	}
 }

@@ -24,10 +24,11 @@ func newBackupCreateCmd(d *deps) *cobra.Command {
 			"--out streams the archive through this machine. --to hands the server a\n" +
 			"presigned PUT URL and follows the run in the ledger, so the archive never\n" +
 			"crosses your connection.\n\n" +
-			"The passphrase is read from " + ui.PassphraseEnv + ", from --passphrase-file, or\n" +
-			"interactively. There is no flag for it: a flag would be visible in `ps`\n" +
-			"and left in shell history. Without the passphrase the archive cannot be\n" +
-			"read — nobody can recover it for you.",
+			"The passphrase comes from the first of these that is set:\n" +
+			"--passphrase-file, then " + ui.PassphraseEnv + ", then a prompt.\n" +
+			"There is no flag for it: a flag would be visible in `ps` and left in\n" +
+			"shell history. Without the passphrase the archive cannot be read —\n" +
+			"nobody can recover it for you.",
 		Example: "  tinycld backup create --out ./backup.age\n" +
 			"  tinycld backup create --out - | aws s3 cp - s3://bucket/backup.age\n" +
 			"  tinycld backup create --to 'https://…presigned PUT…'",
