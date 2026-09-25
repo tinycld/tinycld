@@ -23,7 +23,7 @@ interface NavEntry {
 // the `admin /` root (the breadcrumb is the only place a route literal appears).
 //
 // This console is reached ONLY by a raw PocketBase superuser doing recovery —
-// any admin with an app session is redirected to /settings (app/a/setup.tsx).
+// any admin with an app session is redirected to /settings (SetupPage).
 // So every tab here must also exist under /settings, or it is unreachable in
 // practice: that is exactly how the system-settings panels were stranded. Both
 // tabs below mount the same components /settings does.

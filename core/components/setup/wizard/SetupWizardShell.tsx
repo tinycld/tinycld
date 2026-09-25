@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import { ScrollView, Text, useWindowDimensions, View } from 'react-native'
 import { ProgressSegments } from './ProgressSegments'
 import { ServerLogPreview } from './ServerLogPreview'
-import { ghostPreviewModel, useWorkspacePreview } from './use-workspace-preview'
+import { ghostPreviewModel, type PreviewModel, useWorkspacePreview } from './use-workspace-preview'
 import { WorkspacePreview } from './WorkspacePreview'
 import { WorkspacePreviewStrip } from './WorkspacePreviewStrip'
 
@@ -51,15 +51,11 @@ function stepLabelOf(props: SetupWizardShellProps): string {
     return `${summary.steps[index].label} · ${index + 1} of ${summary.total}`
 }
 
-function useSetupWizardLayout(props: SetupWizardShellProps) {
-    const live = useWorkspacePreview()
+function useSetupWizardLayout(props: SetupWizardShellProps, model: PreviewModel) {
     const { width } = useWindowDimensions()
     const isPhone = width < PHONE_MAX_WIDTH
-    // Pre-auth screens never show live org data (the name there is the server
-    // default), on the pane and on the phone strip alike.
-    const isPreAuth = props.preview !== 'workspace'
     return {
-        model: isPreAuth ? ghostPreviewModel(props.ghostInitials) : live,
+        model,
         isNewApps: props.currentStepId === APPS_STEP_ID,
         summary: props.summary ?? EMPTY_SUMMARY,
         stepLabel: stepLabelOf(props),
@@ -113,7 +109,20 @@ function PreviewPane({ layout, code }: { layout: SetupWizardLayout; code: string
  * left and a live miniature of the workspace on the right (a strip on phones).
  */
 export function SetupWizardShell(props: SetupWizardShellProps) {
-    const layout = useSetupWizardLayout(props)
+    if (props.preview === 'workspace') return <LiveShell {...props} />
+    // Pre-auth screens never show live org data (the name there is the server
+    // default), and there is nobody signed in to read it as, so they do not
+    // subscribe to it at all.
+    return <ShellFrame props={props} model={ghostPreviewModel(props.ghostInitials)} />
+}
+
+function LiveShell(props: SetupWizardShellProps) {
+    const model = useWorkspacePreview()
+    return <ShellFrame props={props} model={model} />
+}
+
+function ShellFrame({ props, model }: { props: SetupWizardShellProps; model: PreviewModel }) {
+    const layout = useSetupWizardLayout(props, model)
     return (
         <View className="flex-1 bg-background">
             <WorkspacePreviewStrip

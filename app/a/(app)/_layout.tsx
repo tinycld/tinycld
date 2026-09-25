@@ -5,6 +5,7 @@ import { HelpDrawer } from '@tinycld/core/components/help/HelpDrawer'
 import { HelpSearchPalette } from '@tinycld/core/components/help/HelpSearchPalette'
 import { NotifyContextSync } from '@tinycld/core/components/NotifyContextSync'
 import { SearchPalette } from '@tinycld/core/components/search-palette/SearchPalette'
+import { useShouldOpenSetupWizard } from '@tinycld/core/components/setup/wizard/use-setup-wizard'
 import { AuthGate } from '@tinycld/core/components/workspace/AuthGate'
 import { ImportNotifier } from '@tinycld/core/components/workspace/ImportNotifier'
 import { SkeletonLayout } from '@tinycld/core/components/workspace/SkeletonLayout'
@@ -13,12 +14,12 @@ import { useAuth } from '@tinycld/core/lib/auth'
 import { trace } from '@tinycld/core/lib/debug-trace'
 import { useHelpSearchShortcut } from '@tinycld/core/lib/help/use-help-search-shortcut'
 import { markNavMilestone } from '@tinycld/core/lib/nav-perf'
-import { activeSlugFromPathname } from '@tinycld/core/lib/org-routes'
+import { activeSlugFromPathname, appHref } from '@tinycld/core/lib/org-routes'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import { useExpoPushRegistration } from '@tinycld/core/lib/use-expo-push-registration'
 import { useNativeNotificationHandler } from '@tinycld/core/lib/use-native-notification-handler'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
-import { usePathname, useUnstableGlobalHref } from 'expo-router'
+import { Redirect, usePathname, useUnstableGlobalHref } from 'expo-router'
 import { useEffect } from 'react'
 
 export default function OrgLayout() {
@@ -39,6 +40,9 @@ export default function OrgLayout() {
     // Show notifications that arrive while the app is foregrounded, and route
     // taps to the notification's deep link. A no-op on web — sw.js does both.
     useNativeNotificationHandler()
+    // An owner or admin with an unfinished wizard resumes it before the
+    // workspace. False until role and wizard state have both loaded.
+    const shouldOpenWizard = useShouldOpenSetupWizard()
 
     if (!isReady) {
         return (
@@ -48,6 +52,8 @@ export default function OrgLayout() {
             </>
         )
     }
+
+    if (shouldOpenWizard) return <Redirect href={appHref('setup/next')} />
 
     return (
         <>

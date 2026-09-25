@@ -1,5 +1,6 @@
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { defineConfig } from 'vitest/config'
+import { defineConfig, type Plugin } from 'vitest/config'
 
 // The app shell owns the canonical vitest config. Package-scoped runs point the
 // `include` glob (or a positional filter) at one package's tests/, but always
@@ -8,7 +9,29 @@ import { defineConfig } from 'vitest/config'
 const APP_DIR = import.meta.dirname
 const CORE_DIR = path.join(APP_DIR, 'core')
 
+// @gluestack-ui publishes .jsx.map files whose `sources` point at a src/ tree
+// it does not ship. Vitest transforms those .jsx files itself, so Vite follows
+// each map, finds nothing and prints "points to missing source files" for
+// every test that imports core/ui/button or core/ui/icon. Loading the file
+// without its sourceMappingURL leaves Vite to map to the .jsx it compiles.
+const DANGLING_SOURCEMAP_PACKAGES = /\/node_modules\/@gluestack-ui\/[^/]+\/lib\/.+\.jsx?$/
+const SOURCEMAP_COMMENT = /^\/\/# sourceMappingURL=.*$/m
+
+function dropDanglingSourcemaps(): Plugin {
+    return {
+        name: 'drop-dangling-sourcemaps',
+        enforce: 'pre',
+        async load(id) {
+            const file = id.split('?', 1)[0]
+            if (!DANGLING_SOURCEMAP_PACKAGES.test(file)) return null
+            const code = await readFile(file, 'utf-8')
+            return { code: code.replace(SOURCEMAP_COMMENT, ''), map: null }
+        },
+    }
+}
+
 export default defineConfig({
+    plugins: [dropDanglingSourcemaps()],
     resolve: {
         // Platform-split modules (`use-rich-editor.web.tsx` / `.native.tsx`, with
         // a `.d.ts` carrying the shared contract) are resolved by Metro at build
