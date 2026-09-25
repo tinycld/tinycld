@@ -57,6 +57,7 @@ function useStepScreen(
     const id = paramToStepId(param)
     const step = steps.find(s => s.id === id)
     const status = statuses.find(s => s.id === id)
+    if (step && status && status.isVisible === undefined) return { kind: 'loading' }
     if (!step || !status?.isVisible) return { kind: 'redirect', href: NEXT_HREF }
 
     return {

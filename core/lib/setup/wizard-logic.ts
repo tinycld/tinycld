@@ -43,14 +43,16 @@ function phaseOf(status: StepStatus, state: WizardState): 'done' | 'skipped' | '
 }
 
 export function summarizeWizard(statuses: StepStatus[], state: WizardState): WizardSummary {
-    const visible = statuses.filter(s => s.isVisible)
+    const visible = statuses.filter(s => s.isVisible === true)
     const steps = visible.map(s => ({ id: s.id, label: s.label, phase: phaseOf(s, state) }))
     return {
         steps,
         nextStepId: steps.find(s => s.phase === 'todo')?.id ?? null,
         doneCount: steps.filter(s => s.phase === 'done').length,
         total: steps.length,
-        isSettled: visible.every(s => stepIsDone(s, state) !== undefined),
+        isSettled:
+            statuses.every(s => s.isVisible !== undefined) &&
+            visible.every(s => stepIsDone(s, state) !== undefined),
     }
 }
 

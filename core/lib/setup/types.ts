@@ -10,7 +10,8 @@ export interface SetupStepModule {
     default: ComponentType<SetupStepProps>
     /** Derived from real data. undefined while loading. Absent: done once acknowledged. */
     useIsStepDone?: () => boolean | undefined
-    useIsStepVisible?: () => boolean
+    /** undefined while the answer loads: the step is not shown, and the wizard waits before resuming. Absent: always shown. */
+    useIsStepVisible?: () => boolean | undefined
 }
 
 export interface SetupStepEntry {
@@ -26,13 +27,14 @@ export interface LoadedSetupStep {
     Component: ComponentType<SetupStepProps>
     /** null: the step has no derived state; `acknowledged` decides. */
     useIsStepDone: () => boolean | undefined | null
-    useIsStepVisible: () => boolean
+    useIsStepVisible: () => boolean | undefined
 }
 
 export interface StepStatus {
     id: string
     label: string
-    isVisible: boolean
+    /** undefined while the step does not yet know whether it shows. */
+    isVisible: boolean | undefined
     /** true / false; undefined while its data loads; null when the step has no derived state. */
     isDone: boolean | undefined | null
 }

@@ -60,6 +60,15 @@ describe('summarizeWizard', () => {
     it('is not settled while a visible step is loading', () => {
         expect(summarizeWizard([step('a:b', { isDone: undefined })], state()).isSettled).toBe(false)
     })
+    // Resuming before a step knows whether it shows would skip past it.
+    it('is not settled while a step does not yet know if it shows', () => {
+        const summary = summarizeWizard(
+            [step('a:b', { isVisible: undefined }), step('a:c')],
+            state()
+        )
+        expect(summary.isSettled).toBe(false)
+        expect(summary.steps.map(s => s.id)).toEqual(['a:c'])
+    })
 })
 
 describe('shouldOpenWizard', () => {

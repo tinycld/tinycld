@@ -18,11 +18,24 @@ const MAIL_PREFIX = 'mail.'
 // Acknowledged-only: the server treats unset delivery as on, so a stored value
 // cannot tell whether anyone set mail up. The owner's Continue does.
 //
-// Owner-only, like these panels in Settings.
+// Owner-only, like these panels in Settings. Unknown until the managed answer
+// arrives: before it, an empty list reads as "not managed", and the step would
+// show and then vanish on a deployment whose mail is managed elsewhere.
+export function emailStepIsVisible(input: {
+    isOwner: boolean
+    isManaged: boolean
+    isManagedPending: boolean
+}): boolean | undefined {
+    if (!input.isOwner) return false
+    if (input.isManagedPending) return undefined
+    return !input.isManaged
+}
+
 export function useIsStepVisible() {
     const { isOwner } = useCurrentRole()
     const isManaged = useIsSettingManaged(MAIL_PREFIX)
-    return isOwner && !isManaged
+    const isManagedPending = useIsManagedSettingsPending()
+    return emailStepIsVisible({ isOwner, isManaged, isManagedPending })
 }
 
 /**
