@@ -1,4 +1,5 @@
 import { appHref } from '@tinycld/core/lib/org-routes'
+import type { WizardState } from '@tinycld/core/lib/setup/types'
 import { useSetupSteps } from '@tinycld/core/lib/setup/use-setup-steps'
 import { useSetupWizardState } from '@tinycld/core/lib/setup/use-setup-wizard-state'
 import { summarizeWizard } from '@tinycld/core/lib/setup/wizard-logic'
@@ -13,13 +14,29 @@ import { StepStatusChain } from './use-setup-wizard'
  * Stays at the top of Settings until the wizard is finished. "Finish later"
  * on a step only sets `dismissedAt` — this card is the one way back in, so it
  * must outlive that dismissal until `completedAt` is actually set.
+ *
+ * Gated in two stages: this outer component decides IF the card should exist
+ * from role + wizard state alone, so `useSetupSteps()` — which loads every
+ * step module — only runs for the owner/admin who still has a wizard to
+ * finish, not for every visitor to Settings.
  */
 export function FinishSetupCard() {
-    const { isAdmin } = useCurrentRole()
+    const { isAdmin, isReady } = useCurrentRole()
     const { state, update } = useSetupWizardState()
-    const { steps } = useSetupSteps()
 
-    if (!isAdmin || !state || state.completedAt) return null
+    if (!isReady || !isAdmin || !state || state.completedAt) return null
+
+    return <FinishSetupCardLoader state={state} update={update} />
+}
+
+function FinishSetupCardLoader({
+    state,
+    update,
+}: {
+    state: WizardState
+    update: (patch: (s: WizardState) => WizardState) => Promise<void>
+}) {
+    const { steps } = useSetupSteps()
     if (!steps) return null
 
     return (
