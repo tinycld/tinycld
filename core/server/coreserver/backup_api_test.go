@@ -1030,3 +1030,93 @@ func TestBackupToTargetSurvivesTheRequestEnding(t *testing.T) {
 		t.Fatalf("archive at the target unreadable: %v (report ok=%v)", err, rep.OK)
 	}
 }
+
+// A probe boots a full server on the real data directory and is then killed. It
+// must leave every piece of restore state alone: a kill between the swap and the
+// finalize makes the REAL boot see a swapped marker with no finished restore
+// behind it and roll the operator's restore back.
+func TestBootProbeLeavesRestoreStateForTheRealBoot(t *testing.T) {
+	t.Setenv("TINYCLD_BOOT_PROBE", "1")
+	app := setupBackupCollections(t)
+	restoreSeams(t)
+	makeBackupUser(t, app, "owner@example.com", "owner")
+
+	col, err := app.FindCollectionByNameOrId("backups")
+	if err != nil {
+		t.Fatal(err)
+	}
+	abandoned := core.NewRecord(col)
+	abandoned.Set("kind", "manual")
+	abandoned.Set("status", "running")
+	abandoned.Set("started", types.NowDateTime().Add(-time.Hour))
+	if err := app.Save(abandoned); err != nil {
+		t.Fatal(err)
+	}
+
+	dataDir := app.DataDir()
+	restoreDir := filepath.Join(filepath.Dir(dataDir), "restore")
+	pending := filepath.Join(restoreDir, "pending", "r1")
+	if err := os.MkdirAll(pending, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	live, err := os.ReadFile(filepath.Join(dataDir, "data.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pending, "data.db"), live, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pending, ".staged"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := json.Marshal(map[string]any{
+		"id": "r1", "pending": pending, "manifest": format.Manifest{Core: "1.2.3"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	armed := filepath.Join(restoreDir, "armed")
+	if err := os.WriteFile(armed, marker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A scratch file the real boot would wipe. The probe must leave it: the run
+	// that owns it may still be the live process's.
+	scratch := filepath.Join(filepath.Dir(dataDir), "backup-tmp")
+	if err := os.MkdirAll(scratch, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	RegisterBackupBoot(app)
+	if err := app.OnBootstrap().Trigger(&core.BootstrapEvent{App: app}, func(*core.BootstrapEvent) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(armed); err != nil {
+		t.Fatalf("the probe consumed the armed marker: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreDir, "swapped")); !os.IsNotExist(err) {
+		t.Fatal("the probe performed the swap")
+	}
+	if _, err := os.Stat(filepath.Join(pending, "data.db")); err != nil {
+		t.Fatalf("the probe moved the staged data in: %v", err)
+	}
+	if _, err := os.Stat(scratch); err != nil {
+		t.Fatalf("the probe wiped the backup scratch directory: %v", err)
+	}
+	reread, err := app.FindRecordById("backups", abandoned.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reread.GetString("status"); got != "running" {
+		t.Fatalf("the probe closed a running row as %q", got)
+	}
+	rows, err := app.FindRecordsByFilter("backups", "kind = 'restore'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("the probe finalized a restore: %d rows", len(rows))
+	}
+}

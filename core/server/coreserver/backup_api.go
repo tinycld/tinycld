@@ -93,6 +93,13 @@ func RegisterBackupEndpoints(app core.App) {
 // restart. After bootstrap, in ONE hook: finalize a swapped-in restore, then
 // close rows a dead process left running.
 //
+// A process started ONLY as a boot probe — a full server a supervisor launches
+// to ask "does this build boot?" and then kills — does none of it. Such a probe
+// runs on the real data directory, so without the guard it performs the swap and
+// the finalize that belong to the real boot, and a kill landing between them
+// makes the real boot roll the restore back. A supervisor that boots the binary
+// as a probe MUST set TINYCLD_BOOT_PROBE=1 for that process.
+//
 // FinalizeRestore goes FIRST, defensively. The two cannot collide as they stand
 // — the finalize inserts its row already "succeeded" with started = now, and
 // MarkInterrupted only rewrites "running" rows started before bootedAt — so the
@@ -103,7 +110,12 @@ func RegisterBackupEndpoints(app core.App) {
 // interrupted. Keep them adjacent and in this order so that change stays safe.
 func RegisterBackupBoot(app core.App) {
 	bootedAt := time.Now()
+	probe := backup.IsBootProbe()
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
+		if probe {
+			srvLog.Info("boot probe: restore state left untouched for the real boot")
+			return e.Next()
+		}
 		// Before e.Next(): PocketBase opens the database inside it, and the swap
 		// renames pb_data as a whole.
 		if err := backup.ApplyPendingRestore(app.DataDir()); err != nil {

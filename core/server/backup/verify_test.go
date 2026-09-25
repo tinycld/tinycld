@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 
@@ -411,5 +412,104 @@ func TestFinalizeRestoreRecordsASecondRestore(t *testing.T) {
 	}
 	if len(rows) != 2 {
 		t.Fatalf("succeeded restore rows %d, want 2", len(rows))
+	}
+}
+
+// The serve-time finalizer is the first point at which a database exists, so it
+// is what turns a rollback marker into something an operator can see.
+func TestFinalizeRestoreReportsARollback(t *testing.T) {
+	resetRestoreState(t)
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+
+	manifest := format.Manifest{Core: "1.2.3"}
+	raw, err := json.Marshal(rolledBack{
+		Armed:    armed{ID: "r1", Manifest: manifest},
+		Reason:   rollbackReason,
+		RolledAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(rolledBackDir(app), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(rolledBackDir(app), "r1.json")
+	if err := os.WriteFile(marker, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := FinalizeRestore(app); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := app.FindRecordsByFilter(collection, "kind = 'restore' && status = 'failed'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("failed restore rows %d, want 1", len(rows))
+	}
+	if msg := rows[0].GetString("error"); msg != rollbackReason {
+		t.Fatalf("error %q", msg)
+	}
+	var meta map[string]any
+	if err := rows[0].UnmarshalJSONField("metadata", &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["restored_from_job"] != "r1" {
+		t.Fatalf("metadata %+v", meta)
+	}
+	notifs, err := app.FindRecordsByFilter("notifications", "type = 'core.restore.failed'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notifs) == 0 {
+		t.Fatal("administrators were not told the restore was rolled back")
+	}
+	audits, err := app.FindRecordsByFilter("audit_logs", "action = 'restore.failed'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(audits) == 0 {
+		t.Fatal("the rollback was not audited")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("the marker must go once it is recorded")
+	}
+}
+
+// The marker's removal is the last step, so a crash after the insert brings it
+// back. A second pass must not write a second row.
+func TestFinalizeRestoreReportsARollbackOnlyOnce(t *testing.T) {
+	resetRestoreState(t)
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+	write := func() {
+		raw, err := json.Marshal(rolledBack{Armed: armed{ID: "r1"}, Reason: rollbackReason})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(rolledBackDir(app), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(rolledBackDir(app), "r1.json"), raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	if err := FinalizeRestore(app); err != nil {
+		t.Fatal(err)
+	}
+	write()
+	if err := FinalizeRestore(app); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := app.FindRecordsByFilter(collection, "kind = 'restore' && status = 'failed'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("failed restore rows %d, want 1", len(rows))
 	}
 }

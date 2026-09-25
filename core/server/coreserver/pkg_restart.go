@@ -15,6 +15,17 @@ const restartExitCode = 75
 // The legacy serverDir parameter is retained for caller compatibility; the
 // restart marker now lives under the STATE dir (resolveStateDir()) so it
 // persists across the per-build symlink swap rather than in the swapped dir.
+//
+// It sits BESIDE pb_data, not inside it. A restore's boot swap renames pb_data
+// away as a whole, and a restart requested to apply that restore is exactly when
+// the marker is written — inside pb_data it would be carried off with the data
+// the swap sets aside. Nothing reads the marker today (the entrypoint keys on
+// exit 75 alone), so this is a record of intent rather than a protocol, but its
+// location must not depend on which restart it is.
+func restartMarkerPath() string {
+	return filepath.Join(resolveStateDir(), ".restart-requested")
+}
+
 func requestRestart(_ string) {
 	if isDevelopment() {
 		srvLog.Info("restart requested (dev mode — restart manually)")
@@ -22,7 +33,7 @@ func requestRestart(_ string) {
 	}
 
 	// Write a restart marker so the entrypoint knows this was intentional
-	markerPath := filepath.Join(statePbDataDir(), ".restart-requested")
+	markerPath := restartMarkerPath()
 	if err := os.WriteFile(markerPath, []byte("restart"), 0o644); err != nil {
 		srvLog.Warn("failed to write restart marker", "path", markerPath, "err", err)
 	}

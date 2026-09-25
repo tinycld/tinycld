@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
@@ -124,9 +125,21 @@ func swapIn(dataDir string, a armed) error {
 	return nil
 }
 
+// rollbackReason is what an operator is told when the restored data was put
+// back. The rollback itself cannot know more: it runs before the database is
+// open, so the process that failed took its reason with it.
+const rollbackReason = "the restored data did not boot; the previous data was put back"
+
 // rollBack undoes a swap whose process never finalized. The restored data is
 // kept under restore/failed/<id> rather than deleted: it booted far enough to
 // swap in, so whatever stopped it is worth looking at.
+//
+// It also leaves a marker, because a silent rollback is the worst outcome of
+// all: the organization serves its old data, the restore's ledger row stays
+// "running", and nobody is told the restore was undone. The marker is written
+// BEFORE the swapped marker goes, so a crash in between brings this function
+// back rather than losing the news; the finalizer keys on the job id and writes
+// one row per rollback.
 func rollBack(dataDir string, a armed) error {
 	failed := filepath.Join(restoreDirOf(dataDir), "failed", a.ID)
 	if err := os.MkdirAll(filepath.Dir(failed), 0o700); err != nil {
@@ -150,10 +163,99 @@ func rollBack(dataDir string, a armed) error {
 	if err := os.Remove(armedPathOf(dataDir)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	if err := writeRollbackMarker(dataDir, a); err != nil {
+		return err
+	}
 	// This process serves the data the organization had before the restore, so
 	// it is not in maintenance mode.
 	restoring.Store(false)
 	return os.Remove(swappedPathOf(dataDir))
+}
+
+func writeRollbackMarker(dataDir string, a armed) error {
+	dir := rolledBackDirOf(dataDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(rolledBack{Armed: a, Reason: rollbackReason, RolledAt: time.Now().UTC()})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, a.ID+".json"), raw, 0o600)
+}
+
+// reportRollbacks turns every marker rollBack left into a failed restore row, a
+// notification and an audit entry, then deletes it. Called from FinalizeRestore,
+// which is the first point at which a database exists to write to.
+//
+// A marker whose row is already there is dropped rather than recorded twice: the
+// removal is the last step, so a crash after the insert brings the marker back.
+func reportRollbacks(app core.App) error {
+	entries, err := os.ReadDir(rolledBackDir(app))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(rolledBackDir(app), e.Name())
+		raw, rerr := os.ReadFile(path)
+		if rerr != nil {
+			log.Warn("could not read a rollback marker", "path", path, "err", rerr)
+			continue
+		}
+		var rb rolledBack
+		if jerr := json.Unmarshal(raw, &rb); jerr != nil {
+			// An unreadable marker is removed: it cannot be acted on, and
+			// keeping it would re-log the same warning on every boot forever.
+			log.Error("a rollback marker was unreadable and was discarded", "path", path, "err", jerr)
+			if oerr := os.Remove(path); oerr != nil {
+				log.Warn("could not remove an unreadable rollback marker", "path", path, "err", oerr)
+			}
+			continue
+		}
+		if rerr := recordRollback(app, rb); rerr != nil {
+			log.Error("could not record a rolled-back restore", "id", rb.Armed.ID, "err", rerr)
+			continue
+		}
+		if oerr := os.Remove(path); oerr != nil {
+			log.Warn("could not remove a rollback marker", "id", rb.Armed.ID, "err", oerr)
+		}
+	}
+	return nil
+}
+
+func recordRollback(app core.App, rb rolledBack) error {
+	done, err := app.FindRecordsByFilter(
+		collection,
+		"kind = 'restore' && status = 'failed' && metadata.restored_from_job = {:id}",
+		"", 1, 0, dbx.Params{"id": rb.Armed.ID},
+	)
+	if err != nil {
+		return err
+	}
+	if len(done) > 0 {
+		return nil
+	}
+	reason := rb.Reason
+	if reason == "" {
+		reason = rollbackReason
+	}
+	row := newRow(app, KindRestore, "", "")
+	row.Set("status", "failed")
+	row.Set("finished", types.NowDateTime())
+	row.Set("error", truncate(reason, 2000))
+	row.Set("manifest", rb.Armed.Manifest)
+	row.Set("metadata", map[string]any{"restored_from_job": rb.Armed.ID})
+	if err := app.Save(row); err != nil {
+		return err
+	}
+	announceRestore(app, RestoreRequest{}, row, false, reason)
+	return nil
 }
 
 // FinalizeRestore runs after a successful boot of the restored data: the
@@ -171,6 +273,12 @@ func rollBack(dataDir string, a armed) error {
 // initiator either — the user who asked for the restore may not exist in the
 // restored data.
 func FinalizeRestore(app core.App) error {
+	// Reported first: a rollback is the only restore outcome nothing else can
+	// tell an operator about, and it is independent of whatever the swapped
+	// marker says. A failure to report it must not stop a finalize.
+	if err := reportRollbacks(app); err != nil {
+		log.Error("could not report rolled-back restores", "err", err)
+	}
 	raw, err := os.ReadFile(swappedPath(app))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

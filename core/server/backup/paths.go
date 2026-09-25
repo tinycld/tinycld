@@ -2,6 +2,7 @@ package backup
 
 import (
 	"path/filepath"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 
@@ -22,6 +23,16 @@ func previousDir(app core.App, id string) string {
 func armedPath(app core.App) string   { return filepath.Join(restoreDir(app), "armed") }
 func swappedPath(app core.App) string { return filepath.Join(restoreDir(app), "swapped") }
 
+// rolledBackDir holds one marker per restore the boot swap had to undo. The
+// rollback runs before the database is open, so it cannot write a ledger row
+// itself; the marker is what carries the news to the serve-time finalizer.
+func rolledBackDir(app core.App) string {
+	return filepath.Join(restoreDir(app), "rolled-back")
+}
+func rolledBackDirOf(dataDir string) string {
+	return filepath.Join(restoreDirOf(dataDir), "rolled-back")
+}
+
 // The boot swap runs before an app exists, so it derives the same paths from the
 // data dir alone. LedgerPath is the parent of pb_data in every deployment shape.
 func restoreDirOf(dataDir string) string  { return filepath.Join(filepath.Dir(dataDir), "restore") }
@@ -34,6 +45,15 @@ func swappedPathOf(dataDir string) string { return filepath.Join(restoreDirOf(da
 // the swap moves them out of pending one at a time, so after it starts their
 // absence means the opposite of what it means before.
 const stagedSentinel = ".staged"
+
+// rolledBack is what rollBack leaves for the serve-time finalizer. Without it a
+// rollback is silent: the data is correct, the operator is never told their
+// restore was undone, and the ledger row stays "running" forever.
+type rolledBack struct {
+	Armed    armed     `json:"armed"`
+	Reason   string    `json:"reason"`
+	RolledAt time.Time `json:"rolled_at"`
+}
 
 // armed is the marker a restore leaves behind for the process that boots next.
 // It carries the manifest because that process finalizes the ledger row and has

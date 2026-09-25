@@ -391,3 +391,36 @@ func TestApplyPendingRestoreDiscardsAStageWithoutItsSentinel(t *testing.T) {
 		t.Fatal("an aborted stage must not enter maintenance mode")
 	}
 }
+
+// A rollback with no marker is a silent one: the organization serves its old
+// data, the restore's row stays "running", and nobody is told the restore was
+// undone. The rollback runs before the database is open, so the marker is the
+// only way the news reaches the ledger.
+func TestApplyPendingRestoreLeavesARollbackMarker(t *testing.T) {
+	resetRestoreState(t)
+	dataDir := layout(t)
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyPendingRestore(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(rolledBackDirOf(dataDir), "r1.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("no rollback marker: %v", err)
+	}
+	var rb rolledBack
+	if err := json.Unmarshal(raw, &rb); err != nil {
+		t.Fatal(err)
+	}
+	if rb.Armed.ID != "r1" {
+		t.Fatalf("marker names job %q", rb.Armed.ID)
+	}
+	if rb.Reason == "" {
+		t.Fatal("the marker must carry a reason an operator can read")
+	}
+	if rb.RolledAt.IsZero() {
+		t.Fatal("the marker must say when the rollback happened")
+	}
+}
