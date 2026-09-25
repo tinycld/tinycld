@@ -1,7 +1,7 @@
 import { tinycldConfig } from '@tinycld/app-generated/tinycld-config'
-import type { PackageSetupStep } from '../packages/config-types'
-import { compareStepOrder } from './order'
-import type { SetupStepEntry, SetupStepModule } from './types'
+import type { PackageSetupStep } from '@tinycld/core/lib/packages/config-types'
+import { compareStepOrder } from '@tinycld/core/lib/setup/order'
+import type { SetupStepEntry, SetupStepModule } from '@tinycld/core/lib/setup/types'
 
 type Loader = () => Promise<SetupStepModule>
 
@@ -12,25 +12,25 @@ const CORE_STEPS: SetupStepEntry[] = [
         id: 'core:workspace',
         label: 'Workspace',
         order: 'a0',
-        load: () => import('../../components/setup/wizard/steps/WorkspaceStep'),
+        load: () => import('@tinycld/core/components/setup/wizard/steps/WorkspaceStep'),
     },
     {
         id: 'core:apps',
         label: 'Apps',
         order: 'a1',
-        load: () => import('../../components/setup/wizard/steps/AppsStep'),
+        load: () => import('@tinycld/core/components/setup/wizard/steps/AppsStep'),
     },
     {
         id: 'core:email',
         label: 'Email sending',
         order: 'a2',
-        load: () => import('../../components/setup/wizard/steps/EmailStep'),
+        load: () => import('@tinycld/core/components/setup/wizard/steps/EmailStep'),
     },
     {
         id: 'core:team',
         label: 'Your team',
         order: 'a3',
-        load: () => import('../../components/setup/wizard/steps/TeamStep'),
+        load: () => import('@tinycld/core/components/setup/wizard/steps/TeamStep'),
     },
 ]
 

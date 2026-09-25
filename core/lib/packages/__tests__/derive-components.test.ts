@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CORE_SLOT_TARGET } from '../../setup/core-slots'
+import { CORE_SLOT_TARGET } from '@tinycld/core/lib/setup/core-slots'
 import {
     deriveProviders,
     deriveSettings,
