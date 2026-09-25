@@ -147,6 +147,32 @@ describe('lastBackedUp', () => {
         expect(r.label).toBe('Last backed up 2h ago')
     })
 
+    it('picks the run that finished last, not the one that started first', () => {
+        const startedFirst = new Date(Date.now() - 9 * 3600 * 1000).toISOString()
+        // The rows arrive in `started` order, newest first, so the long run that
+        // started earlier is LAST in the list — and is the one that finished most
+        // recently.
+        const r = lastBackedUp([
+            { status: 'succeeded', finished: startedFirst, kind: 'manual' } as never,
+            {
+                status: 'succeeded',
+                finished: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+                kind: 'scheduled',
+            } as never,
+        ])
+        expect(r.label).toBe('Last backed up 2h ago')
+        expect(r.isStale).toBe(false)
+    })
+
+    it('skips a succeeded row with no finish time', () => {
+        const recent = new Date(Date.now() - 2 * 3600 * 1000).toISOString()
+        const r = lastBackedUp([
+            { status: 'succeeded', finished: '', kind: 'manual' } as never,
+            { status: 'succeeded', finished: recent, kind: 'manual' } as never,
+        ])
+        expect(r.label).toBe('Last backed up 2h ago')
+    })
+
     it('ignores a restore row when reporting the last backup', () => {
         const recent = new Date(Date.now() - 2 * 3600 * 1000).toISOString()
         const r = lastBackedUp([

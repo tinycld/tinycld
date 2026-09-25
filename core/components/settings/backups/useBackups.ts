@@ -31,15 +31,26 @@ export type BackupRow = NonNullable<ReturnType<typeof useBackupRows>['data']>[nu
 
 type LedgerEntry = Pick<BackupRow, 'status' | 'finished' | 'kind'>
 
+const finishedAt = (row: LedgerEntry) => new Date(row.finished.replace(' ', 'T')).getTime()
+
 /**
  * The headline line for the panel. Pure, so the ledger's own summary can be
  * asserted without rendering: a restore is not a backup, so it never counts as
  * one, and never having a backup is itself the stale case.
+ *
+ * It picks the greatest `finished`, not the first row in `started` order. The
+ * two disagree whenever runs overlap or one takes longer than the next — a
+ * scheduled run of a big organization started before a small manual one and
+ * finishing after it would otherwise be reported as the latest backup, so the
+ * panel would understate how fresh the data is.
  */
 export function lastBackedUp(rows: readonly LedgerEntry[] | undefined) {
-    const last = rows?.find(row => row.status === 'succeeded' && row.kind !== 'restore')
-    if (!last?.finished) return { label: 'Never backed up', isStale: true }
-    const age = Date.now() - new Date(last.finished.replace(' ', 'T')).getTime()
+    const finished = (rows ?? []).filter(
+        row => row.status === 'succeeded' && row.kind !== 'restore' && row.finished
+    )
+    if (finished.length === 0) return { label: 'Never backed up', isStale: true }
+    const last = finished.reduce((a, b) => (finishedAt(b) > finishedAt(a) ? b : a))
+    const age = Date.now() - finishedAt(last)
     return { label: `Last backed up ${formatTimeAgo(last.finished)}`, isStale: age > STALE_MS }
 }
 

@@ -17,7 +17,9 @@ build output — a restore rebuilds the packages from that list.
 2. Enter an **upload URL**. The server streams the backup to this URL with an
    HTTP PUT, so use a presigned PUT URL from your storage provider (S3, R2,
    B2, GCS and MinIO all support these). Presign it **without** a
-   content-length condition; the upload is chunked.
+   content-length condition; the upload is chunked. The URL must point to a
+   host the server can reach across the network — an address on the server
+   itself is refused.
 3. Enter a **passphrase** of at least 12 characters, twice. The backup is
    encrypted with it. If you lose the passphrase, the backup cannot be read
    by anyone, including us.
@@ -39,8 +41,10 @@ sign in. The CLI prompts for the passphrase.
 ## Restore
 
 Only an owner can restore. Restoring **replaces all current data** with the
-backup. Before it does, the server makes a safety copy of the current data
-and shows you its key in **History** until the restore succeeds.
+backup. Before it does, the server makes a safety copy of the current data. If
+the restore fails, **History** shows the key that reads that copy, so you can
+restore it. If the restore succeeds, the server deletes the copy and no key is
+shown.
 
 1. Open **Settings → Backups → Restore**.
 2. Enter a **download URL** for the backup (a presigned GET URL) and the
