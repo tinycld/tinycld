@@ -28,8 +28,10 @@ On Windows, verify and run it from PowerShell instead:
 ```
 
 On first run it creates `./tinycld-data/`, applies its migrations, listens on
-`127.0.0.1:8090`, and prints a setup URL with a one-time token. Open that URL
-to create the first account.
+`127.0.0.1:8090`, and prints a setup link and an 8-character setup code. Open
+the link (or enter the code in any TinyCld app) to claim the server and create
+the owner account. A new code prints each time the server starts until it is
+claimed.
 
 ## Options
 

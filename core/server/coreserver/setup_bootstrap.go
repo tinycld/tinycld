@@ -137,7 +137,7 @@ func runSetupInit(app core.App, guard *setupGuard, ip string, req setupInitReque
 //
 // Bootstrap two identities for the first operator:
 //  1. a PocketBase _superusers record — keeps PB's installer satisfied (so
-//     the setup token isn't re-printed on every reboot), backs the sharelink
+//     the setup code isn't re-printed on every reboot), backs the sharelink
 //     signing key, and remains a recovery login.
 //  2. a regular `users` record with role=owner — this is the identity the
 //     /admin console actually runs as. The console writes through the

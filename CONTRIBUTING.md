@@ -250,10 +250,10 @@ signals it ran.
 
 ## Logging in for local dev
 - After `pnpm run db:reset` (or `pnpm run db:seed`) the script prints a boxed summary of the credentials to use — you don't need to read the seed script.
-- Two accounts exist: the **app user** `user@tinycld.org` (what you sign in to TinyCld with) and the **PocketBase superuser** `admin@tinycld.org` (the `/_/` admin UI and the `/setup` superuser dashboard).
+- Two accounts exist: the **app user** `user@tinycld.org` (what you sign in to TinyCld with) and the **PocketBase superuser** `admin@tinycld.org` (the `/_/` admin UI and the `/a/setup/recovery` superuser console).
 - Both passwords are **generated randomly on first create** and printed in the box. To pin known passwords (e.g. to match an existing `.env` or share across resets), set `TEST_USER_PW` (app user) and `ADMIN_USER_PW` (superuser) in `tinycld/.env`, or pass `--user-pw`. CI sets both so logins are deterministic — don't change that contract.
 - Override the login emails with `TEST_USER_LOGIN` / `ADMIN_USER_LOGIN` in `tinycld/.env`.
-- There's no first-run `…/setup?token=…` link locally: `db:reset` creates the superuser up front (so it can seed), so PocketBase isn't on its first run. That token flow is only for an empty self-hosted instance. The `/setup` link `db:reset` prints goes to the superuser login → dashboard instead.
+- There's no first-run setup code locally: `db:reset` creates the superuser up front (so it can seed), so PocketBase isn't on its first run. The setup code (printed in the server log with a `/a/setup?code=…` link) is only for an empty self-hosted instance, where it claims the server and creates the owner. The superuser recovery console is at `/a/setup/recovery`.
 
 ## Users & Roles
 - **Single-org deployment: the process IS one org.** There is no `orgs` collection and no `user_org` junction — a user's role lives directly on their `users` auth record. (The hosting router hosts many deployments, each its own process and DB; none of that is visible from inside the app.)

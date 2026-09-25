@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Local runner for the todo-install integration test. Builds a TinyCld
 # image from the CURRENT working tree (so the git-spec validation change is
-# present), boots it, scrapes the first-run /admin bootstrap token, runs the
+# present), boots it, scrapes the first-run setup code, runs the
 # Playwright spec straight from this directory against the assembled local
 # workspace, and tears the container down.
 #
@@ -186,12 +186,12 @@ MOUNT_ROOT="${MOUNT_ROOT:-$(mktemp -d -t tinycld-todo-mounts.XXXXXX)}"
 PB_DATA_DIR="${MOUNT_ROOT}/pb_data"
 BUILDS_DIR="${MOUNT_ROOT}/builds"
 RELEASES_DIR="${MOUNT_ROOT}/releases"
-# The first-run setup token (which we scrape to drive the /admin wizard) is only
+# The first-run setup code (which we scrape to drive the setup wizard) is only
 # printed by PocketBase's InstallerFunc when the DB has NO superusers — i.e. a
 # truly empty pb_data. A fresh mktemp MOUNT_ROOT is already empty, but if the
 # caller reuses MOUNT_ROOT (the `:-` default above) a stale DB from a prior run
-# would suppress the token and the bootstrap scrape would fail. Wipe the mounts
-# before boot so an empty-DB first run — and thus the printed token — is
+# would suppress the code and the bootstrap scrape would fail. Wipe the mounts
+# before boot so an empty-DB first run — and thus the printed code — is
 # guaranteed regardless of how MOUNT_ROOT was chosen.
 rm -rf "${PB_DATA_DIR}" "${BUILDS_DIR}" "${RELEASES_DIR}"
 mkdir -p "${PB_DATA_DIR}" "${BUILDS_DIR}" "${RELEASES_DIR}"
@@ -245,16 +245,16 @@ echo "[runner] ensuring chromium is installed for playwright"
 (cd "${APP_DIR}" && pnpm exec playwright install chromium >/dev/null)
 
 # Runs a subset of the serial spec, selected by a title grep. The first phase
-# needs the bootstrap token (for the first-run /admin wizard); later phases
+# needs the setup code (for the first-run wizard at /a/setup); later phases
 # don't. Each call shares the container's persisted state from the prior phase.
 # $1 is the title grep, $2 a human label for failure messages. Runs from
 # ${SCRIPT_DIR} so the config's `testDir: '.'` resolves to this directory.
 #
 # The spec is passed by filename as a positional filter so ONLY todo-install.spec
 # is loaded — the sibling setup-and-packages.spec.ts in this dir shares a
-# 'bootstrap superuser via /admin wizard' test title, and without this filter the
+# 'bootstrap owner via /setup wizard' test title, and without this filter the
 # `bootstrap` grep in phase 1 would also select it and run it against the same
-# container with the wrong setup token.
+# container with the wrong setup code.
 run_phase() {
     local grep_expr="$1" label="$2"
     echo "[runner] running ${label}"

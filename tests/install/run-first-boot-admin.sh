@@ -85,7 +85,7 @@ else
     echo "[runner] using existing local image ${IMAGE}"
 fi
 
-# 2. Boot on a FRESH blank DB. The setup token is only printed when pb_data has no
+# 2. Boot on a FRESH blank DB. The setup code is only printed when pb_data has no
 #    superusers, so a clean mount guarantees it — and makes every run isolated.
 MOUNT_ROOT="$(mktemp -d -t tinycld-first-boot.XXXXXX)"
 mkdir -p "${MOUNT_ROOT}/pb_data" "${MOUNT_ROOT}/builds" "${MOUNT_ROOT}/releases"
