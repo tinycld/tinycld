@@ -58,6 +58,7 @@ func TestCreateOwnerCommand_PasswordHash(t *testing.T) {
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: dir, HideStartBanner: true})
 	ensureUsersCollection(t, app)
+	createSystemSettingsCollection(t, app)
 	cmd := NewCreateOwnerCommand(app)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -85,6 +86,10 @@ func TestCreateOwnerCommand_PasswordHash(t *testing.T) {
 	if !su.ValidatePassword("pw-1234567890") {
 		t.Fatal("superuser must share the same hash")
 	}
+	// Wizard state is created on owner creation.
+	if _, err := app.FindFirstRecordByFilter("system_settings", "key = {:k}", map[string]any{"k": setupWizardKey}); err != nil {
+		t.Fatalf("wizard state row missing after owner creation: %v", err)
+	}
 }
 
 func TestCreateOwnerCommand_RefusesBothSecrets(t *testing.T) {
@@ -103,6 +108,7 @@ func TestCreateOwnerCommand_RefusesBothSecrets(t *testing.T) {
 func TestCreateOwnerCommand_PasswordWithName(t *testing.T) {
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir(), HideStartBanner: true})
 	ensureUsersCollection(t, app)
+	createSystemSettingsCollection(t, app)
 	cmd := NewCreateOwnerCommand(app)
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{"ada@example.com", "--password", "pw-1234567890", "--name", "Ada"})
