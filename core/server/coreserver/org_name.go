@@ -12,15 +12,25 @@ import (
 // setOrgName renames the deployment. The name lives in Meta.AppName because
 // /api/org-info already serves it before login; there is no other store.
 func setOrgName(app core.App, name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return errors.New("Name is required.")
-	}
-	if len(name) > 255 {
-		return errors.New("Name must be 255 characters or fewer.")
+	name, err := normalizeOrgName(name)
+	if err != nil {
+		return err
 	}
 	app.Settings().Meta.AppName = name
 	return app.Save(app.Settings())
+}
+
+// normalizeOrgName trims a workspace name and checks it, so a caller can
+// refuse a bad name before it changes anything else.
+func normalizeOrgName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errors.New("Name is required.")
+	}
+	if len(name) > 255 {
+		return "", errors.New("Name must be 255 characters or fewer.")
+	}
+	return name, nil
 }
 
 // RegisterOrgNameEndpoint lets an owner or admin rename the deployment. PB's

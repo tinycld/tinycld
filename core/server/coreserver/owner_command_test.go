@@ -2,6 +2,7 @@ package coreserver
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -143,5 +144,88 @@ func TestCreateOwnerCommand_RejectsBadHash_NoSuperuserLeftBehind(t *testing.T) {
 	}
 	if u, _ := app.FindAuthRecordByEmail("users", "ada@example.com"); u != nil {
 		t.Fatal("a rejected hash must not leave a users record behind")
+	}
+}
+
+func wizardStateOf(t *testing.T, app core.App) map[string]any {
+	t.Helper()
+	rec, err := app.FindFirstRecordByFilter("system_settings", "key = {:k}", map[string]any{"k": setupWizardKey})
+	if err != nil {
+		t.Fatalf("wizard state row missing: %v", err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal([]byte(rec.GetString("value")), &state); err != nil {
+		t.Fatal(err)
+	}
+	return state
+}
+
+func runCreateOwner(t *testing.T, app *pocketbase.PocketBase, args ...string) {
+	t.Helper()
+	cmd := NewCreateOwnerCommand(app)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(args)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+}
+
+// --org-name names the workspace for a deployment provisioned without the
+// wizard's claim screens, and marks the name as chosen so the wizard shows it
+// rather than treating it as PocketBase's default.
+func TestCreateOwnerCommand_OrgNameSeedsWorkspace(t *testing.T) {
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir(), HideStartBanner: true})
+	ensureUsersCollection(t, app)
+	createSystemSettingsCollection(t, app)
+
+	runCreateOwner(t, app, "ada@example.com", "--password", "pw-1234567890", "--org-name", "Harbor Dental")
+	if got := app.Settings().Meta.AppName; got != "Harbor Dental" {
+		t.Fatalf("AppName = %q, want Harbor Dental", got)
+	}
+	state := wizardStateOf(t, app)
+	if state["orgNameSeeded"] != true {
+		t.Fatalf("orgNameSeeded = %v, want true", state["orgNameSeeded"])
+	}
+	if _, ok := state["startedAt"]; !ok {
+		t.Fatal("seeding the name must keep the wizard's own fields")
+	}
+
+	// A retried provisioning run applies the flag again.
+	runCreateOwner(t, app, "ada@example.com", "--password", "pw-1234567890", "--org-name", "Harbor Dental Group")
+	if got := app.Settings().Meta.AppName; got != "Harbor Dental Group" {
+		t.Fatalf("AppName after re-run = %q", got)
+	}
+}
+
+func TestCreateOwnerCommand_NoOrgNameLeavesWorkspaceAlone(t *testing.T) {
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir(), HideStartBanner: true})
+	ensureUsersCollection(t, app)
+	createSystemSettingsCollection(t, app)
+	before := app.Settings().Meta.AppName
+
+	runCreateOwner(t, app, "ada@example.com", "--password", "pw-1234567890")
+	if got := app.Settings().Meta.AppName; got != before {
+		t.Fatalf("AppName = %q, want it unchanged (%q)", got, before)
+	}
+	if _, ok := wizardStateOf(t, app)["orgNameSeeded"]; ok {
+		t.Fatal("orgNameSeeded written without --org-name")
+	}
+}
+
+// An invalid name is refused before either identity is created, so a fixed
+// retry is a clean first run.
+func TestCreateOwnerCommand_RejectsBlankOrgName(t *testing.T) {
+	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir(), HideStartBanner: true})
+	ensureUsersCollection(t, app)
+	cmd := NewCreateOwnerCommand(app)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"ada@example.com", "--password", "pw-1234567890", "--org-name", "   "})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected an error for a blank --org-name")
+	}
+	if su, _ := app.FindAuthRecordByEmail("_superusers", "ada@example.com"); su != nil {
+		t.Fatal("a refused --org-name must not leave a superuser behind")
 	}
 }

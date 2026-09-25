@@ -51,7 +51,7 @@ func GenerateOwnerPassword() (string, error) {
 // Idempotent: provisioning may be retried, and a retry must not fail because
 // one or both records already exist.
 func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
-	var password, passwordHash, name string
+	var password, passwordHash, name, orgName string
 
 	cmd := &cobra.Command{
 		Use:   "create-owner <email>",
@@ -65,8 +65,10 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 			"the data directory. Without --password a random one is generated and " +
 			"printed. Pass --password-hash instead of --password to mint both identities " +
 			"from a bcrypt hash computed elsewhere; nothing is printed but the " +
-			"confirmation line. --name sets the owner's display name. Re-running for an " +
-			"existing email is a no-op.",
+			"confirmation line. --name sets the owner's display name. --org-name sets the " +
+			"workspace name (shown at sign-in and in invite emails) and marks it as " +
+			"chosen, so the setup wizard shows it instead of asking; it is applied on " +
+			"every run. Re-running for an existing email leaves the accounts unchanged.",
 		Args:         cobra.ExactArgs(1),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -83,6 +85,12 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 			// leaving a corrupt, permanent superuser behind.
 			if passwordHash != "" && !IsBcryptHash(passwordHash) {
 				return fmt.Errorf("create-owner: --password-hash must be a bcrypt hash")
+			}
+			// Same reason: refuse a bad name before any record exists.
+			if orgName != "" {
+				if _, err := normalizeOrgName(orgName); err != nil {
+					return fmt.Errorf("create-owner: --org-name: %w", err)
+				}
 			}
 
 			if password == "" && passwordHash == "" {
@@ -109,6 +117,16 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 			created, err := createOperatorIdentities(app, email, name, password, passwordHash)
 			if err != nil {
 				return fmt.Errorf("create-owner: %w", err)
+			}
+			if orgName != "" {
+				if err := setOrgName(app, orgName); err != nil {
+					return fmt.Errorf("create-owner: set workspace name: %w", err)
+				}
+				// Like the wizard row itself, a convenience: the name is saved
+				// either way, and the owner can confirm it in the wizard.
+				if err := markOrgNameSeeded(app); err != nil {
+					srvLog.Warn("create-owner: could not record the workspace name in the setup wizard", "err", err)
+				}
 			}
 
 			if !created {
@@ -137,6 +155,8 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 		"bcrypt hash to use for both identities instead of a password")
 	cmd.Flags().StringVar(&name, "name", "",
 		"display name for the owner account (default: the email local-part)")
+	cmd.Flags().StringVar(&orgName, "org-name", "",
+		"workspace name; the setup wizard shows it as already chosen")
 	return cmd
 }
 

@@ -2,6 +2,7 @@ package coreserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -28,4 +29,30 @@ func MarkSetupWizardStarted(app core.App) error {
 		return err
 	}
 	return upsertSystemSetting(app, setupWizardKey, string(value), false)
+}
+
+// markOrgNameSeeded records in the wizard state that the workspace name was
+// chosen by whoever provisioned the deployment. Until then the wizard reads
+// the saved name as PocketBase's default ("Acme") and does not show it.
+func markOrgNameSeeded(app core.App) error {
+	if err := MarkSetupWizardStarted(app); err != nil {
+		return err
+	}
+	rec, err := app.FindFirstRecordByFilter(
+		"system_settings", "key = {:key}", map[string]any{"key": setupWizardKey},
+	)
+	if err != nil {
+		return err
+	}
+	var state map[string]any
+	if err := json.Unmarshal([]byte(rec.GetString("value")), &state); err != nil {
+		return fmt.Errorf("read wizard state: %w", err)
+	}
+	state["orgNameSeeded"] = true
+	value, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	rec.Set("value", string(value))
+	return app.Save(rec)
 }
