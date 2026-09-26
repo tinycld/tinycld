@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase"
+
+	"tinycld.org/core/backup"
 )
 
 // TestLoggerInstallDoesNotHangDuringBootstrap pins the ordering bug fixed
@@ -34,6 +36,10 @@ func TestLoggerInstallDoesNotHangDuringBootstrap(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(slog.New(preBootstrapHandler)) })
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
+	// Register installs the REAL restart function; see the note in
+	// composition_parity_test.go.
+	t.Cleanup(backup.ResetForTesting)
+
 	Register(app, Options{
 		HooksDir:      t.TempDir(),
 		MigrationsDir: t.TempDir(),

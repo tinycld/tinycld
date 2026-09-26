@@ -34,7 +34,7 @@ func newContextListCmd(d *deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List saved contexts",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := d.loadConfig()
 			if err != nil {
@@ -67,7 +67,7 @@ func newContextUseCmd(d *deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <name>",
 		Short: "Switch the current context",
-		Args:  cobra.ExactArgs(1),
+		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := d.loadConfig()
 			if err != nil {
@@ -91,7 +91,7 @@ func newContextAddCmd(d *deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "add <name> <origin>",
 		Short: "Save a context without logging in",
-		Args:  cobra.ExactArgs(2),
+		Args:  usageArgs(cobra.ExactArgs(2)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := d.loadConfig()
 			if err != nil {
@@ -127,7 +127,7 @@ func newContextRemoveCmd(d *deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <name>",
 		Short: "Remove a context and its stored credentials",
-		Args:  cobra.ExactArgs(1),
+		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := d.loadConfig()
 			if err != nil {

@@ -10,7 +10,12 @@ go 1.26.3
 // (tinycld/server) carries the matching replace for the assembled build.
 replace github.com/pocketbase/pocketbase => ../../third_party/pocketbase
 
+// The archive format is a nested module so the CLI can read backup archives
+// without depending on core (or the PocketBase fork).
+replace tinycld.org/core/backup/format => ./backup/format
+
 require (
+	filippo.io/age v1.3.2
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coder/websocket v1.8.14
@@ -26,6 +31,7 @@ require (
 	github.com/getsentry/sentry-go v0.44.1
 	github.com/google/uuid v1.6.0
 	github.com/grafana/sobek v0.0.0-20260722203707-64fef69693b6
+	github.com/klauspost/compress v1.20.0
 	github.com/mrz1836/postmark v1.9.0
 	github.com/nathanstitt/omnidoc v1.0.0
 	github.com/pocketbase/dbx v1.12.0
@@ -33,14 +39,16 @@ require (
 	github.com/skyterra/y-crdt v0.0.0-20260224023949-c0cb10d3f33e
 	github.com/spf13/cobra v1.10.2
 	github.com/yuin/goldmark v1.8.2
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.55.0
 	golang.org/x/image v0.45.0
 	golang.org/x/net v0.57.0
 	golang.org/x/text v0.41.0
 	modernc.org/sqlite v1.54.0
+	tinycld.org/core/backup/format v0.0.0
 )
 
 require (
+	filippo.io/hpke v0.4.0 // indirect
 	github.com/HugoSmits86/nativewebp v1.3.0 // indirect
 	github.com/adrg/strutil v0.2.2 // indirect
 	github.com/adrg/sysfont v0.1.2 // indirect

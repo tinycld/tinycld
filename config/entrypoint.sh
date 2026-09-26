@@ -538,6 +538,12 @@ fi
 # Used by BOTH the exit-75 restart verdict and the startup SIGKILL-recovery
 # below, so the "is the new build healthy?" decision is identical in both paths.
 #
+# TINYCLD_BOOT_PROBE=1 tells the server this process is only being asked whether
+# it boots. Without it the probe is a full server on the real PB_DATA_DIR, so it
+# performs the restore swap and the finalize that belong to the real boot — and
+# the kill below, landing between the two, makes the real boot roll the restore
+# back. See docs/live-install.md, "The boot probe".
+#
 # Disable the mail package's IMAP (:993) and SMTP (:465) listeners FOR THE PROBE
 # ONLY via IMAP_ENABLED/SMTP_ENABLED=false — otherwise the probe binds those
 # fixed ports, and after we kill it the ports aren't released before the real
@@ -565,6 +571,7 @@ probe_current_build() {
     fi
     setsid sh -c '
         export IMAP_ENABLED=false SMTP_ENABLED=false
+        export TINYCLD_BOOT_PROBE=1
         '"$PROBE_CMD"'
     ' &
     HEALTH_PID=$!

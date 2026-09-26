@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -31,11 +32,13 @@ func testDeps(t *testing.T) (*deps, *keychain.MemStore) {
 	t.Helper()
 	store := keychain.NewMemStore()
 	d := &deps{
-		configDir:  t.TempDir(),
-		httpClient: &http.Client{},
-		isTTY:      false,
-		openStore:  func(string, io.Writer) keychain.Store { return store },
-		sleep:      func(time.Duration) {},
+		configDir:    t.TempDir(),
+		httpClient:   &http.Client{},
+		isTTY:        false,
+		openStore:    func(string, io.Writer) keychain.Store { return store },
+		sleep:        func(time.Duration) {},
+		readPassword: func(int) ([]byte, error) { return nil, errors.New("readPassword not stubbed") },
+		getenv:       func(string) string { return "" },
 	}
 	return d, store
 }

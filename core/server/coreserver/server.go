@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 
 	"tinycld.org/core/automation"
+	"tinycld.org/core/backup"
 	"tinycld.org/core/groups"
 	"tinycld.org/core/logging"
 	"tinycld.org/core/notify"
@@ -229,6 +230,21 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// API at all; self-hosters upgrade by downloading a new binary.
 	if opts.supportsSelfRebuild() {
 		RegisterPackageInstallEndpoints(app)
+		// Only a deployment with a toolchain can rebuild itself onto an
+		// archive's package set. Without this the restore refuses a mismatch
+		// instead, which is the right answer for a binary that cannot change
+		// what it carries.
+		RegisterBackupSelfRebuild(app)
+	}
+
+	// Which deployment shape wrote an archive is recorded in every manifest, so
+	// a restore can tell what it is reading before it starts. Set in Register
+	// rather than the shared pair: it names the shape of THIS composition, and a
+	// composition layered on top names its own.
+	if opts.supportsSelfRebuild() {
+		backup.SetSource("docker")
+	} else {
+		backup.SetSource("standalone")
 	}
 	// Admin-console panel endpoint. Tenant push keys will arrive via the org's
 	// system_settings (control-plane provisioned), not a self-serve panel.
@@ -301,6 +317,15 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 	// registerFlags, jsvm/migratecmd setup) falls through to Go's default
 	// slog handler (stderr) instead of the fan-out. That's deliberate, not a
 	// gap: those calls have no _logs table to reach yet regardless.
+
+	// Bound before the logger's hook, because its first step runs before the
+	// database is opened: a restore that staged data before the last restart
+	// swaps it in here, by renaming pb_data as a whole. After bootstrap the same
+	// hook finalizes that restore and closes rows a dead process left running.
+	// Shared: an operator's claim on a copy of their own data does not depend on
+	// who runs the deployment.
+	RegisterBackupBoot(app)
+
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
 		if err := e.Next(); err != nil {
 			return err
@@ -357,6 +382,8 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	RegisterInviteEndpoint(app)
 	RegisterInviteLinkEndpoints(app)
 	RegisterOrgInfoEndpoint(app)
+	// The org backup API. Shared for the same reason as the boot hook above.
+	RegisterBackupEndpoints(app)
 	// Per-user storage breakdown. Shared: a hosting tenant's admin has the
 	// same "which of my users is filling the disk" question as a self-hoster,
 	// and it reports no ceiling the org could not already read.

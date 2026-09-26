@@ -31,6 +31,18 @@ type deps struct {
 	// sleep is nil in production (real time.Sleep); tests inject a no-op so
 	// device-flow polling doesn't stall the suite.
 	sleep func(time.Duration)
+	// now is nil in production (real time.Now). Tests advance it so a wait
+	// bounded by wall-clock time — the backup poll's reconnect window — can be
+	// driven to its limit without the suite waiting that long.
+	now func() time.Time
+	// readPassword reads a line without echoing it; term.ReadPassword in
+	// production, stubbed in tests so no real terminal is needed.
+	readPassword func(fd int) ([]byte, error)
+	// getenv reads an environment variable; os.Getenv in production.
+	getenv func(string) string
+	// stdinFile supplies the fd for readPassword; os.Stdin in production,
+	// nil in tests where readPassword is stubbed and ignores it.
+	stdinFile *os.File
 	// slugs overrides the generated searchable-package list. Nil in
 	// production, where searchSlugs() falls back to the generated var; tests
 	// set it so they do not depend on which packages this checkout assembled.
@@ -54,6 +66,9 @@ func defaultDeps() *deps {
 		isTTY:         term.IsTerminal(int(os.Stdout.Fd())),
 		isInteractive: term.IsTerminal(int(os.Stdin.Fd())),
 		openStore:     keychain.Open,
+		readPassword:  term.ReadPassword,
+		getenv:        os.Getenv,
+		stdinFile:     os.Stdin,
 	}
 }
 
@@ -89,6 +104,12 @@ func newRootCmd(d *deps) *cobra.Command {
 	}
 	root.SetOut(d.stdout)
 	root.SetErr(d.stderr)
+	// Cobra's own flag parsing returns a plain error, which main would exit 1 on
+	// — the same code a command that RAN and failed uses. A misspelled flag is a
+	// misuse, so it exits 2, and a script can tell "I called it wrong" from "it
+	// did not work". Set at the root: cobra inherits the func into every
+	// subcommand, so one line covers the whole tree.
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return Usage(err) })
 
 	pf := root.PersistentFlags()
 	pf.String("output", string(output.Table), "output format: table|json|csv")
@@ -124,6 +145,7 @@ func newRootCmd(d *deps) *cobra.Command {
 		newContextCmd(d),
 		newAuthCmd(d),
 		newSearchCmd(d),
+		newBackupCmd(d),
 	)
 	return root
 }

@@ -1,3 +1,4 @@
+import * as path from 'node:path'
 import { GO_VERSION } from './paths'
 import { assertSafeImportField } from './validate-generated-field'
 
@@ -85,10 +86,13 @@ export function buildSearchSlugsSource(slugs: string[]): string {
 
 // cli/go.work — the assembled CLI build resolves each member's cli module
 // through this. Unlike the server go.work there is no core line: the CLI is a
-// pure HTTP client and (so far) imports nothing from tinycld.org/core. When a
-// member cli first needs a core pure helper (fts.SanitizeQuery,
-// quota.FormatBytes), add core/server here plus the fork replace — see
-// buildGoWork/buildMemberGoWork in gen-server.ts for the mechanics.
+// pure HTTP client and imports nothing from tinycld.org/core proper — only
+// core's nested, dependency-light tinycld.org/core/backup/format module, which
+// it needs to inspect a backup archive. Keeping format its own module is what
+// keeps the CLI free of core and of the PocketBase fork. When a member cli
+// first needs a core pure helper (fts.SanitizeQuery, quota.FormatBytes), add
+// core/server here plus the fork replace — see buildGoWork/buildMemberGoWork in
+// gen-server.ts for the mechanics.
 //
 // The replace mirrors the app server's `replace tinycld.org/core` (there it
 // lives in the committed go.mod; the CLI's must ride in the generated go.work
@@ -99,7 +103,18 @@ export function buildSearchSlugsSource(slugs: string[]): string {
 // workspace `use` member is rejected by Go ("replaced at all versions").
 export function buildCliGoWork(pkgs: CliPkg[]): string {
     const uses = pkgs.map(p => `    ${p.cliRelPath}`)
-    const lines = [`go ${GO_VERSION}`, '', 'use (', '    .', ...uses, ')', '']
+    // core is nested in this same repo, so its format module always sits at a
+    // fixed path relative to cli/ — no member lookup needed.
+    const lines = [
+        `go ${GO_VERSION}`,
+        '',
+        'use (',
+        '    .',
+        '    ../core/server/backup/format',
+        ...uses,
+        ')',
+        '',
+    ]
     if (pkgs.length > 0) {
         lines.push('replace tinycld.org/cli v0.0.0 => .', '')
     }
@@ -117,6 +132,11 @@ export function buildMemberCliGoWork(cliRelPath: string): string {
         'use .',
         '',
         `replace tinycld.org/cli => ${cliRelPath}`,
+        '',
+        // tinycld.org/cli requires core's nested archive-format module at v0.0.0,
+        // so a standalone member cli build needs it replaced too. Versioned for the
+        // same reason as buildMemberGoWork's: the app cli go.work `use`s it.
+        `replace tinycld.org/core/backup/format v0.0.0 => ${path.posix.join(cliRelPath, '..', 'core/server/backup/format')}`,
         '',
     ].join('\n')
 }

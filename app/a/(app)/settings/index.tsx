@@ -13,6 +13,7 @@ import {
     Bell,
     Bug,
     ChevronRight,
+    DatabaseBackup,
     HardDrive,
     History,
     Image,
@@ -133,6 +134,11 @@ function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: bo
                     label="Audit Log"
                     onPress={() => router.push(orgHref('settings/audit-log'))}
                     icon={<ScrollText size={20} color={foregroundColor} />}
+                />
+                <SettingsLink
+                    label="Backups"
+                    onPress={() => router.push(orgHref('settings/backups'))}
+                    icon={<DatabaseBackup size={20} color={foregroundColor} />}
                 />
                 <OwnerLinks isVisible={isOwner} />
             </SettingsGroup>
