@@ -16,6 +16,11 @@ var ErrDomainRefused = errors.New("maildomains: domain refused by the registrar"
 // shown verbatim to the org's admin, so a registrar must write it for that
 // reader: say what is wrong and what to do, and name no provider or internal
 // detail.
+//
+// PocketBase capitalizes the first letter of an API error message, so Message
+// must start with a word, not a domain name — a leading domain name would
+// render as "Example.org already has an MX record...", capitalized as if it
+// were a sentence, which reads wrong to the admin.
 type RefusedError struct {
 	Code    string
 	Message string

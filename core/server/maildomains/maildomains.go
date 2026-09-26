@@ -7,9 +7,10 @@
 // VALUE a deployment must not hold; this delegates an OPERATION a deployment
 // must not perform. Every call in Postmark's Domains API is account-token
 // authenticated, including the reads, and an account token can enumerate,
-// modify and delete every domain on the account — so in a hosted composition
-// the token cannot live in the tenant at any privilege, and the operation must
-// travel to whoever holds it instead.
+// modify and delete every domain on the account — so in a deployment where
+// one provider account is shared by many orgs, the token cannot live in an
+// org's own app process at any privilege, and the operation must travel to
+// whoever holds it instead.
 //
 // By default it is unconfigured and every call returns ErrNotConfigured. A
 // standalone deployment points it at its own implementation with SetResolver; a
@@ -36,7 +37,8 @@ var ErrNotConfigured = errors.New("maildomains: no registrar configured")
 //
 // Deliberately pure data with no credential of any kind: it is the wire type
 // of the delegating implementation, so everything on it crosses a process
-// boundary into a tenant that must not be trusted with the account token.
+// boundary into an org's own app process that must not be trusted with the
+// account token.
 type DomainRecords struct {
 	Domain string `json:"domain"`
 	ID     int64  `json:"id"`
@@ -58,8 +60,8 @@ type DomainRecords struct {
 //
 // AddDomain enrolls the domain with the provider and returns its initial
 // records. GetDomain reads back the current state of an already-enrolled
-// domain. Both take plain data and return plain data, which is what lets the
-// hosted implementation be a transport.
+// domain. Both take plain data and return plain data, which is what lets a
+// shared-account implementation be a transport.
 type Registrar interface {
 	AddDomain(ctx context.Context, domain string) (*DomainRecords, error)
 

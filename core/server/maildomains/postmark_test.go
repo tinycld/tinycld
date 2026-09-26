@@ -83,9 +83,9 @@ func TestAddDomainReturnsRecords(t *testing.T) {
 	}
 }
 
-// Postmark domains are unique per ACCOUNT, so on a shared hosting account a
-// second org claiming the same domain hits this. It must be a distinct error
-// the UI can phrase, not an opaque 422.
+// Postmark domains are unique per ACCOUNT, so on a deployment where one
+// account is shared by many orgs, a second org claiming the same domain hits
+// this. It must be a distinct error the UI can phrase, not an opaque 422.
 func TestAddDomainDuplicateIsDistinct(t *testing.T) {
 	f := &fakeDomains{createErr: postmark.APIError{ErrorCode: 504, Message: "A domain with this name already exists."}}
 	r := NewPostmarkRegistrar(StaticToken("acct"), f)
@@ -144,7 +144,8 @@ func TestNoAccountTokenIsNotConfigured(t *testing.T) {
 
 // With the id known, the lookup is ONE direct call — no listing. This is the
 // whole point: a list-and-scan reports a domain past the first page as
-// unenrolled, and on a hosting account one Postmark account serves every org.
+// unenrolled, and on a deployment where one Postmark account serves every
+// org that account can hold many domains.
 func TestGetDomainByIDSkipsListing(t *testing.T) {
 	f := &fakeDomains{details: map[int64]postmark.DomainDetails{
 		7: {ID: 7, Name: "acme.com", DKIMVerified: true},
@@ -196,12 +197,13 @@ func TestGetDomainStaleIDIsNotEnrolled(t *testing.T) {
 	}
 }
 
-// A provider id is an account-global handle, and on a shared hosting account
-// it may name a DIFFERENT org's domain. GetDomain must refuse to hand back a
-// domain whose name is not the one the caller asked for, because the caller
-// supplying the id is exactly the party that would be attacking.
+// A provider id is an account-global handle, and on a deployment where one
+// account is shared by many orgs it may name a DIFFERENT org's domain.
+// GetDomain must refuse to hand back a domain whose name is not the one the
+// caller asked for, because the caller supplying the id is exactly the party
+// that would be attacking.
 //
-// This is the cross-tenant disclosure this check exists to stop: without the
+// This is the cross-org disclosure this check exists to stop: without the
 // name comparison the victim's DKIMHost / DKIMTextValue / return-path host
 // come back to the attacker verbatim.
 func TestGetDomainByIDRejectsMismatchedName(t *testing.T) {
@@ -223,7 +225,7 @@ func TestGetDomainByIDRejectsMismatchedName(t *testing.T) {
 		t.Fatalf("err = %v, want ErrDomainNotEnrolled for an id naming another domain", err)
 	}
 	if rec != nil {
-		t.Fatalf("rec = %+v, want nil — no records may cross the tenant boundary", rec)
+		t.Fatalf("rec = %+v, want nil — no records may cross the org boundary", rec)
 	}
 	// The error text must name the REQUESTED domain, never the victim's.
 	if strings.Contains(err.Error(), "victim.example") {
@@ -347,8 +349,8 @@ func newPagedAccount(n, target int) (*pagedDomains, string) {
 	return f, f.all[target].Name
 }
 
-// The by-name fallback must page past the first page. On a shared hosting
-// account one Postmark account holds every org's domains, so a domain beyond
+// The by-name fallback must page past the first page. On a deployment where
+// one Postmark account holds every org's domains, a domain beyond
 // domainListLimit is ordinary — and reporting it unenrolled tells the admin
 // their working domain is broken.
 //

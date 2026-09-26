@@ -10,9 +10,10 @@ import (
 )
 
 // ErrDomainAlreadyEnrolled means the provider account already has this domain.
-// On a shared hosting account that is the normal collision between two orgs
-// claiming the same name, so it is a distinct error the caller can phrase as
-// "already configured on this host" rather than surfacing a raw 422.
+// On a deployment where one provider account is shared by many orgs, that is
+// the normal collision between two orgs claiming the same name, so it is a
+// distinct error the caller can phrase as "already configured" rather than
+// surfacing a raw 422.
 var ErrDomainAlreadyEnrolled = errors.New("maildomains: domain already enrolled on this provider account")
 
 // ErrDomainNotEnrolled means the account has never heard of the domain — the
@@ -68,16 +69,16 @@ type PostmarkRegistrar struct {
 // Takes a func() string rather than a plain string so the token can resolve
 // from a seam that populates after construction (syscfg, in core's wiring)
 // without becoming stale. A caller that already holds a concrete token
-// up front (hosting's mailDomainRegistrar) can still use one: wrap it with
-// StaticToken.
+// up front (a registrar built by a supervisor composition) can still use
+// one: wrap it with StaticToken.
 func NewPostmarkRegistrar(accountToken func() string, client PostmarkDomains) *PostmarkRegistrar {
 	return &PostmarkRegistrar{accountToken: accountToken, client: client}
 }
 
 // StaticToken wraps an already-known token as a func() string, for a caller
 // that holds a concrete value up front rather than a seam to read lazily
-// (e.g. hosting's mailDomainRegistrar, which reads the token once from its
-// own control-plane config on each request).
+// (e.g. a registrar that reads the token once from its own supervisor-side
+// config on each request).
 func StaticToken(token string) func() string {
 	return func() string { return token }
 }
@@ -116,15 +117,15 @@ func (p *PostmarkRegistrar) GetDomain(ctx context.Context, domain string, provid
 			return nil, fmt.Errorf("postmark get domain: %w", err)
 		}
 		// The id is an ACCOUNT-GLOBAL handle, not proof of ownership. On a
-		// hosted deployment one Postmark account is shared by every org, so an
-		// id supplied by a caller may name ANOTHER org's domain — and the
+		// deployment where one Postmark account is shared by every org, an id
+		// supplied by a caller may name ANOTHER org's domain — and the
 		// response carries that domain's name, DKIM public key and return-path
 		// host. Requiring the fetched name to match the requested one demotes
 		// the id from a capability to a cache key: it can only ever speed up a
 		// lookup the caller could already perform by name.
 		//
 		// This check must live HERE, below the seam, rather than in the caller:
-		// the tenant that supplies the id is exactly the party a caller-side
+		// the org that supplies the id is exactly the party a caller-side
 		// check would be trusting.
 		if !strings.EqualFold(details.Name, domain) {
 			return nil, fmt.Errorf("%w: %w: %s", ErrDomainNotEnrolled, ErrDomainIDMismatch, domain)
