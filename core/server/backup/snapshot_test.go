@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 )
@@ -154,13 +156,32 @@ func TestVacuumInto_FailedRestoreLeavesNoPermissiveConnection(t *testing.T) {
 		t.Fatalf("setAttachLimit called %d times; the snapshot never reached the restore, so the branch under test did not run", calls)
 	}
 
-	// The pool must be restricted again. Looping well past the pool's width is
-	// what makes this exhaustive in practice: a single probe could miss the one
-	// connection that was left permissive.
-	for i := 0; i < 32; i++ {
-		if _, perr := app.NonconcurrentDB().NewQuery("ATTACH DATABASE ':memory:' AS probe").Execute(); perr == nil {
-			_, _ = app.NonconcurrentDB().NewQuery("DETACH DATABASE probe").Execute()
-			t.Fatalf("ATTACH is permitted after a failed restore (attempt %d); the connection went back into the pool at ATTACH=1", i)
+	// The pool must be restricted again — every connection in it, including the
+	// one the pool opened LAZILY to replace the discarded one. Sequential probes
+	// cannot prove that: the pool keeps handing back the same primed idle
+	// connection and never reaches the replacement, so a missing reprime stays
+	// green. Holding the pool's full width at once forces every connection,
+	// old and new, to be checked out and probed.
+	sqlDB := app.NonconcurrentDB().(*dbx.DB).DB()
+	var held []*sql.Conn
+	defer func() {
+		for _, c := range held {
+			_ = c.Close()
+		}
+	}()
+	for i := 0; i < noAttachPoolWidth; i++ {
+		conn, cerr := sqlDB.Conn(context.Background())
+		if cerr != nil {
+			t.Fatalf("checking out connection %d: %v", i, cerr)
+		}
+		held = append(held, conn)
+		if _, perr := conn.ExecContext(context.Background(), "ATTACH DATABASE ':memory:' AS probe"); perr == nil {
+			_, _ = conn.ExecContext(context.Background(), "DETACH DATABASE probe")
+			t.Fatalf("connection %d permits ATTACH after a failed restore; either the permissive connection went back into the pool or its replacement was never primed", i)
 		}
 	}
 }
+
+// noAttachPoolWidth mirrors core.NoAttachDBConnect's SetMaxOpenConns: holding
+// this many connections at once is what makes the probe above exhaustive.
+const noAttachPoolWidth = 24
