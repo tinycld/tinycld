@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { CORE_STEP_IDS, continueSetupStep, expectSetupStep } from '../../core/e2e-setup-helpers'
 import { bootBinary, buildBinary, setupCodeFromLog } from './boot-binary'
 
 // Drives the real first-run path on a fresh binary. The code is read from the
@@ -29,6 +30,7 @@ async function claimServer(page: Page, server: Server) {
     await page.getByRole('textbox', { name: 'Password', exact: true }).fill(OWNER.password)
     await page.getByRole('textbox', { name: 'Confirm password', exact: true }).fill(OWNER.password)
     await page.getByRole('button', { name: 'Create account' }).click()
+    await expectSetupStep(page, CORE_STEP_IDS.workspace)
     await expect(page.getByText('Your workspace')).toBeVisible()
 }
 
@@ -64,8 +66,9 @@ test('a new server is claimed, set up, paused and resumed', async ({ page }) => 
         await page
             .getByRole('textbox', { name: 'Workspace name', exact: true })
             .fill('Harbor Dental')
-        await page.getByRole('button', { name: 'Continue' }).click()
+        await continueSetupStep(page, CORE_STEP_IDS.workspace)
 
+        await expectSetupStep(page, CORE_STEP_IDS.apps)
         await expect(page.getByText('Choose your apps')).toBeVisible()
         await page.getByRole('button', { name: 'Finish later' }).click()
 
@@ -73,7 +76,7 @@ test('a new server is claimed, set up, paused and resumed', async ({ page }) => 
         await page.getByTestId('nav-settings').click()
         await expect(page.getByText('Finish setup')).toBeVisible()
         await page.getByRole('button', { name: 'Continue' }).click()
-        await expect(page.getByText('Choose your apps')).toBeVisible()
+        await expectSetupStep(page, CORE_STEP_IDS.apps)
     } finally {
         await server.stop()
     }
@@ -88,7 +91,7 @@ test('a hidden app stays hidden after a restart', async ({ page }) => {
     try {
         await claimServer(page, first)
         await page.getByRole('button', { name: 'Skip' }).click()
-        await expect(page.getByText('Choose your apps')).toBeVisible()
+        await expectSetupStep(page, CORE_STEP_IDS.apps)
         const card = page.getByTestId(/^setup-app-/).first()
         hiddenSlug = ((await card.getAttribute('data-testid')) ?? '').replace('setup-app-', '')
         await card.click()

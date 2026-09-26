@@ -1,5 +1,6 @@
 import { and, eq, inArray, not } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
+import { SetupContinueButton } from '@tinycld/core/components/setup/wizard/SetupContinueButton'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import { captureException, errorToString } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
@@ -10,7 +11,6 @@ import { enabledStatusFor } from '@tinycld/core/lib/setup/set-package-enabled'
 import type { SetupStepProps } from '@tinycld/core/lib/setup/types'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { Check } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
 import { type AppChoice, appChoicesOf, CORE_SLUG } from './app-choices'
@@ -115,9 +115,7 @@ export default function AppsStep({ next }: SetupStepProps) {
                 show it again, or add more apps, at any time in Settings → Packages.
             </Text>
             <View className="mb-4 flex-row flex-wrap gap-2">{cards}</View>
-            <Button className="self-start" onPress={next}>
-                <ButtonText>Continue</ButtonText>
-            </Button>
+            <SetupContinueButton onPress={next} />
         </View>
     )
 }

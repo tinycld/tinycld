@@ -1,3 +1,4 @@
+import { CORE_STEP_IDS, setupStepTestId } from '@tinycld/core/lib/setup/step-ids'
 import type { WizardSummary } from '@tinycld/core/lib/setup/wizard-logic'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
@@ -43,7 +44,7 @@ const EMPTY_SUMMARY: WizardSummary = {
 
 // Apps chosen on this step are shown as "new" so each toggle is visible on the
 // rail; on every other step they are part of the settled workspace.
-const APPS_STEP_ID = 'core:apps'
+const APPS_STEP_ID = CORE_STEP_IDS.apps
 
 function stepLabelOf(props: SetupWizardShellProps): string {
     const { phase, summary, currentStepId } = props
@@ -70,6 +71,8 @@ function useSetupWizardLayout(props: SetupWizardShellProps, model: PreviewModel)
         showStrip: isPhone && !isFilled,
         showPane: !isPhone && !isFilled,
         formClassName: formClassNameOf(isPhone, isFilled),
+        // Claim and Done have no registry step, so they carry no step id.
+        stepTestId: props.currentStepId ? setupStepTestId(props.currentStepId) : undefined,
         contentClassName: isFilled
             ? 'flex-grow items-center justify-center p-6 gap-4'
             : 'p-6 gap-4',
@@ -151,6 +154,7 @@ function ShellFrame({ props, model }: { props: SetupWizardShellProps; model: Pre
             </View>
             <View className="flex-1 flex-row">
                 <ScrollView
+                    testID={layout.stepTestId}
                     className={layout.formClassName}
                     contentContainerClassName={layout.contentClassName}
                 >
