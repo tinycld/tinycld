@@ -129,14 +129,22 @@ func withAttachSlot(ctx context.Context, sqlDB *sql.DB, conn *sql.Conn, fn func(
 		// of the pool and re-prime what replaces it — see the doc comment.
 		discardErr := discardAndReprime(sqlDB, conn)
 
-		// A failed restore is surfaced, but it must not mask fn's own error:
-		// that is the one an operator needs, and this one is about the pool.
+		// A failed restore is surfaced, but it must not mask fn's own error: that
+		// is the one an operator needs, and this one is about the pool.
 		if err == nil {
 			err = fmt.Errorf("backup: snapshot could not restore the ATTACH limit: %w", rerr)
 			if discardErr != nil {
 				err = errors.Join(err, discardErr)
 			}
+			return
 		}
+		// fn already failed, so the pool's state has nowhere to be returned. It
+		// is logged rather than dropped: a discard that ITSELF failed means a
+		// connection may still be circulating at ATTACH=1, which is a security
+		// fact an operator has to be able to find, and it would otherwise be
+		// invisible behind whatever fn complained about.
+		log.Error("a snapshot could not restore the ATTACH limit on its connection",
+			"err", rerr, "discard", discardErr, "cause", err)
 	}()
 
 	return fn()
