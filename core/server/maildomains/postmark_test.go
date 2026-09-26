@@ -51,7 +51,8 @@ func (f *fakeDomains) GetDomain(_ context.Context, id int64) (postmark.DomainDet
 	}
 	d, ok := f.details[id]
 	if !ok {
-		return postmark.DomainDetails{}, errors.New("not found")
+		// Postmark's real refusal for an unknown id, so isNotFound sees it.
+		return postmark.DomainDetails{}, postmark.APIError{ErrorCode: 701, Message: "The domain does not exist."}
 	}
 	return d, nil
 }
@@ -514,6 +515,24 @@ func TestRemoveDomainStaleIDIsNil(t *testing.T) {
 
 	if err := r.RemoveDomain(context.Background(), "acme.com", 999); err != nil {
 		t.Fatalf("RemoveDomain: %v, want nil for a stale id", err)
+	}
+}
+
+// A domain deleted and re-added at Postmark gets a new id, so the stored one
+// is stale. Remove must find the domain by name and delete it, not report
+// success while the enrollment stays.
+func TestRemoveDomainStaleIDRetriesByName(t *testing.T) {
+	f := &fakeDomains{
+		list:    []postmark.Domain{{ID: 8, Name: "acme.com"}},
+		details: map[int64]postmark.DomainDetails{8: {ID: 8, Name: "acme.com"}},
+	}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if err := r.RemoveDomain(context.Background(), "acme.com", 999); err != nil {
+		t.Fatalf("RemoveDomain: %v", err)
+	}
+	if got := strings.Join(f.calls, ","); got != "delete:8" {
+		t.Fatalf("calls = %q, want delete:8 — the id found by name", got)
 	}
 }
 

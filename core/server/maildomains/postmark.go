@@ -167,7 +167,14 @@ func (p *PostmarkRegistrar) VerifyDomain(ctx context.Context, domain string, pro
 // the caller does not record a removal that never happened.
 func (p *PostmarkRegistrar) RemoveDomain(ctx context.Context, domain string, providerDomainID int64) error {
 	rec, err := p.GetDomain(ctx, domain, providerDomainID)
-	if errors.Is(err, ErrDomainNotEnrolled) && !errors.Is(err, ErrDomainIDMismatch) {
+	notEnrolled := errors.Is(err, ErrDomainNotEnrolled) && !errors.Is(err, ErrDomainIDMismatch)
+	// A stale stored id does not prove the domain is gone: deleted and re-added
+	// at Postmark, it lives on under a new id. Retry once by name.
+	if notEnrolled && providerDomainID != 0 {
+		rec, err = p.GetDomain(ctx, domain, 0)
+		notEnrolled = errors.Is(err, ErrDomainNotEnrolled)
+	}
+	if notEnrolled {
 		return nil
 	}
 	if err != nil {
