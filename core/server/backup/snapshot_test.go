@@ -1,8 +1,11 @@
 package backup
 
 import (
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -102,5 +105,62 @@ func TestVacuumInto_WorksWithoutTheRestriction(t *testing.T) {
 	}
 	if info, err := os.Stat(dest); err != nil || info.Size() == 0 {
 		t.Fatalf("the snapshot was not written: %v", err)
+	}
+}
+
+// A restore that FAILS must not leave a permissive connection in the pool.
+//
+// The deferred restore is the whole ATTACH guard, and the release is not part of
+// it: database/sql's Conn.Close returns the driver connection to the pool rather
+// than destroying it. So if the restore fails, the connection that just ran
+// VACUUM INTO at ATTACH=1 goes straight back into circulation, and the next piece
+// of package JS to borrow it can ATTACH any file on disk — every other tenant's
+// database and the control plane's.
+//
+// This is the only test that can reach that branch: a live connection's limit
+// always sets, so the failure is injected through setAttachLimit. Without the
+// injection the discard-and-reprime path would be the one piece of the guard
+// nothing ever exercised.
+//
+// Both halves are asserted, because either alone is insufficient. The discard
+// alone trades a permissive connection for an UNPRIMED one, since
+// NoAttachDBConnect primes only at open and the pool's replacement is opened
+// lazily; the reprime alone leaves the permissive connection in the pool.
+func TestVacuumInto_FailedRestoreLeavesNoPermissiveConnection(t *testing.T) {
+	app := newNoAttachApp(t)
+
+	// Fail only the RESTORE. The first call raises the limit so VACUUM INTO can
+	// run — the snapshot has to get as far as needing the restore, or this test
+	// asserts nothing — and every later call reports failure.
+	real := setAttachLimit
+	var calls int
+	setAttachLimit = func(conn *sql.Conn, limit int) (int, error) {
+		calls++
+		if calls == 1 {
+			return real(conn, limit)
+		}
+		return 0, errors.New("injected: the ATTACH limit could not be restored")
+	}
+	t.Cleanup(func() { setAttachLimit = real })
+
+	err := vacuumInto(app, filepath.Join(t.TempDir(), "snap.db"))
+	if err == nil {
+		t.Fatal("a failed restore must be surfaced, not swallowed: an operator has to learn the pool was disturbed")
+	}
+	if !strings.Contains(err.Error(), "restore the ATTACH limit") {
+		t.Fatalf("error = %v, want it to name the failed restore", err)
+	}
+	if calls < 2 {
+		t.Fatalf("setAttachLimit called %d times; the snapshot never reached the restore, so the branch under test did not run", calls)
+	}
+
+	// The pool must be restricted again. Looping well past the pool's width is
+	// what makes this exhaustive in practice: a single probe could miss the one
+	// connection that was left permissive.
+	for i := 0; i < 32; i++ {
+		if _, perr := app.NonconcurrentDB().NewQuery("ATTACH DATABASE ':memory:' AS probe").Execute(); perr == nil {
+			_, _ = app.NonconcurrentDB().NewQuery("DETACH DATABASE probe").Execute()
+			t.Fatalf("ATTACH is permitted after a failed restore (attempt %d); the connection went back into the pool at ATTACH=1", i)
+		}
 	}
 }

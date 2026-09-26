@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"os"
@@ -49,10 +50,12 @@ func vacuumInto(app core.App, dest string) error {
 	if err != nil {
 		return fmt.Errorf("backup: snapshot could not take the writer connection: %w", err)
 	}
-	// Closed, not just released: see withAttachSlot's last paragraph.
+	// An ordinary release. Conn.Close returns the driver connection to the pool
+	// — it does not destroy it — so this is not part of the ATTACH guard; see
+	// withAttachSlot, which owns that.
 	defer conn.Close()
 
-	return withAttachSlot(ctx, conn, func() error {
+	return withAttachSlot(ctx, db.DB(), conn, func() error {
 		if _, err := conn.ExecContext(ctx, "VACUUM INTO '"+dest+"'"); err != nil {
 			return fmt.Errorf("backup: snapshot: %w", err)
 		}
@@ -79,13 +82,29 @@ func vacuumInto(app core.App, dest string) error {
 // which executes one VACUUM INTO and no user SQL of any kind, so there is no
 // point inside it at which package JS could issue an ATTACH.
 //
-// The limit is restored even on failure, and the caller CLOSES the connection
-// rather than returning it to the pool — belt and braces, because the pool
-// reuses a connection indefinitely and a restore that silently failed would
-// leave one permissive connection circulating forever. Closing it means the
-// pool replaces it with a freshly primed one instead.
-func withAttachSlot(ctx context.Context, conn *sql.Conn, fn func() error) (err error) {
-	prev, limitErr := sqlite.Limit(conn, sqliteLimitAttached, 1)
+// # What keeps the opening from leaking
+//
+// The deferred restore is the guard, and it is the ONLY guard. Releasing the
+// connection is not one: database/sql's Conn.Close returns the driver connection
+// to the pool rather than destroying it, so a connection left at ATTACH=1 would
+// go straight back into circulation and the next piece of package JS to borrow it
+// could ATTACH any file on disk. (An earlier version of this comment claimed the
+// close discarded the connection and that the pool would replace it with a
+// freshly primed one. Both were wrong: the close releases, and
+// NoAttachDBConnect primes only at open — a lazily opened replacement would be
+// UNPRIMED, so relying on that would have been worse than relying on nothing.)
+//
+// So a failed restore is handled rather than merely reported. The driver
+// connection is discarded by returning driver.ErrBadConn from Raw, which is the
+// one documented way to tell database/sql not to reuse it, and then
+// ReapplyNoAttachLimits re-primes the pool so the connection opened in its place
+// carries the restriction. Without the second half the discard would trade one
+// permissive connection for one unrestricted one.
+//
+// ReapplyNoAttachLimits is a no-op on a pool that was never restricted, so a
+// single-tenant deployment pays nothing for this path.
+func withAttachSlot(ctx context.Context, sqlDB *sql.DB, conn *sql.Conn, fn func() error) (err error) {
+	prev, limitErr := setAttachLimit(conn, 1)
 	if limitErr != nil {
 		// A dead connection cannot run the snapshot either, so say so rather
 		// than letting VACUUM INTO report the same thing less clearly.
@@ -102,15 +121,58 @@ func withAttachSlot(ctx context.Context, conn *sql.Conn, fn func() error) (err e
 		// Restoring the PREVIOUS value, not zero: a single-tenant deployment
 		// runs at the default, and pinning it to 0 here would take ATTACH away
 		// from a deployment that never restricted it.
-		//
-		// A failed restore is surfaced rather than logged and dropped, but it
-		// must not mask fn's own error — that is the one an operator needs.
-		// Either way the caller closes the connection, so a connection stuck
-		// permissive never returns to the pool.
-		if _, rerr := sqlite.Limit(conn, sqliteLimitAttached, prev); rerr != nil && err == nil {
+		_, rerr := setAttachLimit(conn, prev)
+		if rerr == nil {
+			return
+		}
+		// The restore failed, so this connection is still permissive. Get it out
+		// of the pool and re-prime what replaces it — see the doc comment.
+		discardErr := discardAndReprime(sqlDB, conn)
+
+		// A failed restore is surfaced, but it must not mask fn's own error:
+		// that is the one an operator needs, and this one is about the pool.
+		if err == nil {
 			err = fmt.Errorf("backup: snapshot could not restore the ATTACH limit: %w", rerr)
+			if discardErr != nil {
+				err = errors.Join(err, discardErr)
+			}
 		}
 	}()
 
 	return fn()
+}
+
+// setAttachLimit is the restore call, indirected so a test can make it FAIL.
+//
+// The discard-and-reprime path below only runs when the restore fails, and that
+// failure cannot be provoked from outside — a live connection's limit always sets.
+// Left untestable, the branch that keeps a permissive connection out of the pool
+// would be the one piece of this guard nothing ever exercised.
+var setAttachLimit = func(conn *sql.Conn, limit int) (int, error) {
+	return sqlite.Limit(conn, sqliteLimitAttached, limit)
+}
+
+// discardAndReprime takes one permissive connection out of circulation and makes
+// sure the pool's replacement for it is restricted again.
+//
+// Returning driver.ErrBadConn from Raw is the documented way to tell
+// database/sql that a driver connection must not be reused: the subsequent
+// Close then destroys it instead of releasing it. On its own that is only half
+// the job — the pool opens a replacement lazily, and NoAttachDBConnect primes
+// only at open time, so the replacement would carry SQLite's default limit and
+// package JS could ATTACH. ReapplyNoAttachLimits re-primes every connection in
+// the pool, and is a no-op on a pool that was never restricted.
+func discardAndReprime(sqlDB *sql.DB, conn *sql.Conn) error {
+	var errs []error
+	// The error is expected and is the mechanism, not a fault: Raw returns
+	// whatever the callback returned. Anything ELSE is worth reporting, because
+	// it means the connection was not marked bad and may be reused permissive.
+	if rawErr := conn.Raw(func(any) error { return driver.ErrBadConn }); !errors.Is(rawErr, driver.ErrBadConn) {
+		errs = append(errs, fmt.Errorf(
+			"backup: snapshot could not discard a connection whose ATTACH limit it failed to restore: %w", rawErr))
+	}
+	if reErr := core.ReapplyNoAttachLimits(sqlDB); reErr != nil {
+		errs = append(errs, fmt.Errorf("backup: snapshot could not re-restrict the connection pool: %w", reErr))
+	}
+	return errors.Join(errs...)
 }
