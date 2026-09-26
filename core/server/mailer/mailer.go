@@ -55,6 +55,11 @@ type SendRequest struct {
 	References  string       `json:"references,omitempty"`
 	Headers     []Header     `json:"headers,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+
+	// Metadata is passed to providers that echo it back on their delivery
+	// and bounce notifications. A notification is often received by
+	// something that did not send the message and must work out who did.
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 // SendResult is the response from a successful send.
