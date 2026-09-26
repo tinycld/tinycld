@@ -29,6 +29,9 @@ type PostmarkDomains interface {
 	CreateDomain(ctx context.Context, req postmark.DomainCreateRequest) (postmark.DomainDetails, error)
 	GetDomains(ctx context.Context, count, offset int) (postmark.DomainsList, error)
 	GetDomain(ctx context.Context, domainID int64) (postmark.DomainDetails, error)
+	VerifyDKIMStatus(ctx context.Context, domainID int64) (postmark.DomainDetails, error)
+	VerifyReturnPath(ctx context.Context, domainID int64) (postmark.DomainDetails, error)
+	DeleteDomain(ctx context.Context, domainID int64) error
 }
 
 // PostmarkRegistrar is the DIRECT implementation: it calls Postmark
@@ -122,6 +125,49 @@ func (p *PostmarkRegistrar) GetDomain(ctx context.Context, domain string, provid
 		return toDomainRecords(details), nil
 	}
 	return p.findByName(ctx, domain)
+}
+
+// VerifyDomain asks Postmark to re-check DKIM and Return-Path, then reads the
+// domain back so the caller gets the complete, current records.
+//
+// The id is resolved through GetDomain first, which carries the ownership
+// check: a caller-supplied id naming another org's domain is refused before
+// any verify call touches it.
+func (p *PostmarkRegistrar) VerifyDomain(ctx context.Context, domain string, providerDomainID int64) (*DomainRecords, error) {
+	rec, err := p.GetDomain(ctx, domain, providerDomainID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.client.VerifyDKIMStatus(ctx, rec.ID); err != nil {
+		return nil, fmt.Errorf("postmark verify dkim: %w", err)
+	}
+	if _, err := p.client.VerifyReturnPath(ctx, rec.ID); err != nil {
+		return nil, fmt.Errorf("postmark verify return path: %w", err)
+	}
+	details, err := p.client.GetDomain(ctx, rec.ID)
+	if err != nil {
+		return nil, fmt.Errorf("postmark get domain: %w", err)
+	}
+	return toDomainRecords(details), nil
+}
+
+// RemoveDomain deletes the domain from the account. Not enrolled, or already
+// gone by the time the delete lands, is success.
+//
+// Resolved through GetDomain for the same ownership check as VerifyDomain —
+// here it guards the most destructive call on the account token.
+func (p *PostmarkRegistrar) RemoveDomain(ctx context.Context, domain string, providerDomainID int64) error {
+	rec, err := p.GetDomain(ctx, domain, providerDomainID)
+	if errors.Is(err, ErrDomainNotEnrolled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := p.client.DeleteDomain(ctx, rec.ID); err != nil && !isNotFound(err) {
+		return fmt.Errorf("postmark delete domain: %w", err)
+	}
+	return nil
 }
 
 // findByName is the fallback for a row enrolled before the id was stored. It

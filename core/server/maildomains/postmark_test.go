@@ -17,6 +17,22 @@ type fakeDomains struct {
 	details   map[int64]postmark.DomainDetails
 	listCalls int
 	getErr    error
+	// calls records the verify/delete endpoints hit, in order, as "name:id".
+	calls     []string
+	deleteErr error
+}
+
+func (f *fakeDomains) VerifyDKIMStatus(_ context.Context, id int64) (postmark.DomainDetails, error) {
+	f.calls = append(f.calls, "dkim:"+strconv.FormatInt(id, 10))
+	return postmark.DomainDetails{}, nil
+}
+func (f *fakeDomains) VerifyReturnPath(_ context.Context, id int64) (postmark.DomainDetails, error) {
+	f.calls = append(f.calls, "returnpath:"+strconv.FormatInt(id, 10))
+	return postmark.DomainDetails{}, nil
+}
+func (f *fakeDomains) DeleteDomain(_ context.Context, id int64) error {
+	f.calls = append(f.calls, "delete:"+strconv.FormatInt(id, 10))
+	return f.deleteErr
 }
 
 func (f *fakeDomains) CreateDomain(context.Context, postmark.DomainCreateRequest) (postmark.DomainDetails, error) {
@@ -282,6 +298,18 @@ func (p *pagedDomains) CreateDomain(context.Context, postmark.DomainCreateReques
 	return postmark.DomainDetails{}, errors.New("not implemented")
 }
 
+func (p *pagedDomains) VerifyDKIMStatus(context.Context, int64) (postmark.DomainDetails, error) {
+	return postmark.DomainDetails{}, errors.New("not implemented")
+}
+
+func (p *pagedDomains) VerifyReturnPath(context.Context, int64) (postmark.DomainDetails, error) {
+	return postmark.DomainDetails{}, errors.New("not implemented")
+}
+
+func (p *pagedDomains) DeleteDomain(context.Context, int64) error {
+	return errors.New("not implemented")
+}
+
 func (p *pagedDomains) GetDomains(_ context.Context, count, offset int) (postmark.DomainsList, error) {
 	p.pageCalls = append(p.pageCalls, [2]int{count, offset})
 	// A caller that never advances offset would otherwise loop forever
@@ -383,5 +411,156 @@ func TestFindByNameStopsOnAnExactPageBoundary(t *testing.T) {
 	if len(f.pageCalls) != 1 {
 		t.Fatalf("GetDomains called %d times, want exactly 1 — a full page that already "+
 			"accounts for TotalCount is the last page: %v", len(f.pageCalls), f.pageCalls)
+	}
+}
+
+// The registrar offers the optional capabilities callers type-assert for.
+var (
+	_ Verifier = (*PostmarkRegistrar)(nil)
+	_ Remover  = (*PostmarkRegistrar)(nil)
+)
+
+// Verify asks Postmark to re-check both DNS records, then reads the domain
+// back: the verify responses alone are not the state the caller persists.
+func TestVerifyDomainChecksBothRecordsThenReadsBack(t *testing.T) {
+	f := &fakeDomains{details: map[int64]postmark.DomainDetails{
+		7: {ID: 7, Name: "acme.com", DKIMVerified: true, ReturnPathDomainVerified: true},
+	}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	rec, err := r.VerifyDomain(context.Background(), "acme.com", 7)
+	if err != nil {
+		t.Fatalf("VerifyDomain: %v", err)
+	}
+	if !rec.DKIMVerified || !rec.ReturnPathVerified || rec.ID != 7 {
+		t.Fatalf("rec = %+v, want the fresh records of domain 7", rec)
+	}
+	if got := strings.Join(f.calls, ","); got != "dkim:7,returnpath:7" {
+		t.Fatalf("calls = %q, want dkim:7,returnpath:7", got)
+	}
+}
+
+func TestVerifyDomainZeroIDResolvesByName(t *testing.T) {
+	f := &fakeDomains{
+		list:    []postmark.Domain{{ID: 7, Name: "acme.com"}},
+		details: map[int64]postmark.DomainDetails{7: {ID: 7, Name: "acme.com"}},
+	}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if _, err := r.VerifyDomain(context.Background(), "acme.com", 0); err != nil {
+		t.Fatalf("VerifyDomain: %v", err)
+	}
+	if got := strings.Join(f.calls, ","); got != "dkim:7,returnpath:7" {
+		t.Fatalf("calls = %q, want the id found by name", got)
+	}
+}
+
+// Verify on an id naming another org's domain must not touch that domain.
+func TestVerifyDomainRejectsMismatchedID(t *testing.T) {
+	f := &fakeDomains{details: map[int64]postmark.DomainDetails{42: {ID: 42, Name: "victim.example"}}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if _, err := r.VerifyDomain(context.Background(), "attacker.example", 42); !errors.Is(err, ErrDomainNotEnrolled) {
+		t.Fatalf("err = %v, want ErrDomainNotEnrolled", err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("calls = %v, want none against another org's domain", f.calls)
+	}
+}
+
+func TestRemoveDomainDeletesByID(t *testing.T) {
+	f := &fakeDomains{details: map[int64]postmark.DomainDetails{7: {ID: 7, Name: "acme.com"}}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if err := r.RemoveDomain(context.Background(), "acme.com", 7); err != nil {
+		t.Fatalf("RemoveDomain: %v", err)
+	}
+	if got := strings.Join(f.calls, ","); got != "delete:7" {
+		t.Fatalf("calls = %q, want delete:7", got)
+	}
+}
+
+func TestRemoveDomainZeroIDResolvesByName(t *testing.T) {
+	f := &fakeDomains{
+		list:    []postmark.Domain{{ID: 7, Name: "acme.com"}},
+		details: map[int64]postmark.DomainDetails{7: {ID: 7, Name: "acme.com"}},
+	}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if err := r.RemoveDomain(context.Background(), "acme.com", 0); err != nil {
+		t.Fatalf("RemoveDomain: %v", err)
+	}
+	if got := strings.Join(f.calls, ","); got != "delete:7" {
+		t.Fatalf("calls = %q, want delete:7", got)
+	}
+}
+
+// Remove is idempotent: a domain the account does not hold is already removed.
+func TestRemoveDomainUnknownIsNil(t *testing.T) {
+	f := &fakeDomains{}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if err := r.RemoveDomain(context.Background(), "nope.com", 0); err != nil {
+		t.Fatalf("RemoveDomain: %v, want nil for an unknown domain", err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("calls = %v, want no delete", f.calls)
+	}
+}
+
+func TestRemoveDomainStaleIDIsNil(t *testing.T) {
+	f := &fakeDomains{getErr: postmark.APIError{ErrorCode: 701, Message: "The domain does not exist."}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if err := r.RemoveDomain(context.Background(), "acme.com", 999); err != nil {
+		t.Fatalf("RemoveDomain: %v, want nil for a stale id", err)
+	}
+}
+
+// A delete that races another removal reports not-found; that is success.
+func TestRemoveDomainDeleteNotFoundIsNil(t *testing.T) {
+	f := &fakeDomains{
+		details:   map[int64]postmark.DomainDetails{7: {ID: 7, Name: "acme.com"}},
+		deleteErr: postmark.APIError{ErrorCode: 701, Message: "The domain does not exist."},
+	}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if err := r.RemoveDomain(context.Background(), "acme.com", 7); err != nil {
+		t.Fatalf("RemoveDomain: %v, want nil", err)
+	}
+}
+
+// Delete is the most destructive account-token call: an id naming another
+// org's domain must never reach it.
+func TestRemoveDomainRejectsMismatchedID(t *testing.T) {
+	f := &fakeDomains{details: map[int64]postmark.DomainDetails{42: {ID: 42, Name: "victim.example"}}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	_ = r.RemoveDomain(context.Background(), "attacker.example", 42)
+	if len(f.calls) != 0 {
+		t.Fatalf("calls = %v, want no delete of another org's domain", f.calls)
+	}
+}
+
+func TestRemoveDomainOtherErrorsSurface(t *testing.T) {
+	f := &fakeDomains{
+		details:   map[int64]postmark.DomainDetails{7: {ID: 7, Name: "acme.com"}},
+		deleteErr: postmark.APIError{ErrorCode: 500, Message: "boom"},
+	}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if err := r.RemoveDomain(context.Background(), "acme.com", 7); err == nil {
+		t.Fatal("RemoveDomain returned nil for a provider failure")
+	}
+}
+
+func TestVerifyAndRemoveWithoutTokenAreNotConfigured(t *testing.T) {
+	r := NewPostmarkRegistrar(StaticToken(""), &fakeDomains{})
+
+	if _, err := r.VerifyDomain(context.Background(), "acme.com", 7); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("VerifyDomain err = %v, want ErrNotConfigured", err)
+	}
+	if err := r.RemoveDomain(context.Background(), "acme.com", 7); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("RemoveDomain err = %v, want ErrNotConfigured", err)
 	}
 }

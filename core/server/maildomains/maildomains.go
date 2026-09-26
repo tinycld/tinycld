@@ -74,6 +74,26 @@ type Registrar interface {
 	GetDomain(ctx context.Context, domain string, providerDomainID int64) (*DomainRecords, error)
 }
 
+// Verifier is an OPTIONAL registrar capability: ask the provider to re-check
+// the domain's DKIM and Return-Path records now, and return the fresh state.
+// Callers type-assert Current() for it, so a registrar that cannot verify on
+// demand (or a transport that does not forward it) keeps compiling.
+//
+// providerDomainID follows GetDomain's contract: 0 forces a by-name lookup.
+type Verifier interface {
+	VerifyDomain(ctx context.Context, domain string, providerDomainID int64) (*DomainRecords, error)
+}
+
+// Remover is an OPTIONAL registrar capability: withdraw the domain from the
+// provider account. It is idempotent — a domain the account does not hold is
+// already removed, so that returns nil rather than an error a retry would hit
+// forever.
+//
+// providerDomainID follows GetDomain's contract: 0 forces a by-name lookup.
+type Remover interface {
+	RemoveDomain(ctx context.Context, domain string, providerDomainID int64) error
+}
+
 var (
 	mu      sync.RWMutex
 	current Registrar = unconfigured{}
