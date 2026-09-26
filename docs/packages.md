@@ -841,6 +841,7 @@ runtime. The registries that exist:
 | a CalDAV / CardDAV / WebDAV source | `caldav.Register` / `carddav.Register` / `webdav.Register` |
 | a native automation action | `automation.RegisterAction` |
 | version snapshot/restore hooks for its drive item type | `versionhooks.Register` |
+| a sink for provider delivery notifications about its own sent messages | `deliveryevents.Register` |
 
 `offboard.RegisterReassignable` rewrites every matching row to the successor in
 one `UPDATE`. That is wrong for a membership table: the successor inherits every
