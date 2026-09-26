@@ -570,3 +570,41 @@ func TestVerifyAndRemoveWithoutTokenAreNotConfigured(t *testing.T) {
 		t.Fatalf("RemoveDomain err = %v, want ErrNotConfigured", err)
 	}
 }
+
+// A newly created domain carries its DKIM record ONLY in the pending fields.
+// Without the fallback the admin is shown no DKIM record to publish, so DKIM
+// can never verify.
+func TestAddDomainPublishesPendingDKIMForNewDomain(t *testing.T) {
+	f := &fakeDomains{created: postmark.DomainDetails{
+		ID: 7, Name: "acme.com",
+		DKIMPendingHost: "20260926pm._domainkey.acme.com", DKIMPendingTextValue: "k=rsa;p=PENDING",
+	}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	rec, err := r.AddDomain(context.Background(), "acme.com")
+	if err != nil {
+		t.Fatalf("AddDomain: %v", err)
+	}
+	if rec.DKIMHost != "20260926pm._domainkey.acme.com" || rec.DKIMTextValue != "k=rsa;p=PENDING" {
+		t.Fatalf("DKIM = %q / %q, want the pending record", rec.DKIMHost, rec.DKIMTextValue)
+	}
+}
+
+// A verified DKIM record stays authoritative, even while a rotation has a
+// pending one: the live record is what DNS must keep serving.
+func TestGetDomainKeepsVerifiedDKIMOverPending(t *testing.T) {
+	f := &fakeDomains{details: map[int64]postmark.DomainDetails{7: {
+		ID: 7, Name: "acme.com",
+		DKIMHost: "live._domainkey.acme.com", DKIMTextValue: "k=rsa;p=LIVE",
+		DKIMPendingHost: "next._domainkey.acme.com", DKIMPendingTextValue: "k=rsa;p=NEXT",
+	}}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	rec, err := r.GetDomain(context.Background(), "acme.com", 7)
+	if err != nil {
+		t.Fatalf("GetDomain: %v", err)
+	}
+	if rec.DKIMHost != "live._domainkey.acme.com" || rec.DKIMTextValue != "k=rsa;p=LIVE" {
+		t.Fatalf("DKIM = %q / %q, want the verified record", rec.DKIMHost, rec.DKIMTextValue)
+	}
+}

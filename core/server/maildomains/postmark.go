@@ -231,14 +231,23 @@ func isAlreadyExists(err error) bool {
 }
 
 func toDomainRecords(d postmark.DomainDetails) *DomainRecords {
+	// Postmark reports a NEW domain's DKIM record only in the pending fields,
+	// so without this fallback there is no DKIM record to publish and DKIM
+	// never verifies. The pair is taken together so host and value always
+	// belong to the same key; a verified pair wins because it is the one DNS
+	// is serving.
+	dkimHost, dkimValue := d.DKIMHost, d.DKIMTextValue
+	if dkimHost == "" && dkimValue == "" {
+		dkimHost, dkimValue = d.DKIMPendingHost, d.DKIMPendingTextValue
+	}
 	return &DomainRecords{
 		Domain:               d.Name,
 		ID:                   d.ID,
 		SPFVerified:          d.SPFVerified,
 		DKIMVerified:         d.DKIMVerified,
 		ReturnPathVerified:   d.ReturnPathDomainVerified,
-		DKIMHost:             d.DKIMHost,
-		DKIMTextValue:        d.DKIMTextValue,
+		DKIMHost:             dkimHost,
+		DKIMTextValue:        dkimValue,
 		ReturnPathDomain:     d.ReturnPathDomain,
 		ReturnPathCNAMEValue: d.ReturnPathDomainCNAMEValue,
 	}
