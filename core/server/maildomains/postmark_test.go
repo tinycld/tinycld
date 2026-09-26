@@ -536,7 +536,13 @@ func TestRemoveDomainRejectsMismatchedID(t *testing.T) {
 	f := &fakeDomains{details: map[int64]postmark.DomainDetails{42: {ID: 42, Name: "victim.example"}}}
 	r := NewPostmarkRegistrar(StaticToken("acct"), f)
 
-	_ = r.RemoveDomain(context.Background(), "attacker.example", 42)
+	err := r.RemoveDomain(context.Background(), "attacker.example", 42)
+	if !errors.Is(err, ErrDomainIDMismatch) {
+		t.Fatalf("err = %v, want ErrDomainIDMismatch — a foreign id is not an already-removed domain", err)
+	}
+	if strings.Contains(err.Error(), "victim.example") {
+		t.Errorf("error %q leaks the victim's domain name", err)
+	}
 	if len(f.calls) != 0 {
 		t.Fatalf("calls = %v, want no delete of another org's domain", f.calls)
 	}

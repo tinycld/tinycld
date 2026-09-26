@@ -19,6 +19,13 @@ var ErrDomainAlreadyEnrolled = errors.New("maildomains: domain already enrolled 
 // state every domain is in before AddDomain runs.
 var ErrDomainNotEnrolled = errors.New("maildomains: domain not enrolled with the provider")
 
+// ErrDomainIDMismatch means a caller-supplied provider id names a DIFFERENT
+// domain than the one requested. It always wraps ErrDomainNotEnrolled too, so
+// read callers keep treating it as "not enrolled"; RemoveDomain tells it apart
+// because an id pointing at another domain is a caller bug or an attack, not
+// an already-removed domain.
+var ErrDomainIDMismatch = errors.New("maildomains: provider domain id names a different domain")
+
 // domainListLimit bounds the domain listing Postmark pages over.
 const domainListLimit = 100
 
@@ -120,7 +127,7 @@ func (p *PostmarkRegistrar) GetDomain(ctx context.Context, domain string, provid
 		// the tenant that supplies the id is exactly the party a caller-side
 		// check would be trusting.
 		if !strings.EqualFold(details.Name, domain) {
-			return nil, fmt.Errorf("%w: %s", ErrDomainNotEnrolled, domain)
+			return nil, fmt.Errorf("%w: %w: %s", ErrDomainNotEnrolled, ErrDomainIDMismatch, domain)
 		}
 		return toDomainRecords(details), nil
 	}
@@ -155,10 +162,12 @@ func (p *PostmarkRegistrar) VerifyDomain(ctx context.Context, domain string, pro
 // gone by the time the delete lands, is success.
 //
 // Resolved through GetDomain for the same ownership check as VerifyDomain —
-// here it guards the most destructive call on the account token.
+// here it guards the most destructive call on the account token. An id that
+// names a different domain is NOT "already removed": it returns the error so
+// the caller does not record a removal that never happened.
 func (p *PostmarkRegistrar) RemoveDomain(ctx context.Context, domain string, providerDomainID int64) error {
 	rec, err := p.GetDomain(ctx, domain, providerDomainID)
-	if errors.Is(err, ErrDomainNotEnrolled) {
+	if errors.Is(err, ErrDomainNotEnrolled) && !errors.Is(err, ErrDomainIDMismatch) {
 		return nil
 	}
 	if err != nil {
