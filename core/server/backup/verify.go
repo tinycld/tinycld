@@ -17,9 +17,43 @@ type VerifyReport struct {
 	OK          bool              `json:"ok"`
 }
 
+// selfWritten are the collections finalizing a restore WRITES INTO, and which
+// therefore cannot be compared against the archive's manifest.
+//
+// The manifest counted each collection as it was when the BACKUP ran. Completing
+// the restore then adds rows of its own: the succeeded row in the backup ledger,
+// the notification that tells the administrators the restore happened, and the
+// audit entry that records it (announceRestore, plus reportRollbacks on the
+// rollback path). So the live count of each of these is always at least one
+// higher than the manifest's, through no fault of the data — and every restore
+// reported a mismatch it had caused itself.
+//
+// The consequence was total rather than cosmetic: one mismatch clears rep.OK, so
+// Verify could NEVER report ok after a restore. A restore drill reads exactly that
+// field to decide whether a backup is restorable, so every drill of a healthy
+// backup failed, and the one signal that says "this org can be recovered" was
+// permanently false.
+//
+// Excluding them is the honest fix rather than counting an allowance. The number
+// of rows a restore writes is not fixed — it depends on how many administrators
+// are notified, and the rollback path writes a row per marker — so an allowance
+// would be a second thing to keep in step with every future write, and it would
+// mask a real discrepancy of exactly that size. What these three collections held
+// at backup time is not what the restore is being asked to prove.
+//
+// It is a package-level map rather than a call-time set because these names are a
+// property of what the engine writes, and a caller has no way to know them.
+var selfWritten = map[string]bool{
+	collection:      true, // the backup ledger: the succeeded restore row
+	"notifications": true, // announceRestore tells the administrators
+	"audit_logs":    true, // announceRestore records the restore
+}
+
 // Verify compares the live data with the manifest of the most recent succeeded
 // restore. With no restore on record it only runs the integrity check: there is
 // nothing to compare against, and that is not a failure.
+//
+// Collections the restore writes into itself are skipped — see selfWritten.
 func Verify(app core.App) (VerifyReport, error) {
 	rep := VerifyReport{Collections: map[string][2]int{}}
 	var result string
@@ -41,12 +75,9 @@ func Verify(app core.App) (VerifyReport, error) {
 		return rep, err
 	}
 	for name, want := range m.Counts.Collections {
-		// The ledger cannot be compared with itself. The archive's manifest
-		// counted it as it was when the backup ran, and finalizing the restore
-		// then inserts the succeeded row into that very collection — so the live
-		// count is always at least one higher and every restore would report a
-		// mismatch it caused itself.
-		if name == collection {
+		// A collection the restore itself writes into cannot be compared against
+		// the manifest. See selfWritten.
+		if selfWritten[name] {
 			continue
 		}
 		var n int

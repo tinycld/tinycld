@@ -261,6 +261,84 @@ func TestFinalizeRestoreRecordsTheRestoredArchive(t *testing.T) {
 	if rep.Collections["users"][0] != 4 {
 		t.Fatalf("verify %+v", rep)
 	}
+	// The three collections THIS finalize just wrote into must not be compared
+	// against the manifest. The rows above prove it wrote them, so a Verify that
+	// compared them would report a mismatch it had caused itself — and one
+	// mismatch clears OK, which is the field a restore drill reads.
+	for _, name := range []string{collection, "notifications", "audit_logs"} {
+		if got, ok := rep.Collections[name]; ok {
+			t.Errorf("%s was compared with the manifest and reported %v; finalizing the restore writes into it", name, got)
+		}
+	}
+}
+
+// A restore of data that genuinely matches its manifest must report OK.
+//
+// It could not, and the failure was total rather than cosmetic. Verify excluded
+// only the backup ledger, but announceRestore also writes a notification and an
+// audit entry as the LAST act of the restore — so those two collections are always
+// at least one row ahead of the manifest, and one mismatch clears rep.OK. A
+// restore drill reads exactly that field to decide whether a backup is
+// restorable, so every drill of a perfectly good backup failed and the one signal
+// that says "this org can be recovered" was permanently false. The hosted DR e2e
+// is what surfaced it.
+//
+// The manifest here is built from the live data BEFORE the finalize, which is
+// production's order: the archive is written by the backup, and the rows the
+// restore adds land afterwards.
+func TestVerifyReportsOKAfterAFinalizedRestore(t *testing.T) {
+	resetRestoreState(t)
+	app := newTestApp(t)
+	makeUser(t, app, "owner@example.com", "owner")
+	restoring.Store(true)
+
+	manifest, err := buildManifest(app, KindManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One file, to match what newTestApp's storage holds; the count itself is not
+	// what this test is about.
+	manifest.Counts.Files = 1
+
+	raw, err := json.Marshal(armed{ID: "r1", Pending: pendingDir(app, "r1"), Manifest: manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(swappedPath(app)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(swappedPath(app), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := FinalizeRestore(app); err != nil {
+		t.Fatal(err)
+	}
+
+	// The finalize really did write into all three, or this test would pass for
+	// the wrong reason — on a build where nothing is written, an exclusion is
+	// untested.
+	for _, q := range []struct{ collection, filter string }{
+		{collection, "kind = 'restore' && status = 'succeeded'"},
+		{"notifications", "type = 'core.restore.succeeded'"},
+		{"audit_logs", "action = 'restore.succeeded'"},
+	} {
+		rows, err := app.FindRecordsByFilter(q.collection, q.filter, "", 0, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) == 0 {
+			t.Fatalf("the finalize wrote no %s row, so this test does not exercise the exclusion", q.collection)
+		}
+	}
+
+	rep, err := Verify(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rep.OK {
+		t.Fatalf("a restore whose data matches its manifest must report OK; a drill reads this field: %+v", rep)
+	}
 }
 
 // requestEvent builds a RequestEvent with no next handler: Next() is then a
