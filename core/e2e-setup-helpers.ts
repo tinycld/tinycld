@@ -7,7 +7,11 @@
 // Playwright can load it without Playwright's "required a second time" error,
 // which the full e2e-helpers would trigger by resolving core's copy.
 import type { Locator, Page } from '@playwright/test'
-import { SETUP_CONTINUE_TEST_ID, setupStepTestId } from '@tinycld/core/lib/setup/step-ids'
+import {
+    SETUP_CONTINUE_TEST_ID,
+    SETUP_SKIP_TEST_ID,
+    setupStepTestId,
+} from '@tinycld/core/lib/setup/step-ids'
 
 export { CORE_STEP_IDS } from '@tinycld/core/lib/setup/step-ids'
 
@@ -22,6 +26,12 @@ export async function expectSetupStep(page: Page, stepId: string) {
 export async function continueSetupStep(page: Page, stepId: string) {
     await expectSetupStep(page, stepId)
     await setupStep(page, stepId).getByTestId(SETUP_CONTINUE_TEST_ID).click()
+}
+
+/** Skips a step with the shell's Skip, which sits outside the step itself. */
+export async function skipSetupStep(page: Page, stepId: string) {
+    await expectSetupStep(page, stepId)
+    await page.getByTestId(SETUP_SKIP_TEST_ID).click()
 }
 
 /** Continues each step in order, waiting for each one to show first. */

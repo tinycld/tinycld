@@ -24,9 +24,11 @@ function LabelRow({
     )
 }
 
+// The component owns the form binding and the field's look, so those RN props
+// are not accepted rather than accepted and ignored.
 export type TextInputProps<T extends FieldValues = Record<string, unknown>> = Omit<
     RNTextInputProps,
-    'value' | 'onChangeText' | 'onBlur'
+    'value' | 'onChangeText' | 'onBlur' | 'style' | 'placeholderTextColor'
 > & {
     name: Path<T>
     control: Control<T>
@@ -57,6 +59,8 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
         addon,
         onBlur: onBlurProp,
         onValueChange,
+        testID,
+        accessibilityLabel,
         ...inputProps
     } = props
     const {
@@ -73,6 +77,11 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
             {label ? <LabelRow label={label} icon={LabelIcon} /> : null}
             <View className="flex-row gap-2 items-center">
                 <RNTextInput
+                    // Every React Native prop the caller passes reaches the input
+                    // (autofill hints, onSubmitEditing, …). The props below come
+                    // after the spread because the form binding and the field's
+                    // look belong to this component.
+                    {...inputProps}
                     value={field.value || ''}
                     onChangeText={value => {
                         field.onChange(value)
@@ -82,18 +91,8 @@ export function TextInput<T extends FieldValues = Record<string, unknown>>(
                         field.onBlur()
                         onBlurProp?.()
                     }}
-                    accessibilityLabel={label}
-                    testID={name}
-                    placeholder={inputProps.placeholder}
-                    autoFocus={inputProps.autoFocus}
-                    keyboardType={inputProps.keyboardType}
-                    autoCapitalize={inputProps.autoCapitalize}
-                    // Forward autofill hints so the browser/keychain treats each
-                    // field correctly. Without these, password managers fall back
-                    // to heuristics and can fill a password field with the email.
-                    autoComplete={inputProps.autoComplete}
-                    textContentType={inputProps.textContentType}
-                    secureTextEntry={inputProps.secureTextEntry}
+                    accessibilityLabel={accessibilityLabel ?? label}
+                    testID={testID ?? name}
                     placeholderTextColor={placeholderColor}
                     className={`flex-1 border rounded-lg px-3 py-2.5 text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}
                     style={iosInputCenteringStyle(16)}

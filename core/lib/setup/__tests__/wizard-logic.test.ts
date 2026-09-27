@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { StepStatus, WizardState } from '../types'
-import { chosenOrgName, parseWizardState, shouldOpenWizard, summarizeWizard } from '../wizard-logic'
+import {
+    chosenOrgName,
+    continueStep,
+    parseWizardState,
+    shouldOpenWizard,
+    skipStep,
+    summarizeWizard,
+} from '../wizard-logic'
 
 const state = (patch: Partial<WizardState> = {}): WizardState => ({
     startedAt: '2026-09-25T00:00:00Z',
@@ -107,5 +114,55 @@ describe('chosenOrgName', () => {
     })
     it('shows nothing while the wizard state is unknown', () => {
         expect(chosenOrgName('Acme', null)).toBe('')
+    })
+})
+
+describe('continueStep', () => {
+    it('records a step whose derived state is not done as skipped', () => {
+        const next = continueStep(state(), step('widgets:address', { isDone: false }))
+        expect(next.skipped).toEqual(['widgets:address'])
+        expect(next.acknowledged).toEqual([])
+    })
+    it('moves resume past a not-done step, exactly as Skip does', () => {
+        const statuses = [step('widgets:address'), step('widgets:inbox')]
+        const continued = summarizeWizard(statuses, continueStep(state(), statuses[0]))
+        const skipped = summarizeWizard(statuses, skipStep(state(), 'widgets:address'))
+        expect(continued.nextStepId).toBe('widgets:inbox')
+        expect(continued.steps).toEqual(skipped.steps)
+        expect(continued.steps[0].phase).toBe('skipped')
+    })
+    it('records a step whose derived state is still loading as skipped', () => {
+        const next = continueStep(state(), step('widgets:address', { isDone: undefined }))
+        expect(next.skipped).toEqual(['widgets:address'])
+    })
+    it('keeps an earlier skip of a step that is still not done', () => {
+        const next = continueStep(
+            state({ skipped: ['widgets:address'] }),
+            step('widgets:address', { isDone: false })
+        )
+        expect(next.skipped).toEqual(['widgets:address'])
+    })
+    it('acknowledges a step with no derived state and clears its skip', () => {
+        const next = continueStep(
+            state({ skipped: ['widgets:intro'] }),
+            step('widgets:intro', { isDone: null })
+        )
+        expect(next.acknowledged).toEqual(['widgets:intro'])
+        expect(next.skipped).toEqual([])
+    })
+    it('acknowledges a done step and clears its skip', () => {
+        const next = continueStep(
+            state({ skipped: ['widgets:address'] }),
+            step('widgets:address', { isDone: true })
+        )
+        expect(next.acknowledged).toEqual(['widgets:address'])
+        expect(next.skipped).toEqual([])
+    })
+    it('does not add an id twice', () => {
+        const once = continueStep(state(), step('widgets:intro', { isDone: null }))
+        expect(continueStep(once, step('widgets:intro', { isDone: null })).acknowledged).toEqual([
+            'widgets:intro',
+        ])
+        expect(skipStep(skipStep(state(), 'widgets:a'), 'widgets:a').skipped).toEqual(['widgets:a'])
     })
 })

@@ -1,4 +1,8 @@
-import { CORE_STEP_IDS, setupStepTestId } from '@tinycld/core/lib/setup/step-ids'
+import {
+    CORE_STEP_IDS,
+    SETUP_SKIP_TEST_ID,
+    setupStepTestId,
+} from '@tinycld/core/lib/setup/step-ids'
 import type { WizardSummary } from '@tinycld/core/lib/setup/wizard-logic'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
@@ -99,6 +103,7 @@ function SkipButton({ onPress }: { onPress: (() => void) | null }) {
             className="self-start"
             onPress={onPress}
             accessibilityLabel="Skip this step"
+            testID={SETUP_SKIP_TEST_ID}
         >
             <ButtonText>Skip</ButtonText>
         </Button>
