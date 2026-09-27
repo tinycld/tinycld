@@ -953,6 +953,11 @@ The same rule applies with more force to core itself: **core must not name a
 package.** See [Registries: how core learns what a package
 provides](#registries-how-core-learns-what-a-package-provides).
 
+A package may set a sign-in notice (`useSignInNoticeStore` from
+`@tinycld/core/lib/stores/sign-in-notice-store`) before it routes an
+unauthenticated user to sign-in; the login form shows it and clears it after a
+successful sign-in.
+
 ---
 
 ## Development loop & where to edit
