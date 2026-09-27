@@ -20,7 +20,10 @@ type PostmarkSender struct {
 }
 
 // NewPostmarkSender creates a Postmark-backed sender. The API root is
-// Postmark's own unless mail.postmark_api_url is set.
+// Postmark's own unless mail.postmark_api_url is set. The postmark_api_url
+// override is for test and staging stacks only — it redirects sends to a fake
+// or staging Postmark API. It changes mail sends only. Domain and server calls
+// (domain validation, webhook setup) ignore it and always use Postmark's API.
 func NewPostmarkSender(serverToken, accountToken, defaultFrom string) *PostmarkSender {
 	client := postmark.NewClient(serverToken, accountToken)
 	if apiURL := ConfigResolver(keyPostmarkAPIURL); apiURL != "" {
