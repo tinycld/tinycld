@@ -14,7 +14,7 @@ Without a shared wizard, a package that needs onboarding steps must build a wiza
 
 - One wizard shell and one step registry in core. Packages contribute steps with a manifest field.
 - A short setup code replaces the long URL token. The printed link still fills in the code.
-- Standalone steps: code, owner account (both before sign-in), then Workspace, Apps, Email sending, Invite your team, Done.
+- Standalone steps: code, owner account (both before sign-in), then Workspace, Apps, Email sending, Your team, Done.
 - The Apps step shows only bundled packages. Clearing one hides it for everyone; it never uninstalls or rebuilds.
 - Layout "workspace assembles as you go": form on the left, a live miniature of the workspace on the right (a strip at the top on phones).
 - Step order uses a fractional-indexing rank scheme (the `fractional-indexing` library's keys).
@@ -69,14 +69,14 @@ The generator emits each package's steps into its `tinycld.config.ts` entry as `
 
 ### 5.4 Core steps
 
-Core has no manifest, so its steps live in a static list in `core/lib/setup/core-steps.ts`, merged with the generated list.
+Core has no manifest, so its steps live in a static list, `CORE_STEPS` in `core/lib/setup/registry.ts`, merged with the generated list.
 
 | order | id | Step | Done when |
 |---|---|---|---|
 | `a0` | `core:workspace` | Workspace — name and logo, fields from `OrgBrandingSection` | acknowledged (a new server already has PocketBase's default name, so the name cannot tell) |
 | `a1` | `core:apps` | Apps — bundled packages, enable/disable (owner only: `pkg_registry` writes are owner-only) | acknowledged |
 | `a2` | `core:email` | Email sending — fields from `MailSendingPanel` (owner only) | acknowledged |
-| `a3` | `core:team` | Invite your team — `/api/invite-member` | more than one user, or a pending invite |
+| `a3` | `core:team` | Your team — `/api/invite-member` | more than one user, or a pending invite |
 
 `core:email` is visible only when `!useIsSettingManaged('mail')`, so a deployment where mail settings are managed never shows it.
 
@@ -104,7 +104,7 @@ A package can show context inside the invite step (for example a seat meter) wit
 3. **Workspace.** "People see this name and logo when they sign in and in invite emails." The name is saved through a new `POST /api/org-info/name` (owner/admin), which writes `Meta.AppName`. The account step no longer asks for an app name.
 4. **Choose your apps.** Bundled apps as cards, all selected at first. Copy: "These apps come with your server. Clear an app to hide it from everyone. You can show it again, or add more apps, at any time in Settings → Packages." Button: "Continue". Toggling updates the preview rail at once; nothing rebuilds.
 5. **Email sending.** SMTP fields and a test send.
-6. **Invite your team.** One invite form: username, optional email, and role (member or admin). "Send invite" creates one invite at a time and shows its link; the people already in the workspace are listed below the form. The `setup-team` slot renders above the form. When the server refuses an invite (for example a seat limit), the refusal shows on the form.
+6. **Your team.** One invite form: username, optional email, and role (member or admin). "Send invite" creates one invite at a time and shows its link; the people already in the workspace are listed below the form. The `setup-team` slot renders above the form. When the server refuses an invite (for example a seat limit), the refusal shows on the form.
 7. **Done.** The preview grows to fill the screen. "<Name> is ready" with a one-line summary ("3 apps on · 2 people") and "Open <Name>".
 
 Mockups: `.superpowers/brainstorm/28983-1790348859/content/steps-v2.html` (not committed).
@@ -141,7 +141,7 @@ One `system_settings` row, key `setup.wizard`, owner/admin only (the collection 
 
 ## 9. Platforms
 
-The same screens run on web and native. On native, the connect-to-server flow calls `/api/setup/check` and opens the code screen when setup is needed.
+The same screens run on web and native. The connect screen (`app/a/connect.tsx`) itself does not call `/api/setup/check` — it only resolves and saves the server address. Once a server is active, `AuthGate` calls `useNeedsSetup()`, which fetches `/api/setup/check` for that address; on `needsSetup: true` it redirects to `/a/setup`, opening the code screen. This runs the same way on web and native, since both go through `AuthGate` after connecting.
 
 ## 10. Help
 

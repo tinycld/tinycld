@@ -16,6 +16,6 @@ The setup steps then help you:
 - **Name your workspace** and add a logo.
 - **Choose your apps.** Clear an app to hide it from everyone. You can show it again at any time in Settings → Packages.
 - **Set up email sending,** so invites and password resets reach people.
-- **Invite your team.**
+- **Your team.** Invite people to join.
 
 You can skip any step. To stop and come back later, select **Finish later**. A **Finish setup** card stays at the top of Settings until you complete the last step.
