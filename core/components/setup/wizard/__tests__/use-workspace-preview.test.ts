@@ -7,7 +7,7 @@ const base = {
     logoUrl: '',
     logoCrop: '',
     apps: [],
-    memberInitials: [],
+    members: [],
     memberCount: 0,
 }
 
@@ -19,7 +19,9 @@ describe('buildPreviewModel', () => {
     })
     it('is empty with no name, apps or members', () => {
         expect(buildPreviewModel(base).isEmpty).toBe(true)
-        expect(buildPreviewModel({ ...base, memberInitials: ['DR'] }).isEmpty).toBe(false)
+        expect(
+            buildPreviewModel({ ...base, members: [{ id: 'u1', initials: 'DR' }] }).isEmpty
+        ).toBe(false)
     })
     it('carries the logo crop so a cropped logo renders cropped', () => {
         const m = buildPreviewModel({ ...base, logoUrl: 'https://x/logo.png', logoCrop: '{"x":1}' })
@@ -27,7 +29,14 @@ describe('buildPreviewModel', () => {
         expect(m.isGhost).toBe(false)
     })
     it('counts every member, not just the avatars shown', () => {
-        const m = buildPreviewModel({ ...base, memberInitials: ['A', 'B'], memberCount: 7 })
+        const m = buildPreviewModel({
+            ...base,
+            members: [
+                { id: 'u1', initials: 'A' },
+                { id: 'u2', initials: 'B' },
+            ],
+            memberCount: 7,
+        })
         expect(m.memberCount).toBe(7)
     })
 })
@@ -41,14 +50,14 @@ describe('ghostPreviewModel', () => {
             logoUrl: '',
             logoCrop: '',
             apps: [],
-            memberInitials: ['DR'],
+            members: [{ id: 'owner', initials: 'DR' }],
             isGhost: true,
             isEmpty: false,
         })
     })
     it('has no avatar before initials are known', () => {
         const m = ghostPreviewModel(undefined)
-        expect(m.memberInitials).toEqual([])
+        expect(m.members).toEqual([])
         expect(m.isEmpty).toBe(true)
     })
 })

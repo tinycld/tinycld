@@ -3,10 +3,12 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -157,5 +159,97 @@ func TestPostMultipartJSONField(t *testing.T) {
 	}
 	if f := got[0].files["attachments"]; f.name != "a.txt" || f.content != "attachment-bytes" {
 		t.Fatalf("attachment part = %+v", f)
+	}
+}
+
+// TestPostMultipartFieldsWritesFieldsInOrderThenFile pins the wire order: the
+// restore endpoint reads the passphrase part before it will accept the archive,
+// so the fields must go out in the order given and ahead of every file.
+func TestPostMultipartFieldsWritesFieldsInOrderThenFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.age")
+	if err := os.WriteFile(path, []byte("ARCHIVE"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	var fileBody, fileName string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mr, err := r.MultipartReader()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		for {
+			p, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			order = append(order, p.FormName())
+			if p.FormName() == "archive" {
+				fileName = p.FileName()
+				b, _ := io.ReadAll(p)
+				fileBody = string(b)
+			}
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"jobId":"j1"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := New(srv.URL, validStore("access-1"), srv.Client())
+
+	type resp struct {
+		JobID string `json:"jobId"`
+	}
+	var lastWritten, lastTotal int64
+	out, err := PostMultipartFields[resp](context.Background(), c, "/api/org-backups/restore",
+		[]Field{{Name: "passphrase", Value: "correct horse battery"}, {Name: "force", Value: "true"}},
+		[]FilePart{{Field: "archive", Name: "a.age", Path: path}},
+		func(written, total int64) { lastWritten, lastTotal = written, total })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.JobID != "j1" || strings.Join(order, ",") != "passphrase,force,archive" || fileBody != "ARCHIVE" {
+		t.Fatalf("out %+v order %v body %q", out, order, fileBody)
+	}
+	if fileName != "a.age" {
+		t.Fatalf("file name %q", fileName)
+	}
+	if lastWritten != int64(len("ARCHIVE")) || lastTotal != int64(len("ARCHIVE")) {
+		t.Fatalf("progress written=%d total=%d", lastWritten, lastTotal)
+	}
+}
+
+// TestPostMultipartFieldsRetriesAfter401 pins the GetBody rebuild: the fields
+// and the file must both be replayed, in order, on the refreshed attempt.
+func TestPostMultipartFieldsRetriesAfter401(t *testing.T) {
+	path := writeTempFile(t, "a.age", "ARCHIVE")
+	var got []parsedUpload
+	srv := multipartServer(t, "access-2", &got)
+	c := New(srv.URL, validStore("access-1"), srv.Client())
+
+	type resp struct {
+		ID string `json:"id"`
+	}
+	out, err := PostMultipartFields[resp](context.Background(), c, "/",
+		[]Field{{Name: "passphrase", Value: "pw"}},
+		[]FilePart{{Field: "archive", Name: "a.age", Path: path}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.ID != "created" {
+		t.Fatalf("out %+v", out)
+	}
+	if len(got) != 1 {
+		t.Fatalf("successful uploads = %d, want exactly 1 (the retry)", len(got))
+	}
+	if got[0].fields["passphrase"] != "pw" {
+		t.Fatalf("fields %v", got[0].fields)
+	}
+	if f := got[0].files["archive"]; f.content != "ARCHIVE" {
+		t.Fatalf("retried body incomplete: %+v", f)
 	}
 }

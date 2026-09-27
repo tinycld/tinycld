@@ -43,6 +43,13 @@ describe('buildGoWork', () => {
         expect(work).toContain('    ../../core/server')
         expect(work).toContain('    ../../contacts/server')
     })
+
+    // core requires its nested archive-format module at v0.0.0; without it in
+    // the workspace the graph load hits the proxy for that version.
+    it("uses core's nested archive-format module", () => {
+        const work = buildGoWork('../../core/server', [contacts])
+        expect(work).toContain('    ../../core/server/backup/format')
+    })
 })
 
 describe('buildMemberGoWork', () => {
@@ -53,6 +60,18 @@ describe('buildMemberGoWork', () => {
         )
         expect(work).toContain('use .')
         expect(work).toContain('replace tinycld.org/core => ../../tinycld/core/server')
+    })
+
+    // core requires the nested archive-format module at v0.0.0. Versioned because
+    // core (a `use` member) replaces it at all versions in its own go.mod.
+    it('replaces the archive-format module, versioned', () => {
+        const work = buildMemberGoWork(
+            '../../tinycld/core/server',
+            '../../tinycld/third_party/pocketbase'
+        )
+        expect(work).toContain(
+            'replace tinycld.org/core/backup/format v0.0.0 => ../../tinycld/core/server/backup/format'
+        )
     })
 
     // The fork is vendored in the app shell, so it is never absent — a member that

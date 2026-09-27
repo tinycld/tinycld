@@ -1,11 +1,11 @@
 // One row in RulesPanel: drag handle · name/summary · badges · last-run line
 // · enabled Switch · overflow Menu (Edit / Run history / Run now / Delete).
 
-import { formatRelativeTime } from '@tinycld/core/components/NotificationDrawer'
 import { needsPackage, ruleSummary } from '@tinycld/core/components/rules/rule-summary'
 import { SortableDragHandle } from '@tinycld/core/components/SortableList'
 import type { CatalogResponse } from '@tinycld/core/lib/automation/api'
 import { useRuleMutations } from '@tinycld/core/lib/automation/use-rule-mutations'
+import { formatTimeAgo } from '@tinycld/core/lib/format-utils'
 import { useRulesUiStore } from '@tinycld/core/lib/stores/rules-ui-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import type { Rules } from '@tinycld/core/types/pbSchema'
@@ -147,7 +147,7 @@ function LastRunLine({ lastRun }: { lastRun?: { fired_at: string; matched: boole
         <View className="flex-row items-center gap-1">
             <Clock size={11} color={mutedColor} />
             <Text className="text-[11px] text-muted-foreground">
-                {lastRun.matched ? 'Ran' : "Didn't match"} {formatRelativeTime(lastRun.fired_at)}
+                {lastRun.matched ? 'Ran' : "Didn't match"} {formatTimeAgo(lastRun.fired_at)}
             </Text>
         </View>
     )

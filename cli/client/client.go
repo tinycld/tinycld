@@ -358,14 +358,29 @@ func (c *Client) refresh(stale TokenSet) (TokenSet, error) {
 	return fresh, nil
 }
 
+// APIError is a non-2xx response. It keeps the raw body as well as the
+// message: some refusals carry structure a caller has to act on (the restore
+// endpoint's 409 names the package diff), and re-parsing a rendered message
+// string would turn the server's prose into a wire format.
+type APIError struct {
+	Status  int
+	Message string
+	Body    []byte
+}
+
+func (e *APIError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("server error (HTTP %d): %s", e.Status, e.Message)
+	}
+	return fmt.Sprintf("server error (HTTP %d)", e.Status)
+}
+
 // apiError shapes a non-2xx response into a readable error, surfacing the
 // server's message field when one exists.
 func apiError(status int, body []byte) error {
 	var pb struct {
 		Message string `json:"message"`
 	}
-	if json.Unmarshal(body, &pb) == nil && pb.Message != "" {
-		return fmt.Errorf("server error (HTTP %d): %s", status, pb.Message)
-	}
-	return fmt.Errorf("server error (HTTP %d)", status)
+	_ = json.Unmarshal(body, &pb)
+	return &APIError{Status: status, Message: pb.Message, Body: body}
 }
