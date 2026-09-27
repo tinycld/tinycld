@@ -231,7 +231,16 @@ function serve(opts: { port: number; dataDir: string; releasesDir: string }): Ch
     return spawn(PB_BINARY, args, {
         cwd: ROOT,
         stdio: 'inherit',
-        env: { ...process.env, ...mailEnv },
+        env: {
+            ...process.env,
+            // The backup API refuses a loopback or link-local target: the server
+            // fetches from and PUTs to whatever URL the caller supplies, and
+            // those addresses are only reachable from the server itself. Every
+            // e2e target IS on loopback (the harness's own sink), so the check
+            // is relaxed for this process only.
+            TINYCLD_BACKUP_ALLOW_LOOPBACK: '1',
+            ...mailEnv,
+        },
     })
 }
 
