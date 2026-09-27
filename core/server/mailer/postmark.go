@@ -19,10 +19,15 @@ type PostmarkSender struct {
 	defaultFrom string
 }
 
-// NewPostmarkSender creates a Postmark-backed sender.
+// NewPostmarkSender creates a Postmark-backed sender. The API root is
+// Postmark's own unless mail.postmark_api_url is set.
 func NewPostmarkSender(serverToken, accountToken, defaultFrom string) *PostmarkSender {
+	client := postmark.NewClient(serverToken, accountToken)
+	if apiURL := ConfigResolver(keyPostmarkAPIURL); apiURL != "" {
+		client.BaseURL = strings.TrimRight(apiURL, "/")
+	}
 	return &PostmarkSender{
-		client:      postmark.NewClient(serverToken, accountToken),
+		client:      client,
 		defaultFrom: defaultFrom,
 	}
 }
@@ -62,14 +67,13 @@ func (p *PostmarkSender) Send(ctx context.Context, msg *Message) error {
 	return nil
 }
 
-// SendFull sends a rich email with CC, BCC, attachments, and threading headers.
-func (p *PostmarkSender) SendFull(ctx context.Context, req *SendRequest) (*SendResult, error) {
-	if !deliveryEnabled() {
-		return log.SendFull(ctx, req)
-	}
+// buildPostmarkEmail translates a SendRequest into the postmark.Email wire
+// shape. Split out from SendFull so request-building is testable without
+// the network.
+func buildPostmarkEmail(req *SendRequest, defaultFrom string) postmark.Email {
 	from := req.From
 	if from == "" {
-		from = p.defaultFrom
+		from = defaultFrom
 	}
 	email := postmark.Email{
 		From:     from,
@@ -80,6 +84,7 @@ func (p *PostmarkSender) SendFull(ctx context.Context, req *SendRequest) (*SendR
 		HTMLBody: req.HTMLBody,
 		TextBody: req.TextBody,
 		ReplyTo:  req.ReplyTo,
+		Metadata: req.Metadata,
 	}
 
 	var headers []postmark.Header
@@ -104,6 +109,16 @@ func (p *PostmarkSender) SendFull(ctx context.Context, req *SendRequest) (*SendR
 			ContentID:   att.ContentID,
 		})
 	}
+
+	return email
+}
+
+// SendFull sends a rich email with CC, BCC, attachments, and threading headers.
+func (p *PostmarkSender) SendFull(ctx context.Context, req *SendRequest) (*SendResult, error) {
+	if !deliveryEnabled() {
+		return log.SendFull(ctx, req)
+	}
+	email := buildPostmarkEmail(req, p.defaultFrom)
 
 	resp, err := p.client.SendEmail(ctx, email)
 	if err != nil {
