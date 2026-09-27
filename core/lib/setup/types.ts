@@ -18,7 +18,8 @@ export interface SetupStepEntry {
     id: string // `<slug>:<id>`
     label: string
     order: string | null
-    load: () => Promise<SetupStepModule>
+    /** Resolves to a module that should follow SetupStepModule; checked at load. */
+    load: () => Promise<unknown>
 }
 
 export interface LoadedSetupStep {

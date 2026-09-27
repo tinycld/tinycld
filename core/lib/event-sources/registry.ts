@@ -1,4 +1,5 @@
 import { tinycldConfig } from '@tinycld/app-generated/tinycld-config'
+import { log } from '@tinycld/core/lib/logger'
 import type { EventSourceModule } from './types'
 
 type EventSourceEntryLike = {
@@ -50,6 +51,14 @@ export const packageEventSources = deriveEventSources(
     tinycldConfig as readonly EventSourceEntryLike[]
 )
 
+function isEventSourceModule(mod: unknown): mod is EventSourceModule {
+    return (
+        typeof mod === 'object' &&
+        mod !== null &&
+        typeof (mod as Record<string, unknown>).useEventSource === 'function'
+    )
+}
+
 /**
  * Build a module loader over a source table. Split from the module-level
  * binding so tests can exercise caching and the malformed-module path with
@@ -74,8 +83,15 @@ export function createEventSourceLoader(sources: Record<string, RegisteredEventS
         if (cached) return cached
         const source = sources[target]?.find(s => s.id === id)
         if (!source) return null
-        const mod = (await source.load()) as EventSourceModule
-        if (typeof mod?.useEventSource !== 'function') return null
+        const mod = await source.load()
+        if (!isEventSourceModule(mod)) {
+            log.warn('event-sources.load', 'skipping a module without a useEventSource hook', {
+                target,
+                sourceId: id,
+                contributorSlug: source.contributorSlug,
+            })
+            return null
+        }
         cache.set(key, mod)
         return mod
     }

@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { log } from '@tinycld/core/lib/logger'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEventSourceLoader, deriveEventSources } from '../registry'
 import type { EventSourceModule } from '../types'
 
@@ -76,7 +77,12 @@ describe('createEventSourceLoader', () => {
         expect(await loader('calendar', 'boards-due')).toBeNull()
     })
 
-    it('returns null when the module lacks a useEventSource function', async () => {
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
+    it('returns null and logs when the module lacks a useEventSource function', async () => {
+        const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined)
         const loader = createEventSourceLoader({
             calendar: [
                 {
@@ -89,5 +95,10 @@ describe('createEventSourceLoader', () => {
             ],
         })
         expect(await loader('calendar', 'boards-due')).toBeNull()
+        expect(warn).toHaveBeenCalledWith('event-sources.load', expect.any(String), {
+            target: 'calendar',
+            sourceId: 'boards-due',
+            contributorSlug: 'boards',
+        })
     })
 })
