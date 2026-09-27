@@ -157,7 +157,40 @@ func TestForPackageSiblingLoggersDoNotShareAttrs(t *testing.T) {
 	a.Info("from a")
 	b.Info("from b")
 
+	if got := len(h.sink.records); got != 2 {
+		t.Fatalf("expected 2 records at the capturing handler, got %d", got)
+	}
 	if h.sink.records[0].attrs["side"] != "a" || h.sink.records[1].attrs["side"] != "b" {
 		t.Errorf("sibling attrs leaked: %v / %v", h.sink.records[0].attrs, h.sink.records[1].attrs)
+	}
+}
+
+// Run with -race: a package logger resolves the default on every call, so it
+// must be safe while another goroutine swaps the default.
+func TestForPackageLogsWhileTheDefaultIsSwapped(t *testing.T) {
+	log := ForPackage("widgets")
+	final := installCapture(t, slog.LevelDebug)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			log.Info("tick", "i", i)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			slog.SetDefault(slog.New(newCaptureHandler(slog.LevelDebug)))
+		}
+	}()
+	wg.Wait()
+
+	slog.SetDefault(slog.New(final))
+	log.Info("after the swaps")
+	last := final.sink.records[len(final.sink.records)-1]
+	if last.msg != "after the swaps" || last.attrs["pkg"] != "widgets" {
+		t.Errorf("record after the swaps did not reach the current default: %+v", last)
 	}
 }

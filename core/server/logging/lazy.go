@@ -48,9 +48,14 @@ func newLazyHandler(ops []handlerOp) *lazyHandler {
 // itself: it would recurse forever. Install builds its fan-out from concrete
 // handlers only, and nothing should pass a ForPackage logger to SetDefault.
 func (h *lazyHandler) resolve() slog.Handler {
+	// The cache is read before the default so the CompareAndSwap below fails
+	// whenever another goroutine stored a newer entry in between: a caller
+	// that read a default which SetDefault has since replaced cannot then
+	// overwrite the fresh entry and force the next call to rebuild again.
+	cached := h.cache.Load()
 	base := slog.Default()
-	if c := h.cache.Load(); c != nil && c.base == base {
-		return c.handler
+	if cached != nil && cached.base == base {
+		return cached.handler
 	}
 	resolved := base.Handler()
 	for _, op := range h.ops {
@@ -60,7 +65,7 @@ func (h *lazyHandler) resolve() slog.Handler {
 			resolved = resolved.WithAttrs(op.attrs)
 		}
 	}
-	h.cache.Store(&resolvedHandler{base: base, handler: resolved})
+	h.cache.CompareAndSwap(cached, &resolvedHandler{base: base, handler: resolved})
 	return resolved
 }
 
