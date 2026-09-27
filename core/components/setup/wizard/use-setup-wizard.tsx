@@ -1,6 +1,6 @@
 import type { LoadedSetupStep, StepStatus } from '@tinycld/core/lib/setup/types'
 import { useSetupWizardState } from '@tinycld/core/lib/setup/use-setup-wizard-state'
-import { shouldOpenWizard } from '@tinycld/core/lib/setup/wizard-logic'
+import { continueStep, shouldOpenWizard, skipStep } from '@tinycld/core/lib/setup/wizard-logic'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import type { ReactNode } from 'react'
 
@@ -54,7 +54,6 @@ function StepStatusLink({
     )
 }
 
-const addTo = (list: string[], id: string) => (list.includes(id) ? list : [...list, id])
 const now = () => new Date().toISOString()
 
 /**
@@ -67,13 +66,8 @@ export function useWizardActions() {
     return {
         state,
         isReady,
-        skip: (id: string) => update(s => ({ ...s, skipped: addTo(s.skipped, id) })),
-        acknowledge: (id: string) =>
-            update(s => ({
-                ...s,
-                acknowledged: addTo(s.acknowledged, id),
-                skipped: s.skipped.filter(x => x !== id),
-            })),
+        skip: (id: string) => update(s => skipStep(s, id)),
+        continueStep: (status: StepStatus) => update(s => continueStep(s, status)),
         finishLater: () => update(s => ({ ...s, dismissedAt: now() })),
         complete: () => update(s => ({ ...s, completedAt: now() })),
     }

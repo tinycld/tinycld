@@ -65,7 +65,7 @@ function useStepScreen(
         summary,
         currentStepId: id,
         Component: step.Component,
-        next: thenGo(() => actions.acknowledge(id), NEXT_HREF),
+        next: thenGo(() => actions.continueStep(status), NEXT_HREF),
         onSkip: thenGo(() => actions.skip(id), NEXT_HREF),
         onFinishLater: thenGo(actions.finishLater, appHref('')),
     }

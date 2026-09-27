@@ -29,6 +29,31 @@ export function stepIsDone(status: StepStatus, state: WizardState): boolean | un
     return status.isDone
 }
 
+const addTo = (list: string[], id: string) => (list.includes(id) ? list : [...list, id])
+
+/**
+ * The state after Continue on a step. A step whose derived state says "not
+ * done" (or has not loaded yet) is recorded as skipped: otherwise resume would
+ * open the same step again and Continue would appear to do nothing. A step
+ * with no derived state is acknowledged, which is what makes it done. A skip
+ * is cleared only when the step is done, so Continue never hides a step that
+ * still needs work.
+ */
+export function continueStep(state: WizardState, status: StepStatus): WizardState {
+    if (status.isDone === null || status.isDone === true) {
+        return {
+            ...state,
+            acknowledged: addTo(state.acknowledged, status.id),
+            skipped: state.skipped.filter(x => x !== status.id),
+        }
+    }
+    return { ...state, skipped: addTo(state.skipped, status.id) }
+}
+
+export function skipStep(state: WizardState, id: string): WizardState {
+    return { ...state, skipped: addTo(state.skipped, id) }
+}
+
 export interface WizardSummary {
     steps: { id: string; label: string; phase: 'done' | 'skipped' | 'todo' }[]
     nextStepId: string | null
