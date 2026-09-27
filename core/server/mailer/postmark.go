@@ -19,10 +19,15 @@ type PostmarkSender struct {
 	defaultFrom string
 }
 
-// NewPostmarkSender creates a Postmark-backed sender.
+// NewPostmarkSender creates a Postmark-backed sender. The API root is
+// Postmark's own unless mail.postmark_api_url is set.
 func NewPostmarkSender(serverToken, accountToken, defaultFrom string) *PostmarkSender {
+	client := postmark.NewClient(serverToken, accountToken)
+	if apiURL := ConfigResolver(keyPostmarkAPIURL); apiURL != "" {
+		client.BaseURL = strings.TrimRight(apiURL, "/")
+	}
 	return &PostmarkSender{
-		client:      postmark.NewClient(serverToken, accountToken),
+		client:      client,
 		defaultFrom: defaultFrom,
 	}
 }

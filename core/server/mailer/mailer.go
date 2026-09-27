@@ -116,6 +116,9 @@ const (
 	keyFromAddress     = "mail.from_address"     // default From; falls back to defaultFromAddress
 	keyDeliveryEnabled = "mail.delivery_enabled" // "false" disables delivery (logs instead)
 	keySMTPPublicHost  = "mail.smtp_public_hostname"
+	// keyPostmarkAPIURL replaces Postmark's API root. It is unset in
+	// production; a test stack sets it to point sends at a stand-in server.
+	keyPostmarkAPIURL = "mail.postmark_api_url"
 )
 
 const defaultFromAddress = "noreply@tinycld.org"
