@@ -18,18 +18,6 @@ vi.mock('@tinycld/core/lib/auth', () => ({
 // Pre-auth branding lookup — irrelevant to the notice behavior under test.
 vi.mock('@tinycld/core/lib/use-org-info', () => ({ useOrgInfo: () => ({ org: null }) }))
 
-// The RN TextInput test stub doesn't wire onChangeText to DOM change events
-// (react-native-stub.cjs passes it through as an inert prop), so there's no
-// way to type into the identifier/password fields directly. Force review-mode
-// hints on and use its real "fill demo credentials" button instead — it calls
-// the same setIdentifier/setPassword the fields do, driving the form through
-// production wiring rather than reaching into component internals.
-vi.mock('@tinycld/core/lib/build-mode', () => ({ isReviewBuild: () => true }))
-vi.mock('@tinycld/core/lib/core-config', async importOriginal => ({
-    ...(await importOriginal<typeof import('@tinycld/core/lib/core-config')>()),
-    getCoreConfigOptional: () => ({ demoEmail: 'alice@example.com', demoPassword: 'secret' }),
-}))
-
 import { LoginModal } from '@tinycld/core/components/workspace/LoginModal'
 import { useSignInNoticeStore } from '@tinycld/core/lib/stores/sign-in-notice-store'
 
@@ -39,6 +27,11 @@ import { useSignInNoticeStore } from '@tinycld/core/lib/stores/sign-in-notice-st
 // toast-placement.test.tsx.
 function byTestId(container: HTMLElement, id: string): HTMLElement | null {
     return container.querySelector(`[testid="${id}"]`)
+}
+
+function typeInto(input: HTMLElement | null, value: string) {
+    if (!input) throw new Error('input not rendered')
+    fireEvent.input(input, { target: { value } })
 }
 
 afterEach(() => {
@@ -65,16 +58,14 @@ describe('LoginModal — sign-in notice', () => {
         useSignInNoticeStore.getState().setNotice('Your widgets invite link has expired.')
         login.mockResolvedValue({ user: { id: 'u1', email: 'a@example.com' }, error: null })
 
-        const { container, getByText } = render(<LoginModal />)
+        const { container } = render(<LoginModal />)
         expect(byTestId(container, 'sign-in-notice')).toBeTruthy()
 
-        // Fills identifier + password via the review-mode "fill demo
-        // credentials" button (see the mocks above) — the TextInput stub
-        // doesn't wire onChangeText to DOM change events, so this is the
-        // only way to reach a non-empty, submittable form.
-        fireEvent.click(getByText('Fill demo credentials'))
+        typeInto(byTestId(container, 'identifier'), 'alice@example.com')
+        typeInto(byTestId(container, 'login-password'), 'secret')
         fireEvent.click(byTestId(container, 'login-submit') as HTMLElement)
 
+        expect(login).toHaveBeenCalledWith('alice@example.com', 'secret')
         await vi.waitFor(() => {
             expect(useSignInNoticeStore.getState().notice).toBeNull()
         })

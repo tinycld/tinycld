@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, render } from '@testing-library/react'
+import { cleanup, fireEvent, render } from '@testing-library/react'
 import { useForm } from 'react-hook-form'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -9,7 +9,7 @@ import { TextInput, type TextInputProps } from '../TextInput'
 // caller's testID and onSubmitEditing type-checked and then did nothing.
 type Forwarded = Pick<
     TextInputProps,
-    'testID' | 'onSubmitEditing' | 'accessibilityLabel' | 'aria-label'
+    'testID' | 'onSubmitEditing' | 'accessibilityLabel' | 'aria-label' | 'onValueChange'
 >
 
 function Harness(props: Forwarded) {
@@ -46,6 +46,13 @@ describe('TextInput forwards React Native props', () => {
         const { container } = render(<Harness onSubmitEditing={onSubmitEditing} />)
         inputOf(container).dispatchEvent(new Event('SubmitEditing'))
         expect(onSubmitEditing).toHaveBeenCalledTimes(1)
+    })
+
+    it('reports typed text through onChangeText', () => {
+        const onValueChange = vi.fn()
+        const { container } = render(<Harness onValueChange={onValueChange} />)
+        fireEvent.input(inputOf(container), { target: { value: 'abc' } })
+        expect(onValueChange).toHaveBeenCalledWith('abc')
     })
 
     it("uses the caller's aria-label", () => {
