@@ -2,13 +2,13 @@
 
 **Date:** 2026-09-25
 **Status:** Approved design. Next step: implementation plan.
-**Repos:** `tinycld` (core, app shell, generator). A separate commit in `hosting` revises its onboarding spec §7 to use this wizard.
+**Repos:** `tinycld` (core, app shell, generator).
 
 ## 1. Problem
 
 A new standalone server prints a URL with a 64-character token. The person must copy that URL from the log. `/a/setup` then shows one form (app name, email, password, URL), and after it the person lands in the package manager, not in the app. Nothing helps them set up branding, email sending, or their team.
 
-The hosting onboarding spec (`hosting/docs/superpowers/specs/2026-09-23-tenant-signup-and-onboarding-design.md` §7) plans a wizard of its own in hosting-ui. That wizard is not built yet. This spec replaces it with one wizard in core that both deployments use. Packages add steps through a manifest registry, so core never names a package or knows that hosting exists.
+Without a shared wizard, a package that needs onboarding steps must build a wizard of its own. This spec gives core one wizard that every deployment uses. Packages add steps through a manifest registry, so core never names a package.
 
 ## 2. Decisions
 
@@ -45,7 +45,7 @@ In `core/server/coreserver/setup_bootstrap.go`:
 - **Lockout.** 5 failed tries from one IP within 10 minutes lock that IP for 10 minutes. 20 failed tries in total make a new code, which is printed again. Both `verify` and `init` count.
 - **`POST /api/setup/init`.** As today, but takes `code` (not `token`) and the owner's `name`. The check and the clear of the code happen inside one locked section, so two concurrent calls cannot both succeed (this closes the current TOCTOU gap). It also writes the wizard state row (§7).
 - **`GET /api/setup/check`.** Unchanged.
-- **`create-owner`** (`owner_command.go`) also writes the wizard state row, on every run when no row exists (even if the owner already exists). Hosting creates owners with it, so hosting tenants get the wizard with no core knowledge of hosting.
+- **`create-owner`** (`owner_command.go`) also writes the wizard state row, on every run when no row exists (even if the owner already exists). A service provider that creates owners with it gets the wizard with no special code in core.
 
 ## 5. Step registry
 
@@ -78,9 +78,9 @@ Core has no manifest, so its steps live in a static list in `core/lib/setup/core
 | `a2` | `core:email` | Email sending — fields from `MailSendingPanel` (owner only) | acknowledged |
 | `a3` | `core:team` | Invite your team — `/api/invite-member` | more than one user, or a pending invite |
 
-`core:email` is visible only when `!useIsSettingManaged('mail')`, so a deployment that supplies mail settings (such as hosting) never shows it.
+`core:email` is visible only when `!useIsSettingManaged('mail')`, so a deployment where mail settings are managed never shows it.
 
-Packages place steps between these keys, e.g. hosting-ui `a0V` (web address) and `a0k` (email domain). A key before `a0` (e.g. `Zz`, which is `generateKeyBetween(null, 'a0')`) puts a step first after sign-in.
+Packages place steps between these keys, e.g. a package step at `a0V` or `a0k`. A key before `a0` (e.g. `Zz`, which is `generateKeyBetween(null, 'a0')`) puts a step first after sign-in.
 
 ### 5.5 Core slot in the invite step
 
@@ -173,17 +173,7 @@ The same screens run on web and native. On native, the connect-to-server flow ca
 - Hide an app in the Apps step, restart the server, the app is still hidden.
 - A wrong code shows the mismatch message.
 
-## 12. Hosting spec changes (separate commit in `hosting`)
-
-§7 of the hosting onboarding spec changes:
-
-- Remove the `onboarding` collection, the `/a/hosting-ui/setup` route, and the progress card in hosting settings.
-- Hosting-ui declares `setupSteps` for plan (`Zz`, first after sign-in), web address (`a0V`) and email domain (`a0k`).
-- Hosting-ui contributes a seat meter to the core `setup-team` slot. Seat limits stay enforced by the hosting seat hooks on `users`.
-- The first-mailbox step moves to the mail package as a generic step, since a standalone server with mail can use it too.
-- `enter.tsx` keeps sending the owner to the app root; the core entry rule opens the wizard.
-
-## 13. Out of scope
+## 12. Out of scope
 
 - A package banner slot in the app shell.
 - Package steps adding to the preview.

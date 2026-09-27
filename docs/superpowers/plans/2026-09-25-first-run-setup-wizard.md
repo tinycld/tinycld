@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Web and native both work. No web-only or native-only code paths except where the existing code already has them (`Platform.OS === 'web'` for `window.location.origin`).
-- Core never names a package, `hosting`, `tenant`, `saas` or `router` (`pnpm run check:core-isolation` must pass).
+- Core never names a package or a kind of deployment (`pnpm run check:core-isolation` must pass).
 - No raw hex colors. Use semantic Tailwind tokens (`bg-primary`, `text-muted-foreground`, `bg-rail-background`, `text-rail-text`, …) or `useThemeColor(...)`.
 - No `useEffect`+`useState` to sync data. Server data via `useLiveQuery`; writes via `useMutation` from `@tinycld/core/lib/mutations`; shared UI state via Zustand (`@tinycld/core/lib/store`).
 - Keep JSX minimal: no `.map()`, complex ternaries or calculations in the returned JSX. Use `isVisible` props instead of `{cond && <Big/>}`.
@@ -1267,12 +1267,12 @@ describe('compareStepOrder', () => {
         expect(
             sort([
                 { id: 'core:apps', order: 'a1' },
-                { id: 'hosting-ui:plan', order: 'Zz' },
-                { id: 'hosting-ui:domain', order: 'a0k' },
+                { id: 'widgets:plan', order: 'Zz' },
+                { id: 'widgets:domain', order: 'a0k' },
                 { id: 'core:workspace', order: 'a0' },
-                { id: 'hosting-ui:web', order: 'a0V' },
+                { id: 'widgets:web', order: 'a0V' },
             ])
-        ).toEqual(['hosting-ui:plan', 'core:workspace', 'hosting-ui:web', 'hosting-ui:domain', 'core:apps'])
+        ).toEqual(['widgets:plan', 'core:workspace', 'widgets:web', 'widgets:domain', 'core:apps'])
     })
     it('breaks ties by id and puts unkeyed steps last', () => {
         expect(
@@ -1793,8 +1793,8 @@ describe('buildSetupStepEntries', () => {
 
 describe('step URL params', () => {
     it('round-trips ids through a URL-safe param', () => {
-        expect(stepIdToParam('hosting-ui:web-address')).toBe('hosting-ui.web-address')
-        expect(paramToStepId('hosting-ui.web-address')).toBe('hosting-ui:web-address')
+        expect(stepIdToParam('widgets:web-address')).toBe('widgets.web-address')
+        expect(paramToStepId('widgets.web-address')).toBe('widgets:web-address')
     })
 })
 ```
@@ -2899,5 +2899,5 @@ git commit -m "test(setup): first-run wizard end to end on the shipped binary"
 
 ## Out of scope for this plan
 
-- Hosting-ui steps (plan, web address, email domain), the seat meter contribution, and the mail "Your address" step. Each belongs to its own repo's plan and uses the `setupSteps` field and `core:setup-team` slot this plan adds.
-- A hosted tenant re-reads its name from `.runtime/app.json` at boot (see `org_info.go`), so a rename through `/api/org-info/name` does not survive a hosted restart. The hosting plan must decide how a tenant rename reaches the router.
+- Steps and `core:setup-team` slot contributions from packages. Each belongs to its own repo's plan and uses the `setupSteps` field and `core:setup-team` slot this plan adds.
+- A deployment that re-reads its name from `.runtime/app.json` at boot (see `org_info.go`) loses a rename made through `/api/org-info/name` when it restarts. A service provider that writes that file must decide how a rename reaches it.
