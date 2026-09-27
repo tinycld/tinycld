@@ -274,6 +274,19 @@ func TestMarkInterrupted(t *testing.T) {
 	}
 }
 
+// PocketBase applies migrations in Serve, after bootstrap, so the boot hook
+// runs against a fresh database before the backups collection exists.
+func TestMarkInterruptedBeforeTheCollectionExists(t *testing.T) {
+	app, err := newBareApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+	if err := MarkInterrupted(app, time.Now()); err != nil {
+		t.Fatalf("a database with no backups collection has nothing to close, got %v", err)
+	}
+}
+
 func TestMarkInterruptedLeavesRunsFromThisBoot(t *testing.T) {
 	app := newTestApp(t)
 	row := newRow(app, KindScheduled, "", "")

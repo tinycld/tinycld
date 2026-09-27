@@ -9,6 +9,7 @@
 // hand it the TS entry, which works regardless of package manager or hoisting.
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
+import { constants } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -21,7 +22,10 @@ const tsxCli = require.resolve('tsx/cli')
 const child = spawn(process.execPath, [tsxCli, cliEntry, ...process.argv.slice(2)], {
     stdio: 'inherit',
 })
-child.on('exit', code => process.exit(code ?? 0))
+// A child killed by a signal has no exit code. Treating that as 0 reported a
+// killed test run (OOM, a timeout's SIGTERM) as a pass; use the shell's
+// 128 + signal number instead.
+child.on('exit', (code, signal) => process.exit(code ?? 128 + (constants.signals[signal] ?? 0)))
 child.on('error', err => {
     console.error('[tinycld-pkg] failed to launch:', err)
     process.exit(1)

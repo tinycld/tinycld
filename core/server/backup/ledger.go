@@ -1,6 +1,8 @@
 package backup
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"path/filepath"
@@ -91,6 +93,13 @@ func HostOnly(raw string) string {
 // existed cannot still be running, because the goroutine that owned it died
 // with the old process.
 func MarkInterrupted(app core.App, bootedAt time.Time) error {
+	// PocketBase applies migrations in Serve, after bootstrap, so on a fresh
+	// database the collection does not exist yet — and no run can be in it.
+	if _, err := app.FindCachedCollectionByNameOrId(collection); errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
 	rows, err := app.FindRecordsByFilter(collection, "status = 'running' || status = 'waiting_for_source'", "", 0, 0)
 	if err != nil {
 		return err

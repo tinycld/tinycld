@@ -51,9 +51,8 @@ const SERVER_ENV: Record<string, string> = Object.fromEntries(
 
 export default defineConfig({
     // Override Playwright's CI default (the `dot` reporter, which prints a bare
-    // `·` per completed test — no name, so a run looks frozen during the cold
-    // Metro compile each worker pays on its first test, then dumps every dot at
-    // once). In non-TTY CI, `list` prints a NAMED line as each test COMPLETES
+    // `·` per completed test — no name, so a long-running spec makes the run look
+    // frozen). In non-TTY CI, `list` prints a NAMED line as each test COMPLETES
     // (`✓ 3 mail › opens thread (4.1s)`) — it doesn't stream a per-test "started"
     // line (that's TTY-only), but the accruing named lines + durations show
     // which tests have finished and that the run is progressing. Inherited by
@@ -81,10 +80,9 @@ export default defineConfig({
     //
     // WHY A FIXED 2 RATHER THAN A PERCENTAGE. The runner has 2 cores, so any
     // percentage at or below 100% resolves to 1 there, while a developer
-    // machine with 14 cores would take 7 and pay seven cold Metro compiles
-    // (see the reporter note above — each worker pays one on its first test).
-    // A fixed 2 is the number that helps CI, which is where the wall clock
-    // actually hurts, and it caps that startup cost on a laptop too.
+    // machine with 14 cores would take 7 browsers against one PocketBase. A
+    // fixed 2 is the number that helps CI, which is where the wall clock
+    // actually hurts, and it keeps local runs the same shape as CI.
     //
     // A package that needs different parallelism overrides this in its own
     // config; a suite whose specs are not independent should be FIXED rather
