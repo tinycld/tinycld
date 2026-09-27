@@ -12,3 +12,4 @@
 // literal, so any sibling spec that reads or stages the auth blob needs this.
 export * from '../tests/e2e/auth-key-helpers.ts'
 export * from '../tests/e2e/helpers.ts'
+export * from './e2e-setup-helpers.ts'

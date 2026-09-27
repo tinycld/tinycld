@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CORE_STEP_IDS } from './step-ids'
 import type { StepStatus, WizardState } from './types'
 
 const wizardStateSchema = z.object({
@@ -10,7 +11,7 @@ const wizardStateSchema = z.object({
     orgNameSeeded: z.boolean().optional(),
 })
 
-export const WORKSPACE_STEP_ID = 'core:workspace'
+export const WORKSPACE_STEP_ID = CORE_STEP_IDS.workspace
 
 export function parseWizardState(raw: string | undefined): WizardState | null {
     if (!raw) return null

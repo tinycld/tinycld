@@ -1,4 +1,5 @@
 import { MailSendingPanel } from '@tinycld/core/components/settings/system/MailSendingPanel'
+import { SetupContinueButton } from '@tinycld/core/components/setup/wizard/SetupContinueButton'
 import {
     type PackageSystemSettingsGroup,
     packageSystemSettings,
@@ -9,7 +10,6 @@ import {
     useIsManagedSettingsPending,
     useIsSettingManaged,
 } from '@tinycld/core/lib/use-managed-settings'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { Suspense } from 'react'
 import { Text, View } from 'react-native'
 
@@ -74,9 +74,7 @@ export default function EmailStep({ next }: SetupStepProps) {
                 <MailSendingPanel />
                 {panels}
             </View>
-            <Button className="self-start" onPress={next}>
-                <ButtonText>Continue</ButtonText>
-            </Button>
+            <SetupContinueButton onPress={next} />
         </View>
     )
 }

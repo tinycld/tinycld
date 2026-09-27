@@ -686,6 +686,8 @@ setupSteps: [
 
 When the person skips a step, the progress bar shows it as skipped, and the wizard does not open it again when it resumes.
 
+**Continue button and e2e tests.** Use `SetupContinueButton` from `@tinycld/core/components/setup/wizard/SetupContinueButton` for the step's Continue. The wizard gives the current step's container the test ID `setup-step-<slug>:<id>`, and the button has the test ID `setup-continue`. The helpers in `@tinycld/core/e2e-setup-helpers` (also in `@tinycld/core/e2e-helpers`) use these IDs: `expectSetupStep(page, stepId)`, `continueSetupStep(page, stepId)` and `continueSetupSteps(page, stepIds)`. Core's step IDs are in `CORE_STEP_IDS`. Use the helpers, not the step text, so that your tests do not fail when core changes its text.
+
 **The `setup-team` slot.** Core renders a sidebar slot on the Team step, above the invite form. A package can add content there (for example, a link to import people from another service) with a `sidebarContributions` entry that targets core:
 
 ```ts

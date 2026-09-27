@@ -10,14 +10,22 @@ import (
 )
 
 // ErrDomainAlreadyEnrolled means the provider account already has this domain.
-// On a shared hosting account that is the normal collision between two orgs
-// claiming the same name, so it is a distinct error the caller can phrase as
-// "already configured on this host" rather than surfacing a raw 422.
+// On a deployment where one provider account is shared by many orgs, that is
+// the normal collision between two orgs claiming the same name, so it is a
+// distinct error the caller can phrase as "already configured" rather than
+// surfacing a raw 422.
 var ErrDomainAlreadyEnrolled = errors.New("maildomains: domain already enrolled on this provider account")
 
 // ErrDomainNotEnrolled means the account has never heard of the domain — the
 // state every domain is in before AddDomain runs.
 var ErrDomainNotEnrolled = errors.New("maildomains: domain not enrolled with the provider")
+
+// ErrDomainIDMismatch means a caller-supplied provider id names a DIFFERENT
+// domain than the one requested. It always wraps ErrDomainNotEnrolled too, so
+// read callers keep treating it as "not enrolled"; RemoveDomain tells it apart
+// because an id pointing at another domain is a caller bug or an attack, not
+// an already-removed domain.
+var ErrDomainIDMismatch = errors.New("maildomains: provider domain id names a different domain")
 
 // domainListLimit bounds the domain listing Postmark pages over.
 const domainListLimit = 100
@@ -29,6 +37,9 @@ type PostmarkDomains interface {
 	CreateDomain(ctx context.Context, req postmark.DomainCreateRequest) (postmark.DomainDetails, error)
 	GetDomains(ctx context.Context, count, offset int) (postmark.DomainsList, error)
 	GetDomain(ctx context.Context, domainID int64) (postmark.DomainDetails, error)
+	VerifyDKIMStatus(ctx context.Context, domainID int64) (postmark.DomainDetails, error)
+	VerifyReturnPath(ctx context.Context, domainID int64) (postmark.DomainDetails, error)
+	DeleteDomain(ctx context.Context, domainID int64) error
 }
 
 // PostmarkRegistrar is the DIRECT implementation: it calls Postmark
@@ -58,16 +69,16 @@ type PostmarkRegistrar struct {
 // Takes a func() string rather than a plain string so the token can resolve
 // from a seam that populates after construction (syscfg, in core's wiring)
 // without becoming stale. A caller that already holds a concrete token
-// up front (hosting's mailDomainRegistrar) can still use one: wrap it with
-// StaticToken.
+// up front (a registrar built by a supervisor composition) can still use
+// one: wrap it with StaticToken.
 func NewPostmarkRegistrar(accountToken func() string, client PostmarkDomains) *PostmarkRegistrar {
 	return &PostmarkRegistrar{accountToken: accountToken, client: client}
 }
 
 // StaticToken wraps an already-known token as a func() string, for a caller
 // that holds a concrete value up front rather than a seam to read lazily
-// (e.g. hosting's mailDomainRegistrar, which reads the token once from its
-// own control-plane config on each request).
+// (e.g. a registrar that reads the token once from its own supervisor-side
+// config on each request).
 func StaticToken(token string) func() string {
 	return func() string { return token }
 }
@@ -106,22 +117,74 @@ func (p *PostmarkRegistrar) GetDomain(ctx context.Context, domain string, provid
 			return nil, fmt.Errorf("postmark get domain: %w", err)
 		}
 		// The id is an ACCOUNT-GLOBAL handle, not proof of ownership. On a
-		// hosted deployment one Postmark account is shared by every org, so an
-		// id supplied by a caller may name ANOTHER org's domain — and the
+		// deployment where one Postmark account is shared by every org, an id
+		// supplied by a caller may name ANOTHER org's domain — and the
 		// response carries that domain's name, DKIM public key and return-path
 		// host. Requiring the fetched name to match the requested one demotes
 		// the id from a capability to a cache key: it can only ever speed up a
 		// lookup the caller could already perform by name.
 		//
 		// This check must live HERE, below the seam, rather than in the caller:
-		// the tenant that supplies the id is exactly the party a caller-side
+		// the org that supplies the id is exactly the party a caller-side
 		// check would be trusting.
 		if !strings.EqualFold(details.Name, domain) {
-			return nil, fmt.Errorf("%w: %s", ErrDomainNotEnrolled, domain)
+			return nil, fmt.Errorf("%w: %w: %s", ErrDomainNotEnrolled, ErrDomainIDMismatch, domain)
 		}
 		return toDomainRecords(details), nil
 	}
 	return p.findByName(ctx, domain)
+}
+
+// VerifyDomain asks Postmark to re-check DKIM and Return-Path, then reads the
+// domain back so the caller gets the complete, current records.
+//
+// The id is resolved through GetDomain first, which carries the ownership
+// check: a caller-supplied id naming another org's domain is refused before
+// any verify call touches it.
+func (p *PostmarkRegistrar) VerifyDomain(ctx context.Context, domain string, providerDomainID int64) (*DomainRecords, error) {
+	rec, err := p.GetDomain(ctx, domain, providerDomainID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.client.VerifyDKIMStatus(ctx, rec.ID); err != nil {
+		return nil, fmt.Errorf("postmark verify dkim: %w", err)
+	}
+	if _, err := p.client.VerifyReturnPath(ctx, rec.ID); err != nil {
+		return nil, fmt.Errorf("postmark verify return path: %w", err)
+	}
+	details, err := p.client.GetDomain(ctx, rec.ID)
+	if err != nil {
+		return nil, fmt.Errorf("postmark get domain: %w", err)
+	}
+	return toDomainRecords(details), nil
+}
+
+// RemoveDomain deletes the domain from the account. Not enrolled, or already
+// gone by the time the delete lands, is success.
+//
+// Resolved through GetDomain for the same ownership check as VerifyDomain —
+// here it guards the most destructive call on the account token. An id that
+// names a different domain is NOT "already removed": it returns the error so
+// the caller does not record a removal that never happened.
+func (p *PostmarkRegistrar) RemoveDomain(ctx context.Context, domain string, providerDomainID int64) error {
+	rec, err := p.GetDomain(ctx, domain, providerDomainID)
+	notEnrolled := errors.Is(err, ErrDomainNotEnrolled) && !errors.Is(err, ErrDomainIDMismatch)
+	// A stale stored id does not prove the domain is gone: deleted and re-added
+	// at Postmark, it lives on under a new id. Retry once by name.
+	if notEnrolled && providerDomainID != 0 {
+		rec, err = p.GetDomain(ctx, domain, 0)
+		notEnrolled = errors.Is(err, ErrDomainNotEnrolled)
+	}
+	if notEnrolled {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := p.client.DeleteDomain(ctx, rec.ID); err != nil && !isNotFound(err) {
+		return fmt.Errorf("postmark delete domain: %w", err)
+	}
+	return nil
 }
 
 // findByName is the fallback for a row enrolled before the id was stored. It
@@ -176,14 +239,23 @@ func isAlreadyExists(err error) bool {
 }
 
 func toDomainRecords(d postmark.DomainDetails) *DomainRecords {
+	// Postmark reports a NEW domain's DKIM record only in the pending fields,
+	// so without this fallback there is no DKIM record to publish and DKIM
+	// never verifies. The pair is taken together so host and value always
+	// belong to the same key; a verified pair wins because it is the one DNS
+	// is serving.
+	dkimHost, dkimValue := d.DKIMHost, d.DKIMTextValue
+	if dkimHost == "" && dkimValue == "" {
+		dkimHost, dkimValue = d.DKIMPendingHost, d.DKIMPendingTextValue
+	}
 	return &DomainRecords{
 		Domain:               d.Name,
 		ID:                   d.ID,
 		SPFVerified:          d.SPFVerified,
 		DKIMVerified:         d.DKIMVerified,
 		ReturnPathVerified:   d.ReturnPathDomainVerified,
-		DKIMHost:             d.DKIMHost,
-		DKIMTextValue:        d.DKIMTextValue,
+		DKIMHost:             dkimHost,
+		DKIMTextValue:        dkimValue,
 		ReturnPathDomain:     d.ReturnPathDomain,
 		ReturnPathCNAMEValue: d.ReturnPathDomainCNAMEValue,
 	}

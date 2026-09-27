@@ -1,12 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { OrgBrandingSection } from '@tinycld/core/components/settings/OrgBrandingSection'
+import { SetupContinueButton } from '@tinycld/core/components/setup/wizard/SetupContinueButton'
 import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { useSetupPreviewStore } from '@tinycld/core/lib/setup/setup-preview-store'
 import type { SetupStepProps } from '@tinycld/core/lib/setup/types'
 import { ORG_INFO_QUERY_KEY } from '@tinycld/core/lib/use-org-info'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useEffect } from 'react'
 import { Text, View } from 'react-native'
@@ -80,9 +80,7 @@ export default function WorkspaceStep({ next }: SetupStepProps) {
             <View className="mb-4">
                 <OrgBrandingSection />
             </View>
-            <Button className="self-start" onPress={onSubmit} isDisabled={isPending}>
-                <ButtonText>Continue</ButtonText>
-            </Button>
+            <SetupContinueButton onPress={onSubmit} isDisabled={isPending} />
         </View>
     )
 }

@@ -7,6 +7,7 @@ import {
     inviteSchema,
     useInviteMember,
 } from '@tinycld/core/components/settings/members/use-invite-member'
+import { SetupContinueButton } from '@tinycld/core/components/setup/wizard/SetupContinueButton'
 import { SidebarSlot } from '@tinycld/core/components/sidebar-primitives/SidebarSlot'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { CORE_SLOT_TARGET } from '@tinycld/core/lib/setup/core-slots'
@@ -153,9 +154,7 @@ export default function TeamStep({ next }: SetupStepProps) {
             <InvitedLink invited={invited} />
             <Text className="text-sm font-semibold text-foreground">People in this workspace</Text>
             <View className="mb-4">{people}</View>
-            <Button className="self-start" onPress={next}>
-                <ButtonText>Continue</ButtonText>
-            </Button>
+            <SetupContinueButton onPress={next} />
         </View>
     )
 }
