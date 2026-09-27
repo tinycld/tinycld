@@ -13,6 +13,11 @@ export const CORE_STEP_IDS = {
 // spec advances a step without reading its copy.
 export const SETUP_CONTINUE_TEST_ID = 'setup-continue'
 
+// The shell's Skip, one per screen. A step whose done state is derived from
+// data stays current until that data exists, so Skip is how a spec passes an
+// optional step it does not fill.
+export const SETUP_SKIP_TEST_ID = 'setup-skip'
+
 export function setupStepTestId(stepId: string): string {
     return `setup-step-${stepId}`
 }
