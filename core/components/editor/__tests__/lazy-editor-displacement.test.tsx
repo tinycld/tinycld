@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, render } from '@testing-library/react'
+import { captureExceptionToSentry } from '@tinycld/core/lib/sentry'
 import { Text, View } from 'react-native'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WarmEditorLease } from '../../../lib/editor/warm/types'
@@ -52,6 +53,13 @@ const lease: WarmEditorLease = {
     },
     generation: 1,
 }
+
+// Error paths below are expected; record them instead of printing to stderr.
+vi.mock('@tinycld/core/lib/sentry', () => ({
+    addBreadcrumbToSentry: vi.fn(),
+    captureExceptionToSentry: vi.fn(),
+    captureMessageToSentry: vi.fn(),
+}))
 
 vi.mock('../../../lib/editor/warm', () => ({
     useWarmEditor: () => lease,
@@ -159,7 +167,7 @@ describe('displacement', () => {
      */
     it('does nothing when the editor is merely unheld', async () => {
         const onCommit = vi.fn()
-        const { rerender } = render(<Probe onCommit={onCommit} commitOnDisplace />)
+        const { rerender, unmount } = render(<Probe onCommit={onCommit} commitOnDisplace />)
 
         holder = null
         result = null
@@ -168,6 +176,14 @@ describe('displacement', () => {
         })
 
         expect(onCommit).not.toHaveBeenCalled()
+        // Leaving with no editor to read must drop the write, not commit ''.
+        unmount()
+        expect(onCommit).not.toHaveBeenCalled()
+        expect(captureExceptionToSentry).toHaveBeenCalledWith(
+            'editor.lazy.submitWithoutEditor',
+            expect.any(Error),
+            expect.anything()
+        )
     })
 
     /**

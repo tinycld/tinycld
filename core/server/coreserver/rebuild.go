@@ -459,16 +459,27 @@ func changedMember(m RebuildManifest, buildDir string) (slug, version string) {
 // buildCurrentMemberSet reads installed/bundled pkg_registry rows into the
 // member set the current live build represents. The base row (slug "core") maps
 // to the tinycld member. Always includes tinycld.
+//
+// A bundled app the owner hid is "disabled", yet its code is still in the
+// build, so it stays in the set: leaving it out would make the next install,
+// upgrade or uninstall rebuild without it, and re-enabling it would then
+// point at code that is gone. A disabled row that is not bundled has no code
+// in the build (it left it), so it stays out.
 func buildCurrentMemberSet(app core.App) ([]MemberSpec, error) {
 	recs, err := app.FindAllRecords("pkg_registry",
-		dbx.In("status", "installed", "bundled"))
+		dbx.In("status", "installed", "bundled", "disabled"))
 	if err != nil {
 		return nil, err
 	}
+	bundled := bundledSlugSet()
 	out := make([]MemberSpec, 0, len(recs))
 	for _, r := range recs {
+		slug := r.GetString("slug")
+		if r.GetString("status") == "disabled" && !bundled[slug] {
+			continue
+		}
 		out = append(out, MemberSpec{
-			Slug:    registrySlugToMember(r.GetString("slug")),
+			Slug:    registrySlugToMember(slug),
 			Version: r.GetString("version"),
 			Spec:    r.GetString("npm_package"),
 		})
@@ -479,7 +490,8 @@ func buildCurrentMemberSet(app core.App) ([]MemberSpec, error) {
 // commitRegistry mirrors the just-activated manifest into pkg_registry so the
 // admin inventory reflects the live build:
 //   - existing rows for present members: version/spec updated, status set to
-//     installed (bundled rows keep "bundled");
+//     installed (bundled rows keep "bundled", and a hidden bundled row stays
+//     "disabled");
 //   - present members with NO row yet (a fresh install): a full row is created
 //     from the member's manifest parsed out of the build dir;
 //   - the row for uninstalledSlug (a user-initiated uninstall): DELETED, so the
@@ -500,6 +512,7 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir, uninstalledSlug s
 	if err != nil {
 		return err
 	}
+	bundled := bundledSlugSet()
 	seen := map[string]bool{}
 	for _, r := range recs {
 		slug := r.GetString("slug")
@@ -547,7 +560,10 @@ func commitRegistry(app core.App, m RebuildManifest, buildDir, uninstalledSlug s
 			r.Set("npm_package", ms.Spec)
 			changed = true
 		}
-		if r.GetString("status") != "bundled" && r.GetString("status") != "installed" {
+		// A hidden bundled app is in the build (see buildCurrentMemberSet) but
+		// must stay hidden; only the owner's toggle shows it again.
+		isHiddenBundled := r.GetString("status") == "disabled" && bundled[slug]
+		if !isHiddenBundled && r.GetString("status") != "bundled" && r.GetString("status") != "installed" {
 			r.Set("status", "installed")
 			changed = true
 		}

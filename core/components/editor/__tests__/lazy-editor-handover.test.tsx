@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, render } from '@testing-library/react'
+import { captureExceptionToSentry } from '@tinycld/core/lib/sentry'
 import { isValidElement } from 'react'
 import { Text, View } from 'react-native'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -58,6 +59,13 @@ const lease: WarmEditorLease = {
         return generation
     },
 }
+
+// Error paths below are expected; record them instead of printing to stderr.
+vi.mock('@tinycld/core/lib/sentry', () => ({
+    addBreadcrumbToSentry: vi.fn(),
+    captureExceptionToSentry: vi.fn(),
+    captureMessageToSentry: vi.fn(),
+}))
 
 vi.mock('../../../lib/editor/warm', () => ({
     useWarmEditor: () => lease,
@@ -132,6 +140,11 @@ describe('LazyEditor handover safety', () => {
         })
 
         expect(onCommit).not.toHaveBeenCalled()
+        expect(captureExceptionToSentry).toHaveBeenCalledWith(
+            'editor.lazy.staleRead',
+            expect.any(Error),
+            expect.objectContaining({ generationAtRead: 1, generationNow: 2 })
+        )
     })
 
     /**

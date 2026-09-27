@@ -1,5 +1,7 @@
+import { appHref } from '@tinycld/core/lib/org-routes'
 import { setPendingRoute } from '@tinycld/core/lib/pending-route'
-import { useUnstableGlobalHref } from 'expo-router'
+import { useNeedsSetup } from '@tinycld/core/lib/setup/use-needs-setup'
+import { Redirect, useUnstableGlobalHref } from 'expo-router'
 import { useEffect } from 'react'
 import { LoginModal } from './LoginModal'
 
@@ -21,6 +23,10 @@ export function AuthGate() {
     useEffect(() => {
         setPendingRoute(href)
     }, [href])
+
+    // Nobody can sign in to a server that has no owner yet: claim it instead.
+    const needsSetup = useNeedsSetup()
+    if (needsSetup) return <Redirect href={appHref('setup')} />
 
     return <LoginModal />
 }

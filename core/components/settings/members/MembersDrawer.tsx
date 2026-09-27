@@ -1,8 +1,7 @@
 import { Avatar } from '@tinycld/core/components/Avatar'
 import { useAuth } from '@tinycld/core/lib/auth'
-import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
-import { pb, useStore } from '@tinycld/core/lib/pocketbase'
+import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useAvatarUrl } from '@tinycld/core/lib/use-avatar-url'
 import {
@@ -19,7 +18,6 @@ import {
     FormErrorSummary,
     TextInput,
     useForm,
-    z,
     zodResolver,
 } from '@tinycld/core/ui/form'
 import { Switch } from '@tinycld/core/ui/switch'
@@ -40,6 +38,12 @@ import {
     ROLE_ORDER,
     ROLE_SWATCH,
 } from './types'
+import {
+    type InviteFormValues,
+    type InviteResult,
+    inviteSchema,
+    useInviteMember,
+} from './use-invite-member'
 import { useRoleColors } from './use-role-color'
 
 // writeIsDemo writes the demo flag onto a pbtsdb users-collection draft. The
@@ -446,19 +450,6 @@ function RemoveSection({
     )
 }
 
-const inviteSchema = z.object({
-    username: z
-        .string()
-        .regex(
-            /^[a-z0-9][a-z0-9_-]{0,31}$/,
-            'Use 1-32 chars: lowercase letters, digits, dash or underscore'
-        ),
-    email: z.string().email('Enter a valid email address').or(z.literal('')).optional(),
-    role: z.enum(['admin', 'member', 'guest']),
-})
-
-type InviteFormValues = z.infer<typeof inviteSchema>
-
 function InviteView({ onDone }: { onDone: () => void }) {
     const fgColor = useThemeColor('foreground')
     const mutedColor = useThemeColor('muted-foreground')
@@ -480,28 +471,9 @@ function InviteView({ onDone }: { onDone: () => void }) {
         defaultValues: { username: '', email: '', role: 'member' },
     })
 
-    const [result, setResult] = useState<{ userId: string; inviteUrl: string } | null>(null)
+    const [result, setResult] = useState<InviteResult | null>(null)
 
-    const invite = useMutation({
-        mutationFn: async (data: InviteFormValues) => {
-            // Single-org: /api/invite-member returns `userId` (the user_org
-            // junction is gone). Reading a junction-row id here yielded
-            // undefined, so the link panel called
-            // /api/invite-link/undefined/{rotate,send} and got a 404 — the
-            // invite itself succeeded, only its follow-up actions were broken.
-            return pb.send<{ userId: string; inviteUrl: string }>('/api/invite-member', {
-                method: 'POST',
-                body: JSON.stringify({
-                    username: data.username.trim().toLowerCase(),
-                    email: data.email?.trim() ?? '',
-                    role: data.role,
-                }),
-                headers: { 'Content-Type': 'application/json' },
-            })
-        },
-        onSuccess: data => setResult({ userId: data.userId, inviteUrl: data.inviteUrl }),
-        onError: handleMutationErrorsWithForm({ setError, getValues }),
-    })
+    const invite = useInviteMember({ setError, getValues, onInvited: setResult })
 
     const onSubmit = handleSubmit(data => invite.mutate(data))
     const inviteRoles: OrgRole[] = ['admin', 'member', 'guest']

@@ -23,6 +23,13 @@ export interface ConfigSearch {
     label?: string
 }
 
+export interface ConfigSetupStep {
+    id: string
+    label: string
+    module: string // package-exports subpath e.g. 'setup/plan'
+    order: string | null
+}
+
 export interface ConfigEventSource {
     target: string
     id: string
@@ -48,6 +55,7 @@ export interface ConfigPkg {
     automation?: string // exports subpath to the AutomationDefinitions module
     eventSources: ConfigEventSource[]
     eventSourceHost: boolean
+    setupSteps: ConfigSetupStep[]
     manifest: { name: string; slug: string; version: string; description: string } & Record<
         string,
         unknown
@@ -82,6 +90,7 @@ function validateConfigPkg(p: ConfigPkg): void {
     if (p.search) assertSafeImportField('search.adapter', p.search.adapter)
     if (p.automation) assertSafeImportField('automation', p.automation)
     for (const s of p.eventSources) assertSafeImportField('eventSources[].module', s.module)
+    for (const s of p.setupSteps) assertSafeImportField('setupSteps[].module', s.module)
 }
 
 function pushEventSourceLines(lines: string[], p: ConfigPkg): void {
@@ -92,6 +101,19 @@ function pushEventSourceLines(lines: string[], p: ConfigPkg): void {
         const color = s.color ? ` color: ${jsonLiteral(s.color)},` : ''
         lines.push(
             `            { target: ${jsonLiteral(s.target)}, id: ${jsonLiteral(s.id)}, label: ${jsonLiteral(s.label)},${color} order: ${s.order}, load: () => import('${p.packageName}/${s.module}') },`
+        )
+    }
+    lines.push('        ],')
+}
+
+// Bare load thunks, not lazy(): the module exports hooks alongside the
+// component, and the wizard needs them before it renders any step.
+function pushSetupStepLines(lines: string[], p: ConfigPkg): void {
+    if (p.setupSteps.length === 0) return
+    lines.push('        setupSteps: [')
+    for (const s of p.setupSteps) {
+        lines.push(
+            `            { id: ${jsonLiteral(s.id)}, label: ${jsonLiteral(s.label)}, order: ${jsonLiteral(s.order)}, load: () => import('${p.packageName}/${s.module}') },`
         )
     }
     lines.push('        ],')
@@ -196,6 +218,7 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
             lines.push('        },')
         }
         pushEventSourceLines(lines, p)
+        pushSetupStepLines(lines, p)
         if (p.automation) lines.push(`        automation: ${ident(p.slug)}Automation,`)
         lines.push('    }),')
     }

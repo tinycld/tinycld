@@ -65,6 +65,15 @@ export interface PackageEventSource {
     order: number
     load: () => Promise<unknown>
 }
+// A first-run wizard step. `load` is a bare thunk (not React.lazy) because
+// the module exports hooks as well as the component — see
+// core/lib/setup/types.ts for the contract.
+export interface PackageSetupStep {
+    id: string
+    label: string
+    order: string | null
+    load: () => Promise<unknown>
+}
 export interface SeedUser {
     id: string
     username: string
@@ -131,6 +140,7 @@ export interface PackageEntry<S extends SchemaDeclaration, R> {
         load: () => Promise<unknown>
     }
     eventSources?: PackageEventSource[]
+    setupSteps?: PackageSetupStep[]
     automation?: AutomationDefinitions
     seed?: (pb: PocketBase, ctx: SeedContext) => Promise<void>
 }
@@ -156,6 +166,7 @@ export function definePackageEntry<S extends SchemaDeclaration>() {
         sidebarContributions?: PackageEntry<S, R>['sidebarContributions']
         search?: PackageEntry<S, R>['search']
         eventSources?: PackageEntry<S, R>['eventSources']
+        setupSteps?: PackageEntry<S, R>['setupSteps']
         automation?: PackageEntry<S, R>['automation']
         seed?: PackageEntry<S, R>['seed']
     }): PackageEntry<S, R> => entry as unknown as PackageEntry<S, R>

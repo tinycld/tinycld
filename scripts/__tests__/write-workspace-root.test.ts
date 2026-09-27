@@ -144,7 +144,10 @@ describe('writeWorkspaceRoot', () => {
         fs.writeFileSync(path.join(wsRoot, 'pnpm-workspace.yaml'), 'storeDir: /baked\n')
         fs.writeFileSync(path.join(wsRoot, 'package-versions.json'), '{"expo":"55.0.0"}')
         vi.stubEnv('TINYCLD_SERVER_REBUILD', '1')
+        const info = vi.spyOn(console, 'log').mockImplementation(() => {})
         writeWorkspaceRoot(wsRoot, appDir)
+        expect(info.mock.calls.flat().join(' ')).toMatch(/leaving pin files/)
+        info.mockRestore()
         expect(fs.readFileSync(path.join(wsRoot, 'pnpm-workspace.yaml'), 'utf8')).toBe(
             'storeDir: /baked\n'
         )

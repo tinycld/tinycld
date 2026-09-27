@@ -97,19 +97,19 @@ jobs:
           docker logs tinycld-smoke || true
           exit 1
 
-      - name: Scrape setup token from container logs
-        id: token
+      - name: Scrape setup code from container logs
+        id: code
         run: |
           set -eu
-          token=$(docker logs tinycld-smoke 2>&1 | grep -oE 'token=[a-f0-9]+' | head -1 | cut -d= -f2)
-          if [ -z "$token" ]; then
-            echo "::error::no setup token printed in logs"
+          code=$(docker logs tinycld-smoke 2>&1 | grep -oE 'code=[A-Z0-9]{8}' | head -1 | cut -d= -f2)
+          if [ -z "$code" ]; then
+            echo "::error::no setup code printed in logs"
             docker logs tinycld-smoke
             exit 1
           fi
-          echo "token=${token}" >> "$GITHUB_OUTPUT"
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
           # Mask in subsequent log output even though it's a one-time bootstrap.
-          echo "::add-mask::${token}"
+          echo "::add-mask::${code}"
 
       # The post-cutover app repo has no package-lock.json (the lockfile
       # lives only at the workspace root, which isn't checked in) and the
@@ -158,7 +158,7 @@ jobs:
           # block uses `import.meta.url` + `createRequire('@tinycld/core/...')`,
           # which only resolves inside the workspace; in this isolated CJS sandbox
           # it either throws ("exports is not defined") or hangs the TS loader.
-          # The runner forwards PW_BASE_URL / PW_SETUP_TOKEN via env instead, so
+          # The runner forwards PW_BASE_URL / PW_SETUP_CODE via env instead, so
           # the loader is unnecessary here. Drop the `import { createRequire }`
           # line and replace the call with a no-op.
           sed -e "/^import { createRequire } from 'node:module'$/d" \
@@ -182,7 +182,7 @@ jobs:
         timeout-minutes: 5
         env:
           PW_BASE_URL: http://localhost:7090
-          PW_SETUP_TOKEN: ${{ steps.token.outputs.token }}
+          PW_SETUP_CODE: ${{ steps.code.outputs.code }}
           CI: 'true'
           DEBUG: 'pw:api,pw:browser*'
           FORCE_COLOR: '0'

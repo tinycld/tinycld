@@ -306,6 +306,11 @@ const pkg_build = newCollection('pkg_build', {
 // the create_system_settings migration.
 const system_settings = newCollection('system_settings', {
     omitOnInsert: ['created', 'updated'],
+    // On-demand so a query for one key (the setup wizard's, read on every
+    // app load for owners and admins) fetches that row alone instead of
+    // every setting, secrets included. The Settings console still asks for
+    // all of them.
+    syncMode: 'on-demand',
     ...indexing,
 })
 

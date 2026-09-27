@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // environment bellChannel and osChannel transitively load modules that throw
 // (pocketbase needs EXPO_PUBLIC_ENV; notifications loads web-push). We only
 // care about the toast path here, so stub the other channels' external deps.
+// Error paths below are expected; record them instead of printing to stderr.
+vi.mock('@tinycld/core/lib/sentry', () => ({ captureExceptionToSentry: vi.fn() }))
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
     notificationsCollection: {
         insert: vi.fn(() => ({ isPersisted: { promise: Promise.resolve() } })),

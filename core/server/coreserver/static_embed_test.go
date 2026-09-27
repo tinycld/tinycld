@@ -117,7 +117,7 @@ func TestStaticFS_UnrenamedShellBreaksEveryDeepLink(t *testing.T) {
 	runStaticFSScenario(t, unrenamed, nil, nil, &tests.ApiScenario{
 		Name:            "the first-run setup deep link 404s",
 		Method:          http.MethodGet,
-		URL:             "/a/setup?token=abc",
+		URL:             "/a/setup?code=abc",
 		ExpectedStatus:  http.StatusNotFound,
 		ExpectedContent: []string{"wasn't found"},
 	})

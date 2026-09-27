@@ -1,5 +1,6 @@
 import { captureException } from '@tinycld/core/lib/errors'
 import { unregisterExpoPushToken } from '@tinycld/core/lib/expo-push'
+import { log } from '@tinycld/core/lib/logger'
 import { clearPendingRoute } from '@tinycld/core/lib/pending-route'
 import {
     authStoreReady,
@@ -94,6 +95,12 @@ interface AuthStoreState {
         otpId: string
     ) => Promise<VerifyOtpResult>
     startDemo: (serverAddr: string) => Promise<LoginResult>
+    // Adopt a token minted by the server outside a PocketBase auth call (the
+    // first-run owner). The caller has only the user's id and email.
+    signInWithToken: (
+        token: string,
+        identity: { id: string; email: string }
+    ) => Promise<LoginResult>
 }
 
 export const useAuthStore = create<AuthStoreState>()((set, get) => ({
@@ -320,6 +327,33 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         } catch (error) {
             captureException('demo.start', error)
             const message = error instanceof Error ? error.message : 'Failed to start demo'
+            return { user: null, error: message }
+        }
+    },
+
+    signInWithToken: async (token, identity) => {
+        pb.authStore.save(token, {
+            ...identity,
+            collectionId: '_pb_users_auth_',
+            collectionName: 'users',
+        } as never)
+        try {
+            // The saved record is partial; authRefresh replaces it with the
+            // full one. Then refetch what the signed-out screens synced as
+            // nobody (see refetchLoadedStores), exactly as login does.
+            await refreshAuth()
+            const user = getUserFromAuthStore()
+            const record = pb.authStore.record as Users | null
+            if (!user || !record) return { user: null, error: 'The new session was not accepted.' }
+            await seedUser(record)
+            set({ user })
+            await preloadStores()
+            return { user, error: null }
+        } catch (error) {
+            // The owner already exists, so the caller sends the person to sign
+            // in; without this the reason they had to is lost.
+            log.error('core.setup', error)
+            const message = error instanceof Error ? error.message : 'Failed to sign in'
             return { user: null, error: message }
         }
     },

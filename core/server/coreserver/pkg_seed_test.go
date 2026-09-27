@@ -374,3 +374,30 @@ func TestSyncBundledPackagesCreatesRowForNewSlug(t *testing.T) {
 		t.Errorf("version = %q, want %q", got, "0.3.0")
 	}
 }
+
+// A bundled package the owner disabled must stay disabled across boots.
+// SyncBundledPackages used to flip it back to bundled, so every restart
+// undid the owner's choice.
+func TestSyncBundledPackagesKeepsOwnerDisabledRow(t *testing.T) {
+	app := newRegistryOnlyApp(t)
+	dir := t.TempDir()
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Drive", Slug: "drive", Version: "1.0.0"}})
+	withCwd(t, dir)
+
+	SyncBundledPackages(app)
+	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'drive'", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.Set("status", "disabled")
+	if err := app.Save(rec); err != nil {
+		t.Fatal(err)
+	}
+
+	SyncBundledPackages(app)
+
+	after, _ := app.FindFirstRecordByFilter("pkg_registry", "slug = 'drive'", nil)
+	if got := after.GetString("status"); got != "disabled" {
+		t.Fatalf("status after re-sync = %q, want disabled", got)
+	}
+}

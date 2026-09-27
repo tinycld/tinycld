@@ -1,9 +1,27 @@
-import type { ConfigPkg } from './gen-config'
+import { CORE_SLOT_TARGET, CORE_SLOTS } from '../core/lib/setup/core-slots'
+import { isValidOrderKey } from '../core/lib/setup/order'
+import type { ConfigPkg, ConfigSetupStep } from './gen-config'
 import type { PackageManifest } from './load-manifest'
 
 export function schemaTypeName(slug: string): string {
     const camel = slug.replace(/-([a-z])/g, (_m, c) => c.toUpperCase())
     return `${camel.charAt(0).toUpperCase()}${camel.slice(1)}Schema`
+}
+
+function toSetupSteps(manifest: PackageManifest): ConfigSetupStep[] {
+    return (manifest.setupSteps ?? []).map(s => {
+        if (!/^[a-z0-9-]+$/.test(s.id)) {
+            throw new Error(
+                `[generate] ${manifest.slug}: setupStep id '${s.id}' is invalid — ids appear in URLs and must match [a-z0-9-]+`
+            )
+        }
+        if (s.order !== undefined && !isValidOrderKey(s.order)) {
+            throw new Error(
+                `[generate] ${manifest.slug}: setupStep '${s.id}' has order '${s.order}', which is not a fractional-indexing key (core uses a0–a3)`
+            )
+        }
+        return { id: s.id, label: s.label, module: s.module, order: s.order ?? null }
+    })
 }
 
 export function manifestToConfigPkg(packageName: string, manifest: PackageManifest): ConfigPkg {
@@ -55,6 +73,7 @@ export function manifestToConfigPkg(packageName: string, manifest: PackageManife
             order: s.order ?? 0,
         })),
         eventSourceHost: Boolean(manifest.eventSourceHost),
+        setupSteps: toSetupSteps(manifest),
         manifest: {
             name: manifest.name,
             slug: manifest.slug,
@@ -151,6 +170,7 @@ export function validateEventSources(pkgs: ConfigPkg[]): void {
 
 export function validateSidebarContributions(pkgs: ConfigPkg[]): void {
     const slotsByTarget = new Map<string, Set<string>>()
+    slotsByTarget.set(CORE_SLOT_TARGET, new Set(CORE_SLOTS))
     for (const p of pkgs) {
         slotsByTarget.set(p.slug, new Set(p.slots))
     }

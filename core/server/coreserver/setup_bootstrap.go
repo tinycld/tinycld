@@ -1,26 +1,46 @@
 package coreserver
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
-
-	"sync"
+	"time"
 
 	"tinycld.org/core/approutes"
 
+	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 )
 
-var (
-	setupToken   string
-	setupTokenMu sync.Mutex
-)
+var setupState = newSetupGuard(time.Now, announceSetupCode)
+
+// announceSetupCode prints the code on its own line and inside the link, so
+// a person can either click the link or type the code into any client
+// (a native app has no link to click).
+func announceSetupCode(code string) {
+	printBoxed(
+		"Finish setup in your browser:",
+		setupPublicURL()+approutes.Href("setup")+"?code="+code,
+		"Setup code: "+formatSetupCode(code),
+	)
+}
+
+var setupBaseURL string
+
+// setupPublicURL prefers TINYCLD_PUBLIC_URL so the printed link matches where
+// the person browses; PocketBase's baseURL is the bind address, which is
+// wrong behind a reverse proxy.
+func setupPublicURL() string {
+	if publicURL := strings.TrimRight(os.Getenv("TINYCLD_PUBLIC_URL"), "/"); publicURL != "" {
+		return publicURL
+	}
+	return strings.TrimRight(setupBaseURL, "/")
+}
 
 func RegisterSetupBootstrap(app *pocketbase.PocketBase) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
@@ -34,161 +54,163 @@ func RegisterSetupBootstrap(app *pocketbase.PocketBase) {
 			}
 		}
 
-		// Replace PB's default installer with our own setup URL
+		// setupBaseURL is written once here, at boot, before any request is
+		// served, then only ever read — no concurrent access to guard.
 		e.InstallerFunc = func(_ core.App, _ *core.Record, baseURL string) error {
-			token, err := generateToken(32)
-			if err != nil {
-				return fmt.Errorf("setup bootstrap: failed to generate token: %w", err)
-			}
-
-			setupTokenMu.Lock()
-			setupToken = token
-			setupTokenMu.Unlock()
-
-			// Prefer TINYCLD_PUBLIC_URL when set so the printed URL matches
-			// where the user actually browses (dev: scripts/dev.ts proxy on
-			// 7100; prod: whatever public URL fronts PB). PB's baseURL is
-			// the bind address, which is wrong whenever a reverse proxy
-			// sits in front of the server.
-			publicURL := strings.TrimRight(os.Getenv("TINYCLD_PUBLIC_URL"), "/")
-			if publicURL == "" {
-				publicURL = strings.TrimRight(baseURL, "/")
-			}
-			setupURL := fmt.Sprintf("%s%s?token=%s", publicURL, approutes.Href("setup"), token)
-			printBoxed("First run setup, visit below URL to configure tinycld:", setupURL)
-			return nil
+			setupBaseURL = baseURL
+			return setupState.Issue()
 		}
 
 		e.Router.GET("/api/setup/check", func(re *core.RequestEvent) error {
-			setupTokenMu.Lock()
-			hasToken := setupToken != ""
-			setupTokenMu.Unlock()
-			return re.JSON(http.StatusOK, map[string]bool{"needsSetup": hasToken})
+			return re.JSON(http.StatusOK, map[string]bool{"needsSetup": setupState.NeedsSetup()})
 		})
-
+		e.Router.POST("/api/setup/verify", func(re *core.RequestEvent) error {
+			var body struct {
+				Code string `json:"code"`
+			}
+			if err := json.NewDecoder(re.Request.Body).Decode(&body); err != nil {
+				return re.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body."})
+			}
+			if result := setupState.Check(re.RealIP(), body.Code); result != checkOK {
+				return setupRefusal(re, result)
+			}
+			return re.JSON(http.StatusOK, map[string]any{})
+		})
 		e.Router.POST("/api/setup/init", func(re *core.RequestEvent) error {
-			return handleSetupInit(app, re)
+			var req setupInitRequest
+			if err := json.NewDecoder(re.Request.Body).Decode(&req); err != nil {
+				return re.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body."})
+			}
+			body, status := runSetupInit(app, setupState, re.RealIP(), req)
+			return re.JSON(status, body)
 		})
-
 		return e.Next()
 	})
 }
 
 type setupInitRequest struct {
-	Token    string `json:"token"`
-	AppName  string `json:"appName"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	AppURL   string `json:"appUrl"`
 }
 
-func handleSetupInit(app *pocketbase.PocketBase, re *core.RequestEvent) error {
-	setupTokenMu.Lock()
-	currentToken := setupToken
-	setupTokenMu.Unlock()
+var setupRefusalBodies = map[checkResult]map[string]string{
+	checkMismatch: {"error": "That code does not match. Check the server log for the latest code.", "reason": "mismatch"},
+	checkLocked:   {"error": "Too many tries. Wait 10 minutes, or restart the server for a new code.", "reason": "locked"},
+	checkNoSetup:  {"error": "This server is already set up.", "reason": "done"},
+}
 
-	if currentToken == "" {
-		return re.JSON(http.StatusForbidden, map[string]string{
-			"error": "Setup has already been completed.",
-		})
+func setupRefusal(re *core.RequestEvent, result checkResult) error {
+	return re.JSON(http.StatusForbidden, setupRefusalBodies[result])
+}
+
+// runSetupInit is the handler body, split out so tests drive it without HTTP.
+func runSetupInit(app core.App, guard *setupGuard, ip string, req setupInitRequest) (any, int) {
+	if strings.TrimSpace(req.Email) == "" || req.Password == "" {
+		return map[string]string{"error": "Email and password are required."}, http.StatusBadRequest
 	}
-
-	var req setupInitRequest
-	if err := json.NewDecoder(re.Request.Body).Decode(&req); err != nil {
-		return re.JSON(http.StatusBadRequest, map[string]string{
-			"error": "Invalid request body.",
-		})
+	var operator *core.Record
+	result, err := guard.Consume(ip, req.Code, func() error {
+		created, cerr := createSetupOwner(app, req)
+		operator = created
+		return cerr
+	})
+	if result != checkOK {
+		return setupRefusalBodies[result], http.StatusForbidden
 	}
-
-	if req.Token != currentToken {
-		return re.JSON(http.StatusForbidden, map[string]string{
-			"error": "Invalid setup token.",
-		})
-	}
-
-	if req.Email == "" || req.Password == "" {
-		return re.JSON(http.StatusBadRequest, map[string]string{
-			"error": "Email and password are required.",
-		})
-	}
-
-	setupTokenMu.Lock()
-	tokenStillValid := setupToken != ""
-	setupTokenMu.Unlock()
-	if !tokenStillValid {
-		return re.JSON(http.StatusForbidden, map[string]string{
-			"error": "Setup has already been completed.",
-		})
-	}
-
-	// Bootstrap two identities for the first operator:
-	//   1. a PocketBase _superusers record — keeps PB's installer satisfied (so
-	//      the setup token isn't re-printed on every reboot), backs the sharelink
-	//      signing key, and remains a recovery login.
-	//   2. a regular `users` record with role=owner — this is the identity the
-	//      /admin console actually runs as. The console writes through the
-	//      app's pbtsdb stores (the shared app pb client), and those writes
-	//      must carry an auth that satisfies the users `manageRule` (the
-	//      owner/admin clause) to set managed fields like `verified` when
-	//      creating a pre-verified user. A raw _superusers token on a
-	//      throwaway client never reached those stores, which is why org creation
-	//      failed with a 400 on `verified`. We therefore mint the returned auth
-	//      token from the `users` record and the client saves it onto the shared
-	//      pb instance.
-	superusers, err := app.FindCollectionByNameOrId("_superusers")
 	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Failed to find superusers collection.",
-		})
+		srvLog.Error("setup: owner creation failed", "err", err)
+		return map[string]string{"error": setupInitFailureMessage(err)}, http.StatusBadRequest
 	}
-	superuser := core.NewRecord(superusers)
-	superuser.SetEmail(req.Email)
-	superuser.SetPassword(req.Password)
-	superuser.SetVerified(true)
-	if err := app.Save(superuser); err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"error": fmt.Sprintf("Failed to create superuser: %v", err),
-		})
-	}
-
-	operator, err := createOwnerOperator(app, req.Email, "", req.Password)
-	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"error": fmt.Sprintf("Failed to create admin user: %v", err),
-		})
-	}
-
-	if req.AppName != "" {
-		app.Settings().Meta.AppName = req.AppName
-	}
-	if req.AppURL != "" {
-		app.Settings().Meta.AppURL = req.AppURL
-	}
-	if req.AppName != "" || req.AppURL != "" {
-		if err := app.Save(app.Settings()); err != nil {
-			srvLog.Warn("setup bootstrap: failed to save settings", "err", err)
-		}
-	}
-
-	// Clear the token — one-time use
-	setupTokenMu.Lock()
-	setupToken = ""
-	setupTokenMu.Unlock()
-
-	// Mint the token from the `users` operator (not _superusers) so the console
-	// runs as the owner app user and store writes are authorized.
 	authToken, err := operator.NewAuthToken()
 	if err != nil {
-		return re.JSON(http.StatusInternalServerError, map[string]string{
-			"error": "Admin user created but failed to generate auth token.",
-		})
+		return map[string]string{"error": "Owner created but failed to generate auth token."}, http.StatusInternalServerError
 	}
+	return map[string]string{"authToken": authToken, "email": req.Email, "userId": operator.Id}, http.StatusOK
+}
 
-	return re.JSON(http.StatusOK, map[string]string{
-		"authToken": authToken,
-		"email":     req.Email,
-		"userId":    operator.Id,
+// createSetupOwner mints both identities (see createOperatorIdentities for
+// why there are two), saves the app URL and starts the wizard. It runs inside
+// the guard's lock.
+//
+// Bootstrap two identities for the first operator:
+//  1. a PocketBase _superusers record — keeps PB's installer satisfied (so
+//     the setup code isn't re-printed on every reboot), backs the sharelink
+//     signing key, and remains a recovery login.
+//  2. a regular `users` record with role=owner — this is the identity the
+//     /admin console actually runs as. The console writes through the
+//     app's pbtsdb stores (the shared app pb client), and those writes
+//     must carry an auth that satisfies the users `manageRule` (the
+//     owner/admin clause) to set managed fields like `verified` when
+//     creating a pre-verified user. A raw _superusers token on a
+//     throwaway client never reached those stores, which is why org creation
+//     failed with a 400 on `verified`. We therefore mint the returned auth
+//     token from the `users` record and the client saves it onto the shared
+//     pb instance.
+func createSetupOwner(app core.App, req setupInitRequest) (*core.Record, error) {
+	// One transaction: a users save that fails after the superuser was saved
+	// would otherwise leave that superuser behind, so a retry with the same
+	// code fails on its duplicate email, and after a restart PocketBase's
+	// installer (which only runs while no superuser exists) no longer prints a
+	// code at all — the server could never be claimed.
+	var operator *core.Record
+	err := app.RunInTransaction(func(txApp core.App) error {
+		superusers, err := txApp.FindCollectionByNameOrId(core.CollectionNameSuperusers)
+		if err != nil {
+			return fmt.Errorf("find superusers collection: %w", err)
+		}
+		superuser := core.NewRecord(superusers)
+		superuser.SetEmail(req.Email)
+		superuser.SetPassword(req.Password)
+		superuser.SetVerified(true)
+		if err := txApp.Save(superuser); err != nil {
+			return fmt.Errorf("create superuser: %w", err)
+		}
+		created, err := createOwnerOperator(txApp, req.Email, req.Name, req.Password)
+		if err != nil {
+			return fmt.Errorf("create owner: %w", err)
+		}
+		operator = created
+		if req.AppURL != "" {
+			txApp.Settings().Meta.AppURL = req.AppURL
+			if err := txApp.Save(txApp.Settings()); err != nil {
+				srvLog.Warn("setup: failed to save app URL", "err", err)
+			}
+		}
+		if err := MarkSetupWizardStarted(txApp); err != nil {
+			srvLog.Warn("setup: could not start the setup wizard", "err", err)
+		}
+		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return operator, nil
+}
+
+// setupInitFailureMessage is what the person sees when the owner could not be
+// created. A validation message (a name that is too long, a weak password)
+// tells them what to change; anything else is a server fault whose detail
+// belongs in the log, not on the form.
+func setupInitFailureMessage(err error) string {
+	var verrs validation.Errors
+	if !errors.As(err, &verrs) {
+		return "Could not create the owner account."
+	}
+	// validation.Errors.Error() adds its own full stop after each message,
+	// which already ends in one; build the text from the parts instead.
+	fields := make([]string, 0, len(verrs))
+	for field := range verrs {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	parts := make([]string, 0, len(fields))
+	for _, field := range fields {
+		parts = append(parts, field+": "+verrs[field].Error())
+	}
+	return strings.Join(parts, " ")
 }
 
 // IsBcryptHash reports whether v looks like a bcrypt hash ("$2" prefix, the
@@ -295,18 +317,12 @@ func newOwnerRecord(app core.App, email, name string) (*core.Record, error) {
 	return operator, nil
 }
 
-func generateToken(bytes int) (string, error) {
-	b := make([]byte, bytes)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
-func printBoxed(title, url string) {
-	w := len(url) + 4
-	if titleW := len(title) + 4; titleW > w {
-		w = titleW
+func printBoxed(title string, lines ...string) {
+	w := len(title) + 4
+	for _, l := range lines {
+		if lineW := len(l) + 4; lineW > w {
+			w = lineW
+		}
 	}
 	h := strings.Repeat("─", w)
 
@@ -318,6 +334,8 @@ func printBoxed(title, url string) {
 	fmt.Printf("\n┌%s┐\n", h)
 	fmt.Printf("%s\n", pad(title))
 	fmt.Printf("│%s│\n", strings.Repeat(" ", w))
-	fmt.Printf("%s\n", pad(url))
+	for _, l := range lines {
+		fmt.Printf("%s\n", pad(l))
+	}
 	fmt.Printf("└%s┘\n\n", h)
 }

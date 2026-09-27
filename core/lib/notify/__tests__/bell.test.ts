@@ -5,8 +5,11 @@
 // component. Keep both: this file tests the channel, that one tests the wiring.
 import { bellChannel } from '@tinycld/core/lib/notify/channels/bell'
 import { clearNotifyContext, setNotifyContext } from '@tinycld/core/lib/notify/context'
+import { captureExceptionToSentry } from '@tinycld/core/lib/sentry'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// Error paths below are expected; record them instead of printing to stderr.
+vi.mock('@tinycld/core/lib/sentry', () => ({ captureExceptionToSentry: vi.fn() }))
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
     notificationsCollection: {
         insert: vi.fn(() => ({ isPersisted: { promise: Promise.resolve() } })),
@@ -63,6 +66,10 @@ describe('BellChannel', () => {
 
         const { notificationsCollection } = await import('@tinycld/core/lib/pocketbase')
         expect(notificationsCollection.insert).not.toHaveBeenCalled()
+        expect(captureExceptionToSentry).toHaveBeenCalledWith(
+            'notify.bell.no_context',
+            expect.any(Error)
+        )
     })
 
     it('defaults body, url, and metadata when the input omits them', async () => {

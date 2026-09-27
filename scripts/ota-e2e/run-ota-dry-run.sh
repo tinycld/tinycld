@@ -5,7 +5,7 @@
 #   1. Pre-flight: docker running, sim UDID, Xcode, free Docker disk.
 #   2. Build the server image (the install-harness Dockerfile) unless reused.
 #   3. Boot the container on :7090 with bind-mounts; wait for first-boot health.
-#   4. Scrape the first-run /admin bootstrap token from the container logs.
+#   4. Scrape the first-run setup code from the container logs.
 #   5. Drive the install spec's first two tests (bootstrap superuser + install
 #      @tinycld/todo v1.0.0). The install runs `expo export --platform ios`,
 #      minting a `build-<ts>-ios` bundle — the newer bundle the app reloads into.
@@ -166,14 +166,14 @@ boot_container() {
 
 scrape_token() {
     local i
-    TOKEN=""
+    CODE=""
     for i in $(seq 1 30); do
-        TOKEN="$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'token=[a-f0-9]+' | head -1 | cut -d= -f2 || true)"
-        [ -n "${TOKEN}" ] && break
+        CODE="$(docker logs "${CONTAINER}" 2>&1 | grep -oE 'code=[A-Z0-9]{8}' | head -1 | cut -d= -f2 || true)"
+        [ -n "${CODE}" ] && break
         sleep 1
     done
-    [ -n "${TOKEN}" ] || die "no first-run /admin bootstrap token printed within 30s"
-    log "scraped bootstrap token (${#TOKEN} chars)"
+    [ -n "${CODE}" ] || die "no first-run setup code printed within 30s"
+    log "scraped setup code (${#CODE} chars)"
 }
 
 # ---------------------------------------------------------------------------
@@ -197,8 +197,8 @@ mint_ios_bundle() {
     log "ensuring chromium for playwright"
     (cd "${APP_DIR}" && pnpm exec playwright install chromium >/dev/null 2>&1) || true
 
-    # The /admin?token= setup wizard only renders while pb_data has NO superuser,
-    # and the token is one-shot. On a fresh container we run bootstrap+install; on
+    # The /setup?code= wizard only renders while pb_data has NO superuser, and
+    # the code is one-shot. On a fresh container we run bootstrap+install; on
     # a reused (already-bootstrapped) container we run install-only, which logs in
     # as the existing superuser. Pick the right test set by probing for the user.
     local grep_expr
@@ -207,14 +207,14 @@ mint_ios_bundle() {
         grep_expr='install @tinycld/todo pinned to v1.0.0'
     else
         log "fresh container — running bootstrap + install"
-        grep_expr='bootstrap superuser via /admin wizard|install @tinycld/todo pinned to v1.0.0'
+        grep_expr='bootstrap owner via /setup wizard|install @tinycld/todo pinned to v1.0.0'
     fi
 
     log "installing @tinycld/todo v1.0.0 (mints the ios bundle via expo export — several minutes)…"
     (
         cd "${APP_DIR}/tests/install"
         PW_BASE_URL="${SERVER_URL}" \
-        PW_TODO_SETUP_TOKEN="${TOKEN}" \
+        PW_TODO_SETUP_CODE="${CODE}" \
         ADMIN_USER_LOGIN="${ADMIN_USER_LOGIN}" \
         ADMIN_USER_PW="${ADMIN_USER_PW}" \
         RUN_TODO_INSTALL_TEST=1 \

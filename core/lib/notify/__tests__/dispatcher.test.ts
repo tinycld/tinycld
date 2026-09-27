@@ -1,9 +1,12 @@
 import type { NotifyChannel } from '@tinycld/core/lib/notify/channels/types'
 import { __setChannelsForTests, notify } from '@tinycld/core/lib/notify/dispatcher'
+import { captureExceptionToSentry } from '@tinycld/core/lib/sentry'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // Channel modules are imported eagerly by the dispatcher; stub their deps so
 // loading this test does not require runtime env (pocketbase client, RN APIs).
+// Error paths below are expected; record them instead of printing to stderr.
+vi.mock('@tinycld/core/lib/sentry', () => ({ captureExceptionToSentry: vi.fn() }))
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
     notificationsCollection: {
         insert: vi.fn(() => ({ isPersisted: { promise: Promise.resolve() } })),
@@ -71,6 +74,11 @@ describe('notify.emit', () => {
             })
         ).not.toThrow()
         expect(bell.dispatch).toHaveBeenCalled()
+        expect(captureExceptionToSentry).toHaveBeenCalledWith(
+            'notify.channel.threw',
+            expect.any(Error),
+            { channel: 'toast' }
+        )
     })
 
     it('swallows a channel rejection without affecting others', async () => {
@@ -88,5 +96,10 @@ describe('notify.emit', () => {
         // allow microtasks to flush
         await new Promise(r => setTimeout(r, 0))
         expect(bell.dispatch).toHaveBeenCalled()
+        expect(captureExceptionToSentry).toHaveBeenCalledWith(
+            'notify.channel.rejected',
+            expect.any(Error),
+            { channel: 'toast' }
+        )
     })
 })

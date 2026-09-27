@@ -145,6 +145,14 @@ export interface PackageManifest {
     // enforced by the version-management compatibility solver. See the
     // PackageManifest doc in core/lib/packages/types.ts.
     peerVersions?: Record<string, string>
+    /**
+     * Steps this package adds to the first-run setup wizard. `module` is a
+     * package-exports subpath whose module default-exports the step component
+     * and may export `useIsStepDone` / `useIsStepVisible` (see
+     * core/lib/setup/types.ts). `order` is a fractional-indexing key; core's
+     * steps are a0 (workspace), a1 (apps), a2 (email), a3 (team).
+     */
+    setupSteps?: { id: string; label: string; module: string; order?: string }[]
 }
 
 // Import a member's manifest.ts (ESM default export). This file is run via tsx,

@@ -359,6 +359,7 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 // single-org composition; the users hooks in particular bind in
 // guard → demo-audit → disabled order.
 func RegisterSharedCore(app *pocketbase.PocketBase) {
+	RegisterPkgEnableHook(app)
 	notify.Register(app)
 	notify.RegisterCommentMentionHooks(app)
 	// Teach the realtime broker how to verify anonymous share-session
@@ -382,6 +383,7 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	RegisterInviteEndpoint(app)
 	RegisterInviteLinkEndpoints(app)
 	RegisterOrgInfoEndpoint(app)
+	RegisterOrgNameEndpoint(app)
 	// The org backup API. Shared for the same reason as the boot hook above.
 	RegisterBackupEndpoints(app)
 	// Per-user storage breakdown. Shared: a hosting tenant's admin has the

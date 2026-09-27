@@ -92,5 +92,6 @@ export function useOrgInfo() {
     // pending window lets a hosted owner act on it before the managed banner
     // arrives; callers that gate on it wait instead.
     const managedSettings = data?.managedSettings ?? NO_MANAGED_SETTINGS
-    return { org, managedSettings, isManagedSettingsPending: isPending }
+    // isPending tells "no name yet" apart from "not loaded yet".
+    return { org, managedSettings, isManagedSettingsPending: isPending, isPending }
 }

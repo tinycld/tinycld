@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, render } from '@testing-library/react'
+import { captureExceptionToSentry } from '@tinycld/core/lib/sentry'
 import { Text, View } from 'react-native'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EditorResult } from '../../../lib/editor/types'
@@ -57,6 +58,13 @@ function currentLease(): WarmEditorLease {
         result: leaseState.result,
     }
 }
+
+// Error paths below are expected; record them instead of printing to stderr.
+vi.mock('@tinycld/core/lib/sentry', () => ({
+    addBreadcrumbToSentry: vi.fn(),
+    captureExceptionToSentry: vi.fn(),
+    captureMessageToSentry: vi.fn(),
+}))
 
 // Built per call rather than closed over a module-level const: vi.mock factories
 // are hoisted above these declarations, so capturing one directly would read it
@@ -178,5 +186,10 @@ describe('LazyEditor renders exactly two things', () => {
         // Reading a nonexistent editor resolves to '', and committing that
         // would blank the record. The persisted value must survive untouched.
         expect(onCommit).not.toHaveBeenCalled()
+        expect(captureExceptionToSentry).toHaveBeenCalledWith(
+            'editor.lazy.submitWithoutEditor',
+            expect.any(Error),
+            expect.anything()
+        )
     })
 })

@@ -1,23 +1,27 @@
 import { expect, type Page, test } from '@playwright/test'
 
-// Smoke-tests for the /admin flow. Split into three tests so most of the
-// coverage runs without the one-time PW_SETUP_TOKEN:
-//   1. bootstrap (needs PW_SETUP_TOKEN) — fills the first-run wizard and
-//      creates the superuser. Skipped if the token isn't exported.
+// Smoke-tests for the first-run wizard + /admin flow. Split into three tests
+// so most of the coverage runs without the one-time PW_SETUP_CODE:
+//   1. bootstrap (needs PW_SETUP_CODE) — claims the server and creates the
+//      owner through the first-run wizard. Skipped if the code isn't exported.
 //   2. dashboard packages tab — logs in as the superuser, asserts every
 //      bundled feature package shows up.
 //   3. system settings — saves a value and asserts it reaches the client.
-//      Drives /settings as the OWNER app user, not the /setup console: the
-//      system-settings panels live in the in-app settings area (the /setup
-//      console is superuser-recovery only, and redirects any admin away).
+//      Drives /settings as the OWNER app user, not the /setup/recovery
+//      console: the system-settings panels live in the in-app settings area
+//      (/setup/recovery is superuser-recovery only, and redirects any admin
+//      away).
 //
 // The tests run serially: the later tests depend on the superuser created by
-// test 1 (or by a previous bootstrap if PW_SETUP_TOKEN was consumed earlier).
+// test 1 (or by a previous bootstrap if PW_SETUP_CODE was consumed earlier).
+// Test 1 finishes the wizard with "Finish later" (rather than completing every
+// step) so it lands in the app and does not leave the owner mid-wizard, which
+// would otherwise redirect tests 2 and 3's navigations back into /a/setup.
 //
-// PW_SETUP_TOKEN is scraped from `docker logs <container>` by the workflow
+// PW_SETUP_CODE is scraped from `docker logs <container>` by the workflow
 // before invoking playwright.
 
-const SETUP_TOKEN = process.env.PW_SETUP_TOKEN
+const SETUP_CODE = process.env.PW_SETUP_CODE
 
 // Adjust this list when the public-CI default LINKED_PACKAGES set changes.
 // The names match `app/server/bundled-packages.json::name` (capitalized
@@ -75,11 +79,11 @@ async function loginAsOwner(page: Page) {
 }
 
 async function loginAsSuperuser(page: Page) {
-    // /setup, not /admin: the pre-auth bootstrap + superuser-login console moved
-    // there in the single-org migration (app/admin.tsx → app/setup.tsx). /admin
-    // is now the authenticated console behind AuthGate, which renders a
-    // LoginModal rather than the superuser form.
-    await page.goto('/a/setup')
+    // /setup/recovery, not /admin: the raw-superuser recovery console moved
+    // there once /setup itself became the first-run wizard door. /admin is the
+    // authenticated console behind AuthGate, which renders a LoginModal rather
+    // than the superuser form.
+    await page.goto('/a/setup/recovery')
     await expect(page.getByText('Superuser Login')).toBeVisible()
     await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
     await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
@@ -94,39 +98,34 @@ async function loginAsSuperuser(page: Page) {
 test.describe.configure({ mode: 'serial' })
 
 test.describe('first-run install', () => {
-    test('bootstrap superuser via /setup wizard', async ({ page }) => {
+    test('bootstrap owner via /setup wizard', async ({ page }) => {
         test.skip(
-            !SETUP_TOKEN,
-            'PW_SETUP_TOKEN not set — workflow must scrape it from `docker logs` and export before running'
+            !SETUP_CODE,
+            'PW_SETUP_CODE not set — workflow must scrape it from `docker logs` and export before running'
         )
 
-        await page.goto(`/a/setup?token=${SETUP_TOKEN}`)
+        await page.goto(`/a/setup?code=${SETUP_CODE}`)
 
-        await expect(page.getByText('Welcome to TinyCld')).toBeVisible()
+        await expect(page.getByText('Create your owner account')).toBeVisible()
 
-        // The wizard form has five required fields. Application Name and
-        // App URL were added after this spec was first written; without
-        // them the submit handler short-circuits on validation and the
-        // 'Create Account & Continue' click resolves into nothing.
-        await page
-            .getByRole('textbox', { name: 'Application Name', exact: true })
-            .fill('Smoke TinyCld')
+        await page.getByRole('textbox', { name: 'Name', exact: true }).fill('Smoke Owner')
         await page.getByRole('textbox', { name: 'Email', exact: true }).fill(SUPERUSER_EMAIL)
         await page.getByRole('textbox', { name: 'Password', exact: true }).fill(SUPERUSER_PASSWORD)
         await page
-            .getByRole('textbox', { name: 'Confirm Password', exact: true })
+            .getByRole('textbox', { name: 'Confirm password', exact: true })
             .fill(SUPERUSER_PASSWORD)
-        await page
-            .getByRole('textbox', { name: 'App URL', exact: true })
-            .fill('http://localhost:7090')
 
-        await page.getByRole('button', { name: 'Create Account & Continue' }).click()
+        await page.getByRole('button', { name: 'Create account' }).click()
 
-        // Setup wizard transitions in-place to the dashboard. Single-org: the
-        // default tab is Packages (SetupDashboard defaultTab), and the
-        // Organizations tab is now a static "managed by the router" explainer
-        // rather than a create form with an empty list.
-        await expect(page.getByText('Packages', { exact: true }).first()).toBeVisible()
+        // The owner is created and signed in; the signed-in wizard opens on its
+        // first step.
+        await expect(page.getByText('Your workspace')).toBeVisible()
+
+        // Tests 2 and 3 sign back in and expect to land on Settings/System —
+        // leaving the owner mid-wizard would redirect those navigations back
+        // into the wizard instead. "Finish later" dismisses it for now; Settings
+        // still offers a "Finish setup" card to resume it.
+        await page.getByRole('button', { name: 'Finish later' }).click()
     })
 
     test('superuser dashboard lists every bundled package', async ({ page }) => {

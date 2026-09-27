@@ -264,6 +264,58 @@ describe('validateEventSources', () => {
     })
 })
 
+describe('setupSteps', () => {
+    const base = { name: 'Acme', slug: 'acme', version: '1.0.0', description: 'x' }
+
+    it('carries setup steps with their order', () => {
+        const pkg = manifestToConfigPkg('@acme/acme', {
+            ...base,
+            setupSteps: [{ id: 'plan', label: 'Plan', module: 'setup/plan', order: 'Zz' }],
+        })
+        expect(pkg.setupSteps).toEqual([
+            { id: 'plan', label: 'Plan', module: 'setup/plan', order: 'Zz' },
+        ])
+    })
+
+    it('rejects an invalid order key', () => {
+        expect(() =>
+            manifestToConfigPkg('@acme/acme', {
+                ...base,
+                setupSteps: [{ id: 'plan', label: 'Plan', module: 'setup/plan', order: '10' }],
+            })
+        ).toThrow(/order '10'/)
+    })
+
+    it('rejects a step id outside [a-z0-9-]', () => {
+        expect(() =>
+            manifestToConfigPkg('@acme/acme', {
+                ...base,
+                setupSteps: [{ id: 'Plan.x', label: 'Plan', module: 'setup/plan' }],
+            })
+        ).toThrow(/id 'Plan\.x'/)
+    })
+})
+
+describe('core slot contributions', () => {
+    const pkg = (slot: string) =>
+        manifestToConfigPkg('@acme/acme', {
+            name: 'Acme',
+            slug: 'acme',
+            version: '1.0.0',
+            description: 'x',
+            sidebarContributions: [{ target: 'core', slot, component: 'setup/seats' }],
+        })
+
+    it('accepts a slot core declares', () => {
+        expect(() => validateSidebarContributions([pkg('setup-team')])).not.toThrow()
+    })
+    it('rejects an unknown core slot', () => {
+        expect(() => validateSidebarContributions([pkg('nope')])).toThrow(
+            /unknown slot 'core:nope'/
+        )
+    })
+})
+
 describe('validateNavShortcuts', () => {
     const withShortcut = (slug: string, shortcut?: string) =>
         manifestToConfigPkg(`@tinycld/${slug}`, {

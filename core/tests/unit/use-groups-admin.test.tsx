@@ -6,15 +6,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const h = vi.hoisted(() => ({ registry: {} as Record<string, unknown> }))
 
 vi.mock('@tinycld/core/lib/pocketbase', async () => {
-    const { createCollection, localOnlyCollectionOptions } = await import('@tanstack/db')
+    const { BasicIndex, createCollection, localOnlyCollectionOptions } = await import(
+        '@tanstack/db'
+    )
+    // Indexed like the app's collections (core/lib/pocketbase.ts), so a join
+    // loads through the index instead of warning about a full scan.
     const mk = <T extends { id: string }>(id: string, initialData: T[]) =>
-        createCollection(
-            localOnlyCollectionOptions({
+        createCollection({
+            ...localOnlyCollectionOptions({
                 id: `${id}-${Math.random()}`,
                 getKey: (r: T) => r.id,
                 initialData,
-            })
-        )
+            }),
+            autoIndex: 'eager',
+            defaultIndexType: BasicIndex,
+        })
     h.registry = {
         groups: mk('groups', [{ id: 'g1', name: 'Sales', description: '' }]),
         group_members: mk('group_members', [{ id: 'm1', group: 'g1', user: 'u1' }]),
