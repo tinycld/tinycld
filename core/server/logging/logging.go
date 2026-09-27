@@ -47,6 +47,9 @@ func Install(pbHandler slog.Handler) {
 //
 //	log := logging.ForPackage("boards")
 //	log.WarnContext(ctx, "refusing to flush a card from another board", "cardID", id)
+//
+// The logger follows the default installed later by Install (see lazyHandler),
+// so it is safe to create in a package-level var.
 func ForPackage(name string) *slog.Logger {
-	return slog.Default().With("pkg", name)
+	return slog.New(newLazyHandler(nil)).With("pkg", name)
 }
