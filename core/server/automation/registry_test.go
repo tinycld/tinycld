@@ -10,18 +10,18 @@ import (
 func TestActionRegistry(t *testing.T) {
 	t.Cleanup(ResetRegistriesForTest)
 	called := false
-	RegisterAction("mail:send-message", func(app core.App, req ActionRequest) error {
+	RegisterAction("gizmos:send-message", func(app core.App, req ActionRequest) error {
 		called = true
 		return nil
 	})
-	h, ok := actionHandler("mail:send-message")
+	h, ok := actionHandler("gizmos:send-message")
 	if !ok {
 		t.Fatal("registered handler must resolve")
 	}
 	if err := h(nil, ActionRequest{}); err != nil || !called {
 		t.Fatal("handler must be invocable")
 	}
-	if _, ok := actionHandler("mail:unregistered"); ok {
+	if _, ok := actionHandler("gizmos:unregistered"); ok {
 		t.Fatal("unknown ref must miss")
 	}
 }

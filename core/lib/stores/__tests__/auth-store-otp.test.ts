@@ -108,7 +108,7 @@ describe('auth-store OTP methods', () => {
                 })
             )
 
-            const result = await requestShareOtp('drive', 'share_tok', 'user@example.com')
+            const result = await requestShareOtp('cogs', 'share_tok', 'user@example.com')
             expect(result).toEqual({ otpId: 'otp_abc123', error: null })
         })
 
@@ -123,7 +123,7 @@ describe('auth-store OTP methods', () => {
                 })
             )
 
-            const result = await requestShareOtp('drive', 'share_tok', 'not-an-email')
+            const result = await requestShareOtp('cogs', 'share_tok', 'not-an-email')
             expect(result).toEqual({ otpId: null, error: 'invalid email address' })
         })
 
@@ -138,14 +138,14 @@ describe('auth-store OTP methods', () => {
                 })
             )
 
-            const result = await requestShareOtp('drive', 'share_tok', 'user@example.com')
+            const result = await requestShareOtp('cogs', 'share_tok', 'user@example.com')
             expect(result).toEqual({ otpId: null, error: 'this link does not require sign-in' })
         })
 
         it('returns network error on fetch failure', async () => {
             vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')))
 
-            const result = await requestShareOtp('drive', 'share_tok', 'user@example.com')
+            const result = await requestShareOtp('cogs', 'share_tok', 'user@example.com')
             expect(result).toEqual({ otpId: null, error: 'network error' })
         })
 
@@ -160,7 +160,7 @@ describe('auth-store OTP methods', () => {
                 })
             )
 
-            const result = await requestShareOtp('drive', 'share_tok', 'user@example.com')
+            const result = await requestShareOtp('cogs', 'share_tok', 'user@example.com')
             expect(result).toEqual({ otpId: null, error: 'Internal Server Error' })
         })
     })
@@ -183,7 +183,7 @@ describe('auth-store OTP methods', () => {
             )
 
             const result = await verifyShareOtp(
-                'drive',
+                'cogs',
                 'share_tok',
                 'guest@example.com',
                 '123456',
@@ -215,7 +215,7 @@ describe('auth-store OTP methods', () => {
             )
 
             const result = await verifyShareOtp(
-                'drive',
+                'cogs',
                 'share_tok',
                 'guest@example.com',
                 'badcode',

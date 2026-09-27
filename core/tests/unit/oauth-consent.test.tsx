@@ -7,14 +7,14 @@ afterEach(cleanup)
 
 const labels = {
     'notes:read': 'Read your notes',
-    'tasks:write': 'Create and modify your tasks',
+    'widgets:write': 'Create and modify your widgets',
 }
 
 describe('ScopeList', () => {
     it('renders the server-provided description for each scope', () => {
-        render(<ScopeList scopes={['notes:read', 'tasks:write']} labels={labels} />)
+        render(<ScopeList scopes={['notes:read', 'widgets:write']} labels={labels} />)
         expect(screen.getByText('Read your notes')).toBeTruthy()
-        expect(screen.getByText('Create and modify your tasks')).toBeTruthy()
+        expect(screen.getByText('Create and modify your widgets')).toBeTruthy()
     })
 
     it('falls back to the raw scope name when the server sent no label', () => {

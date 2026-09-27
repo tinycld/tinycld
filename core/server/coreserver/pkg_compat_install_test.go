@@ -34,20 +34,20 @@ func TestCheckInstallCompat_NoPeerVersions(t *testing.T) {
 	}
 }
 
-// The calendar-slots case: a peer requirement on an ABSENT package must fail the
+// The sprockets-slots case: a peer requirement on an ABSENT package must fail the
 // install up front (the bug — it used to install and roll its migration back).
 func TestCheckInstallCompat_MissingDependencyFails(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	m := &parsedManifest{
-		Slug:         "calendar-slots",
+		Slug:         "sprockets-slots",
 		Version:      "0.1.0",
-		PeerVersions: map[string]string{"calendar": "^0.1.0"},
+		PeerVersions: map[string]string{"sprockets": "^0.1.0"},
 	}
 	err := checkInstallCompat(app, m)
 	if err == nil {
-		t.Fatal("expected a compat error when calendar is not installed, got nil")
+		t.Fatal("expected a compat error when sprockets is not installed, got nil")
 	}
-	if !strings.Contains(err.Error(), "calendar") || !strings.Contains(err.Error(), "not installed") {
+	if !strings.Contains(err.Error(), "sprockets") || !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("error should name the missing dependency and say it's not installed, got: %v", err)
 	}
 }
@@ -55,14 +55,14 @@ func TestCheckInstallCompat_MissingDependencyFails(t *testing.T) {
 // With the dependency present and in range, the install passes the gate.
 func TestCheckInstallCompat_SatisfiedDependencyPasses(t *testing.T) {
 	app := newRegistryOnlyApp(t)
-	installRegistryRow(t, app, "calendar", "0.1.0")
+	installRegistryRow(t, app, "sprockets", "0.1.0")
 	m := &parsedManifest{
-		Slug:         "calendar-slots",
+		Slug:         "sprockets-slots",
 		Version:      "0.1.0",
-		PeerVersions: map[string]string{"calendar": "^0.1.0"},
+		PeerVersions: map[string]string{"sprockets": "^0.1.0"},
 	}
 	if err := checkInstallCompat(app, m); err != nil {
-		t.Fatalf("expected no error when calendar 0.1.0 satisfies ^0.1.0, got %v", err)
+		t.Fatalf("expected no error when sprockets 0.1.0 satisfies ^0.1.0, got %v", err)
 	}
 }
 
@@ -70,15 +70,15 @@ func TestCheckInstallCompat_SatisfiedDependencyPasses(t *testing.T) {
 // version actually found (not "not installed").
 func TestCheckInstallCompat_OutOfRangeDependencyFails(t *testing.T) {
 	app := newRegistryOnlyApp(t)
-	installRegistryRow(t, app, "calendar", "0.2.0")
+	installRegistryRow(t, app, "sprockets", "0.2.0")
 	m := &parsedManifest{
-		Slug:         "calendar-slots",
+		Slug:         "sprockets-slots",
 		Version:      "0.1.0",
-		PeerVersions: map[string]string{"calendar": "^0.1.0"},
+		PeerVersions: map[string]string{"sprockets": "^0.1.0"},
 	}
 	err := checkInstallCompat(app, m)
 	if err == nil {
-		t.Fatal("expected a compat error when calendar 0.2.0 violates ^0.1.0, got nil")
+		t.Fatal("expected a compat error when sprockets 0.2.0 violates ^0.1.0, got nil")
 	}
 	if !strings.Contains(err.Error(), "0.2.0") {
 		t.Fatalf("error should report the found version 0.2.0, got: %v", err)
@@ -117,14 +117,14 @@ func registryRowWithManifest(t *testing.T, app core.App, slug, version, manifest
 func TestCheckVersionChangeCompat_RefusesViolatingChange(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	installRegistryRow(t, app, "core", "0.0.4")
-	registryRowWithManifest(t, app, "mail", "1.0.0",
+	registryRowWithManifest(t, app, "gizmos", "1.0.0",
 		`{"peerVersions":{"@tinycld/core":">=0.0.4 <0.1.0"}}`)
 
 	err := checkVersionChangeCompat(app, []installjob.VersionChange{{Slug: "core", TargetVersion: "0.5.0"}})
 	if err == nil {
-		t.Fatal("expected the gate to refuse core 0.5.0 against mail's >=0.0.4 <0.1.0")
+		t.Fatal("expected the gate to refuse core 0.5.0 against gizmos's >=0.0.4 <0.1.0")
 	}
-	for _, want := range []string{"mail", ">=0.0.4 <0.1.0", "0.5.0"} {
+	for _, want := range []string{"gizmos", ">=0.0.4 <0.1.0", "0.5.0"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error should name %q, got: %v", want, err)
 		}
@@ -135,7 +135,7 @@ func TestCheckVersionChangeCompat_RefusesViolatingChange(t *testing.T) {
 func TestCheckVersionChangeCompat_AllowsCompatibleChange(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	installRegistryRow(t, app, "core", "0.0.4")
-	registryRowWithManifest(t, app, "mail", "1.0.0",
+	registryRowWithManifest(t, app, "gizmos", "1.0.0",
 		`{"peerVersions":{"@tinycld/core":">=0.0.4 <0.1.0"}}`)
 
 	if err := checkVersionChangeCompat(app, []installjob.VersionChange{{Slug: "core", TargetVersion: "0.0.9"}}); err != nil {

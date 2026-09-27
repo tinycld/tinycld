@@ -18,8 +18,8 @@ describe('pending-route', () => {
     })
 
     it('preserves the query string, which encodes package view state', () => {
-        setPendingRoute('/a/boards?focused=HOME-1')
-        expect(takePendingRoute()).toBe('/a/boards?focused=HOME-1')
+        setPendingRoute('/a/gadgets?focused=HOME-1')
+        expect(takePendingRoute()).toBe('/a/gadgets?focused=HOME-1')
     })
 
     it('keeps the OAuth consent code so the device flow can resume', () => {
@@ -90,8 +90,8 @@ describe('pending-route entry-URL capture', () => {
     })
 
     it('keeps the query string of the entry URL', async () => {
-        const mod = await importWithLocation('/a/boards', '?focused=HOME-1')
-        expect(mod.takePendingRoute()).toBe('/a/boards?focused=HOME-1')
+        const mod = await importWithLocation('/a/gadgets', '?focused=HOME-1')
+        expect(mod.takePendingRoute()).toBe('/a/gadgets?focused=HOME-1')
     })
 
     it('captures nothing when the app is opened at the root', async () => {

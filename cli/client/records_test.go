@@ -18,7 +18,7 @@ type testRow struct {
 func TestListRecordsBuildsQuery(t *testing.T) {
 	var gotQuery url.Values
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/collections/drive_items/records", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/collections/cogs_items/records", func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.Query()
 		json.NewEncoder(w).Encode(map[string]any{
 			"page": 2, "perPage": 50, "totalItems": 120, "totalPages": 3,
@@ -29,7 +29,7 @@ func TestListRecordsBuildsQuery(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c := New(srv.URL, validStore("t"), srv.Client())
 
-	res, err := ListRecords[testRow](context.Background(), c, "drive_items", ListOptions{
+	res, err := ListRecords[testRow](context.Background(), c, "cogs_items", ListOptions{
 		Filter: `parent = "abc"`, Sort: "-is_folder,name", Fields: "id,name",
 		Page: 2, PerPage: 50,
 	})
@@ -166,8 +166,8 @@ func TestFilterQuoting(t *testing.T) {
 }
 
 func TestFileURLEscapes(t *testing.T) {
-	got := FileURL("mail_messages", "rec 1", "body_ab12cd34ef.html")
-	want := "/api/files/mail_messages/rec%201/body_ab12cd34ef.html"
+	got := FileURL("gizmos_messages", "rec 1", "body_ab12cd34ef.html")
+	want := "/api/files/gizmos_messages/rec%201/body_ab12cd34ef.html"
 	if got != want {
 		t.Fatalf("FileURL = %q, want %q", got, want)
 	}

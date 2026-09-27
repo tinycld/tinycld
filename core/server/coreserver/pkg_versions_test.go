@@ -17,10 +17,10 @@ func TestClassifySpec(t *testing.T) {
 		wantSource pkgSource
 		wantKey    string
 	}{
-		{"@tinycld/mail", sourceNpm, "@tinycld/mail"},
-		{"@tinycld/mail@1.2.3", sourceNpm, "@tinycld/mail"},
-		{"mail", sourceNpm, "mail"},
-		{"mail@latest", sourceNpm, "mail"},
+		{"@tinycld/gizmos", sourceNpm, "@tinycld/gizmos"},
+		{"@tinycld/gizmos@1.2.3", sourceNpm, "@tinycld/gizmos"},
+		{"gizmos", sourceNpm, "gizmos"},
+		{"gizmos@latest", sourceNpm, "gizmos"},
 		{"github:tinycld/todo", sourceGit, "github:tinycld/todo"},
 		{"git+https://github.com/tinycld/todo.git", sourceGit, "git+https://github.com/tinycld/todo.git"},
 		{"git+file:///workspace/base-remote.git", sourceGit, "git+file:///workspace/base-remote.git"},
@@ -38,10 +38,10 @@ func TestClassifySpec(t *testing.T) {
 
 func TestStripNpmVersion(t *testing.T) {
 	cases := map[string]string{
-		"@tinycld/mail@1.2.3": "@tinycld/mail",
-		"@tinycld/mail":       "@tinycld/mail",
-		"mail@1":              "mail",
-		"mail":                "mail",
+		"@tinycld/gizmos@1.2.3": "@tinycld/gizmos",
+		"@tinycld/gizmos":       "@tinycld/gizmos",
+		"gizmos@1":              "gizmos",
+		"gizmos":                "gizmos",
 	}
 	for in, want := range cases {
 		if got := stripNpmVersion(in); got != want {

@@ -9,25 +9,31 @@ describe('deriveEventSources', () => {
     it('groups by target, sorted by order then contributor slug', () => {
         const derived = deriveEventSources([
             {
-                manifest: { slug: 'tasks' },
+                manifest: { slug: 'widgets' },
                 eventSources: [
-                    { target: 'calendar', id: 'tasks-due', label: 'Tasks', order: 0, load },
+                    { target: 'sprockets', id: 'widgets-due', label: 'Widgets', order: 0, load },
                 ],
             },
             {
-                manifest: { slug: 'boards' },
+                manifest: { slug: 'gadgets' },
                 eventSources: [
-                    { target: 'calendar', id: 'boards-due', label: 'Boards', order: 0, load },
-                    { target: 'timeline', id: 'boards-activity', label: 'Boards', order: 5, load },
+                    { target: 'sprockets', id: 'gadgets-due', label: 'Gadgets', order: 0, load },
+                    {
+                        target: 'timeline',
+                        id: 'gadgets-activity',
+                        label: 'Gadgets',
+                        order: 5,
+                        load,
+                    },
                 ],
             },
             { manifest: { slug: 'contacts' } },
         ])
-        expect(Object.keys(derived).sort()).toEqual(['calendar', 'timeline'])
-        expect(derived.calendar.map(s => s.id)).toEqual(['boards-due', 'tasks-due'])
+        expect(Object.keys(derived).sort()).toEqual(['sprockets', 'timeline'])
+        expect(derived.sprockets.map(s => s.id)).toEqual(['gadgets-due', 'widgets-due'])
         expect(derived.timeline[0]).toMatchObject({
-            contributorSlug: 'boards',
-            id: 'boards-activity',
+            contributorSlug: 'gadgets',
+            id: 'gadgets-activity',
             order: 5,
         })
     })
@@ -36,14 +42,14 @@ describe('deriveEventSources', () => {
         const derived = deriveEventSources([
             {
                 manifest: { slug: 'aaa' },
-                eventSources: [{ target: 'calendar', id: 'late', label: 'L', order: 9, load }],
+                eventSources: [{ target: 'sprockets', id: 'late', label: 'L', order: 9, load }],
             },
             {
                 manifest: { slug: 'zzz' },
-                eventSources: [{ target: 'calendar', id: 'early', label: 'E', order: 1, load }],
+                eventSources: [{ target: 'sprockets', id: 'early', label: 'E', order: 1, load }],
             },
         ])
-        expect(derived.calendar.map(s => s.id)).toEqual(['early', 'late'])
+        expect(derived.sprockets.map(s => s.id)).toEqual(['early', 'late'])
     })
 })
 
@@ -55,18 +61,18 @@ describe('createEventSourceLoader', () => {
     it('loads a registered module once and caches it', async () => {
         const loadSpy = vi.fn().mockResolvedValue(module)
         const loader = createEventSourceLoader({
-            calendar: [
+            sprockets: [
                 {
-                    contributorSlug: 'boards',
-                    id: 'boards-due',
+                    contributorSlug: 'gadgets',
+                    id: 'gadgets-due',
                     label: 'C',
                     order: 0,
                     load: loadSpy,
                 },
             ],
         })
-        const first = await loader('calendar', 'boards-due')
-        const second = await loader('calendar', 'boards-due')
+        const first = await loader('sprockets', 'gadgets-due')
+        const second = await loader('sprockets', 'gadgets-due')
         expect(first).toBe(module)
         expect(second).toBe(module)
         expect(loadSpy).toHaveBeenCalledTimes(1)
@@ -74,7 +80,7 @@ describe('createEventSourceLoader', () => {
 
     it('returns null for an unregistered source', async () => {
         const loader = createEventSourceLoader({})
-        expect(await loader('calendar', 'boards-due')).toBeNull()
+        expect(await loader('sprockets', 'gadgets-due')).toBeNull()
     })
 
     afterEach(() => {
@@ -84,21 +90,21 @@ describe('createEventSourceLoader', () => {
     it('returns null and logs when the module lacks a useEventSource function', async () => {
         const warn = vi.spyOn(log, 'warn').mockImplementation(() => undefined)
         const loader = createEventSourceLoader({
-            calendar: [
+            sprockets: [
                 {
-                    contributorSlug: 'boards',
-                    id: 'boards-due',
+                    contributorSlug: 'gadgets',
+                    id: 'gadgets-due',
                     label: 'C',
                     order: 0,
                     load: () => Promise.resolve({ somethingElse: true }),
                 },
             ],
         })
-        expect(await loader('calendar', 'boards-due')).toBeNull()
+        expect(await loader('sprockets', 'gadgets-due')).toBeNull()
         expect(warn).toHaveBeenCalledWith('event-sources.load', expect.any(String), {
-            target: 'calendar',
-            sourceId: 'boards-due',
-            contributorSlug: 'boards',
+            target: 'sprockets',
+            sourceId: 'gadgets-due',
+            contributorSlug: 'gadgets',
         })
     })
 })

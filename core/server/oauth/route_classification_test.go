@@ -42,7 +42,7 @@ func TestEveryRegisteredRouteIsClassified(t *testing.T) {
 		{"GET", "/api/collections/labels/records", "a core collection a package claims"},
 		{"POST", "/api/collections/labels/records", "a core collection a package claims"},
 		{"DELETE", "/api/collections/labels/records/abc123", "a core collection a package claims"},
-		{"GET", "/api/tasks/export", "a bespoke read endpoint"},
+		{"GET", "/api/widgets/export", "a bespoke read endpoint"},
 		{"POST", "/api/notes/items/abc123/move", "a per-record family"},
 	}
 	for _, r := range reachable {

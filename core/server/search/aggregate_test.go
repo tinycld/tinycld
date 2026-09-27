@@ -48,23 +48,23 @@ func titlesOf(rows []Row) []string {
 
 func TestAggregateMergesAndOrdersAcrossPackages(t *testing.T) {
 	// The case that motivates scoring at all: without it, nav.order alone would
-	// put mail's weak hit above drive's exact title match.
+	// put gizmos's weak hit above cogs's exact title match.
 	app := testApp(t)
 	sources := []Source{
 		{
-			Slug: "mail", Order: 5,
+			Slug: "gizmos", Order: 5,
 			Search: func(core.App, string, Query) (Result, error) {
 				return Result{Rows: []Row{{ID: "m1", Title: "Q3 approval", Subtitle: "budget team"}}, Total: 1}, nil
 			},
 		},
-		rowSource("drive", 12, 1, "budget"),
+		rowSource("cogs", 12, 1, "budget"),
 	}
 
 	resp := Aggregate(context.Background(), app, "u1", Query{Include: []string{"budget"}}, sources)
 	if got := titlesOf(resp.Rows); len(got) != 2 || got[0] != "budget" {
-		t.Fatalf("rows = %v, want drive's exact match first", got)
+		t.Fatalf("rows = %v, want cogs's exact match first", got)
 	}
-	if resp.Counts["mail"] != 1 || resp.Counts["drive"] != 1 {
+	if resp.Counts["gizmos"] != 1 || resp.Counts["cogs"] != 1 {
 		t.Fatalf("counts = %v", resp.Counts)
 	}
 }
@@ -73,13 +73,13 @@ func TestAggregateStampsSlugFromTheSource(t *testing.T) {
 	// A source must not be able to label rows as another package's.
 	app := testApp(t)
 	liar := Source{
-		Slug: "boards", Order: 25,
+		Slug: "gadgets", Order: 25,
 		Search: func(core.App, string, Query) (Result, error) {
-			return Result{Rows: []Row{{Slug: "mail", ID: "c1", Title: "x"}}, Total: 1}, nil
+			return Result{Rows: []Row{{Slug: "gizmos", ID: "c1", Title: "x"}}, Total: 1}, nil
 		},
 	}
 	resp := Aggregate(context.Background(), app, "u1", Query{Include: []string{"x"}}, []Source{liar})
-	if len(resp.Rows) != 1 || resp.Rows[0].Slug != "boards" {
+	if len(resp.Rows) != 1 || resp.Rows[0].Slug != "gadgets" {
 		t.Fatalf("rows = %+v, want slug stamped as cards", resp.Rows)
 	}
 }
@@ -90,22 +90,22 @@ func TestAggregateIsolatesAFailingSource(t *testing.T) {
 	app := testApp(t)
 	sources := []Source{
 		{
-			Slug: "mail", Order: 5,
+			Slug: "gizmos", Order: 5,
 			Search: func(core.App, string, Query) (Result, error) {
 				return Result{}, errors.New("index corrupt")
 			},
 		},
-		rowSource("drive", 12, 1, "budget"),
+		rowSource("cogs", 12, 1, "budget"),
 	}
 
 	resp := Aggregate(context.Background(), app, "u1", Query{Include: []string{"budget"}}, sources)
-	if len(resp.Rows) != 1 || resp.Rows[0].Slug != "drive" {
-		t.Fatalf("rows = %+v, want drive's row despite mail failing", resp.Rows)
+	if len(resp.Rows) != 1 || resp.Rows[0].Slug != "cogs" {
+		t.Fatalf("rows = %+v, want cogs's row despite gizmos failing", resp.Rows)
 	}
-	if len(resp.Partial) != 1 || resp.Partial[0] != "mail" {
-		t.Fatalf("partial = %v, want [mail] — a dropped package must be reported", resp.Partial)
+	if len(resp.Partial) != 1 || resp.Partial[0] != "gizmos" {
+		t.Fatalf("partial = %v, want [gizmos] — a dropped package must be reported", resp.Partial)
 	}
-	if _, counted := resp.Counts["mail"]; counted {
+	if _, counted := resp.Counts["gizmos"]; counted {
 		t.Error("a failed source must not report a count, which would read as a real zero")
 	}
 }
@@ -114,19 +114,19 @@ func TestAggregateIsolatesAPanickingSource(t *testing.T) {
 	app := testApp(t)
 	sources := []Source{
 		{
-			Slug: "boards", Order: 25,
+			Slug: "gadgets", Order: 25,
 			Search: func(core.App, string, Query) (Result, error) {
 				panic("nil map write")
 			},
 		},
-		rowSource("drive", 12, 1, "budget"),
+		rowSource("cogs", 12, 1, "budget"),
 	}
 
 	resp := Aggregate(context.Background(), app, "u1", Query{Include: []string{"budget"}}, sources)
 	if len(resp.Rows) != 1 {
 		t.Fatalf("a panicking package must degrade to no rows, got %+v", resp.Rows)
 	}
-	if len(resp.Partial) != 1 || resp.Partial[0] != "boards" {
+	if len(resp.Partial) != 1 || resp.Partial[0] != "gadgets" {
 		t.Fatalf("partial = %v, want [cards]", resp.Partial)
 	}
 }
@@ -134,13 +134,13 @@ func TestAggregateIsolatesAPanickingSource(t *testing.T) {
 func TestAggregateTimesOutASlowSourceWithoutBlockingTheRest(t *testing.T) {
 	app := testApp(t)
 	slow := Source{
-		Slug: "mail", Order: 5,
+		Slug: "gizmos", Order: 5,
 		Search: func(core.App, string, Query) (Result, error) {
 			time.Sleep(2 * sourceTimeout)
 			return Result{}, nil
 		},
 	}
-	sources := []Source{slow, rowSource("drive", 12, 1, "budget")}
+	sources := []Source{slow, rowSource("cogs", 12, 1, "budget")}
 
 	start := time.Now()
 	resp := Aggregate(context.Background(), app, "u1", Query{Include: []string{"budget"}}, sources)
@@ -149,11 +149,11 @@ func TestAggregateTimesOutASlowSourceWithoutBlockingTheRest(t *testing.T) {
 	if elapsed >= 2*sourceTimeout {
 		t.Fatalf("waited %v — a slow source must be cut off, not awaited", elapsed)
 	}
-	if len(resp.Rows) != 1 || resp.Rows[0].Slug != "drive" {
-		t.Fatalf("rows = %+v, want drive's row", resp.Rows)
+	if len(resp.Rows) != 1 || resp.Rows[0].Slug != "cogs" {
+		t.Fatalf("rows = %+v, want cogs's row", resp.Rows)
 	}
-	if len(resp.Partial) != 1 || resp.Partial[0] != "mail" {
-		t.Fatalf("partial = %v, want [mail]", resp.Partial)
+	if len(resp.Partial) != 1 || resp.Partial[0] != "gizmos" {
+		t.Fatalf("partial = %v, want [gizmos]", resp.Partial)
 	}
 }
 
@@ -163,7 +163,7 @@ func TestAggregateRequiresAPositiveTerm(t *testing.T) {
 	app := testApp(t)
 	called := false
 	src := Source{
-		Slug: "mail", Order: 5,
+		Slug: "gizmos", Order: 5,
 		Search: func(core.App, string, Query) (Result, error) {
 			called = true
 			return Result{}, nil
@@ -183,7 +183,7 @@ func TestAggregateRefusesAnUnauthenticatedCaller(t *testing.T) {
 	app := testApp(t)
 	called := false
 	src := Source{
-		Slug: "mail", Order: 5,
+		Slug: "gizmos", Order: 5,
 		Search: func(core.App, string, Query) (Result, error) {
 			called = true
 			return Result{}, nil
@@ -199,14 +199,14 @@ func TestAggregateReportsTruncation(t *testing.T) {
 	// A client that cannot tell "5 results" from "5 of 500" will imply
 	// completeness it was never given.
 	app := testApp(t)
-	src := rowSource("mail", 5, 500, "budget a", "budget b")
+	src := rowSource("gizmos", 5, 500, "budget a", "budget b")
 
 	resp := Aggregate(context.Background(), app, "u1", Query{Include: []string{"budget"}}, []Source{src})
-	if len(resp.Truncated) != 1 || resp.Truncated[0] != "mail" {
-		t.Fatalf("truncated = %v, want [mail]", resp.Truncated)
+	if len(resp.Truncated) != 1 || resp.Truncated[0] != "gizmos" {
+		t.Fatalf("truncated = %v, want [gizmos]", resp.Truncated)
 	}
-	if resp.Counts["mail"] != 500 {
-		t.Fatalf("count = %d, want the source's full total", resp.Counts["mail"])
+	if resp.Counts["gizmos"] != 500 {
+		t.Fatalf("count = %d, want the source's full total", resp.Counts["gizmos"])
 	}
 }
 
@@ -216,7 +216,7 @@ func TestAggregatePagesTheMergedSet(t *testing.T) {
 	app := testApp(t)
 	var gotOffset int
 	src := Source{
-		Slug: "mail", Order: 5,
+		Slug: "gizmos", Order: 5,
 		Search: func(_ core.App, _ string, q Query) (Result, error) {
 			gotOffset = q.Offset
 			return Result{Rows: []Row{
@@ -250,7 +250,7 @@ func TestAggregateOverFetchesSoRankingCanChoose(t *testing.T) {
 	app := testApp(t)
 	var gotLimit int
 	src := Source{
-		Slug: "mail", Order: 5,
+		Slug: "gizmos", Order: 5,
 		Search: func(_ core.App, _ string, q Query) (Result, error) {
 			gotLimit = q.Limit
 			return Result{}, nil

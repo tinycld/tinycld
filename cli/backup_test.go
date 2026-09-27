@@ -51,8 +51,8 @@ func buildArchive(t *testing.T) []byte {
 		Source:   "standalone",
 		Kind:     "manual",
 		Core:     "2.4.0",
-		Packages: map[string]string{"mail": "1.2.0", "drive": "0.9.1"},
-		Lockfile: format.Lockfile{"mail": "sha256-mail", "drive": "sha256-drive"},
+		Packages: map[string]string{"gizmos": "1.2.0", "cogs": "0.9.1"},
+		Lockfile: format.Lockfile{"gizmos": "sha256-gizmos", "cogs": "sha256-cogs"},
 		Counts:   format.Counts{Collections: map[string]int{"messages": 3}, Files: 2, Bytes: 11},
 	})
 	if err != nil {
@@ -519,7 +519,7 @@ func TestBackupInspectFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"format", "created", "2026-09-24T12:00:00Z", "standalone", "2.4.0", "package mail", "1.2.0", "member data.db", "OK", "verified"} {
+	for _, want := range []string{"format", "created", "2026-09-24T12:00:00Z", "standalone", "2.4.0", "package gizmos", "1.2.0", "member data.db", "OK", "verified"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("inspect output missing %q:\n%s", want, stdout)
 		}

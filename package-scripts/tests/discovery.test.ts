@@ -20,11 +20,11 @@ function makeWs(): string {
     const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'tcld-disc-'))
     fs.writeFileSync(
         path.join(ws, 'package.json'),
-        JSON.stringify({ workspaces: ['app', 'contacts', 'core'] })
+        JSON.stringify({ workspaces: ['app', 'doodads', 'core'] })
     )
     for (const [dir, name, manifest] of [
         ['app', 'app', false],
-        ['contacts', '@tinycld/contacts', true],
+        ['doodads', '@tinycld/doodads', true],
         ['core', '@tinycld/core', false],
     ] as const) {
         fs.mkdirSync(path.join(ws, dir), { recursive: true })
@@ -42,27 +42,27 @@ describe('discover', () => {
     afterEach(() => fs.rmSync(ws, { recursive: true, force: true }))
 
     it('finds the workspace root from a nested cwd', () => {
-        const sub = path.join(ws, 'contacts', 'tinycld', 'contacts')
+        const sub = path.join(ws, 'doodads', 'tinycld', 'doodads')
         fs.mkdirSync(sub, { recursive: true })
         const d = discover(sub)
         expect(d.workspaceRoot).toBe(fs.realpathSync(ws))
     })
 
     it('identifies the app shell member (name "app")', () => {
-        const d = discover(path.join(ws, 'contacts'))
+        const d = discover(path.join(ws, 'doodads'))
         expect(path.basename(d.appDir)).toBe('app')
     })
 
     it('recognizes the app shell by either "tinycld" or the legacy "app" name', () => {
         expect(isAppShellName('tinycld')).toBe(true)
         expect(isAppShellName('app')).toBe(true)
-        expect(isAppShellName('@tinycld/contacts')).toBe(false)
+        expect(isAppShellName('@tinycld/doodads')).toBe(false)
         expect(isAppShellName(null)).toBe(false)
     })
 
     it('infers the current package from cwd (feature with manifest.ts)', () => {
-        const d = discover(path.join(ws, 'contacts', 'tinycld'))
-        expect(d.currentPackage?.name).toBe('@tinycld/contacts')
+        const d = discover(path.join(ws, 'doodads', 'tinycld'))
+        expect(d.currentPackage?.name).toBe('@tinycld/doodads')
         expect(d.currentPackage?.kind).toBe('feature')
     })
 
@@ -96,7 +96,7 @@ describe('discover with multiple app-shell checkouts', () => {
     afterEach(() => fs.rmSync(ws, { recursive: true, force: true }))
 
     it('resolves the checkout the core symlink points into, not the first name match', () => {
-        const d = discover(path.join(ws, 'contacts'))
+        const d = discover(path.join(ws, 'doodads'))
         expect(path.basename(d.appDir)).toBe('app-wt')
     })
 
@@ -109,7 +109,7 @@ describe('discover with multiple app-shell checkouts', () => {
     it('honors TINYCLD_APP_DIR above everything', () => {
         process.env.TINYCLD_APP_DIR = path.join(ws, 'app')
         try {
-            const d = discover(path.join(ws, 'contacts'))
+            const d = discover(path.join(ws, 'doodads'))
             expect(path.basename(d.appDir)).toBe('app')
         } finally {
             delete process.env.TINYCLD_APP_DIR

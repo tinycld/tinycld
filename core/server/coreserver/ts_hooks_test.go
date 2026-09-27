@@ -60,15 +60,15 @@ func TestHookPointCallReturnsHandlerValue(t *testing.T) {
 		return payload["name"].(string) + "!", nil
 	})
 
-	res, err := hp.Call(map[string]any{"name": "drive"})
+	res, err := hp.Call(map[string]any{"name": "cogs"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !res.Handled {
 		t.Fatal("Handled must be true when a handler ran")
 	}
-	if res.Value != "drive!" {
-		t.Fatalf("got %#v, want %q", res.Value, "drive!")
+	if res.Value != "cogs!" {
+		t.Fatalf("got %#v, want %q", res.Value, "cogs!")
 	}
 }
 

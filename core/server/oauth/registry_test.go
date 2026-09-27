@@ -8,14 +8,14 @@ import (
 
 // Fixture packages for this package's tests. Deliberately FICTIONAL: core's
 // tests must not know a real package any more than core's code does. "notes"
-// and "tasks" between them exercise every shape the registry supports —
+// and "widgets" between them exercise every shape the registry supports —
 // read/write and read-only collections, a shared core collection both claim
 // (labels), exact endpoints, and a per-record prefix family.
 const (
-	scopeNotesRead  = "notes:read"
-	scopeNotesWrite = "notes:write"
-	scopeTasksRead  = "tasks:read"
-	scopeTasksWrite = "tasks:write"
+	scopeNotesRead    = "notes:read"
+	scopeNotesWrite   = "notes:write"
+	scopeWidgetsRead  = "widgets:read"
+	scopeWidgetsWrite = "widgets:write"
 )
 
 func notesPackage() Package {
@@ -40,27 +40,27 @@ func notesPackage() Package {
 	}
 }
 
-func tasksPackage() Package {
+func widgetsPackage() Package {
 	return Package{
-		Slug: "tasks",
+		Slug: "widgets",
 		Scopes: []Scope{
-			{ID: scopeTasksRead, Label: "Read your tasks"},
-			{ID: scopeTasksWrite, Label: "Create and modify your tasks"},
+			{ID: scopeWidgetsRead, Label: "Read your widgets"},
+			{ID: scopeWidgetsWrite, Label: "Create and modify your widgets"},
 		},
 		Collections: map[string]Access{
-			"tasks_items": {Read: []string{scopeTasksRead}, Write: []string{scopeTasksWrite}},
-			"labels":      {Read: []string{scopeTasksRead}, Write: []string{scopeTasksWrite}},
+			"widgets_items": {Read: []string{scopeWidgetsRead}, Write: []string{scopeWidgetsWrite}},
+			"labels":        {Read: []string{scopeWidgetsRead}, Write: []string{scopeWidgetsWrite}},
 		},
 		Endpoints: map[string][]string{
-			"POST /api/tasks/upload-version": {scopeTasksWrite},
-			"GET /api/tasks/export":          {scopeTasksRead},
+			"POST /api/widgets/upload-version": {scopeWidgetsWrite},
+			"GET /api/widgets/export":          {scopeWidgetsRead},
 		},
 	}
 }
 
 func registerFixtures() {
 	RegisterPackage(notesPackage())
-	RegisterPackage(tasksPackage())
+	RegisterPackage(widgetsPackage())
 }
 
 // Every test in this package runs against the fixture registry. A test that
@@ -119,7 +119,7 @@ func TestCoreDeclaresNoPackageScopes(t *testing.T) {
 }
 
 func TestRegisterPackageBuildsCatalog(t *testing.T) {
-	want := []string{ScopeProfile, ScopeBackups, scopeNotesRead, scopeNotesWrite, scopeTasksRead, scopeTasksWrite}
+	want := []string{ScopeProfile, ScopeBackups, scopeNotesRead, scopeNotesWrite, scopeWidgetsRead, scopeWidgetsWrite}
 	if got := AllScopes(); strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("AllScopes = %v, want %v (profile first, packages by slug, scopes in declaration order)", got, want)
 	}
@@ -161,13 +161,13 @@ func TestRegisterPackageRejectsMalformedRegistrations(t *testing.T) {
 	}{
 		{"bad slug", Package{Slug: "Notes!", Scopes: []Scope{{ID: "x:read", Label: "x"}}}, "not a valid slug"},
 		{"no scopes", Package{Slug: "notes"}, "registers no scopes"},
-		{"scope outside own namespace", Package{Slug: "notes", Scopes: []Scope{{ID: "tasks:read", Label: "x"}}}, `must be "notes:"`},
+		{"scope outside own namespace", Package{Slug: "notes", Scopes: []Scope{{ID: "widgets:read", Label: "x"}}}, `must be "notes:"`},
 		{"scope with no label", Package{Slug: "notes", Scopes: []Scope{{ID: "notes:read"}}}, "plain-language label"},
 		{"label that is a scope string", Package{Slug: "notes", Scopes: []Scope{{ID: "notes:read", Label: "notes:read"}}}, "plain-language label"},
 		{"duplicate scope", Package{Slug: "notes", Scopes: []Scope{{ID: "notes:read", Label: "a"}, {ID: "notes:read", Label: "b"}}}, "declared twice"},
 		{"collection naming an undeclared scope", Package{
 			Slug: "notes", Scopes: []Scope{{ID: "notes:read", Label: "a"}},
-			Collections: map[string]Access{"notes_items": {Read: []string{"tasks:read"}}},
+			Collections: map[string]Access{"notes_items": {Read: []string{"widgets:read"}}},
 		}, "does not declare"},
 		{"collection with no read rule", Package{
 			Slug: "notes", Scopes: []Scope{{ID: "notes:write", Label: "a"}},

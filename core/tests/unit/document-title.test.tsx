@@ -34,6 +34,6 @@ test('renders nothing and skips the pbtsdb org lookup on native', () => {
 // silently drops the org segment from the browser tab title.
 test('performs the org lookup on web', () => {
     Platform.OS = 'web'
-    render(<DocumentTitle title="Inbox" pkg="Mail" />)
+    render(<DocumentTitle title="Inbox" pkg="Gizmos" />)
     expect(useOrgInfo).toHaveBeenCalled()
 })

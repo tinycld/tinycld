@@ -16,10 +16,10 @@ beforeEach(() => {
     mkdirSync(coreDir, { recursive: true })
     writeFileSync(join(coreDir, 'package.json'), JSON.stringify({ name: '@tinycld/core' }))
     // A feature sibling at the workspace root (unchanged layout).
-    const mailDir = join(root, 'mail')
-    mkdirSync(mailDir, { recursive: true })
-    writeFileSync(join(mailDir, 'package.json'), JSON.stringify({ name: '@tinycld/mail' }))
-    writeFileSync(join(mailDir, 'manifest.ts'), 'export default {}')
+    const gizmosDir = join(root, 'gizmos')
+    mkdirSync(gizmosDir, { recursive: true })
+    writeFileSync(join(gizmosDir, 'package.json'), JSON.stringify({ name: '@tinycld/gizmos' }))
+    writeFileSync(join(gizmosDir, 'manifest.ts'), 'export default {}')
     process.env.TINYCLD_APP_DIR = tinycldDir
     vi.resetModules()
 })
@@ -36,5 +36,5 @@ test('memberDir resolves @tinycld/core nested inside the tinycld member', async 
 
 test('memberDir resolves a feature sibling at the workspace root', async () => {
     const { memberDir } = await import('../paths')
-    expect(memberDir('@tinycld/mail')).toBe(join(root, 'mail'))
+    expect(memberDir('@tinycld/gizmos')).toBe(join(root, 'gizmos'))
 })

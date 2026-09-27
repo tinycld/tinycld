@@ -17,20 +17,20 @@ import (
 func TestVerifyTargetPeerVersions_TightenedTargetRefused(t *testing.T) {
 	buildDir := t.TempDir()
 	pkgbuildtest.WriteBuildBase(t, buildDir, "0.0.4")
-	pkgbuildtest.WriteBuildMember(t, buildDir, "mail", "2.0.0",
+	pkgbuildtest.WriteBuildMember(t, buildDir, "gizmos", "2.0.0",
 		map[string]string{pkgbuild.CorePackageKey: ">=0.5.0 <0.6.0"})
 
 	m := pkgbuild.RebuildManifest{BuildID: "b", Members: []pkgbuild.MemberSpec{
 		// Deliberately-wrong manifest versions: the verify must read what is
 		// actually ON DISK, not trust the delta's version strings.
 		{Slug: pkgbuild.BaseMemberSlug, Version: "9.9.9", FromCurrent: true},
-		{Slug: "mail", Version: "9.9.9"},
+		{Slug: "gizmos", Version: "9.9.9"},
 	}}
 	err := pkgbuild.VerifyTargetPeerVersions(m, buildDir)
 	if err == nil {
-		t.Fatal("expected refusal: mail's fetched manifest requires core >=0.5.0 <0.6.0 against core 0.0.4")
+		t.Fatal("expected refusal: gizmos's fetched manifest requires core >=0.5.0 <0.6.0 against core 0.0.4")
 	}
-	for _, want := range []string{"mail", ">=0.5.0 <0.6.0", "0.0.4"} {
+	for _, want := range []string{"gizmos", ">=0.5.0 <0.6.0", "0.0.4"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error should name %q, got: %v", want, err)
 		}
@@ -41,12 +41,12 @@ func TestVerifyTargetPeerVersions_TightenedTargetRefused(t *testing.T) {
 func TestVerifyTargetPeerVersions_SatisfiedSetPasses(t *testing.T) {
 	buildDir := t.TempDir()
 	pkgbuildtest.WriteBuildBase(t, buildDir, "0.0.4")
-	pkgbuildtest.WriteBuildMember(t, buildDir, "mail", "2.0.0",
+	pkgbuildtest.WriteBuildMember(t, buildDir, "gizmos", "2.0.0",
 		map[string]string{pkgbuild.CorePackageKey: ">=0.0.4 <0.1.0"})
 
 	m := pkgbuild.RebuildManifest{BuildID: "b", Members: []pkgbuild.MemberSpec{
 		{Slug: pkgbuild.BaseMemberSlug, FromCurrent: true},
-		{Slug: "mail"},
+		{Slug: "gizmos"},
 	}}
 	if err := pkgbuild.VerifyTargetPeerVersions(m, buildDir); err != nil {
 		t.Fatalf("expected satisfied set to pass, got %v", err)
@@ -60,18 +60,18 @@ func TestVerifyTargetPeerVersions_SatisfiedSetPasses(t *testing.T) {
 func TestVerifyTargetPeerVersions_MissingPeerRefused(t *testing.T) {
 	buildDir := t.TempDir()
 	pkgbuildtest.WriteBuildBase(t, buildDir, "0.0.4")
-	pkgbuildtest.WriteBuildMember(t, buildDir, "calendar-slots", "1.0.0",
-		map[string]string{"calendar": "^1.0.0"})
+	pkgbuildtest.WriteBuildMember(t, buildDir, "sprockets-slots", "1.0.0",
+		map[string]string{"sprockets": "^1.0.0"})
 
 	m := pkgbuild.RebuildManifest{BuildID: "b", Members: []pkgbuild.MemberSpec{
 		{Slug: pkgbuild.BaseMemberSlug, FromCurrent: true},
-		{Slug: "calendar-slots", FromCurrent: true},
+		{Slug: "sprockets-slots", FromCurrent: true},
 	}}
 	err := pkgbuild.VerifyTargetPeerVersions(m, buildDir)
 	if err == nil {
-		t.Fatal("expected refusal: calendar-slots requires calendar, which the build set lacks")
+		t.Fatal("expected refusal: sprockets-slots requires sprockets, which the build set lacks")
 	}
-	if !strings.Contains(err.Error(), "calendar") || !strings.Contains(err.Error(), "not installed") {
+	if !strings.Contains(err.Error(), "sprockets") || !strings.Contains(err.Error(), "not installed") {
 		t.Fatalf("error should name the missing peer, got: %v", err)
 	}
 }
@@ -81,19 +81,19 @@ func TestVerifyTargetPeerVersions_MissingPeerRefused(t *testing.T) {
 func TestVerifyTargetPeerVersions_UnreadableManifestFailsClosed(t *testing.T) {
 	buildDir := t.TempDir()
 	pkgbuildtest.WriteBuildBase(t, buildDir, "0.0.4")
-	if err := os.MkdirAll(filepath.Join(buildDir, "mail"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(buildDir, "gizmos"), 0o755); err != nil {
 		t.Fatal(err)
 	} // member dir exists, no manifest.ts
 
 	m := pkgbuild.RebuildManifest{BuildID: "b", Members: []pkgbuild.MemberSpec{
 		{Slug: pkgbuild.BaseMemberSlug, FromCurrent: true},
-		{Slug: "mail"},
+		{Slug: "gizmos"},
 	}}
 	err := pkgbuild.VerifyTargetPeerVersions(m, buildDir)
 	if err == nil {
 		t.Fatal("expected an unreadable member manifest to fail the verify")
 	}
-	if !strings.Contains(err.Error(), "mail") {
+	if !strings.Contains(err.Error(), "gizmos") {
 		t.Fatalf("error should name the unreadable member, got: %v", err)
 	}
 }

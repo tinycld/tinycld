@@ -7,7 +7,7 @@ import type * as Y from 'yjs'
 
 /**
  * A server may DISCARD an idle collaborative document and rebuild it from
- * storage — boards' janitor evicts a quiet board, and the next joiner re-seeds
+ * storage — gadgets' janitor evicts a quiet board, and the next joiner re-seeds
  * every card's description out of the cards table.
  *
  * The rebuilt document is a different incarnation, and y-crdt mints a fresh
@@ -80,7 +80,7 @@ interface Captured {
 
 function Harness({ captured }: { captured: Captured }) {
     const room = useRealtimeRoom({
-        roomKind: 'boards',
+        roomKind: 'gadgets',
         roomID: 'board-1',
         initialAwareness: null,
         docEpochOf: hello =>
@@ -157,7 +157,7 @@ describe('useRealtimeRoom — document epoch', () => {
         const first = captured.doc
         act(() => {
             open(sockets[0])
-            // A room kind whose hello carries no epoch at all — text and calc
+            // A room kind whose hello carries no epoch at all — notepads and trinkets
             // today. Nothing about their behavior may change.
             sockets[0].deliverHello({ readOnly: false })
         })

@@ -289,7 +289,7 @@ func TestGuestRLS_AuditLogs_GuestCannotRead(t *testing.T) {
 	auditCol, _ := env.app.FindCollectionByNameOrId("audit_logs")
 	a := core.NewRecord(auditCol)
 	a.Set("action", "created")
-	a.Set("resource_type", "drive_items")
+	a.Set("resource_type", "cogs_items")
 	a.Set("resource_id", "abc123")
 	if err := env.app.Save(a); err != nil {
 		t.Fatal(err)
@@ -306,7 +306,7 @@ func TestGuestRLS_AuditLogs_MemberCannotRead(t *testing.T) {
 	auditCol, _ := env.app.FindCollectionByNameOrId("audit_logs")
 	a := core.NewRecord(auditCol)
 	a.Set("action", "created")
-	a.Set("resource_type", "drive_items")
+	a.Set("resource_type", "cogs_items")
 	a.Set("resource_id", "abc123")
 	if err := env.app.Save(a); err != nil {
 		t.Fatal(err)
@@ -325,7 +325,7 @@ func TestGuestRLS_AuditLogs_AdminCanRead(t *testing.T) {
 	auditCol, _ := env.app.FindCollectionByNameOrId("audit_logs")
 	a := core.NewRecord(auditCol)
 	a.Set("action", "created")
-	a.Set("resource_type", "drive_items")
+	a.Set("resource_type", "cogs_items")
 	a.Set("resource_id", "abc123")
 	if err := env.app.Save(a); err != nil {
 		t.Fatal(err)

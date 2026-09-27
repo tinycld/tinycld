@@ -30,7 +30,7 @@ vi.mock('@tinycld/core/lib/pocketbase', async () => {
             localOnlyCollectionOptions({ id, getKey: (r: { id: string }) => r.id, initialData })
         )
     const me = (role: string) => [{ id: 'u1', role }]
-    const grant = (access: string) => [{ id: 'a1', user: 'u1', pkg: 'mail', access }]
+    const grant = (access: string) => [{ id: 'a1', user: 'u1', pkg: 'gizmos', access }]
     const registry: Record<string, Record<string, unknown>> = {
         owner: { users: mk('u-owner', me('owner')), org_pkg_access: mk('a-owner', []) },
         memberDefault: {
@@ -63,7 +63,7 @@ import { usePkgAccessResult } from '../../lib/use-pkg-access'
 
 afterEach(() => cleanup())
 
-async function resolveAccess(scenario: typeof h.scenario, slug = 'mail') {
+async function resolveAccess(scenario: typeof h.scenario, slug = 'gizmos') {
     h.scenario = scenario
     const { result } = renderHook(() => usePkgAccessResult(slug))
     await waitFor(() => expect(result.current.isReady).toBe(true))
@@ -96,6 +96,6 @@ describe('usePkgAccessResult', () => {
     })
 
     it('a grant for another package does not leak: the guest is still denied elsewhere', async () => {
-        expect(await resolveAccess('guestReadonly', 'drive')).toBe('none')
+        expect(await resolveAccess('guestReadonly', 'cogs')).toBe('none')
     })
 })

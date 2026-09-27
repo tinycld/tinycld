@@ -40,7 +40,7 @@ func TestLocalFileName(t *testing.T) {
 func TestDownloadToFile(t *testing.T) {
 	content := strings.Repeat("x", 4096)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/files/drive_items/r1/report.pdf", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/files/cogs_items/r1/report.pdf", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer access-1" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -56,7 +56,7 @@ func TestDownloadToFile(t *testing.T) {
 
 	dest := filepath.Join(t.TempDir(), "out.pdf")
 	var lastWritten, lastTotal int64
-	err := DownloadToFile(context.Background(), c, "/api/files/drive_items/r1/report.pdf", dest,
+	err := DownloadToFile(context.Background(), c, "/api/files/cogs_items/r1/report.pdf", dest,
 		func(written, total int64) { lastWritten, lastTotal = written, total })
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +82,7 @@ func TestDownloadToFileErrorLeavesNoDest(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"message":"Requires the \"drive:read\" scope"}`))
+		w.Write([]byte(`{"message":"Requires the \"cogs:read\" scope"}`))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -90,7 +90,7 @@ func TestDownloadToFileErrorLeavesNoDest(t *testing.T) {
 
 	dest := filepath.Join(t.TempDir(), "out.bin")
 	err := DownloadToFile(context.Background(), c, "/api/files/x/y/z", dest, nil)
-	if err == nil || !strings.Contains(err.Error(), "drive:read") {
+	if err == nil || !strings.Contains(err.Error(), "cogs:read") {
 		t.Fatalf("err = %v", err)
 	}
 	if _, statErr := os.Stat(dest); !os.IsNotExist(statErr) {
@@ -101,7 +101,7 @@ func TestDownloadToFileErrorLeavesNoDest(t *testing.T) {
 func TestDownloadPublicSendsNoBearer(t *testing.T) {
 	var sawAuth string
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/drive/download-folder", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/cogs/download-folder", func(w http.ResponseWriter, r *http.Request) {
 		sawAuth = r.Header.Get("Authorization")
 		w.Write([]byte("zip-bytes"))
 	})
@@ -110,7 +110,7 @@ func TestDownloadPublicSendsNoBearer(t *testing.T) {
 
 	dest := filepath.Join(t.TempDir(), "folder.zip")
 	err := DownloadPublic(context.Background(), srv.Client(),
-		srv.URL+"/api/drive/download-folder?token=abc", dest, nil)
+		srv.URL+"/api/cogs/download-folder?token=abc", dest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestStreamingOutlivesClientTimeout(t *testing.T) {
 	// mid-stream if downloads went through Do. This server trickles a body
 	// for ~6× the client's timeout; DownloadToFile must still complete.
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/files/drive_items/r1/big.bin", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/files/cogs_items/r1/big.bin", func(w http.ResponseWriter, r *http.Request) {
 		f := w.(http.Flusher)
 		for range 6 {
 			w.Write([]byte("chunk"))
@@ -144,7 +144,7 @@ func TestStreamingOutlivesClientTimeout(t *testing.T) {
 	c := New(srv.URL, validStore("access-1"), hc)
 
 	dest := filepath.Join(t.TempDir(), "big.bin")
-	if err := DownloadToFile(context.Background(), c, "/api/files/drive_items/r1/big.bin", dest, nil); err != nil {
+	if err := DownloadToFile(context.Background(), c, "/api/files/cogs_items/r1/big.bin", dest, nil); err != nil {
 		t.Fatalf("streaming download died to the API timeout: %v", err)
 	}
 	got, _ := os.ReadFile(dest)

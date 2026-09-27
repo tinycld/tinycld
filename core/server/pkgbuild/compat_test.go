@@ -4,12 +4,12 @@ import "testing"
 
 func TestSolveCompatSatisfied(t *testing.T) {
 	resolved := map[string]string{
-		"mail":         "1.2.0",
-		"contacts":     "1.0.0",
+		"gizmos":       "1.2.0",
+		"doodads":      "1.0.0",
 		CorePackageKey: "2.5.0",
 	}
 	peers := map[string]map[string]string{
-		"mail": {CorePackageKey: ">=2.1 <3", "contacts": ">=1.0"},
+		"gizmos": {CorePackageKey: ">=2.1 <3", "doodads": ">=1.0"},
 	}
 	if v := SolveCompat(resolved, peers); len(v) != 0 {
 		t.Fatalf("expected no violations, got %v", v)
@@ -18,11 +18,11 @@ func TestSolveCompatSatisfied(t *testing.T) {
 
 func TestSolveCompatViolatedRange(t *testing.T) {
 	resolved := map[string]string{
-		"mail":         "1.2.0",
+		"gizmos":       "1.2.0",
 		CorePackageKey: "2.0.0", // below the required >=2.1
 	}
 	peers := map[string]map[string]string{
-		"mail": {CorePackageKey: ">=2.1 <3"},
+		"gizmos": {CorePackageKey: ">=2.1 <3"},
 	}
 	v := SolveCompat(resolved, peers)
 	if len(v) != 1 {
@@ -34,9 +34,9 @@ func TestSolveCompatViolatedRange(t *testing.T) {
 }
 
 func TestSolveCompatMissingPeer(t *testing.T) {
-	resolved := map[string]string{"mail": "1.2.0"} // contacts not installed
+	resolved := map[string]string{"gizmos": "1.2.0"} // doodads not installed
 	peers := map[string]map[string]string{
-		"mail": {"contacts": ">=1.0"},
+		"gizmos": {"doodads": ">=1.0"},
 	}
 	v := SolveCompat(resolved, peers)
 	if len(v) != 1 || v[0].Found != "" {
@@ -45,9 +45,9 @@ func TestSolveCompatMissingPeer(t *testing.T) {
 }
 
 func TestSolveCompatUnparsableRangeIsViolation(t *testing.T) {
-	resolved := map[string]string{"mail": "1.2.0", "contacts": "1.0.0"}
+	resolved := map[string]string{"gizmos": "1.2.0", "doodads": "1.0.0"}
 	peers := map[string]map[string]string{
-		"mail": {"contacts": "not-a-range"},
+		"gizmos": {"doodads": "not-a-range"},
 	}
 	if v := SolveCompat(resolved, peers); len(v) != 1 {
 		t.Fatalf("expected unparsable range to be a violation, got %v", v)
@@ -55,10 +55,10 @@ func TestSolveCompatUnparsableRangeIsViolation(t *testing.T) {
 }
 
 func TestPeerVersionsFromManifest(t *testing.T) {
-	json := `{"slug":"mail","peerVersions":{"@tinycld/core":">=2.1","contacts":">=1.0"}}`
+	json := `{"slug":"gizmos","peerVersions":{"@tinycld/core":">=2.1","doodads":">=1.0"}}`
 	peers := PeerVersionsFromManifest(json)
-	if peers["@tinycld/core"] != ">=2.1" || peers["contacts"] != ">=1.0" {
-		t.Errorf("PeerVersionsFromManifest = %v, want core>=2.1 contacts>=1.0", peers)
+	if peers["@tinycld/core"] != ">=2.1" || peers["doodads"] != ">=1.0" {
+		t.Errorf("PeerVersionsFromManifest = %v, want core>=2.1 doodads>=1.0", peers)
 	}
 	if PeerVersionsFromManifest("") != nil {
 		t.Error("empty manifest should yield nil")

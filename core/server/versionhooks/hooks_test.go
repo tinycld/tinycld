@@ -14,7 +14,7 @@ func TestRegister_StoresAndRetrieves(t *testing.T) {
 	snapshotCalled := false
 	restoreCalled := false
 
-	Register("text", Hook{
+	Register("notepads", Hook{
 		OnSnapshot: func(_ core.App, _, _ *core.Record) error {
 			snapshotCalled = true
 			return nil
@@ -25,7 +25,7 @@ func TestRegister_StoresAndRetrieves(t *testing.T) {
 		},
 	})
 
-	hook := For("text")
+	hook := For("notepads")
 	if hook.OnSnapshot == nil || hook.OnRestore == nil {
 		t.Fatalf("retrieved hook missing callbacks: %+v", hook)
 	}
@@ -47,17 +47,17 @@ func TestRegister_ReplacesOnRereg(t *testing.T) {
 	firstErr := errors.New("first")
 	secondErr := errors.New("second")
 
-	Register("text", Hook{
+	Register("notepads", Hook{
 		OnSnapshot: func(_ core.App, _, _ *core.Record) error { return firstErr },
 		OnRestore:  func(_ core.App, _, _ *core.Record) error { return firstErr },
 	})
 	// Re-register with a hook that only sets OnSnapshot — confirms
 	// replacement is full-struct, not field-merge.
-	Register("text", Hook{
+	Register("notepads", Hook{
 		OnSnapshot: func(_ core.App, _, _ *core.Record) error { return secondErr },
 	})
 
-	hook := For("text")
+	hook := For("notepads")
 	if err := hook.OnSnapshot(nil, nil, nil); err != secondErr {
 		t.Errorf("OnSnapshot returned %v, want %v (replacement)", err, secondErr)
 	}

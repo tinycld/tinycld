@@ -22,11 +22,11 @@ const topics: HelpTopic[] = [
         body: 'Share tokens live outside the org-scoped tree and are revocable.',
     },
     {
-        id: 'mail:compose',
-        pkgSlug: 'mail',
+        id: 'gizmos:compose',
+        pkgSlug: 'gizmos',
         topicId: 'compose',
         title: 'Composing a message',
-        summary: 'Write, draft, and send mail',
+        summary: 'Write, draft, and send messages',
         tags: ['compose', 'draft'],
         body: 'Open the compose window with the new-message button.',
     },
@@ -60,7 +60,7 @@ describe('searchHelpTopics', () => {
 
     it('matches a tag', () => {
         const results = searchHelpTopics(topics, 'draft')
-        expect(results.map(r => r.topic.id)).toEqual(['mail:compose'])
+        expect(results.map(r => r.topic.id)).toEqual(['gizmos:compose'])
     })
 
     it('matches the summary', () => {

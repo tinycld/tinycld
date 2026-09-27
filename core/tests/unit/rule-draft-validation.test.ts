@@ -19,8 +19,8 @@ import { draftToRecord, emptyDraft, validateDraft } from '../../lib/automation/d
 const CATALOG: CatalogResponse = {
     triggers: [
         {
-            ref: 'mail:message-received',
-            pkg: 'mail',
+            ref: 'gizmos:message-received',
+            pkg: 'gizmos',
             id: 'message-received',
             label: 'A message arrives',
             collection: 'mail_messages',
@@ -64,7 +64,7 @@ function savableDraft() {
     return {
         ...emptyDraft('personal'),
         name: 'My rule',
-        trigger: 'mail:message-received',
+        trigger: 'gizmos:message-received',
         actions: [{ uid: 'a1', ref: 'core:notify', params: { title: 'hi' } }],
     }
 }

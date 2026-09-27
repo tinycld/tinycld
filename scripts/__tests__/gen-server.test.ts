@@ -11,10 +11,10 @@ import {
     type ServerPkg,
 } from '../gen-server'
 
-const contacts: ServerPkg = {
-    slug: 'contacts',
-    module: 'tinycld.org/packages/contacts',
-    serverRelPath: '../../contacts/server',
+const doodads: ServerPkg = {
+    slug: 'doodads',
+    module: 'tinycld.org/packages/doodads',
+    serverRelPath: '../../doodads/server',
 }
 
 describe('buildPackageExtensionsGo', () => {
@@ -23,31 +23,31 @@ describe('buildPackageExtensionsGo', () => {
         expect(go).toContain('func registerPackageExtensions(_ *pocketbase.PocketBase) {}')
     })
     it('imports + registers each server package by slug identifier', () => {
-        const go = buildPackageExtensionsGo([contacts])
-        expect(go).toContain('contacts "tinycld.org/packages/contacts"')
-        expect(go).toContain('contacts.Register(app)')
+        const go = buildPackageExtensionsGo([doodads])
+        expect(go).toContain('doodads "tinycld.org/packages/doodads"')
+        expect(go).toContain('doodads.Register(app)')
         expect(go).toContain('func registerPackageExtensions(app *pocketbase.PocketBase)')
     })
 
     it('rejects a module path that would break out of the generated Go import', () => {
-        const bad: ServerPkg = { ...contacts, module: 'tinycld.org/x"; evil()//' }
+        const bad: ServerPkg = { ...doodads, module: 'tinycld.org/x"; evil()//' }
         expect(() => buildPackageExtensionsGo([bad])).toThrow(/unsafe value/)
     })
 })
 
 describe('buildGoWork', () => {
     it('includes ., core, and each server package use', () => {
-        const work = buildGoWork('../../core/server', [contacts])
+        const work = buildGoWork('../../core/server', [doodads])
         expect(work).toContain('use (')
         expect(work).toContain('    .')
         expect(work).toContain('    ../../core/server')
-        expect(work).toContain('    ../../contacts/server')
+        expect(work).toContain('    ../../doodads/server')
     })
 
     // core requires its nested archive-format module at v0.0.0; without it in
     // the workspace the graph load hits the proxy for that version.
     it("uses core's nested archive-format module", () => {
-        const work = buildGoWork('../../core/server', [contacts])
+        const work = buildGoWork('../../core/server', [doodads])
         expect(work).toContain('    ../../core/server/backup/format')
     })
 })
@@ -144,48 +144,48 @@ describe('buildBundledPackages', () => {
         const json = buildBundledPackages([
             {
                 manifest: {
-                    name: 'Mail',
-                    slug: 'mail',
+                    name: 'Gizmos',
+                    slug: 'gizmos',
                     version: '0.1.0',
                     description: 'Email',
-                    nav: { label: 'Mail', icon: 'mail', order: 10 },
-                    server: { package: 'server', module: 'tinycld.org/packages/mail' },
+                    nav: { label: 'Gizmos', icon: 'mail', order: 10 },
+                    server: { package: 'server', module: 'tinycld.org/packages/gizmos' },
                 },
             },
             {
-                manifest: { name: 'Calc', slug: 'calc', version: '0.2.0', description: '' },
+                manifest: { name: 'Trinkets', slug: 'trinkets', version: '0.2.0', description: '' },
             },
         ])
         const parsed = JSON.parse(json)
         expect(parsed).toEqual([
             {
-                name: 'Mail',
-                slug: 'mail',
+                name: 'Gizmos',
+                slug: 'gizmos',
                 version: '0.1.0',
                 icon: 'mail',
                 description: 'Email',
                 hasServer: true,
                 navOrder: 10,
                 manifestJson: JSON.stringify({
-                    name: 'Mail',
-                    slug: 'mail',
+                    name: 'Gizmos',
+                    slug: 'gizmos',
                     version: '0.1.0',
                     description: 'Email',
-                    nav: { label: 'Mail', icon: 'mail', order: 10 },
-                    server: { package: 'server', module: 'tinycld.org/packages/mail' },
+                    nav: { label: 'Gizmos', icon: 'mail', order: 10 },
+                    server: { package: 'server', module: 'tinycld.org/packages/gizmos' },
                 }),
             },
             {
-                name: 'Calc',
-                slug: 'calc',
+                name: 'Trinkets',
+                slug: 'trinkets',
                 version: '0.2.0',
                 icon: '',
                 description: '',
                 hasServer: false,
                 navOrder: 0,
                 manifestJson: JSON.stringify({
-                    name: 'Calc',
-                    slug: 'calc',
+                    name: 'Trinkets',
+                    slug: 'trinkets',
                     version: '0.2.0',
                     description: '',
                 }),

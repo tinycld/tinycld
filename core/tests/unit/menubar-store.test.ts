@@ -28,19 +28,21 @@ describe('menuBarRegistryId', () => {
     })
 
     it('folds the scope into the id', () => {
-        expect(menuBarRegistryId('format', 'calc')).toBe('menubar:calc:format')
-        expect(menuBarRegistryId('format', 'text')).toBe('menubar:text:format')
+        expect(menuBarRegistryId('format', 'trinkets')).toBe('menubar:trinkets:format')
+        expect(menuBarRegistryId('format', 'notepads')).toBe('menubar:notepads:format')
     })
 
     it('keeps the same menuId distinct across scopes', () => {
-        // The bug this fixes: a frozen calc menubar and an active text menubar
+        // The bug this fixes: a frozen trinkets menubar and an active notepads menubar
         // both have a "format" menu; without scoping they shared one registry
         // key and both opened at once.
-        expect(menuBarRegistryId('format', 'calc')).not.toBe(menuBarRegistryId('format', 'text'))
+        expect(menuBarRegistryId('format', 'trinkets')).not.toBe(
+            menuBarRegistryId('format', 'notepads')
+        )
     })
 
     it('produces ids that do not collide with non-menubar registry entries', () => {
-        const menubarFile = menuBarRegistryId('file', 'calc')
+        const menubarFile = menuBarRegistryId('file', 'trinkets')
         const toolbarFile = 'toolbar:file'
         expect(menubarFile).not.toBe(toolbarFile)
         expect(menubarFile.startsWith('menubar:')).toBe(true)

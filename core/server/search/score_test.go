@@ -72,12 +72,12 @@ func TestScoreTiersAreStrictlyOrdered(t *testing.T) {
 }
 
 func TestSortRowsTieBreaksOnTitleLengthThenPackageOrder(t *testing.T) {
-	order := map[string]int{"mail": 5, "drive": 12}
+	order := map[string]int{"gizmos": 5, "cogs": 12}
 
 	// Same tier, different title lengths: the tighter match wins.
 	rows := []Row{
-		{Slug: "drive", ID: "1", Title: "budget review long"},
-		{Slug: "drive", ID: "2", Title: "budget rev"},
+		{Slug: "cogs", ID: "1", Title: "budget review long"},
+		{Slug: "cogs", ID: "2", Title: "budget rev"},
 	}
 	sortRows(rows, []string{"budget"}, order)
 	if rows[0].ID != "2" {
@@ -87,11 +87,11 @@ func TestSortRowsTieBreaksOnTitleLengthThenPackageOrder(t *testing.T) {
 	// Same tier and identical titles: nav.order decides, so ordering does not
 	// depend on which source answered first.
 	rows = []Row{
-		{Slug: "drive", ID: "d", Title: "budget"},
-		{Slug: "mail", ID: "m", Title: "budget"},
+		{Slug: "cogs", ID: "d", Title: "budget"},
+		{Slug: "gizmos", ID: "m", Title: "budget"},
 	}
 	sortRows(rows, []string{"budget"}, order)
-	if rows[0].Slug != "mail" {
+	if rows[0].Slug != "gizmos" {
 		t.Fatalf("lower nav.order should sort first, got %s", rows[0].Slug)
 	}
 }

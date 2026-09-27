@@ -21,14 +21,14 @@ func TestFromPMTopLevelImage(t *testing.T) {
 			{
 				Type: NodeImage,
 				Attrs: map[string]any{
-					"src": "/api/files/boards_attachments/rec1/pic_ab.png",
+					"src": "/api/files/gadgets_attachments/rec1/pic_ab.png",
 					"alt": "pic.png",
 				},
 			},
 		},
 	}
 	got := FromPM(doc)
-	want := "![pic.png](/api/files/boards_attachments/rec1/pic_ab.png)\n"
+	want := "![pic.png](/api/files/gadgets_attachments/rec1/pic_ab.png)\n"
 	if got != want {
 		t.Fatalf("FromPM(top-level image) = %q; want %q", got, want)
 	}

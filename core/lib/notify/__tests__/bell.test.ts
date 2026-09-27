@@ -32,8 +32,8 @@ describe('BellChannel', () => {
         await bellChannel.dispatch({
             event: 'import.complete',
             title: 'Import done',
-            body: '42 contacts',
-            url: '/contacts',
+            body: '42 doodads',
+            url: '/doodads',
             data: { source: 'google-takeout', count: 42 },
             variant: 'success',
         })
@@ -46,8 +46,8 @@ describe('BellChannel', () => {
             user: 'u1',
             type: 'import.complete',
             title: 'Import done',
-            body: '42 contacts',
-            url: '/contacts',
+            body: '42 doodads',
+            url: '/doodads',
             metadata: { source: 'google-takeout', count: 42 },
             read: false,
             dismissed: false,

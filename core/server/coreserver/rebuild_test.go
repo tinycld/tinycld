@@ -18,7 +18,7 @@ func TestRebuildManifest_RoundTrip(t *testing.T) {
 		BuildID: "build-1234",
 		Members: []MemberSpec{
 			{Slug: "tinycld", Version: "1.2.0", Spec: "git+https://github.com/tinycld/tinycld#v1.2.0"},
-			{Slug: "mail", Version: "0.3.1", Spec: "@tinycld/mail@0.3.1"},
+			{Slug: "gizmos", Version: "0.3.1", Spec: "@tinycld/gizmos@0.3.1"},
 		},
 	}
 	b, err := json.Marshal(m)
@@ -32,15 +32,15 @@ func TestRebuildManifest_RoundTrip(t *testing.T) {
 	if got.BuildID != "build-1234" || len(got.Members) != 2 {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
-	if got.Members[1].Slug != "mail" || got.Members[1].Spec != "@tinycld/mail@0.3.1" {
+	if got.Members[1].Slug != "gizmos" || got.Members[1].Spec != "@tinycld/gizmos@0.3.1" {
 		t.Fatalf("member mismatch: %+v", got.Members[1])
 	}
 }
 
 func TestRebuildManifest_MemberBySlug(t *testing.T) {
-	m := RebuildManifest{Members: []MemberSpec{{Slug: "mail"}, {Slug: "calc"}}}
-	if ms, ok := m.MemberBySlug("calc"); !ok || ms.Slug != "calc" {
-		t.Fatalf("MemberBySlug(calc) failed: %+v ok=%v", ms, ok)
+	m := RebuildManifest{Members: []MemberSpec{{Slug: "gizmos"}, {Slug: "trinkets"}}}
+	if ms, ok := m.MemberBySlug("trinkets"); !ok || ms.Slug != "trinkets" {
+		t.Fatalf("MemberBySlug(trinkets) failed: %+v ok=%v", ms, ok)
 	}
 	if _, ok := m.MemberBySlug("absent"); ok {
 		t.Fatal("MemberBySlug(absent) should be !ok")
@@ -67,8 +67,8 @@ func TestBuildCurrentMemberSet_MapsCoreToTinycld(t *testing.T) {
 	app := newMigrateTestApp(t)
 	addPkgRegistryCollection(t, app)
 	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
-	setRegistryRow(t, app, "mail", "installed", "0.3.1", "@tinycld/mail@0.3.1")
-	setRegistryRow(t, app, "calc", "available", "0.1.0", "@tinycld/calc@0.1.0") // excluded
+	setRegistryRow(t, app, "gizmos", "installed", "0.3.1", "@tinycld/gizmos@0.3.1")
+	setRegistryRow(t, app, "trinkets", "available", "0.1.0", "@tinycld/trinkets@0.1.0") // excluded
 
 	set, err := buildCurrentMemberSet(app)
 	if err != nil {
@@ -81,11 +81,11 @@ func TestBuildCurrentMemberSet_MapsCoreToTinycld(t *testing.T) {
 	if _, ok := bySlug["tinycld"]; !ok {
 		t.Fatal("core row should map to tinycld member")
 	}
-	if _, ok := bySlug["mail"]; !ok {
-		t.Fatal("installed mail missing")
+	if _, ok := bySlug["gizmos"]; !ok {
+		t.Fatal("installed gizmos missing")
 	}
-	if _, ok := bySlug["calc"]; ok {
-		t.Fatal("available calc should be excluded")
+	if _, ok := bySlug["trinkets"]; ok {
+		t.Fatal("available trinkets should be excluded")
 	}
 }
 
@@ -151,25 +151,25 @@ func TestCommitRegistry_MirrorsManifest(t *testing.T) {
 	app := newMigrateTestApp(t)
 	addPkgRegistryCollection(t, app)
 	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
-	setRegistryRow(t, app, "mail", "installed", "0.3.1", "@tinycld/mail@0.3.1")
+	setRegistryRow(t, app, "gizmos", "installed", "0.3.1", "@tinycld/gizmos@0.3.1")
 
-	// Desired set upgrades mail and drops nothing; core stays.
+	// Desired set upgrades gizmos and drops nothing; core stays.
 	m := RebuildManifest{
 		BuildID: "build-x",
 		Members: []MemberSpec{
 			{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld"},
-			{Slug: "mail", Version: "0.4.0", Spec: "@tinycld/mail@0.4.0"},
+			{Slug: "gizmos", Version: "0.4.0", Spec: "@tinycld/gizmos@0.4.0"},
 		},
 	}
 	if err := commitRegistry(app, m, t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
-	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
+	gizmos, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'gizmos'", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mail.GetString("version") != "0.4.0" {
-		t.Fatalf("mail version = %s, want 0.4.0", mail.GetString("version"))
+	if gizmos.GetString("version") != "0.4.0" {
+		t.Fatalf("gizmos version = %s, want 0.4.0", gizmos.GetString("version"))
 	}
 }
 
@@ -179,7 +179,7 @@ func TestCommitRegistry_DisablesDroppedMember(t *testing.T) {
 	app := newMigrateTestApp(t)
 	addPkgRegistryCollection(t, app)
 	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
-	setRegistryRow(t, app, "mail", "installed", "0.3.1", "@tinycld/mail@0.3.1")
+	setRegistryRow(t, app, "gizmos", "installed", "0.3.1", "@tinycld/gizmos@0.3.1")
 
 	m := RebuildManifest{
 		BuildID: "build-y",
@@ -188,12 +188,12 @@ func TestCommitRegistry_DisablesDroppedMember(t *testing.T) {
 	if err := commitRegistry(app, m, t.TempDir(), ""); err != nil {
 		t.Fatal(err)
 	}
-	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
+	gizmos, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'gizmos'", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mail.GetString("status") != "disabled" {
-		t.Fatalf("mail status = %s, want disabled", mail.GetString("status"))
+	if gizmos.GetString("status") != "disabled" {
+		t.Fatalf("gizmos status = %s, want disabled", gizmos.GetString("status"))
 	}
 }
 
@@ -204,18 +204,18 @@ func TestCommitRegistry_DeletesUninstalledMember(t *testing.T) {
 	app := newMigrateTestApp(t)
 	addPkgRegistryCollection(t, app)
 	setRegistryRow(t, app, "core", "bundled", "1.0.0", "git+https://x/tinycld")
-	setRegistryRow(t, app, "mail", "installed", "0.3.1", "@tinycld/mail@0.3.1")
+	setRegistryRow(t, app, "gizmos", "installed", "0.3.1", "@tinycld/gizmos@0.3.1")
 
 	m := RebuildManifest{
 		BuildID: "build-z",
 		Members: []MemberSpec{{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld"}},
 	}
-	// uninstalledSlug = "mail" → its row should be removed, not disabled.
-	if err := commitRegistry(app, m, t.TempDir(), "mail"); err != nil {
+	// uninstalledSlug = "gizmos" → its row should be removed, not disabled.
+	if err := commitRegistry(app, m, t.TempDir(), "gizmos"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil); err == nil {
-		t.Fatal("mail row still exists; expected it to be deleted on uninstall")
+	if _, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'gizmos'", nil); err == nil {
+		t.Fatal("gizmos row still exists; expected it to be deleted on uninstall")
 	}
 	// The base must be untouched.
 	if _, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'core'", nil); err != nil {
@@ -227,10 +227,10 @@ func TestDesiredSet_Install(t *testing.T) {
 	current := []MemberSpec{
 		{Slug: "tinycld", Version: "1.0.0", Spec: "git+https://x/tinycld#v1.0.0"},
 	}
-	delta := setDelta{op: "install", slug: "mail", version: "0.3.1", spec: "@tinycld/mail@0.3.1"}
+	delta := setDelta{op: "install", slug: "gizmos", version: "0.3.1", spec: "@tinycld/gizmos@0.3.1"}
 	m := desiredSet("build-1", current, delta)
-	if _, ok := m.MemberBySlug("mail"); !ok {
-		t.Fatal("mail not added")
+	if _, ok := m.MemberBySlug("gizmos"); !ok {
+		t.Fatal("gizmos not added")
 	}
 	if len(m.Members) != 2 {
 		t.Fatalf("want 2 members, got %d", len(m.Members))
@@ -238,10 +238,10 @@ func TestDesiredSet_Install(t *testing.T) {
 }
 
 func TestDesiredSet_Uninstall(t *testing.T) {
-	current := []MemberSpec{{Slug: "tinycld"}, {Slug: "mail"}}
-	m := desiredSet("build-2", current, setDelta{op: "uninstall", slug: "mail"})
-	if _, ok := m.MemberBySlug("mail"); ok {
-		t.Fatal("mail should be removed")
+	current := []MemberSpec{{Slug: "tinycld"}, {Slug: "gizmos"}}
+	m := desiredSet("build-2", current, setDelta{op: "uninstall", slug: "gizmos"})
+	if _, ok := m.MemberBySlug("gizmos"); ok {
+		t.Fatal("gizmos should be removed")
 	}
 	if _, ok := m.MemberBySlug("tinycld"); !ok {
 		t.Fatal("tinycld must remain")
@@ -251,12 +251,12 @@ func TestDesiredSet_Uninstall(t *testing.T) {
 func TestDesiredSet_Upgrade_OverridesSpec(t *testing.T) {
 	current := []MemberSpec{
 		{Slug: "tinycld"},
-		{Slug: "mail", Version: "0.3.1", Spec: "@tinycld/mail@0.3.1"},
+		{Slug: "gizmos", Version: "0.3.1", Spec: "@tinycld/gizmos@0.3.1"},
 	}
-	m := desiredSet("build-3", current, setDelta{op: "version", slug: "mail", version: "0.4.0", spec: "@tinycld/mail@0.4.0"})
-	ms, _ := m.MemberBySlug("mail")
-	if ms.Version != "0.4.0" || ms.Spec != "@tinycld/mail@0.4.0" {
-		t.Fatalf("mail not upgraded: %+v", ms)
+	m := desiredSet("build-3", current, setDelta{op: "version", slug: "gizmos", version: "0.4.0", spec: "@tinycld/gizmos@0.4.0"})
+	ms, _ := m.MemberBySlug("gizmos")
+	if ms.Version != "0.4.0" || ms.Spec != "@tinycld/gizmos@0.4.0" {
+		t.Fatalf("gizmos not upgraded: %+v", ms)
 	}
 }
 
@@ -309,7 +309,7 @@ func TestRebuild_VerifyCompatFailure_DiscardsBuildBeforeBackup(t *testing.T) {
 			return os.MkdirAll(dir, 0o755)
 		},
 		verifyCompat: func(m RebuildManifest, dir string) error {
-			return fmt.Errorf("mail requires @tinycld/core >=0.5.0 (found: 0.0.4)")
+			return fmt.Errorf("gizmos requires @tinycld/core >=0.5.0 (found: 0.0.4)")
 		},
 		pipeline: func(j *installjob.Job, dir string) (buildOutput, error) {
 			piped = true

@@ -111,9 +111,9 @@ func TestOrgPkgAccess_AdminCanCreate(t *testing.T) {
 		URL:     "/api/collections/org_pkg_access/records",
 		Headers: map[string]string{"Authorization": env.adminToken},
 		Body: strings.NewReader(
-			`{"user":"` + env.member.Id + `","pkg":"mail","access":"readonly"}`),
+			`{"user":"` + env.member.Id + `","pkg":"gizmos","access":"readonly"}`),
 		ExpectedStatus:        http.StatusOK,
-		ExpectedContent:       []string{`"pkg":"mail"`},
+		ExpectedContent:       []string{`"pkg":"gizmos"`},
 		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
 		DisableTestAppCleanup: true,
 	}
@@ -124,25 +124,25 @@ func TestOrgPkgAccess_AdminCanCreate(t *testing.T) {
 // member they open.
 func TestOrgPkgAccess_AdminSeesOtherUsersRows(t *testing.T) {
 	env := setupPkgAccessRLSApp(t)
-	pkgAccessRow(t, env.app, env.member.Id, "mail", "readonly")
+	pkgAccessRow(t, env.app, env.member.Id, "gizmos", "readonly")
 
-	runListScenario(t, env.app, "org_pkg_access", env.adminToken, []string{`"pkg":"mail"`})
+	runListScenario(t, env.app, "org_pkg_access", env.adminToken, []string{`"pkg":"gizmos"`})
 }
 
 // A member keeps reading their OWN row — use-pkg-access resolves the current
 // user's access from it, so losing this read would fail every gate closed.
 func TestOrgPkgAccess_MemberReadsOwnRow(t *testing.T) {
 	env := setupPkgAccessRLSApp(t)
-	pkgAccessRow(t, env.app, env.member.Id, "drive", "readonly")
+	pkgAccessRow(t, env.app, env.member.Id, "cogs", "readonly")
 
-	runListScenario(t, env.app, "org_pkg_access", env.memberToken, []string{`"pkg":"drive"`})
+	runListScenario(t, env.app, "org_pkg_access", env.memberToken, []string{`"pkg":"cogs"`})
 }
 
 // ...and only their own. Opening reads to admins must not leak another user's
 // grants to an ordinary member.
 func TestOrgPkgAccess_MemberCannotSeeOtherUsersRows(t *testing.T) {
 	env := setupPkgAccessRLSApp(t)
-	pkgAccessRow(t, env.app, env.other.Id, "calendar", "readonly")
+	pkgAccessRow(t, env.app, env.other.Id, "sprockets", "readonly")
 
 	runListScenario(t, env.app, "org_pkg_access", env.memberToken, []string{`"totalItems":0`})
 }
@@ -157,7 +157,7 @@ func TestOrgPkgAccess_MemberCannotCreate(t *testing.T) {
 		URL:     "/api/collections/org_pkg_access/records",
 		Headers: map[string]string{"Authorization": env.memberToken},
 		Body: strings.NewReader(
-			`{"user":"` + env.member.Id + `","pkg":"mail","access":"full"}`),
+			`{"user":"` + env.member.Id + `","pkg":"gizmos","access":"full"}`),
 		ExpectedStatus:        http.StatusBadRequest,
 		ExpectedContent:       []string{`"message":"Failed to create record."`},
 		TestAppFactory:        func(_ testing.TB) *tests.TestApp { return env.app },
@@ -169,7 +169,7 @@ func TestOrgPkgAccess_MemberCannotCreate(t *testing.T) {
 // Anonymous callers get nothing.
 func TestOrgPkgAccess_AnonDenied(t *testing.T) {
 	env := setupPkgAccessRLSApp(t)
-	pkgAccessRow(t, env.app, env.member.Id, "mail", "readonly")
+	pkgAccessRow(t, env.app, env.member.Id, "gizmos", "readonly")
 
 	runListScenario(t, env.app, "org_pkg_access", "", []string{`"totalItems":0`})
 }

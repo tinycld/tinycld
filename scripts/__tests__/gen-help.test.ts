@@ -28,8 +28,8 @@ describe('buildHelpSource', () => {
     it('emits a HelpGroup[] with id = pkg:topic, sorted by order', () => {
         const src = buildHelpSource([
             {
-                packageName: '@tinycld/mail',
-                pkgSlug: 'mail',
+                packageName: '@tinycld/gizmos',
+                pkgSlug: 'gizmos',
                 topics: [
                     {
                         topicId: 'b',
@@ -48,6 +48,6 @@ describe('buildHelpSource', () => {
         ])
         expect(src).toContain('export const packageHelp')
         // order 1 (a) should appear before order 2 (b)
-        expect(src.indexOf('"mail:a"')).toBeLessThan(src.indexOf('"mail:b"'))
+        expect(src.indexOf('"gizmos:a"')).toBeLessThan(src.indexOf('"gizmos:b"'))
     })
 })

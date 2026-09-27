@@ -2,12 +2,12 @@ import { chipsToText } from '@tinycld/core/lib/search/chip-text'
 import { parseQuery } from '@tinycld/core/lib/search/parse-query'
 import { describe, expect, it } from 'vitest'
 
-const SLUGS = ['mail', 'drive', 'boards', 'contacts']
+const SLUGS = ['gizmos', 'cogs', 'gadgets', 'doodads']
 
 describe('parseQuery — chips', () => {
     it('turns a matching word followed by a colon into a chip', () => {
-        expect(parseQuery('mail: budget', SLUGS)).toEqual({
-            chips: ['mail'],
+        expect(parseQuery('gizmos: budget', SLUGS)).toEqual({
+            chips: ['gizmos'],
             include: ['budget'],
             exclude: [],
             remainder: 'budget',
@@ -23,20 +23,20 @@ describe('parseQuery — chips', () => {
         })
     })
 
-    // The regression test for "mail server migration": a package name typed
+    // The regression test for "gizmos server migration": a package name typed
     // WITHOUT a colon must stay searchable text, or that email is unfindable.
     it('leaves a package name without a colon as searchable text', () => {
-        expect(parseQuery('mail server', SLUGS)).toEqual({
+        expect(parseQuery('gizmos server', SLUGS)).toEqual({
             chips: [],
-            include: ['mail', 'server'],
+            include: ['gizmos', 'server'],
             exclude: [],
-            remainder: 'mail server',
+            remainder: 'gizmos server',
         })
     })
 
     it('accepts multiple chips', () => {
-        expect(parseQuery('mail: drive: budget', SLUGS)).toEqual({
-            chips: ['mail', 'drive'],
+        expect(parseQuery('gizmos: cogs: budget', SLUGS)).toEqual({
+            chips: ['gizmos', 'cogs'],
             include: ['budget'],
             exclude: [],
             remainder: 'budget',
@@ -44,8 +44,8 @@ describe('parseQuery — chips', () => {
     })
 
     it('ignores a duplicate chip but still consumes the word', () => {
-        expect(parseQuery('mail: mail: budget', SLUGS)).toEqual({
-            chips: ['mail'],
+        expect(parseQuery('gizmos: gizmos: budget', SLUGS)).toEqual({
+            chips: ['gizmos'],
             include: ['budget'],
             exclude: [],
             remainder: 'budget',
@@ -53,8 +53,8 @@ describe('parseQuery — chips', () => {
     })
 
     it('matches a slug case-insensitively', () => {
-        expect(parseQuery('Mail: budget', SLUGS)).toEqual({
-            chips: ['mail'],
+        expect(parseQuery('Gizmos: budget', SLUGS)).toEqual({
+            chips: ['gizmos'],
             include: ['budget'],
             exclude: [],
             remainder: 'budget',
@@ -67,18 +67,18 @@ describe('parseQuery — chip-after-text ordering (C1 regression)', () => {
     // LENGTH (text.slice(chipsToText(chips).length)), which assumes chips are
     // always a leading prefix of the raw text. parseQuery recognizes `pkg:`
     // ANYWHERE in the string, so typing a chip-forming token AFTER free text
-    // ("budget mail: q3") made the slice cut into "budget" instead of the
+    // ("budget gizmos: q3") made the slice cut into "budget" instead of the
     // chip prefix — the word survived the first parse and was destroyed on
     // the next keystroke once the corrupted display got written back to the
     // store. parseQuery now recognizes chips ONLY from a leading run at the
     // very start of input, so a later `pkg:`-shaped token is parsed as plain
     // text — never promoted to a chip, and never dropped either.
     it('keeps free text that precedes a chip-forming token as literal words', () => {
-        expect(parseQuery('budget mail: q3', SLUGS)).toEqual({
+        expect(parseQuery('budget gizmos: q3', SLUGS)).toEqual({
             chips: [],
-            include: ['budget', 'mail', 'q3'],
+            include: ['budget', 'gizmos', 'q3'],
             exclude: [],
-            remainder: 'budget mail: q3',
+            remainder: 'budget gizmos: q3',
         })
     })
 
@@ -87,11 +87,11 @@ describe('parseQuery — chip-after-text ordering (C1 regression)', () => {
     // second token must not be promoted to a chip (only the leading run
     // counts) and "budget" must not be lost.
     it('does not promote a second pkg: token once free text has broken the leading run', () => {
-        expect(parseQuery('boards: budget drive: q3', SLUGS)).toEqual({
-            chips: ['boards'],
-            include: ['budget', 'drive', 'q3'],
+        expect(parseQuery('gadgets: budget cogs: q3', SLUGS)).toEqual({
+            chips: ['gadgets'],
+            include: ['budget', 'cogs', 'q3'],
             exclude: [],
-            remainder: 'budget drive: q3',
+            remainder: 'budget cogs: q3',
         })
     })
 
@@ -100,7 +100,7 @@ describe('parseQuery — chip-after-text ordering (C1 regression)', () => {
     // (onChangeRemainder). If that reconstruction ever drops a word, the
     // word is gone for good the next time the user types. This simulates the
     // exact multi-keystroke sequence from the bug report: open with no
-    // chips, type "budget mail:", then continue typing " q3".
+    // chips, type "budget gizmos:", then continue typing " q3".
     it('loses no word across a simulated keystroke round-trip', () => {
         let storeText = ''
         const type = (nextRemainder: string) => {
@@ -108,14 +108,14 @@ describe('parseQuery — chip-after-text ordering (C1 regression)', () => {
             storeText = chipsToText(parsed.chips) + nextRemainder
         }
 
-        type('budget mail:')
+        type('budget gizmos:')
         let parsed = parseQuery(storeText, SLUGS)
         expect(parsed.include).toContain('budget')
 
         type(`${parsed.remainder} q3`)
         parsed = parseQuery(storeText, SLUGS)
 
-        expect(parsed.include).toEqual(['budget', 'mail', 'q3'])
+        expect(parsed.include).toEqual(['budget', 'gizmos', 'q3'])
         expect(parsed.chips).toEqual([])
     })
 })

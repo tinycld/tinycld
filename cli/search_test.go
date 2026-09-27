@@ -44,7 +44,7 @@ func searchDeps(t *testing.T, s *searchServer) *deps {
 	// Fixed rather than the generated list: that one reflects whichever
 	// packages the checkout assembled (empty in CI), which would make these
 	// assertions pass or fail on the machine rather than on the code.
-	d.slugs = []string{"mail", "drive", "boards", "contacts"}
+	d.slugs = []string{"gizmos", "cogs", "gadgets", "doodads"}
 
 	host := strings.TrimPrefix(s.srv.URL, "http://")
 	cfg := &config.Config{
@@ -73,7 +73,7 @@ func TestSearchSendsParsedGrammar(t *testing.T) {
 
 	// Chips scope the request, the bare word stays a term, and the hyphenated
 	// term becomes an exclusion — the same split the palette would produce.
-	if _, _, err := runCLI(t, d, "search", "mail: drive: budget -draft"); err != nil {
+	if _, _, err := runCLI(t, d, "search", "gizmos: cogs: budget -draft"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -83,8 +83,8 @@ func TestSearchSendsParsedGrammar(t *testing.T) {
 	if got := s.lastQuery.Get("not"); got != "draft" {
 		t.Errorf("not = %q, want %q", got, "draft")
 	}
-	if got := s.lastQuery["pkg"]; len(got) != 2 || got[0] != "mail" || got[1] != "drive" {
-		t.Errorf("pkg = %v, want [mail drive]", got)
+	if got := s.lastQuery["pkg"]; len(got) != 2 || got[0] != "gizmos" || got[1] != "cogs" {
+		t.Errorf("pkg = %v, want [gizmos cogs]", got)
 	}
 }
 
@@ -92,15 +92,15 @@ func TestSearchMergesPkgFlagWithChips(t *testing.T) {
 	s := newSearchServer(t)
 	d := searchDeps(t, s)
 
-	if _, _, err := runCLI(t, d, "search", "mail: budget", "--pkg", "drive"); err != nil {
+	if _, _, err := runCLI(t, d, "search", "gizmos: budget", "--pkg", "cogs"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Additive, not overriding: both express scope, and dropping either would
 	// search a package the user did not ask for (or skip one they did).
 	got := s.lastQuery["pkg"]
-	if len(got) != 2 || got[0] != "mail" || got[1] != "drive" {
-		t.Errorf("pkg = %v, want [mail drive]", got)
+	if len(got) != 2 || got[0] != "gizmos" || got[1] != "cogs" {
+		t.Errorf("pkg = %v, want [gizmos cogs]", got)
 	}
 }
 
@@ -123,11 +123,11 @@ func TestSearchTableOutput(t *testing.T) {
 	s.response = searchResponse{
 		Rows: []searchRow{
 			{
-				Slug: "drive", ID: "d1", Title: "<mark>budget</mark>-2026.xlsx",
+				Slug: "cogs", ID: "d1", Title: "<mark>budget</mark>-2026.xlsx",
 				Subtitle: "Spreadsheet", Meta: "2d",
 			},
 		},
-		Counts: map[string]int{"drive": 1},
+		Counts: map[string]int{"cogs": 1},
 	}
 	d := searchDeps(t, s)
 
@@ -154,10 +154,10 @@ func TestSearchJSONKeepsFieldsAndCleanStdout(t *testing.T) {
 	s := newSearchServer(t)
 	s.response = searchResponse{
 		Rows: []searchRow{{
-			Slug: "mail", ID: "m1", Title: "Q3 budget",
+			Slug: "gizmos", ID: "m1", Title: "Q3 budget",
 			Fields: map[string]any{"mailbox_id": "mb1"},
 		}},
-		Counts: map[string]int{"mail": 1},
+		Counts: map[string]int{"gizmos": 1},
 	}
 	d := searchDeps(t, s)
 
@@ -181,8 +181,8 @@ func TestSearchJSONKeepsFieldsAndCleanStdout(t *testing.T) {
 func TestSearchReportsPerPackageCounts(t *testing.T) {
 	s := newSearchServer(t)
 	s.response = searchResponse{
-		Rows:   []searchRow{{Slug: "mail", ID: "m1", Title: "Q3 budget"}},
-		Counts: map[string]int{"mail": 12, "drive": 3, "boards": 0},
+		Rows:   []searchRow{{Slug: "gizmos", ID: "m1", Title: "Q3 budget"}},
+		Counts: map[string]int{"gizmos": 12, "cogs": 3, "gadgets": 0},
 	}
 	d := searchDeps(t, s)
 
@@ -192,10 +192,10 @@ func TestSearchReportsPerPackageCounts(t *testing.T) {
 	}
 
 	// Ordered by count, and a package with no matches is not listed.
-	if !strings.Contains(stderr, "(12 in mail, 3 in drive)") {
+	if !strings.Contains(stderr, "(12 in gizmos, 3 in cogs)") {
 		t.Errorf("counts = %q", stderr)
 	}
-	if strings.Contains(stderr, "boards") {
+	if strings.Contains(stderr, "gadgets") {
 		t.Errorf("zero-count package should not be listed: %q", stderr)
 	}
 }
@@ -205,10 +205,10 @@ func TestSearchReportsPerPackageCounts(t *testing.T) {
 func TestSearchNamesPartialAndTruncatedPackages(t *testing.T) {
 	s := newSearchServer(t)
 	s.response = searchResponse{
-		Rows:      []searchRow{{Slug: "mail", ID: "m1", Title: "Q3 budget"}},
-		Counts:    map[string]int{"mail": 1},
-		Partial:   []string{"drive"},
-		Truncated: []string{"mail"},
+		Rows:      []searchRow{{Slug: "gizmos", ID: "m1", Title: "Q3 budget"}},
+		Counts:    map[string]int{"gizmos": 1},
+		Partial:   []string{"cogs"},
+		Truncated: []string{"gizmos"},
 	}
 	d := searchDeps(t, s)
 
@@ -217,10 +217,10 @@ func TestSearchNamesPartialAndTruncatedPackages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(stderr, "warning") || !strings.Contains(stderr, "drive") {
+	if !strings.Contains(stderr, "warning") || !strings.Contains(stderr, "cogs") {
 		t.Errorf("partial package not reported: %q", stderr)
 	}
-	if !strings.Contains(stderr, "more matches available in mail") {
+	if !strings.Contains(stderr, "more matches available in gizmos") {
 		t.Errorf("truncated package not reported: %q", stderr)
 	}
 }
@@ -231,9 +231,9 @@ func TestSearchNamesPartialAndTruncatedPackages(t *testing.T) {
 func TestSearchQuietStillWarnsAboutPartial(t *testing.T) {
 	s := newSearchServer(t)
 	s.response = searchResponse{
-		Rows:    []searchRow{{Slug: "mail", ID: "m1", Title: "Q3 budget"}},
-		Counts:  map[string]int{"mail": 1},
-		Partial: []string{"drive"},
+		Rows:    []searchRow{{Slug: "gizmos", ID: "m1", Title: "Q3 budget"}},
+		Counts:  map[string]int{"gizmos": 1},
+		Partial: []string{"cogs"},
 	}
 	d := searchDeps(t, s)
 
@@ -245,7 +245,7 @@ func TestSearchQuietStillWarnsAboutPartial(t *testing.T) {
 	if strings.Contains(stderr, "result(s)") {
 		t.Errorf("--quiet should suppress the count line: %q", stderr)
 	}
-	if !strings.Contains(stderr, "drive") {
+	if !strings.Contains(stderr, "cogs") {
 		t.Errorf("--quiet must not hide a dropped package: %q", stderr)
 	}
 }
@@ -303,13 +303,13 @@ func TestSearchWithNoGeneratedSlugsStillSearches(t *testing.T) {
 	d := searchDeps(t, s)
 	d.slugs = []string{}
 
-	if _, _, err := runCLI(t, d, "search", "budget", "--pkg", "mail"); err != nil {
+	if _, _, err := runCLI(t, d, "search", "budget", "--pkg", "gizmos"); err != nil {
 		t.Fatalf("should not reject --pkg with no slug list: %v", err)
 	}
-	if got := s.lastQuery["pkg"]; len(got) != 1 || got[0] != "mail" {
-		t.Errorf("pkg = %v, want [mail]", got)
+	if got := s.lastQuery["pkg"]; len(got) != 1 || got[0] != "gizmos" {
+		t.Errorf("pkg = %v, want [gizmos]", got)
 	}
-	// With no list, `mail:` cannot be recognized as a chip and stays a term.
+	// With no list, `gizmos:` cannot be recognized as a chip and stays a term.
 	if got := s.lastQuery.Get("q"); got != "budget" {
 		t.Errorf("q = %q, want %q", got, "budget")
 	}
@@ -319,11 +319,11 @@ func TestSearchLimitIsSentAndTruncationReported(t *testing.T) {
 	s := newSearchServer(t)
 	s.response = searchResponse{
 		Rows: []searchRow{
-			{Slug: "mail", ID: "m1", Title: "Q3 budget"},
-			{Slug: "mail", ID: "m2", Title: "budget draft"},
+			{Slug: "gizmos", ID: "m1", Title: "Q3 budget"},
+			{Slug: "gizmos", ID: "m2", Title: "budget draft"},
 		},
-		Counts:    map[string]int{"mail": 12},
-		Truncated: []string{"mail"},
+		Counts:    map[string]int{"gizmos": 12},
+		Truncated: []string{"gizmos"},
 	}
 	d := searchDeps(t, s)
 
@@ -336,10 +336,10 @@ func TestSearchLimitIsSentAndTruncationReported(t *testing.T) {
 		t.Errorf("limit = %q, want %q", got, "2")
 	}
 	// The count is the package's full total, not the number of rows shown.
-	if !strings.Contains(stderr, "12 in mail") {
+	if !strings.Contains(stderr, "12 in gizmos") {
 		t.Errorf("full count not reported: %q", stderr)
 	}
-	if !strings.Contains(stderr, "more matches available in mail") {
+	if !strings.Contains(stderr, "more matches available in gizmos") {
 		t.Errorf("truncation not reported: %q", stderr)
 	}
 }
@@ -377,13 +377,13 @@ func TestSearchRejectsUnknownPackage(t *testing.T) {
 
 // --not is a list of terms to exclude. Anything else it parses into — a `pkg:`
 // chip, a nested `-term` — has no meaning there, and was silently dropped:
-// `--not "pkg:mail"` looked like it worked and filtered nothing.
+// `--not "pkg:gizmos"` looked like it worked and filtered nothing.
 func TestSearchNotRejectsNonTerms(t *testing.T) {
 	srv := newSearchServer(t)
 	d := searchDeps(t, srv)
 
 	for _, tc := range []struct{ name, not, wantMsg string }{
-		{"a package chip", "mail:", "--pkg"},
+		{"a package chip", "gizmos:", "--pkg"},
 		{"a nested negation", "-spam", "nested negation"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

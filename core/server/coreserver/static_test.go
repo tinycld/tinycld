@@ -94,7 +94,7 @@ func TestStatic_AppRouteServesShellNotWebsite(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:               "app route falls back to the SPA shell, not the website",
 		Method:             http.MethodGet,
-		URL:                "/mail",
+		URL:                "/gizmos",
 		ExpectedStatus:     http.StatusOK,
 		ExpectedContent:    []string{"APP SHELL"},
 		NotExpectedContent: []string{"MARKETING HOME"},
@@ -205,7 +205,7 @@ func TestStatic_ShellRevalidates(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:            "shell serves no-cache + ETag",
 		Method:          http.MethodGet,
-		URL:             "/mail",
+		URL:             "/gizmos",
 		ExpectedStatus:  http.StatusOK,
 		ExpectedContent: []string{"APP SHELL"},
 		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
@@ -227,7 +227,7 @@ func TestStatic_ShellConditionalGet(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:           "matching If-None-Match yields 304, empty body",
 		Method:         http.MethodGet,
-		URL:            "/mail",
+		URL:            "/gizmos",
 		Headers:        map[string]string{"If-None-Match": shellETag(shell)},
 		ExpectedStatus: http.StatusNotModified,
 		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
@@ -245,7 +245,7 @@ func TestStatic_ShellStaleETagRefetches(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:            "stale If-None-Match re-sends the shell",
 		Method:          http.MethodGet,
-		URL:             "/mail",
+		URL:             "/gizmos",
 		Headers:         map[string]string{"If-None-Match": shellETag("<html>OLD SHELL</html>")},
 		ExpectedStatus:  http.StatusOK,
 		ExpectedContent: []string{"APP SHELL"},
@@ -270,7 +270,7 @@ func TestStatic_ShellPinsAssetURLsToRelease(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:           "shell asset URLs carry ?r=<release id>",
 		Method:         http.MethodGet,
-		URL:            "/a/mail",
+		URL:            "/a/gizmos",
 		ExpectedStatus: http.StatusOK,
 		ExpectedContent: []string{
 			`href="/_expo/static/css/global-1.css?r=2026-09-15-005748-50a0598"`,
@@ -290,7 +290,7 @@ func TestStatic_ShellWithoutReleaseIDIsUnchanged(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:               "no release id leaves asset URLs untouched",
 		Method:             http.MethodGet,
-		URL:                "/a/mail",
+		URL:                "/a/gizmos",
 		ExpectedStatus:     http.StatusOK,
 		ExpectedContent:    []string{`src="/_expo/static/js/web/index-abc.js"`},
 		NotExpectedContent: []string{`?r=`},
@@ -354,11 +354,11 @@ func TestIsDavPath(t *testing.T) {
 		}
 	}
 	for _, p := range []string{
-		// "/drive" is deliberately NOT a DAV path: it is the in-app SPA route,
-		// and matching it here would route a hard load of /drive to Basic-Auth
-		// WebDAV instead of the app (see isDavPath's comment). Protocol mounts
-		// live under the reserved "/dav" namespace instead.
-		"/drive",
+		// A package's in-app SPA route is deliberately NOT a DAV path: matching
+		// it here would route a hard load of it to Basic-Auth WebDAV instead of
+		// the app (see isDavPath's comment). Protocol mounts live under the
+		// reserved "/dav" namespace instead.
+		"/cogs",
 		"/", "/api/health", "/settings", "/.well-known/apple-app-site-association",
 	} {
 		if isDavPath(p) {
@@ -380,7 +380,7 @@ func TestStatic_ShellRefusesFramingByDefault(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:            "an app route may not be framed",
 		Method:          http.MethodGet,
-		URL:             "/a/boards",
+		URL:             "/a/gadgets",
 		ExpectedStatus:  http.StatusOK,
 		ExpectedContent: []string{"APP SHELL"},
 		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {
@@ -454,7 +454,7 @@ func TestStatic_ConditionalGetStillCarriesTheFramingPolicy(t *testing.T) {
 	runStaticScenario(t, publicDir, websiteDir, releasesDir, &tests.ApiScenario{
 		Name:           "a 304 still refuses framing",
 		Method:         http.MethodGet,
-		URL:            "/a/boards",
+		URL:            "/a/gadgets",
 		Headers:        map[string]string{"If-None-Match": shellETag(shell)},
 		ExpectedStatus: http.StatusNotModified,
 		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {

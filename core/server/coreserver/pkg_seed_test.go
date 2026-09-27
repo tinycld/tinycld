@@ -23,11 +23,11 @@ func TestSyncBundledPackagesPersistsManifestJSON(t *testing.T) {
 	dir := t.TempDir()
 	rows := []bundledPackage{
 		{
-			Name:    "Mail",
-			Slug:    "mail",
+			Name:    "Gizmos",
+			Slug:    "gizmos",
 			Version: "1.2.0",
 			ManifestJSON: mustJSON(t, map[string]any{
-				"slug":         "mail",
+				"slug":         "gizmos",
 				"version":      "1.2.0",
 				"peerVersions": map[string]string{"@tinycld/core": ">=2.1 <3"},
 			}),
@@ -38,9 +38,9 @@ func TestSyncBundledPackagesPersistsManifestJSON(t *testing.T) {
 
 	SyncBundledPackages(app)
 
-	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
+	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'gizmos'", nil)
 	if err != nil {
-		t.Fatalf("mail row not seeded: %v", err)
+		t.Fatalf("gizmos row not seeded: %v", err)
 	}
 	got := rec.GetString("manifest_json")
 	if got == "" {
@@ -53,7 +53,7 @@ func TestSyncBundledPackagesPersistsManifestJSON(t *testing.T) {
 
 	// And re-syncing (update branch) must keep manifest_json set.
 	SyncBundledPackages(app)
-	rec2, _ := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
+	rec2, _ := app.FindFirstRecordByFilter("pkg_registry", "slug = 'gizmos'", nil)
 	if rec2.GetString("manifest_json") == "" {
 		t.Error("manifest_json lost on re-sync (update branch)")
 	}
@@ -67,27 +67,27 @@ func TestSyncBundledPackagesSeedsSourceAsNpmPackage(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	dir := t.TempDir()
 	rows := []bundledPackage{
-		{Name: "Mail", Slug: "mail", Version: "1.2.0", Source: "github:tinycld/mail"},
-		{Name: "Contacts", Slug: "contacts", Version: "0.0.4"}, // no source -> spec-less
+		{Name: "Gizmos", Slug: "gizmos", Version: "1.2.0", Source: "github:tinycld/gizmos"},
+		{Name: "Doodads", Slug: "doodads", Version: "0.0.4"}, // no source -> spec-less
 	}
 	writeBundledJSON(t, dir, rows)
 	withCwd(t, dir)
 
 	SyncBundledPackages(app)
 
-	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
+	gizmos, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'gizmos'", nil)
 	if err != nil {
-		t.Fatalf("mail row not seeded: %v", err)
+		t.Fatalf("gizmos row not seeded: %v", err)
 	}
-	if got := mail.GetString("npm_package"); got != "github:tinycld/mail" {
-		t.Errorf("mail npm_package = %q, want github:tinycld/mail", got)
+	if got := gizmos.GetString("npm_package"); got != "github:tinycld/gizmos" {
+		t.Errorf("gizmos npm_package = %q, want github:tinycld/gizmos", got)
 	}
-	contactsRec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'contacts'", nil)
+	contactsRec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'doodads'", nil)
 	if err != nil {
-		t.Fatalf("contacts row not seeded: %v", err)
+		t.Fatalf("doodads row not seeded: %v", err)
 	}
 	if got := contactsRec.GetString("npm_package"); got != "" {
-		t.Errorf("contacts npm_package = %q, want empty (no source -> spec-less)", got)
+		t.Errorf("doodads npm_package = %q, want empty (no source -> spec-less)", got)
 	}
 }
 
@@ -127,26 +127,26 @@ func TestSyncBundledPackages_CoreHasSourceAndServer(t *testing.T) {
 func TestSyncBundledPackagesBackfillDoesNotClobberPinnedSpec(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	dir := t.TempDir()
-	rows := []bundledPackage{{Name: "Mail", Slug: "mail", Version: "1.2.0", Source: "github:tinycld/mail"}}
+	rows := []bundledPackage{{Name: "Gizmos", Slug: "gizmos", Version: "1.2.0", Source: "github:tinycld/gizmos"}}
 	writeBundledJSON(t, dir, rows)
 	withCwd(t, dir)
 
 	// First sync backfills the bare source.
 	SyncBundledPackages(app)
-	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
+	gizmos, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'gizmos'", nil)
 	if err != nil {
-		t.Fatalf("mail row not seeded: %v", err)
+		t.Fatalf("gizmos row not seeded: %v", err)
 	}
 	// Simulate an in-app upgrade pinning a tag.
-	mail.Set("npm_package", "github:tinycld/mail#v1.3.0")
-	if err := app.Save(mail); err != nil {
+	gizmos.Set("npm_package", "github:tinycld/gizmos#v1.3.0")
+	if err := app.Save(gizmos); err != nil {
 		t.Fatal(err)
 	}
 
 	// Re-sync (update branch) must leave the pinned spec alone.
 	SyncBundledPackages(app)
-	mail2, _ := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
-	if got := mail2.GetString("npm_package"); got != "github:tinycld/mail#v1.3.0" {
+	mail2, _ := app.FindFirstRecordByFilter("pkg_registry", "slug = 'gizmos'", nil)
+	if got := mail2.GetString("npm_package"); got != "github:tinycld/gizmos#v1.3.0" {
 		t.Errorf("re-sync clobbered pinned spec: got %q", got)
 	}
 }
@@ -163,7 +163,7 @@ func TestUpsertPkgRegistryPreservesBundledStatus(t *testing.T) {
 
 	// A bundled row being upgraded.
 	bundled := core.NewRecord(col)
-	bundled.Set("slug", "mail")
+	bundled.Set("slug", "gizmos")
 	bundled.Set("version", "1.0.0")
 	bundled.Set("status", "bundled")
 	if err := app.Save(bundled); err != nil {
@@ -171,37 +171,37 @@ func TestUpsertPkgRegistryPreservesBundledStatus(t *testing.T) {
 	}
 	// An available row being installed.
 	avail := core.NewRecord(col)
-	avail.Set("slug", "contacts")
+	avail.Set("slug", "doodads")
 	avail.Set("version", "")
 	avail.Set("status", "available")
 	if err := app.Save(avail); err != nil {
 		t.Fatal(err)
 	}
 
-	mailManifest := &parsedManifest{Slug: "mail", Version: "1.1.0", Nav: &manifestNav{}}
+	mailManifest := &parsedManifest{Slug: "gizmos", Version: "1.1.0", Nav: &manifestNav{}}
 	if err := upsertPkgRegistry(app, mailManifest,
-		"github:tinycld/mail#v1.1.0", []byte(`{"slug":"mail"}`)); err != nil {
-		t.Fatalf("upsert mail: %v", err)
+		"github:tinycld/gizmos#v1.1.0", []byte(`{"slug":"gizmos"}`)); err != nil {
+		t.Fatalf("upsert gizmos: %v", err)
 	}
-	contactsManifest := &parsedManifest{Slug: "contacts", Version: "0.5.0", Nav: &manifestNav{}}
+	contactsManifest := &parsedManifest{Slug: "doodads", Version: "0.5.0", Nav: &manifestNav{}}
 	if err := upsertPkgRegistry(app, contactsManifest,
-		"@tinycld/contacts@0.5.0", []byte(`{"slug":"contacts"}`)); err != nil {
-		t.Fatalf("upsert contacts: %v", err)
+		"@tinycld/doodads@0.5.0", []byte(`{"slug":"doodads"}`)); err != nil {
+		t.Fatalf("upsert doodads: %v", err)
 	}
 
-	mail, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'mail'", nil)
+	gizmos, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'gizmos'", nil)
 	if err != nil {
-		t.Fatalf("mail row not found: %v", err)
+		t.Fatalf("gizmos row not found: %v", err)
 	}
-	if got := mail.GetString("status"); got != "bundled" {
-		t.Errorf("bundled mail status = %q after upgrade, want bundled", got)
+	if got := gizmos.GetString("status"); got != "bundled" {
+		t.Errorf("bundled gizmos status = %q after upgrade, want bundled", got)
 	}
-	contacts, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'contacts'", nil)
+	doodads, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'doodads'", nil)
 	if err != nil {
-		t.Fatalf("contacts row not found: %v", err)
+		t.Fatalf("doodads row not found: %v", err)
 	}
-	if got := contacts.GetString("status"); got != "installed" {
-		t.Errorf("available contacts status = %q after install, want installed", got)
+	if got := doodads.GetString("status"); got != "installed" {
+		t.Errorf("available doodads status = %q after install, want installed", got)
 	}
 }
 
@@ -212,16 +212,16 @@ func TestUpsertPkgRegistryNavless(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 
 	navless := &parsedManifest{
-		Name: "Calendar Slots", Slug: "calendar-slots", Version: "0.1.0",
-		Description: "Adds booking pages to the calendar sidebar",
+		Name: "Sprockets Slots", Slug: "sprockets-slots", Version: "0.1.0",
+		Description: "Adds booking pages to the sprockets sidebar",
 		// Nav intentionally nil.
 	}
 	if err := upsertPkgRegistry(app, navless,
-		"github:stefnnn/tinycld-calendar-slots", []byte(`{"slug":"calendar-slots"}`)); err != nil {
+		"github:acme/tinycld-sprockets-slots", []byte(`{"slug":"sprockets-slots"}`)); err != nil {
 		t.Fatalf("upsert navless: %v", err)
 	}
 
-	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'calendar-slots'", nil)
+	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'sprockets-slots'", nil)
 	if err != nil {
 		t.Fatalf("navless row not found: %v", err)
 	}
@@ -318,12 +318,12 @@ func TestFindBundledPackagesJSONPrefersServerCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The stale sibling copy: what the baked image shipped, missing `boards`.
-	writeBundledJSON(t, dir, []bundledPackage{{Name: "Mail", Slug: "mail", Version: "1.0.0"}})
+	// The stale sibling copy: what the baked image shipped, missing `gadgets`.
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Gizmos", Slug: "gizmos", Version: "1.0.0"}})
 	// The freshly generated copy an in-app install just rewrote.
 	writeBundledJSON(t, serverDir, []bundledPackage{
-		{Name: "Mail", Slug: "mail", Version: "1.0.0"},
-		{Name: "Boards", Slug: "boards", Version: "0.3.0"},
+		{Name: "Gizmos", Slug: "gizmos", Version: "1.0.0"},
+		{Name: "Gadgets", Slug: "gadgets", Version: "0.3.0"},
 	})
 	withCwd(t, dir)
 
@@ -354,18 +354,18 @@ func TestSyncBundledPackagesCreatesRowForNewSlug(t *testing.T) {
 	if err := os.MkdirAll(serverDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeBundledJSON(t, dir, []bundledPackage{{Name: "Mail", Slug: "mail", Version: "1.0.0"}})
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Gizmos", Slug: "gizmos", Version: "1.0.0"}})
 	writeBundledJSON(t, serverDir, []bundledPackage{
-		{Name: "Mail", Slug: "mail", Version: "1.0.0"},
-		{Name: "Boards", Slug: "boards", Version: "0.3.0", Icon: "kanban"},
+		{Name: "Gizmos", Slug: "gizmos", Version: "1.0.0"},
+		{Name: "Gadgets", Slug: "gadgets", Version: "0.3.0", Icon: "kanban"},
 	})
 	withCwd(t, dir)
 
 	SyncBundledPackages(app)
 
-	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = {:slug}", map[string]any{"slug": "boards"})
+	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = {:slug}", map[string]any{"slug": "gadgets"})
 	if err != nil {
-		t.Fatalf("no pkg_registry row for boards after sync: %v", err)
+		t.Fatalf("no pkg_registry row for gadgets after sync: %v", err)
 	}
 	if got := rec.GetString("status"); got != "bundled" {
 		t.Errorf("status = %q, want %q", got, "bundled")
@@ -381,11 +381,11 @@ func TestSyncBundledPackagesCreatesRowForNewSlug(t *testing.T) {
 func TestSyncBundledPackagesKeepsOwnerDisabledRow(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	dir := t.TempDir()
-	writeBundledJSON(t, dir, []bundledPackage{{Name: "Drive", Slug: "drive", Version: "1.0.0"}})
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Cogs", Slug: "cogs", Version: "1.0.0"}})
 	withCwd(t, dir)
 
 	SyncBundledPackages(app)
-	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'drive'", nil)
+	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'cogs'", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,7 +396,7 @@ func TestSyncBundledPackagesKeepsOwnerDisabledRow(t *testing.T) {
 
 	SyncBundledPackages(app)
 
-	after, _ := app.FindFirstRecordByFilter("pkg_registry", "slug = 'drive'", nil)
+	after, _ := app.FindFirstRecordByFilter("pkg_registry", "slug = 'cogs'", nil)
 	if got := after.GetString("status"); got != "disabled" {
 		t.Fatalf("status after re-sync = %q, want disabled", got)
 	}

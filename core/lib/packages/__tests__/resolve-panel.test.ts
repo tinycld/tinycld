@@ -6,8 +6,8 @@ const B = () => null
 
 const orgGroups = [
     {
-        pkgSlug: 'mail',
-        packageName: 'Mail',
+        pkgSlug: 'gizmos',
+        packageName: 'Gizmos',
         panels: [
             { slug: 'provider', label: 'Domains', Component: A },
             { slug: 'mailboxes', label: 'Mailboxes', Component: A },
@@ -17,41 +17,41 @@ const orgGroups = [
 
 const systemGroups = [
     {
-        pkgSlug: 'mail',
-        packageName: 'Mail',
+        pkgSlug: 'gizmos',
+        packageName: 'Gizmos',
         panels: [{ slug: 'provider', label: 'Provider', Component: B }],
     },
 ]
 
 describe('resolvePanel', () => {
     it('finds the panel a package contributes', () => {
-        const match = resolvePanel(orgGroups, 'mail', 'mailboxes')
+        const match = resolvePanel(orgGroups, 'gizmos', 'mailboxes')
         expect(match?.panel.label).toBe('Mailboxes')
-        expect(match?.group.packageName).toBe('Mail')
+        expect(match?.group.packageName).toBe('Gizmos')
     })
 
     it('returns null for an unknown package', () => {
-        expect(resolvePanel(orgGroups, 'calendar', 'provider')).toBeNull()
+        expect(resolvePanel(orgGroups, 'sprockets', 'provider')).toBeNull()
     })
 
     it('returns null for a slug the package does not contribute', () => {
-        expect(resolvePanel(orgGroups, 'mail', 'nope')).toBeNull()
+        expect(resolvePanel(orgGroups, 'gizmos', 'nope')).toBeNull()
     })
 
     it('returns null when either segment is missing', () => {
-        expect(resolvePanel(orgGroups, 'mail', undefined)).toBeNull()
+        expect(resolvePanel(orgGroups, 'gizmos', undefined)).toBeNull()
         expect(resolvePanel(orgGroups, undefined, 'provider')).toBeNull()
         expect(resolvePanel(orgGroups, undefined, undefined)).toBeNull()
     })
 
-    // Why the two settings route trees stay separate. Mail declares the slug
+    // Why the two settings route trees stay separate. Gizmos declares the slug
     // `provider` in BOTH its org-scoped `settings` and its deployment-wide
     // `systemSettings`. The same (pkgSlug, panelSlug) pair must therefore
     // resolve to a DIFFERENT panel depending on which registry is searched —
     // merging the registries would strand whichever panel lost the lookup.
     it('resolves the same slug pair to a different panel per registry', () => {
-        const org = resolvePanel(orgGroups, 'mail', 'provider')
-        const system = resolvePanel(systemGroups, 'mail', 'provider')
+        const org = resolvePanel(orgGroups, 'gizmos', 'provider')
+        const system = resolvePanel(systemGroups, 'gizmos', 'provider')
 
         expect(org?.panel.label).toBe('Domains')
         expect(system?.panel.label).toBe('Provider')

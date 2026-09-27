@@ -114,11 +114,11 @@
 func TestSyncBundledPackagesKeepsOwnerDisabledRow(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	dir := t.TempDir()
-	writeBundledJSON(t, dir, []bundledPackage{{Name: "Drive", Slug: "drive", Version: "1.0.0"}})
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Cogs", Slug: "cogs", Version: "1.0.0"}})
 	withCwd(t, dir)
 
 	SyncBundledPackages(app)
-	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'drive'", nil)
+	rec, err := app.FindFirstRecordByFilter("pkg_registry", "slug = 'cogs'", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestSyncBundledPackagesKeepsOwnerDisabledRow(t *testing.T) {
 
 	SyncBundledPackages(app)
 
-	after, _ := app.FindFirstRecordByFilter("pkg_registry", "slug = 'drive'", nil)
+	after, _ := app.FindFirstRecordByFilter("pkg_registry", "slug = 'cogs'", nil)
 	if got := after.GetString("status"); got != "disabled" {
 		t.Fatalf("status after re-sync = %q, want disabled", got)
 	}
@@ -237,12 +237,12 @@ func saveRegistryRow(t *testing.T, app core.App, slug, status string) *core.Reco
 func TestPkgEnableHookRestoresSource(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	dir := t.TempDir()
-	writeBundledJSON(t, dir, []bundledPackage{{Name: "Drive", Slug: "drive", Version: "1.0.0"}})
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Cogs", Slug: "cogs", Version: "1.0.0"}})
 	withCwd(t, dir)
 	RegisterPkgEnableHook(app)
 
 	cases := []struct{ slug, want string }{
-		{"drive", "bundled"},
+		{"cogs", "bundled"},
 		{"todo", "installed"},
 	}
 	for _, c := range cases {
@@ -262,11 +262,11 @@ func TestPkgEnableHookRestoresSource(t *testing.T) {
 func TestPkgEnableHookLeavesOtherWritesAlone(t *testing.T) {
 	app := newRegistryOnlyApp(t)
 	dir := t.TempDir()
-	writeBundledJSON(t, dir, []bundledPackage{{Name: "Drive", Slug: "drive", Version: "1.0.0"}})
+	writeBundledJSON(t, dir, []bundledPackage{{Name: "Cogs", Slug: "cogs", Version: "1.0.0"}})
 	withCwd(t, dir)
 	RegisterPkgEnableHook(app)
 
-	rec := saveRegistryRow(t, app, "drive", "bundled")
+	rec := saveRegistryRow(t, app, "cogs", "bundled")
 	rec.Set("status", "disabled")
 	if err := app.Save(rec); err != nil {
 		t.Fatal(err)
@@ -1782,11 +1782,11 @@ describe('buildSetupStepEntries', () => {
             ],
             [
                 { manifest: { slug: 'acme' }, setupSteps: [{ id: 'plan', label: 'Plan', order: 'Zz', load }] },
-                { manifest: { slug: 'mail' }, setupSteps: [{ id: 'address', label: 'Address', order: 'a0s', load }] },
+                { manifest: { slug: 'widgets' }, setupSteps: [{ id: 'address', label: 'Address', order: 'a0s', load }] },
                 { manifest: { slug: 'none' } },
             ]
         )
-        expect(entries.map(e => e.id)).toEqual(['acme:plan', 'core:workspace', 'mail:address', 'core:apps'])
+        expect(entries.map(e => e.id)).toEqual(['acme:plan', 'core:workspace', 'widgets:address', 'core:apps'])
     })
 })
 
@@ -2598,7 +2598,7 @@ export function useIsStepDone() {
 
 - [ ] **Step 4: EmailStep**
 
-- Render `<MailSendingPanel />`, then every system settings panel whose `keyPrefix` starts with `mail.` (from `packageSystemSettings`, flattened in a helper above the JSX, rendered as `<Panel.Component />` inside `Suspense`). This lets a mail package's provider panel appear without core naming it.
+- Render `<MailSendingPanel />`, then every system settings panel whose `keyPrefix` starts with `mail.` (from `packageSystemSettings`, flattened in a helper above the JSX, rendered as `<Panel.Component />` inside `Suspense`). This lets a package's mail-provider panel appear without core naming it.
 - Button "Continue" → `next()` (the panels save themselves).
 - Exports:
 

@@ -37,7 +37,7 @@ func swapThrottle(t *testing.T) {
 
 func davRequest(t *testing.T, ip, user, pass string) *http.Request {
 	t.Helper()
-	r, err := http.NewRequest("PROPFIND", "/dav/drive/", nil)
+	r, err := http.NewRequest("PROPFIND", "/dav/cogs/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

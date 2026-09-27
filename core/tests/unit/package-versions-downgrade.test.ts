@@ -7,7 +7,7 @@ import {
 
 function info(overrides: Partial<PackageVersionInfo>): PackageVersionInfo {
     return {
-        slug: 'mail',
+        slug: 'gizmos',
         source: 'npm',
         current: '1.2.0',
         latest: '1.3.0',

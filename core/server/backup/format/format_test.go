@@ -26,8 +26,8 @@ func testRecipient(t *testing.T) (age.Recipient, age.Identity) {
 func sampleManifest() Manifest {
 	return Manifest{
 		Format: FormatV1, Created: time.Unix(1_700_000_000, 0).UTC(), Instance: "inst", Source: "docker",
-		Kind: "manual", Core: "1.2.3", Lockfile: Lockfile{"tinycld": "1.2.3", "mail": "github:tinycld/mail#v1.0.0"},
-		Packages: map[string]string{"mail": "1.0.0"},
+		Kind: "manual", Core: "1.2.3", Lockfile: Lockfile{"tinycld": "1.2.3", "gizmos": "github:tinycld/gizmos#v1.0.0"},
+		Packages: map[string]string{"gizmos": "1.0.0"},
 		Counts:   Counts{Collections: map[string]int{"users": 2}, Files: 1, Bytes: 5},
 	}
 }
@@ -71,7 +71,7 @@ func TestRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	m, err := r.ReadManifest()
-	if err != nil || m.Core != "1.2.3" || m.Lockfile["mail"] == "" {
+	if err != nil || m.Core != "1.2.3" || m.Lockfile["gizmos"] == "" {
 		t.Fatalf("manifest: %+v %v", m, err)
 	}
 	var names []string

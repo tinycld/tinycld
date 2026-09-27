@@ -31,10 +31,10 @@ const fixtureJSON = `{
             ]
         },
         {
-            "slug": "mail",
+            "slug": "gizmos",
             "triggers": [
                 { "id": "message-received", "label": "A message arrives",
-                  "collection": "mail_messages", "on": "create",
+                  "collection": "gizmos_messages", "on": "create",
                   "fields": ["subject", { "key": "sender_email", "label": "Sender" }] }
             ],
             "actions": []
@@ -66,8 +66,8 @@ func TestLookupByQualifiedRef(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	trig, pkg, ok := defs.Trigger("mail:message-received")
-	if !ok || pkg != "mail" || trig.Collection != "mail_messages" || trig.On != "create" {
+	trig, pkg, ok := defs.Trigger("gizmos:message-received")
+	if !ok || pkg != "gizmos" || trig.Collection != "gizmos_messages" || trig.On != "create" {
 		t.Fatalf("trigger lookup failed: %+v %q %v", trig, pkg, ok)
 	}
 	if trig.Fields[1].Key != "sender_email" || trig.Fields[1].Label != "Sender" {
@@ -81,18 +81,18 @@ func TestLookupByQualifiedRef(t *testing.T) {
 	if sv.Context != "record-id" {
 		t.Fatalf("context SetValue not decoded: %+v", sv)
 	}
-	if _, _, ok := defs.Trigger("mail:nope"); ok {
+	if _, _, ok := defs.Trigger("gizmos:nope"); ok {
 		t.Fatal("unknown ref must miss")
 	}
 }
 
 func TestTriggersForCollectionOp(t *testing.T) {
 	defs, _ := LoadDefs(writeFixture(t))
-	hits := defs.TriggersFor("mail_messages", "create")
-	if len(hits) != 1 || hits[0].Ref != "mail:message-received" {
+	hits := defs.TriggersFor("gizmos_messages", "create")
+	if len(hits) != 1 || hits[0].Ref != "gizmos:message-received" {
 		t.Fatalf("TriggersFor: %+v", hits)
 	}
-	if len(defs.TriggersFor("mail_messages", "delete")) != 0 {
+	if len(defs.TriggersFor("gizmos_messages", "delete")) != 0 {
 		t.Fatal("op filter failed")
 	}
 }
