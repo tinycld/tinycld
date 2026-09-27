@@ -128,11 +128,7 @@ function LoginForm({
                 Sign in to your account to continue
             </Text>
 
-            {notice && (
-                <View className="rounded-lg p-3 mb-4 bg-info-soft" testID="sign-in-notice">
-                    <Text className="text-sm text-info">{notice}</Text>
-                </View>
-            )}
+            <SignInNotice isVisible={!!notice} notice={notice} />
 
             {error && (
                 <View className="rounded-lg p-3 mb-4 bg-danger-soft">
@@ -207,6 +203,16 @@ function LoginForm({
                 <ChangeServerLink />
             </View>
         </>
+    )
+}
+
+function SignInNotice({ isVisible, notice }: { isVisible: boolean; notice: string | null }) {
+    if (!isVisible) return null
+
+    return (
+        <View className="rounded-lg p-3 mb-4 bg-info-soft" testID="sign-in-notice">
+            <Text className="text-sm text-info">{notice}</Text>
+        </View>
     )
 }
 
