@@ -17,7 +17,7 @@ Without a shared wizard, a package that needs onboarding steps must build a wiza
 - Standalone steps: code, owner account (both before sign-in), then Workspace, Apps, Email sending, Invite your team, Done.
 - The Apps step shows only bundled packages. Clearing one hides it for everyone; it never uninstalls or rebuilds.
 - Layout "workspace assembles as you go": form on the left, a live miniature of the workspace on the right (a strip at the top on phones).
-- Step order uses fractional-indexing rank strings, the same scheme boards uses (`boards/tinycld/boards/lib/rank.ts`).
+- Step order uses a fractional-indexing rank scheme (the `fractional-indexing` library's keys).
 - Wizard state is one `system_settings` row. "Done" is derived from real data wherever possible.
 
 ## 3. Prerequisite fix: package hide control

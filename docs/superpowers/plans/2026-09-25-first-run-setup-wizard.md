@@ -1300,8 +1300,7 @@ Expected: FAIL — cannot resolve `../order`.
 import { generateKeyBetween } from 'fractional-indexing'
 
 /**
- * Setup steps use the same fractional-indexing keys as boards
- * (boards/tinycld/boards/lib/rank.ts), so a package can place a step between
+ * Setup steps use a fractional-indexing rank scheme, so a package can place a step between
  * two others without renumbering anything. A key is valid when the library
  * accepts it as a lower bound.
  */
@@ -1350,7 +1349,7 @@ export const CORE_SLOT_TARGET = 'core'
 export const CORE_SLOTS = ['setup-team'] as const
 ```
 
-Add `fractional-indexing` to core's peer dependencies if `core/package.json` does not list it: check `grep fractional core/package.json core/package-versions.json`. If absent, add the same range boards uses (`">=3.2.0 <4"`) to `core/package.json` `peerDependencies`; it is already installed in the workspace.
+Add `fractional-indexing` to core's peer dependencies if `core/package.json` does not list it: check `grep fractional core/package.json core/package-versions.json`. If absent, add the range `">=3.2.0 <4"` to `core/package.json` `peerDependencies`; it is already installed in the workspace.
 
 Run: `pnpm exec vitest run core/lib/setup/__tests__/order.test.ts`
 Expected: PASS.
