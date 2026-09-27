@@ -16,6 +16,6 @@ func main() {
 	registerPackageCommands(root, client.NewLazy(d.resolveClientContext, d.httpClient))
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
 }

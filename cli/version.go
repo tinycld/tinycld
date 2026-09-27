@@ -17,7 +17,7 @@ func newVersionCmd(d *deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print the CLI version",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			type info struct {
 				Version string `json:"version"`
