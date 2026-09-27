@@ -13,12 +13,18 @@ export interface PreviewModel {
     logoUrl: string
     logoCrop: string
     apps: { slug: string; icon: string }[]
-    memberInitials: string[]
-    /** Everyone in the workspace; `memberInitials` is capped for the avatars. */
+    /** Keyed by the person's id, so two people with the same initials keep distinct avatars. */
+    members: PreviewMember[]
+    /** Everyone in the workspace; `members` is capped for the avatars. */
     memberCount: number
     isEmpty: boolean
     /** Before the server is claimed: nothing about the org is shown yet. */
     isGhost: boolean
+}
+
+export interface PreviewMember {
+    id: string
+    initials: string
 }
 
 export function initialsOf(name: string): string {
@@ -36,7 +42,7 @@ export function buildPreviewModel(input: {
     logoUrl: string
     logoCrop: string
     apps: { slug: string; icon: string }[]
-    memberInitials: string[]
+    members: PreviewMember[]
     memberCount: number
 }): PreviewModel {
     const name = (input.draftName ?? input.orgName).trim()
@@ -46,9 +52,9 @@ export function buildPreviewModel(input: {
         logoUrl: input.logoUrl,
         logoCrop: input.logoCrop,
         apps: input.apps,
-        memberInitials: input.memberInitials,
+        members: input.members,
         memberCount: input.memberCount,
-        isEmpty: !name && input.apps.length === 0 && input.memberInitials.length === 0,
+        isEmpty: !name && input.apps.length === 0 && input.members.length === 0,
         isGhost: false,
     }
 }
@@ -58,16 +64,16 @@ export function buildPreviewModel(input: {
  * server is claimed the name is PocketBase's default, not the person's.
  */
 export function ghostPreviewModel(initials: string | undefined): PreviewModel {
-    const memberInitials = initials ? [initials] : []
+    const members = initials ? [{ id: 'owner', initials }] : []
     return {
         name: '',
         initial: '',
         logoUrl: '',
         logoCrop: '',
         apps: [],
-        memberInitials,
-        memberCount: memberInitials.length,
-        isEmpty: memberInitials.length === 0,
+        members,
+        memberCount: members.length,
+        isEmpty: members.length === 0,
         isGhost: true,
     }
 }
@@ -95,7 +101,7 @@ export function useWorkspacePreview(): PreviewModel {
             .select(({ p }) => ({ slug: p.slug }))
     )
     const { data: people = [] } = useLiveQuery(query =>
-        query.from({ u: users }).select(({ u }) => ({ name: u.name }))
+        query.from({ u: users }).select(({ u }) => ({ id: u.id, name: u.name }))
     )
 
     const enabledSlugs = new Set(enabled.map(e => e.slug))
@@ -109,7 +115,9 @@ export function useWorkspacePreview(): PreviewModel {
         logoUrl: org?.logoUrl ?? '',
         logoCrop: org?.logoCrop ?? '',
         apps,
-        memberInitials: people.slice(0, MAX_AVATARS).map(p => initialsOf(p.name)),
+        members: people
+            .slice(0, MAX_AVATARS)
+            .map(p => ({ id: p.id, initials: initialsOf(p.name) })),
         memberCount: people.length,
     })
 }

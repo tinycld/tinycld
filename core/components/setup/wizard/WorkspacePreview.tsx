@@ -84,8 +84,8 @@ export function WorkspacePreview({
 }) {
     const rail = railAppsOf(model, isNewApps)
     // The only person on a ghost workspace is the owner being created.
-    const avatars = model.memberInitials.map((i, n) => (
-        <Avatar key={`${i}-${n}`} initials={i} isOwner={model.isGhost} />
+    const avatars = model.members.map(m => (
+        <Avatar key={m.id} initials={m.initials} isOwner={model.isGhost} />
     ))
     return (
         <View
