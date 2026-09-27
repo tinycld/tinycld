@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // LoginModal only needs login() + the current user from useAuth — mock it
@@ -37,7 +38,7 @@ function typeInto(input: HTMLElement | null, value: string) {
 afterEach(() => {
     cleanup()
     login.mockReset()
-    useSignInNoticeStore.setState({ notice: null })
+    useSignInNoticeStore.setState({ notice: null, shownBy: null })
 })
 
 describe('LoginModal — sign-in notice', () => {
@@ -68,6 +69,47 @@ describe('LoginModal — sign-in notice', () => {
         expect(login).toHaveBeenCalledWith('alice@example.com', 'secret')
         await vi.waitFor(() => {
             expect(useSignInNoticeStore.getState().notice).toBeNull()
+        })
+    })
+
+    it('keeps the notice through StrictMode double effects', () => {
+        useSignInNoticeStore.getState().setNotice('Your widgets invite link has expired.')
+        const { container } = render(
+            <StrictMode>
+                <LoginModal />
+            </StrictMode>
+        )
+        expect(byTestId(container, 'sign-in-notice')).toBeTruthy()
+        expect(useSignInNoticeStore.getState().notice).toBe('Your widgets invite link has expired.')
+    })
+
+    it('does not show the notice again after the user left sign-in without signing in', () => {
+        useSignInNoticeStore.getState().setNotice('Your widgets invite link has expired.')
+        const first = render(<LoginModal />)
+        expect(byTestId(first.container, 'sign-in-notice')).toBeTruthy()
+        first.unmount()
+
+        const { container } = render(<LoginModal />)
+        expect(byTestId(container, 'sign-in-notice')).toBeNull()
+        expect(useSignInNoticeStore.getState().notice).toBeNull()
+    })
+})
+
+describe('LoginModal — sign-in error', () => {
+    it('shows no error before a sign-in attempt', () => {
+        const { container } = render(<LoginModal />)
+        expect(byTestId(container, 'sign-in-error')).toBeNull()
+    })
+
+    it('shows the error a failed sign-in returns', async () => {
+        login.mockResolvedValue({ user: null, error: 'Wrong password.' })
+        const { container } = render(<LoginModal />)
+        typeInto(byTestId(container, 'identifier'), 'alice@example.com')
+        typeInto(byTestId(container, 'login-password'), 'wrong')
+        fireEvent.click(byTestId(container, 'login-submit') as HTMLElement)
+
+        await vi.waitFor(() => {
+            expect(byTestId(container, 'sign-in-error')?.textContent).toBe('Wrong password.')
         })
     })
 })
