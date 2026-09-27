@@ -1,5 +1,6 @@
 import {
     CORE_STEP_IDS,
+    SETUP_FINISH_LATER_TEST_ID,
     SETUP_SKIP_TEST_ID,
     setupStepTestId,
 } from '@tinycld/core/lib/setup/step-ids'
@@ -89,7 +90,13 @@ type SetupWizardLayout = ReturnType<typeof useSetupWizardLayout>
 function FinishLaterButton({ onPress }: { onPress: (() => void) | null }) {
     if (!onPress) return null
     return (
-        <Button variant="link" size="sm" onPress={onPress} accessibilityLabel="Finish setup later">
+        <Button
+            variant="link"
+            size="sm"
+            onPress={onPress}
+            accessibilityLabel="Finish setup later"
+            testID={SETUP_FINISH_LATER_TEST_ID}
+        >
             <ButtonText>Finish later</ButtonText>
         </Button>
     )

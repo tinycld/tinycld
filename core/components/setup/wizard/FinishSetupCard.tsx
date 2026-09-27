@@ -1,4 +1,5 @@
 import { appHref } from '@tinycld/core/lib/org-routes'
+import { SETUP_RESUME_TEST_ID } from '@tinycld/core/lib/setup/step-ids'
 import type { WizardState } from '@tinycld/core/lib/setup/types'
 import { useSetupSteps } from '@tinycld/core/lib/setup/use-setup-steps'
 import { useSetupWizardState } from '@tinycld/core/lib/setup/use-setup-wizard-state'
@@ -73,7 +74,7 @@ function FinishSetupCardBody({
                     {finishSetupSubtitleOf(summary)}
                 </Text>
             </View>
-            <Button onPress={handleContinue}>
+            <Button onPress={handleContinue} testID={SETUP_RESUME_TEST_ID}>
                 <ButtonText>Continue</ButtonText>
             </Button>
         </View>

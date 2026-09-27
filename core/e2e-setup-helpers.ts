@@ -9,6 +9,8 @@
 import type { Locator, Page } from '@playwright/test'
 import {
     SETUP_CONTINUE_TEST_ID,
+    SETUP_FINISH_LATER_TEST_ID,
+    SETUP_RESUME_TEST_ID,
     SETUP_SKIP_TEST_ID,
     setupStepTestId,
 } from '@tinycld/core/lib/setup/step-ids'
@@ -39,4 +41,18 @@ export async function continueSetupSteps(page: Page, stepIds: readonly string[])
     for (const stepId of stepIds) {
         await continueSetupStep(page, stepId)
     }
+}
+
+/** Leaves the wizard with the shell's Finish later; the app opens. */
+export async function finishSetupLater(page: Page) {
+    await page.getByTestId(SETUP_FINISH_LATER_TEST_ID).click()
+}
+
+/**
+ * Opens Settings from the package rail and presses Continue on its Finish
+ * setup card. The wizard opens at its first step still to do.
+ */
+export async function resumeSetupFromSettings(page: Page) {
+    await page.getByTestId('nav-settings').click()
+    await page.getByTestId(SETUP_RESUME_TEST_ID).click()
 }

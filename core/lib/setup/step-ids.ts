@@ -18,6 +18,13 @@ export const SETUP_CONTINUE_TEST_ID = 'setup-continue'
 // optional step it does not fill.
 export const SETUP_SKIP_TEST_ID = 'setup-skip'
 
+// The shell's Finish later, which leaves the wizard for the app.
+export const SETUP_FINISH_LATER_TEST_ID = 'setup-finish-later'
+
+// The Continue on Settings' Finish setup card: the one way back into a
+// wizard that was left with Finish later.
+export const SETUP_RESUME_TEST_ID = 'setup-resume'
+
 export function setupStepTestId(stepId: string): string {
     return `setup-step-${stepId}`
 }
