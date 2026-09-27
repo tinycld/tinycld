@@ -69,8 +69,8 @@ func TestSentryHandlerAttachesAttrsAsContext(t *testing.T) {
 	hub, tr := newTestHub(t)
 	ctx := sentry.SetHubOnContext(context.Background(), hub)
 
-	logger := slog.New(NewSentryHandler(slog.LevelWarn)).With("pkg", "boards")
-	logger.ErrorContext(ctx, "flush failed", "boardID", "b1")
+	logger := slog.New(NewSentryHandler(slog.LevelWarn)).With("pkg", "widgets")
+	logger.ErrorContext(ctx, "flush failed", "widgetID", "w1")
 
 	if len(tr.events) != 1 {
 		t.Fatalf("expected 1 event, got %d", len(tr.events))
@@ -79,10 +79,10 @@ func TestSentryHandlerAttachesAttrsAsContext(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected a %q context on the event, got %v", "log", tr.events[0].Contexts)
 	}
-	if logCtx["pkg"] != "boards" {
-		t.Errorf("expected pkg=cards in log context, got %v", logCtx["pkg"])
+	if logCtx["pkg"] != "widgets" {
+		t.Errorf("expected pkg=widgets in log context, got %v", logCtx["pkg"])
 	}
-	if logCtx["boardID"] != "b1" {
-		t.Errorf("expected boardID=b1 in log context, got %v", logCtx["boardID"])
+	if logCtx["widgetID"] != "w1" {
+		t.Errorf("expected widgetID=w1 in log context, got %v", logCtx["widgetID"])
 	}
 }

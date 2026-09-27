@@ -43,10 +43,10 @@ func Install(pbHandler slog.Handler) {
 }
 
 // ForPackage returns a logger stamped with a pkg attribute, replacing the old
-// hand-written "boards: " message prefixes with a queryable structured field.
+// hand-written "widgets: " message prefixes with a queryable structured field.
 //
-//	log := logging.ForPackage("boards")
-//	log.WarnContext(ctx, "refusing to flush a card from another board", "cardID", id)
+//	log := logging.ForPackage("widgets")
+//	log.WarnContext(ctx, "refusing to flush a gadget from another widget", "gadgetID", id)
 //
 // The logger follows the default installed later by Install (see lazyHandler),
 // so it is safe to create in a package-level var.
