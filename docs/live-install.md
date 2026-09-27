@@ -192,9 +192,26 @@ loop does the relaunch.
 
 ### 1. The server signals (exit 75)
 
-`requestRestart` (`pkg_restart.go`) writes a `pb_data/.restart-requested`
-marker and calls `os.Exit(75)`. In dev mode it logs and returns instead (you
-restart manually).
+`requestRestart` (`pkg_restart.go`) writes a `.restart-requested` marker in the
+state dir — beside `pb_data`, not inside it, because a restore's boot swap
+renames `pb_data` away as a whole — and calls `os.Exit(75)`. In dev mode it logs
+and returns instead (you restart manually).
+
+### The boot probe
+
+`probe_current_build()` in `entrypoint.sh` boots a full server on the real data
+dir to ask "does this build answer `/api/health`?", then kills it. That process
+sets `TINYCLD_BOOT_PROBE=1`.
+
+The server reads the variable at registration. When it is `1` the boot does no
+restore work at all: no swap of staged data, no finalize, no `interrupted`
+sweep, no wipe of the backup scratch directory. Without it the probe performs
+the swap and the finalize that belong to the real boot, and the kill, landing
+between the two, makes the real boot roll the restore back — so an operator's
+restore silently does nothing.
+
+Any supervisor that boots the binary only to check that it boots must set this
+variable for that process.
 
 ### 2. The entrypoint catches it
 

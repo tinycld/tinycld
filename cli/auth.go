@@ -88,7 +88,7 @@ func newAuthLoginCmd(d *deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "login <host>",
 		Short: "Authenticate with a TinyCld server",
-		Args:  cobra.ExactArgs(1),
+		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			origin, err := config.NormalizeOrigin(args[0])
 			if err != nil {
@@ -192,7 +192,7 @@ func newAuthStatusCmd(d *deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show the logged-in user for the current context",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, name, err := d.apiClient()
 			if err != nil {
@@ -222,7 +222,7 @@ func newAuthLogoutCmd(d *deps) *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Revoke this device's access and forget its credentials",
-		Args:  cobra.NoArgs,
+		Args:  usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := d.loadConfig()
 			if err != nil {

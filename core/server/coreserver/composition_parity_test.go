@@ -6,6 +6,7 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 
+	"tinycld.org/core/backup"
 	"tinycld.org/core/quota"
 	"tinycld.org/core/rlstest"
 )
@@ -29,7 +30,7 @@ import (
 // RegisterSharedCore instead of Register's own tail. If it should not, record
 // the divergence in the embedder's parity allowlist with a reason.
 var hostHookCounts = map[string]int{
-	"OnBootstrap":                     6,
+	"OnBootstrap":                     7,
 	"OnCollectionAfterCreateError":    1,
 	"OnCollectionAfterCreateSuccess":  1,
 	"OnCollectionAfterDeleteError":    1,
@@ -77,15 +78,19 @@ var hostHookCounts = map[string]int{
 	"OnRecordUpdateExecute":           4,
 	"OnRecordUpdateRequest":           11,
 	"OnRecordValidate":                6,
-	"OnServe":                         24,
+	"OnServe":                         26,
 	"OnSettingsReload":                1,
-	"OnTerminate":                     2,
+	"OnTerminate":                     3,
 }
 
 func TestRegisterBindsTheRecordedHandlerCounts(t *testing.T) {
 	// Register falls back to quota.RegisteredSources() (a process global other
 	// tests may have populated) when Options.QuotaSources is empty.
 	quota.ResetSourcesForTesting()
+	// Register installs the REAL restart function, which ends the process. Left
+	// in place it would kill the test binary the next time any test in this
+	// package reached a restore's phase 6.
+	t.Cleanup(backup.ResetForTesting)
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
 	Register(app, Options{

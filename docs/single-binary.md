@@ -67,12 +67,20 @@ sudo setcap cap_net_bind_service=+ep ./tinycld
 
 ## Backups
 
-Everything is under the data directory. Stop the server and copy it, or
-snapshot the database alone while it runs:
+Use `tinycld backup create --out ./backup.age` from the CLI, or Settings →
+Backups in the app. Restoring into the single binary works when the backup's
+package set matches the binary's; otherwise `tinycld backup restore --force`
+restores the data without reconciling packages. See the in-app topic
+"Backups & restore".
 
-```sh
-sqlite3 ./tinycld-data/pb_data/data.db "VACUUM INTO './backup.db'"
-```
+A restore does not apply the restored data itself. It stages every byte beside
+the data directory, then stops the server process. The restored data is applied
+on the NEXT start, so the binary must be under a supervisor that relaunches it
+(systemd, a container restart policy, or your own script) — or you restart it
+yourself. Settings → Backups shows "Restart the server to complete this
+restore." while a restart is still owed.
+
+If you run the binary under systemd, `Restart=always` is enough.
 
 ## Upgrading
 
