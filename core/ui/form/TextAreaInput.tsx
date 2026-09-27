@@ -25,7 +25,14 @@ function LabelRow({
 
 export type TextAreaInputProps<T extends FieldValues = Record<string, unknown>> = Omit<
     RNTextInputProps,
-    'value' | 'onChangeText' | 'onBlur'
+    | 'value'
+    | 'onChangeText'
+    | 'onBlur'
+    | 'className'
+    | 'style'
+    | 'placeholderTextColor'
+    | 'defaultValue'
+    | 'multiline'
 > & {
     name: Path<T>
     control: Control<T>
@@ -49,6 +56,8 @@ export function TextAreaInput<T extends FieldValues = Record<string, unknown>>(
         rules,
         numberOfLines = 4,
         wrapperProps = {},
+        testID,
+        accessibilityLabel,
         ...inputProps
     } = props
 
@@ -65,14 +74,18 @@ export function TextAreaInput<T extends FieldValues = Record<string, unknown>>(
         <View className="gap-1.5 mb-3" {...wrapperProps}>
             {label ? <LabelRow label={label} icon={LabelIcon} /> : null}
             <RNTextInput
+                // Every React Native prop the caller passes reaches the input
+                // (autofill hints, onSubmitEditing, maxLength, …). The props
+                // below come after the spread because the form binding and
+                // the field's look belong to this component.
+                {...inputProps}
                 multiline
                 numberOfLines={numberOfLines}
                 value={field.value || ''}
                 onChangeText={field.onChange}
                 onBlur={field.onBlur}
-                accessibilityLabel={label}
-                testID={name}
-                placeholder={inputProps.placeholder}
+                accessibilityLabel={accessibilityLabel ?? label}
+                testID={testID ?? name}
                 placeholderTextColor={placeholderColor}
                 textAlignVertical="top"
                 className={`border rounded-lg px-3 py-2.5 text-base text-foreground bg-background ${hasError ? 'border-danger' : 'border-border'}`}

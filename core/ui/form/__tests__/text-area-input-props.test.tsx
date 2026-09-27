@@ -3,18 +3,18 @@ import { cleanup, render } from '@testing-library/react'
 import { useForm } from 'react-hook-form'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { TextInput, type TextInputProps } from '../TextInput'
+import { TextAreaInput, type TextAreaInputProps } from '../TextAreaInput'
 
-// TextInput once forwarded only a fixed allowlist of React Native props, so a
-// caller's testID and onSubmitEditing type-checked and then did nothing.
+// TextAreaInput dropped every React Native prop except a fixed allowlist, so
+// a caller's testID and onSubmitEditing type-checked and then did nothing.
 type Forwarded = Pick<
-    TextInputProps,
-    'testID' | 'onSubmitEditing' | 'accessibilityLabel' | 'aria-label'
+    TextAreaInputProps,
+    'testID' | 'onSubmitEditing' | 'accessibilityLabel' | 'maxLength'
 >
 
 function Harness(props: Forwarded) {
     const { control } = useForm({ defaultValues: { field: '' } })
-    return <TextInput control={control} name="field" label="Field" {...props} />
+    return <TextAreaInput control={control} name="field" label="Field" {...props} />
 }
 
 function inputOf(container: HTMLElement) {
@@ -25,7 +25,7 @@ function inputOf(container: HTMLElement) {
 
 afterEach(cleanup)
 
-describe('TextInput forwards React Native props', () => {
+describe('TextAreaInput forwards React Native props', () => {
     it('uses the field name as the test id by default', () => {
         const { container } = render(<Harness />)
         expect(inputOf(container).getAttribute('testID')).toBe('field')
@@ -48,9 +48,9 @@ describe('TextInput forwards React Native props', () => {
         expect(onSubmitEditing).toHaveBeenCalledTimes(1)
     })
 
-    it("uses the caller's aria-label", () => {
-        const { container } = render(<Harness aria-label="Custom aria" />)
-        expect(inputOf(container).getAttribute('aria-label')).toBe('Custom aria')
+    it('forwards maxLength to the native input', () => {
+        const { container } = render(<Harness maxLength={140} />)
+        expect(inputOf(container).getAttribute('maxLength')).toBe('140')
     })
 })
 
@@ -60,7 +60,7 @@ describe('TextInput forwards React Native props', () => {
 function TypeCheck() {
     const { control } = useForm({ defaultValues: { field: '' } })
     return (
-        <TextInput
+        <TextAreaInput
             control={control}
             name="field"
             // @ts-expect-error className is owned by the component
@@ -73,7 +73,7 @@ void TypeCheck
 function TypeCheckDefaultValue() {
     const { control } = useForm({ defaultValues: { field: '' } })
     return (
-        <TextInput
+        <TextAreaInput
             control={control}
             name="field"
             // @ts-expect-error defaultValue is owned by the component

@@ -82,11 +82,11 @@ func Apply(app core.App, e Event) (handled bool, err error) {
 	mu.RUnlock()
 
 	for _, r := range snapshot {
-		handled, err = r.sink(app, e)
+		ok, err := r.sink(app, e)
 		if err != nil {
 			return false, err
 		}
-		if handled {
+		if ok {
 			return true, nil
 		}
 	}

@@ -28,7 +28,13 @@ function LabelRow({
 // are not accepted rather than accepted and ignored.
 export type TextInputProps<T extends FieldValues = Record<string, unknown>> = Omit<
     RNTextInputProps,
-    'value' | 'onChangeText' | 'onBlur' | 'style' | 'placeholderTextColor'
+    | 'value'
+    | 'onChangeText'
+    | 'onBlur'
+    | 'className'
+    | 'style'
+    | 'placeholderTextColor'
+    | 'defaultValue'
 > & {
     name: Path<T>
     control: Control<T>
