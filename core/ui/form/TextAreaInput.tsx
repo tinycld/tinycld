@@ -74,10 +74,7 @@ export function TextAreaInput<T extends FieldValues = Record<string, unknown>>(
         <View className="gap-1.5 mb-3" {...wrapperProps}>
             {label ? <LabelRow label={label} icon={LabelIcon} /> : null}
             <RNTextInput
-                // Every React Native prop the caller passes reaches the input
-                // (autofill hints, onSubmitEditing, maxLength, …). The props
-                // below come after the spread because the form binding and
-                // the field's look belong to this component.
+                // Spread before the owned props for the same reason as TextInput.
                 {...inputProps}
                 multiline
                 numberOfLines={numberOfLines}
