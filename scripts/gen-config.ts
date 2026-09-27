@@ -93,6 +93,15 @@ function validateConfigPkg(p: ConfigPkg): void {
     for (const s of p.setupSteps) assertSafeImportField('setupSteps[].module', s.module)
 }
 
+// A bare load thunk for a module that exports hooks. The return annotation
+// matters: without it tsc infers the thunk from the module's exports while it
+// infers this config's type, and a module whose hooks read the stores (which
+// are typed from this config) closes a cycle that silently erases every
+// collection's row type.
+function hookModuleLoader(specifier: string): string {
+    return `(): Promise<unknown> => import('${specifier}')`
+}
+
 function pushEventSourceLines(lines: string[], p: ConfigPkg): void {
     if (p.eventSources.length === 0) return
     lines.push('        eventSources: [')
@@ -100,7 +109,7 @@ function pushEventSourceLines(lines: string[], p: ConfigPkg): void {
         // Same bare-thunk rationale as search: the module exports a hook.
         const color = s.color ? ` color: ${jsonLiteral(s.color)},` : ''
         lines.push(
-            `            { target: ${jsonLiteral(s.target)}, id: ${jsonLiteral(s.id)}, label: ${jsonLiteral(s.label)},${color} order: ${s.order}, load: () => import('${p.packageName}/${s.module}') },`
+            `            { target: ${jsonLiteral(s.target)}, id: ${jsonLiteral(s.id)}, label: ${jsonLiteral(s.label)},${color} order: ${s.order}, load: ${hookModuleLoader(`${p.packageName}/${s.module}`)} },`
         )
     }
     lines.push('        ],')
@@ -113,7 +122,7 @@ function pushSetupStepLines(lines: string[], p: ConfigPkg): void {
     lines.push('        setupSteps: [')
     for (const s of p.setupSteps) {
         lines.push(
-            `            { id: ${jsonLiteral(s.id)}, label: ${jsonLiteral(s.label)}, order: ${jsonLiteral(s.order)}, load: () => import('${p.packageName}/${s.module}') },`
+            `            { id: ${jsonLiteral(s.id)}, label: ${jsonLiteral(s.label)}, order: ${jsonLiteral(s.order)}, load: ${hookModuleLoader(`${p.packageName}/${s.module}`)} },`
         )
     }
     lines.push('        ],')
@@ -214,7 +223,9 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
             if (p.search.label) lines.push(`            label: ${jsonLiteral(p.search.label)},`)
             // A bare thunk, NOT lazy(): the adapter exports a hook, not a
             // component, and React.lazy cannot wrap it.
-            lines.push(`            load: () => import('${p.packageName}/${p.search.adapter}'),`)
+            lines.push(
+                `            load: ${hookModuleLoader(`${p.packageName}/${p.search.adapter}`)},`
+            )
             lines.push('        },')
         }
         pushEventSourceLines(lines, p)

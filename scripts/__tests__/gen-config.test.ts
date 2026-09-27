@@ -298,7 +298,9 @@ describe('buildConfigSource', () => {
             'target: "calendar", id: "boards-due", label: "Card due dates", color: "graphite", order: 0'
         )
         // A bare thunk: the module exports a hook, so React.lazy cannot wrap it.
-        expect(src).toContain("load: () => import('@tinycld/boards/calendar-source')")
+        expect(src).toContain(
+            "load: (): Promise<unknown> => import('@tinycld/boards/calendar-source')"
+        )
         expect(src).not.toContain("lazy(() => import('@tinycld/boards/calendar-source'))")
         // An event source alone must not pull in the react lazy import.
         expect(src).not.toContain("import { lazy } from 'react'")
@@ -333,7 +335,10 @@ describe('buildConfigSource', () => {
         expect(src).not.toContain('Automation from')
     })
 
-    it('emits setup steps as load thunks', () => {
+    // The return annotation stops tsc from inferring the loader from the
+    // module's exports while it infers the config's own type: a module whose
+    // hooks read the stores would otherwise close a cycle through the config.
+    it('emits setup steps as load thunks typed Promise<unknown>', () => {
         const src = buildConfigSource([
             {
                 ...emptyPkg('@acme/acme', 'acme'),
@@ -341,7 +346,16 @@ describe('buildConfigSource', () => {
             },
         ])
         expect(src).toContain(
-            `{ id: "plan", label: "Plan", order: "Zz", load: () => import('@acme/acme/setup/plan') },`
+            `{ id: "plan", label: "Plan", order: "Zz", load: (): Promise<unknown> => import('@acme/acme/setup/plan') },`
+        )
+    })
+
+    it('emits the search adapter as a load thunk typed Promise<unknown>', () => {
+        const src = buildConfigSource([
+            { ...emptyPkg('@acme/widgets', 'widgets'), search: { adapter: 'search-adapter' } },
+        ])
+        expect(src).toContain(
+            "load: (): Promise<unknown> => import('@acme/widgets/search-adapter'),"
         )
     })
 })
