@@ -52,9 +52,20 @@ export function buildPackageExtensionsGo(pkgs: ServerPkg[]): string {
 
 export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
     const uses = pkgs.map(p => `    ${p.serverRelPath}`)
-    return [`go ${GO_VERSION}`, '', 'use (', '    .', `    ${coreRelPath}`, ...uses, ')', ''].join(
-        '\n'
-    )
+    return [
+        `go ${GO_VERSION}`,
+        '',
+        'use (',
+        '    .',
+        `    ${coreRelPath}`,
+        // core's archive format is a nested module (so the CLI can read archives
+        // without core or the fork); core requires it at v0.0.0, so the workspace
+        // must carry it or the graph load hits the proxy.
+        `    ${coreRelPath}/backup/format`,
+        ...uses,
+        ')',
+        '',
+    ].join('\n')
 }
 
 // A member server module (drive, calc, …) imports tinycld.org/core/* but pins
@@ -83,6 +94,12 @@ export function buildMemberGoWork(coreRelPath: string, forkRelPath: string): str
         'use .',
         '',
         `replace tinycld.org/core => ${coreRelPath}`,
+        '',
+        // core requires its nested archive-format module at v0.0.0. A replace is
+        // needed for the same proxy-resolution reason as core's own above, and it
+        // must be VERSIONED: Go rejects an unversioned replace of a module that a
+        // `use`d module (core) also replaces at all versions.
+        `replace tinycld.org/core/backup/format v0.0.0 => ${coreRelPath}/backup/format`,
         '',
         `replace github.com/pocketbase/pocketbase => ${forkRelPath}`,
         '',

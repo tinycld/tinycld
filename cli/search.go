@@ -54,7 +54,7 @@ func newSearchCmd(d *deps) *cobra.Command {
 		Example: "  tinycld search budget\n" +
 			"  tinycld search \"mail: drive: budget -draft\"\n" +
 			"  tinycld search budget --pkg mail --not draft --json",
-		Args: cobra.ExactArgs(1),
+		Args: usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o, _, err := output.FromCommand(cmd)
 			if err != nil {

@@ -1,7 +1,7 @@
 // Per-rule run history: a Dialog, which is a sheet on a phone by itself.
 import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
-import { formatRelativeTime } from '@tinycld/core/components/NotificationDrawer'
+import { formatTimeAgo } from '@tinycld/core/lib/format-utils'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import type { RuleRuns } from '@tinycld/core/types/pbSchema'
@@ -95,9 +95,7 @@ function RunRow({ run }: { run: RuleRuns }) {
         <View className="rounded-lg border border-border bg-surface-secondary p-3 gap-2">
             <View className="flex-row items-center justify-between">
                 <MatchedPill matched={run.matched} />
-                <Text className="text-xs text-muted-foreground">
-                    {formatRelativeTime(run.fired_at)}
-                </Text>
+                <Text className="text-xs text-muted-foreground">{formatTimeAgo(run.fired_at)}</Text>
             </View>
             <Text className="text-xs text-muted-foreground">{run.duration_ms}ms</Text>
             <ActionResultsList results={results} />

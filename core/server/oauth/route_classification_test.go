@@ -25,6 +25,15 @@ func TestEveryRegisteredRouteIsClassified(t *testing.T) {
 		{"POST", "/oauth/revoke", "RFC 7009: presenting the token is the authority"},
 		{"GET", "/oauth/userinfo", "advertised in discovery; needs the profile scope"},
 		{"GET", "/api/collections/users/records", "identity lookups by any token"},
+		// Core's own backup API. Two of these carry a record id, which an
+		// exact-match entry cannot express, so a core prefix rule covers them.
+		{"POST", "/api/org-backups", "the CLI's backup command"},
+		{"GET", "/api/org-backups/abc123", "the CLI polls the ledger row after a restore"},
+		{"GET", "/api/org-backups/verify", "post-restore verification"},
+		{"POST", "/api/org-backups/restore", "the CLI's restore command"},
+		{"PATCH", "/api/org-backups/restore/abc123", "a fresh URL for an expired presigned source"},
+		{"GET", "/api/collections/backups/records", "`tinycld backup list` reads the ledger"},
+		{"GET", "/api/collections/backups/records/abc123", "one ledger row by id"},
 		// A package's routes: its record collections, its stored files, its
 		// bespoke endpoints. Each real package pins its own CLI-reachable
 		// routes in its own tests; these are the fixture package's.

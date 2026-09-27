@@ -64,6 +64,32 @@ func PostMultipart[T any](ctx context.Context, c *Client, path, jsonField string
 	return out, err
 }
 
+// Field is one plain multipart form field. Fields are written in the order
+// given (never sorted) and ahead of every file part — the restore endpoint
+// reads the passphrase part before it will accept the archive, so a reordered
+// body is rejected.
+type Field struct {
+	Name  string
+	Value string
+}
+
+// PostMultipartFields sends ordered plain fields plus file uploads, streaming
+// the files rather than buffering them. Use it over CreateRecordMultipart when
+// the server reads the parts in order; use CreateRecordMultipart for record
+// writes, where the order does not matter.
+func PostMultipartFields[T any](ctx context.Context, c *Client, path string, fields []Field, files []FilePart, progress ProgressFunc) (T, error) {
+	var out T
+	err := postMultipart(ctx, c, path, func(mw *multipart.Writer, count *countingSink) error {
+		for _, f := range fields {
+			if err := mw.WriteField(f.Name, f.Value); err != nil {
+				return err
+			}
+		}
+		return writeFileParts(mw, files, count, progress)
+	}, &out)
+	return out, err
+}
+
 func writeFileParts(mw *multipart.Writer, files []FilePart, count *countingSink, progress ProgressFunc) error {
 	var total int64
 	if progress != nil {

@@ -328,6 +328,12 @@ const audit_logs = newCollection('audit_logs', {
     ...indexing,
 })
 
+// The backup ledger. Read-only from the client: the server writes every row.
+const backups = newCollection('backups', {
+    relations: { initiated_by: users },
+    ...indexing,
+})
+
 const pkg_install_log = newCollection('pkg_install_log', {
     omitOnInsert: ['created', 'updated'],
     relations: { initiated_by: users },
@@ -390,6 +396,7 @@ const coreStores = {
     pkg_registry,
     pkg_build,
     audit_logs,
+    backups,
     pkg_install_log,
     notifications,
     rules,
