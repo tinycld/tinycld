@@ -1,5 +1,10 @@
 import { expect, type Page, test } from '@playwright/test'
-import { CORE_STEP_IDS, continueSetupStep, expectSetupStep } from '../../core/e2e-setup-helpers'
+import {
+    CORE_STEP_IDS,
+    continueSetupStep,
+    expectSetupStep,
+    finishSetupLater,
+} from '../../core/e2e-setup-helpers'
 import { bootBinary, buildBinary, setupCodeFromLog } from './boot-binary'
 
 // Drives the real first-run path on a fresh binary. The code is read from the
@@ -70,7 +75,7 @@ test('a new server is claimed, set up, paused and resumed', async ({ page }) => 
 
         await expectSetupStep(page, CORE_STEP_IDS.apps)
         await expect(page.getByText('Choose your apps')).toBeVisible()
-        await page.getByRole('button', { name: 'Finish later' }).click()
+        await finishSetupLater(page)
 
         // Finish later lands in the app; Settings offers to resume.
         await page.getByTestId('nav-settings').click()
@@ -102,7 +107,7 @@ test('a hidden app stays hidden after a restart', async ({ page }) => {
     const second = await bootBinary({ dataDir })
     try {
         await signIn(page, second.baseURL)
-        await page.getByRole('button', { name: 'Finish later' }).click()
+        await finishSetupLater(page)
         await expect(page.getByTestId('nav-settings')).toBeVisible()
         await expect(page.getByTestId(`nav-${hiddenSlug}`)).toHaveCount(0)
     } finally {
