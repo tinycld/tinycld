@@ -1,5 +1,6 @@
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { appHref } from '@tinycld/core/lib/org-routes'
+import { SETUP_DONE_TEST_ID } from '@tinycld/core/lib/setup/step-ids'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { useRouter } from 'expo-router'
 import { Text, View } from 'react-native'
@@ -30,7 +31,7 @@ function useDoneStep(complete: () => Promise<void>) {
 export function DoneStep({ complete }: { complete: () => Promise<void> }) {
     const { model, heading, buttonLabel, summary, onOpen, isPending } = useDoneStep(complete)
     return (
-        <View className="w-full items-center gap-3.5">
+        <View testID={SETUP_DONE_TEST_ID} className="w-full items-center gap-3.5">
             <View className="w-full max-w-[420px] items-center">
                 <WorkspacePreview model={model} isNewApps={false} />
             </View>

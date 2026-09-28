@@ -5,6 +5,7 @@ import { handleMutationErrorsWithForm } from '@tinycld/core/lib/errors'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { pb } from '@tinycld/core/lib/pocketbase'
 import { useSetupPreviewStore } from '@tinycld/core/lib/setup/setup-preview-store'
+import { SETUP_WORKSPACE_NAME_TEST_ID } from '@tinycld/core/lib/setup/step-ids'
 import type { SetupStepProps } from '@tinycld/core/lib/setup/types'
 import { ORG_INFO_QUERY_KEY } from '@tinycld/core/lib/use-org-info'
 import { TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
@@ -73,6 +74,7 @@ export default function WorkspaceStep({ next }: SetupStepProps) {
                 control={control}
                 name="name"
                 label="Workspace name"
+                testID={SETUP_WORKSPACE_NAME_TEST_ID}
                 placeholder="Harbor Dental"
                 onValueChange={setDraftName}
                 onSubmitEditing={onSubmit}

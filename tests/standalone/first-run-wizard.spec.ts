@@ -4,6 +4,7 @@ import {
     continueSetupStep,
     expectSetupStep,
     finishSetupLater,
+    setupWorkspaceName,
 } from '../../core/e2e-setup-helpers'
 import { bootBinary, buildBinary, setupCodeFromLog } from './boot-binary'
 
@@ -68,9 +69,7 @@ test('a new server is claimed, set up, paused and resumed', async ({ page }) => 
     try {
         await claimServer(page, server)
 
-        await page
-            .getByRole('textbox', { name: 'Workspace name', exact: true })
-            .fill('Harbor Dental')
+        await setupWorkspaceName(page).fill('Harbor Dental')
         await continueSetupStep(page, CORE_STEP_IDS.workspace)
 
         await expectSetupStep(page, CORE_STEP_IDS.apps)

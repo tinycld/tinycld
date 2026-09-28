@@ -11,6 +11,11 @@ import { SetupContinueButton } from '@tinycld/core/components/setup/wizard/Setup
 import { SidebarSlot } from '@tinycld/core/components/sidebar-primitives/SidebarSlot'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { CORE_SLOT_TARGET } from '@tinycld/core/lib/setup/core-slots'
+import {
+    SETUP_INVITE_EMAIL_TEST_ID,
+    SETUP_INVITE_SEND_TEST_ID,
+    SETUP_INVITE_USERNAME_TEST_ID,
+} from '@tinycld/core/lib/setup/step-ids'
 import type { SetupStepProps } from '@tinycld/core/lib/setup/types'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import {
@@ -122,6 +127,7 @@ export default function TeamStep({ next }: SetupStepProps) {
                 control={control}
                 name="username"
                 label="Username"
+                testID={SETUP_INVITE_USERNAME_TEST_ID}
                 placeholder="alice"
                 autoCapitalize="none"
                 autoCorrect={false}
@@ -130,6 +136,7 @@ export default function TeamStep({ next }: SetupStepProps) {
                 control={control}
                 name="email"
                 label="Email (optional)"
+                testID={SETUP_INVITE_EMAIL_TEST_ID}
                 hint="Their existing address, so you can send the invite link to them."
                 placeholder="alice@company.com"
                 autoCapitalize="none"
@@ -148,6 +155,7 @@ export default function TeamStep({ next }: SetupStepProps) {
                 className="mb-4 self-start"
                 onPress={onSubmit}
                 isDisabled={isPending}
+                testID={SETUP_INVITE_SEND_TEST_ID}
             >
                 <ButtonText>Send invite</ButtonText>
             </Button>

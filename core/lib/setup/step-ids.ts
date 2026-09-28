@@ -25,6 +25,14 @@ export const SETUP_FINISH_LATER_TEST_ID = 'setup-finish-later'
 // wizard that was left with Finish later.
 export const SETUP_RESUME_TEST_ID = 'setup-resume'
 
+// Fields and buttons a spec fills on core's own steps, and the Done screen,
+// which has no registry step and so no step container id.
+export const SETUP_WORKSPACE_NAME_TEST_ID = 'setup-workspace-name'
+export const SETUP_INVITE_USERNAME_TEST_ID = 'setup-invite-username'
+export const SETUP_INVITE_EMAIL_TEST_ID = 'setup-invite-email'
+export const SETUP_INVITE_SEND_TEST_ID = 'setup-invite-send'
+export const SETUP_DONE_TEST_ID = 'setup-done'
+
 export function setupStepTestId(stepId: string): string {
     return `setup-step-${stepId}`
 }
