@@ -27,9 +27,14 @@ export interface CommentThreadProps<R extends BaseCommentRow> {
     onResolve: () => void
     onReopen: () => void
     // When supplied, the reply composer opens an @-mention popover
-    // (handled by CommentComposer). Read-mode display of mention
-    // tokens lives separately (renderMentionsToText).
+    // (handled by CommentComposer). Doubles as the user id → display
+    // name source for read-mode rendering of `[[@id]]` tokens, which
+    // is why it stays a plain list even when the picker's candidates
+    // come from `useMentionSuggestions` instead.
     mentionSuggestions?: MentionSuggestion[]
+    // The picker's search hook, forwarded verbatim to the reply
+    // composer — see CommentComposer for the stable-identity rule.
+    useMentionSuggestions?: (query: string) => MentionSuggestion[]
 }
 
 // Generic thread renderer: root + replies, edit/delete (own only),
@@ -103,6 +108,7 @@ export function CommentThread<R extends BaseCommentRow>(props: CommentThreadProp
                         error={props.replyError ?? null}
                         onSubmit={props.onReply}
                         mentionSuggestions={props.mentionSuggestions}
+                        useMentionSuggestions={props.useMentionSuggestions}
                     />
                     <View className="flex-row justify-end mt-1">
                         <Pressable
