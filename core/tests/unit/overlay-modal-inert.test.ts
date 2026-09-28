@@ -8,7 +8,7 @@ import {
     useOverlayLayer,
     wasConsumedByLayerDismissal,
 } from '@tinycld/core/ui/overlay/layer-stack'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 /**
  * A modal layer takes the app behind it out of play. `aria-modal` on the
@@ -158,10 +158,11 @@ describe('wasConsumedByLayerDismissal', () => {
         menu.unmount()
     })
 
-    // An event with no pointerId cannot be tied to the press that dismissed
-    // the layer. Treating two absent ids as equal would be the same
-    // permanently-dead-backdrop bug by another route.
-    it('never treats an absent pointer id as consumed', () => {
+    // Two absent ids cannot be told apart from two unrelated synthetic events,
+    // so that pairing is never consumed — treating it as a match would be the
+    // permanently-dead-backdrop bug by another route. The fallback below needs
+    // the DISMISSING press to have carried an id.
+    it('never treats an absent pointer id as consumed when the press had none either', () => {
         const menu = renderHook(() =>
             useOverlayLayer({ isOpen: true, nodes: () => [], onDismiss: () => {} })
         )
@@ -169,6 +170,53 @@ describe('wasConsumedByLayerDismissal', () => {
         expect(wasConsumedByLayerDismissal(undefined)).toBe(false)
         expect(wasConsumedByLayerDismissal({})).toBe(false)
         menu.unmount()
+    })
+
+    /**
+     * The iOS Safari shape, and why the id match alone is not enough there.
+     * Safari fires the `pointerdown` with a real pointerId, then dispatches the
+     * `click` it synthesizes as a plain `MouseEvent` with no `pointerId` — so
+     * the click never looks consumed, and a press that only meant to close a
+     * menu drawn inside a Sheet still reaches the backdrop and closes the Sheet
+     * too. An id-less click falls back to time.
+     */
+    it('attributes an id-less click to a dismissing press that carried an id', () => {
+        const menu = renderHook(() =>
+            useOverlayLayer({ isOpen: true, nodes: () => [], onDismiss: () => {} })
+        )
+        pressOn(document.body, 1)
+        // A MouseEvent-shaped click: no pointerId at all.
+        expect(wasConsumedByLayerDismissal({})).toBe(true)
+        menu.unmount()
+    })
+
+    // Still single-use: the fallback swallows the one click belonging to that
+    // press, not every id-less click that follows.
+    it('consumes the id-less fallback on read', () => {
+        const menu = renderHook(() =>
+            useOverlayLayer({ isOpen: true, nodes: () => [], onDismiss: () => {} })
+        )
+        pressOn(document.body, 1)
+        expect(wasConsumedByLayerDismissal({})).toBe(true)
+        expect(wasConsumedByLayerDismissal({})).toBe(false)
+        menu.unmount()
+    })
+
+    // The window is what bounds the fallback. Past it, an id-less click is on
+    // its own again and closes the layer normally.
+    it('stops attributing an id-less click once the window has passed', () => {
+        vi.useFakeTimers()
+        try {
+            const menu = renderHook(() =>
+                useOverlayLayer({ isOpen: true, nodes: () => [], onDismiss: () => {} })
+            )
+            pressOn(document.body, 1)
+            vi.advanceTimersByTime(400)
+            expect(wasConsumedByLayerDismissal({})).toBe(false)
+            menu.unmount()
+        } finally {
+            vi.useRealTimers()
+        }
     })
 
     // A press that dismisses nothing must leave no residue behind. The press
