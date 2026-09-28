@@ -22,9 +22,11 @@ import { Dialog } from '@tinycld/core/ui/dialog'
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-// The single branding row's id is fixed by its migration — see
-// 2020000001_create_org_branding.js — so create and PATCH both target it.
-const BRANDING_RECORD_ID = 'branding'
+// There is one branding row, but its id is PocketBase's own: the released
+// migration (2020000001_create_org_branding.js) kept the default id field,
+// which requires exactly 15 characters, so a fixed readable id such as
+// 'branding' is refused on create. The server reads the row by filter, not by
+// id, so every write here targets whatever id the row was given.
 
 function brandingImage(
     branding: { id: string; logo: string; logo_crop: string } | null
@@ -66,7 +68,8 @@ function useOrgBrandingEditor() {
 
     const writeCrop = useMutation({
         mutationFn: mutation(function* (crop: CropRect) {
-            yield brandingCollection.update(BRANDING_RECORD_ID, draft => {
+            if (!branding) return
+            yield brandingCollection.update(branding.id, draft => {
                 draft.logo_crop = serializeCrop(crop)
             })
         }),
@@ -75,7 +78,8 @@ function useOrgBrandingEditor() {
 
     const removeLogo = useMutation({
         mutationFn: mutation(function* () {
-            yield brandingCollection.update(BRANDING_RECORD_ID, draft => {
+            if (!branding) return
+            yield brandingCollection.update(branding.id, draft => {
                 draft.logo = ''
                 draft.logo_crop = ''
             })
@@ -88,10 +92,12 @@ function useOrgBrandingEditor() {
             const blob = await avatarImageToBlob(params)
             const ext = params.mimeType.split('/')[1] ?? 'png'
             const file = new File([blob], `logo.${ext}`, { type: params.mimeType })
+            const crop = serializeCrop(params.crop)
 
             if (branding) {
                 const formData = new FormData()
                 formData.append('logo', file)
+                formData.append('logo_crop', crop)
                 await uploadFormDataWithProgress({
                     url: pb.buildURL(`/api/collections/org_branding/records/${branding.id}`),
                     formData,
@@ -101,18 +107,16 @@ function useOrgBrandingEditor() {
             } else {
                 // No row exists yet — this is the deployment's first logo, so
                 // create it. uploadRecordWithFile POSTs (create), which is only
-                // correct here because there is nothing to update.
+                // correct here because there is nothing to update. The crop
+                // travels with the file: the new row's id is not known until
+                // the response, and the live query files the row on its own.
                 await uploadRecordWithFile({
                     collection: 'org_branding',
-                    fields: { id: BRANDING_RECORD_ID },
+                    fields: { logo_crop: crop },
                     file: { name: file.name, type: file.type, size: file.size, file },
                     fileField: 'logo',
                 })
             }
-
-            await brandingCollection.update(BRANDING_RECORD_ID, draft => {
-                draft.logo_crop = serializeCrop(params.crop)
-            }).isPersisted.promise
         },
         onSuccess: invalidateOrgInfo,
         onError: err => {
