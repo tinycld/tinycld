@@ -36,6 +36,16 @@ const MARKED = new Set<HTMLElement>()
  * hides it from a screen reader, at exactly the moment it has something to
  * say. They register here instead of being moved, so their stacking is
  * untouched.
+ *
+ * A registered node must be a LEAF surface — the toast strip, the offline
+ * overlay — never an ancestor of app content. A protected node's own subtree
+ * is left alone on purpose (its contents are the thing being kept usable), so
+ * exempting an ancestor of the app would leave that entire branch interactive
+ * behind the modal: every control the dialog exists to hold out of play stays
+ * clickable and stays visible to a screen reader, with nothing to show that
+ * the guard was skipped. `protectedLeaves` below refuses that rather than
+ * trusting the caller: a registered node that CONTAINS another node we must
+ * keep is walked like any other ancestor.
  */
 const EXEMPT = new Set<HTMLElement>()
 const exemptListeners = new Set<() => void>()
@@ -46,7 +56,13 @@ export function inertExemptionEpoch(): number {
     return exemptEpoch
 }
 
-/** Registers a node as always-interactive. Returns its unregister. */
+/**
+ * Registers a node as always-interactive. Returns its unregister.
+ *
+ * The node must be a leaf surface, not an ancestor of app content — see the
+ * EXEMPT doc above. Passing an ancestor is not silently honoured: the walk
+ * still descends through it.
+ */
 export function exemptFromInert(node: HTMLElement | null | undefined): () => void {
     if (!node) return () => {}
     EXEMPT.add(node)
@@ -95,6 +111,25 @@ export function clearInertSiblings() {
 }
 
 /**
+ * The protected nodes whose own subtree must not be walked.
+ *
+ * A protected node's contents are the thing being kept interactive, so it has
+ * no siblings of its own to mark and descending into it would inert the
+ * surface we are protecting. But that only holds for a LEAF: a protected node
+ * that contains ANOTHER protected node is an ancestor, and skipping it would
+ * leave everything else under it interactive too — see the EXEMPT doc. So a
+ * node is treated as a leaf only when nothing else protected sits inside it.
+ */
+function protectedLeaves(live: readonly HTMLElement[]): Set<HTMLElement> {
+    const leaves = new Set<HTMLElement>()
+    for (const node of live) {
+        const containsAnother = live.some(other => other !== node && node.contains(other))
+        if (!containsAnother) leaves.add(node)
+    }
+    return leaves
+}
+
+/**
  * Marks everything outside the hosts' ancestor paths `inert`, and clears any
  * marks from a previous call. Safe to run on every change: it recomputes from
  * scratch rather than trying to diff, because the tree moves under it (a host
@@ -112,13 +147,10 @@ export function applyInertSiblings(hosts: readonly (HTMLElement | undefined)[]) 
 
     const body = document.body
     const keep = pathsToRoot(live, body)
-    // A protected node's own contents are the thing being kept interactive, so
-    // its subtree is never walked — only the ancestors ABOVE it have siblings
-    // to mark.
-    const hostNodes = new Set(live)
+    const leaves = protectedLeaves(live)
 
     for (const node of keep) {
-        if (hostNodes.has(node)) continue
+        if (leaves.has(node)) continue
         for (const child of Array.from(node.children)) {
             if (!isElement(child) || keep.has(child)) continue
             // Never re-mark something already inert for its own reasons — this

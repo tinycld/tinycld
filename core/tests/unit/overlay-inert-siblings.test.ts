@@ -1,6 +1,10 @@
 // @vitest-environment happy-dom
 
-import { applyInertSiblings, clearInertSiblings } from '@tinycld/core/ui/overlay/inert-siblings'
+import {
+    applyInertSiblings,
+    clearInertSiblings,
+    exemptFromInert,
+} from '@tinycld/core/ui/overlay/inert-siblings'
 import { afterEach, describe, expect, it } from 'vitest'
 
 /**
@@ -133,6 +137,70 @@ describe('applyInertSiblings', () => {
         const t = mountMobileTree()
         applyInertSiblings([el()])
         expect(isInert(t.appRoot)).toBe(false)
+    })
+
+    // An exempt LEAF surface — the toast strip, the offline overlay — renders
+    // in place rather than through a host, so nothing on a host path protects
+    // it. It must stay usable: a toast raised by the dialog's own save has
+    // Dismiss and Undo on it.
+    it('keeps an exempt leaf surface interactive', () => {
+        const t = mountMobileTree()
+        const toast = el()
+        const toastButton = el('button')
+        toast.appendChild(toastButton)
+        document.body.appendChild(toast)
+        const release = exemptFromInert(toast)
+        try {
+            applyInertSiblings([t.rootHost])
+            expect(isInert(toast)).toBe(false)
+            expect(isInert(toastButton)).toBe(false)
+            expect(isInert(t.appRoot)).toBe(true)
+        } finally {
+            release()
+        }
+    })
+
+    // An exempt node's subtree is skipped on purpose, so exempting an ANCESTOR
+    // of app content would leave that whole branch interactive behind the
+    // modal — every control the dialog exists to hold out of play still
+    // clickable, still visible to a screen reader, with nothing to say the
+    // guard was skipped. A node that contains another protected node is an
+    // ancestor, so it is walked like any other.
+    it('still walks through an exempt node that is an ancestor of a host', () => {
+        const t = mountMobileTree()
+        // appRoot contains the sheet host, so exempting it must not buy its
+        // children a pass.
+        const release = exemptFromInert(t.appRoot)
+        try {
+            applyInertSiblings([t.sheetHost])
+            expect(isInert(t.appRoot)).toBe(false)
+            expect(isInert(t.banner)).toBe(true)
+            expect(isInert(t.tabBar)).toBe(true)
+            expect(isInert(t.packageTabs)).toBe(true)
+            expect(isInert(t.sheetHost)).toBe(false)
+        } finally {
+            release()
+        }
+    })
+
+    // The same, for an exempt node containing another exempt node rather than
+    // a host: the outer one is an ancestor and loses the leaf exemption.
+    it('still walks through an exempt node that is an ancestor of another exemption', () => {
+        const outer = el()
+        const chrome = el()
+        const toast = el()
+        outer.append(chrome, toast)
+        document.body.append(outer)
+        const releaseOuter = exemptFromInert(outer)
+        const releaseToast = exemptFromInert(toast)
+        try {
+            applyInertSiblings([])
+            expect(isInert(toast)).toBe(false)
+            expect(isInert(chrome)).toBe(true)
+        } finally {
+            releaseToast()
+            releaseOuter()
+        }
     })
 
     // Something inert for its own reasons must come back inert, not be

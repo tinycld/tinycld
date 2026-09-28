@@ -57,6 +57,19 @@ describe('the inert machinery is a leaf', () => {
         }
     })
 
+    // The regression this file was written for: `d5e2875c` had host.tsx reach
+    // the inert machinery through the barrel, which re-exported it, which put
+    // host.tsx in its own import cycle and left `inertExemptionEpoch`
+    // undefined at runtime in the web bundle. The two assertions above say the
+    // barrel must not carry it; this one says host.tsx must not go looking for
+    // it there — without both, moving the import back to './index' passes.
+    it('host.tsx imports the inert machinery directly, not through the barrel', () => {
+        const specifiers = importSpecifiers(source('host.tsx'))
+        expect(specifiers).toContain('./inert-siblings')
+        expect(specifiers).not.toContain('.')
+        expect(specifiers).not.toContain('./index')
+    })
+
     // The shape that actually ships: a consumer reaches the hook directly.
     it('its consumers import it directly, not through the barrel', async () => {
         const mod = await import('@tinycld/core/ui/overlay/use-inert-exempt')
