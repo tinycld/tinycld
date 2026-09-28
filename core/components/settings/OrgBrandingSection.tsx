@@ -19,12 +19,9 @@ import { pb } from '@tinycld/core/lib/pocketbase'
 import { useOrgBranding } from '@tinycld/core/lib/use-org-branding'
 import { ORG_INFO_QUERY_KEY, useOrgInfo } from '@tinycld/core/lib/use-org-info'
 import { Dialog } from '@tinycld/core/ui/dialog'
+import { newRecordId } from 'pbtsdb/core'
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
-
-// The single branding row's id is fixed by its migration — see
-// 2020000001_create_org_branding.js — so create and PATCH both target it.
-const BRANDING_RECORD_ID = 'branding'
 
 function brandingImage(
     branding: { id: string; logo: string; logo_crop: string } | null
@@ -44,7 +41,11 @@ function brandingImage(
  * State and mutations for OrgBrandingSection, kept out of the component body
  * for the same reason as AvatarSection's useAvatarEditor. The upload mutation
  * branches on whether a branding row exists yet: the FIRST logo is a create
- * (uploadRecordWithFile), every one after is a PATCH to the fixed row id.
+ * (uploadRecordWithFile), every one after is a PATCH to that row. The row's
+ * id is whatever the create generated — org_branding's migration declares no
+ * id field, so PocketBase's default one applies and a short fixed id like
+ * 'branding' is refused (min 15 characters). /api/org-info reads whichever
+ * row exists, so nothing depends on the id's value.
  */
 function useOrgBrandingEditor() {
     const { branding, brandingCollection } = useOrgBranding()
@@ -64,9 +65,11 @@ function useOrgBrandingEditor() {
         queryClient.invalidateQueries({ queryKey: ORG_INFO_QUERY_KEY })
     }
 
+    // Both edit an existing logo, so a missing row means nothing to do.
     const writeCrop = useMutation({
         mutationFn: mutation(function* (crop: CropRect) {
-            yield brandingCollection.update(BRANDING_RECORD_ID, draft => {
+            if (!branding) return
+            yield brandingCollection.update(branding.id, draft => {
                 draft.logo_crop = serializeCrop(crop)
             })
         }),
@@ -75,7 +78,8 @@ function useOrgBrandingEditor() {
 
     const removeLogo = useMutation({
         mutationFn: mutation(function* () {
-            yield brandingCollection.update(BRANDING_RECORD_ID, draft => {
+            if (!branding) return
+            yield brandingCollection.update(branding.id, draft => {
                 draft.logo = ''
                 draft.logo_crop = ''
             })
@@ -89,9 +93,13 @@ function useOrgBrandingEditor() {
             const ext = params.mimeType.split('/')[1] ?? 'png'
             const file = new File([blob], `logo.${ext}`, { type: params.mimeType })
 
+            // The crop rides along with the bytes: a separate update through
+            // the collection would race the row's arrival over realtime.
+            const logoCrop = serializeCrop(params.crop)
             if (branding) {
                 const formData = new FormData()
                 formData.append('logo', file)
+                formData.append('logo_crop', logoCrop)
                 await uploadFormDataWithProgress({
                     url: pb.buildURL(`/api/collections/org_branding/records/${branding.id}`),
                     formData,
@@ -104,15 +112,11 @@ function useOrgBrandingEditor() {
                 // correct here because there is nothing to update.
                 await uploadRecordWithFile({
                     collection: 'org_branding',
-                    fields: { id: BRANDING_RECORD_ID },
+                    fields: { id: newRecordId(), logo_crop: logoCrop },
                     file: { name: file.name, type: file.type, size: file.size, file },
                     fileField: 'logo',
                 })
             }
-
-            await brandingCollection.update(BRANDING_RECORD_ID, draft => {
-                draft.logo_crop = serializeCrop(params.crop)
-            }).isPersisted.promise
         },
         onSuccess: invalidateOrgInfo,
         onError: err => {
