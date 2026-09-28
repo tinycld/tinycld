@@ -1,4 +1,4 @@
-import { like } from '@tanstack/db'
+import { eq, like } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { collectionByName } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -84,6 +84,27 @@ function useRelationRecords(target: string, displayField: string, search: string
     }
 }
 
+// The selected record, resolved on its own.
+//
+// The trigger has to name the selection even when it is nowhere near the search
+// window — after a save-and-reopen the picker starts with no term at all, so a
+// label read off the 50-row window is a raw record id in the common case.
+//
+// A one-row query, not `collection.get(id)`: the target syncs on demand, so a
+// row that was never fetched is simply absent from the store and `get` answers
+// undefined. The query fetches it. It is bounded by construction — one id, one
+// row — and runs no request at all while nothing is selected.
+function useSelectedRecord(target: string, value: string) {
+    const collection = collectionByName(target)
+    const { data } = useLiveQuery({
+        query: q => {
+            if (!collection || !value) return null
+            return q.from({ record: collection }).where(({ record }) => eq(record.id, value))
+        },
+    })
+    return (data?.[0] ?? undefined) as Record<string, unknown> | undefined
+}
+
 export function RelationRecordPicker({
     target,
     displayField,
@@ -99,7 +120,12 @@ export function RelationRecordPicker({
     // `\"` compiles to an unterminated filter literal and PocketBase answers 400.
     const term = search.trim().replace(/\\/g, '')
     const debouncedSearch = useDebouncedValue(term, SEARCH_DEBOUNCE_MS)
-    const { isRegistered, isReady, records } = useRelationRecords(target, displayField, debouncedSearch)
+    const { isRegistered, isReady, records } = useRelationRecords(
+        target,
+        displayField,
+        debouncedSearch
+    )
+    const selectedRecord = useSelectedRecord(target, value)
 
     // The debounce window, plus the request it then issues, is a stretch of time
     // in which `records` still answers the PREVIOUS term. Rendering those rows is
@@ -123,12 +149,11 @@ export function RelationRecordPicker({
         )
     }
 
-    // The trigger label falls back to the raw id when the selected record is not
-    // in the current window: the search narrows what the menu lists, and the
-    // selection is frequently filtered out of it. Reading it off a full
-    // collection fetch is what this component is no longer allowed to do.
-    const selected = matches.find(entry => entry.record.id === value)
-    const label = selected ? selected.label : value || 'Select…'
+    // The trigger names the selection from its own one-row query, so it stays
+    // correct while the menu's window shows something else entirely — or
+    // nothing, on a freshly reopened picker with no term typed. It falls back
+    // to the raw id only while that row is still in flight.
+    const label = selectedRecord ? recordLabel(selectedRecord, displayField) : value || 'Select…'
 
     return (
         <Menu
