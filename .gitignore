@@ -15,7 +15,7 @@ playwright/.cache/
 tests/install/todo-install-logs/
 scripts/ota-e2e/ota-dry-run-logs/
 scripts/ota-e2e/ota-crash-rollback-logs/
-
+docs/superpowers/
 # Local secrets — never commit
 .env
 .env.local
