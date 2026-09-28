@@ -17,8 +17,8 @@ import (
 //     bucket remotely → a refreshable targeted lockout of their DAV sync.
 //
 // The header must count only when the app's TrustedProxy settings name it —
-// the same trust switch PocketBase's own RealIP honors, which the hosting
-// router materializes for every tenant and a standalone operator sets when
+// the same trust switch PocketBase's own RealIP honors, which a managed
+// deployment materializes for every org and a standalone operator sets when
 // they deploy behind a proxy.
 
 // A direct attacker rotating XFF must stay in the RemoteAddr bucket.

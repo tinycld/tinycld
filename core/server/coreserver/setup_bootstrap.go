@@ -312,7 +312,7 @@ func newOwnerRecord(app core.App, email, name string) (*core.Record, error) {
 	//
 	// The person who ran the setup wizard is the deployment's owner, so this is
 	// also the honest value. Standalone-only: RegisterSetupBootstrap is bound
-	// in the host composition, never in a tenant.
+	// in the host composition, never on a managed deployment.
 	operator.Set("role", "owner")
 	return operator, nil
 }

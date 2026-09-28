@@ -7,9 +7,9 @@ import (
 // OrgScope resolves which address books a user sees and, per request, the owner
 // id + book path an object operation is scoped to.
 //
-// Single-org deployment: the process IS one org (whether the standalone app or a
-// hosting tenant). A user sees exactly one book, and its objects are the ones
-// they own. Contact records now reference the `users` collection directly (the
+// Single-org deployment: the process IS one org (whether the standalone app or
+// an org's own process on a managed deployment). A user sees exactly one book,
+// and its objects are the ones they own. Contact records now reference the `users` collection directly (the
 // former `user_org` junction is gone), so the owner id IS the authenticated
 // user's id — no membership lookup, no org slug in paths.
 type OrgScope interface {

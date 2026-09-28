@@ -31,7 +31,7 @@ class EditorWebViewModule : Module() {
     }
     OnActivityDestroys { EditorWebViewPool.destroyAll() }
 
-    // Synchronous so the hosting hook keeps its `post(): boolean` contract — the
+    // Synchronous so the owning hook keeps its `post(): boolean` contract — the
     // return value is "an instance exists", and the WebView call itself is
     // posted to the main thread inside.
     Function("postMessage") { instanceKey: String, data: String ->

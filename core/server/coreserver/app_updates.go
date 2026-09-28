@@ -13,8 +13,8 @@ import (
 )
 
 // buildIDPattern matches the only build_id shapes either composition mints:
-// the host installer's `build-<unixMilli>` and seed `build-base`, and the
-// hosting builder's content-addressed `recipe-<hash12>` (buildIDFor takes the
+// the host installer's `build-<unixMilli>` and seed `build-base`, and a
+// composing server's content-addressed `recipe-<hash12>` (buildIDFor takes the
 // first 12 hex chars of the recipe hash). serveBuildFile interpolates the build
 // id into the archive path, so it MUST be validated against this before
 // joining — Go's mux percent-decodes path segments, so an un-validated id like

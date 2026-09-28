@@ -73,7 +73,7 @@ final class Store {
     private var activeURL: URL { root.appendingPathComponent("active.json") }
 
     /// Per-server pointer state. Each server the user connects to keeps its own
-    /// bundle and its own crash-tracking, because in a multi-org deployment
+    /// bundle and its own crash-tracking, because on a managed deployment
     /// every org runs a DIFFERENT build with a different package set. With one
     /// shared slot, switching orgs made each foreground see the other org's
     /// bundle as "not current" and re-download it — a thrash loop, with a full

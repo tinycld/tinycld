@@ -9,7 +9,7 @@ import (
 // trail: every alias/delegate below exists because a coreserver host tail
 // (registry, install log, DB backup, activation, restart) still consumes an
 // identifier that moved into the shared pkgbuild library
-// (hosting/docs/DESIGN-org-package-agency.md, D5). Keeping the aliases here
+// (DESIGN-org-package-agency D5). Keeping the aliases here
 // means the DB-side callers and the rebuild orchestrator's tests compile
 // unchanged while the library stays host-free.
 

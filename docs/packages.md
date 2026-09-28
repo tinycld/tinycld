@@ -553,13 +553,13 @@ files — regenerate by re-running the install/generate. (Likewise the per-packa
 See [the Go server section](#the-go-pocketbase-server-side).
 
 The ONE generated registrar serves both modes of the dual-mode binary
-(DESIGN-org-package-agency D5): `server/main.go` dispatches to tenant mode
-when invoked with `--org-dir` (the hosting router's flag contract, making a
-per-org build artifact a drop-in tenant binary) and passes the same
+(DESIGN-org-package-agency D5): `server/main.go` dispatches to per-org mode
+when invoked with `--org-dir` (the flag contract a composing server uses,
+making a per-org build artifact a drop-in per-org binary) and passes the same
 `registerPackageExtensions` there. A package that must behave differently
-hosted detects it via `coreserver.GetTenantContext(app)` / `IsTenant(app)` —
-the tenant composition stamps that context before the registrar runs. There
-is no separate tenant registrar or `RegisterTenant` entry point.
+in that mode reads the context the composing server stamps on the app
+before the registrar runs. There is no separate per-org registrar or entry
+point.
 
 What the generator **no longer** emits: `package-collections.ts`,
 `package-registry.ts`, `package-sidebars.ts`, `package-providers.ts`,

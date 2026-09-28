@@ -2,11 +2,11 @@
 // workspace members, assemble an out-of-tree pnpm workspace, and drive it
 // through pnpm install / go build / expo export into a runtime tree.
 //
-// It is consumed by two hosts (see hosting/docs/DESIGN-org-package-agency.md,
-// D5): the single-tenant coreserver, which wraps it with its DB-backed tails
-// (pkg_registry, install log, DB backup, symlink activate, exit-75 restart),
-// and the hosting trusted builder, which wraps it with job intake, per-job
-// confinement, and a content-addressed artifact cache.
+// It is consumed by two hosts: the standalone coreserver, which wraps it with
+// its DB-backed tails (pkg_registry, install log, DB backup, symlink activate,
+// exit-75 restart), and a managed deployment's trusted builder, which wraps it
+// with job intake, per-job confinement, and a content-addressed artifact
+// cache.
 //
 // Two hard rules keep it shareable:
 //

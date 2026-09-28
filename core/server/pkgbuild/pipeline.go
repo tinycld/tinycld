@@ -46,8 +46,8 @@ func childEnv(buildDir string) []string {
 // with the default binary name. Fields exist so hosts can inject their
 // sandbox (runners), their staging, and their configuration — and so tests
 // stub steps per-instance instead of mutating package state (a Pipeline value
-// is safe to use concurrently with others, which the hosting builder's
-// parallel jobs require).
+// is safe to use concurrently with others, which a managed deployment
+// builder's parallel jobs require).
 type Pipeline struct {
 	// Run executes buffered commands (go build). Default RunCmd.
 	Run CmdRunner
@@ -78,7 +78,7 @@ type Pipeline struct {
 	// none. Which main gets linked is a host decision, not a pipeline one.
 	GoBuildTags []string
 	// BinaryName is the server binary filename `go build -o` produces. The
-	// single-tenant host passes its Register-time binary name; default
+	// standalone host passes its Register-time binary name; default
 	// "tinycld".
 	BinaryName string
 	// ConfigValue resolves host configuration (the Sentry keys: "sentry.dsn",
@@ -165,11 +165,12 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// security" section of docs/superpowers/specs/2026-06-10-rebuild-from-scratch-design.md).
 	// This step runs the installed members' own build scripts (and, via the
 	// generator postinstall, evaluates their manifest.ts). Installing a package is
-	// therefore equivalent to running its author's code on the host; single-tenant
-	// gates this to the org owner at the install endpoint, and the hosting
-	// builder confines the whole job. Do not "harden" this by sandboxing the
-	// build alone — member Go gets compiled into the server below and runs as the
-	// server at runtime regardless, so a build sandbox would buy no real isolation.
+	// therefore equivalent to running its author's code on the host; the
+	// standalone server gates this to the org owner at the install endpoint, and
+	// a managed deployment's builder confines the whole job. Do not "harden" this
+	// by sandboxing the build alone — member Go gets compiled into the server
+	// below and runs as the server at runtime regardless, so a build sandbox
+	// would buy no real isolation.
 	sink.Progress("Installing dependencies", ProgPnpmInstall, "pnpm install")
 	if err := TimeStep(sink, "pnpm install (+ generator postinstall)", func() error {
 		return p.runPnpmInstall(sink, buildDir)
@@ -196,7 +197,7 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 		args = append(args, ".")
 		out, e := p.run()(goDir, "go", args...)
 		if e != nil {
-			// Same rationale as runPnpmInstall: in the hosting builder the
+			// Same rationale as runPnpmInstall: in a confined builder the
 			// error string is all that leaves the job child, so the compile
 			// errors must ride it.
 			return ErrFromCmd("go build", lastLines(out, 30), e)
@@ -221,8 +222,8 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 		out, e := p.runExportWithProgress(sink, ProgGoBuild, ProgExpoWeb,
 			"Exporting web bundle", appDir, "--platform", "web")
 		if e != nil {
-			// Same rationale as runPnpmInstall and go build above: in the
-			// hosting builder the error STRING is all that leaves the job
+			// Same rationale as runPnpmInstall and go build above: in a
+			// confined builder the error STRING is all that leaves the job
 			// child, so a bare "exit status 1" is unactionable — the Metro
 			// resolution error that actually explains the failure has to ride
 			// it. This step was the one build step that discarded its output.
@@ -353,9 +354,9 @@ func (p Pipeline) runPnpmInstall(sink ProgressSink, buildDir string) error {
 		out, err = RunCmdStreamingEnv(onLine, buildDir, childEnv(buildDir), "pnpm", "install", "--no-frozen-lockfile")
 	}
 	if err != nil {
-		// The failing output must ride the error itself: in the hosting
+		// The failing output must ride the error itself: in a confined
 		// builder this runs inside a re-exec'd job child whose structured
-		// failure line is all the router keeps — a bare "exit status 1" left
+		// failure line is all the parent keeps — a bare "exit status 1" left
 		// the actual pnpm/generator error unreachable anywhere.
 		return ErrFromCmd("pnpm install", lastLines(out, 30), err)
 	}

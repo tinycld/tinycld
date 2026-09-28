@@ -10,11 +10,11 @@ import (
 	"testing"
 )
 
-// A tenant's JS runs with $app bound, and $app reaches raw SQL through
+// An org's JS runs with $app bound, and $app reaches raw SQL through
 // db()/nonconcurrentDB()/concurrentDB()/auxDB(). Withholding the $os/$filesystem
-// bindings therefore does not remove the tenant's file access: ATTACH DATABASE
+// bindings therefore does not remove that JS's file access: ATTACH DATABASE
 // against an absolute path is a read/write primitive for anything the process
-// user can reach, including a sibling tenant's data.db.
+// user can reach, including a sibling org's data.db.
 //
 // These tests pin the connector that closes it.
 
@@ -29,7 +29,7 @@ func TestNoAttachDBConnect_BlocksAttach(t *testing.T) {
 	if _, err := vdb.NewQuery("CREATE TABLE secrets (v TEXT)").Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := vdb.NewQuery("INSERT INTO secrets VALUES ('OTHER-TENANT-SECRET')").Execute(); err != nil {
+	if _, err := vdb.NewQuery("INSERT INTO secrets VALUES ('OTHER-ORG-SECRET')").Execute(); err != nil {
 		t.Fatal(err)
 	}
 	vdb.Close()
@@ -47,8 +47,8 @@ func TestNoAttachDBConnect_BlocksAttach(t *testing.T) {
 	// The exploit, verbatim.
 	_, err = db.NewQuery("ATTACH DATABASE '" + victim + "' AS stolen").Execute()
 	if err == nil {
-		t.Fatal("ATTACH DATABASE succeeded: a sandboxed tenant can read every " +
-			"other tenant's database through $app's raw-SQL surface")
+		t.Fatal("ATTACH DATABASE succeeded: a sandboxed org can read every " +
+			"other org's database through $app's raw-SQL surface")
 	}
 	if !strings.Contains(err.Error(), "too many attached") {
 		t.Logf("ATTACH blocked with an unexpected error (still blocked): %v", err)
@@ -56,7 +56,7 @@ func TestNoAttachDBConnect_BlocksAttach(t *testing.T) {
 }
 
 // The limit is per-connection, so it has to hold on every connection the pool
-// opens — not just the first. A tenant that keeps issuing queries until the
+// opens — not just the first. An org that keeps issuing queries until the
 // pool grows must not find an unrestricted connection waiting.
 func TestNoAttachDBConnect_HoldsAcrossPooledConnections(t *testing.T) {
 	dir := t.TempDir()
@@ -118,7 +118,7 @@ func TestNoAttachDBConnect_HoldsAcrossPooledConnections(t *testing.T) {
 }
 
 // The restriction must not leak onto databases that did not ask for it — the
-// control plane and any non-tenant app keep the stock connector.
+// control plane and any app that runs trusted code keep the stock connector.
 func TestDefaultDBConnect_StillAllowsAttach(t *testing.T) {
 	dir := t.TempDir()
 	other := filepath.Join(dir, "other.db")
@@ -172,7 +172,7 @@ func TestNoAttachDBConnect_PathWithQueryLikeText(t *testing.T) {
 // from the app config immediately after DBConnect returns. That silently
 // undid the restriction: connections past the primed cap were never primed,
 // and the 3-minute idle expiry retired primed connections in favour of fresh
-// unprimed ones — a full cross-tenant ATTACH escape, reached without touching
+// unprimed ones — a full cross-org ATTACH escape, reached without touching
 // db_noattach.go. Booting a real app is the only level at which this shows up,
 // which is why the check lives here rather than on a bare pool.
 func TestNoAttachDBConnect_SurvivesAppPoolConfiguration(t *testing.T) {

@@ -15,11 +15,11 @@ func runBuildPipeline(job *installjob.Job, buildDir, buildID string) (buildOutpu
 	p := pkgbuild.Pipeline{
 		BinaryName: binaryName,
 		// Through the seam, not systemConfig directly. A self-rebuild only ever
-		// runs on a deployment that administers its own settings — a hosted
-		// tenant never registers the install endpoints, because the router owns
-		// its deploys — so the two resolve identically today. Using the seam
-		// keeps that true if a supervising composition ever gains this path,
-		// rather than silently building with an empty Sentry DSN.
+		// runs on a deployment that administers its own settings — an org on a
+		// managed deployment never registers the install endpoints, because its
+		// supervisor owns its deploys — so the two resolve identically today.
+		// Using the seam keeps that true if a supervising composition ever gains
+		// this path, rather than silently building with an empty Sentry DSN.
 		ConfigValue: syscfg.Get,
 	}
 	return p.Execute(installJobSink{job}, buildDir, buildID)

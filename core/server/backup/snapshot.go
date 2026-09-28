@@ -30,8 +30,8 @@ const sqliteLimitAttached = 7
 // builder Execute on the writer connection and SQLite rejects the statement
 // with "cannot VACUUM from within a transaction".
 //
-// It runs on ONE borrowed connection rather than on the pool, because a HOSTED
-// tenant's connections cannot ATTACH and VACUUM INTO needs to — see
+// It runs on ONE borrowed connection rather than on the pool, because an org
+// opened with ATTACH restricted cannot ATTACH and VACUUM INTO needs to — see
 // withAttachSlot.
 func vacuumInto(app core.App, dest string) error {
 	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
@@ -66,15 +66,16 @@ func vacuumInto(app core.App, dest string) error {
 // withAttachSlot runs fn with ONE attach slot available on conn, restoring the
 // connection's previous limit afterwards.
 //
-// This exists because two correct requirements collide. A hosted tenant is
-// opened with core.NoAttachDBConnect, which sets SQLITE_LIMIT_ATTACHED to 0 on
-// every pooled connection: $app hands sandboxed package JS raw SQL, and an
-// ATTACH against an absolute path would be a read and write primitive for every
-// other tenant's database and the control plane's. And SQLite implements VACUUM
-// INTO by attaching the destination internally, so on such a connection the
-// statement fails outright — "too many attached databases - max 0 (1)". Before
-// this, every backup on a hosted tenant failed, and only there: the engine's own
-// tests and every single-tenant deployment run with the default limit.
+// This exists because two correct requirements collide. An org on a managed
+// deployment is opened with core.NoAttachDBConnect, which sets
+// SQLITE_LIMIT_ATTACHED to 0 on every pooled connection: $app hands sandboxed
+// package JS raw SQL, and an ATTACH against an absolute path would be a read and
+// write primitive for every other database on the same machine, the supervisor's
+// included. And SQLite implements VACUUM INTO by attaching the destination
+// internally, so on such a connection the statement fails outright — "too many
+// attached databases - max 0 (1)". Before this, every backup on such an org
+// failed, and only there: the engine's own tests and every standalone deployment
+// run with the default limit.
 //
 // Raising the limit to exactly 1, on one connection, for the duration of one
 // statement is the narrowest opening that lets the snapshot run. It is not a
@@ -102,7 +103,7 @@ func vacuumInto(app core.App, dest string) error {
 // permissive connection for one unrestricted one.
 //
 // ReapplyNoAttachLimits is a no-op on a pool that was never restricted, so a
-// single-tenant deployment pays nothing for this path.
+// standalone deployment pays nothing for this path.
 func withAttachSlot(ctx context.Context, sqlDB *sql.DB, conn *sql.Conn, fn func() error) (err error) {
 	prev, limitErr := setAttachLimit(conn, 1)
 	if limitErr != nil {
@@ -118,7 +119,7 @@ func withAttachSlot(ctx context.Context, sqlDB *sql.DB, conn *sql.Conn, fn func(
 		return fn()
 	}
 	defer func() {
-		// Restoring the PREVIOUS value, not zero: a single-tenant deployment
+		// Restoring the PREVIOUS value, not zero: a standalone deployment
 		// runs at the default, and pinning it to 0 here would take ATTACH away
 		// from a deployment that never restricted it.
 		_, rerr := setAttachLimit(conn, prev)

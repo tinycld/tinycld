@@ -230,7 +230,7 @@ func TestSandboxApisStaticUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Referencing $apis.static runs at hook LOAD; under sandbox it is undefined,
-	// so registration must return an error (a tenant cannot mount a host dir).
+	// so registration must return an error (an org cannot mount a host dir).
 	hook := `routerAdd('GET','/assets/{path...}', $apis.static(` + "`" + served + "`" + `, false))`
 	if err := os.WriteFile(filepath.Join(hooksDir, "main.pb.js"), []byte(hook), 0o644); err != nil {
 		t.Fatal(err)

@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * scaffold-search-stubs.ts — provisions two searchable stub packages into the
- * workspace hosting the app shell, so the palette's e2e can exercise
+ * workspace that contains the app shell, so the palette's e2e can exercise
  * cross-package search without any real feature package installed.
  *
  * Why stubs: the palette spec used to drive `navigateToPackage(page, 'boards')`

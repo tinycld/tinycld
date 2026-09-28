@@ -11,15 +11,15 @@ describe('classifyBundleId', () => {
     it('recognizes an embedded id', () => {
         expect(classifyBundleId('embedded-1.13.7')).toBe('embedded')
     })
-    it('recognizes a single-tenant server build id', () => {
+    it('recognizes a standalone server build id', () => {
         expect(classifyBundleId('build-1718200000000-ios')).toBe('server')
         expect(classifyBundleId('build-1718200000000-android')).toBe('server')
     })
-    it('recognizes a hosting content-addressed build id', () => {
-        // The hosting builder mints recipe-<hash12>-<platform>, so two orgs
-        // with the same package set advertise the SAME bundle. Without this the
-        // hosted OTA harness classifies every real id as 'unknown' and fails at
-        // precheck.
+    it('recognizes a content-addressed build id', () => {
+        // A managed deployment's builder mints recipe-<hash12>-<platform>, so
+        // two orgs with the same package set advertise the SAME bundle. Without
+        // this the OTA harness on such a deployment classifies every real id as
+        // 'unknown' and fails at precheck.
         expect(classifyBundleId('recipe-ab12cd34ef56-ios')).toBe('server')
         expect(classifyBundleId('recipe-ab12cd34ef56-android')).toBe('server')
     })

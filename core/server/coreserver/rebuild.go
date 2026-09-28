@@ -355,7 +355,7 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installjob.Job, m Re
 
 // logRecipeHashBreadcrumb best-effort computes and logs the build's recipe
 // hash (DESIGN-org-package-agency D4) from what assemble recorded, so
-// operators can correlate single-tenant builds with the hosting build cache
+// operators can correlate standalone builds with a content-addressed build cache
 // once it exists. Never fatal — World A does not consume the hash. The common
 // unavailability reason today: a FromCurrent member copied from an active
 // build that predates members.lock.json carries no integrity, which

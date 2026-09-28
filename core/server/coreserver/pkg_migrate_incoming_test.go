@@ -12,7 +12,7 @@ import (
 // The defect these tests pin down:
 //
 // A revert always runs in the OUTGOING process — activateBuild only renames a
-// symlink, and a hosted tenant runs its downs then waits to be killed. So a
+// symlink, and a managed deployment runs its downs then waits to be killed. So a
 // Down resolved from the process-global core.AppMigrations is the OUTGOING
 // build's Down. When a release FIXES a broken down migration, the fixed copy
 // can never run: the only copy in memory is the broken one. It fails SILENTLY,

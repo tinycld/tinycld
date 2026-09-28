@@ -62,7 +62,7 @@ func (im *IncomingMigrations) Len() int { return len(im.list.Items()) }
 //
 // sandboxed MUST match how the deployment loads its own migrations, or the
 // incoming downs run under a different capability set than the ups did. A
-// hosted tenant loads sandboxed (no $os/$http/$filesystem, bounded exec); a
+// managed deployment loads sandboxed (no $os/$http/$filesystem, bounded exec); a
 // self-hosted deployment loads unsandboxed. Getting this wrong is a silent
 // divergence: a migration guarded on `typeof $os === 'undefined'` would take
 // the wrong branch, and one that uses $os unguarded would throw.

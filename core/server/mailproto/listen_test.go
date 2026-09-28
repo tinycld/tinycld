@@ -16,8 +16,8 @@ import (
 
 // The injection seam these tests pin: a host that supplies opts.Listen owns
 // the socket, and mailproto must serve on exactly that listener and never
-// fall back to binding the configured address. That is what lets a tenant
-// process run IMAP/SMTP without binding a port (hosting HANDOFF §6). Each
+// fall back to binding the configured address. That is what lets an org's
+// own process run IMAP/SMTP without binding a port. Each
 // test configures an address that CANNOT be bound — so any regression back to
 // the internal bind fails loudly instead of quietly binding a port.
 
@@ -53,7 +53,7 @@ func dialAndReadLine(t *testing.T, ln net.Listener) string {
 func TestStartIMAP_ServesOnInjectedListener(t *testing.T) {
 	app := newTestApp(t)
 	// The test app is production-mode, so this drives the TLS-only path — the
-	// exact shape a router-managed tenant would use.
+	// exact shape an org behind a TLS-passthrough proxy would use.
 	dir := t.TempDir()
 	certPath, keyPath := dir+"/cert.pem", dir+"/key.pem"
 	writeCertPair(t, certPath, keyPath, "imap.test")
@@ -134,7 +134,7 @@ func TestStartSMTP_ServesOnInjectedListener(t *testing.T) {
 }
 
 // Without injection the configured address is still bound directly — the
-// single-tenant app's path is unchanged.
+// standalone app's path is unchanged.
 func TestStartSMTP_DefaultPathStillBinds(t *testing.T) {
 	app := newTestApp(t)
 	t.Setenv("TEST_SMTP_ADDR", "127.0.0.1:0")

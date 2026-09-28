@@ -2,10 +2,11 @@
 // server export pipeline. They never collide, so an observed flip from one
 // class to the other is an unambiguous "the app reloaded into a new bundle".
 //   embedded-<appVersion>      — baked into the binary (plugins/with-app-updater.cjs)
-//   build-<unixMilli>-<plat>   — minted by the single-tenant installer
-//   recipe-<hash12>-<plat>     — minted by the hosting builder, content-addressed
-//                                on the recipe hash, so two orgs with the same
-//                                package set advertise the SAME bundle id
+//   build-<unixMilli>-<plat>   — minted by the standalone installer
+//   recipe-<hash12>-<plat>     — minted by a managed deployment's builder,
+//                                content-addressed on the recipe hash, so two
+//                                orgs with the same package set advertise the
+//                                SAME bundle id
 
 export type BundleIdClass = 'embedded' | 'server' | 'unknown'
 

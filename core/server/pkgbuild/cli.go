@@ -6,8 +6,8 @@ import (
 )
 
 // CLIDistDirName is where cross-compiled CLI binaries land inside a build's
-// app dir, and where the download endpoints and the hosting artifact stager
-// look for them.
+// app dir, and where the download endpoints and a managed deployment's
+// artifact stager look for them.
 const CLIDistDirName = "cli-dist"
 
 // CLITarget is one cross-compilation target of the per-org CLI.

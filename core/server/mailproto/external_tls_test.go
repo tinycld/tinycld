@@ -15,15 +15,15 @@ import (
 )
 
 // The external-TLS contract these tests pin: when the host declares it
-// terminates TLS itself (the hosting router holds the wildcard cert and
-// hands the tenant plaintext over a private unix socket), mailproto must
+// terminates TLS itself (a reverse proxy holds the wildcard cert and hands
+// the org's process plaintext over a private unix socket), mailproto must
 //   - start with NO cert material configured, even in production mode,
 //   - serve exactly the injected listener,
 //   - allow authentication over the plaintext transport (the public hop was
-//     TLS; the plaintext hop is a router-owned unix socket), and
+//     TLS; the plaintext hop is a proxy-owned unix socket), and
 //   - advertise no STARTTLS (there is no TLS to start).
 // A regression to the TLS-only production path would refuse to boot every
-// router-managed tenant; a regression to LOGINDISABLED/no-AUTH would lock
+// org behind such a proxy; a regression to LOGINDISABLED/no-AUTH would lock
 // every mail client out.
 
 // extTLSIMAPSession is a nop session with a real Close, so tearing the

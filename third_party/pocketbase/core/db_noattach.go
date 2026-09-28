@@ -25,7 +25,7 @@ const sqliteLimitAttached = 7
 // and prime the whole cap before the pool is used.
 //
 // PocketBase already runs its non-concurrent DB at 1 connection and its
-// concurrent DB at a small multiple; this cap sits above normal tenant load.
+// concurrent DB at a small multiple; this cap sits above one org's normal load.
 const noAttachMaxConns = 24
 
 // restrictedPools records every pool NoAttachDBConnect has primed, so the pool
@@ -34,7 +34,8 @@ const noAttachMaxConns = 24
 //
 // Keyed by *sql.DB identity, not by path: two apps in one process may
 // legitimately open the same file with different policies — the router's
-// control plane and a tenant, in the deployment this exists for.
+// control plane and an org that runs in its own process, in the deployment
+// this exists for.
 var restrictedPools sync.Map // *sql.DB -> struct{}
 
 // NoAttachDBConnect opens a database whose connections cannot ATTACH another
@@ -44,8 +45,8 @@ var restrictedPools sync.Map // *sql.DB -> struct{}
 // take away its file access, because $app stays bound and $app exposes raw SQL
 // (db, nonconcurrentDB, concurrentDB, auxDB, runInTransaction). ATTACH DATABASE
 // against an absolute path is then a read and write primitive for anything the
-// process user can reach — in a multi-tenant deployment, every other tenant's
-// data.db and the control plane's.
+// process user can reach — when several orgs share one machine, every other
+// org's data.db and the control plane's.
 //
 // IMPORTANT for callers that also configure the pool: the restriction depends
 // on the pool settings applied here (see restrictAttach). A caller that
@@ -53,10 +54,10 @@ var restrictedPools sync.Map // *sql.DB -> struct{}
 // defeats it — BaseApp.initDataDB did exactly that — so any such caller must
 // route through ReapplyNoAttachLimits.
 //
-// A host may also separate tenants by uid, and should. That is a second line
+// A host may also separate orgs by uid, and should. That is a second line
 // rather than a substitute: it is absent on developer machines, absent when the
-// router runs unprivileged, and it fails outright for any pair of tenants that
-// end up sharing a uid.
+// parent process runs unprivileged, and it fails outright for any pair of orgs
+// that end up sharing a uid.
 func NoAttachDBConnect(dbPath string) (*dbx.DB, error) {
 	db, err := DefaultDBConnect(dbPath)
 	if err != nil {
@@ -80,7 +81,7 @@ func NoAttachDBConnect(dbPath string) (*dbx.DB, error) {
 // connections lazily, so "prime every connection up front" holds only while the
 // cap and the pinned idle pool hold. Raising MaxOpenConns admits unprimed
 // connections; a non-zero ConnMaxIdleTime lets primed ones be retired and
-// replaced by unprimed ones. Both reopen a full cross-tenant ATTACH escape
+// replaced by unprimed ones. Both reopen a full cross-org ATTACH escape
 // without touching this file, which is why the re-priming lives next to the
 // original rather than at the call site.
 func ReapplyNoAttachLimits(sqlDB *sql.DB) error {
@@ -151,7 +152,7 @@ func assertAttachBlocked(ctx context.Context, c *sql.Conn) error {
 	if err == nil {
 		_, _ = c.ExecContext(ctx, "DETACH DATABASE tinycld_attach_probe")
 		return fmt.Errorf("ATTACH DATABASE is still permitted after setting " +
-			"SQLITE_LIMIT_ATTACHED: untrusted JS could read every other tenant's database")
+			"SQLITE_LIMIT_ATTACHED: untrusted JS could read every other org's database")
 	}
 	return nil
 }

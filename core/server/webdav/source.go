@@ -4,15 +4,16 @@
 // Source, materialized from each package's manifest `webdav` block).
 //
 // Why it lives in core, not per-feature: a protocol server has to be reachable
-// on a port, and the hosting router owns every listening socket — a tenant
-// serves on a unix socket handed down to it. Anything that must be *bound*
-// therefore belongs to core, where the router can open it. The rule is about
-// ports, not about Go: performance-sensitive work belongs in Go, and this
-// package is Go.
+// on a port, and on a managed deployment a reverse proxy owns every listening
+// socket — an org's process serves on a unix socket handed down to it.
+// Anything that must be *bound* therefore belongs to core, where the composing
+// server can open it. The rule is about ports, not about Go:
+// performance-sensitive work belongs in Go, and this package is Go.
 //
-// Separately, `serve-org` links no feature package today, so the Source cannot
-// be a Go literal the feature registers — it arrives as data the router
-// materialized from the manifest. Core imports no feature package.
+// Separately, an org's own process links no feature package today, so the
+// Source cannot be a Go literal the feature registers — it arrives as data the
+// composing server materialized from the manifest. Core imports no feature
+// package.
 //
 // What a package contributes:
 //
@@ -21,13 +22,13 @@
 //   - Go callbacks (Hooks): the little that is neither config nor an
 //     enforcement boundary — currently just the version snapshot on overwrite.
 //     Authorization comes from the collection's PB rules and quota from
-//     core/quota, both of which a tenant process gets too.
+//     core/quota, both of which an org's own process gets too.
 //   - Opt-in TS hook points, for behaviour an org wants to customize without
 //     writing Go. See hooks.go; the fast path never touches a JS VM.
 //
-// Where it runs: in the single-tenant app, in-process. Under hosting's
-// per-process tenant isolation, inside each org's own process — the router
-// materializes the Sources and reverse-proxies to that process.
+// Where it runs: in the standalone app, in-process. Under per-org process
+// isolation, inside each org's own process — the composing server materializes
+// the Sources and reverse-proxies to that process.
 package webdav
 
 import (
@@ -59,7 +60,7 @@ type Source struct {
 	// Trash binds the feature's soft-delete state, when it has one. Set, a
 	// DAV DELETE stamps the per-user trash row (restorable from the feature's
 	// own trash UI) instead of destroying the record; nil keeps hard delete.
-	// Config rather than a hook because a tenant's Source arrives as data.
+	// Config rather than a hook because an org's Source arrives as data.
 	Trash *TrashConfig
 
 	// Hooks are the optional feature side effects. A nil hook means "no extra
@@ -125,10 +126,10 @@ type FieldMap struct {
 // there is exactly one place a tree's permissions are defined — the migration —
 // and the DAV path cannot drift from what the REST API and the web UI enforce.
 //
-// It also has to be that way for hosting. A rule is a string and travels in
-// the schema; a Go closure cannot cross a process boundary. Were authorization
-// a hook, a tenant process (which links no feature package) would serve the tree with
-// no per-record checks at all.
+// It also has to be that way for a managed deployment. A rule is a string and
+// travels in the schema; a Go closure cannot cross a process boundary. Were
+// authorization a hook, an org's own process (which links no feature package)
+// would serve the tree with no per-record checks at all.
 //
 // What remains here is the work that genuinely is not an access decision.
 //
@@ -138,9 +139,10 @@ type FieldMap struct {
 // through by construction.
 //
 // Hooks travel on the Source itself: under the single-Register contract each
-// feature mounts its own sources (host and tenant alike), so its closures ride
-// along directly — the old materialized-config mount that could not carry Go
-// closures (and needed a by-slug registry to close the gap, R7) is retired.
+// feature mounts its own sources (standalone and per-org process alike), so its
+// closures ride along directly — the old materialized-config mount that could
+// not carry Go closures (and needed a by-slug registry to close the gap, R7) is
+// retired.
 type Hooks struct {
 	// BeforeOverwrite runs just before an existing entry's blob is replaced —
 	// drive uses it to snapshot the outgoing version. An error here is logged,

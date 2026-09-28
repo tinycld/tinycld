@@ -100,9 +100,9 @@ func Register(app *pocketbase.PocketBase, sources []Source, host HostBindings) [
 //
 // The app is taken as core.App — the minimal interface the backend actually
 // needs — so any host can drive it without holding a concrete
-// *pocketbase.PocketBase. Under per-process tenant isolation this runs INSIDE
+// *pocketbase.PocketBase. Under per-org process isolation this runs INSIDE
 // the org's own process, which mounts these routes on its own router from the
-// source list the router materialized.
+// source list the composing server materialized.
 func HandlerFor(app core.App, sources []Source, host HostBindings) (http.Handler, []*Backend) {
 	if len(sources) == 0 {
 		return nil, nil

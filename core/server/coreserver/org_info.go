@@ -11,10 +11,10 @@ import (
 // RegisterOrgInfoEndpoint serves the deployment's branding to the client,
 // unauthenticated — the client wants it before login (document title, org
 // avatar). The name is Settings().Meta.AppName: the setup wizard's app name in
-// a standalone deployment, or the org's display_name in a router-managed
-// tenant (adopted from .runtime/app.json at boot, serve-org). The logo URL and
-// crop come from org_branding, whose viewRule is deliberately public for the
-// same pre-login reason. Nothing else from settings is exposed: PB's own
+// a standalone deployment, or the org's display_name on a managed deployment
+// (adopted from .runtime/app.json at boot, serve-org). The logo URL and crop
+// come from org_branding, whose viewRule is deliberately public for the same
+// pre-login reason. Nothing else from settings is exposed: PB's own
 // /api/settings is superuser-only, and this endpoint publishes only these
 // deliberately-public fields.
 func RegisterOrgInfoEndpoint(app core.App) {

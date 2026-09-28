@@ -13,11 +13,11 @@ import (
 // disk, and the per-user ceiling (0 = unlimited) their usage is measured
 // against.
 //
-// Deliberately NOT a deployment total against a plan ceiling. A single-tenant
+// Deliberately NOT a deployment total against a plan ceiling. A standalone
 // deployment's operator owns the disk; the only question the app can answer
 // for them is which user is filling it. What an organization owes for the
 // space it occupies is a commercial question belonging to whoever sells the
-// hosting, and core knows nothing about plans, ceilings or billing.
+// space, and core knows nothing about plans, ceilings or billing.
 type StorageUsageResponse struct {
 	Users        []quota.UserBytes `json:"users"`
 	LimitPerUser int64             `json:"limitPerUser"`
@@ -31,8 +31,8 @@ type StorageUsageResponse struct {
 //
 // Sources and the per-user ceiling are read per request rather than captured,
 // because this registers from RegisterSharedCore — shared by the single-org
-// app and a hosting tenant, which bind quota with different limit resolvers
-// (a tenant's org ceiling comes from the router). Reading through the same
+// app and a managed deployment, which bind quota with different limit resolvers
+// (a managed org's ceiling comes from its supervisor). Reading through the same
 // registry and resolver enforcement uses keeps the reported numbers and the
 // enforced ceiling describing one set of collections in both compositions.
 func RegisterStorageUsageEndpoint(app *pocketbase.PocketBase) {

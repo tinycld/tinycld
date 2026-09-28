@@ -49,7 +49,7 @@ type SMTPOptions struct {
 	AuthDisabled bool
 
 	// Listen, when non-nil, replaces every TCP bind for this service (see
-	// ListenFunc — the hosting injection seam). Nil = bind the configured
+	// ListenFunc — the host's injection seam). Nil = bind the configured
 	// addresses.
 	Listen ListenFunc
 

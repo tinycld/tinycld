@@ -113,7 +113,7 @@ func (api *fileApi) download(e *core.RequestEvent) error {
 	// accessible … all file names have a random part appended which needs to
 	// be known by the user before accessing the file". That is security by
 	// obscurity, and it is the wrong default for this app: every file field we
-	// ship holds tenant data (mail attachments, drive items, cards
+	// ship holds an org's data (mail attachments, drive items, cards
 	// attachments, text snapshots), a filename leaks through any share of the
 	// URL, and none of our collections had opted in — so a record id plus a
 	// filename downloaded anyone's file, unauthenticated. Found while testing

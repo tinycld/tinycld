@@ -6,8 +6,8 @@
 // process that started it, and the Device Grant it actually uses never
 // redirects at all.
 //
-// Seeded rather than hand-registered so every deployment — self-hosted or a
-// multi-org tenant — can authenticate a CLI the moment it boots.
+// Seeded rather than hand-registered so every deployment, however it is
+// run, can authenticate a CLI the moment it boots.
 migrate(
     app => {
         const clients = app.findCollectionByNameOrId('oauth_clients')

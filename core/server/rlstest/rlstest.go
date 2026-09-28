@@ -90,12 +90,13 @@ func Apply(t testing.TB, app core.App, migrationsDirs ...string) {
 }
 
 // ApplyWithHooks is Apply plus the package's real pb-hooks directory, so a
-// test can exercise what a hosted TENANT runs: PocketBase, the shipped
-// migrations, and the package's JS hooks — but none of its Go.
+// test can exercise what an org's OWN PROCESS on a managed deployment runs:
+// PocketBase, the shipped migrations, and the package's JS hooks — but none of
+// its Go.
 //
 // That combination is the one no existing suite covered. Tests that bind the
-// Go hooks prove the single-tenant app is safe and say nothing about a tenant;
-// tests that bind nothing miss behaviour the tenant genuinely has.
+// Go hooks prove the standalone app is safe and say nothing about such a
+// process; tests that bind nothing miss behaviour it genuinely has.
 func ApplyWithHooks(t testing.TB, app core.App, hooksDir string, migrationsDirs ...string) {
 	t.Helper()
 

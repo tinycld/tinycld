@@ -1,11 +1,11 @@
 // Golden test for the recipe-hash canonical form.
 //
-// PAIRING RULE (same contract as the transpile goldens shared with the
-// hosting router): the fixture + golden constant below are duplicated
-// byte-for-byte in hosting/internal/recipeparity/recipehash_parity_test.go.
-// If the canonical form changes (recipeFormatVersion bump), THIS golden goes
-// red here and the stale twin goes red in hosting's CI — fix by changing
-// BOTH sides and regenerating BOTH goldens together, never one alone.
+// PAIRING RULE (same contract as the transpile goldens): a downstream
+// consumer keeps a byte-for-byte twin of the fixture + golden constant below
+// in its own parity test. If the canonical form changes (recipeFormatVersion
+// bump), THIS golden goes red here and the stale twin goes red in that
+// consumer's CI — fix by changing BOTH sides and regenerating BOTH goldens
+// together, never one alone.
 package pkgbuild_test
 
 import (
@@ -43,7 +43,7 @@ func TestRecipeHash_MatchesGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got != goldenRecipeHash {
-		t.Fatalf("recipe hash drifted from golden:\n  got  %s\n  want %s\nIf the canonical form changed intentionally, bump the format version and regenerate BOTH goldens (here and hosting/internal/recipeparity).", got, goldenRecipeHash)
+		t.Fatalf("recipe hash drifted from golden:\n  got  %s\n  want %s\nIf the canonical form changed intentionally, bump the format version and regenerate BOTH goldens (here and the downstream twin).", got, goldenRecipeHash)
 	}
 }
 

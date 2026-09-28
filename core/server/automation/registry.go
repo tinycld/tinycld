@@ -1,8 +1,8 @@
 // Package automation's registries (actionHandlers, ownerResolvers,
 // triggerFilters, relationAuthorizers below) are process-global vars, not
 // per-app state. Every deployment shape runs one org per OS process — a
-// hosting router spawns a per-org build artifact as its own process
-// (hosting/README.md) — so these maps only ever serve one org's Engine;
+// managed deployment spawns each org's build artifact as its own process
+// under a supervisor — so these maps only ever serve one org's Engine;
 // they are package globals for registration ergonomics, not for sharing.
 package automation
 

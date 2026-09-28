@@ -871,7 +871,7 @@ func BindApis(vm *sobek.Runtime) { bindApisCommon(vm, true) }
 func BindApisSandboxed(vm *sobek.Runtime) { bindApisCommon(vm, false) }
 
 // bindApisCommon installs the $apis object. When withStatic is false the raw
-// $apis.static filesystem-read helper is omitted (sandboxed tenants).
+// $apis.static filesystem-read helper is omitted (sandboxed orgs).
 func bindApisCommon(vm *sobek.Runtime, withStatic bool) {
 	obj := vm.NewObject()
 	vm.Set("$apis", obj)

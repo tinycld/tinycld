@@ -2,7 +2,7 @@ module tinycld.org/core
 
 go 1.26.3
 
-// Build against the multi-org PocketBase fork, vendored at
+// Build against the PocketBase fork, vendored at
 // tinycld/third_party/pocketbase: core's jsvm registration uses the fork-only
 // jsvm.Config.OnInit to install its $-bindings, so core's standalone build/test
 // must resolve the fork too. Same module path + base tag (v0.39.8) as upstream —

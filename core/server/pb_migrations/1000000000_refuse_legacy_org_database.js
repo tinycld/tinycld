@@ -1,7 +1,7 @@
 /// <reference path="../pb_data/types.d.ts" />
-// Refuse to run against a database created by a pre-hosting build.
+// Refuse to run against a database created by an older, org-scoped build.
 //
-// The hosting transition dropped the org-scoped schema (`orgs`, `user_org`)
+// The move to one org per database dropped the org-scoped schema (`orgs`, `user_org`)
 // by editing already-shipped migrations in place, and no data-conversion
 // migration exists anywhere. That is deliberate: every deployment is
 // provisioned fresh (see CLAUDE.md "Migrations may be edited in place"), so
@@ -26,12 +26,12 @@ migrate(
                 legacy = true
             } catch {
                 // Not found — the required state: this database was
-                // provisioned fresh on the post-hosting schema.
+                // provisioned fresh on the one-org-per-database schema.
             }
             if (legacy) {
                 throw new Error(
                     `refusing to migrate: found legacy collection '${name}'. ` +
-                        'This database was created by a pre-hosting build, and there ' +
+                        'This database was created by an older org-scoped build, and there ' +
                         'is no in-place upgrade path from the org-scoped schema: the ' +
                         'shipped migrations were rewritten in place, already-applied ' +
                         'ones will never re-run, and the current access rules would ' +

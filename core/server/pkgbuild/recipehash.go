@@ -8,8 +8,7 @@ import (
 	"strings"
 )
 
-// RecipeHash is the single definition of the build-cache key
-// (hosting/docs/DESIGN-org-package-agency.md, D4/D5): two orgs whose
+// RecipeHash is the single definition of the build-cache key: two orgs whose
 // resolved package sets, version pins, and toolchains match hit the same
 // artifact by construction, on whichever host computes the hash.
 //
@@ -22,8 +21,9 @@ import (
 //     keeping it out keeps World A's core/tinycld slug duality out of the key.
 //   - FromCurrent — a World-A materialization strategy, not identity; the
 //     builder always fetches.
-//   - Build target — D5's dual-mode binary decision: one artifact serves both
-//     host and tenant, so the recipe needs no target dimension.
+//   - Build target — the dual-mode binary decision: one artifact serves both
+//     the standalone server and an org's own process, so the recipe needs no
+//     target dimension.
 //
 // Canonical form v1 (hand-rolled sorted lines, newline-terminated — language-
 // portable and diff-readable when a golden test fails):
@@ -37,8 +37,8 @@ import (
 //	extra <name> <integrity>              (sorted; source a host links beyond the member set)
 //
 // Changing the canonical form REQUIRES bumping recipeFormatVersion and
-// regenerating BOTH golden tests (pkgbuild/recipehash_test.go and hosting's
-// internal/recipeparity) together.
+// regenerating BOTH golden tests (pkgbuild/recipehash_test.go and the
+// byte-for-byte twin a downstream consumer keeps) together.
 const recipeFormatVersion = "tinycld-recipe/v2"
 
 // Toolchain pins the tool versions that shape build output. All three fields
@@ -197,7 +197,7 @@ func checkToken(kind, v string) error {
 
 // RecipeHashForBuild computes the recipe hash of an ASSEMBLED build dir from
 // what assemble recorded: members.lock.json and the overrides file. This is
-// the form hosts use — the single-tenant breadcrumb log today, the builder's
+// the form hosts use — the standalone breadcrumb log today, a builder's
 // cache key at publish time.
 func RecipeHashForBuild(buildDir string, tc Toolchain) (string, error) {
 	members, err := ReadMembersLock(buildDir)

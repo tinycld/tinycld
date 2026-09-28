@@ -369,19 +369,20 @@ func setSetting(t *testing.T, app *tests.TestApp, key string, value int64) {
 	}
 }
 
-// THE hosting security property: the org ceiling must come from the value the
-// router injected, NOT from the org's own settings. Each tenant has its own
-// superusers, so a limit read from the tenant DB could be raised by the tenant.
-func TestFixedLimitsIgnoresTenantSettingsForOrgCeiling(t *testing.T) {
+// THE managed-deployment security property: the org ceiling must come from the
+// value the supervisor injected, NOT from the org's own settings. Each org has
+// its own superusers, so a limit read from the org's DB could be raised by the
+// org.
+func TestFixedLimitsIgnoresOrgSettingsForOrgCeiling(t *testing.T) {
 	app, _, _, _ := setupQuotaApp(t)
 
-	// A tenant superuser writes a wildly generous ceiling into their own DB.
+	// An org superuser writes a wildly generous ceiling into their own DB.
 	setSetting(t, app, "org_storage_limit_bytes", 1<<40) // 1 TB
 
-	// The router said 50 MB. That is what must hold.
+	// The supervisor said 50 MB. That is what must hold.
 	limits := FixedLimits(50 << 20)(app)
 	if limits.PerOrg != 50<<20 {
-		t.Fatalf("PerOrg = %d, want the router's %d — a tenant must not be able to raise its own ceiling",
+		t.Fatalf("PerOrg = %d, want the supervisor's %d — an org must not be able to raise its own ceiling",
 			limits.PerOrg, int64(50<<20))
 	}
 }

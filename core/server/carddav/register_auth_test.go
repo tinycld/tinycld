@@ -11,9 +11,9 @@ import (
 // A bad Basic credential must produce a 401 WITH a WWW-Authenticate challenge.
 // Before authentication moved to the route wrapper, it reached the backend,
 // whose bare davauth.ErrUnauthorized go-webdav reports as a 500 — clients read
-// that as a server fault and never re-prompt for a password. Found live by the
-// router's cross-org CardDAV probe (an org's user probing another org's
-// tenant got 500, not 401).
+// that as a server fault and never re-prompt for a password. Found live by a
+// cross-org CardDAV probe on a managed deployment (an org's user probing
+// another org's server got 500, not 401).
 
 func davRequest(handler http.Handler, email, password string) *httptest.ResponseRecorder {
 	body := `<?xml version="1.0" encoding="utf-8"?>

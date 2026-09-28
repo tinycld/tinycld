@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * scaffold-shortcut-stub.ts — provisions the @tinycld/shortcut-stub
- * package into the workspace that's hosting app.
+ * package into the workspace that contains the app.
  *
  * Why a stub: app's keyboard-shortcut tests (open help, navigate via
  * `t <letter>` chord) need a package installed that contributes a nav

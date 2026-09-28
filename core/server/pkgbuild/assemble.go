@@ -11,10 +11,10 @@ import (
 )
 
 // DefaultPnpmStoreDir is the fixed content-addressable store baked into the
-// single-tenant runtime image. Reusing it makes a per-build `pnpm install`
+// standalone runtime image. Reusing it makes a per-build `pnpm install`
 // hardlink-fast instead of re-downloading the ~2GB dependency graph. See the
-// Dockerfile store comment. Hosts with a different layout (the hosting
-// builder) override it via ScaffoldOptions.
+// Dockerfile store comment. Hosts with a different layout (a managed
+// deployment's builder) override it via ScaffoldOptions.
 const DefaultPnpmStoreDir = "/workspace/.pnpm-store"
 
 // PackageManagerSpec pins pnpm for every assembled build — the exact spec
@@ -42,7 +42,7 @@ var scaffoldExtras = []string{".npmrc", "tinycld.packages.ts", "scripts", "tests
 const OverridesFile = "package-versions.json"
 
 // ScaffoldOptions carries the host-specific knobs of the workspace scaffold.
-// The zero value is the single-tenant host's configuration.
+// The zero value is the standalone host's configuration.
 type ScaffoldOptions struct {
 	// PnpmStoreDir is the pnpm content-addressable store the assembled
 	// workspace points at; empty means DefaultPnpmStoreDir.
@@ -57,9 +57,9 @@ func (o ScaffoldOptions) storeDir() string {
 }
 
 // MemberSource materializes workspace members into a build dir. It is the
-// host seam the design doc names: the single-tenant host fetches changed
-// members and copies unchanged ones from its currently-active build; the
-// hosting builder always fetches (it has no "current build").
+// host seam the design doc names: the standalone host fetches changed
+// members and copies unchanged ones from its currently-active build; a
+// managed deployment's builder always fetches (it has no "current build").
 //
 // Both methods report the member's tarball integrity ("sha256:<hex>" of the
 // exact bytes it was materialized from) — the fact RecipeHash keys the build
@@ -339,8 +339,9 @@ func writePnpmWorkspaceYAML(buildDir string, members []string, storeDir string) 
 
 // ReadOverrides loads the version pins from package-versions.json under root —
 // the overrides input of RecipeHash. Exported for hosts that must compute the
-// recipe hash from the scaffold source BEFORE a build dir exists (the hosting
-// builder's cache-hit check); RecipeHashForBuild covers the post-assemble case.
+// recipe hash from the scaffold source BEFORE a build dir exists (a managed
+// deployment builder's cache-hit check); RecipeHashForBuild covers the
+// post-assemble case.
 func ReadOverrides(root string) (map[string]string, error) {
 	return readOverrides(root)
 }
