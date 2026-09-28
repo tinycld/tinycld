@@ -47,8 +47,11 @@ export function useMentionCandidates(
                     and(
                         inArray(u.role, ['owner', 'admin', 'member']),
                         eq(u.disabled, false),
-                        // `like` compiles to PocketBase's `~`, whose wildcard is
-                        // `%`, so a trailing one makes this a prefix match.
+                        // `like` compiles to `name ~ "<term>%"`. PocketBase
+                        // auto-wraps a `~` operand in `%` only when it has none
+                        // of its own (`wrapLikeParams`), so the explicit trailing
+                        // `%` is what makes this a prefix match rather than a
+                        // contains match — which is what an autocomplete wants.
                         like(u.name, `${term}%`)
                     )
                 )

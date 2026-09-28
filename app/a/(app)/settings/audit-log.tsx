@@ -232,6 +232,12 @@ function AuditLogList({
     // search change remounts it and the window returns to one page.
     const [page, setPage] = useState(1)
 
+    // pbtsdb's escapeValue escapes `"` but not `\`, so a term containing `\"`
+    // compiles to `"\\""` — an unterminated filter literal PocketBase answers
+    // with a 400. Dropping backslashes is the whole guard: a backslash has no
+    // meaning to a `~` match here, so nothing searchable is lost.
+    const term = search.replace(/\\/g, '')
+
     const { data: logs } = useLiveQuery({
         query: query => {
             let q = query.from({ audit_logs: auditLogsCollection })
@@ -244,17 +250,23 @@ function AuditLogList({
             if (resourceFilter) {
                 q = q.where(({ audit_logs }) => eq(audit_logs.resource_type, resourceFilter))
             }
-            if (search) {
-                // `like` compiles to PocketBase's `~`, whose wildcard is `%`, so
-                // this is a contains-match across the three columns a human
-                // would recognise an entry by. Chained `.where()` calls AND
-                // together, which is why each predicate gets its own call rather
-                // than being collected into one `and(...)`.
+            if (term) {
+                // `like` compiles to `field ~ "value"`. PocketBase auto-wraps a
+                // `~` operand in `%` only when the operand has no `%` of its own
+                // (`wrapLikeParams`, third_party/pocketbase/tools/search/filter.go),
+                // so supplying our own gives plain SQL LIKE semantics — `%x%` is
+                // a contains match across the three columns a human would
+                // recognise an entry by. Supplying them also opts out of
+                // PocketBase's own `_`/`%` escaping, which is cosmetic here: a
+                // typed `_` or `%` widens the match rather than breaking it.
+                //
+                // Chained `.where()` calls AND together, which is why each
+                // predicate gets its own call rather than one `and(...)`.
                 q = q.where(({ audit_logs }) =>
                     or(
-                        like(audit_logs.resource_label, `%${search}%`),
-                        like(audit_logs.action, `%${search}%`),
-                        like(audit_logs.resource_type, `%${search}%`)
+                        like(audit_logs.resource_label, `%${term}%`),
+                        like(audit_logs.action, `%${term}%`),
+                        like(audit_logs.resource_type, `%${term}%`)
                     )
                 )
             }

@@ -61,9 +61,11 @@ function useRelationRecords(target: string, displayField: string, search: string
             // arbitrary collection a package's catalog named, so it could be the
             // deployment's largest table — an unfiltered read here was the only
             // one in the app whose worst case is unbounded. `like` compiles to
-            // PocketBase's `~`, whose wildcard is `%`, so this is a
-            // contains-match, and the order is the display field rather than id
-            // because id order is meaningless to a human.
+            // `<field> ~ "%<term>%"`; the explicit `%` on both sides is what
+            // makes it a contains match, since PocketBase only auto-wraps an
+            // operand that carries no `%` of its own (`wrapLikeParams`). The
+            // order is the display field rather than id because id order is
+            // meaningless to a human.
             let query = q.from({ record: collection })
             if (search) {
                 query = query.where(({ record }) =>
@@ -88,8 +90,10 @@ export function RelationRecordPicker({
     const placeholderColor = useThemeColor('field-placeholder')
     const [search, setSearch] = useState('')
     // Debounced so each keystroke does not open a new subscription — the query's
-    // identity is derived from the term it captures.
-    const debouncedSearch = useDebouncedValue(search.trim(), SEARCH_DEBOUNCE_MS)
+    // identity is derived from the term it captures. Backslashes are dropped
+    // because pbtsdb's escapeValue escapes `"` but not `\`, so a term containing
+    // `\"` compiles to an unterminated filter literal and PocketBase answers 400.
+    const debouncedSearch = useDebouncedValue(search.trim().replace(/\\/g, ''), SEARCH_DEBOUNCE_MS)
     const { isRegistered, records } = useRelationRecords(target, displayField, debouncedSearch)
 
     const matches = records.map(record => ({ record, label: recordLabel(record, displayField) }))

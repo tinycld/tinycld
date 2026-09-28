@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { AUDIT_PAGE_SIZE, auditWindowSize, hasMoreAuditPages } from '../../lib/audit-log-page'
 
-// `audit_logs` is unbounded history, so the screen must never ask for it
-// unfiltered. These are the two numbers that keep that true: how large a window
-// the query asks the server for, and when "Load more" is spent.
+// The paging arithmetic only, which is all these assertions can guard: they
+// exercise two pure functions and would still pass if the screen stopped calling
+// them. That the query actually carries `limit(auditWindowSize(page))` — and the
+// search predicates — is asserted by mounting the screen in
+// audit-log-query.mount.test.tsx.
 
 describe('auditWindowSize', () => {
     it('asks for one page first, then one more page per press', () => {

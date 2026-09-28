@@ -44,6 +44,8 @@ const knownIcons = {
     Quote: Icon,
     Table: Icon,
     Type: Icon,
+    // Settings screens mounted whole (tests/audit-log-query.mount.test.tsx)
+    ArrowLeft: Icon,
     // Additional icons imported by text components
     AlertCircle: Icon,
     ChevronRight: Icon,
