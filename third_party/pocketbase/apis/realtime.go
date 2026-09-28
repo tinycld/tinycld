@@ -456,6 +456,50 @@ func bindRealtimeEvents(app core.App) {
 		Priority: -99,
 	})
 
+	// update: remember which subscriptions see the record before it changes
+	app.OnModelUpdate().Bind(&hook.Handler[*core.ModelEvent]{
+		Func: func(e *core.ModelEvent) error {
+			record := realtimeResolveRecord(e.App, e.Model, "")
+			if record != nil {
+				// note: use the outside scoped app instance so that the checks
+				// read the committed row even when the update runs in a transaction
+				err := realtimeCacheLeaveCandidates(e.App, record, app)
+				if err != nil {
+					app.Logger().Debug(
+						"Failed to cache record leave candidates",
+						slog.String("id", record.Id),
+						slog.String("collectionName", record.Collection().Name),
+						slog.String("error", err.Error()),
+					)
+				}
+			}
+
+			return e.Next()
+		},
+		Priority: 99, // execute as later as possible
+	})
+
+	// update: failure
+	app.OnModelAfterUpdateError().Bind(&hook.Handler[*core.ModelErrorEvent]{
+		Func: func(e *core.ModelErrorEvent) error {
+			collection := realtimeResolveRecordCollection(e.App, e.Model)
+			if collection != nil {
+				err := realtimeUnsetDryCacheKey(e.App, realtimeLeaveKey(e.Model))
+				if err != nil {
+					app.Logger().Debug(
+						"Failed to cleanup record leave candidates after update failure",
+						slog.Any("id", e.Model.PK()),
+						slog.String("collectionName", collection.Name),
+						slog.String("error", err.Error()),
+					)
+				}
+			}
+
+			return e.Next()
+		},
+		Priority: -99,
+	})
+
 	// delete: dry cache
 	app.OnModelDelete().Bind(&hook.Handler[*core.ModelEvent]{
 		Func: func(e *core.ModelEvent) error {
@@ -602,18 +646,12 @@ func realtimeBroadcastRecord(app core.App, action string, record *core.Record, d
 		return nil // no subscribers
 	}
 
-	subscriptionRuleMap := map[string]*string{
-		(collection.Name + "/" + record.Id + "?"): collection.ViewRule,
-		(collection.Id + "/" + record.Id + "?"):   collection.ViewRule,
-		(collection.Name + "/*?"):                 collection.ListRule,
-		(collection.Id + "/*?"):                   collection.ListRule,
-
-		// @deprecated: the same as the wildcard topic but kept for backward compatibility
-		(collection.Name + "?"): collection.ListRule,
-		(collection.Id + "?"):   collection.ListRule,
-	}
+	subscriptionRuleMap := realtimeSubscriptionRuleMap(record)
 
 	dryCacheKey := getDryCacheKey(action, record)
+
+	// only a committed update can make a record leave a subscription
+	detectLeaves := action == "update" && !dryCache
 
 	group := new(errgroup.Group)
 
@@ -627,6 +665,11 @@ func realtimeBroadcastRecord(app core.App, action string, record *core.Record, d
 			var clientAuth *core.Record
 
 			for _, client := range chunk {
+				var visibleBefore map[string]struct{}
+				if detectLeaves {
+					visibleBefore = realtimeTakeLeaveCandidates(client, record)
+				}
+
 				// note: not executed concurrently to avoid races and to ensure
 				// that the access checks are applied for the current record db state
 				for prefix, rule := range subscriptionRuleMap {
@@ -650,6 +693,9 @@ func realtimeBroadcastRecord(app core.App, action string, record *core.Record, d
 						if !realtimeCanAccessRecord(accessCheckApp, record, requestInfo, rule) {
 							continue
 						}
+
+						// still visible, so it did not leave this subscription
+						delete(visibleBefore, sub)
 
 						// create a clean record copy without expand and unknown fields because we don't know yet
 						// which exact fields the client subscription requested or has permissions to access
@@ -763,6 +809,8 @@ func realtimeBroadcastRecord(app core.App, action string, record *core.Record, d
 						}
 					}
 				}
+
+				realtimeSendLeaveMessages(app, client, visibleBefore, record)
 			}
 
 			return nil
