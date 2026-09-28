@@ -134,6 +134,12 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
     // refreshes itself via pbtsdb realtime, so these callbacks only dismiss the
     // progress panel and refresh the version-discovery view (a separate server
     // query, not a pbtsdb store).
+    //
+    // Still true under `realtime: 'query'` (pbtsdb 0.10): the running-jobs query
+    // below subscribes with its own `status = "running"` filter, and the server
+    // emits a DELETE to a subscription whose filter a row has left (PR #296), so
+    // a job flipping off `running` drops out of this list live rather than
+    // lingering until the next fetch.
     // A job already RUNNING when this screen is opened — started by another
     // admin, or by this one before a page reload — is adopted from the install
     // log, so the panel shows it rather than leaving the screen looking idle

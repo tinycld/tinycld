@@ -1,5 +1,4 @@
 import { and, eq, or } from '@tanstack/db'
-import { useLiveQuery } from '@tanstack/react-db'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useMyLiveQuery } from '@tinycld/core/lib/use-my-live-query'
 import { useCallback, useMemo } from 'react'
@@ -46,7 +45,15 @@ export function useLabelsForRecord(recordId: string, collection: string) {
             )
     )
 
-    const { data: allLabels } = useLiveQuery(query => query.from({ labels: labelsCollection }))
+    // The same scope as useLabels() above — org labels plus mine — not the whole
+    // collection. An unfiltered read here pulled every user's personal labels
+    // and discarded all but this record's, and the identical predicate means
+    // react-db folds the two into one live collection.
+    const { data: allLabels } = useMyLiveQuery((query, { userId }) =>
+        query
+            .from({ labels: labelsCollection })
+            .where(({ labels }) => or(eq(labels.user, ''), eq(labels.user, userId)))
+    )
 
     const labels = useMemo(() => {
         if (!assignments || !allLabels) return []

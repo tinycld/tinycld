@@ -48,8 +48,12 @@ export interface CommentDrawerProps<R extends BaseCommentRow> {
     onReopen: (threadId: string) => void
     // Optional @-mention candidate pool, forwarded to every thread's
     // reply composer. When omitted, the reply composer falls back to
-    // a plain textarea.
+    // a plain textarea. Also the display-name source for rendering
+    // `[[@id]]` tokens in existing comment bodies.
     mentionSuggestions?: MentionSuggestion[]
+    // The picker's search hook, forwarded to every thread's reply
+    // composer — see CommentComposer for the stable-identity rule.
+    useMentionSuggestions?: (query: string) => MentionSuggestion[]
 }
 
 export function CommentDrawer<R extends BaseCommentRow>(props: CommentDrawerProps<R>) {
@@ -114,6 +118,7 @@ export function CommentDrawer<R extends BaseCommentRow>(props: CommentDrawerProp
                                 onResolve={props.onResolve}
                                 onReopen={props.onReopen}
                                 mentionSuggestions={props.mentionSuggestions}
+                                useMentionSuggestions={props.useMentionSuggestions}
                             />
                         ))
                     )}
@@ -136,6 +141,7 @@ interface GroupViewProps<R extends BaseCommentRow> {
     onResolve: (threadId: string) => void
     onReopen: (threadId: string) => void
     mentionSuggestions?: MentionSuggestion[]
+    useMentionSuggestions?: (query: string) => MentionSuggestion[]
 }
 
 function GroupView<R extends BaseCommentRow>(props: GroupViewProps<R>) {
@@ -165,6 +171,7 @@ function GroupView<R extends BaseCommentRow>(props: GroupViewProps<R>) {
                     onResolve={() => props.onResolve(thread.root.id)}
                     onReopen={() => props.onReopen(thread.root.id)}
                     mentionSuggestions={props.mentionSuggestions}
+                    useMentionSuggestions={props.useMentionSuggestions}
                 />
             ))}
         </View>

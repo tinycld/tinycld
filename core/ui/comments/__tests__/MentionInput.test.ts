@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectTrigger, renderMentionsToText } from '../mention-input-helpers'
+import { caretAfterEdit, detectTrigger, renderMentionsToText } from '../mention-input-helpers'
 
 describe('detectTrigger', () => {
     it('returns null on an empty value', () => {
@@ -60,5 +60,76 @@ describe('renderMentionsToText', () => {
 
     it('leaves text without tokens untouched', () => {
         expect(renderMentionsToText('plain body', new Map())).toBe('plain body')
+    })
+})
+
+// The caret arithmetic MentionInput runs on every keystroke. It matters
+// because the caret is what `detectTrigger` reads and what a pick
+// splices on: land it in the wrong place and the popover opens on an
+// unrelated `@…` further along the body, then silently truncates
+// everything between that `@` and the real caret.
+describe('caretAfterEdit', () => {
+    it('advances by the inserted length from a collapsed caret', () => {
+        // "hey " + "@" typed at the end.
+        const prev = { text: 'hey ', start: 4, end: 4 }
+        expect(caretAfterEdit(prev, 'hey @')).toBe(5)
+    })
+
+    it('retreats by the deleted length from a collapsed caret', () => {
+        // Backspace at the end of "hey @".
+        const prev = { text: 'hey @', start: 5, end: 5 }
+        expect(caretAfterEdit(prev, 'hey ')).toBe(4)
+    })
+
+    it('keeps the caret mid-body when the edit is not at the end', () => {
+        // Typing "x" at offset 3 of "hey there".
+        const prev = { text: 'hey there', start: 3, end: 3 }
+        expect(caretAfterEdit(prev, 'heyx there')).toBe(4)
+    })
+
+    // The regression: a non-collapsed selection. Deleting it leaves the
+    // caret where the selection began — NOT `start - (end - start)`,
+    // which is what tracking only `selection.start` produced.
+    it('leaves the caret at the selection start when a range is deleted', () => {
+        // Select "there" (offsets 4..9) in "hey there" and press Delete.
+        const prev = { text: 'hey there', start: 4, end: 9 }
+        expect(caretAfterEdit(prev, 'hey ')).toBe(4)
+    })
+
+    it('puts the caret after the replacement when a range is typed over', () => {
+        // Select "there" (offsets 4..9) in "hey there" and type "@".
+        const prev = { text: 'hey there', start: 4, end: 9 }
+        expect(caretAfterEdit(prev, 'hey @')).toBe(5)
+    })
+
+    it('puts the caret after a multi-character replacement of a range', () => {
+        // Select "there" and paste "everyone".
+        const prev = { text: 'hey there', start: 4, end: 9 }
+        expect(caretAfterEdit(prev, 'hey everyone')).toBe(12)
+    })
+
+    it('handles a whole-body select-all then type', () => {
+        const prev = { text: 'hey there', start: 0, end: 9 }
+        expect(caretAfterEdit(prev, '@')).toBe(1)
+    })
+
+    it('clamps into the new text when the selection is stale', () => {
+        // A programmatic reset can leave a selection past the new end.
+        const prev = { text: 'hey there', start: 20, end: 20 }
+        expect(caretAfterEdit(prev, '')).toBe(0)
+    })
+
+    // Select-range-then-type is exactly how a user replaces a word with
+    // a mention, so assert the caret it produces actually opens the
+    // trigger — the two helpers have to agree or the popover never shows.
+    it('lands a caret that detectTrigger reads as an open mention', () => {
+        const prev = { text: 'hey there', start: 4, end: 9 }
+        const caret = caretAfterEdit(prev, 'hey @al')
+        expect(caret).toBe(7)
+        expect(detectTrigger('hey @al', caret)).toEqual({
+            atIndex: 4,
+            caretIndex: 7,
+            query: 'al',
+        })
     })
 })

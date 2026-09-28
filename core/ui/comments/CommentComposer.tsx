@@ -1,5 +1,5 @@
 import { FormErrorSummary, TextAreaInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import type { NativeSyntheticEvent, TextInputKeyPressEventData } from 'react-native'
 import { Pressable, Text, View } from 'react-native'
 import { MentionInput, type MentionSuggestion } from './MentionInput'
@@ -24,6 +24,32 @@ export interface CommentComposerProps {
     // that changes is that `[[@id]]` tokens may be embedded in the
     // submitted string.
     mentionSuggestions?: MentionSuggestion[]
+    // A search hook, passed in as a prop, called with the text the user
+    // has typed after `@` (empty string when no trigger is active). The
+    // rows it returns are the popover's candidates.
+    //
+    // A hook as a prop is unusual, so: the composer owns the mention
+    // trigger query but not the candidate pool — that belongs to the
+    // package (text and calc search the user roster through core's
+    // bounded `useMentionCandidates`; another surface might search a
+    // project's members). The pool therefore has to be fetched by the
+    // caller's hook, which means it has to run under a query the
+    // composer holds. Handing the hook down is the only shape that
+    // keeps the caller's hook at a component's top level, called
+    // unconditionally on every render.
+    //
+    // The prop identity MUST be stable for the composer's lifetime —
+    // pass a module-level hook function, never an inline closure, or
+    // React sees a different hook at the same position each render.
+    //
+    // Supplying it also switches mentions on, exactly as
+    // `mentionSuggestions` does, and takes precedence over it for the
+    // picker: the search knows the query, the static list does not.
+    // `mentionSuggestions` therefore only matters to a caller that has
+    // a static pool and no search — read-mode display names are not
+    // its job and never were: CommentThread resolves those from
+    // `useMentionNames`.
+    useMentionSuggestions?: (query: string) => MentionSuggestion[]
     // submitOnEnter switches the composer into chat-style mode:
     // Enter (without Shift) submits the form; Shift+Enter inserts a
     // newline. The visible submit button is hidden — Enter IS the
@@ -88,7 +114,26 @@ export function CommentComposer(props: CommentComposerProps) {
         [props.submitOnEnter, onSubmit]
     )
 
-    const useMentions = props.mentionSuggestions !== undefined
+    // The live `@…` query MentionInput reports. Local, synchronous UI
+    // state that nothing outside this composer needs.
+    const [mentionQuery, setMentionQuery] = useState('')
+
+    // Called unconditionally — see the prop's doc comment on why a hook
+    // arrives as a prop and why its identity has to be stable. The
+    // no-op fallback keeps the hook count identical between a caller
+    // that passes one and a caller that doesn't, for a given mount.
+    const searchedSuggestions = (props.useMentionSuggestions ?? useNoSuggestions)(mentionQuery)
+
+    const onMentionQueryChange = useCallback((query: string | null) => {
+        setMentionQuery(query ?? '')
+    }, [])
+
+    const mentionPool = props.useMentionSuggestions
+        ? searchedSuggestions
+        : (props.mentionSuggestions ?? EMPTY_SUGGESTIONS)
+
+    const useMentions =
+        props.mentionSuggestions !== undefined || props.useMentionSuggestions !== undefined
 
     return (
         <View>
@@ -101,7 +146,8 @@ export function CommentComposer(props: CommentComposerProps) {
                     placeholder={props.placeholder}
                     autoFocus={props.autoFocus}
                     numberOfLines={3}
-                    suggestions={props.mentionSuggestions ?? []}
+                    suggestions={mentionPool}
+                    onQueryChange={onMentionQueryChange}
                     onKeyPress={props.submitOnEnter ? onKeyPress : undefined}
                 />
             ) : (
@@ -150,3 +196,12 @@ export function CommentComposer(props: CommentComposerProps) {
         </View>
     )
 }
+
+// Stand-in for an absent `useMentionSuggestions` prop. A module-level
+// function so its identity is stable, and a real (if trivial) hook
+// position so the hook order never shifts.
+function useNoSuggestions(_query: string): MentionSuggestion[] {
+    return EMPTY_SUGGESTIONS
+}
+
+const EMPTY_SUGGESTIONS: MentionSuggestion[] = []

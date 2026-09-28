@@ -89,7 +89,24 @@ export function useLayerFocus({
             // means no one else wanted it, which is when restoring is right.
             const active = document.activeElement as HTMLElement | null
             const isUnclaimed = !active || active === document.body || container.contains(active)
-            if (isUnclaimed) previous.focus()
+            if (!isUnclaimed) return
+
+            // Deferred a frame: a modal layer holds the rest of the app
+            // `inert` while it is open, and the re-render that drops it
+            // commits AFTER this cleanup. Focusing an element that is still
+            // inert silently does nothing, and focus falls to the body — so
+            // wait for the removal to land. Re-check on the way in, because a
+            // frame is long enough for something else to claim focus.
+            const raf =
+                typeof requestAnimationFrame === 'function'
+                    ? requestAnimationFrame
+                    : (cb: () => void) => setTimeout(cb, 0)
+            raf(() => {
+                if (!previous.isConnected) return
+                const now = document.activeElement as HTMLElement | null
+                if (now && now !== document.body) return
+                previous.focus()
+            })
         }
     }, [isActive, container, initialFocusRef, trap, restore])
 }

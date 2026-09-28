@@ -1,10 +1,12 @@
+import { eq, like } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { collectionByName } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useDebouncedValue } from '@tinycld/core/lib/use-debounced-value'
 import { Menu } from '@tinycld/core/ui/menu'
 import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ChevronDown } from 'lucide-react-native'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { Pressable, Text } from 'react-native'
 
 export interface RelationRecordPickerProps {
@@ -33,23 +35,74 @@ function recordLabel(record: Record<string, unknown>, displayField: string): str
 // belong to another package entirely), so org/user scoping is the caller's
 // concern, not this generic picker's — rows are already RLS-filtered by the
 // server.
-// How many matches the menu will render at once. The list is filtered before
-// it is capped, so this bounds the DOM, not what the user can reach.
-const VISIBLE_LIMIT = 50
 
-function useRelationRecords(target: string) {
+// How many matches the menu will render at once — and, because both the filter
+// and the cap are now in the request, how many rows are ever fetched.
+const VISIBLE_LIMIT = 50
+const SEARCH_DEBOUNCE_MS = 250
+
+// The target collection is named at runtime by a package's automation catalog, so
+// `displayField` cannot be a key of any one row type — it is a key of whichever
+// of the registered row types `target` resolved to. The ref proxy does answer an
+// arbitrary property; only the static union of row shapes refuses to be indexed
+// by a plain string. `string` is the narrowest type both `like` and `orderBy`
+// accept for a value expression, so the cast lands there rather than on `any`,
+// and it covers exactly this one access.
+function fieldRef(record: object, displayField: string): string {
+    return (record as Record<string, string>)[displayField]
+}
+
+function useRelationRecords(target: string, displayField: string, search: string) {
+    const collection = collectionByName(target)
+    const { data, isReady } = useLiveQuery({
+        query: q => {
+            if (!collection) return null
+            // Both the filter and the cap belong in the request. The target is an
+            // arbitrary collection a package's catalog named, so it could be the
+            // deployment's largest table — an unfiltered read here was the only
+            // one in the app whose worst case is unbounded. `like` compiles to
+            // `<field> ~ "%<term>%"`; the explicit `%` on both sides is what
+            // makes it a contains match, since PocketBase only auto-wraps an
+            // operand that carries no `%` of its own (`wrapLikeParams`). The
+            // order is the display field rather than id because id order is
+            // meaningless to a human.
+            let query = q.from({ record: collection })
+            if (search) {
+                query = query.where(({ record }) =>
+                    like(fieldRef(record, displayField), `%${search}%`)
+                )
+            }
+            return query
+                .orderBy(({ record }) => fieldRef(record, displayField))
+                .limit(VISIBLE_LIMIT)
+        },
+    })
+    return {
+        isRegistered: Boolean(collection),
+        isReady,
+        records: (data ?? []) as Record<string, unknown>[],
+    }
+}
+
+// The selected record, resolved on its own.
+//
+// The trigger has to name the selection even when it is nowhere near the search
+// window — after a save-and-reopen the picker starts with no term at all, so a
+// label read off the 50-row window is a raw record id in the common case.
+//
+// A one-row query, not `collection.get(id)`: the target syncs on demand, so a
+// row that was never fetched is simply absent from the store and `get` answers
+// undefined. The query fetches it. It is bounded by construction — one id, one
+// row — and runs no request at all while nothing is selected.
+function useSelectedRecord(target: string, value: string) {
     const collection = collectionByName(target)
     const { data } = useLiveQuery({
         query: q => {
-            if (!collection) return null
-            // No LIMIT here: the cap has to be applied AFTER filtering, or the
-            // filter only ever searches the first N rows. Ordering by id is
-            // likewise wrong as a user-facing order — it's random to a human —
-            // so both are handled below against the display field.
-            return q.from({ record: collection })
+            if (!collection || !value) return null
+            return q.from({ record: collection }).where(({ record }) => eq(record.id, value))
         },
     })
-    return { isRegistered: Boolean(collection), records: (data ?? []) as Record<string, unknown>[] }
+    return (data?.[0] ?? undefined) as Record<string, unknown> | undefined
 }
 
 export function RelationRecordPicker({
@@ -60,37 +113,30 @@ export function RelationRecordPicker({
 }: RelationRecordPickerProps) {
     const mutedColor = useThemeColor('muted-foreground')
     const placeholderColor = useThemeColor('field-placeholder')
-    const { isRegistered, records } = useRelationRecords(target)
     const [search, setSearch] = useState('')
-
-    // Labelling is independent of the search term, so it is memoized on its own
-    // — otherwise every keystroke re-derived a label for every row.
-    const labelled = useMemo(
-        () =>
-            records.map(record => ({
-                record,
-                label: recordLabel(record, displayField),
-            })),
-        [records, displayField]
+    // Debounced so each keystroke does not open a new subscription — the query's
+    // identity is derived from the term it captures. Backslashes are dropped
+    // because pbtsdb's escapeValue escapes `"` but not `\`, so a term containing
+    // `\"` compiles to an unterminated filter literal and PocketBase answers 400.
+    const term = search.trim().replace(/\\/g, '')
+    const debouncedSearch = useDebouncedValue(term, SEARCH_DEBOUNCE_MS)
+    const { isRegistered, isReady, records } = useRelationRecords(
+        target,
+        displayField,
+        debouncedSearch
     )
+    const selectedRecord = useSelectedRecord(target, value)
 
-    // Filter FIRST, then sort. Sorting the whole collection before filtering
-    // ran an O(n log n) pass per keystroke over every row, when the sort only
-    // ever needs to order what survives the filter — usually a handful.
-    //
-    // Capping comes last, and after the sort rather than before it: ordering by
-    // id and capping first (the previous behavior) meant a collection larger
-    // than the cap hid most of itself behind an arbitrary boundary, so a folder
-    // created a moment ago was typically unreachable with no way to search for
-    // it.
-    const matches = useMemo(() => {
-        const needle = search.trim().toLowerCase()
-        const filtered = needle
-            ? labelled.filter(entry => entry.label.toLowerCase().includes(needle))
-            : [...labelled]
-        filtered.sort((a, b) => a.label.localeCompare(b.label))
-        return { visible: filtered.slice(0, VISIBLE_LIMIT), total: filtered.length }
-    }, [labelled, search])
+    // The debounce window, plus the request it then issues, is a stretch of time
+    // in which `records` still answers the PREVIOUS term. Rendering those rows is
+    // not merely stale, it is wrong: the row a user reaches for is not the row
+    // they typed for, so a click selects a different record — or, if the rows
+    // shrank, lands on whatever is behind the menu. Show the searching hint until
+    // the results answer the term that is actually in the box.
+    const isSearching = debouncedSearch !== term || !isReady
+    const matches = isSearching
+        ? []
+        : records.map(record => ({ record, label: recordLabel(record, displayField) }))
 
     if (!isRegistered) {
         return (
@@ -103,11 +149,11 @@ export function RelationRecordPicker({
         )
     }
 
-    // Resolved against the full labelled set, not `matches` — the trigger must
-    // keep showing the selected record's name while a search is narrowing the
-    // list, and the selection is frequently filtered out of it.
-    const selected = labelled.find(entry => entry.record.id === value)
-    const label = selected ? selected.label : value || 'Select…'
+    // The trigger names the selection from its own one-row query, so it stays
+    // correct while the menu's window shows something else entirely — or
+    // nothing, on a freshly reopened picker with no term typed. It falls back
+    // to the raw id only while that row is still in flight.
+    const label = selectedRecord ? recordLabel(selectedRecord, displayField) : value || 'Select…'
 
     return (
         <Menu
@@ -130,7 +176,7 @@ export function RelationRecordPicker({
                     className="border rounded-lg px-2.5 py-1.5 text-sm text-foreground bg-background border-border"
                 />
             </Menu.Custom>
-            {matches.visible.map(({ record, label: recordName }) => (
+            {matches.map(({ record, label: recordName }) => (
                 <Menu.Item
                     key={record.id as string}
                     label={recordName}
@@ -138,19 +184,42 @@ export function RelationRecordPicker({
                     onSelect={() => onChange(record.id as string)}
                 />
             ))}
-            {matches.visible.length === 0 ? (
-                <Text className="px-3 py-2 text-xs text-muted-foreground">
-                    {records.length === 0 ? 'Nothing to choose from' : 'No matches'}
-                </Text>
-            ) : null}
-            {matches.total > matches.visible.length ? (
-                // Say so rather than silently truncating: a user who
-                // can't see their record needs to know to narrow the
-                // search, not assume it doesn't exist.
-                <Text className="px-3 py-2 text-xs text-muted-foreground">
-                    {matches.total - matches.visible.length} more — keep typing to narrow
-                </Text>
-            ) : null}
+            <SearchingHint isVisible={isSearching} />
+            <EmptyHint
+                isVisible={!isSearching && matches.length === 0}
+                hasSearch={Boolean(debouncedSearch)}
+            />
+            <MoreHint isVisible={!isSearching && matches.length >= VISIBLE_LIMIT} />
         </Menu>
+    )
+}
+
+// Shown while the rows on hand still answer an earlier term. "No matches" would
+// be a lie here — nothing has been asked yet — and the previous rows would be a
+// worse one, because they are clickable.
+function SearchingHint({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return <Text className="px-3 py-2 text-xs text-muted-foreground">Searching…</Text>
+}
+
+function EmptyHint({ isVisible, hasSearch }: { isVisible: boolean; hasSearch: boolean }) {
+    if (!isVisible) return null
+    return (
+        <Text className="px-3 py-2 text-xs text-muted-foreground">
+            {hasSearch ? 'No matches' : 'Nothing to choose from'}
+        </Text>
+    )
+}
+
+// Say so rather than silently truncating: a user who can't see their record
+// needs to know to narrow the search, not assume it doesn't exist. A full window
+// is the only signal available — the server was not asked how many more there
+// are, deliberately, since counting costs a second unbounded query.
+function MoreHint({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return (
+        <Text className="px-3 py-2 text-xs text-muted-foreground">
+            Showing the first {VISIBLE_LIMIT} — keep typing to narrow
+        </Text>
     )
 }

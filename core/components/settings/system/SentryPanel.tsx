@@ -6,7 +6,7 @@ import { Panel, PanelIntro, SaveRow } from './panel-chrome'
 const sentrySchema = z.object({ dsn: sentryDsnSchema })
 
 export function SentryPanel() {
-    const { byKey, upsert } = useSystemSettings()
+    const { byKey, upsert } = useSystemSettings('sentry')
     const existing = byKey.get('sentry.dsn')
 
     const {

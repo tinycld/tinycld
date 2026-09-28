@@ -1,4 +1,4 @@
-import { and, count, eq, not } from '@tanstack/db'
+import { and, count, eq, inArray } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { mutation, performMutations, useMutation } from '@tinycld/core/lib/mutations'
 import { useStore } from '@tinycld/core/lib/pocketbase'
@@ -80,10 +80,17 @@ export function useGroupMembersAdmin(groupId: string) {
                     email: u.email,
                 })),
     })
+    // Positive predicates, not `not(...)`: pbtsdb compiles a query's `where` to a
+    // PocketBase filter, where `not(...)` becomes `!(...)` — an "invalid sign
+    // operator" the server refuses outright, so the picker returned nothing. So
+    // "not a guest" is the set of roles that may join a group, and "not disabled"
+    // is `disabled = false`.
     const { data: eligible } = useLiveQuery(query =>
         query
             .from({ u: usersCollection })
-            .where(({ u }) => and(not(eq(u.role, 'guest')), not(eq(u.disabled, true))))
+            .where(({ u }) =>
+                and(inArray(u.role, ['owner', 'admin', 'member']), eq(u.disabled, false))
+            )
             .orderBy(({ u }) => u.name)
             .select(({ u }) => ({ userId: u.id, name: u.name, email: u.email }))
     )

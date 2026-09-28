@@ -6,6 +6,7 @@ import {
     OverlayPortal,
     useLayerFocus,
     useOverlayLayer,
+    wasConsumedByLayerDismissal,
 } from '@tinycld/core/ui/overlay'
 import { Sheet } from '@tinycld/core/ui/sheet'
 import { X } from 'lucide-react-native'
@@ -151,11 +152,12 @@ function DialogLayer({
 
     // The backdrop covers the host, so an outside press is a backdrop press;
     // the layer joins the stack for the Android back button and for Escape.
-    useOverlayLayer({
+    const { isTopLayer } = useOverlayLayer({
         isOpen: true,
         nodes: () => [surfaceNode as unknown as Node | null],
         onDismiss: onClose,
         dismissOnOutside: false,
+        isModal: true,
     })
     useLayerFocus({
         isActive: true,
@@ -173,10 +175,27 @@ function DialogLayer({
                     style={StyleSheet.absoluteFill}
                 >
                     {/* Not in the accessibility tree: the header's Close button is the
-                        one "Close" a reader (or a test) should find. */}
+                        one "Close" a reader (or a test) should find.
+
+                        The backdrop closes the dialog only for a press that is
+                        really aimed at it. A menu or popover opened from inside the
+                        dialog draws over this same backdrop, so one press outside
+                        the menu produces both a pointerdown that dismisses the menu
+                        and then a click here, by which time the dialog is back on
+                        top. Acting on that click would dismiss two layers with one
+                        press and throw away everything the user had entered. Both
+                        guards are needed: `isTopLayer` for a press while the menu is
+                        still open, and `wasConsumedByLayerDismissal` for the click
+                        that follows the press which closed it. A genuine second
+                        press still closes the dialog. */}
                     <Pressable
                         style={[StyleSheet.absoluteFill, { backgroundColor: backdropColor }]}
-                        onPress={onClose}
+                        onPress={event => {
+                            if (!isTopLayer()) return
+                            const native = event?.nativeEvent as { pointerId?: number } | undefined
+                            if (wasConsumedByLayerDismissal(native)) return
+                            onClose()
+                        }}
                         accessible={false}
                         importantForAccessibility="no"
                     />

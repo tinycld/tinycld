@@ -1,6 +1,7 @@
 import { eq } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { useAuth } from '@tinycld/core/lib/auth'
+import { ACTIVE_PKG_STATUSES } from '@tinycld/core/lib/packages/registry-predicates'
 import { usePackages } from '@tinycld/core/lib/packages/use-packages'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
@@ -29,7 +30,7 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
         query: query =>
             query
                 .from({ pkg_registry: pkgRegistryCollection })
-                .where(({ pkg_registry }) => eq(pkg_registry.status, 'bundled')),
+                .where(({ pkg_registry }) => eq(pkg_registry.status, ACTIVE_PKG_STATUSES[0])),
     })
 
     // Also include 'installed' status packages
@@ -37,7 +38,7 @@ export function useAccessiblePackagesResult(): AccessiblePackagesResult {
         query: query =>
             query
                 .from({ pkg_registry: pkgRegistryCollection })
-                .where(({ pkg_registry }) => eq(pkg_registry.status, 'installed')),
+                .where(({ pkg_registry }) => eq(pkg_registry.status, ACTIVE_PKG_STATUSES[1])),
     })
 
     // User-level access overrides

@@ -1,14 +1,23 @@
-import { and, eq } from '@tanstack/db'
+import { eq, like, or } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
+import {
+    AUDIT_PAGE_SIZE,
+    auditWindowSize,
+    hasMoreAuditPages,
+} from '@tinycld/core/lib/audit-log-page'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
+import { useDebouncedValue } from '@tinycld/core/lib/use-debounced-value'
 import { useNavigateBack } from '@tinycld/core/lib/use-navigate-back'
+import { PlainInput } from '@tinycld/core/ui/PlainInput'
 import { ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react-native'
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
+
+const SEARCH_DEBOUNCE_MS = 250
 
 const ACTION_OPTIONS = [
     { label: 'All', value: '' },
@@ -73,6 +82,8 @@ export default function AuditLogSettings() {
     const { isAdmin } = useCurrentRole()
     const [actionFilter, setActionFilter] = useState('')
     const [resourceFilter, setResourceFilter] = useState('')
+    const [search, setSearch] = useState('')
+    const debouncedSearch = useDebouncedValue(search.trim(), SEARCH_DEBOUNCE_MS)
 
     const fgColor = useThemeColor('foreground')
 
@@ -103,9 +114,20 @@ export default function AuditLogSettings() {
                     onActionChange={setActionFilter}
                     resourceFilter={resourceFilter}
                     onResourceChange={setResourceFilter}
+                    search={search}
+                    onSearchChange={setSearch}
                 />
 
-                <AuditLogList actionFilter={actionFilter} resourceFilter={resourceFilter} />
+                {/* Keyed on the query terms so a filter or search change remounts
+                    the list and drops back to page 1 — otherwise a narrowed
+                    search would keep asking for the window the old, wider query
+                    had grown to. */}
+                <AuditLogList
+                    key={`${actionFilter}|${resourceFilter}|${debouncedSearch}`}
+                    actionFilter={actionFilter}
+                    resourceFilter={resourceFilter}
+                    search={debouncedSearch}
+                />
             </View>
         </ScrollView>
     )
@@ -116,14 +138,30 @@ function FilterBar({
     onActionChange,
     resourceFilter,
     onResourceChange,
+    search,
+    onSearchChange,
 }: {
     actionFilter: string
     onActionChange: (v: string) => void
     resourceFilter: string
     onResourceChange: (v: string) => void
+    search: string
+    onSearchChange: (v: string) => void
 }) {
+    const placeholderColor = useThemeColor('field-placeholder')
     return (
         <View className="mb-4 gap-3">
+            <View className="gap-1.5">
+                <FilterLabel text="Search" />
+                <PlainInput
+                    value={search}
+                    onChangeText={onSearchChange}
+                    placeholder="Resource, action or type…"
+                    placeholderTextColor={placeholderColor}
+                    testID="audit-search"
+                    className="border rounded-lg px-2.5 py-1.5 text-sm text-foreground bg-background border-border"
+                />
+            </View>
             <View className="gap-1.5">
                 <FilterLabel text="Action" />
                 <View className="flex-row gap-1.5 flex-wrap">
@@ -182,37 +220,68 @@ function FilterChip({
 function AuditLogList({
     actionFilter,
     resourceFilter,
+    search,
 }: {
     actionFilter: string
     resourceFilter: string
+    search: string
 }) {
     const [auditLogsCollection, usersCollection] = useStore('audit_logs', 'users')
+    // Paging position is synchronous, screen-local UI state — nothing else reads
+    // it. The parent keys this component on the query terms, so a filter or
+    // search change remounts it and the window returns to one page.
+    const [page, setPage] = useState(1)
+
+    // pbtsdb's escapeValue escapes `"` but not `\`, so a term containing `\"`
+    // compiles to `"\\""` — an unterminated filter literal PocketBase answers
+    // with a 400. Dropping backslashes is the whole guard: a backslash has no
+    // meaning to a `~` match here, so nothing searchable is lost.
+    const term = search.replace(/\\/g, '')
 
     const { data: logs } = useLiveQuery({
         query: query => {
             let q = query.from({ audit_logs: auditLogsCollection })
-            if (actionFilter || resourceFilter) {
-                q = q.where(({ audit_logs }) => {
-                    if (actionFilter && resourceFilter) {
-                        return and(
-                            eq(audit_logs.action, actionFilter),
-                            eq(audit_logs.resource_type, resourceFilter)
-                        )
-                    }
-                    if (actionFilter) return eq(audit_logs.action, actionFilter)
-                    return eq(audit_logs.resource_type, resourceFilter)
-                })
+            // Every predicate goes into the request. `audit_logs` is unbounded
+            // history, so a client-side filter over an unfiltered fetch would
+            // download a deployment's entire history to render fifty rows.
+            if (actionFilter) {
+                q = q.where(({ audit_logs }) => eq(audit_logs.action, actionFilter))
+            }
+            if (resourceFilter) {
+                q = q.where(({ audit_logs }) => eq(audit_logs.resource_type, resourceFilter))
+            }
+            if (term) {
+                // `like` compiles to `field ~ "value"`. PocketBase auto-wraps a
+                // `~` operand in `%` only when the operand has no `%` of its own
+                // (`wrapLikeParams`, third_party/pocketbase/tools/search/filter.go),
+                // so supplying our own gives plain SQL LIKE semantics — `%x%` is
+                // a contains match across the three columns a human would
+                // recognise an entry by. Supplying them also opts out of
+                // PocketBase's own `_`/`%` escaping, which is cosmetic here: a
+                // typed `_` or `%` widens the match rather than breaking it.
+                //
+                // Chained `.where()` calls AND together, which is why each
+                // predicate gets its own call rather than one `and(...)`.
+                q = q.where(({ audit_logs }) =>
+                    or(
+                        like(audit_logs.resource_label, `%${term}%`),
+                        like(audit_logs.action, `%${term}%`),
+                        like(audit_logs.resource_type, `%${term}%`)
+                    )
+                )
             }
             // Left-join the actor rather than reading it off `row.expand`: a
             // row's embedded copy is a shape the collection controls, so a
             // hand-written `expand?` keeps compiling after it goes away and the
-            // name silently falls back to "System". `users` is eager, so this
-            // resolves from the local store with no extra request.
+            // name silently falls back to "System". `users` is on-demand, so the
+            // join batch-loads the actors these rows name — one request by id for
+            // the set, not one per row, and nothing for actors already held.
             return q
                 .join({ actor: usersCollection }, ({ audit_logs, actor }) =>
                     eq(audit_logs.actor, actor.id)
                 )
                 .orderBy(({ audit_logs }) => audit_logs.created, 'desc')
+                .limit(auditWindowSize(page))
                 .select(({ audit_logs, actor }) => ({
                     ...audit_logs,
                     actorName: actor?.name,
@@ -221,18 +290,42 @@ function AuditLogList({
         },
     })
 
-    if (!logs || logs.length === 0) {
+    const rows = logs ?? []
+
+    if (rows.length === 0) {
         return (
             <Text className="text-muted-foreground text-sm mt-2">No audit log entries found.</Text>
         )
     }
 
     return (
-        <View className="rounded-xl border border-border overflow-hidden bg-surface-secondary">
-            {logs.map(entry => (
-                <AuditLogRow key={entry.id} entry={entry} />
-            ))}
+        <View className="gap-3">
+            <View className="rounded-xl border border-border overflow-hidden bg-surface-secondary">
+                {rows.map(entry => (
+                    <AuditLogRow key={entry.id} entry={entry} />
+                ))}
+            </View>
+            <View className="flex-row items-center justify-between gap-3">
+                <Text className="text-muted-foreground text-xs">Showing {rows.length}</Text>
+                <LoadMoreButton
+                    isVisible={hasMoreAuditPages(rows.length, page)}
+                    onPress={() => setPage(p => p + 1)}
+                />
+            </View>
         </View>
+    )
+}
+
+function LoadMoreButton({ isVisible, onPress }: { isVisible: boolean; onPress: () => void }) {
+    if (!isVisible) return null
+    return (
+        <Pressable
+            onPress={onPress}
+            testID="audit-load-more"
+            className="px-3 py-1.5 rounded-md border border-border"
+        >
+            <Text className="text-primary text-xs font-semibold">Load {AUDIT_PAGE_SIZE} more</Text>
+        </Pressable>
     )
 }
 

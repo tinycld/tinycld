@@ -361,18 +361,39 @@ import type { ContactsSchema } from './types'
 
 type MergedSchema = Schema & ContactsSchema
 
+// Hoisted so every collection in this package shares one object literal —
+// `indexing` for the TanStack DB passthrough, `onDemand` for the sync posture
+// core uses for all of its own collections.
+const indexing = {
+    collectionOptions: { autoIndex: 'eager' as const, defaultIndexType: BasicIndex },
+}
+const onDemand = { syncMode: 'on-demand', realtime: 'query' } as const
+
 export function registerCollections(
     newCollection: ReturnType<typeof createCollection<MergedSchema>>,
-    coreStores: CoreStores,            // access core collections for expand relations
+    coreStores: CoreStores,            // access core collections as relation targets
 ) {
     const contacts = newCollection('contacts', {
         omitOnInsert: ['created', 'updated', 'deleted_at'] as const,
-        expand: { owner: coreStores.users },
-        collectionOptions: { autoIndex: 'eager' as const, defaultIndexType: BasicIndex },
+        relations: { owner: coreStores.users },   // where expanded records are FILED
+        ...onDemand,
+        ...indexing,
     })
     return { contacts }
 }
 ```
+
+`relations` (not `expand`) names the collection each expanded record is filed
+into; rows never carry an `expand` property. Read a relation through
+`materialize()`, a join, or `target.get(id)`.
+
+`...onDemand` is the default posture for a new collection: with
+`syncMode: 'on-demand'` only the rows a live query asks for enter the store,
+and `realtime: 'query'` subscribes with that query's own filter, so the
+subscription covers exactly the rows the query holds. Declare
+`alwaysFetchRelations` only when this collection is the sole path by which rows
+enter a target — a target with a query of its own already loads itself, so the
+expand just enlarges every request here.
 
 The generator emits each package's `{Pkg}Schema` into a single literal
 intersection — `MergedPackageSchema` in `tinycld.config.ts` (e.g.

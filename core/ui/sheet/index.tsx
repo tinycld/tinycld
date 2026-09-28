@@ -5,6 +5,7 @@ import {
     OverlayPortal,
     useHasSheetHost,
     useOverlayLayer,
+    wasConsumedByLayerDismissal,
 } from '@tinycld/core/ui/overlay'
 import { X } from 'lucide-react-native'
 import type { ReactNode } from 'react'
@@ -128,11 +129,14 @@ function SheetRoot({
 
     // The backdrop covers the host, so an outside press is a backdrop press;
     // the layer joins the stack for Escape and the Android back button only.
-    useOverlayLayer({
+    const { isTopLayer } = useOverlayLayer({
         isOpen,
         nodes: () => [surfaceRef.current as unknown as Node | null],
         onDismiss: close,
         dismissOnOutside: false,
+        // Same rule as Dialog: a sheet owns the screen, so the app behind it
+        // goes inert. See AppContent in ui/overlay/host.tsx.
+        isModal: true,
     })
 
     const panGesture = Gesture.Pan()
@@ -177,7 +181,18 @@ function SheetRoot({
                 <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]}>
                     <Pressable
                         style={[StyleSheet.absoluteFill, { backgroundColor: overlayBg }]}
-                        onPress={close}
+                        // Both guards, exactly as Dialog's backdrop — on the
+                        // mobile breakpoint a Dialog IS a Sheet, so the
+                        // rules-builder case lives here too. `isTopLayer` for a
+                        // press while a menu is still open, and
+                        // `wasConsumedByLayerDismissal` for the click that
+                        // follows the press which closed it.
+                        onPress={event => {
+                            if (!isTopLayer()) return
+                            const native = event?.nativeEvent as { pointerId?: number } | undefined
+                            if (wasConsumedByLayerDismissal(native)) return
+                            close()
+                        }}
                         accessibilityRole="button"
                         accessibilityLabel="Close"
                     />

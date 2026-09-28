@@ -3,6 +3,7 @@ import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { type Toast as ToastType, useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useDeviceInsets } from '@tinycld/core/lib/use-safe-area'
+import { useInertExempt } from '@tinycld/core/ui/overlay/use-inert-exempt'
 import { AlertTriangle, CheckCircle, Info, X, XCircle } from 'lucide-react-native'
 import { useEffect, useRef } from 'react'
 import { Animated, Platform, Pressable, Text, View, type ViewStyle } from 'react-native'
@@ -46,11 +47,18 @@ export function ToastRenderer() {
     const toasts = useToastStore(s => s.toasts)
     // Before the early return — hooks cannot be called conditionally.
     const placement = useToastPlacement()
+    const inertExemptRef = useInertExempt()
 
     if (toasts.length === 0) return null
 
     return (
         <View
+            // The stack renders in place, not through an overlay host, so a
+            // modal layer's `inert` would otherwise swallow it — leaving
+            // Dismiss and Undo dead and the toast invisible to a screen
+            // reader at the moment it has something to say. A toast raised by
+            // a dialog's own save is exactly that case.
+            ref={inertExemptRef}
             testID="toast-stack"
             style={{ position: 'absolute', zIndex: 10000, gap: 8, ...placement.style }}
             pointerEvents="box-none"

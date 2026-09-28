@@ -68,8 +68,20 @@ if (typeof customElements !== 'undefined' && !customElements.get(TEXT_INPUT_TAG)
     )
 }
 
+// `onSelectionChange` is delivered from a custom DOM event, the same way
+// `onLayout` is above: a test dispatches `rn-selectionchange` with the caret it
+// wants (see `fireSelection` in mention-input-query.test.tsx). The stub never
+// invents a caret, because the thing worth testing is precisely that a
+// component does not assume one — a real TextInput fires this on every arrow
+// key, click and edit, with an ordering relative to `input` that differs per
+// platform, and a test has to be able to reproduce either order.
+const SELECTION_EVENT = 'rn-selectionchange'
+
 const TextHost = host(TEXT_INPUT_TAG)
-const TextInput = React.forwardRef(function TextInput({ onChangeText, ...props }, ref) {
+const TextInput = React.forwardRef(function TextInput(
+    { onChangeText, onSelectionChange, ...props },
+    ref
+) {
     const node = React.useRef(null)
     const setRef = React.useCallback(
         (el) => {
@@ -86,6 +98,14 @@ const TextInput = React.forwardRef(function TextInput({ onChangeText, ...props }
         el.addEventListener('input', handler)
         return () => el.removeEventListener('input', handler)
     }, [onChangeText])
+    React.useLayoutEffect(() => {
+        const el = node.current
+        if (!el || !onSelectionChange) return
+        // `e.detail` is the selection itself: { start, end }.
+        const handler = (e) => onSelectionChange({ nativeEvent: { selection: e.detail } })
+        el.addEventListener(SELECTION_EVENT, handler)
+        return () => el.removeEventListener(SELECTION_EVENT, handler)
+    }, [onSelectionChange])
     return React.createElement(TextHost, { ...props, ref: setRef })
 })
 TextInput.displayName = TEXT_INPUT_TAG

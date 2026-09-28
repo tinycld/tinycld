@@ -10,6 +10,7 @@ function layer(id: number, nodes: Node[], options: Partial<LayerRecord> = {}): L
         onDismiss: () => {},
         dismissOnOutside: true,
         dismissOnEscape: true,
+        isModal: false,
         ...options,
     }
 }
