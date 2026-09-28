@@ -1,4 +1,5 @@
 import type { BaseCommentRow, Thread } from '@tinycld/core/lib/comments'
+import { useMentionNames } from '@tinycld/core/lib/comments/use-mention-names'
 import { TextAreaInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useCallback, useMemo, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
@@ -27,10 +28,12 @@ export interface CommentThreadProps<R extends BaseCommentRow> {
     onResolve: () => void
     onReopen: () => void
     // When supplied, the reply composer opens an @-mention popover
-    // (handled by CommentComposer). Doubles as the user id → display
-    // name source for read-mode rendering of `[[@id]]` tokens, which
-    // is why it stays a plain list even when the picker's candidates
-    // come from `useMentionSuggestions` instead.
+    // (handled by CommentComposer). This is the picker's candidate pool
+    // only — read-mode display names come from `useMentionNames`, which
+    // looks up exactly the ids the loaded bodies mention. A bounded
+    // search pool cannot serve as that name source: it holds whoever
+    // matches what the user is typing right now, not whoever a stored
+    // body names.
     mentionSuggestions?: MentionSuggestion[]
     // The picker's search hook, forwarded verbatim to the reply
     // composer — see CommentComposer for the stable-identity rule.
@@ -45,15 +48,14 @@ export function CommentThread<R extends BaseCommentRow>(props: CommentThreadProp
     const isResolved = thread.resolvedAt != null
     const dim = isResolved || isOrphaned
 
-    // Build the user id → display name map once per render so every
-    // CommentLine's mention rendering is O(1) per token.
-    const nameByUserId = useMemo(() => {
-        const m = new Map<string, string>()
-        for (const s of props.mentionSuggestions ?? []) {
-            m.set(s.userId, s.displayName)
-        }
-        return m
-    }, [props.mentionSuggestions])
+    // One bounded lookup for the whole thread, so each CommentLine's mention
+    // rendering is O(1) per token and the request names only the handful of ids
+    // these bodies actually mention.
+    const bodies = useMemo(
+        () => [thread.root.body, ...thread.replies.map(reply => reply.body)],
+        [thread.root.body, thread.replies]
+    )
+    const nameByUserId = useMentionNames(bodies)
 
     return (
         <View className={`px-3 py-3 border-b border-border ${dim ? 'opacity-60' : ''}`}>
