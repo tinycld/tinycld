@@ -1,5 +1,5 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { type Control, type FieldValues, type Path, useController } from 'react-hook-form'
 import type { TextInputProps as RNTextInputProps } from 'react-native'
 import {
@@ -45,10 +45,17 @@ export type MentionInputProps<T extends FieldValues = Record<string, unknown>> =
 > & {
     name: Path<T>
     control: Control<T>
-    // The candidate pool to show. Either a static list the caller
-    // already holds, or — the usual case now — the rows a server-side
-    // search returned for the query this input reported through
-    // `onQueryChange`. Rendered in order, capped at `maxSuggestions`.
+    // The candidate pool to show, rendered in order, all of it. Either
+    // a static list the caller already holds, or — the usual case now —
+    // the rows a server-side search returned for the query this input
+    // reported through `onQueryChange`.
+    //
+    // There is deliberately no cap here. Whoever produces the list
+    // already bounds it (`useMentionCandidates` does it in the request,
+    // via `.limit(MENTION_CANDIDATE_LIMIT)`), and a second cap in the
+    // view only means the popover silently shows fewer rows than were
+    // fetched and paid for — the old default of 6 discarded 14 of the
+    // 20 that came back. One bound, at the source.
     suggestions: MentionSuggestion[]
     // Reports the text typed after `@`, or null when the caret is not
     // inside a fresh `@…` token. The owner keeps it in state and feeds
@@ -58,22 +65,12 @@ export type MentionInputProps<T extends FieldValues = Record<string, unknown>> =
     // members).
     onQueryChange?: (query: string | null) => void
     numberOfLines?: number
-    // Max suggestion rows shown in the popover. Default 6.
-    maxSuggestions?: number
 }
 
 export function MentionInput<T extends FieldValues = Record<string, unknown>>(
     props: MentionInputProps<T>
 ) {
-    const {
-        name,
-        control,
-        suggestions,
-        onQueryChange,
-        numberOfLines = 3,
-        maxSuggestions = 6,
-        ...inputProps
-    } = props
+    const { name, control, suggestions, onQueryChange, numberOfLines = 3, ...inputProps } = props
 
     const {
         field,
@@ -100,41 +97,43 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
         [onQueryChange]
     )
 
-    // Cap only. The rows in `suggestions` are already the matches for
-    // the reported query — a search hook filtered them server-side, and
-    // re-filtering here would drop legitimate hits the server matched
-    // on a field this component can't see (an email, say). A caller
-    // passing a static pool gets an unfiltered list, which is correct
-    // for the small fixed rosters that pattern is for.
-    const visibleSuggestions = useMemo(
-        () => suggestions.slice(0, maxSuggestions),
-        [suggestions, maxSuggestions]
-    )
-
-    // The current text, mirrored into a ref so the selection handler can
-    // read it without being re-created (and re-bound) on every keystroke.
-    // A ref, not state: nothing renders off it.
-    const textRef = useRef(value)
-    textRef.current = value
+    // Last known (text, caret) pair. A ref, not state: nothing renders
+    // off it, and both handlers need the other's latest value to derive
+    // the trigger without being re-bound on every keystroke.
+    const lastRef = useRef({ text: value, caret: value.length })
+    if (lastRef.current.text !== value) {
+        // The value moved without going through onChangeText — a form
+        // reset after submit, or a caller writing the field directly.
+        // Resync so the next edit's caret arithmetic starts from the
+        // text actually on screen, and clamp the caret into it.
+        lastRef.current = { text: value, caret: Math.min(lastRef.current.caret, value.length) }
+    }
 
     const onChangeText = useCallback(
         (next: string) => {
             field.onChange(next)
-            textRef.current = next
             // RN fires onSelectionChange for a text change too, but the
-            // order differs per platform. Deriving the trigger here
-            // against an end-of-text caret covers the case where the
-            // change event lands first — which is also the only place a
-            // mention is ever begun. The selection event then re-derives
-            // it from the settled caret, correcting a mid-body edit.
-            reportTrigger(detectTrigger(next, next.length))
+            // order differs per platform, so the settled caret may not
+            // have arrived yet. Carry the last known caret through the
+            // edit instead of assuming end-of-text: an insertion of
+            // (next.length - prev.length) characters at the caret moves
+            // it by exactly that much. Assuming end-of-text instead
+            // opens the popover on an unrelated `@…` further along the
+            // body — and a pick would then splice at that stale offset
+            // and silently truncate everything between.
+            const prev = lastRef.current
+            const caret = Math.min(prev.caret + (next.length - prev.text.length), next.length)
+            lastRef.current = { text: next, caret }
+            reportTrigger(detectTrigger(next, caret))
         },
         [field, reportTrigger]
     )
 
     const onSelectionChange = useCallback(
         (e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
-            reportTrigger(detectTrigger(textRef.current, e.nativeEvent.selection.start))
+            const caret = e.nativeEvent.selection.start
+            lastRef.current = { ...lastRef.current, caret }
+            reportTrigger(detectTrigger(lastRef.current.text, caret))
         },
         [reportTrigger]
     )
@@ -142,17 +141,30 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
     const onPick = useCallback(
         (s: MentionSuggestion) => {
             if (!trigger) return
+            // Re-validate the trigger against the body it is about to
+            // splice. The trigger was derived in an earlier event, and
+            // the value can have moved since (a pick raced against the
+            // selection event, or the form was reset under us). Splicing
+            // on stale offsets silently deletes whatever now sits
+            // between them, so a mismatch closes the popover instead.
+            const isStale =
+                trigger.caretIndex > value.length ||
+                value.slice(trigger.atIndex, trigger.caretIndex) !== `@${trigger.query}`
+            if (isStale) {
+                reportTrigger(null)
+                return
+            }
             const before = value.slice(0, trigger.atIndex)
             const after = value.slice(trigger.caretIndex)
             const token = `[[@${s.userId}]] `
             const next = `${before}${token}${after}`
             field.onChange(next)
-            textRef.current = next
-            // The token closes the trigger: no `@…` remains at the caret.
-            reportTrigger(null)
             // Re-focus + collapse caret just after the inserted token
             // so subsequent typing happens in the right spot.
             const nextCaret = before.length + token.length
+            lastRef.current = { text: next, caret: nextCaret }
+            // The token closes the trigger: no `@…` remains at the caret.
+            reportTrigger(null)
             // RN TextInput doesn't honor a programmatic `selection`
             // prop while the user holds focus on some platforms; the
             // imperative ref call covers iOS/Android. Web's react-
@@ -165,7 +177,7 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
     )
 
     const hasError = !!error
-    const showSuggestions = !!trigger && visibleSuggestions.length > 0
+    const showSuggestions = !!trigger && suggestions.length > 0
 
     return (
         <View>
@@ -190,7 +202,7 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
             />
             {showSuggestions ? (
                 <View className="mt-1 border border-border rounded-md bg-background overflow-hidden">
-                    {visibleSuggestions.map(s => (
+                    {suggestions.map(s => (
                         <Pressable
                             key={s.userId}
                             onPress={() => onPick(s)}
