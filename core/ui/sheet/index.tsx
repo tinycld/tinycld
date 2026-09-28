@@ -128,11 +128,14 @@ function SheetRoot({
 
     // The backdrop covers the host, so an outside press is a backdrop press;
     // the layer joins the stack for Escape and the Android back button only.
-    useOverlayLayer({
+    const { isTopLayer } = useOverlayLayer({
         isOpen,
         nodes: () => [surfaceRef.current as unknown as Node | null],
         onDismiss: close,
         dismissOnOutside: false,
+        // Same rule as Dialog: a sheet owns the screen, so the app behind it
+        // goes inert. See AppContent in ui/overlay/host.tsx.
+        isModal: true,
     })
 
     const panGesture = Gesture.Pan()
@@ -177,7 +180,11 @@ function SheetRoot({
                 <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]}>
                     <Pressable
                         style={[StyleSheet.absoluteFill, { backgroundColor: overlayBg }]}
-                        onPress={close}
+                        // Only while the sheet is the top layer — see the
+                        // same guard on Dialog's backdrop.
+                        onPress={() => {
+                            if (isTopLayer()) close()
+                        }}
                         accessibilityRole="button"
                         accessibilityLabel="Close"
                     />

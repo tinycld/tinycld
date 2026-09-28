@@ -54,7 +54,7 @@ function fieldRef(record: object, displayField: string): string {
 
 function useRelationRecords(target: string, displayField: string, search: string) {
     const collection = collectionByName(target)
-    const { data } = useLiveQuery({
+    const { data, isReady } = useLiveQuery({
         query: q => {
             if (!collection) return null
             // Both the filter and the cap belong in the request. The target is an
@@ -77,7 +77,11 @@ function useRelationRecords(target: string, displayField: string, search: string
                 .limit(VISIBLE_LIMIT)
         },
     })
-    return { isRegistered: Boolean(collection), records: (data ?? []) as Record<string, unknown>[] }
+    return {
+        isRegistered: Boolean(collection),
+        isReady,
+        records: (data ?? []) as Record<string, unknown>[],
+    }
 }
 
 export function RelationRecordPicker({
@@ -93,10 +97,20 @@ export function RelationRecordPicker({
     // identity is derived from the term it captures. Backslashes are dropped
     // because pbtsdb's escapeValue escapes `"` but not `\`, so a term containing
     // `\"` compiles to an unterminated filter literal and PocketBase answers 400.
-    const debouncedSearch = useDebouncedValue(search.trim().replace(/\\/g, ''), SEARCH_DEBOUNCE_MS)
-    const { isRegistered, records } = useRelationRecords(target, displayField, debouncedSearch)
+    const term = search.trim().replace(/\\/g, '')
+    const debouncedSearch = useDebouncedValue(term, SEARCH_DEBOUNCE_MS)
+    const { isRegistered, isReady, records } = useRelationRecords(target, displayField, debouncedSearch)
 
-    const matches = records.map(record => ({ record, label: recordLabel(record, displayField) }))
+    // The debounce window, plus the request it then issues, is a stretch of time
+    // in which `records` still answers the PREVIOUS term. Rendering those rows is
+    // not merely stale, it is wrong: the row a user reaches for is not the row
+    // they typed for, so a click selects a different record — or, if the rows
+    // shrank, lands on whatever is behind the menu. Show the searching hint until
+    // the results answer the term that is actually in the box.
+    const isSearching = debouncedSearch !== term || !isReady
+    const matches = isSearching
+        ? []
+        : records.map(record => ({ record, label: recordLabel(record, displayField) }))
 
     if (!isRegistered) {
         return (
@@ -145,10 +159,22 @@ export function RelationRecordPicker({
                     onSelect={() => onChange(record.id as string)}
                 />
             ))}
-            <EmptyHint isVisible={matches.length === 0} hasSearch={Boolean(debouncedSearch)} />
-            <MoreHint isVisible={matches.length >= VISIBLE_LIMIT} />
+            <SearchingHint isVisible={isSearching} />
+            <EmptyHint
+                isVisible={!isSearching && matches.length === 0}
+                hasSearch={Boolean(debouncedSearch)}
+            />
+            <MoreHint isVisible={!isSearching && matches.length >= VISIBLE_LIMIT} />
         </Menu>
     )
+}
+
+// Shown while the rows on hand still answer an earlier term. "No matches" would
+// be a lie here — nothing has been asked yet — and the previous rows would be a
+// worse one, because they are clickable.
+function SearchingHint({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return <Text className="px-3 py-2 text-xs text-muted-foreground">Searching…</Text>
 }
 
 function EmptyHint({ isVisible, hasSearch }: { isVisible: boolean; hasSearch: boolean }) {

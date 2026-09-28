@@ -9,4 +9,11 @@ export {
     OverlayProvider,
     useHasSheetHost,
 } from './host'
-export { type LayerRecord, layerToDismiss, useOverlayLayer } from './layer-stack'
+export {
+    type LayerRecord,
+    layerToDismiss,
+    modalLayerCount,
+    useIsModalLayerOpen,
+    useOverlayLayer,
+    wasConsumedByLayerDismissal,
+} from './layer-stack'

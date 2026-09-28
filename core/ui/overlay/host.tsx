@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { Platform, StyleSheet, View } from 'react-native'
+import { useIsModalLayerOpen } from './layer-stack'
 
 /**
  * Where a floating layer renders.
@@ -115,13 +116,52 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
         <ActionsContext.Provider value={actions}>
             <StateContext.Provider value={state}>
                 <ItemsContext.Provider value={items}>
-                    {children}
+                    <AppContent>{children}</AppContent>
                     <OverlayHost name="root" />
                 </ItemsContext.Provider>
             </StateContext.Provider>
         </ActionsContext.Provider>
     )
 }
+
+/**
+ * The app, below every layer — and out of play while a modal one is open.
+ *
+ * A dialog sets `aria-modal` on its own surface, but that is only a hint to a
+ * screen reader: it does nothing to the rest of the document, which stays
+ * focusable, hit-testable and queryable. The backdrop covers the page
+ * visually and eats the press, so a press aimed at something behind a dialog
+ * does not reach it — it dismisses the dialog instead. Anything that targets
+ * an element by its content rather than by its coordinates (a screen reader,
+ * keyboard navigation, an e2e locator) still finds the page behind and acts
+ * on it, and the user's work in the dialog is discarded by the same press.
+ *
+ * `inert` is what actually holds the page out: the subtree stops taking
+ * focus, stops receiving pointer events, and leaves the accessibility tree.
+ * Only a modal layer sets it — a menu or a popover deliberately leaves the
+ * page usable behind it.
+ *
+ * Web only. On native an RN `Modal` already owns the screen.
+ */
+function AppContent({ children }: { children: ReactNode }) {
+    const isModalOpen = useIsModalLayerOpen()
+    if (Platform.OS !== 'web') return <>{children}</>
+    return (
+        <View
+            // `flex: 1`, not absoluteFill: this wrapper takes the place the
+            // app's own root had in the provider's flex column, so it must
+            // grow exactly as the app did or every screen loses its height.
+            style={FLEX_ONE}
+            // `inert` is a plain boolean attribute the DOM understands and
+            // react-native-web's View types do not, hence the spread.
+            {...(isModalOpen ? { inert: true } : {})}
+        >
+            {children}
+        </View>
+    )
+}
+
+const FLEX_ONE = { flex: 1 } as const
 
 function useActions(): HostActions {
     const actions = useContext(ActionsContext)
