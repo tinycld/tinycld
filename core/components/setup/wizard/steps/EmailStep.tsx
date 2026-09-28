@@ -1,17 +1,17 @@
-import { MailSendingPanel } from '@tinycld/core/components/settings/system/MailSendingPanel'
-import { SetupContinueButton } from '@tinycld/core/components/setup/wizard/SetupContinueButton'
+import { StepHeading } from '@tinycld/core/components/setup/wizard/StepHeading'
 import {
     type PackageSystemSettingsGroup,
     packageSystemSettings,
 } from '@tinycld/core/lib/packages/derive-components'
 import type { SetupStepProps } from '@tinycld/core/lib/setup/types'
+import { useAccessiblePackages } from '@tinycld/core/lib/use-accessible-packages'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import {
     useIsManagedSettingsPending,
     useIsSettingManaged,
 } from '@tinycld/core/lib/use-managed-settings'
-import { Suspense } from 'react'
-import { Text, View } from 'react-native'
+import { View } from 'react-native'
+import { EmailSendingForm } from './EmailSendingForm'
 
 const MAIL_PREFIX = 'mail.'
 
@@ -39,42 +39,42 @@ export function useIsStepVisible() {
 }
 
 /**
- * Package panels that edit mail settings, so a package's provider panel shows
- * here without core naming the package.
+ * The names of the enabled apps that send mail through this provider. A
+ * package says so by contributing a system-settings panel for the `mail.`
+ * keys, so core learns it without naming any package. `enabled` is the set
+ * the Apps step left on: a hidden app sends nothing.
  */
-export function mailPanelsOf(groups: readonly PackageSystemSettingsGroup[]) {
-    return groups.flatMap(g =>
-        g.panels
-            .filter(p => p.keyPrefix?.startsWith(MAIL_PREFIX))
-            .map(p => ({ key: `${g.pkgSlug}:${p.slug}`, Component: p.Component }))
+export function mailSendingAppsOf(
+    groups: readonly PackageSystemSettingsGroup[],
+    enabled: readonly { slug: string; name: string }[]
+): string[] {
+    const senders = new Set(
+        groups
+            .filter(g => g.panels.some(p => p.keyPrefix?.startsWith(MAIL_PREFIX)))
+            .map(g => g.pkgSlug)
     )
+    return enabled.filter(p => senders.has(p.slug)).map(p => p.name)
 }
 
-const MAIL_PANELS = mailPanelsOf(packageSystemSettings)
+const BASE_LEAD = 'Your server sends invites, password resets, and notifications by email.'
+
+export function emailLeadOf(mailApps: readonly string[]): string {
+    if (mailApps.length === 0) return `${BASE_LEAD} Choose how it sends them.`
+    return `${BASE_LEAD} ${mailApps.join(' and ')} also sends every message people write through the same provider.`
+}
 
 export default function EmailStep({ next }: SetupStepProps) {
     const isManaged = useIsSettingManaged(MAIL_PREFIX)
     // Until the managed answer arrives an empty list reads as "nothing is
-    // managed"; rendering the panels then would let an owner act on
-    // settings they do not administer.
+    // managed"; rendering the form then would let an owner act on settings
+    // they do not administer.
     const isPending = useIsManagedSettingsPending()
+    const mailApps = mailSendingAppsOf(packageSystemSettings, useAccessiblePackages())
     if (isPending || isManaged) return null
-    const panels = MAIL_PANELS.map(({ key, Component }) => (
-        <Suspense key={key} fallback={null}>
-            <Component />
-        </Suspense>
-    ))
     return (
-        <View className="max-w-[440px] gap-1">
-            <Text className="text-2xl font-bold text-foreground">Email sending</Text>
-            <Text className="mb-3 text-sm text-muted-foreground">
-                Your server sends invites and password resets by email. Set up how it sends them.
-            </Text>
-            <View className="mb-4 gap-4">
-                <MailSendingPanel />
-                {panels}
-            </View>
-            <SetupContinueButton onPress={next} />
+        <View>
+            <StepHeading title="Email sending" lead={emailLeadOf(mailApps)} />
+            <EmailSendingForm next={next} />
         </View>
     )
 }

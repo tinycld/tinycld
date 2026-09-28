@@ -21,10 +21,11 @@ import { Panel, PanelIntro, SaveRow, SecretField } from './panel-chrome'
 
 // Core transactional mail (invites, password reset, share notifications). These
 // are the SHARED `mail.*` keys the core mailer reads. When the mail feature
-// package is installed it owns provider selection + the server token via its own
-// system-settings panel, so here we only surface the from-address and the
+// package is installed it owns provider selection + the Postmark tokens via its
+// own system-settings panel, so here we only surface the from-address and the
 // delivery switch to avoid two editors of the same key. In a mail-less assembly
-// we also surface provider + token so core mail is configurable on its own.
+// we also surface provider + the account token so core mail is configurable on
+// its own; the server derives the sending token from the account token.
 //
 // Note the asymmetry: `mail.from_address` and `mail.delivery_enabled` are owned
 // HERE in every assembly — the mail package's panel never writes them.
@@ -35,7 +36,7 @@ const mailProviders = [
 
 const mailSchema = z.object({
     provider: z.enum(['postmark', 'smtp']),
-    serverToken: z.string(), // secret, write-only
+    accountToken: z.string(), // secret, write-only
     fromAddress: fromAddressSchema,
     deliveryEnabled: z.boolean(),
 })
@@ -50,7 +51,7 @@ export function MailSendingPanel() {
     const mailPackageInstalled = usePackage('mail') !== null
 
     const provider = byKey.get('mail.provider')
-    const serverToken = byKey.get('mail.postmark_server_token')
+    const accountToken = byKey.get('mail.postmark_account_token')
     const fromAddress = byKey.get('mail.from_address')
     const deliveryEnabled = byKey.get('mail.delivery_enabled')
 
@@ -63,7 +64,7 @@ export function MailSendingPanel() {
         resolver: zodResolver(mailSchema),
         values: {
             provider: (provider?.value || 'postmark') as 'postmark' | 'smtp',
-            serverToken: '',
+            accountToken: '',
             fromAddress: fromAddress?.value ?? '',
             deliveryEnabled: isDeliveryEnabled(deliveryEnabled?.value),
         },
@@ -88,10 +89,10 @@ export function MailSendingPanel() {
                     value: data.provider,
                     isSecret: false,
                 })
-                if (shouldPersistSecret(data.serverToken)) {
+                if (shouldPersistSecret(data.accountToken)) {
                     await upsert.mutateAsync({
-                        key: 'mail.postmark_server_token',
-                        value: data.serverToken,
+                        key: 'mail.postmark_account_token',
+                        value: data.accountToken,
                         isSecret: true,
                     })
                 }
@@ -116,7 +117,7 @@ export function MailSendingPanel() {
             <ProviderFields
                 isVisible={!mailPackageInstalled}
                 control={control}
-                serverToken={serverToken}
+                accountToken={accountToken}
             />
 
             <TextInput
@@ -147,11 +148,11 @@ export function MailSendingPanel() {
 function ProviderFields({
     isVisible,
     control,
-    serverToken,
+    accountToken,
 }: {
     isVisible: boolean
     control: Control<z.infer<typeof mailSchema>>
-    serverToken: SettingRow | undefined
+    accountToken: SettingRow | undefined
 }) {
     if (!isVisible) return null
     return (
@@ -164,9 +165,9 @@ function ProviderFields({
             />
             <SecretField
                 control={control}
-                name="serverToken"
-                label="Postmark server token"
-                existing={serverToken}
+                name="accountToken"
+                label="Postmark account token"
+                existing={accountToken}
             />
         </>
     )

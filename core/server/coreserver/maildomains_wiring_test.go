@@ -22,7 +22,7 @@ func TestMailDomainsWiredFromSettings(t *testing.T) {
 		}
 		return ""
 	})
-	wireMailDomains()
+	wireMailDomains(noOrgName)
 
 	if _, ok := maildomains.Current().(*maildomains.PostmarkRegistrar); !ok {
 		t.Fatalf("Current() = %T, want *maildomains.PostmarkRegistrar", maildomains.Current())
@@ -32,7 +32,7 @@ func TestMailDomainsWiredFromSettings(t *testing.T) {
 // TestMailDomainsResolveTokenAfterLateLoad reproduces the REAL production
 // boot order, not the inverted one the other tests here use for convenience.
 //
-// In production (system_config.go RegisterSystemConfig), wireMailDomains()
+// In production (system_config.go RegisterSystemConfig), wireMailDomains(noOrgName)
 // runs synchronously and FIRST — before systemConfig.load(app), which only
 // happens later inside an OnServe hook. So at wiring time syscfg.Get returns
 // "" for every key, including the account token. A registrar that captures
@@ -61,7 +61,7 @@ func TestMailDomainsResolveTokenAfterLateLoad(t *testing.T) {
 	})
 
 	// Wire while the token does not exist yet — the real boot order.
-	wireMailDomains()
+	wireMailDomains(noOrgName)
 
 	reg, ok := maildomains.Current().(*maildomains.PostmarkRegistrar)
 	if !ok {
@@ -104,7 +104,7 @@ func TestMailDomainsWiringRespectsClaim(t *testing.T) {
 	maildomains.SetRegistrar(claimed)
 
 	syscfg.SetResolver(func(string) string { return "acct-token" })
-	wireMailDomains()
+	wireMailDomains(noOrgName)
 
 	if _, ok := maildomains.Current().(stubClaimedRegistrar); !ok {
 		t.Fatalf("Current() = %T, want the supervisor's registrar to survive core wiring", maildomains.Current())
@@ -118,4 +118,52 @@ func (stubClaimedRegistrar) AddDomain(context.Context, string) (*maildomains.Dom
 }
 func (stubClaimedRegistrar) GetDomain(context.Context, string, int64) (*maildomains.DomainRecords, error) {
 	return nil, nil
+}
+
+func noOrgName() string { return "" }
+
+// The sender-facing token source answers from the configured server token
+// without touching Postmark, and reports not configured when neither token
+// is set. Derivation itself is covered in package maildomains.
+func TestServerTokenSourceUsesConfiguredToken(t *testing.T) {
+	maildomains.ResetForTesting()
+	syscfg.ResetForTesting()
+	t.Cleanup(maildomains.ResetForTesting)
+	t.Cleanup(syscfg.ResetForTesting)
+
+	values := map[string]string{}
+	syscfg.SetResolver(func(key string) string { return values[key] })
+	wireMailDomains(noOrgName)
+
+	if _, err := maildomains.ServerToken(context.Background()); !errors.Is(err, maildomains.ErrNotConfigured) {
+		t.Fatalf("err = %v, want ErrNotConfigured with no tokens", err)
+	}
+	values["mail.postmark_server_token"] = "srv-token"
+	got, err := maildomains.ServerToken(context.Background())
+	if err != nil || got != "srv-token" {
+		t.Fatalf("got %q, %v; want the configured server token", got, err)
+	}
+}
+
+// A composition that claimed the seam keeps the account token away from the
+// org and ships it a server token instead. Senders must still get that token.
+func TestServerTokenSourceInstalledWhenClaimed(t *testing.T) {
+	maildomains.ResetForTesting()
+	syscfg.ResetForTesting()
+	t.Cleanup(maildomains.ResetForTesting)
+	t.Cleanup(syscfg.ResetForTesting)
+
+	maildomains.SetRegistrar(&maildomains.PostmarkRegistrar{})
+	syscfg.SetResolver(func(key string) string {
+		if key == "mail.postmark_server_token" {
+			return "shipped-token"
+		}
+		return ""
+	})
+	wireMailDomains(noOrgName)
+
+	got, err := maildomains.ServerToken(context.Background())
+	if err != nil || got != "shipped-token" {
+		t.Fatalf("got %q, %v; want the shipped server token", got, err)
+	}
 }
