@@ -1,6 +1,5 @@
 import { useCallback, useLayoutEffect, useRef } from 'react'
-import type { View } from 'react-native'
-import { Platform } from 'react-native'
+import { Platform, type View } from 'react-native'
 import { exemptFromInert } from './inert-siblings'
 
 /**

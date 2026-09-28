@@ -1,13 +1,11 @@
 // @vitest-environment happy-dom
 
 import { render } from '@testing-library/react'
-import {
-    OverlayHost,
-    OverlayPortal,
-    OverlayProvider,
-    useInertExempt,
-} from '@tinycld/core/ui/overlay'
+import { OverlayHost, OverlayPortal, OverlayProvider } from '@tinycld/core/ui/overlay'
 import { resetLayers, useOverlayLayer } from '@tinycld/core/ui/overlay/layer-stack'
+// Directly, not through the barrel — the same path the real consumers use, so
+// this test exercises the import shape that ships.
+import { useInertExempt } from '@tinycld/core/ui/overlay/use-inert-exempt'
 import { Text, View } from 'react-native'
 import { afterEach, describe, expect, it } from 'vitest'
 
