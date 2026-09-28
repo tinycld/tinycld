@@ -1,7 +1,9 @@
+import { createLiveQueryCollection, eq } from '@tanstack/db'
 import { QueryCache, QueryClient } from '@tanstack/react-query'
 import { type MergedPackageSchema, tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
+import { ACTIVE_PKG_STATUSES, isActivePkg } from '@tinycld/core/lib/packages/registry-predicates'
 import { refetchLoadedStores } from '@tinycld/core/lib/refetch-loaded-stores'
 import type { Schema, Users } from '@tinycld/core/types/pbSchema'
 import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
@@ -9,13 +11,14 @@ import PocketBase, { AsyncAuthStore } from 'pocketbase'
 import { Platform } from 'react-native'
 import { clearAuthBlob, parseAuthBlob, readAuthBlob, writeAuthBlob } from './auth-storage'
 import { PB_SERVER_ADDR } from './config'
+import { REALTIME_DISABLED_MESSAGE } from './realtime-disabled-message'
 import { getResolvedAddress, subscribeResolvedAddress } from './server-address'
 import { createReachabilityTracker } from './server-reachability'
 import { shareTokenHeaders } from './share-token'
 import { useConnectivityStore } from './stores/connectivity-store'
 import type { UserSession } from './types'
 
-export { eq } from '@tanstack/db'
+export { eq }
 
 // MergedSchema = core's Schema intersected with each linked package's schema.
 // MergedPackageSchema is a PRECOMPUTED LITERAL intersection from the generated
@@ -197,6 +200,13 @@ setLogger({
     info: () => {},
     warn: () => {},
     error: (msg, context) => {
+        // A realtime-disabled document (an embed without `embed_live` — see
+        // realtime-enabled.ts) rejects every subscribe BY DESIGN, and since
+        // pbtsdb 0.10 subscribes once per distinct query filter, that is one
+        // reported error per filter per screen. Matched on the message string
+        // because importing isRealtimeEnabled from here would be circular.
+        const err = (context as { error?: { message?: string } } | undefined)?.error
+        if (err?.message === REALTIME_DISABLED_MESSAGE) return
         // Stable grouping key; the varying message rides in the Error and the
         // pbtsdb context object rides in `extra`.
         captureException('pbtsdb.error', new Error(msg), context as Record<string, unknown>)
@@ -234,47 +244,61 @@ const indexing = {
     },
 }
 
+// Every collection syncs on demand and subscribes per query (pbtsdb 0.10):
+// only the rows a live query asks for enter the store, and realtime covers
+// exactly those rows. The server emits a delete to a subscription a row
+// leaves, so a filtered view stays correct across updates.
+const onDemand = { syncMode: 'on-demand', realtime: 'query' } as const
+
 const users = newCollection('users', {
     omitOnInsert: ['created', 'updated', 'password', 'tokenKey'],
+    ...onDemand,
     ...indexing,
 })
 
 const groups = newCollection('groups', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     ...indexing,
 })
 
 const group_members = newCollection('group_members', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     relations: { group: groups, user: users },
     ...indexing,
 })
 
 const settings = newCollection('settings', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     ...indexing,
 })
 
 const user_preferences = newCollection('user_preferences', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     relations: { user: users },
     ...indexing,
 })
 
 const labels = newCollection('labels', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     relations: { user: users },
     ...indexing,
 })
 
 const label_assignments = newCollection('label_assignments', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     relations: { label: labels, user: users },
     ...indexing,
 })
 
 const org_pkg_access = newCollection('org_pkg_access', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     relations: { user: users },
     ...indexing,
 })
@@ -285,11 +309,13 @@ const org_pkg_access = newCollection('org_pkg_access', {
 // user's own grants live via useMyLiveQuery — the oauth_grants list/view rule
 // already scopes reads to `user = @request.auth.id`.
 const oauth_grants = newCollection('oauth_grants', {
+    ...onDemand,
     ...indexing,
 })
 
 const pkg_registry = newCollection('pkg_registry', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     ...indexing,
 })
 
@@ -298,6 +324,7 @@ const pkg_registry = newCollection('pkg_registry', {
 // read it via the pbtsdb store instead of the raw PocketBase client.
 const pkg_build = newCollection('pkg_build', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     ...indexing,
 })
 
@@ -306,11 +333,11 @@ const pkg_build = newCollection('pkg_build', {
 // the create_system_settings migration.
 const system_settings = newCollection('system_settings', {
     omitOnInsert: ['created', 'updated'],
-    // On-demand so a query for one key (the setup wizard's, read on every
-    // app load for owners and admins) fetches that row alone instead of
-    // every setting, secrets included. The Settings console still asks for
-    // all of them.
-    syncMode: 'on-demand',
+    // This collection is why on-demand matters most: a query for one key (the
+    // setup wizard's, read on every app load for owners and admins) fetches
+    // that row alone instead of every setting, secrets included. The Settings
+    // console still asks for all of them.
+    ...onDemand,
     ...indexing,
 })
 
@@ -319,29 +346,34 @@ const system_settings = newCollection('system_settings', {
 // See the create_org_branding migration.
 const org_branding = newCollection('org_branding', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     ...indexing,
 })
 
 const audit_logs = newCollection('audit_logs', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     relations: { actor: users },
     ...indexing,
 })
 
 // The backup ledger. Read-only from the client: the server writes every row.
 const backups = newCollection('backups', {
+    ...onDemand,
     relations: { initiated_by: users },
     ...indexing,
 })
 
 const pkg_install_log = newCollection('pkg_install_log', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     relations: { initiated_by: users },
     ...indexing,
 })
 
 const notifications = newCollection('notifications', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     relations: { user: users },
     ...indexing,
 })
@@ -349,12 +381,14 @@ export const notificationsCollection = notifications
 
 const rules = newCollection('rules', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     relations: { owner: users },
     ...indexing,
 })
 
 const rule_runs = newCollection('rule_runs', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     relations: { rule: rules },
     ...indexing,
 })
@@ -364,6 +398,7 @@ const rule_runs = newCollection('rule_runs', {
 // only writer, mirroring pkg_registry's read-many/write-engine posture.
 const automation_catalog = newCollection('automation_catalog', {
     omitOnInsert: ['created', 'updated'],
+    ...onDemand,
     ...indexing,
 })
 
@@ -379,9 +414,10 @@ const automation_catalog = newCollection('automation_catalog', {
 // Drive still registers its own richer instance (expand over drive_items);
 // package stores spread AFTER core in the map, so drive's wins when present
 // and this one serves everyone else. Write-only from the client — list/view
-// rules are null, so the eager sync holds nothing.
+// rules are null, so a read returns nothing; nothing ever queries it.
 const comment_mentions = newCollection('comment_mentions', {
     omitOnInsert: ['created'],
+    ...onDemand,
 })
 
 const coreStores = {
@@ -474,23 +510,72 @@ function isAuthRejection(err: unknown): boolean {
 }
 
 export async function seedUser(userRecord: Users) {
-    await stores.users.preload()
+    // startSyncImmediate, not preload(): preload() on an on-demand collection
+    // fetches nothing (there is no query to derive a filter from) and warns.
+    // All this needs is a store in a writable state for the upsert below, which
+    // seeds the freshly authenticated record before any query asks for it.
+    stores.users.startSyncImmediate()
     stores.users.utils?.writeUpsert(userRecord)
 }
+
+// Live queries built by preloadStores, kept so clearStores can tear them down.
+// Module-level rather than local because the teardown happens in a different
+// call: a live query outlives the preload that created it, holding its source
+// collections subscribed until it is cleaned up.
+const preloadedQueries: { cleanup: () => Promise<void> }[] = []
 
 export async function preloadStores() {
     // Whatever synced before sign-in was fetched as nobody — see
     // refetchLoadedStores. Done before the preloads so a store that is already
     // syncing is not preloaded (a no-op) and then refetched.
     await refetchLoadedStores(Object.values(stores))
-    await Promise.all([
-        stores.users.preload(),
-        stores.org_pkg_access.preload(),
-        stores.pkg_registry.preload(),
-    ])
+
+    // Every collection is on-demand now (see `onDemand`), so `preload()` has
+    // nothing to fetch — an on-demand store loads rows per live query, keyed by
+    // that query's filter. Warming it therefore means running the SAME queries
+    // the app is about to run, so their keys are already populated when the auth
+    // store sets the user and the first screens mount. A predicate that differs
+    // from the reading hook's warms a key nobody reads, which is why the
+    // pkg_registry filters come from the shared helper.
+    const userId = pb.authStore.record?.id
+    if (!userId) return
+
+    const lqs = [
+        createLiveQueryCollection(q =>
+            q.from({ users: stores.users }).where(({ users }) => eq(users.id, userId))
+        ),
+        createLiveQueryCollection(q =>
+            q
+                .from({ org_pkg_access: stores.org_pkg_access })
+                .where(({ org_pkg_access }) => eq(org_pkg_access.user, userId))
+        ),
+        // usePackages' combined predicate...
+        createLiveQueryCollection(q =>
+            q
+                .from({ pkg_registry: stores.pkg_registry })
+                .where(({ pkg_registry }) => isActivePkg(pkg_registry))
+        ),
+        // ...and useAccessiblePackages' two single-status ones, which are
+        // separate queries and therefore separate keys.
+        ...ACTIVE_PKG_STATUSES.map(status =>
+            createLiveQueryCollection(q =>
+                q
+                    .from({ pkg_registry: stores.pkg_registry })
+                    .where(({ pkg_registry }) => eq(pkg_registry.status, status))
+            )
+        ),
+    ]
+    preloadedQueries.push(...lqs)
+    await Promise.all(lqs.map(lq => lq.preload()))
 }
 
 export async function clearStores() {
+    // The live queries go FIRST: a live query whose source collection has been
+    // cleaned up throws on its next change, and cleanup() drains the sources.
+    const lqs = preloadedQueries.splice(0, preloadedQueries.length)
+    for (const lq of lqs) {
+        await lq.cleanup()
+    }
     for (const s of Object.values(stores)) {
         // cleanup() on an already cleaned-up collection throws an invalid
         // status-transition error, and repeated teardowns are a legal path

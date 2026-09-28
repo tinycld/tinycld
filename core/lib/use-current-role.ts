@@ -14,11 +14,16 @@ export function useCurrentRole() {
     const { user, isLoggedIn, isInitializing } = useAuth({ throwIfAnon: false })
     const [usersCollection] = useStore('users')
 
+    // Returning null disables the query when nobody is authed, the way
+    // useMyLiveQuery does. `users` is on-demand, so a blank id is not a local
+    // no-op any more: it becomes a real `id = ""` request to PocketBase on every
+    // pre-login screen. A disabled query reports isReady true with no data,
+    // which is what the anon branch below already wants.
     const { data: rows, isReady: queryReady } = useLiveQuery({
         query: query =>
-            query
-                .from({ users: usersCollection })
-                .where(({ users }) => eq(users.id, user?.id ?? '')),
+            user?.id
+                ? query.from({ users: usersCollection }).where(({ users }) => eq(users.id, user.id))
+                : null,
     })
 
     const role = rows?.[0]?.role ?? null

@@ -206,8 +206,9 @@ function AuditLogList({
             // Left-join the actor rather than reading it off `row.expand`: a
             // row's embedded copy is a shape the collection controls, so a
             // hand-written `expand?` keeps compiling after it goes away and the
-            // name silently falls back to "System". `users` is eager, so this
-            // resolves from the local store with no extra request.
+            // name silently falls back to "System". `users` is on-demand, so the
+            // join batch-loads the actors these rows name — one request by id for
+            // the set, not one per row, and nothing for actors already held.
             return q
                 .join({ actor: usersCollection }, ({ audit_logs, actor }) =>
                     eq(audit_logs.actor, actor.id)

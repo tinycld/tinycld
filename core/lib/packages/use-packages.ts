@@ -1,7 +1,7 @@
-import { eq, or } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { useMemo } from 'react'
+import { isActivePkg } from './registry-predicates'
 import { packageRegistry } from './static-registry'
 import type { PackageManifest } from './types'
 
@@ -16,9 +16,7 @@ export function usePackages(): PackageEntry[] {
         query: query =>
             query
                 .from({ pkg_registry: pkgRegistryCollection })
-                .where(({ pkg_registry }) =>
-                    or(eq(pkg_registry.status, 'installed'), eq(pkg_registry.status, 'bundled'))
-                ),
+                .where(({ pkg_registry }) => isActivePkg(pkg_registry)),
     })
 
     return useMemo(() => {

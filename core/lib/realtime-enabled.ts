@@ -1,4 +1,5 @@
 import { pb } from './pocketbase'
+import { REALTIME_DISABLED_MESSAGE } from './realtime-disabled-message'
 
 // Whether this DOCUMENT may hold realtime subscriptions.
 //
@@ -13,13 +14,19 @@ import { pb } from './pocketbase'
 // link says to (`embed_live`).
 //
 // WHY A DOCUMENT-WIDE SWITCH RATHER THAN A PER-COLLECTION ONE. pbtsdb has no
-// "don't subscribe" option — `syncMode` is only eager|on-demand and the
-// subscription is intrinsic to a collection — so the alternatives were to fork
-// the board's data path or to turn realtime off for the whole page. An embed
-// document renders nothing but a read-only board, so the page-wide switch is
-// both safe and the one that leaves the board's rendering identical to a
-// member's. That identity is the property the whole share-link design exists to
-// preserve; a second data path would spend it.
+// "don't subscribe" option. Its `realtime` option (0.10) only chooses WHICH rows
+// a collection covers — 'collection' or 'query' — never whether it subscribes at
+// all; the subscription is still intrinsic to a collection. So the alternatives
+// were to fork the board's data path or to turn realtime off for the whole page.
+// An embed document renders nothing but a read-only board, so the page-wide
+// switch is both safe and the one that leaves the board's rendering identical to
+// a member's. That identity is the property the whole share-link design exists
+// to preserve; a second data path would spend it.
+//
+// One consequence of `realtime: 'query'`: a rejected subscribe is now reported
+// once per distinct query filter rather than once per collection, so
+// pocketbase.ts's pbtsdb logger drops these rejections by message rather than
+// shipping a burst of them to Sentry.
 //
 // A module-level variable, not a store, for the same reason share-token.ts
 // gives: the reader is not a hook. It runs inside the PocketBase client, at
@@ -69,7 +76,7 @@ export function installRealtimeGuard() {
     const original = realtime.subscribe.bind(realtime)
     realtime.subscribe = (...args: unknown[]) => {
         if (!realtimeEnabled) {
-            return Promise.reject(new Error('realtime is disabled for this page'))
+            return Promise.reject(new Error(REALTIME_DISABLED_MESSAGE))
         }
         return original(...args)
     }

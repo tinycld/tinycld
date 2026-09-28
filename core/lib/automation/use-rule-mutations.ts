@@ -1,3 +1,4 @@
+import { useLiveQuery } from '@tanstack/react-db'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { pb, useStore } from '@tinycld/core/lib/pocketbase'
@@ -14,10 +15,26 @@ function nextOrderFor(rules: { order: number }[]): number {
     return Math.max(...rules.map(r => r.order)) + 1
 }
 
+// `order` is a GLOBAL column, not per-scope: the engine sorts a trigger's rules
+// by `order` across both scopes (automation/engine.go FindRecordsByFilter sorts
+// on it, and its subsequent SliceStable only lifts org above personal as a
+// stable tier — it never re-numbers within one). So the max must be taken over
+// every rule, and `rules` is on-demand: its store holds only the scope
+// RulesPanel happens to have loaded. This live query asks for all of them, so
+// the store has both scopes before the max is computed.
+function useAllRuleOrders() {
+    const [rulesCollection] = useStore('rules')
+    const { data: rows } = useLiveQuery({
+        query: query => query.from({ r: rulesCollection }).select(({ r }) => ({ order: r.order })),
+    })
+    return rows ?? []
+}
+
 // `useCurrentUserId`/`useMyLiveQuery` doesn't export a bare user-id hook —
 // the established idiom (see useLabelMutations) is `useAuth().user.id`.
 export function useRuleMutations() {
     const [rulesCollection] = useStore('rules')
+    const allOrders = useAllRuleOrders()
     const { user } = useAuth()
     const userId = user.id
 
@@ -31,11 +48,13 @@ export function useRuleMutations() {
                 // two tabs (or a builder left open while rules changed) would
                 // otherwise both seed the same stale "max + 1" and land on the
                 // same order, where ties make display and execution diverge.
+                // `allOrders` is a live query, so it re-renders this hook on
+                // every rule change and the value read here is the current one.
                 yield rulesCollection.insert({
                     id: newRecordId(),
                     owner: userId,
                     ...fields,
-                    order: nextOrderFor(rulesCollection.toArray),
+                    order: nextOrderFor(allOrders),
                 })
             }
         }),

@@ -10,9 +10,13 @@
 // in-memory rows otherwise. So this shares the same data a `useLiveQuery` sees,
 // stays consistent with optimistic mutations, and avoids a redundant round-trip.
 //
-// Callers filter/find on the returned array in JS (the store holds the whole
-// collection). For a one-off lookup by a non-id field this is the imperative
-// equivalent of a `.where()` on a liveQuery.
+// Callers filter/find on the returned array in JS. NOTE what that array is:
+// every collection is on-demand (pbtsdb 0.10), so the store holds only the rows
+// some live query has already asked for, plus whatever `toArrayWhenReady()`'s
+// own preload brought in. It is NOT the whole collection. So a predicate here
+// answers "among the rows we hold", which is right for confirming a row the
+// caller just wrote or saw, and wrong for "does any row match" — that needs the
+// matching live query (or a direct PocketBase read) to have run first.
 
 // Structural type: anything that can yield its rows once the store is ready.
 // pbtsdb/TanStack-DB collections satisfy this; tests pass a lightweight fake.

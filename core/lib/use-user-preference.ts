@@ -20,17 +20,23 @@ export function useUserPreference<T>(
     const userId = user?.id ?? ''
     const [userPreferencesCollection] = useStore('user_preferences')
 
-    const { data: rows } = useLiveQuery({
+    // Disabled while anon (null query, the useMyLiveQuery idiom): under
+    // on-demand sync a blank id would send a real `user = ""` request from the
+    // login screen instead of filtering nothing locally. setValue's own
+    // isLoggedIn guard is what keeps the resulting isReady=true harmless.
+    const { data: rows, isReady } = useLiveQuery({
         query: query =>
-            query
-                .from({ user_preferences: userPreferencesCollection })
-                .where(({ user_preferences }) =>
-                    and(
-                        eq(user_preferences.app, app),
-                        eq(user_preferences.key, key),
-                        eq(user_preferences.user, userId)
-                    )
-                ),
+            userId
+                ? query
+                      .from({ user_preferences: userPreferencesCollection })
+                      .where(({ user_preferences }) =>
+                          and(
+                              eq(user_preferences.app, app),
+                              eq(user_preferences.key, key),
+                              eq(user_preferences.user, userId)
+                          )
+                      )
+                : null,
     })
 
     const existing = isLoggedIn ? rows?.[0] : undefined
@@ -42,6 +48,11 @@ export function useUserPreference<T>(
     // INSERTs a duplicate. PocketBase's unique index on (user, app, key)
     // rejects the second insert and TanStack DB rolls the optimistic update
     // back, manifesting as the UI flipping to the new value and snapping back.
+    //
+    // toArray alone is no longer enough to rule that out. user_preferences is
+    // on-demand, so the store is empty until THIS query's fetch lands — a
+    // pre-load `toArray` is indistinguishable from "no row exists". setValue
+    // therefore waits on the query's own isReady before mutating.
     const upsert = useMutation({
         mutationFn: mutation(function* (newValue: T) {
             if (!user) return
@@ -68,9 +79,12 @@ export function useUserPreference<T>(
         (newValue: T) => {
             // No-op when anon: there's no user to scope the preference to.
             if (!isLoggedIn) return
+            // And no-op until the row (or its confirmed absence) has loaded —
+            // see the insert/rollback note above.
+            if (!isReady) return
             upsert.mutate(newValue)
         },
-        [isLoggedIn, upsert]
+        [isLoggedIn, isReady, upsert]
     )
 
     return [value, setValue] as const

@@ -18,17 +18,23 @@ export function useThemePreference() {
     const { user, isLoggedIn } = useAuth({ throwIfAnon: false })
     const [userPreferencesCollection] = useStore('user_preferences')
 
-    const { data: rows } = useLiveQuery({
+    // Disabled while anon (null query, the useMyLiveQuery idiom). This hook
+    // mounts on every screen including the pre-login one, and user_preferences
+    // is on-demand — a blank id would send a real `user = ""` request there
+    // rather than filtering nothing locally.
+    const { data: rows, isReady } = useLiveQuery({
         query: query =>
-            query
-                .from({ user_preferences: userPreferencesCollection })
-                .where(({ user_preferences }) =>
-                    and(
-                        eq(user_preferences.app, APP),
-                        eq(user_preferences.key, KEY),
-                        eq(user_preferences.user, user?.id ?? '')
-                    )
-                ),
+            user?.id
+                ? query
+                      .from({ user_preferences: userPreferencesCollection })
+                      .where(({ user_preferences }) =>
+                          and(
+                              eq(user_preferences.app, APP),
+                              eq(user_preferences.key, KEY),
+                              eq(user_preferences.user, user.id)
+                          )
+                      )
+                : null,
     })
 
     const existing = rows?.[0]
@@ -56,9 +62,16 @@ export function useThemePreference() {
 
     const setPreference = useCallback(
         (pref: ThemePreference) => {
+            // Wait for the row (or its confirmed absence) to load. user_preferences
+            // is on-demand, so before this query's fetch lands `existing` is
+            // undefined whether or not a row exists — mutating then INSERTs a
+            // duplicate, which the unique index on (user, app, key) rejects and
+            // TanStack DB rolls back: the theme flips and snaps straight back.
+            // Same reasoning as use-user-preference.ts.
+            if (!isReady) return
             upsert.mutate(pref)
         },
-        [upsert]
+        [isReady, upsert]
     )
 
     const resolved: ResolvedTheme =
