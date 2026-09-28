@@ -5,6 +5,7 @@ import {
     OverlayPortal,
     useHasSheetHost,
     useOverlayLayer,
+    wasConsumedByLayerDismissal,
 } from '@tinycld/core/ui/overlay'
 import { X } from 'lucide-react-native'
 import type { ReactNode } from 'react'
@@ -180,10 +181,17 @@ function SheetRoot({
                 <Animated.View style={[StyleSheet.absoluteFill, backdropStyle]}>
                     <Pressable
                         style={[StyleSheet.absoluteFill, { backgroundColor: overlayBg }]}
-                        // Only while the sheet is the top layer — see the
-                        // same guard on Dialog's backdrop.
-                        onPress={() => {
-                            if (isTopLayer()) close()
+                        // Both guards, exactly as Dialog's backdrop — on the
+                        // mobile breakpoint a Dialog IS a Sheet, so the
+                        // rules-builder case lives here too. `isTopLayer` for a
+                        // press while a menu is still open, and
+                        // `wasConsumedByLayerDismissal` for the click that
+                        // follows the press which closed it.
+                        onPress={event => {
+                            if (!isTopLayer()) return
+                            const native = event?.nativeEvent as { pointerId?: number } | undefined
+                            if (wasConsumedByLayerDismissal(native)) return
+                            close()
                         }}
                         accessibilityRole="button"
                         accessibilityLabel="Close"

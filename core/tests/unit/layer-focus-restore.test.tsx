@@ -34,10 +34,17 @@ function Harness({ isActive }: { isActive: boolean }) {
 
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T
 
+// The restore is deferred to the next animation frame — see the test below.
+const nextFrame = () => new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+
 describe('useLayerFocus — handing focus back on close', () => {
     afterEach(cleanup)
 
-    it('returns focus to the trigger when nothing else claimed it', () => {
+    // The restore is deferred one frame: a modal layer holds the rest of the
+    // app `inert` while open, and the re-render that drops it commits AFTER
+    // this cleanup runs. Focusing a still-inert element silently does nothing
+    // and focus falls to the body, so the restore waits for the removal.
+    it('returns focus to the trigger when nothing else claimed it', async () => {
         const { rerender } = renderBare(<Harness isActive={false} />)
         byId('trigger').focus()
 
@@ -45,7 +52,29 @@ describe('useLayerFocus — handing focus back on close', () => {
         expect(document.activeElement?.textContent).toBe('Row')
 
         rerender(<Harness isActive={false} />)
+        await nextFrame()
         expect(document.activeElement).toBe(byId('trigger'))
+    })
+
+    // The reason the restore is deferred at all. While a modal layer is open
+    // the rest of the app is `inert`, and `HTMLElement.focus()` on an inert
+    // element silently does nothing. The re-render that drops the attribute
+    // commits AFTER this cleanup, so restoring inline left focus on the body.
+    it('restores focus after the inert attribute is dropped, not before', async () => {
+        const { rerender } = renderBare(<Harness isActive={false} />)
+        const trigger = byId('trigger')
+        trigger.focus()
+
+        rerender(<Harness isActive={true} />)
+        // What a modal layer does to everything behind it.
+        trigger.parentElement?.setAttribute('inert', '')
+
+        rerender(<Harness isActive={false} />)
+        // The attribute comes off in the commit that follows the cleanup.
+        trigger.parentElement?.removeAttribute('inert')
+
+        await nextFrame()
+        expect(document.activeElement).toBe(trigger)
     })
 
     it('leaves focus alone when the closing action moved it somewhere new', () => {

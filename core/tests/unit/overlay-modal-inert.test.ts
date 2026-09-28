@@ -93,32 +93,102 @@ describe('useIsModalLayerOpen', () => {
  * with one press, discarding whatever the user had entered in the dialog.
  */
 describe('wasConsumedByLayerDismissal', () => {
+    function pressOn(target: EventTarget, pointerId: number) {
+        target.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId }))
+    }
+
     it('is false before any layer has been dismissed', () => {
-        expect(wasConsumedByLayerDismissal({ pointerId: 7 })).toBe(false)
+        expect(wasConsumedByLayerDismissal({ pointerId: 1 })).toBe(false)
     })
 
     it('is true for the press that dismissed a layer', () => {
         const menu = renderHook(() =>
             useOverlayLayer({ isOpen: true, nodes: () => [], onDismiss: () => {} })
         )
-        document.body.dispatchEvent(
-            new PointerEvent('pointerdown', { bubbles: true, pointerId: 7 })
-        )
-        expect(wasConsumedByLayerDismissal({ pointerId: 7 })).toBe(true)
+        pressOn(document.body, 1)
+        expect(wasConsumedByLayerDismissal({ pointerId: 1 })).toBe(true)
         menu.unmount()
     })
 
-    // The guard has to be about THIS press, not about "a dismissal happened
-    // recently" — otherwise a genuine second press on the backdrop, the one
-    // that should close the dialog, would be swallowed too.
-    it('is false for a different press', () => {
+    /**
+     * The case a real mouse produces, and the one the first version of this
+     * guard got wrong. A mouse reuses pointerId 1 for its entire life, so a
+     * flag that was only ever set — never cleared — left the dialog's backdrop
+     * permanently dead after the first menu dismissal.
+     *
+     * Press 1 closes the menu, and the click it produces on the backdrop is
+     * swallowed. Press 2, same pointerId, has dismissed nothing, so its click
+     * must close the dialog.
+     */
+    it('swallows only the click belonging to the dismissing press, same pointerId', () => {
         const menu = renderHook(() =>
             useOverlayLayer({ isOpen: true, nodes: () => [], onDismiss: () => {} })
         )
-        document.body.dispatchEvent(
-            new PointerEvent('pointerdown', { bubbles: true, pointerId: 7 })
+
+        // Press 1: outside the menu, so it dismisses it. The backdrop click
+        // that follows belongs to this press and must not close the dialog.
+        pressOn(document.body, 1)
+        expect(wasConsumedByLayerDismissal({ pointerId: 1 })).toBe(true)
+        menu.unmount()
+
+        // Press 2: the menu is gone, so nothing is dismissed. Same mouse,
+        // same pointerId — this click MUST reach the dialog.
+        pressOn(document.body, 1)
+        expect(wasConsumedByLayerDismissal({ pointerId: 1 })).toBe(false)
+    })
+
+    // Reading it consumes it: one press yields one swallowed click, not a
+    // standing veto on every click that follows.
+    it('consumes the flag on read', () => {
+        const menu = renderHook(() =>
+            useOverlayLayer({ isOpen: true, nodes: () => [], onDismiss: () => {} })
         )
+        pressOn(document.body, 1)
+        expect(wasConsumedByLayerDismissal({ pointerId: 1 })).toBe(true)
+        expect(wasConsumedByLayerDismissal({ pointerId: 1 })).toBe(false)
+        menu.unmount()
+    })
+
+    it('is false for a different pointer', () => {
+        const menu = renderHook(() =>
+            useOverlayLayer({ isOpen: true, nodes: () => [], onDismiss: () => {} })
+        )
+        pressOn(document.body, 7)
         expect(wasConsumedByLayerDismissal({ pointerId: 8 })).toBe(false)
         menu.unmount()
+    })
+
+    // An event with no pointerId cannot be tied to the press that dismissed
+    // the layer. Treating two absent ids as equal would be the same
+    // permanently-dead-backdrop bug by another route.
+    it('never treats an absent pointer id as consumed', () => {
+        const menu = renderHook(() =>
+            useOverlayLayer({ isOpen: true, nodes: () => [], onDismiss: () => {} })
+        )
+        document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+        expect(wasConsumedByLayerDismissal(undefined)).toBe(false)
+        expect(wasConsumedByLayerDismissal({})).toBe(false)
+        menu.unmount()
+    })
+
+    // A press that dismisses nothing must leave no residue behind. The press
+    // lands INSIDE the layer here, so the stack dismisses nothing and the
+    // flag has to come back down on its own.
+    it('clears the flag on a press that dismisses nothing', () => {
+        const inside = document.createElement('div')
+        document.body.appendChild(inside)
+        const menu = renderHook(() =>
+            useOverlayLayer({ isOpen: true, nodes: () => [inside], onDismiss: () => {} })
+        )
+
+        pressOn(document.body, 1)
+        expect(wasConsumedByLayerDismissal({ pointerId: 1 })).toBe(true)
+
+        // Inside the layer: nothing is dismissed, so the next click is free.
+        pressOn(inside, 1)
+        expect(wasConsumedByLayerDismissal({ pointerId: 1 })).toBe(false)
+
+        menu.unmount()
+        inside.remove()
     })
 })

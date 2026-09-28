@@ -3,6 +3,7 @@ import { disconnectServer } from '@tinycld/core/lib/pocketbase'
 import { getResolvedAddress, probe } from '@tinycld/core/lib/server-address'
 import { useConnectivityStore } from '@tinycld/core/lib/stores/connectivity-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
+import { useInertExempt } from '@tinycld/core/ui/overlay'
 import { router } from 'expo-router'
 import { ServerOff, WifiOff } from 'lucide-react-native'
 import { useEffect } from 'react'
@@ -45,6 +46,8 @@ export function OfflineOverlay() {
         }
     }, [shouldPoll])
 
+    const inertExemptRef = useInertExempt()
+
     if (isOnline && isServerReachable) return null
 
     // Two distinct failure modes deserve distinct copy:
@@ -63,6 +66,10 @@ export function OfflineOverlay() {
 
     return (
         <View
+            // Renders in place rather than through an overlay host, so a modal
+            // layer's `inert` would otherwise swallow it — and this overlay's
+            // whole job is to be reachable when something has gone wrong.
+            ref={inertExemptRef}
             testID="offline-overlay"
             style={{ ...fillStyle, zIndex: 10001, alignItems: 'center', justifyContent: 'center' }}
             className="bg-warning-soft"

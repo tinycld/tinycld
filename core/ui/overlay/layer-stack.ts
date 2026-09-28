@@ -36,7 +36,8 @@ const modalListeners = new Set<() => void>()
 /** Test seam. */
 export function resetLayers() {
     stack.length = 0
-    lastDismissalPointerId = null
+    currentPointerId = null
+    currentPointerConsumed = false
     notifyModalListeners()
 }
 
@@ -79,15 +80,24 @@ export function topLayer(): LayerRecord | null {
 
 let listenerInstalled = false
 
-// The pointerdown that most recently dismissed a layer. A press that closes a
-// menu must not ALSO be read as a press on whatever the menu was drawn over —
-// see `wasConsumedByLayerDismissal`.
-let lastDismissalPointerId: number | null = null
+// The most recent pointerdown, and whether it dismissed a layer. A press that
+// closes a menu must not ALSO be read as a press on whatever the menu was drawn
+// over — see `wasConsumedByLayerDismissal`.
+let currentPointerId: number | null = null
+let currentPointerConsumed = false
 
 function onPointerDown(event: Event) {
+    // Recorded for EVERY press, not only a dismissing one. A mouse reuses the
+    // same pointerId (1) for its whole life, so a flag that only ever got set
+    // would stay true forever and the backdrop would never close the dialog
+    // again after the first menu dismissal.
+    const pointer = event as PointerEvent
+    currentPointerId = typeof pointer.pointerId === 'number' ? pointer.pointerId : null
+    currentPointerConsumed = false
+
     const layer = layerToDismiss(stack, event.target as Node | null)
     if (!layer) return
-    lastDismissalPointerId = (event as PointerEvent).pointerId ?? -1
+    currentPointerConsumed = true
     layer.onDismiss()
 }
 
@@ -101,13 +111,21 @@ function onPointerDown(event: Event) {
  * dialog too — two layers dismissed by one press, and the user's work in the
  * dialog discarded by a press that was only ever meant to close the menu.
  *
- * `pointerId` ties the click back to the press it came from, so a genuine
- * second press on the backdrop still closes the dialog.
+ * Reading it CONSUMES it: the one click that belongs to that press is
+ * swallowed, and the next press on the backdrop closes the dialog normally,
+ * even from the same mouse reporting the same pointerId.
+ *
+ * An absent pointerId is never treated as consumed. A synthetic or
+ * non-pointer-backed event cannot be tied to the press that dismissed the
+ * layer, and swallowing it would be the same permanent-dead-backdrop bug by
+ * another route.
  */
 export function wasConsumedByLayerDismissal(event: { pointerId?: number } | undefined): boolean {
-    if (lastDismissalPointerId === null) return false
-    const id = event?.pointerId ?? -1
-    return id === lastDismissalPointerId
+    if (!currentPointerConsumed) return false
+    const id = event?.pointerId
+    if (typeof id !== 'number' || id !== currentPointerId) return false
+    currentPointerConsumed = false
+    return true
 }
 
 /**

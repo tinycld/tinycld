@@ -10,6 +10,13 @@ export {
     useHasSheetHost,
 } from './host'
 export {
+    applyInertSiblings,
+    clearInertSiblings,
+    exemptFromInert,
+    inertExemptionEpoch,
+    subscribeInertExemptions,
+} from './inert-siblings'
+export {
     type LayerRecord,
     layerToDismiss,
     modalLayerCount,
@@ -17,3 +24,4 @@ export {
     useOverlayLayer,
     wasConsumedByLayerDismissal,
 } from './layer-stack'
+export { useInertExempt } from './use-inert-exempt'

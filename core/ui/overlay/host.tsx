@@ -7,9 +7,16 @@ import {
     useLayoutEffect,
     useMemo,
     useState,
+    useSyncExternalStore,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { Platform, StyleSheet, View } from 'react-native'
+import {
+    applyInertSiblings,
+    clearInertSiblings,
+    inertExemptionEpoch,
+    subscribeInertExemptions,
+} from './inert-siblings'
 import { useIsModalLayerOpen } from './layer-stack'
 
 /**
@@ -116,7 +123,8 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
         <ActionsContext.Provider value={actions}>
             <StateContext.Provider value={state}>
                 <ItemsContext.Provider value={items}>
-                    <AppContent>{children}</AppContent>
+                    <ModalInertGate domNodes={domNodes} />
+                    {children}
                     <OverlayHost name="root" />
                 </ItemsContext.Provider>
             </StateContext.Provider>
@@ -125,43 +133,46 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
 }
 
 /**
- * The app, below every layer — and out of play while a modal one is open.
+ * Holds the rest of the document out of play while a modal layer is open.
  *
- * A dialog sets `aria-modal` on its own surface, but that is only a hint to a
- * screen reader: it does nothing to the rest of the document, which stays
- * focusable, hit-testable and queryable. The backdrop covers the page
- * visually and eats the press, so a press aimed at something behind a dialog
- * does not reach it — it dismisses the dialog instead. Anything that targets
- * an element by its content rather than by its coordinates (a screen reader,
- * keyboard navigation, an e2e locator) still finds the page behind and acts
- * on it, and the user's work in the dialog is discarded by the same press.
- *
- * `inert` is what actually holds the page out: the subtree stops taking
- * focus, stops receiving pointer events, and leaves the accessibility tree.
- * Only a modal layer sets it — a menu or a popover deliberately leaves the
- * page usable behind it.
+ * Renders nothing. The work is a DOM side effect — see inert-siblings.ts for
+ * why the app cannot simply be wrapped in one `inert` element: `inert` cascades
+ * to the whole subtree, and the `sheet` host is deliberately nested inside the
+ * app content so a bottom sheet rests on the mobile tab bar rather than under
+ * it. Wrapping made the sheet's own content inert the moment it opened.
  *
  * Web only. On native an RN `Modal` already owns the screen.
  */
-function AppContent({ children }: { children: ReactNode }) {
+function ModalInertGate({ domNodes }: { domNodes: HostState['domNodes'] }) {
     const isModalOpen = useIsModalLayerOpen()
-    if (Platform.OS !== 'web') return <>{children}</>
-    return (
-        <View
-            // `flex: 1`, not absoluteFill: this wrapper takes the place the
-            // app's own root had in the provider's flex column, so it must
-            // grow exactly as the app did or every screen loses its height.
-            style={FLEX_ONE}
-            // `inert` is a plain boolean attribute the DOM understands and
-            // react-native-web's View types do not, hence the spread.
-            {...(isModalOpen ? { inert: true } : {})}
-        >
-            {children}
-        </View>
-    )
-}
+    const rootNode = domNodes.root
+    const sheetNode = domNodes.sheet
 
-const FLEX_ONE = { flex: 1 } as const
+    // The overlay hosts, plus a tick that changes whenever the set of
+    // always-interactive surfaces does — a toast raised by the dialog's own
+    // save mounts AFTER the modal, so the gate has to re-run for it.
+    const exemptEpoch = useSyncExternalStore(
+        subscribeInertExemptions,
+        inertExemptionEpoch,
+        ZERO_EPOCH
+    )
+
+    useLayoutEffect(() => {
+        if (Platform.OS !== 'web') return
+        if (!isModalOpen) {
+            clearInertSiblings()
+            return
+        }
+        // Reading exemptEpoch here is what makes it a real dependency rather
+        // than a bare cache-buster: the exemptions it counts are an input to
+        // the call below.
+        void exemptEpoch
+        applyInertSiblings([rootNode, sheetNode])
+        return clearInertSiblings
+    }, [isModalOpen, rootNode, sheetNode, exemptEpoch])
+
+    return null
+}
 
 function useActions(): HostActions {
     const actions = useContext(ActionsContext)
@@ -267,3 +278,5 @@ export function OverlayPortal({
 export function useHasSheetHost(): boolean {
     return useHostState().hosts.sheet === true
 }
+
+const ZERO_EPOCH = () => 0
