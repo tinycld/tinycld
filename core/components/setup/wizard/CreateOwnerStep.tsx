@@ -5,11 +5,11 @@ import { appHref } from '@tinycld/core/lib/org-routes'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
 import { NEEDS_SETUP_QUERY_KEY } from '@tinycld/core/lib/setup/use-needs-setup'
 import { useAuthStore } from '@tinycld/core/lib/stores/auth-store'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useRouter } from 'expo-router'
 import { Platform, Text, View } from 'react-native'
 import { claimErrorMessage, refusalBodyOf } from './ClaimServerStep'
+import { SetupContinueButton } from './SetupContinueButton'
 import { StepHeading } from './StepHeading'
 import { ownerFailureOf, postSetup } from './setup-api'
 
@@ -175,14 +175,7 @@ export function CreateOwnerStep({
                 autoComplete="new-password"
                 textContentType="newPassword"
             />
-            <Button
-                size="lg"
-                className="mt-1 min-h-11 self-start"
-                onPress={onSubmit}
-                isDisabled={isPending}
-            >
-                <ButtonText className="text-[15px] font-semibold">Create account</ButtonText>
-            </Button>
+            <SetupContinueButton onPress={onSubmit} isDisabled={isPending} label="Create account" />
         </View>
     )
 }

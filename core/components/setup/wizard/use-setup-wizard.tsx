@@ -68,7 +68,6 @@ export function useWizardActions() {
         isReady,
         skip: (id: string) => update(s => skipStep(s, id)),
         continueStep: (status: StepStatus) => update(s => continueStep(s, status)),
-        finishLater: () => update(s => ({ ...s, dismissedAt: now() })),
         complete: () => update(s => ({ ...s, completedAt: now() })),
     }
 }

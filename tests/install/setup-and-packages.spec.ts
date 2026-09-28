@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { completeSetupBySkipping } from '../../core/e2e-setup-helpers'
 
 // Smoke-tests for the first-run wizard + /admin flow. Split into three tests
 // so most of the coverage runs without the one-time PW_SETUP_CODE:
@@ -14,9 +15,9 @@ import { expect, type Page, test } from '@playwright/test'
 //
 // The tests run serially: the later tests depend on the superuser created by
 // test 1 (or by a previous bootstrap if PW_SETUP_CODE was consumed earlier).
-// Test 1 finishes the wizard with "Finish later" (rather than completing every
-// step) so it lands in the app and does not leave the owner mid-wizard, which
-// would otherwise redirect tests 2 and 3's navigations back into /a/setup.
+// Test 1 finishes the wizard by skipping every step so it lands in the app and
+// does not leave the owner mid-wizard, which would otherwise redirect tests 2
+// and 3's navigations back into /a/setup.
 //
 // PW_SETUP_CODE is scraped from `docker logs <container>` by the workflow
 // before invoking playwright.
@@ -123,9 +124,8 @@ test.describe('first-run install', () => {
 
         // Tests 2 and 3 sign back in and expect to land on Settings/System —
         // leaving the owner mid-wizard would redirect those navigations back
-        // into the wizard instead. "Finish later" dismisses it for now; Settings
-        // still offers a "Finish setup" card to resume it.
-        await page.getByRole('button', { name: 'Finish later' }).click()
+        // into the wizard instead, so skip to the end and open the workspace.
+        await completeSetupBySkipping(page)
     })
 
     test('superuser dashboard lists every bundled package', async ({ page }) => {

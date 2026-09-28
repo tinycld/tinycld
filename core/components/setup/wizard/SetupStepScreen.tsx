@@ -21,7 +21,6 @@ type StepScreen =
           Component: ComponentType<SetupStepProps>
           next: () => void
           onSkip: (() => void) | null
-          onFinishLater: (() => void) | null
           openStep: (id: string) => void
       }
     | {
@@ -44,9 +43,9 @@ function useStepScreen(
     const router = useRouter()
     // Each action awaits its single write before navigating; see useWizardActions.
     // Steps are pushed, not replaced, so the browser's back button returns to
-    // the previous step; leaving the wizard replaces, so back does not re-enter it.
-    const thenGo = (write: () => Promise<void>, href: string, mode: 'push' | 'replace') => () => {
-        write().then(() => router[mode](href), stayOnFailure)
+    // the previous step.
+    const thenGo = (write: () => Promise<void>, href: string) => () => {
+        write().then(() => router.push(href), stayOnFailure)
     }
     const openStep = (id: string) => router.push(appHref(`setup/${stepIdToParam(id)}`))
 
@@ -74,9 +73,8 @@ function useStepScreen(
         summary,
         currentStepId: id,
         Component: step.Component,
-        next: thenGo(() => actions.continueStep(status), NEXT_HREF, 'push'),
-        onSkip: thenGo(() => actions.skip(id), NEXT_HREF, 'push'),
-        onFinishLater: thenGo(actions.finishLater, appHref(''), 'replace'),
+        next: thenGo(() => actions.continueStep(status), NEXT_HREF),
+        onSkip: thenGo(() => actions.skip(id), NEXT_HREF),
         openStep,
     }
 }
@@ -101,7 +99,6 @@ function StepScreenBody({
                 phase="setup"
                 summary={screen.summary}
                 currentStepId={null}
-                onFinishLater={null}
                 onSkip={null}
                 onOpenStep={screen.openStep}
             >
@@ -115,7 +112,6 @@ function StepScreenBody({
             phase="setup"
             summary={screen.summary}
             currentStepId={screen.currentStepId}
-            onFinishLater={screen.onFinishLater}
             onSkip={screen.onSkip}
             onOpenStep={screen.openStep}
         >

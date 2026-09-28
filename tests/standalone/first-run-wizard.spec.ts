@@ -2,10 +2,11 @@ import { expect, type Page, test } from '@playwright/test'
 import {
     attachSetupLogo,
     CORE_STEP_IDS,
+    completeSetupBySkipping,
     continueSetupStep,
     expectSetupStep,
-    finishSetupLater,
     ONE_PIXEL_PNG_BASE64,
+    setupStep,
     setupWorkspaceName,
 } from '../../core/e2e-setup-helpers'
 import { bootBinary, buildBinary, setupCodeFromLog } from './boot-binary'
@@ -91,13 +92,13 @@ test('a new server is claimed, set up, paused and resumed', async ({ page }) => 
 
         await expectSetupStep(page, CORE_STEP_IDS.apps)
         await expect(page.getByText('Choose your apps')).toBeVisible()
-        await finishSetupLater(page)
 
-        // Finish later lands in the app; Settings offers to resume.
+        // The remaining steps can all be skipped; the Done screen then opens
+        // the workspace, and the wizard does not open again.
+        await completeSetupBySkipping(page)
         await page.getByTestId('nav-settings').click()
-        await expect(page.getByText('Finish setup')).toBeVisible()
-        await page.getByRole('button', { name: 'Continue' }).click()
-        await expectSetupStep(page, CORE_STEP_IDS.apps)
+        await expect(page.getByText('Settings', { exact: true })).toBeVisible()
+        await expect(setupStep(page, CORE_STEP_IDS.apps)).toHaveCount(0)
     } finally {
         await server.stop()
     }
@@ -123,8 +124,8 @@ test('a hidden app stays hidden after a restart', async ({ page }) => {
     const second = await bootBinary({ dataDir })
     try {
         await signIn(page, second.baseURL)
-        await finishSetupLater(page)
-        await expect(page.getByTestId('nav-settings')).toBeVisible()
+        // The wizard reopens where it was left; skipping to the end lands in the app.
+        await completeSetupBySkipping(page)
         await expect(page.getByTestId(`nav-${hiddenSlug}`)).toHaveCount(0)
     } finally {
         await second.stop()

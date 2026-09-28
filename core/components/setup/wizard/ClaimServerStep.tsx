@@ -1,12 +1,12 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { NEEDS_SETUP_QUERY_KEY } from '@tinycld/core/lib/setup/use-needs-setup'
-import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { Controller, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useRef } from 'react'
 import { Text, View } from 'react-native'
 import { CodeInput } from './CodeInput'
 import { ServerLogPreview } from './ServerLogPreview'
+import { SetupContinueButton } from './SetupContinueButton'
 import { StepHeading } from './StepHeading'
 import { postSetup, type SetupErrorBody, SetupRequestError } from './setup-api'
 
@@ -104,14 +104,7 @@ export function ClaimServerStep({
                 />
                 <Notice message={codeError} />
             </View>
-            <Button
-                size="lg"
-                className="mt-2 min-h-11 self-start"
-                onPress={onSubmit}
-                isDisabled={isPending}
-            >
-                <ButtonText className="text-[15px] font-semibold">Continue</ButtonText>
-            </Button>
+            <SetupContinueButton onPress={onSubmit} isDisabled={isPending} />
             <View className="mt-2 gap-2.5">
                 <Text className="text-[13px] text-muted-foreground">
                     Look for this box in the server log.

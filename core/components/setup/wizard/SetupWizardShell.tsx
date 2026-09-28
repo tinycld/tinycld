@@ -1,10 +1,11 @@
 import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import {
-    SETUP_FINISH_LATER_TEST_ID,
+    SETUP_CONTINUE_TEST_ID,
     SETUP_SKIP_TEST_ID,
     setupStepTestId,
 } from '@tinycld/core/lib/setup/step-ids'
 import type { WizardSummary } from '@tinycld/core/lib/setup/wizard-logic'
+import { useSetupContinueStore } from '@tinycld/core/lib/stores/setup-continue-store'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
 import { ScrollView, Text, View } from 'react-native'
@@ -18,7 +19,6 @@ export interface SetupWizardShellProps {
     phase: 'claim' | 'setup'
     summary: WizardSummary | null
     currentStepId: string | null
-    onFinishLater: (() => void) | null
     onSkip: (() => void) | null
     /** Opens another step from the list; absent when steps cannot be revisited. */
     onOpenStep?: (id: string) => void
@@ -61,22 +61,6 @@ function useSetupWizardLayout(props: SetupWizardShellProps) {
 }
 
 type SetupWizardLayout = ReturnType<typeof useSetupWizardLayout>
-
-function FinishLaterButton({ onPress }: { onPress: (() => void) | null }) {
-    if (!onPress) return null
-    return (
-        <Button
-            variant="link"
-            size="sm"
-            className="px-0"
-            onPress={onPress}
-            accessibilityLabel="Finish setup later"
-            testID={SETUP_FINISH_LATER_TEST_ID}
-        >
-            <ButtonText className="text-[13px]">Finish later</ButtonText>
-        </Button>
-    )
-}
 
 function PositionLabel({ label }: { label: string }) {
     if (!label) return null
@@ -122,21 +106,39 @@ function SkipButton({ onPress }: { onPress: (() => void) | null }) {
     )
 }
 
-/** Skip on the left, Finish later on the right; hidden when neither applies. */
+/** The Continue the screen's SetupContinueButton published; nothing until one has. */
+function ContinueButton() {
+    const action = useSetupContinueStore(s => s.action)
+    if (!action) return null
+    return (
+        <Button
+            size="lg"
+            className="min-h-11"
+            onPress={action.onPress}
+            isDisabled={action.isDisabled}
+            testID={SETUP_CONTINUE_TEST_ID}
+        >
+            <ButtonText className="text-[15px] font-semibold">{action.label}</ButtonText>
+        </Button>
+    )
+}
+
+/** Skip on the left, Continue on the right; hidden when the screen has neither. */
 function ShellFooter({ props }: { props: SetupWizardShellProps }) {
-    if (!props.onSkip && !props.onFinishLater) return null
+    const hasContinue = useSetupContinueStore(s => s.action !== null)
+    if (!props.onSkip && !hasContinue) return null
     return (
         <View className="flex-row items-center justify-between border-t border-border pt-4">
             <SkipButton onPress={props.onSkip} />
-            <FinishLaterButton onPress={props.onFinishLater} />
+            <ContinueButton />
         </View>
     )
 }
 
 /**
  * Frame for every wizard screen: one card, centred on the page, with the
- * step list along its top, the step's form in the middle and Skip / Finish
- * later at its foot. Package steps render inside the same card.
+ * step list along its top, the step's form in the middle and Skip / Continue
+ * at its foot. Package steps render inside the same card.
  */
 export function SetupWizardShell(props: SetupWizardShellProps) {
     const layout = useSetupWizardLayout(props)

@@ -6,7 +6,6 @@ const wizardStateSchema = z.object({
     startedAt: z.string(),
     acknowledged: z.array(z.string()),
     skipped: z.array(z.string()),
-    dismissedAt: z.string().optional(),
     completedAt: z.string().optional(),
     orgNameSeeded: z.boolean().optional(),
 })
@@ -89,7 +88,7 @@ export function shouldOpenWizard(input: {
 }): boolean {
     if (!input.isSettled || !input.state) return false
     if (input.role !== 'owner' && input.role !== 'admin') return false
-    return !input.state.dismissedAt && !input.state.completedAt
+    return !input.state.completedAt
 }
 
 /**

@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { completeSetupBySkipping } from '../../core/e2e-setup-helpers'
 
 // Minimal, parameterized install spec for @tinycld/calendar-slots, driven through
 // the real in-app installer UI against an already-running container (the
@@ -444,11 +445,11 @@ test.describe('calendar-slots install', () => {
 
         await page.getByRole('button', { name: 'Create account' }).click()
         // The owner is created and signed in; the signed-in wizard opens on its
-        // first step. Dismiss it so later phases' navigations (which expect the
-        // superuser recovery console / in-app dashboard) aren't redirected back
-        // into the wizard.
+        // first step. Finish it by skipping so later phases' navigations (which
+        // expect the superuser recovery console / in-app dashboard) aren't
+        // redirected back into the wizard.
         await expect(page.getByText('Your organization', { exact: true })).toBeVisible()
-        await page.getByRole('button', { name: 'Finish later' }).click()
+        await completeSetupBySkipping(page)
     })
 
     test('installing calendar-slots WITHOUT calendar is rejected by the compat gate', async ({

@@ -18,4 +18,4 @@ The setup steps then help you:
 - **Set up email sending,** so invites and password resets reach people.
 - **Your team.** Invite people to join.
 
-You can skip any step. To stop and come back later, select **Finish later**. A **Finish setup** card stays at the top of Settings until you complete the last step.
+You can skip any step. Each step's **Continue** is at the bottom right of the card, next to **Skip this step**. The last screen opens your workspace.
