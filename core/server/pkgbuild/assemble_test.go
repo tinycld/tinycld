@@ -42,7 +42,7 @@ func TestWriteWorkspaceScaffold(t *testing.T) {
 	dir := t.TempDir()
 	src := t.TempDir()
 	pkgbuildtest.WriteTestOverrides(t, src) // scaffold copies it into dir before YAML is written
-	members := []string{"tinycld", "mail", "calc"}
+	members := []string{"tinycld", "gizmos", "trinkets"}
 	if err := pkgbuild.WriteWorkspaceScaffold(dir, members, src, pkgbuild.ScaffoldOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestWriteWorkspaceScaffold(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(ws)
-	for _, m := range []string{"tinycld", "tinycld/core", "tinycld/package-scripts", "mail", "calc"} {
+	for _, m := range []string{"tinycld", "tinycld/core", "tinycld/package-scripts", "gizmos", "trinkets"} {
 		if !strings.Contains(s, m) {
 			t.Fatalf("pnpm-workspace.yaml missing member %q", m)
 		}
@@ -118,7 +118,7 @@ func TestAssembleBuild_FetchesAllAndScaffolds(t *testing.T) {
 		BuildID: "build-1",
 		Members: []pkgbuild.MemberSpec{
 			{Slug: "tinycld", Spec: "git+file:///x/tinycld"},
-			{Slug: "mail", Spec: "@tinycld/mail@1"},
+			{Slug: "gizmos", Spec: "@tinycld/gizmos@1"},
 		},
 	}
 	var fetched []string
@@ -152,8 +152,8 @@ func TestAssembleBuild_FetchesAllAndScaffolds(t *testing.T) {
 	for _, rm := range locked {
 		bySlug[rm.Slug] = rm
 	}
-	if bySlug["mail"].Integrity != "sha256:fake-mail" || bySlug["mail"].Name != "@tinycld/mail" {
-		t.Fatalf("mail lock entry = %+v", bySlug["mail"])
+	if bySlug["gizmos"].Integrity != "sha256:fake-gizmos" || bySlug["gizmos"].Name != "@tinycld/gizmos" {
+		t.Fatalf("gizmos lock entry = %+v", bySlug["gizmos"])
 	}
 	if bySlug["tinycld"].Name != pkgbuild.CorePackageKey || bySlug["tinycld"].Version != "1.0.0" {
 		t.Fatalf("base lock entry = %+v", bySlug["tinycld"])
@@ -167,7 +167,7 @@ func TestAssembleBuild_CopiesFromCurrentVsFetch(t *testing.T) {
 		BuildID: "build-2",
 		Members: []pkgbuild.MemberSpec{
 			{Slug: "tinycld", Spec: "github:tinycld/tinycld", FromCurrent: true}, // unchanged → copy
-			{Slug: "mail", Spec: "@tinycld/mail@2"},                              // changed → fetch
+			{Slug: "gizmos", Spec: "@tinycld/gizmos@2"},                          // changed → fetch
 		},
 	}
 	var fetched, copied []string
@@ -190,8 +190,8 @@ func TestAssembleBuild_CopiesFromCurrentVsFetch(t *testing.T) {
 	if err := pkgbuild.AssembleBuild(nil, manifest, build, src, srcRoot, pkgbuild.ScaffoldOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(fetched) != 1 || fetched[0] != "mail" {
-		t.Fatalf("expected only mail fetched, got %v", fetched)
+	if len(fetched) != 1 || fetched[0] != "gizmos" {
+		t.Fatalf("expected only gizmos fetched, got %v", fetched)
 	}
 	if len(copied) != 1 || copied[0] != "tinycld" {
 		t.Fatalf("expected only tinycld copied from current, got %v", copied)
@@ -207,7 +207,7 @@ func TestAssembleBuild_CopiesFromCurrentVsFetch(t *testing.T) {
 	if got := pkgbuild.LockedIntegrity(build, "tinycld"); got != "sha256:carried" {
 		t.Fatalf("carried integrity = %q, want sha256:carried", got)
 	}
-	if got := pkgbuild.LockedIntegrity(build, "mail"); got != "sha256:fresh" {
+	if got := pkgbuild.LockedIntegrity(build, "gizmos"); got != "sha256:fresh" {
 		t.Fatalf("fetched integrity = %q, want sha256:fresh", got)
 	}
 }
@@ -227,21 +227,21 @@ func TestFetchMember_PlacesExtractedDirAndReturnsIntegrity(t *testing.T) {
 	packer := func(spec, into string) (string, string, error) {
 		return pkgDir, "sha256:abc123", nil // pretend we packed+hashed+untarred
 	}
-	integrity, err := pkgbuild.FetchMemberWith(pkgbuild.MemberSpec{Slug: "mail", Spec: "@tinycld/mail@0.3.1"}, build, packer)
+	integrity, err := pkgbuild.FetchMemberWith(pkgbuild.MemberSpec{Slug: "gizmos", Spec: "@tinycld/gizmos@0.3.1"}, build, packer)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if integrity != "sha256:abc123" {
 		t.Fatalf("integrity = %q, want the packer's hash", integrity)
 	}
-	if _, err := os.Stat(filepath.Join(build, "mail", "manifest.ts")); err != nil {
-		t.Fatalf("expected build/mail/manifest.ts: %v", err)
+	if _, err := os.Stat(filepath.Join(build, "gizmos", "manifest.ts")); err != nil {
+		t.Fatalf("expected build/gizmos/manifest.ts: %v", err)
 	}
 }
 
 func TestNpmPackSource_CopyCurrentRefuses(t *testing.T) {
-	_, err := pkgbuild.NpmPackSource().CopyCurrent(pkgbuild.MemberSpec{Slug: "mail"}, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "mail") {
+	_, err := pkgbuild.NpmPackSource().CopyCurrent(pkgbuild.MemberSpec{Slug: "gizmos"}, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "gizmos") {
 		t.Fatalf("fetch-only source must refuse CopyCurrent, got: %v", err)
 	}
 }

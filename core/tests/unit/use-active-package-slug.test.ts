@@ -13,13 +13,13 @@ vi.mock('expo-router', () => ({ usePathname: () => pathname }))
 // added or removed.
 vi.mock('@tinycld/core/lib/search/registry', () => ({
     searchPackages: [
-        { slug: 'mail', label: 'Mail', icon: 'mail', order: 5, endpoint: '/api/mail/search' },
+        { slug: 'gizmos', label: 'Gizmos', icon: 'mail', order: 5, endpoint: '/api/gizmos/search' },
         {
-            slug: 'drive',
-            label: 'Drive',
+            slug: 'cogs',
+            label: 'Cogs',
             icon: 'hard-drive',
             order: 12,
-            endpoint: '/api/drive/search',
+            endpoint: '/api/cogs/search',
         },
     ],
 }))
@@ -31,9 +31,9 @@ afterEach(() => {
 })
 
 test('returns the slug when the path starts with an installed package', () => {
-    pathname = '/mail/thread-1'
+    pathname = '/gizmos/thread-1'
     const { result } = renderHook(() => useActivePackageSlug())
-    expect(result.current).toBe('mail')
+    expect(result.current).toBe('gizmos')
 })
 
 test('returns null when no segment matches an installed package', () => {
@@ -46,17 +46,17 @@ test('returns null when no segment matches an installed package', () => {
 // non-package prefix segment (here 'org-slug', which names no installed
 // package) must not stop it from finding the package segment that follows.
 test('skips a leading non-package segment to find the package segment', () => {
-    pathname = '/org-slug/drive/folder-1'
+    pathname = '/org-slug/cogs/folder-1'
     const { result } = renderHook(() => useActivePackageSlug())
-    expect(result.current).toBe('drive')
+    expect(result.current).toBe('cogs')
 })
 
 // If TWO segments each name an installed package, the leftmost one wins —
 // pinning this down guards against a future rewrite that scans in reverse.
 test('prefers the earliest matching segment when two segments both match', () => {
-    pathname = '/mail/drive'
+    pathname = '/gizmos/cogs'
     const { result } = renderHook(() => useActivePackageSlug())
-    expect(result.current).toBe('mail')
+    expect(result.current).toBe('gizmos')
 })
 
 test('returns null for the root path', () => {

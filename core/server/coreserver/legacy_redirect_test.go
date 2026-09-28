@@ -15,14 +15,14 @@ func TestLegacyAppRedirect(t *testing.T) {
 		{"bare pre-auth route", "connect", "/a/connect"},
 
 		// Already migrated — must not double-prefix.
-		{"already prefixed", "a/mail", ""},
+		{"already prefixed", "a/gizmos", ""},
 		{"bare prefix", "a", ""},
 
 		// Not app routes. Rewriting any of these would break them.
-		{"public share", "p/drive/share/tok", ""},
+		{"public share", "p/cogs/share/tok", ""},
 		{"public demo", "p/demo", ""},
 		{"api", "api/health", ""},
-		{"webdav", "dav/drive/", ""},
+		{"webdav", "dav/cogs/", ""},
 		{"caldav", "caldav/u/cal/", ""},
 		{"asset miss", "favicon.ico", ""},
 		{"well-known", ".well-known/caldav", ""},

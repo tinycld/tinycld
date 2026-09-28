@@ -18,8 +18,11 @@ describe('humanizeFieldKey', () => {
 
 describe('refs', () => {
     it('round-trips a qualified ref', () => {
-        expect(qualifyRef('mail', 'message-received')).toBe('mail:message-received')
-        expect(parseRef('mail:message-received')).toEqual({ pkg: 'mail', id: 'message-received' })
+        expect(qualifyRef('gizmos', 'message-received')).toBe('gizmos:message-received')
+        expect(parseRef('gizmos:message-received')).toEqual({
+            pkg: 'gizmos',
+            id: 'message-received',
+        })
     })
 
     it('throws on a malformed ref', () => {

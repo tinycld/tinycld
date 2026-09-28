@@ -4,7 +4,7 @@ import { toStaticRegistry } from '../static-registry'
 describe('toStaticRegistry', () => {
     it('flattens manifests, defaulting packageName to @tinycld/<slug>', () => {
         const entries = [
-            { manifest: { name: 'Contacts', slug: 'contacts', version: '1', description: 'd' } },
+            { manifest: { name: 'Doodads', slug: 'doodads', version: '1', description: 'd' } },
             {
                 manifest: {
                     name: 'X',
@@ -16,7 +16,7 @@ describe('toStaticRegistry', () => {
             },
         ]
         const reg = toStaticRegistry(entries)
-        expect(reg[0].packageName).toBe('@tinycld/contacts')
+        expect(reg[0].packageName).toBe('@tinycld/doodads')
         expect(reg[1].packageName).toBe('@acme/x')
     })
 })

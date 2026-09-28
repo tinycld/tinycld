@@ -14,7 +14,7 @@ func TestRejectBaseUninstall(t *testing.T) {
 	} else if !strings.Contains(strings.ToLower(err.Error()), "base") {
 		t.Fatalf("expected a base-specific rejection message, got: %v", err)
 	}
-	for _, slug := range []string{"mail", "drive", "calendar", "contacts"} {
+	for _, slug := range []string{"gizmos", "cogs", "sprockets", "doodads"} {
 		if err := rejectBaseUninstall(slug); err != nil {
 			t.Errorf("rejectBaseUninstall(%q) = %v, want nil (features are uninstallable)", slug, err)
 		}

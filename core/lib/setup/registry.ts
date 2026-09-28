@@ -2,9 +2,7 @@ import { tinycldConfig } from '@tinycld/app-generated/tinycld-config'
 import type { PackageSetupStep } from '@tinycld/core/lib/packages/config-types'
 import { compareStepOrder } from '@tinycld/core/lib/setup/order'
 import { CORE_STEP_IDS } from '@tinycld/core/lib/setup/step-ids'
-import type { SetupStepEntry, SetupStepModule } from '@tinycld/core/lib/setup/types'
-
-type Loader = () => Promise<SetupStepModule>
+import type { SetupStepEntry } from '@tinycld/core/lib/setup/types'
 
 // Core has no manifest, so its steps are listed here. Keys leave room on both
 // sides for package steps (see docs/packages.md "setupSteps").
@@ -44,9 +42,7 @@ export function buildSetupStepEntries(
             id: `${p.manifest.slug}:${s.id}`,
             label: s.label,
             order: s.order,
-            // The generator only emits modules that follow the step contract;
-            // the registry normalizes the shape when it loads them.
-            load: s.load as Loader,
+            load: s.load,
         }))
     )
     return [...core, ...fromPackages].sort(compareStepOrder)

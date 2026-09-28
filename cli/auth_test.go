@@ -16,7 +16,7 @@ import (
 // authServerScopes is what the fake server advertises. Fictional packages: the
 // CLI shell knows no real package, and the test only cares that whatever the
 // server advertises is exactly what the login asks for.
-const authServerScopes = "profile notes:read notes:write tasks:read"
+const authServerScopes = "profile notes:read notes:write widgets:read"
 
 type authCounts struct {
 	tokenPolls, revokes int
@@ -58,7 +58,7 @@ func authServer(t *testing.T) (*httptest.Server, *authCounts) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"access_token": "access-1", "token_type": "Bearer",
 			"expires_in": 3600, "refresh_token": "refresh-1",
-			"scope": "profile mail:read",
+			"scope": "profile gizmos:read",
 		})
 	})
 	mux.HandleFunc("GET /oauth/userinfo", func(w http.ResponseWriter, r *http.Request) {
@@ -166,7 +166,7 @@ func TestAuthStatus(t *testing.T) {
 	if status.Email != "nathan@example.com" || status.Origin != srv.URL {
 		t.Fatalf("status = %+v", status)
 	}
-	if !strings.Contains(status.Scopes, "mail:read") {
+	if !strings.Contains(status.Scopes, "gizmos:read") {
 		t.Fatalf("scopes = %q", status.Scopes)
 	}
 }

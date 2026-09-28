@@ -25,8 +25,8 @@ describe('kebabToPascal', () => {
 describe('buildPackageIconsSource', () => {
     it('emits an import per distinct kebab name and a sorted Record', () => {
         const src = buildPackageIconsSource([
-            { name: '@tinycld/mail', manifest: { nav: { icon: 'mail' } } },
-            { name: '@tinycld/drive', manifest: { nav: { icon: 'hard-drive' } } },
+            { name: '@tinycld/gizmos', manifest: { nav: { icon: 'mail' } } },
+            { name: '@tinycld/cogs', manifest: { nav: { icon: 'hard-drive' } } },
         ])
         expect(src).toContain("import Mail from 'lucide-react-native/icons/mail'")
         expect(src).toContain("import HardDrive from 'lucide-react-native/icons/hard-drive'")
@@ -52,7 +52,7 @@ describe('buildPackageIconsSource', () => {
     it('skips features with no nav.icon', () => {
         const src = buildPackageIconsSource([
             { name: '@tinycld/settings-only', manifest: {} },
-            { name: '@tinycld/mail', manifest: { nav: { icon: 'mail' } } },
+            { name: '@tinycld/gizmos', manifest: { nav: { icon: 'mail' } } },
         ])
         expect(src).toContain("import Mail from 'lucide-react-native/icons/mail'")
         expect(src).toContain('mail: Mail')
@@ -95,9 +95,9 @@ describe('buildPackageIconsSource', () => {
 
     it('every kebab key in the emitted map corresponds to a real lucide icon file', () => {
         const src = buildPackageIconsSource([
-            { name: '@tinycld/mail', manifest: { nav: { icon: 'mail' } } },
-            { name: '@tinycld/drive', manifest: { nav: { icon: 'hard-drive' } } },
-            { name: '@tinycld/calendar', manifest: { nav: { icon: 'calendar' } } },
+            { name: '@tinycld/gizmos', manifest: { nav: { icon: 'mail' } } },
+            { name: '@tinycld/cogs', manifest: { nav: { icon: 'hard-drive' } } },
+            { name: '@tinycld/sprockets', manifest: { nav: { icon: 'calendar' } } },
         ])
         for (const name of ['mail', 'hard-drive', 'calendar']) {
             expect(fs.existsSync(path.join(LUCIDE_ICONS_DIR, `${name}.mjs`))).toBe(true)

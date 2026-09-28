@@ -58,9 +58,9 @@ test('/p/demo seeds the hosted demo server and does not redirect to /connect', a
 })
 
 test('an address-less non-exempt route redirects to /a/connect with backTo', async () => {
-    const { result } = renderHook(() => useServerAddressGate('/a/mail'))
+    const { result } = renderHook(() => useServerAddressGate('/a/gizmos'))
     await waitFor(() => expect(result.current.status).toBe('unresolved'))
-    expect(replace).toHaveBeenCalledWith('/a/connect?backTo=%2Fa%2Fmail')
+    expect(replace).toHaveBeenCalledWith('/a/connect?backTo=%2Fa%2Fgizmos')
 })
 
 test('/a/connect is exempt from the redirect even with no address', async () => {

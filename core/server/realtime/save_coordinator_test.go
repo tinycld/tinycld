@@ -261,7 +261,7 @@ func TestSaveCoordinatorGivesUpAfterMaxAttempts(t *testing.T) {
 	c.maxAttempts = 3
 	c.backoff = func(int) time.Duration { return 10 * time.Millisecond }
 	c.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	c.SetJournal("text", nil)
+	c.SetJournal("notepads", nil)
 	c.captureGiveUp = func(d giveUpDetail) {
 		mu.Lock()
 		captured = d
@@ -298,8 +298,8 @@ func TestSaveCoordinatorGivesUpAfterMaxAttempts(t *testing.T) {
 	if captured.DriveItemID != "doomed-room" {
 		t.Errorf("driveItemID = %q, want doomed-room", captured.DriveItemID)
 	}
-	if captured.Kind != "text" {
-		t.Errorf("kind = %q, want text", captured.Kind)
+	if captured.Kind != "notepads" {
+		t.Errorf("kind = %q, want notepads", captured.Kind)
 	}
 	if captured.Attempts != 3 {
 		t.Errorf("attempts = %d, want 3", captured.Attempts)

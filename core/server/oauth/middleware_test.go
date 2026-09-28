@@ -16,16 +16,16 @@ func TestScopeForRouteMapsRegisteredRoutes(t *testing.T) {
 	}{
 		{"GET", "/api/notes/search", scopeNotesRead},
 		{"POST", "/api/notes/send", scopeNotesWrite},
-		{"POST", "/api/tasks/upload-version", scopeTasksWrite},
-		{"GET", "/api/tasks/export", scopeTasksRead},
+		{"POST", "/api/widgets/upload-version", scopeWidgetsWrite},
+		{"GET", "/api/widgets/export", scopeWidgetsRead},
 		{"GET", "/api/collections/notes_items/records", scopeNotesRead},
 		{"POST", "/api/collections/notes_items/records", scopeNotesWrite},
-		{"PATCH", "/api/collections/tasks_items/records/abc", scopeTasksWrite},
+		{"PATCH", "/api/collections/widgets_items/records/abc", scopeWidgetsWrite},
 		{"GET", "/api/collections/notes_folder_counts/records", scopeNotesRead},
 		// Stored files carry the owning collection's read scope.
 		{"GET", "/api/files/notes_items/rec123/body_ab12cd34ef.html", scopeNotesRead},
-		{"GET", "/api/files/tasks_items/rec123/report_ab12cd34ef.pdf", scopeTasksRead},
-		{"HEAD", "/api/files/tasks_items/rec123/report_ab12cd34ef.pdf", scopeTasksRead},
+		{"GET", "/api/files/widgets_items/rec123/report_ab12cd34ef.pdf", scopeWidgetsRead},
+		{"HEAD", "/api/files/widgets_items/rec123/report_ab12cd34ef.pdf", scopeWidgetsRead},
 		// A per-record family, classified by prefix.
 		{"POST", "/api/notes/items/abc123/move", scopeNotesWrite},
 		// Core's own identity entries.
@@ -69,10 +69,10 @@ func TestScopeForRouteFilePaths(t *testing.T) {
 		{"POST", "/api/files/token", "a file token minted by a bearer would bypass the scope table"},
 		{"GET", "/api/files/oauth_clients/rec123/logo_ab12cd34ef.png", "unclassified collection"},
 		{"GET", "/api/files/pkg_registry/rec123/bundle_ab12cd34ef.zip", "unclassified collection"},
-		{"POST", "/api/files/tasks_items/rec123/report_ab12cd34ef.pdf", "no write goes through /api/files/"},
-		{"DELETE", "/api/files/tasks_items/rec123/report_ab12cd34ef.pdf", "no write goes through /api/files/"},
-		{"GET", "/api/files/tasks_items/rec123", "missing filename segment"},
-		{"GET", "/api/files/tasks_items", "missing record and filename segments"},
+		{"POST", "/api/files/widgets_items/rec123/report_ab12cd34ef.pdf", "no write goes through /api/files/"},
+		{"DELETE", "/api/files/widgets_items/rec123/report_ab12cd34ef.pdf", "no write goes through /api/files/"},
+		{"GET", "/api/files/widgets_items/rec123", "missing filename segment"},
+		{"GET", "/api/files/widgets_items", "missing record and filename segments"},
 		{"GET", "/api/files//rec123/name.pdf", "empty collection segment"},
 	}
 	for _, d := range denied {
@@ -89,14 +89,14 @@ func TestFileCollectionFromPath(t *testing.T) {
 		want string
 		ok   bool
 	}{
-		{"/api/files/tasks_items/rec123/name_ab12cd34ef.pdf", "tasks_items", true},
+		{"/api/files/widgets_items/rec123/name_ab12cd34ef.pdf", "widgets_items", true},
 		{"/api/files/notes_items/rec123/body_ab12cd34ef.html", "notes_items", true},
 		{"/api/files/token", "", false},
-		{"/api/files/tasks_items/rec123", "", false},
-		{"/api/files/tasks_items/rec123/", "", false},
+		{"/api/files/widgets_items/rec123", "", false},
+		{"/api/files/widgets_items/rec123/", "", false},
 		{"/api/files//rec123/name.pdf", "", false},
-		{"/api/files/tasks_items//name.pdf", "", false},
-		{"/api/collections/tasks_items/records", "", false},
+		{"/api/files/widgets_items//name.pdf", "", false},
+		{"/api/collections/widgets_items/records", "", false},
 	}
 	for _, c := range cases {
 		got, ok := fileCollectionFromPath(c.path)
@@ -328,7 +328,7 @@ func TestEnforceGrantAllowsInScopeRequest(t *testing.T) {
 func TestEnforceGrantRejectsOutOfScopeRequest(t *testing.T) {
 	// This is the assertion that must fail if the scope check is ever
 	// removed or short-circuited: a grant scoped to notes:read only must not
-	// authorize a tasks:write route.
+	// authorize a widgets:write route.
 	app := newSchemaApp(t)
 	userID, clientID := seedUserAndClient(t, app)
 	grant, err := NewGrant(app, userID, clientID, []string{scopeNotesRead}, "active")
@@ -344,7 +344,7 @@ func TestEnforceGrantRejectsOutOfScopeRequest(t *testing.T) {
 		t.Fatalf("MintAccessToken: %v", err)
 	}
 
-	re := newRequestEvent(app, "POST", "/api/tasks/upload-version", token)
+	re := newRequestEvent(app, "POST", "/api/widgets/upload-version", token)
 	err = enforceGrant(re)
 	if err == nil {
 		t.Fatal("enforceGrant must refuse a request outside the grant's scopes")
@@ -438,10 +438,10 @@ func TestScopeForRouteAnyOfSharedCollections(t *testing.T) {
 	if !read.SatisfiedBy([]string{scopeNotesRead}) {
 		t.Error("labels read must be reachable with notes:read alone")
 	}
-	if !read.SatisfiedBy([]string{scopeTasksRead}) {
-		t.Error("labels read must be reachable with tasks:read alone")
+	if !read.SatisfiedBy([]string{scopeWidgetsRead}) {
+		t.Error("labels read must be reachable with widgets:read alone")
 	}
-	if read.SatisfiedBy([]string{scopeNotesWrite, scopeTasksWrite}) {
+	if read.SatisfiedBy([]string{scopeNotesWrite, scopeWidgetsWrite}) {
 		t.Error("labels read must NOT be satisfied by write-only scopes")
 	}
 
@@ -449,10 +449,10 @@ func TestScopeForRouteAnyOfSharedCollections(t *testing.T) {
 	if !write.SatisfiedBy([]string{scopeNotesWrite}) {
 		t.Error("labels write must be reachable with notes:write alone")
 	}
-	if !write.SatisfiedBy([]string{scopeTasksWrite}) {
-		t.Error("labels write must be reachable with tasks:write alone")
+	if !write.SatisfiedBy([]string{scopeWidgetsWrite}) {
+		t.Error("labels write must be reachable with widgets:write alone")
 	}
-	if write.SatisfiedBy([]string{scopeNotesRead, scopeTasksRead}) {
+	if write.SatisfiedBy([]string{scopeNotesRead, scopeWidgetsRead}) {
 		t.Error("labels write must NOT be satisfied by read-only scopes")
 	}
 }
@@ -466,7 +466,7 @@ func TestScopeForRouteKeepsPackagesApart(t *testing.T) {
 		{"POST", "/api/notes/items/abc123/move"},
 		{"GET", "/api/files/notes_items/rec123/body_ab12cd34ef.html"},
 	} {
-		if ScopeForRoute(r.method, r.path).SatisfiedBy([]string{scopeTasksRead, scopeTasksWrite}) {
+		if ScopeForRoute(r.method, r.path).SatisfiedBy([]string{scopeWidgetsRead, scopeWidgetsWrite}) {
 			t.Errorf("%s %s is reachable with another package's scopes", r.method, r.path)
 		}
 	}

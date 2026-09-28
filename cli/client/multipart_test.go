@@ -82,7 +82,7 @@ func TestCreateRecordMultipart(t *testing.T) {
 	path := writeTempFile(t, "report.pdf", "pdf-bytes")
 	var progressCalls int
 	var lastWritten, lastTotal int64
-	out, err := CreateRecordMultipart[testRow](context.Background(), c, "drive_items",
+	out, err := CreateRecordMultipart[testRow](context.Background(), c, "cogs_items",
 		map[string]string{"name": "report.pdf", "parent": "", "is_folder": "false"},
 		[]FilePart{{Field: "file", Name: "report.pdf", Path: path}},
 		func(written, total int64) {
@@ -118,7 +118,7 @@ func TestMultipartRetriesAfter401(t *testing.T) {
 	c := New(srv.URL, validStore("access-1"), srv.Client())
 
 	path := writeTempFile(t, "data.txt", "same-bytes-twice")
-	out, err := CreateRecordMultipart[testRow](context.Background(), c, "drive_items",
+	out, err := CreateRecordMultipart[testRow](context.Background(), c, "cogs_items",
 		map[string]string{"name": "data.txt"},
 		[]FilePart{{Field: "file", Name: "data.txt", Path: path}}, nil)
 	if err != nil {
@@ -144,7 +144,7 @@ func TestPostMultipartJSONField(t *testing.T) {
 	type sendReq struct {
 		Subject string `json:"subject"`
 	}
-	_, err := PostMultipart[testRow](context.Background(), c, "/api/mail/send",
+	_, err := PostMultipart[testRow](context.Background(), c, "/api/gizmos/send",
 		"json", sendReq{Subject: "hello"},
 		[]FilePart{{Field: "attachments", Name: "a.txt", Path: attach}}, nil)
 	if err != nil {

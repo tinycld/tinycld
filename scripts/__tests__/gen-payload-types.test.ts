@@ -10,54 +10,54 @@ import {
 
 const GENERATED = '/app/lib/generated'
 
-const mail: PayloadFeatureInput = {
-    name: '@tinycld/mail',
-    dir: '/ws/mail',
-    manifest: { slug: 'mail', payloads: { package: 'server/api' } },
+const gizmos: PayloadFeatureInput = {
+    name: '@tinycld/gizmos',
+    dir: '/ws/gizmos',
+    manifest: { slug: 'gizmos', payloads: { package: 'server/api' } },
 }
 
-const contacts: PayloadFeatureInput = {
-    name: '@tinycld/contacts',
-    dir: '/ws/contacts',
-    manifest: { slug: 'contacts' },
+const doodads: PayloadFeatureInput = {
+    name: '@tinycld/doodads',
+    dir: '/ws/doodads',
+    manifest: { slug: 'doodads' },
 }
 
 describe('planPayloadEmits', () => {
     it('plans one emit per feature with a payloads block', () => {
-        const emits = planPayloadEmits([mail, contacts], GENERATED)
+        const emits = planPayloadEmits([gizmos, doodads], GENERATED)
         expect(emits).toEqual([
             {
-                slug: 'mail',
-                srcDir: path.join('/ws/mail', 'server/api'),
-                outFile: path.join(GENERATED, 'mail-api.ts'),
+                slug: 'gizmos',
+                srcDir: path.join('/ws/gizmos', 'server/api'),
+                outFile: path.join(GENERATED, 'gizmos-api.ts'),
             },
         ])
     })
 
     it('skips features without a payloads block', () => {
-        expect(planPayloadEmits([contacts], GENERATED)).toEqual([])
+        expect(planPayloadEmits([doodads], GENERATED)).toEqual([])
     })
 
     it('rejects unsafe payloads.package values', () => {
         const quoted: PayloadFeatureInput = {
-            ...mail,
-            manifest: { slug: 'mail', payloads: { package: `server'; evil()//` } },
+            ...gizmos,
+            manifest: { slug: 'gizmos', payloads: { package: `server'; evil()//` } },
         }
         expect(() => planPayloadEmits([quoted], GENERATED)).toThrow(/unsafe value/)
     })
 
     it('rejects path traversal in payloads.package', () => {
         const traversal: PayloadFeatureInput = {
-            ...mail,
-            manifest: { slug: 'mail', payloads: { package: '../outside' } },
+            ...gizmos,
+            manifest: { slug: 'gizmos', payloads: { package: '../outside' } },
         }
         expect(() => planPayloadEmits([traversal], GENERATED)).toThrow(/relative path inside/)
     })
 
     it('rejects an unsafe slug', () => {
         const badSlug: PayloadFeatureInput = {
-            ...mail,
-            manifest: { slug: 'mail/../..', payloads: { package: 'server/api' } },
+            ...gizmos,
+            manifest: { slug: 'gizmos/../..', payloads: { package: 'server/api' } },
         }
         expect(() => planPayloadEmits([badSlug], GENERATED)).toThrow(/invalid slug/)
     })
@@ -67,11 +67,11 @@ describe('orphanPayloadFiles', () => {
     it('returns only -api.ts files whose slug is absent, tolerating a missing dir', () => {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gen-payload-types-'))
         try {
-            for (const f of ['mail-api.ts', 'drive-api.ts', 'package-icons.ts', 'notes.txt']) {
+            for (const f of ['gizmos-api.ts', 'cogs-api.ts', 'package-icons.ts', 'notes.txt']) {
                 fs.writeFileSync(path.join(dir, f), '')
             }
-            const orphans = orphanPayloadFiles(dir, new Set(['mail']))
-            expect(orphans).toEqual([path.join(dir, 'drive-api.ts')])
+            const orphans = orphanPayloadFiles(dir, new Set(['gizmos']))
+            expect(orphans).toEqual([path.join(dir, 'cogs-api.ts')])
         } finally {
             fs.rmSync(dir, { recursive: true, force: true })
         }

@@ -4,6 +4,10 @@ import { OrgLogo } from '@tinycld/core/components/OrgLogo'
 import { requestPasswordReset } from '@tinycld/core/lib/account-password'
 import { useAuth } from '@tinycld/core/lib/auth'
 import { takePendingRoute } from '@tinycld/core/lib/pending-route'
+import {
+    useSignInNotice,
+    useSignInNoticeStore,
+} from '@tinycld/core/lib/stores/sign-in-notice-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import type { OrgBranding as OrgBrandingInfo } from '@tinycld/core/lib/use-org-info'
 import { useOrgInfo } from '@tinycld/core/lib/use-org-info'
@@ -73,6 +77,8 @@ function LoginForm({
     const mutedColor = useThemeColor('muted-foreground')
     const primaryFg = useThemeColor('primary-foreground')
     const { login } = useAuth({ throwIfAnon: false })
+    const notice = useSignInNotice()
+    const clearNotice = useSignInNoticeStore(s => s.clear)
     // Pre-auth: reads the unauthenticated /api/org-info endpoint, so it
     // resolves fine before the user signs in. `org` is null while loading or
     // on an unbranded deployment — OrgBranding degrades to nothing rather
@@ -94,6 +100,11 @@ function LoginForm({
             setError(result.error)
             setIsSubmitting(false)
         } else if (result.user) {
+            // The notice (if any) explained why this sign-in was needed; a
+            // fresh session no longer needs the explanation, and it must not
+            // reappear if this user is later routed back to sign-in for an
+            // unrelated reason.
+            clearNotice()
             // Return to whatever route the gate interrupted — a deep link, or
             // the screen an expired session flipped out from under the user.
             // Recorded by AuthGate; replace (not push) so the sign-in overlay
@@ -120,11 +131,9 @@ function LoginForm({
                 Sign in to your account to continue
             </Text>
 
-            {error && (
-                <View className="rounded-lg p-3 mb-4 bg-danger-soft">
-                    <Text className="text-sm text-danger">{error}</Text>
-                </View>
-            )}
+            <SignInNotice isVisible={!!notice} notice={notice} />
+
+            <SignInError isVisible={!!error} error={error} />
 
             <View className="mb-4">
                 <Text className="mb-1.5 text-sm font-semibold text-foreground">
@@ -193,6 +202,26 @@ function LoginForm({
                 <ChangeServerLink />
             </View>
         </>
+    )
+}
+
+function SignInNotice({ isVisible, notice }: { isVisible: boolean; notice: string | null }) {
+    if (!isVisible) return null
+
+    return (
+        <View className="rounded-lg p-3 mb-4 bg-info-soft" testID="sign-in-notice">
+            <Text className="text-sm text-info">{notice}</Text>
+        </View>
+    )
+}
+
+function SignInError({ isVisible, error }: { isVisible: boolean; error: string | null }) {
+    if (!isVisible) return null
+
+    return (
+        <View className="rounded-lg p-3 mb-4 bg-danger-soft" testID="sign-in-error">
+            <Text className="text-sm text-danger">{error}</Text>
+        </View>
     )
 }
 

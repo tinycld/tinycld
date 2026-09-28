@@ -74,7 +74,7 @@ test('does not throw, and registers the handler, when the adapter resolves after
     expect(() => {
         render(
             <Providers>
-                <PackageActions slug="mail" onReady={onReady} />
+                <PackageActions slug="gizmos" onReady={onReady} />
             </Providers>
         )
     }).not.toThrow()
@@ -88,7 +88,7 @@ test('does not throw, and registers the handler, when the adapter resolves after
     resolveAdapter?.()
 
     await waitFor(() => {
-        expect(onReady).toHaveBeenCalledWith('mail', expect.any(Function))
+        expect(onReady).toHaveBeenCalledWith('gizmos', expect.any(Function))
     })
     expect(searchActions).toHaveBeenCalledTimes(1)
 })

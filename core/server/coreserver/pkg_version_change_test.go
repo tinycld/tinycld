@@ -83,8 +83,8 @@ func TestSpecForVersion(t *testing.T) {
 		source, target, want string
 		wantErr              bool
 	}{
-		{"@tinycld/mail", "1.2.3", "@tinycld/mail@1.2.3", false},
-		{"@tinycld/mail@1.0.0", "1.2.3", "@tinycld/mail@1.2.3", false},
+		{"@tinycld/gizmos", "1.2.3", "@tinycld/gizmos@1.2.3", false},
+		{"@tinycld/gizmos@1.0.0", "1.2.3", "@tinycld/gizmos@1.2.3", false},
 		{"github:tinycld/todo", "v1.2.0", "github:tinycld/todo#v1.2.0", false},
 		{"github:tinycld/todo#v0.1.0", "v1.2.0", "github:tinycld/todo#v1.2.0", false},
 		{"", "1.0.0", "", true},
@@ -111,18 +111,18 @@ func TestSpecForVersion(t *testing.T) {
 // files regardless of the pkg_build labeling.
 func TestCurrentBuildMigrationsUsesOwnerMap(t *testing.T) {
 	restore := setMigrationOwnersForTest(map[string]string{
-		"1713000005_x.js":    "mail",
-		"1713000006_y.js":    "mail",
+		"1713000005_x.js":    "gizmos",
+		"1713000006_y.js":    "gizmos",
 		"1700000000_core.js": "core",
 	})
 	defer restore()
 
 	// `current` pkg_build is labeled by a DIFFERENT package (core) — the old
-	// per-slug lookup would have found no `mail` row and returned empty.
-	got := currentBuildMigrations(nil, "mail")
+	// per-slug lookup would have found no `gizmos` row and returned empty.
+	got := currentBuildMigrations(nil, "gizmos")
 	want := []string{"1713000005_x.js", "1713000006_y.js"}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("currentBuildMigrations(mail) = %v, want %v (from owner map)", got, want)
+		t.Errorf("currentBuildMigrations(gizmos) = %v, want %v (from owner map)", got, want)
 	}
 
 	// Unknown slug → empty (not nil-panic).
@@ -132,7 +132,7 @@ func TestCurrentBuildMigrationsUsesOwnerMap(t *testing.T) {
 }
 
 // TestCheckChangeCompatBlocksIncompatibleSet exercises the apply pipeline's
-// authoritative re-check: a proposed downgrade of core below mail's declared
+// authoritative re-check: a proposed downgrade of core below gizmos's declared
 // peerVersions floor must surface a violation.
 
 // TestVersionDirection is the M2 regression guard: equal versions (incl. 1.0 vs
@@ -158,7 +158,7 @@ func TestDowngradeBuildRecordsEmptyMigrationDelta(t *testing.T) {
 
 	rec, err := recordBuild(app, map[string]any{
 		"build_id":            "build-dg-1",
-		"pkg_slug":            "mail",
+		"pkg_slug":            "gizmos",
 		"action":              "install",
 		"migrations_applied":  len(appliedDelta),
 		"migration_files":     appliedDelta,

@@ -3,35 +3,35 @@ import { describe, expect, it } from 'vitest'
 
 describe('workspace-store v0 → v1 lastPackageHref migration', () => {
     it('prefixes stored v0 hrefs, preserving the query string', () => {
-        const out = migrate({ lastPackageHref: { mail: '/mail?folder=sent' } }, 0)
-        expect(out.lastPackageHref).toEqual({ mail: '/a/mail?folder=sent' })
+        const out = migrate({ lastPackageHref: { gizmos: '/gizmos?folder=sent' } }, 0)
+        expect(out.lastPackageHref).toEqual({ gizmos: '/a/gizmos?folder=sent' })
     })
 
     it('prefixes deep hrefs', () => {
-        const out = migrate({ lastPackageHref: { drive: '/drive/folder/f1' } }, 0)
-        expect(out.lastPackageHref).toEqual({ drive: '/a/drive/folder/f1' })
+        const out = migrate({ lastPackageHref: { cogs: '/cogs/folder/f1' } }, 0)
+        expect(out.lastPackageHref).toEqual({ cogs: '/a/cogs/folder/f1' })
     })
 
     it('is idempotent — an already-prefixed value is left alone', () => {
-        const out = migrate({ lastPackageHref: { mail: '/a/mail' } }, 0)
-        expect(out.lastPackageHref).toEqual({ mail: '/a/mail' })
+        const out = migrate({ lastPackageHref: { gizmos: '/a/gizmos' } }, 0)
+        expect(out.lastPackageHref).toEqual({ gizmos: '/a/gizmos' })
     })
 
     it('drops values that are not app paths', () => {
         const out = migrate(
-            { lastPackageHref: { mail: 'https://example.com/mail', calc: '/calc' } },
+            { lastPackageHref: { gizmos: 'https://example.com/gizmos', trinkets: '/trinkets' } },
             0
         )
-        expect(out.lastPackageHref).toEqual({ calc: '/a/calc' })
+        expect(out.lastPackageHref).toEqual({ trinkets: '/a/trinkets' })
     })
 
     it('leaves v1 state untouched', () => {
-        const state = { lastPackageHref: { mail: '/mail' } }
+        const state = { lastPackageHref: { gizmos: '/gizmos' } }
         expect(migrate(state, 1)).toBe(state)
     })
 
     it('preserves other persisted fields', () => {
-        const out = migrate({ isSidebarOpen: true, lastPackageHref: { mail: '/mail' } }, 0)
+        const out = migrate({ isSidebarOpen: true, lastPackageHref: { gizmos: '/gizmos' } }, 0)
         expect(out).toMatchObject({ isSidebarOpen: true })
     })
 })

@@ -9,12 +9,12 @@ import (
 )
 
 // setupCommentMentionTestApp builds the minimum collection graph the
-// notify hook touches: users, drive_items, text_comments, comment_mentions,
+// notify hook touches: users, drive_items, notepads_comments, comment_mentions,
 // and notifications. NewTestApp() ships the standard PB users + collections
 // (settings, etc.) but not the tinycld extensions, so we add them inline.
 //
 // Single-org: there are no orgs/user_org collections. mentioned_user and
-// text_comments.author keep their field names but hold users ids directly.
+// notepads_comments.author keep their field names but hold users ids directly.
 func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 	t.Helper()
 	app, err := tests.NewTestApp()
@@ -48,7 +48,7 @@ func setupCommentMentionTestApp(t *testing.T) *tests.TestApp {
 		t.Fatal(err)
 	}
 
-	textComments := core.NewBaseCollection("text_comments")
+	textComments := core.NewBaseCollection("notepads_comments")
 	textComments.Fields.Add(&core.RelationField{
 		Name: "drive_item", Required: true, CollectionId: driveItems.Id, MaxSelect: 1,
 	})
@@ -138,7 +138,7 @@ func seedMentionFixture(t *testing.T) *mentionFixture {
 		t.Fatal(err)
 	}
 
-	tcCol, _ := app.FindCollectionByNameOrId("text_comments")
+	tcCol, _ := app.FindCollectionByNameOrId("notepads_comments")
 	commentRoot := core.NewRecord(tcCol)
 	commentRoot.Set("drive_item", driveItem.Id)
 	commentRoot.Set("comment_id", "cm_xyz")
@@ -217,7 +217,7 @@ func TestCommentMention_AllowlistRejectsUnknownCollection(t *testing.T) {
 
 func TestCommentMention_HappyPathWritesNotification(t *testing.T) {
 	f := seedMentionFixture(t)
-	mention := mkMention(t, f.app, f, "text_comments")
+	mention := mkMention(t, f.app, f, "notepads_comments")
 	runHookSync(t, f.app, mention)
 	n := findLatestNotification(t, f.app, f.mentionUser.Id)
 	if n == nil {
@@ -226,10 +226,10 @@ func TestCommentMention_HappyPathWritesNotification(t *testing.T) {
 	if got := n.GetString("type"); got != "comment_mention" {
 		t.Errorf("type = %q, want comment_mention", got)
 	}
-	if got := n.GetString("package"); got != "text" {
-		t.Errorf("package = %q, want text", got)
+	if got := n.GetString("package"); got != "notepads" {
+		t.Errorf("package = %q, want notepads", got)
 	}
-	wantURL := "https://app.test.local/p/text/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
+	wantURL := "https://app.test.local/p/notepads/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q", got, wantURL)
 	}
@@ -241,7 +241,7 @@ func TestCommentMention_ReplyDeepLinksToRootThread(t *testing.T) {
 	// Create a reply pointing at the root. Mentions on a reply should
 	// deep-link to the root (so the drawer opens with the whole thread
 	// in view), not to the reply id.
-	tcCol, _ := f.app.FindCollectionByNameOrId("text_comments")
+	tcCol, _ := f.app.FindCollectionByNameOrId("notepads_comments")
 	reply := core.NewRecord(tcCol)
 	reply.Set("drive_item", f.driveItem.Id)
 	reply.Set("comment_id", "cm_xyz")
@@ -255,7 +255,7 @@ func TestCommentMention_ReplyDeepLinksToRootThread(t *testing.T) {
 
 	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
 	mention := core.NewRecord(cmCol)
-	mention.Set("comment_collection", "text_comments")
+	mention.Set("comment_collection", "notepads_comments")
 	mention.Set("comment_record", reply.Id)
 	mention.Set("drive_item", f.driveItem.Id)
 	mention.Set("mentioned_user", f.mentionUser.Id)
@@ -269,7 +269,7 @@ func TestCommentMention_ReplyDeepLinksToRootThread(t *testing.T) {
 	if n == nil {
 		t.Fatal("expected notification, got none")
 	}
-	wantURL := "https://app.test.local/p/text/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
+	wantURL := "https://app.test.local/p/notepads/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q (reply should deep-link to root)", got, wantURL)
 	}
@@ -278,11 +278,11 @@ func TestCommentMention_ReplyDeepLinksToRootThread(t *testing.T) {
 func TestCommentMention_SuggestionReplyDeepLinksWithFocusSuggestionParam(t *testing.T) {
 	f := seedMentionFixture(t)
 
-	// Create a suggestion-reply row: text_comments with suggestion_id set.
+	// Create a suggestion-reply row: notepads_comments with suggestion_id set.
 	// The notify hook should detect the suggestion_id and emit a
 	// ?focusSuggestion=<id> URL instead of ?thread=<thread>, so the
 	// recipient lands on the focused suggestion row in the review drawer.
-	tcCol, _ := f.app.FindCollectionByNameOrId("text_comments")
+	tcCol, _ := f.app.FindCollectionByNameOrId("notepads_comments")
 	suggestionReply := core.NewRecord(tcCol)
 	suggestionReply.Set("drive_item", f.driveItem.Id)
 	suggestionReply.Set("comment_id", "synth_xyz")
@@ -297,7 +297,7 @@ func TestCommentMention_SuggestionReplyDeepLinksWithFocusSuggestionParam(t *test
 
 	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
 	mention := core.NewRecord(cmCol)
-	mention.Set("comment_collection", "text_comments")
+	mention.Set("comment_collection", "notepads_comments")
 	mention.Set("comment_record", suggestionReply.Id)
 	mention.Set("drive_item", f.driveItem.Id)
 	mention.Set("mentioned_user", f.mentionUser.Id)
@@ -311,7 +311,7 @@ func TestCommentMention_SuggestionReplyDeepLinksWithFocusSuggestionParam(t *test
 	if n == nil {
 		t.Fatal("expected notification, got none")
 	}
-	wantURL := "https://app.test.local/p/text/" + f.driveItem.Id + "?focusSuggestion=sug_abc123"
+	wantURL := "https://app.test.local/p/notepads/" + f.driveItem.Id + "?focusSuggestion=sug_abc123"
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q (suggestion reply should deep-link with focusSuggestion param)", got, wantURL)
 	}
@@ -324,7 +324,7 @@ func TestCommentMention_SkipsSelfMention(t *testing.T) {
 	// already drops these, but defense in depth lives here too.
 	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
 	mention := core.NewRecord(cmCol)
-	mention.Set("comment_collection", "text_comments")
+	mention.Set("comment_collection", "notepads_comments")
 	mention.Set("comment_record", f.commentRoot.Id)
 	mention.Set("drive_item", f.driveItem.Id)
 	mention.Set("mentioned_user", f.authorUser.Id)
@@ -348,7 +348,7 @@ func TestCommentMention_HookIsRegisteredAndFiresAsync(t *testing.T) {
 
 	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
 	mention := core.NewRecord(cmCol)
-	mention.Set("comment_collection", "text_comments")
+	mention.Set("comment_collection", "notepads_comments")
 	mention.Set("comment_record", f.commentRoot.Id)
 	mention.Set("drive_item", f.driveItem.Id)
 	mention.Set("mentioned_user", f.mentionUser.Id)
@@ -386,12 +386,12 @@ func TestCommentMention_HookIsRegisteredAndFiresAsync(t *testing.T) {
 // target_record so a mention can hang off any package's record. These tests
 // cover the cards path (no drive item at all) and the legacy fallback.
 
-// addCardsComments extends the fixture app with the boards_comments table the
+// addCardsComments extends the fixture app with the gadgets_comments table the
 // cards path resolves its author through. Mirrors the real collection's
 // shape only as far as this hook reads it.
 func addCardsComments(t *testing.T, app core.App, usersID string) *core.Collection {
 	t.Helper()
-	c := core.NewBaseCollection("boards_comments")
+	c := core.NewBaseCollection("gadgets_comments")
 	c.Fields.Add(&core.TextField{Name: "card"})
 	c.Fields.Add(&core.TextField{Name: "project"})
 	c.Fields.Add(&core.TextField{Name: "body"})
@@ -425,9 +425,9 @@ func seedCardsMention(t *testing.T, f *mentionFixture, cardID string) *core.Reco
 
 	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
 	mention := core.NewRecord(cmCol)
-	mention.Set("comment_collection", "boards_comments")
+	mention.Set("comment_collection", "gadgets_comments")
 	mention.Set("comment_record", comment.Id)
-	mention.Set("target_collection", "boards_cards")
+	mention.Set("target_collection", "gadgets_cards")
 	mention.Set("target_record", cardID)
 	mention.Set("mentioned_user", f.mentionUser.Id)
 	// drive_item intentionally NOT set.
@@ -451,11 +451,11 @@ func TestCommentMention_CardsTargetNotifiesWithoutDriveItem(t *testing.T) {
 	if n == nil {
 		t.Fatal("expected a notification for a cards mention, got none")
 	}
-	if got := n.GetString("package"); got != "boards" {
+	if got := n.GetString("package"); got != "gadgets" {
 		t.Errorf("package = %q, want cards", got)
 	}
-	// Boards routes its board at /a/boards and opens a card via ?focused=.
-	wantURL := "https://app.test.local/a/boards?focused=" + cardID
+	// Gadgets routes its board at /a/gadgets and opens a card via ?focused=.
+	wantURL := "https://app.test.local/a/gadgets?focused=" + cardID
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q", got, wantURL)
 	}
@@ -481,9 +481,9 @@ func TestCommentMention_CardsSkipsSelfMention(t *testing.T) {
 
 	cmCol, _ := f.app.FindCollectionByNameOrId("comment_mentions")
 	mention := core.NewRecord(cmCol)
-	mention.Set("comment_collection", "boards_comments")
+	mention.Set("comment_collection", "gadgets_comments")
 	mention.Set("comment_record", comment.Id)
-	mention.Set("target_collection", "boards_cards")
+	mention.Set("target_collection", "gadgets_cards")
 	mention.Set("target_record", "card0000000000")
 	mention.Set("mentioned_user", f.mentionUser.Id)
 	if err := f.app.Save(mention); err != nil {
@@ -500,14 +500,14 @@ func TestCommentMention_CardsSkipsSelfMention(t *testing.T) {
 // still resolve it, or the migration window silently drops notifications.
 func TestCommentMention_LegacyRowWithoutTargetColumns(t *testing.T) {
 	f := seedMentionFixture(t)
-	mention := mkMention(t, f.app, f, "text_comments") // sets drive_item only
+	mention := mkMention(t, f.app, f, "notepads_comments") // sets drive_item only
 	runHookSync(t, f.app, mention)
 
 	n := findLatestNotification(t, f.app, f.mentionUser.Id)
 	if n == nil {
 		t.Fatal("expected a notification for a legacy drive-only row, got none")
 	}
-	wantURL := "https://app.test.local/p/text/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
+	wantURL := "https://app.test.local/p/notepads/" + f.driveItem.Id + "?thread=" + f.commentRoot.Id
 	if got := n.GetString("url"); got != wantURL {
 		t.Errorf("url = %q, want %q", got, wantURL)
 	}
@@ -533,9 +533,9 @@ func relaxFixtureDriveItem(t *testing.T, app core.App) {
 }
 
 // The notification TYPE is what the per-user mute preference is keyed on, so a
-// package's two mention sources must agree. Boards' DESCRIPTION mentions come
-// from its own flush hook and send "boards_mention"; a cards COMMENT mention
-// must send the same, or muting boards would silence only half of them.
+// package's two mention sources must agree. Gadgets' DESCRIPTION mentions come
+// from its own flush hook and send "gadgets_mention"; a cards COMMENT mention
+// must send the same, or muting gadgets would silence only half of them.
 func TestCommentMention_CardsUsesPackageScopedType(t *testing.T) {
 	f := seedMentionFixture(t)
 	relaxFixtureDriveItem(t, f.app)
@@ -547,8 +547,8 @@ func TestCommentMention_CardsUsesPackageScopedType(t *testing.T) {
 	if n == nil {
 		t.Fatal("expected a notification, got none")
 	}
-	if got := n.GetString("type"); got != "boards_mention" {
-		t.Errorf("type = %q, want boards_mention (must match the description "+
+	if got := n.GetString("type"); got != "gadgets_mention" {
+		t.Errorf("type = %q, want gadgets_mention (must match the description "+
 			"hook's type, or one mute switch cannot cover both)", got)
 	}
 }
@@ -557,7 +557,7 @@ func TestCommentMention_CardsUsesPackageScopedType(t *testing.T) {
 // comment is one thing to a reader.
 func TestCommentMention_DocumentPackagesShareOneType(t *testing.T) {
 	f := seedMentionFixture(t)
-	mention := mkMention(t, f.app, f, "text_comments")
+	mention := mkMention(t, f.app, f, "notepads_comments")
 	runHookSync(t, f.app, mention)
 
 	n := findLatestNotification(t, f.app, f.mentionUser.Id)
@@ -611,7 +611,7 @@ func TestCommentMention_MutedTypeIsNotDelivered(t *testing.T) {
 	f := seedMentionFixture(t)
 	mutePreference(t, f.app, f.mentionUser.Id, map[string]any{"comment_mention": false})
 
-	mention := mkMention(t, f.app, f, "text_comments")
+	mention := mkMention(t, f.app, f, "notepads_comments")
 	runHookSync(t, f.app, mention)
 
 	if got := findLatestNotification(t, f.app, f.mentionUser.Id); got != nil {
@@ -623,13 +623,13 @@ func TestCommentMention_MutedTypeIsNotDelivered(t *testing.T) {
 // switches at all.
 func TestCommentMention_MutingCardsLeavesDocumentMentions(t *testing.T) {
 	f := seedMentionFixture(t)
-	mutePreference(t, f.app, f.mentionUser.Id, map[string]any{"boards_mention": false})
+	mutePreference(t, f.app, f.mentionUser.Id, map[string]any{"gadgets_mention": false})
 
-	mention := mkMention(t, f.app, f, "text_comments")
+	mention := mkMention(t, f.app, f, "notepads_comments")
 	runHookSync(t, f.app, mention)
 
 	if got := findLatestNotification(t, f.app, f.mentionUser.Id); got == nil {
-		t.Error("muting boards_mention also silenced a document mention")
+		t.Error("muting gadgets_mention also silenced a document mention")
 	}
 }
 
@@ -637,9 +637,9 @@ func TestCommentMention_MutingCardsLeavesDocumentMentions(t *testing.T) {
 // defaults to sending, so a missing key is not a mute.
 func TestCommentMention_UnrelatedMuteDoesNotBlock(t *testing.T) {
 	f := seedMentionFixture(t)
-	mutePreference(t, f.app, f.mentionUser.Id, map[string]any{"mail_new_message": false})
+	mutePreference(t, f.app, f.mentionUser.Id, map[string]any{"gizmos_new_message": false})
 
-	mention := mkMention(t, f.app, f, "text_comments")
+	mention := mkMention(t, f.app, f, "notepads_comments")
 	runHookSync(t, f.app, mention)
 
 	if got := findLatestNotification(t, f.app, f.mentionUser.Id); got == nil {

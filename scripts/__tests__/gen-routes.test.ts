@@ -10,31 +10,31 @@ describe('emitRoutes', () => {
     let routesBase: string
     beforeEach(() => {
         tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tcld-routes-'))
-        pkgDir = path.join(tmp, 'contacts')
-        fs.mkdirSync(path.join(pkgDir, 'tinycld', 'contacts', 'screens'), { recursive: true })
-        fs.writeFileSync(path.join(pkgDir, 'tinycld', 'contacts', 'screens', 'index.tsx'), '')
-        fs.writeFileSync(path.join(pkgDir, 'tinycld', 'contacts', 'screens', '[id].tsx'), '')
+        pkgDir = path.join(tmp, 'doodads')
+        fs.mkdirSync(path.join(pkgDir, 'tinycld', 'doodads', 'screens'), { recursive: true })
+        fs.writeFileSync(path.join(pkgDir, 'tinycld', 'doodads', 'screens', 'index.tsx'), '')
+        fs.writeFileSync(path.join(pkgDir, 'tinycld', 'doodads', 'screens', '[id].tsx'), '')
         routesBase = path.join(tmp, 'app', 'a', '(app)')
     })
     afterEach(() => fs.rmSync(tmp, { recursive: true, force: true }))
 
     it('emits one re-export per screen file under routesBase/<slug>/', () => {
         const written = emitRoutes({
-            packageName: '@tinycld/contacts',
-            slug: 'contacts',
+            packageName: '@tinycld/doodads',
+            slug: 'doodads',
             packageDir: pkgDir,
-            routesDir: 'tinycld/contacts/screens', // resolved path relative to pkgDir
+            routesDir: 'tinycld/doodads/screens', // resolved path relative to pkgDir
             importSubpath: 'screens', // the exports-map subpath
             routesBase,
         })
-        const indexFile = path.join(routesBase, 'contacts', 'index.tsx')
+        const indexFile = path.join(routesBase, 'doodads', 'index.tsx')
         expect(fs.existsSync(indexFile)).toBe(true)
         expect(fs.readFileSync(indexFile, 'utf8')).toBe(
-            "export { default } from '@tinycld/contacts/screens/index'\n"
+            "export { default } from '@tinycld/doodads/screens/index'\n"
         )
-        const idFile = path.join(routesBase, 'contacts', '[id].tsx')
+        const idFile = path.join(routesBase, 'doodads', '[id].tsx')
         expect(fs.readFileSync(idFile, 'utf8')).toBe(
-            "export { default } from '@tinycld/contacts/screens/[id]'\n"
+            "export { default } from '@tinycld/doodads/screens/[id]'\n"
         )
         expect(written).toHaveLength(2)
     })
@@ -43,9 +43,9 @@ describe('emitRoutes', () => {
         expect(() =>
             emitRoutes({
                 packageName: "@tinycld/x'; evil()//",
-                slug: 'contacts',
+                slug: 'doodads',
                 packageDir: pkgDir,
-                routesDir: 'tinycld/contacts/screens',
+                routesDir: 'tinycld/doodads/screens',
                 importSubpath: 'screens',
                 routesBase,
             })
@@ -59,12 +59,12 @@ describe('emitPublicRoutes', () => {
     let publicRoutesBase: string
     beforeEach(() => {
         tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tcld-public-routes-'))
-        pkgDir = path.join(tmp, 'drive')
-        fs.mkdirSync(path.join(pkgDir, 'tinycld', 'drive', 'public-screens', 'share'), {
+        pkgDir = path.join(tmp, 'cogs')
+        fs.mkdirSync(path.join(pkgDir, 'tinycld', 'cogs', 'public-screens', 'share'), {
             recursive: true,
         })
         fs.writeFileSync(
-            path.join(pkgDir, 'tinycld', 'drive', 'public-screens', 'share', '[token].tsx'),
+            path.join(pkgDir, 'tinycld', 'cogs', 'public-screens', 'share', '[token].tsx'),
             ''
         )
         publicRoutesBase = path.join(tmp, 'app', 'p')
@@ -73,17 +73,17 @@ describe('emitPublicRoutes', () => {
 
     it('emits re-exports under publicRoutesBase/<slug>/, preserving nested paths', () => {
         const written = emitPublicRoutes({
-            packageName: '@tinycld/drive',
-            slug: 'drive',
+            packageName: '@tinycld/cogs',
+            slug: 'cogs',
             packageDir: pkgDir,
-            routesDir: 'tinycld/drive/public-screens',
+            routesDir: 'tinycld/cogs/public-screens',
             importSubpath: 'public-screens',
             publicRoutesBase,
         })
-        const tokenFile = path.join(publicRoutesBase, 'drive', 'share', '[token].tsx')
+        const tokenFile = path.join(publicRoutesBase, 'cogs', 'share', '[token].tsx')
         expect(fs.existsSync(tokenFile)).toBe(true)
         expect(fs.readFileSync(tokenFile, 'utf8')).toBe(
-            "export { default } from '@tinycld/drive/public-screens/share/[token]'\n"
+            "export { default } from '@tinycld/cogs/public-screens/share/[token]'\n"
         )
         expect(written).toEqual([tokenFile])
     })
@@ -97,7 +97,7 @@ describe('pruneOrphanRouteDirs', () => {
         fs.mkdirSync(path.join(base, 'todo'))
         fs.writeFileSync(path.join(base, 'todo', '[id].tsx'), '')
         // a present package's route dir
-        fs.mkdirSync(path.join(base, 'mail'))
+        fs.mkdirSync(path.join(base, 'gizmos'))
         // an app-owned dir
         fs.mkdirSync(path.join(base, 'admin'))
         // app-owned files (must never be touched — prune is dir-only)
@@ -107,11 +107,11 @@ describe('pruneOrphanRouteDirs', () => {
     afterEach(() => fs.rmSync(base, { recursive: true, force: true }))
 
     it('removes only orphan package route dirs, sparing present + app-owned + files', () => {
-        const pruned = pruneOrphanRouteDirs(base, new Set(['mail']), new Set(['admin']))
+        const pruned = pruneOrphanRouteDirs(base, new Set(['gizmos']), new Set(['admin']))
 
         expect(pruned).toEqual(['todo'])
         expect(fs.existsSync(path.join(base, 'todo'))).toBe(false)
-        expect(fs.existsSync(path.join(base, 'mail'))).toBe(true)
+        expect(fs.existsSync(path.join(base, 'gizmos'))).toBe(true)
         expect(fs.existsSync(path.join(base, 'admin'))).toBe(true)
         expect(fs.existsSync(path.join(base, '_layout.tsx'))).toBe(true)
         expect(fs.existsSync(path.join(base, 'index.tsx'))).toBe(true)
@@ -122,7 +122,7 @@ describe('pruneOrphanRouteDirs', () => {
     })
 
     it('prunes nothing when every dir is present or app-owned', () => {
-        expect(pruneOrphanRouteDirs(base, new Set(['mail', 'todo']), new Set(['admin']))).toEqual(
+        expect(pruneOrphanRouteDirs(base, new Set(['gizmos', 'todo']), new Set(['admin']))).toEqual(
             []
         )
         expect(fs.existsSync(path.join(base, 'todo'))).toBe(true)

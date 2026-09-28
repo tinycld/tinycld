@@ -22,18 +22,20 @@ describe('fetchReleaseManifest', () => {
             json: async () => ({
                 appTag: 'v0.0.3',
                 releasedAt: '2026-06-05T12:00:00.000Z',
-                members: [{ name: 'mail', repo: 'tinycld/mail', tag: 'v0.1.0', sha: 'abc1234' }],
+                members: [
+                    { name: 'gizmos', repo: 'tinycld/gizmos', tag: 'v0.1.0', sha: 'abc1234' },
+                ],
             }),
         }))
 
         const manifest = await fetchReleaseManifest()
         expect(manifest.appTag).toBe('v0.0.3')
         expect(manifest.members).toHaveLength(1)
-        expect(manifest.members[0]?.name).toBe('mail')
+        expect(manifest.members[0]?.name).toBe('gizmos')
     })
 
     it('returns an empty members list on a non-ok response', async () => {
-        mockFetch(() => ({ ok: false, json: async () => ({ members: [{ name: 'mail' }] }) }))
+        mockFetch(() => ({ ok: false, json: async () => ({ members: [{ name: 'gizmos' }] }) }))
         const manifest = await fetchReleaseManifest()
         expect(manifest.members).toEqual([])
     })

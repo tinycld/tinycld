@@ -18,11 +18,11 @@ import (
 func TestProductionRebuildDeps_WireVerifyCompat(t *testing.T) {
 	buildDir := t.TempDir()
 	pkgbuildtest.WriteBuildBase(t, buildDir, "0.0.4")
-	pkgbuildtest.WriteBuildMember(t, buildDir, "mail", "2.0.0",
+	pkgbuildtest.WriteBuildMember(t, buildDir, "gizmos", "2.0.0",
 		map[string]string{corePackageKey: ">=0.5.0 <0.6.0"})
 	m := RebuildManifest{BuildID: "b", Members: []MemberSpec{
 		{Slug: baseMemberSlug, FromCurrent: true},
-		{Slug: "mail"},
+		{Slug: "gizmos"},
 	}}
 
 	deps := productionRebuildDeps(pocketbase.New(), &installjob.Job{ID: "j"}, m, nil)
@@ -30,7 +30,7 @@ func TestProductionRebuildDeps_WireVerifyCompat(t *testing.T) {
 		t.Fatal("production deps must wire verifyCompat")
 	}
 	err := deps.verifyCompat(m, buildDir)
-	if err == nil || !strings.Contains(err.Error(), "mail") {
+	if err == nil || !strings.Contains(err.Error(), "gizmos") {
 		t.Fatalf("production verifyCompat must refuse the violating build, got: %v", err)
 	}
 }

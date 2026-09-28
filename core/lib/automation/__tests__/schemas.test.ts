@@ -66,7 +66,7 @@ describe('conditionsAstSchema', () => {
 describe('ruleActionsSchema', () => {
     it('accepts an ordered action list with qualified refs', () => {
         const ok = [
-            { ref: 'mail:move-to-folder', params: { folder: 'abc123def456ghi' } },
+            { ref: 'gizmos:move-to-folder', params: { folder: 'abc123def456ghi' } },
             { ref: 'core:apply-label', params: { label: 'abc123def456ghi' } },
         ]
         expect(ruleActionsSchema.safeParse(ok).success).toBe(true)
@@ -112,7 +112,7 @@ describe('validateDefinitions', () => {
     }
 
     it('returns no errors for a valid definition set', () => {
-        expect(validateDefinitions('mail', good)).toEqual([])
+        expect(validateDefinitions('gizmos', good)).toEqual([])
     })
 
     it('rejects malformed and duplicate ids', () => {
@@ -122,7 +122,7 @@ describe('validateDefinitions', () => {
                 { id: 'Same_Id', label: 'y', collection: 'c', on: 'create' },
             ],
         }
-        const errors = validateDefinitions('mail', dup)
+        const errors = validateDefinitions('gizmos', dup)
         expect(errors.some(e => e.includes('kebab-case'))).toBe(true)
         expect(errors.some(e => e.includes('duplicate'))).toBe(true)
     })
@@ -131,7 +131,9 @@ describe('validateDefinitions', () => {
         const synthetic: AutomationDefinitions = {
             triggers: [{ id: 'schedule', label: 'On a schedule', synthetic: 'schedule' }],
         }
-        expect(validateDefinitions('mail', synthetic).some(e => e.includes('synthetic'))).toBe(true)
+        expect(validateDefinitions('gizmos', synthetic).some(e => e.includes('synthetic'))).toBe(
+            true
+        )
         expect(validateDefinitions('core', synthetic, { allowSynthetic: true })).toEqual([])
     })
 
@@ -147,7 +149,9 @@ describe('validateDefinitions', () => {
                 },
             ],
         }
-        expect(validateDefinitions('mail', bad).some(e => e.includes('declares watch'))).toBe(true)
+        expect(validateDefinitions('gizmos', bad).some(e => e.includes('declares watch'))).toBe(
+            true
+        )
     })
 
     it('rejects an empty fields list on a trigger', () => {
@@ -162,7 +166,7 @@ describe('validateDefinitions', () => {
                 },
             ],
         }
-        expect(validateDefinitions('mail', bad).some(e => e.includes('empty fields list'))).toBe(
+        expect(validateDefinitions('gizmos', bad).some(e => e.includes('empty fields list'))).toBe(
             true
         )
     })
@@ -184,7 +188,7 @@ describe('validateDefinitions', () => {
                 },
             ],
         }
-        expect(validateDefinitions('mail', bad).some(e => e.includes('missing'))).toBe(true)
+        expect(validateDefinitions('gizmos', bad).some(e => e.includes('missing'))).toBe(true)
     })
 
     // A typed relation param with no target reaches the UI as a picker over
@@ -200,7 +204,7 @@ describe('validateDefinitions', () => {
                 },
             ],
         }
-        expect(validateDefinitions('boards', bad).some(e => e.includes('no relationTarget'))).toBe(
+        expect(validateDefinitions('gadgets', bad).some(e => e.includes('no relationTarget'))).toBe(
             true
         )
     })
@@ -217,7 +221,7 @@ describe('validateDefinitions', () => {
             ],
         }
         expect(
-            validateDefinitions('boards', bad).some(e => e.includes('declares relationTarget'))
+            validateDefinitions('gadgets', bad).some(e => e.includes('declares relationTarget'))
         ).toBe(true)
     })
 
@@ -232,7 +236,7 @@ describe('validateDefinitions', () => {
                 },
             ],
         }
-        expect(validateDefinitions('boards', good)).toEqual([])
+        expect(validateDefinitions('gadgets', good)).toEqual([])
     })
 
     // Column params inherit the column's target; declaring one is not the
@@ -254,6 +258,6 @@ describe('validateDefinitions', () => {
                 },
             ],
         }
-        expect(validateDefinitions('mail', good)).toEqual([])
+        expect(validateDefinitions('gizmos', good)).toEqual([])
     })
 })

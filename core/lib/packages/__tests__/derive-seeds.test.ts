@@ -5,10 +5,10 @@ describe('deriveSeeds', () => {
     it('orders by manifest dependencies (deps first)', () => {
         const noop = async () => {}
         const seeds = deriveSeeds([
-            { manifest: { slug: 'calc', dependencies: ['drive'] }, seed: noop },
-            { manifest: { slug: 'drive' }, seed: noop },
+            { manifest: { slug: 'trinkets', dependencies: ['cogs'] }, seed: noop },
+            { manifest: { slug: 'cogs' }, seed: noop },
         ] as never)
-        expect(seeds.map(s => s.slug)).toEqual(['drive', 'calc'])
+        expect(seeds.map(s => s.slug)).toEqual(['cogs', 'trinkets'])
     })
 
     it('skips entries without a seed', () => {

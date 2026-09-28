@@ -8,15 +8,15 @@ import {
 } from '../src/runners'
 
 const appDir = '/ws/app'
-const featurePkg = { dir: '/ws/contacts', name: '@tinycld/contacts', kind: 'feature' as const }
+const featurePkg = { dir: '/ws/doodads', name: '@tinycld/doodads', kind: 'feature' as const }
 const appPkg = { dir: '/ws/app', name: 'app', kind: 'app' as const }
 
 describe('buildTypecheckCommand', () => {
     it('runs tsc against the package tsconfig', () => {
         const cmd = buildTypecheckCommand(featurePkg, appDir)
         expect(cmd.bin).toBe('tsc')
-        expect(cmd.args).toEqual(['--noEmit', '-p', path.join('/ws/contacts', 'tsconfig.json')])
-        expect(cmd.cwd).toBe('/ws/contacts')
+        expect(cmd.args).toEqual(['--noEmit', '-p', path.join('/ws/doodads', 'tsconfig.json')])
+        expect(cmd.cwd).toBe('/ws/doodads')
     })
 })
 
@@ -24,7 +24,7 @@ describe('buildTestCommand', () => {
     it('runs vitest with the package vitest.config', () => {
         const cmd = buildTestCommand(featurePkg, appDir)
         expect(cmd.bin).toBe('vitest')
-        expect(cmd.args).toEqual(['run', '--config', path.join('/ws/contacts', 'vitest.config.ts')])
+        expect(cmd.args).toEqual(['run', '--config', path.join('/ws/doodads', 'vitest.config.ts')])
     })
     it('for the app shell, uses the app vitest.config', () => {
         const cmd = buildTestCommand(appPkg, appDir)
@@ -39,7 +39,7 @@ describe('buildLintCommand', () => {
         // biome's defaults and produces different (stricter) output.
         const cmd = buildLintCommand(featurePkg, appDir)
         expect(cmd.bin).toBe('biome')
-        expect(cmd.args).toEqual(['check', '/ws/contacts'])
+        expect(cmd.args).toEqual(['check', '/ws/doodads'])
         expect(cmd.cwd).toBe(appDir)
     })
 })

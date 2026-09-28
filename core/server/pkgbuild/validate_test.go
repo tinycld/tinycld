@@ -8,8 +8,8 @@ func TestValidatePackageSpec(t *testing.T) {
 		wantErr bool
 	}{
 		// bare npm names (existing behavior preserved)
-		{"mail", false},
-		{"@tinycld/mail", false},
+		{"gizmos", false},
+		{"@tinycld/gizmos", false},
 		{"@tinycld/google-takeout-import", false},
 		// git specs npm pack understands natively
 		{"github:tinycld/todo", false},
@@ -27,15 +27,15 @@ func TestValidatePackageSpec(t *testing.T) {
 		{"https://github.com/tinycld/todo.git#v1.0.0", false},
 		{"git+https://github.com/tinycld/todo.git#1.2.3-beta.1", false},
 		// rejected #ref forms: only git specs may pin, ref must be a safe token
-		{"mail#v1.0.0", true},          // npm name can't carry a #ref
-		{"@tinycld/mail#v1.0.0", true}, // scoped npm name can't carry a #ref
+		{"gizmos#v1.0.0", true},          // npm name can't carry a #ref
+		{"@tinycld/gizmos#v1.0.0", true}, // scoped npm name can't carry a #ref
 		{"github:tinycld/todo#-flag", true},
 		{"github:tinycld/todo#", true}, // empty ref
 		{"github:tinycld/todo#v1.0.0#extra", true},
 		// versioned npm specs (npm pack name@version)
-		{"mail@1.2.3", false},
-		{"@tinycld/mail@1.2.3", false},
-		{"mail@latest", false},
+		{"gizmos@1.2.3", false},
+		{"@tinycld/gizmos@1.2.3", false},
+		{"gizmos@latest", false},
 		// tightened bare owner/repo shorthand — no path traversal
 		{"../etc", true},
 		{"..%2f/etc", true},
@@ -60,7 +60,7 @@ func TestValidatePackageSpec(t *testing.T) {
 
 func TestValidateManifest(t *testing.T) {
 	base := func() *ParsedManifest {
-		return &ParsedManifest{Name: "Cal Slots", Slug: "calendar-slots", Version: "0.1.0"}
+		return &ParsedManifest{Name: "Sprocket Slots", Slug: "sprockets-slots", Version: "0.1.0"}
 	}
 	cases := []struct {
 		name        string
@@ -77,9 +77,9 @@ func TestValidateManifest(t *testing.T) {
 		{
 			"nav and routes",
 			&ParsedManifest{
-				Name: "Cal", Slug: "calendar", Version: "1.0.0",
+				Name: "Sprockets", Slug: "sprockets", Version: "1.0.0",
 				Routes: &ManifestRoutes{Directory: "screens"},
-				Nav:    &ManifestNav{Label: "Calendar", Icon: "calendar"},
+				Nav:    &ManifestNav{Label: "Sprockets", Icon: "calendar"},
 			},
 			false, nil, false,
 		},
@@ -107,7 +107,7 @@ func TestValidateManifest(t *testing.T) {
 			true, nil, false,
 		},
 		// Env gate: slug collision with a bundled package.
-		{"bundled slug collision", base(), false, map[string]bool{"calendar-slots": true}, true},
+		{"bundled slug collision", base(), false, map[string]bool{"sprockets-slots": true}, true},
 	}
 	for _, tc := range cases {
 		err := ValidateManifest(tc.m, tc.allowServer, tc.bundled)
@@ -118,9 +118,9 @@ func TestValidateManifest(t *testing.T) {
 }
 
 func TestIsTrustedScope(t *testing.T) {
-	trusted := []string{"@tinycld/mail", "@tinycld/todo"}
+	trusted := []string{"@tinycld/gizmos", "@tinycld/todo"}
 	untrusted := []string{
-		"mail",
+		"gizmos",
 		"github:tinycld/todo",
 		"https://github.com/tinycld/todo",
 		"@acme/widget",

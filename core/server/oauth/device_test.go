@@ -27,7 +27,7 @@ func TestValidateScopesRejectsUnknown(t *testing.T) {
 // TestValidateClientScopesEnforcesClientCeiling is the mutation target for
 // Finding 3: oauth_clients.scopes must be an actual ceiling, not a written-
 // but-never-read column. A client registered for `profile` only must not be
-// able to obtain notes:write/tasks:write merely because those scopes exist in
+// able to obtain notes:write/widgets:write merely because those scopes exist in
 // the global AllScopes catalog.
 func TestValidateClientScopesEnforcesClientCeiling(t *testing.T) {
 	app := newSchemaApp(t)
@@ -47,7 +47,7 @@ func TestValidateClientScopesEnforcesClientCeiling(t *testing.T) {
 	if err := ValidateClientScopes(c, []string{scopeNotesRead}); err != nil {
 		t.Fatalf("a registered scope must be allowed: %v", err)
 	}
-	if err := ValidateClientScopes(c, []string{scopeNotesWrite, scopeTasksWrite}); err == nil {
+	if err := ValidateClientScopes(c, []string{scopeNotesWrite, scopeWidgetsWrite}); err == nil {
 		t.Fatal("a client must not be able to obtain a scope outside its own registration, " +
 			"even though both scopes are in the global catalog")
 	}
@@ -137,7 +137,7 @@ func TestDeviceAuthorizationIssuesCodes(t *testing.T) {
 
 	form := url.Values{}
 	form.Set("client_id", "tinycld-cli")
-	form.Set("scope", "notes:read tasks:read")
+	form.Set("scope", "notes:read widgets:read")
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/oauth/device",

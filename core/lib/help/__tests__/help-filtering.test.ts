@@ -27,9 +27,9 @@ const topic = (pkgSlug: string, topicId: string, keyPrefix?: string) => ({
 
 const groups: HelpGroup[] = [
     {
-        packageName: 'Mail',
-        pkgSlug: 'mail',
-        topics: [topic('mail', 'provider-setup', 'mail.'), topic('mail', 'custom-domains')],
+        packageName: 'Gizmos',
+        pkgSlug: 'gizmos',
+        topics: [topic('gizmos', 'provider-setup', 'mail.'), topic('gizmos', 'custom-domains')],
     },
     {
         packageName: 'Push',
@@ -41,8 +41,8 @@ const groups: HelpGroup[] = [
 describe('help topic filtering', () => {
     it('hides a topic that documents a setting administered elsewhere', () => {
         const visible = visibleGroups(groups, ['mail.', 'vapid.'])
-        const mail = visible.find(g => g.pkgSlug === 'mail')
-        expect(mail?.topics.map(t => t.topicId)).toEqual(['custom-domains'])
+        const gizmos = visible.find(g => g.pkgSlug === 'gizmos')
+        expect(gizmos?.topics.map(t => t.topicId)).toEqual(['custom-domains'])
     })
 
     // A package left with no topics contributes no section, rather than an
@@ -64,7 +64,7 @@ describe('help topic filtering', () => {
     it('does not resolve a hidden topic by id', () => {
         const visible = visibleGroups(groups, ['mail.'])
         const byId = new Map(visible.flatMap(g => g.topics).map(t => [t.id, t]))
-        expect(byId.get('mail:provider-setup')).toBeUndefined()
-        expect(byId.get('mail:custom-domains')).toBeDefined()
+        expect(byId.get('gizmos:provider-setup')).toBeUndefined()
+        expect(byId.get('gizmos:custom-domains')).toBeDefined()
     })
 })

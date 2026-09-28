@@ -8,8 +8,8 @@ const catalog: CatalogResponse = {
     triggers: [
         { ref: 'core:manual', pkg: 'core', label: 'Run manually', synthetic: 'manual' },
         {
-            ref: 'mail:message-arrived',
-            pkg: 'mail',
+            ref: 'gizmos:message-arrived',
+            pkg: 'gizmos',
             label: 'A message arrives',
             collection: 'mail_messages',
             fields: [{ key: 'subject', label: 'Subject', type: 'text' }],
@@ -18,15 +18,15 @@ const catalog: CatalogResponse = {
     actions: [
         { ref: 'core:notify', pkg: 'core', label: 'Notify', kind: 'native', available: true },
         {
-            ref: 'mail:move-folder',
-            pkg: 'mail',
+            ref: 'gizmos:move-folder',
+            pkg: 'gizmos',
             label: 'Move to folder',
             kind: 'record-op',
             available: true,
         },
         {
-            ref: 'mail:apply-label',
-            pkg: 'mail',
+            ref: 'gizmos:apply-label',
+            pkg: 'gizmos',
             label: 'Apply label',
             kind: 'record-op',
             available: true,
@@ -40,7 +40,7 @@ function makeRule(overrides: Partial<Rules> = {}): Rules {
         name: 'Test rule',
         scope: 'personal',
         owner: 'u1',
-        trigger: 'mail:message-arrived',
+        trigger: 'gizmos:message-arrived',
         trigger_config: {},
         conditions: { match: 'all', groups: [] },
         actions: [],
@@ -70,8 +70,8 @@ describe('ruleSummary', () => {
                 ],
             },
             actions: [
-                { ref: 'mail:move-folder', params: {} },
-                { ref: 'mail:apply-label', params: {} },
+                { ref: 'gizmos:move-folder', params: {} },
+                { ref: 'gizmos:apply-label', params: {} },
             ],
         })
         expect(ruleSummary(rule, catalog)).toBe(
@@ -103,8 +103,8 @@ describe('ruleSummary', () => {
     it('joins multiple action labels', () => {
         const rule = makeRule({
             actions: [
-                { ref: 'mail:move-folder', params: {} },
-                { ref: 'mail:apply-label', params: {} },
+                { ref: 'gizmos:move-folder', params: {} },
+                { ref: 'gizmos:apply-label', params: {} },
             ],
         })
         expect(ruleSummary(rule, catalog)).toBe('A message arrives · Move to folder, Apply label')
@@ -134,8 +134,8 @@ describe('needsPackage', () => {
     })
 
     it('returns the missing package slug when the trigger is not in the catalog', () => {
-        const rule = makeRule({ trigger: 'calendar:event-created' })
-        expect(needsPackage(rule, catalog)).toBe('calendar')
+        const rule = makeRule({ trigger: 'sprockets:event-created' })
+        expect(needsPackage(rule, catalog)).toBe('sprockets')
     })
 
     it('returns null for a malformed ref rather than throwing', () => {

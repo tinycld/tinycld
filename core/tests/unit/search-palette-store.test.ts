@@ -7,10 +7,10 @@ describe('useSearchPaletteStore', () => {
     })
 
     it('opens seeded with the current package as a chip', () => {
-        useSearchPaletteStore.getState().open('mail')
+        useSearchPaletteStore.getState().open('gizmos')
         const state = useSearchPaletteStore.getState()
         expect(state.isOpen).toBe(true)
-        expect(state.text).toBe('mail: ')
+        expect(state.text).toBe('gizmos: ')
     })
 
     it('opens with empty text when no package is active', () => {
@@ -20,8 +20,8 @@ describe('useSearchPaletteStore', () => {
 
     it('resets text and selection on close', () => {
         const store = useSearchPaletteStore.getState()
-        store.open('mail')
-        store.setText('mail: budget')
+        store.open('gizmos')
+        store.setText('gizmos: budget')
         store.setSelectedRowId('m1')
         store.close()
         const state = useSearchPaletteStore.getState()

@@ -11,36 +11,36 @@ describe('useWorkspaceStore — lastPackageHref', () => {
     })
 
     it('setLastPackageHref adds a new slug → href entry', () => {
-        useWorkspaceStore.getState().setLastPackageHref('calc', '/calc/abc')
+        useWorkspaceStore.getState().setLastPackageHref('trinkets', '/trinkets/abc')
         expect(useWorkspaceStore.getState().lastPackageHref).toEqual({
-            calc: '/calc/abc',
+            trinkets: '/trinkets/abc',
         })
     })
 
     it('setLastPackageHref merges into existing entries without dropping others', () => {
         const { setLastPackageHref } = useWorkspaceStore.getState()
-        setLastPackageHref('calc', '/calc/abc')
+        setLastPackageHref('trinkets', '/trinkets/abc')
         setLastPackageHref('text', '/text/xyz')
         expect(useWorkspaceStore.getState().lastPackageHref).toEqual({
-            calc: '/calc/abc',
+            trinkets: '/trinkets/abc',
             text: '/text/xyz',
         })
     })
 
     it('setLastPackageHref overwrites the same slug', () => {
         const { setLastPackageHref } = useWorkspaceStore.getState()
-        setLastPackageHref('calc', '/calc/abc')
-        setLastPackageHref('calc', '/calc/def')
+        setLastPackageHref('trinkets', '/trinkets/abc')
+        setLastPackageHref('trinkets', '/trinkets/def')
         expect(useWorkspaceStore.getState().lastPackageHref).toEqual({
-            calc: '/calc/def',
+            trinkets: '/trinkets/def',
         })
     })
 
     it('clearLastPackageHref removes only the named slug', () => {
         const { setLastPackageHref, clearLastPackageHref } = useWorkspaceStore.getState()
-        setLastPackageHref('calc', '/calc/abc')
+        setLastPackageHref('trinkets', '/trinkets/abc')
         setLastPackageHref('text', '/text/xyz')
-        clearLastPackageHref('calc')
+        clearLastPackageHref('trinkets')
         expect(useWorkspaceStore.getState().lastPackageHref).toEqual({
             text: '/text/xyz',
         })
@@ -49,7 +49,7 @@ describe('useWorkspaceStore — lastPackageHref', () => {
     it('clearLastPackageHref is a no-op when the slug was not set', () => {
         const { setLastPackageHref, clearLastPackageHref } = useWorkspaceStore.getState()
         setLastPackageHref('text', '/text/xyz')
-        clearLastPackageHref('calc')
+        clearLastPackageHref('trinkets')
         expect(useWorkspaceStore.getState().lastPackageHref).toEqual({
             text: '/text/xyz',
         })

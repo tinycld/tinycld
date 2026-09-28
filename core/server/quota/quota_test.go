@@ -9,8 +9,8 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-// setupQuotaApp builds two storage-bearing collections: one owned (drive-like,
-// with a created_by) and one shared (mail-like, with no owner at all). The
+// setupQuotaApp builds two storage-bearing collections: one owned (cogs-like,
+// with a created_by) and one shared (gizmos-like, with no owner at all). The
 // asymmetry is the point — it is what the per-user vs per-org split turns on.
 func setupQuotaApp(t *testing.T) (*tests.TestApp, *pocketbase.PocketBase, *core.Record, *core.Record) {
 	t.Helper()
@@ -62,8 +62,8 @@ func setupQuotaApp(t *testing.T) (*tests.TestApp, *pocketbase.PocketBase, *core.
 
 func testSources() []Source {
 	return []Source{
-		{Slug: "drive", Collection: "owned_items", SizeField: "size", OwnerField: "created_by"},
-		{Slug: "mail", Collection: "shared_items", SizeField: "total_size"},
+		{Slug: "cogs", Collection: "owned_items", SizeField: "size", OwnerField: "created_by"},
+		{Slug: "gizmos", Collection: "shared_items", SizeField: "total_size"},
 	}
 }
 
@@ -205,7 +205,7 @@ func TestPerUserCeilingRefusesWrite(t *testing.T) {
 }
 
 // The org ceiling spans packages, including sources with no owner — which is
-// the whole reason mail participates.
+// the whole reason gizmos participates.
 func TestPerOrgCeilingCountsSharedData(t *testing.T) {
 	_, pbApp, alice, _ := setupQuotaApp(t)
 

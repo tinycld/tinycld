@@ -8,12 +8,20 @@
 // which the full e2e-helpers would trigger by resolving core's copy.
 import type { Locator, Page } from '@playwright/test'
 import {
+    CORE_STEP_IDS,
     SETUP_CONTINUE_TEST_ID,
+    SETUP_DONE_TEST_ID,
+    SETUP_FINISH_LATER_TEST_ID,
+    SETUP_INVITE_EMAIL_TEST_ID,
+    SETUP_INVITE_SEND_TEST_ID,
+    SETUP_INVITE_USERNAME_TEST_ID,
+    SETUP_RESUME_TEST_ID,
     SETUP_SKIP_TEST_ID,
+    SETUP_WORKSPACE_NAME_TEST_ID,
     setupStepTestId,
 } from '@tinycld/core/lib/setup/step-ids'
 
-export { CORE_STEP_IDS } from '@tinycld/core/lib/setup/step-ids'
+export { CORE_STEP_IDS, SETUP_FINISH_LATER_TEST_ID }
 
 export function setupStep(page: Page, stepId: string): Locator {
     return page.getByTestId(setupStepTestId(stepId))
@@ -39,4 +47,36 @@ export async function continueSetupSteps(page: Page, stepIds: readonly string[])
     for (const stepId of stepIds) {
         await continueSetupStep(page, stepId)
     }
+}
+
+/** Leaves the wizard with the shell's Finish later; the app opens. */
+export async function finishSetupLater(page: Page) {
+    await page.getByTestId(SETUP_FINISH_LATER_TEST_ID).click()
+}
+
+/**
+ * Opens Settings from the package rail and presses Continue on its Finish
+ * setup card. The wizard opens at its first step still to do.
+ */
+export async function resumeSetupFromSettings(page: Page) {
+    await page.getByTestId('nav-settings').click()
+    await page.getByTestId(SETUP_RESUME_TEST_ID).click()
+}
+
+/** The workspace step's name field. */
+export function setupWorkspaceName(page: Page): Locator {
+    return setupStep(page, CORE_STEP_IDS.workspace).getByTestId(SETUP_WORKSPACE_NAME_TEST_ID)
+}
+
+/** Sends one invite from the team step's form; email may be left out. */
+export async function inviteFromSetup(page: Page, invite: { username: string; email?: string }) {
+    const team = setupStep(page, CORE_STEP_IDS.team)
+    await team.getByTestId(SETUP_INVITE_USERNAME_TEST_ID).fill(invite.username)
+    if (invite.email) await team.getByTestId(SETUP_INVITE_EMAIL_TEST_ID).fill(invite.email)
+    await team.getByTestId(SETUP_INVITE_SEND_TEST_ID).click()
+}
+
+/** The Done screen, the wizard's last; it has no registry step. */
+export function setupDone(page: Page): Locator {
+    return page.getByTestId(SETUP_DONE_TEST_ID)
 }

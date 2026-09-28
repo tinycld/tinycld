@@ -62,8 +62,8 @@ func TestParseScopes(t *testing.T) {
 	}{
 		{"", 0},
 		{"notes:read", 1},
-		{"notes:read tasks:write", 2},
-		{"  notes:read   tasks:write  ", 2},
+		{"notes:read widgets:write", 2},
+		{"  notes:read   widgets:write  ", 2},
 	}
 	for _, c := range cases {
 		if got := ParseScopes(c.in); len(got) != c.want {
@@ -73,7 +73,7 @@ func TestParseScopes(t *testing.T) {
 }
 
 func TestHasScope(t *testing.T) {
-	granted := []string{"notes:read", "tasks:write"}
+	granted := []string{"notes:read", "widgets:write"}
 	if !HasScope(granted, "notes:read") {
 		t.Error("HasScope should find a granted scope")
 	}

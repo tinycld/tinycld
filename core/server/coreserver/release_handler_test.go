@@ -51,7 +51,7 @@ func runReleaseHandlerScenario(t *testing.T, releasesDir string, scenario *tests
 }
 
 func TestReleaseHandler_ReturnsManifest(t *testing.T) {
-	body := `{"appTag":"v0.0.3","members":[{"name":"mail","tag":"v0.1.0","sha":"1111111aaaa"}]}`
+	body := `{"appTag":"v0.0.3","members":[{"name":"gizmos","tag":"v0.1.0","sha":"1111111aaaa"}]}`
 	releasesDir := setupCurrentManifest(t, body)
 
 	runReleaseHandlerScenario(t, releasesDir, &tests.ApiScenario{
@@ -61,7 +61,7 @@ func TestReleaseHandler_ReturnsManifest(t *testing.T) {
 		ExpectedStatus: http.StatusOK,
 		ExpectedContent: []string{
 			`"appTag":"v0.0.3"`,
-			`"name":"mail"`,
+			`"name":"gizmos"`,
 			`"tag":"v0.1.0"`,
 		},
 		AfterTestFunc: func(t testing.TB, _ *tests.TestApp, res *http.Response) {

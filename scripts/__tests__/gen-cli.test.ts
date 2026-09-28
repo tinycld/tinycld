@@ -7,10 +7,10 @@ import {
     type CliPkg,
 } from '../gen-cli'
 
-const mail: CliPkg = {
-    slug: 'mail',
-    module: 'tinycld.org/packages/mail/cli',
-    cliRelPath: '../../mail/cli',
+const gizmos: CliPkg = {
+    slug: 'gizmos',
+    module: 'tinycld.org/packages/gizmos/cli',
+    cliRelPath: '../../gizmos/cli',
 }
 
 describe('buildCliExtensionsSource', () => {
@@ -22,42 +22,42 @@ describe('buildCliExtensionsSource', () => {
     })
 
     it('imports + registers each cli package by slug identifier', () => {
-        const go = buildCliExtensionsSource([mail])
-        expect(go).toContain('mail "tinycld.org/packages/mail/cli"')
-        expect(go).toContain('mail.Register(root, c)')
+        const go = buildCliExtensionsSource([gizmos])
+        expect(go).toContain('gizmos "tinycld.org/packages/gizmos/cli"')
+        expect(go).toContain('gizmos.Register(root, c)')
         expect(go).toContain('func registerPackageCommands(root *cobra.Command, c *client.Client)')
     })
 
     it('camelizes hyphenated slugs into valid Go identifiers', () => {
         const go = buildCliExtensionsSource([
             {
-                slug: 'google-takeout-import',
-                module: 'tinycld.org/packages/google-takeout-import/cli',
-                cliRelPath: '../../google-takeout-import/cli',
+                slug: 'gizmo-import',
+                module: 'tinycld.org/packages/gizmo-import/cli',
+                cliRelPath: '../../gizmo-import/cli',
             },
         ])
-        expect(go).toContain('googleTakeoutImport "tinycld.org/packages/google-takeout-import/cli"')
-        expect(go).toContain('googleTakeoutImport.Register(root, c)')
+        expect(go).toContain('gizmoImport "tinycld.org/packages/gizmo-import/cli"')
+        expect(go).toContain('gizmoImport.Register(root, c)')
     })
 
     it('rejects a module path that would break out of the generated Go import', () => {
-        const bad: CliPkg = { ...mail, module: 'tinycld.org/x"; evil()//' }
+        const bad: CliPkg = { ...gizmos, module: 'tinycld.org/x"; evil()//' }
         expect(() => buildCliExtensionsSource([bad])).toThrow(/unsafe value/)
     })
 })
 
 describe('buildCliGoWork', () => {
     it('includes ., the format module, and each cli package use', () => {
-        const work = buildCliGoWork([mail])
+        const work = buildCliGoWork([gizmos])
         expect(work).toContain('use (')
         expect(work).toContain('    .')
-        expect(work).toContain('    ../../mail/cli')
+        expect(work).toContain('    ../../gizmos/cli')
     })
 
     // The CLI reads backup archives, so it uses core's nested archive-format
     // module — but NOT core proper, whose graph drags in the PocketBase fork.
     it('uses the nested format module and never core proper', () => {
-        const work = buildCliGoWork([mail])
+        const work = buildCliGoWork([gizmos])
         expect(work).toContain('    ../core/server/backup/format')
         expect(work).not.toContain('    ../core/server\n')
     })
@@ -66,7 +66,7 @@ describe('buildCliGoWork', () => {
     // replace the graph load hits the proxy and fails. Unversioned is rejected
     // ("replaced at all versions") because the module is itself a `use` member.
     it('replaces tinycld.org/cli (versioned) when members are present', () => {
-        const work = buildCliGoWork([mail])
+        const work = buildCliGoWork([gizmos])
         expect(work).toContain('replace tinycld.org/cli v0.0.0 => .')
     })
 
@@ -82,8 +82,8 @@ describe('buildCliGoWork', () => {
 
 describe('buildSearchSlugsSource', () => {
     it('emits the slugs of packages declaring search, sorted', () => {
-        const go = buildSearchSlugsSource(['mail', 'boards', 'drive'])
-        expect(go).toContain('var searchSlugs = []string{"boards", "drive", "mail"}')
+        const go = buildSearchSlugsSource(['gizmos', 'gadgets', 'cogs'])
+        expect(go).toContain('var searchSlugs = []string{"cogs", "gadgets", "gizmos"}')
     })
 
     // The search set is NOT the cli set: boards and contacts contribute a search
@@ -95,7 +95,7 @@ describe('buildSearchSlugsSource', () => {
     })
 
     it('rejects a slug that would break out of the generated Go literal', () => {
-        expect(() => buildSearchSlugsSource(['mail"; evil()//'])).toThrow(/unsafe value/)
+        expect(() => buildSearchSlugsSource(['gizmos"; evil()//'])).toThrow(/unsafe value/)
     })
 })
 

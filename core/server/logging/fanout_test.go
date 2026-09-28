@@ -54,9 +54,9 @@ func TestFanoutEnabledIsTrueIfAnyChildIsEnabled(t *testing.T) {
 func TestFanoutPropagatesAttrsToChildren(t *testing.T) {
 	var buf bytes.Buffer
 	h := NewFanout(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	slog.New(h).With("pkg", "boards").Info("msg")
+	slog.New(h).With("pkg", "widgets").Info("msg")
 
-	if !strings.Contains(buf.String(), "pkg=boards") {
+	if !strings.Contains(buf.String(), "pkg=widgets") {
 		t.Errorf("WithAttrs did not reach the child handler: %q", buf.String())
 	}
 }

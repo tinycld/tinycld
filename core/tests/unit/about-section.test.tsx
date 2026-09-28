@@ -59,8 +59,8 @@ const MANIFEST: ReleaseManifest = {
     appSha: 'abcdef0123456789',
     releasedAt: '2026-06-05T12:00:00.000Z',
     members: [
-        { name: 'mail', repo: 'tinycld/mail', tag: 'v0.1.0', sha: '1111111aaaa' },
-        { name: 'calendar', repo: 'tinycld/calendar', tag: 'v0.2.1', sha: '2222222bbbb' },
+        { name: 'gizmos', repo: 'tinycld/gizmos', tag: 'v0.1.0', sha: '1111111aaaa' },
+        { name: 'sprockets', repo: 'tinycld/sprockets', tag: 'v0.2.1', sha: '2222222bbbb' },
     ],
 }
 
@@ -96,9 +96,9 @@ describe('AboutSection — included packages', () => {
         const { getByText } = render(<AboutSection />)
 
         expect(getByText('Included packages')).toBeTruthy()
-        expect(getByText('mail')).toBeTruthy()
+        expect(getByText('gizmos')).toBeTruthy()
         expect(getByText('0.1.0 (1111111)')).toBeTruthy()
-        expect(getByText('calendar')).toBeTruthy()
+        expect(getByText('sprockets')).toBeTruthy()
         expect(getByText('0.2.1 (2222222)')).toBeTruthy()
     })
 

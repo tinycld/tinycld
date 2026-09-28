@@ -57,7 +57,7 @@ func TestStaticFS_AppRouteFallsBackToEmbeddedShell(t *testing.T) {
 	runStaticFSScenario(t, publicFs, nil, nil, &tests.ApiScenario{
 		Name:            "an app route falls back to the embedded SPA shell",
 		Method:          http.MethodGet,
-		URL:             "/mail",
+		URL:             "/gizmos",
 		ExpectedStatus:  http.StatusOK,
 		ExpectedContent: []string{"EMBEDDED SHELL"},
 	})
@@ -71,7 +71,7 @@ func TestStaticFS_ReleasesFSWinsOverPublicShell(t *testing.T) {
 	runStaticFSScenario(t, publicFs, nil, releasesFs, &tests.ApiScenario{
 		Name:               "the releases FS shell takes precedence",
 		Method:             http.MethodGet,
-		URL:                "/mail",
+		URL:                "/gizmos",
 		ExpectedStatus:     http.StatusOK,
 		ExpectedContent:    []string{"RELEASE SHELL"},
 		NotExpectedContent: []string{"PUBLIC SHELL"},

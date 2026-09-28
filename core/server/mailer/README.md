@@ -38,7 +38,7 @@ runtime read path. The server reads through `mailer.ConfigResolver`, which
 | `mail.from_address` | no | Default "From" address. Defaults to `noreply@tinycld.org` |
 | `mail.delivery_enabled` | no | `false` logs instead of delivering. Any other value (or unset) delivers in production |
 | `mail.smtp_public_hostname` | no | EHLO/MX hostname for the self-hosted SMTP sender |
-| `mail.postmark_api_url` | no | Replaces the Postmark API root. Leave unset in production; a test stack sets it to a stand-in server |
+| `mail.postmark_api_url` | no | For test and staging stacks only: replaces the Postmark API root with a fake or staging server. Changes mail sends only; domain and server calls ignore it. Leave unset in production |
 
 The mail feature package contributes the **Provider** panel that edits provider
 selection, the Postmark/SMTP credentials, and inbound (SMTP/IMAP) config. The

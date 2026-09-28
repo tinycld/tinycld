@@ -5,13 +5,13 @@ import { afterEach, expect, test, vi } from 'vitest'
 // Drive usePathname from a mutable module-level value so each test can simulate
 // navigation by changing it between renders. This local mock overrides the
 // constant '/' usePathname from unit-setup.ts for this file only.
-let pathname = '/drive'
+let pathname = '/cogs'
 vi.mock('expo-router', () => ({ usePathname: () => pathname }))
 
 import { useCloseOnNavigate } from '../../ui/drawer/use-close-on-navigate'
 
 afterEach(() => {
-    pathname = '/drive'
+    pathname = '/cogs'
 })
 
 test('does not close on the initial mount (opened on the current route)', () => {
@@ -25,7 +25,7 @@ test('closes when the route changes while open', () => {
     const { rerender } = renderHook(() => useCloseOnNavigate(true, onClose))
     expect(onClose).not.toHaveBeenCalled()
 
-    pathname = '/mail'
+    pathname = '/gizmos'
     rerender()
     expect(onClose).toHaveBeenCalledTimes(1)
 })
@@ -36,7 +36,7 @@ test('does not close while the drawer is shut, even across navigation', () => {
         initialProps: { isOpen: false },
     })
 
-    pathname = '/mail'
+    pathname = '/gizmos'
     rerender({ isOpen: false })
     expect(onClose).not.toHaveBeenCalled()
 })
@@ -49,7 +49,7 @@ test('re-baselines on reopen: opening on a new route does not immediately close'
 
     // Close the drawer, then navigate elsewhere while closed.
     rerender({ isOpen: false })
-    pathname = '/calendar'
+    pathname = '/sprockets'
     rerender({ isOpen: false })
     expect(onClose).not.toHaveBeenCalled()
 
@@ -58,14 +58,14 @@ test('re-baselines on reopen: opening on a new route does not immediately close'
     expect(onClose).not.toHaveBeenCalled()
 
     // ...and a subsequent navigation away from that route still closes it.
-    pathname = '/contacts'
+    pathname = '/doodads'
     rerender({ isOpen: true })
     expect(onClose).toHaveBeenCalledTimes(1)
 })
 
 test('tolerates a missing onClose', () => {
     const { rerender } = renderHook(() => useCloseOnNavigate(true, undefined))
-    pathname = '/mail'
+    pathname = '/gizmos'
     expect(() => rerender()).not.toThrow()
 })
 
@@ -82,7 +82,7 @@ test('uses the latest onClose without re-arming on identity change', () => {
     expect(second).not.toHaveBeenCalled()
 
     // Now navigate: only the latest callback runs.
-    pathname = '/mail'
+    pathname = '/gizmos'
     rerender({ cb: second })
     expect(first).not.toHaveBeenCalled()
     expect(second).toHaveBeenCalledTimes(1)

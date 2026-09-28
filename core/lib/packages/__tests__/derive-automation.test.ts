@@ -3,7 +3,7 @@ import { deriveAutomation } from '../derive-automation'
 import type { PackageManifest } from '../types'
 
 const mailEntry = {
-    manifest: { name: 'Mail', slug: 'mail' },
+    manifest: { name: 'Gizmos', slug: 'gizmos' },
     automation: {
         triggers: [
             {
@@ -16,7 +16,7 @@ const mailEntry = {
         actions: [],
     },
 }
-const plainEntry = { manifest: { name: 'Calc', slug: 'calc' } }
+const plainEntry = { manifest: { name: 'Trinkets', slug: 'trinkets' } }
 
 describe('deriveAutomation', () => {
     it('always includes the core catalog, first', () => {
@@ -30,11 +30,11 @@ describe('deriveAutomation', () => {
 
     it('keys package declarations by qualified ref and skips packages without automation', () => {
         const catalog = deriveAutomation([mailEntry, plainEntry])
-        expect(catalog.triggers['mail:message-received']).toMatchObject({
-            pkgSlug: 'mail',
-            pkgName: 'Mail',
+        expect(catalog.triggers['gizmos:message-received']).toMatchObject({
+            pkgSlug: 'gizmos',
+            pkgName: 'Gizmos',
         })
-        expect(catalog.byPackage.map(p => p.pkgSlug)).toEqual(['core', 'mail'])
+        expect(catalog.byPackage.map(p => p.pkgSlug)).toEqual(['core', 'gizmos'])
     })
 })
 

@@ -9,16 +9,16 @@ import {
 
 describe('schemaTypeName', () => {
     it('PascalCases the slug + Schema', () => {
-        expect(schemaTypeName('contacts')).toBe('ContactsSchema')
-        expect(schemaTypeName('google-takeout-import')).toBe('GoogleTakeoutImportSchema')
+        expect(schemaTypeName('doodads')).toBe('DoodadsSchema')
+        expect(schemaTypeName('gizmo-import')).toBe('GizmoImportSchema')
     })
 })
 
 describe('manifestToConfigPkg', () => {
     it('derives flags from manifest presence', () => {
-        const cp = manifestToConfigPkg('@tinycld/contacts', {
-            name: 'Contacts',
-            slug: 'contacts',
+        const cp = manifestToConfigPkg('@tinycld/doodads', {
+            name: 'Doodads',
+            slug: 'doodads',
             version: '0.1.0',
             description: 'd',
             collections: { register: 'collections', types: 'types' },
@@ -27,7 +27,7 @@ describe('manifestToConfigPkg', () => {
             routes: { directory: 'screens' },
         })
         expect(cp.hasRegister).toBe(true)
-        expect(cp.schemaType).toBe('ContactsSchema')
+        expect(cp.schemaType).toBe('DoodadsSchema')
         expect(cp.hasSidebar).toBe(true)
         expect(cp.hasProvider).toBe(false)
         expect(cp.hasSeed).toBe(true)
@@ -35,9 +35,9 @@ describe('manifestToConfigPkg', () => {
     })
 
     it('settings-only package has no register and empty schemaType', () => {
-        const cp = manifestToConfigPkg('@tinycld/google-takeout-import', {
+        const cp = manifestToConfigPkg('@tinycld/gizmo-import', {
             name: 'T',
-            slug: 'google-takeout-import',
+            slug: 'gizmo-import',
             version: '0.1.0',
             description: 'd',
             settings: [{ slug: 'g', component: 'settings/takeout', label: 'Import' }],
@@ -56,9 +56,9 @@ describe('manifestToConfigPkg', () => {
     })
 
     it('defaults systemSettings to [] when the manifest omits it', () => {
-        const cp = manifestToConfigPkg('@tinycld/contacts', {
-            name: 'Contacts',
-            slug: 'contacts',
+        const cp = manifestToConfigPkg('@tinycld/doodads', {
+            name: 'Doodads',
+            slug: 'doodads',
             version: '0.1.0',
             description: 'd',
         })
@@ -66,23 +66,23 @@ describe('manifestToConfigPkg', () => {
     })
 
     it('passes through slots and sidebarContributions, defaulting order to 0', () => {
-        const cp = manifestToConfigPkg('@tinycld/calendar-slots', {
-            name: 'Calendar Slots',
-            slug: 'calendar-slots',
+        const cp = manifestToConfigPkg('@tinycld/sprockets-slots', {
+            name: 'Sprockets Slots',
+            slug: 'sprockets-slots',
             version: '0.1.0',
             description: 'd',
             sidebarContributions: [
                 {
-                    target: 'calendar',
-                    slot: 'sidebar.after-calendars',
+                    target: 'sprockets',
+                    slot: 'sidebar.after-sprockets',
                     component: 'sidebar-contributions/booking-pages',
                 },
             ],
         })
         expect(cp.sidebarContributions).toEqual([
             {
-                target: 'calendar',
-                slot: 'sidebar.after-calendars',
+                target: 'sprockets',
+                slot: 'sidebar.after-sprockets',
                 component: 'sidebar-contributions/booking-pages',
                 order: 0,
             },
@@ -91,20 +91,20 @@ describe('manifestToConfigPkg', () => {
 
     it('rejects duplicate slot names in manifest.slots', () => {
         expect(() =>
-            manifestToConfigPkg('@tinycld/calendar', {
-                name: 'Calendar',
-                slug: 'calendar',
+            manifestToConfigPkg('@tinycld/sprockets', {
+                name: 'Sprockets',
+                slug: 'sprockets',
                 version: '0.1.0',
                 description: 'd',
-                slots: ['sidebar.after-calendars', 'sidebar.after-calendars'],
+                slots: ['sidebar.after-sprockets', 'sidebar.after-sprockets'],
             })
-        ).toThrow(/duplicate slot name 'sidebar\.after-calendars'/)
+        ).toThrow(/duplicate slot name 'sidebar\.after-sprockets'/)
     })
 
     it('maps manifest.automation.definitions to ConfigPkg.automation', () => {
-        const pkg = manifestToConfigPkg('@tinycld/contacts', {
-            name: 'Contacts',
-            slug: 'contacts',
+        const pkg = manifestToConfigPkg('@tinycld/doodads', {
+            name: 'Doodads',
+            slug: 'doodads',
             version: '0.1.0',
             description: 'd',
             automation: { definitions: 'automation' },
@@ -113,9 +113,9 @@ describe('manifestToConfigPkg', () => {
     })
 
     it('leaves ConfigPkg.automation undefined when the manifest has none', () => {
-        const pkg = manifestToConfigPkg('@tinycld/contacts', {
-            name: 'Contacts',
-            slug: 'contacts',
+        const pkg = manifestToConfigPkg('@tinycld/doodads', {
+            name: 'Doodads',
+            slug: 'doodads',
             version: '0.1.0',
             description: 'd',
         })
@@ -124,48 +124,48 @@ describe('manifestToConfigPkg', () => {
 })
 
 describe('validateSidebarContributions', () => {
-    const calendarHost = manifestToConfigPkg('@tinycld/calendar', {
-        name: 'Calendar',
-        slug: 'calendar',
+    const sprocketsHost = manifestToConfigPkg('@tinycld/sprockets', {
+        name: 'Sprockets',
+        slug: 'sprockets',
         version: '0.1.0',
         description: 'd',
-        slots: ['sidebar.after-calendars'],
+        slots: ['sidebar.after-sprockets'],
     })
 
-    const validContributor = manifestToConfigPkg('@tinycld/calendar-slots', {
-        name: 'Calendar Slots',
-        slug: 'calendar-slots',
+    const validContributor = manifestToConfigPkg('@tinycld/sprockets-slots', {
+        name: 'Sprockets Slots',
+        slug: 'sprockets-slots',
         version: '0.1.0',
         description: 'd',
         sidebarContributions: [
             {
-                target: 'calendar',
-                slot: 'sidebar.after-calendars',
+                target: 'sprockets',
+                slot: 'sidebar.after-sprockets',
                 component: 'sidebar-contributions/booking-pages',
             },
         ],
     })
 
     it('accepts contributions targeting declared slots', () => {
-        expect(() => validateSidebarContributions([calendarHost, validContributor])).not.toThrow()
+        expect(() => validateSidebarContributions([sprocketsHost, validContributor])).not.toThrow()
     })
 
     it('rejects contributions targeting an unknown slot on a present host', () => {
-        const badContributor = manifestToConfigPkg('@tinycld/calendar-slots', {
-            name: 'Calendar Slots',
-            slug: 'calendar-slots',
+        const badContributor = manifestToConfigPkg('@tinycld/sprockets-slots', {
+            name: 'Sprockets Slots',
+            slug: 'sprockets-slots',
             version: '0.1.0',
             description: 'd',
             sidebarContributions: [
                 {
-                    target: 'calendar',
+                    target: 'sprockets',
                     slot: 'sidebar.tpyo',
                     component: 'sidebar-contributions/booking-pages',
                 },
             ],
         })
-        expect(() => validateSidebarContributions([calendarHost, badContributor])).toThrow(
-            /unknown slot 'calendar:sidebar\.tpyo'/
+        expect(() => validateSidebarContributions([sprocketsHost, badContributor])).toThrow(
+            /unknown slot 'sprockets:sidebar\.tpyo'/
         )
     })
 
@@ -184,10 +184,10 @@ describe('validateSidebarContributions', () => {
 
 describe('validateEventSources', () => {
     const source = (overrides: Partial<{ target: string; id: string }> = {}) => ({
-        target: 'calendar',
-        id: 'boards-due',
+        target: 'sprockets',
+        id: 'gadgets-due',
         label: 'Card due dates',
-        module: 'calendar-source',
+        module: 'sprockets-source',
         ...overrides,
     })
 
@@ -200,22 +200,22 @@ describe('validateEventSources', () => {
             eventSources: sources,
         })
 
-    const host = manifestToConfigPkg('@tinycld/calendar', {
-        name: 'Calendar',
-        slug: 'calendar',
+    const host = manifestToConfigPkg('@tinycld/sprockets', {
+        name: 'Sprockets',
+        slug: 'sprockets',
         version: '0.1.0',
         description: 'd',
         eventSourceHost: true,
     })
 
     it('maps eventSources onto ConfigPkg, defaulting order to 0', () => {
-        const cp = contributor('boards')
+        const cp = contributor('gadgets')
         expect(cp.eventSources).toEqual([
             {
-                target: 'calendar',
-                id: 'boards-due',
+                target: 'sprockets',
+                id: 'gadgets-due',
                 label: 'Card due dates',
-                module: 'calendar-source',
+                module: 'sprockets-source',
                 order: 0,
             },
         ])
@@ -224,13 +224,13 @@ describe('validateEventSources', () => {
     })
 
     it('accepts a source targeting a present host', () => {
-        expect(() => validateEventSources([host, contributor('boards')])).not.toThrow()
+        expect(() => validateEventSources([host, contributor('gadgets')])).not.toThrow()
     })
 
     it('tolerates a source targeting an absent host (partial checkout)', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
         try {
-            expect(() => validateEventSources([contributor('boards')])).not.toThrow()
+            expect(() => validateEventSources([contributor('gadgets')])).not.toThrow()
             expect(warn).toHaveBeenCalledWith(
                 expect.stringMatching(/not installed in this workspace/)
             )
@@ -240,27 +240,27 @@ describe('validateEventSources', () => {
     })
 
     it('rejects a source targeting a present package that is not a host', () => {
-        const nonHost = manifestToConfigPkg('@tinycld/calendar', {
-            name: 'Calendar',
-            slug: 'calendar',
+        const nonHost = manifestToConfigPkg('@tinycld/sprockets', {
+            name: 'Sprockets',
+            slug: 'sprockets',
             version: '0.1.0',
             description: 'd',
         })
-        expect(() => validateEventSources([nonHost, contributor('boards')])).toThrow(
+        expect(() => validateEventSources([nonHost, contributor('gadgets')])).toThrow(
             /does not declare eventSourceHost/
         )
     })
 
     it('rejects an id outside [a-z0-9-]', () => {
         expect(() =>
-            validateEventSources([host, contributor('boards', [source({ id: 'Cards:Due' })])])
+            validateEventSources([host, contributor('gadgets', [source({ id: 'Cards:Due' })])])
         ).toThrow(/must match \[a-z0-9-\]\+/)
     })
 
     it('rejects a duplicate (target, id) across contributors', () => {
         expect(() =>
-            validateEventSources([host, contributor('boards'), contributor('tasks')])
-        ).toThrow(/declared by both 'boards' and 'tasks'/)
+            validateEventSources([host, contributor('gadgets'), contributor('widgets')])
+        ).toThrow(/declared by both 'gadgets' and 'widgets'/)
     })
 })
 
@@ -328,14 +328,14 @@ describe('validateNavShortcuts', () => {
 
     it('accepts distinct letters', () => {
         expect(() =>
-            validateNavShortcuts([withShortcut('mail', 'm'), withShortcut('boards', 'k')])
+            validateNavShortcuts([withShortcut('gizmos', 'm'), withShortcut('gadgets', 'k')])
         ).not.toThrow()
     })
 
     it('rejects two packages claiming the same letter', () => {
         expect(() =>
-            validateNavShortcuts([withShortcut('boards', 'k'), withShortcut('kanban', 'k')])
-        ).toThrow(/'k' is claimed by both 'boards' and 'kanban'/)
+            validateNavShortcuts([withShortcut('gadgets', 'k'), withShortcut('kanban', 'k')])
+        ).toThrow(/'k' is claimed by both 'gadgets' and 'kanban'/)
     })
 
     it('ignores packages that declare no shortcut', () => {

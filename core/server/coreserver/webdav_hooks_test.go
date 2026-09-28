@@ -20,9 +20,9 @@ import (
 
 func testWebDAVSource() webdav.Source {
 	return webdav.Source{
-		Slug:       "drive",
-		Prefix:     "/drive",
-		Collection: "drive_items",
+		Slug:       "cogs",
+		Prefix:     "/cogs",
+		Collection: "cogs_items",
 		Fields: webdav.FieldMap{
 			Name:     "name",
 			Parent:   "parent",
@@ -44,7 +44,7 @@ func bootHooks(t *testing.T, hookSource string) webdav.TSHooks {
 
 	hooksDir := t.TempDir()
 	if hookSource != "" {
-		if err := os.WriteFile(filepath.Join(hooksDir, "drive.pb.ts"), []byte(hookSource), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(hooksDir, "cogs.pb.ts"), []byte(hookSource), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -350,7 +350,7 @@ func TestWebDAVHookTypoRegistersNothing(t *testing.T) {
 }
 
 // Two packages serving trees must not share handlers: points are namespaced by
-// slug, so registering for "drive" leaves another source's points untouched.
+// slug, so registering for "cogs" leaves another source's points untouched.
 func TestWebDAVHookPointsAreNamespacedBySlug(t *testing.T) {
 	driveHooks := bootHooks(t, `
         webdavHook({ beforeWrite(e) {} })
@@ -362,10 +362,10 @@ func TestWebDAVHookPointsAreNamespacedBySlug(t *testing.T) {
 	otherHooks := webdav.RegisterTSHooks(WebDAVHostBindings(), other)
 
 	if !driveHooks.BeforeWrite.Enabled() {
-		t.Fatal("drive's beforeWrite must be enabled")
+		t.Fatal("cogs's beforeWrite must be enabled")
 	}
 	if otherHooks.BeforeWrite.Enabled() {
-		t.Fatal("another source's beforeWrite must not pick up drive's handler")
+		t.Fatal("another source's beforeWrite must not pick up cogs's handler")
 	}
 }
 

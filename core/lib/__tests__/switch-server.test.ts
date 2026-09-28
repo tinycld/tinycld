@@ -72,16 +72,19 @@ describe('switchToServer', () => {
         // lastPackageHref holds deep-links to record ids on the OTHER server;
         // logout() wipes it for exactly this reason, and a switch never logs out.
         it('clears state that would be read back against the wrong server', async () => {
-            await AsyncStorage.setItem('tinycld_sidebar_open', '{"lastPackageHref":{"mail":"/x"}}')
+            await AsyncStorage.setItem(
+                'tinycld_sidebar_open',
+                '{"lastPackageHref":{"gizmos":"/x"}}'
+            )
             await AsyncStorage.setItem('tinycld:anon-id', 'anon-1')
-            await AsyncStorage.setItem('firstRun:mail', 'done')
+            await AsyncStorage.setItem('firstRun:gizmos', 'done')
 
             const { switchToServer } = await import('../switch-server')
             await expect(switchToServer('https://b.example.com')).rejects.toThrow()
 
             expect(await AsyncStorage.getItem('tinycld_sidebar_open')).toBeNull()
             expect(await AsyncStorage.getItem('tinycld:anon-id')).toBeNull()
-            expect(await AsyncStorage.getItem('firstRun:mail')).toBeNull()
+            expect(await AsyncStorage.getItem('firstRun:gizmos')).toBeNull()
         })
 
         it('leaves other servers auth blobs alone', async () => {

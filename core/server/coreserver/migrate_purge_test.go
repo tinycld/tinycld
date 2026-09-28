@@ -12,11 +12,11 @@ import (
 func TestPurgeUnregisteredPackageRows_RemovesOwnedStrandedRows(t *testing.T) {
 	app := newMigrateTestApp(t)
 
-	createFile := "1800000000_create_calendar-slots.js"
-	configFile := "1800000001_calendar-slots-booking-config.js"
+	createFile := "1800000000_create_sprockets-slots.js"
+	configFile := "1800000001_sprockets-slots-booking-config.js"
 	// A row belonging to a DIFFERENT package that also ended up skipped — must be
 	// left untouched.
-	otherFile := "1715000000_create_calendar_collections.js"
+	otherFile := "1715000000_create_sprockets_collections.js"
 
 	for _, f := range []string{createFile, configFile, otherFile} {
 		if err := insertMigrationRow(app, f); err != nil {
@@ -25,14 +25,14 @@ func TestPurgeUnregisteredPackageRows_RemovesOwnedStrandedRows(t *testing.T) {
 	}
 
 	restore := setMigrationOwnersForTest(map[string]string{
-		createFile: "calendar-slots",
-		configFile: "calendar-slots",
-		otherFile:  "calendar",
+		createFile: "sprockets-slots",
+		configFile: "sprockets-slots",
+		otherFile:  "sprockets",
 	})
 	defer restore()
 
 	skipped := []string{createFile, configFile, otherFile}
-	purged, err := purgeUnregisteredPackageRows(app, "calendar-slots", skipped)
+	purged, err := purgeUnregisteredPackageRows(app, "sprockets-slots", skipped)
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestPurgeUnregisteredPackageRows_RemovesOwnedStrandedRows(t *testing.T) {
 	}
 	// The other package's row must survive.
 	if ok, _ := migrationApplied(app, otherFile); !ok {
-		t.Errorf("row %s (calendar) was wrongly purged", otherFile)
+		t.Errorf("row %s (sprockets) was wrongly purged", otherFile)
 	}
 }
 
@@ -56,7 +56,7 @@ func TestPurgeUnregisteredPackageRows_RemovesOwnedStrandedRows(t *testing.T) {
 func TestPurgeUnregisteredPackageRows_FilenameFallback(t *testing.T) {
 	app := newMigrateTestApp(t)
 
-	createFile := "1800000000_create_calendar-slots.js"
+	createFile := "1800000000_create_sprockets-slots.js"
 	if err := insertMigrationRow(app, createFile); err != nil {
 		t.Fatalf("seed row: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestPurgeUnregisteredPackageRows_FilenameFallback(t *testing.T) {
 	restore := setMigrationOwnersForTest(map[string]string{})
 	defer restore()
 
-	purged, err := purgeUnregisteredPackageRows(app, "calendar-slots", []string{createFile})
+	purged, err := purgeUnregisteredPackageRows(app, "sprockets-slots", []string{createFile})
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
@@ -82,14 +82,14 @@ func TestPurgeUnregisteredPackageRows_FilenameFallback(t *testing.T) {
 func TestPurgeUnregisteredPackageRows_NoMatchPurgesNothing(t *testing.T) {
 	app := newMigrateTestApp(t)
 
-	otherFile := "1715000000_create_calendar_collections.js"
+	otherFile := "1715000000_create_sprockets_collections.js"
 	if err := insertMigrationRow(app, otherFile); err != nil {
 		t.Fatalf("seed row: %v", err)
 	}
-	restore := setMigrationOwnersForTest(map[string]string{otherFile: "calendar"})
+	restore := setMigrationOwnersForTest(map[string]string{otherFile: "sprockets"})
 	defer restore()
 
-	purged, err := purgeUnregisteredPackageRows(app, "calendar-slots", []string{otherFile})
+	purged, err := purgeUnregisteredPackageRows(app, "sprockets-slots", []string{otherFile})
 	if err != nil {
 		t.Fatalf("purge: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestPurgeUnregisteredPackageRows_EmptyInputs(t *testing.T) {
 	if p, err := purgeUnregisteredPackageRows(app, "", []string{"x.js"}); err != nil || p != nil {
 		t.Fatalf("empty slug: got (%v, %v), want (nil, nil)", p, err)
 	}
-	if p, err := purgeUnregisteredPackageRows(app, "calendar-slots", nil); err != nil || p != nil {
+	if p, err := purgeUnregisteredPackageRows(app, "sprockets-slots", nil); err != nil || p != nil {
 		t.Fatalf("empty skipped: got (%v, %v), want (nil, nil)", p, err)
 	}
 }
@@ -137,12 +137,12 @@ func TestPurgeUnregisteredPackageRows_EmptyInputs(t *testing.T) {
 func TestPurgeUnregisteredPackageRows_KeepsRowWhenSchemaSurvives(t *testing.T) {
 	app := newMigrateTestApp(t)
 
-	const survivingCol = "ml_boards_projects"
+	const survivingCol = "ml_gadgets_projects"
 	// Its Down was skipped, so this collection is still in the DB.
-	strandedSchema := "1800000000_create_ml_boards_collections.js"
+	strandedSchema := "1800000000_create_ml_gadgets_collections.js"
 	// Nothing of this one's schema remains — a pure stale row, the case the
 	// purge was actually written for.
-	pureStaleRow := "1800000001_ml_boards_tweak.js"
+	pureStaleRow := "1800000001_ml_gadgets_tweak.js"
 
 	// Both rows are "applied". The collection for strandedSchema is still in the
 	// DB — its Down never ran, which is what "unregistered" means in production.
@@ -160,8 +160,8 @@ func TestPurgeUnregisteredPackageRows_KeepsRowWhenSchemaSurvives(t *testing.T) {
 	}
 
 	restore := setMigrationOwnersForTest(map[string]string{
-		strandedSchema: "ml-boards",
-		pureStaleRow:   "ml-boards",
+		strandedSchema: "ml-gadgets",
+		pureStaleRow:   "ml-gadgets",
 	})
 	defer restore()
 
@@ -169,7 +169,7 @@ func TestPurgeUnregisteredPackageRows_KeepsRowWhenSchemaSurvives(t *testing.T) {
 		t.Fatalf("precondition: %s should exist before the purge", survivingCol)
 	}
 
-	purged, err := purgeUnregisteredPackageRows(app, "ml-boards", []string{strandedSchema, pureStaleRow})
+	purged, err := purgeUnregisteredPackageRows(app, "ml-gadgets", []string{strandedSchema, pureStaleRow})
 	if err == nil {
 		t.Fatalf("purge succeeded (purged %v) while collection %s still exists; want a refusal", purged, survivingCol)
 	}

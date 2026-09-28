@@ -41,8 +41,8 @@ func TestRegisterSourcesIsIdempotentPerSlug(t *testing.T) {
 	ResetSources()
 	t.Cleanup(ResetSources)
 
-	RegisterSources(fakeSource("mail", 5))
-	RegisterSources(fakeSource("mail", 5))
+	RegisterSources(fakeSource("gizmos", 5))
+	RegisterSources(fakeSource("gizmos", 5))
 	if got := len(RegisteredSources()); got != 1 {
 		t.Fatalf("registered %d sources, want 1", got)
 	}
@@ -54,8 +54,8 @@ func TestRegisterSourcesReplacesOnReregistration(t *testing.T) {
 	ResetSources()
 	t.Cleanup(ResetSources)
 
-	RegisterSources(fakeSource("mail", 5))
-	updated := fakeSource("mail", 5)
+	RegisterSources(fakeSource("gizmos", 5))
+	updated := fakeSource("gizmos", 5)
 	updated.Label = "Email"
 	RegisterSources(updated)
 
@@ -74,7 +74,7 @@ func TestRegisterSourcesRejectsUnusableSources(t *testing.T) {
 	RegisterSources(Source{Slug: "", Search: func(core.App, string, Query) (Result, error) {
 		return Result{}, nil
 	}})
-	RegisterSources(Source{Slug: "boards"}) // no Search
+	RegisterSources(Source{Slug: "gadgets"}) // no Search
 	if got := len(RegisteredSources()); got != 0 {
 		t.Fatalf("registered %d unusable sources, want 0", got)
 	}
@@ -86,23 +86,23 @@ func TestRegisteredSourcesOrdersByOrderThenSlug(t *testing.T) {
 	ResetSources()
 	t.Cleanup(ResetSources)
 
-	RegisterSources(fakeSource("boards", 25), fakeSource("mail", 5), fakeSource("drive", 12))
-	RegisterSources(fakeSource("contacts", 5)) // ties with mail on order
+	RegisterSources(fakeSource("gadgets", 25), fakeSource("gizmos", 5), fakeSource("cogs", 12))
+	RegisterSources(fakeSource("doodads", 5)) // ties with gizmos on order
 
-	want := []string{"contacts", "mail", "drive", "boards"}
+	want := []string{"doodads", "gizmos", "cogs", "gadgets"}
 	if got := slugsOf(RegisteredSources()); !equalSlugs(got, want) {
 		t.Fatalf("order = %v, want %v", got, want)
 	}
 }
 
 func TestSelectSourcesFiltersByRequestedSlugs(t *testing.T) {
-	all := []Source{fakeSource("mail", 5), fakeSource("drive", 12), fakeSource("boards", 25)}
+	all := []Source{fakeSource("gizmos", 5), fakeSource("cogs", 12), fakeSource("gadgets", 25)}
 
-	if got := slugsOf(selectSources(all, nil, nil)); !equalSlugs(got, []string{"mail", "drive", "boards"}) {
+	if got := slugsOf(selectSources(all, nil, nil)); !equalSlugs(got, []string{"gizmos", "cogs", "gadgets"}) {
 		t.Errorf("no slugs should search everything, got %v", got)
 	}
-	if got := slugsOf(selectSources(all, []string{"drive"}, nil)); !equalSlugs(got, []string{"drive"}) {
-		t.Errorf("selected = %v, want [drive]", got)
+	if got := slugsOf(selectSources(all, []string{"cogs"}, nil)); !equalSlugs(got, []string{"cogs"}) {
+		t.Errorf("selected = %v, want [cogs]", got)
 	}
 	if got := selectSources(all, []string{"nonexistent"}, nil); len(got) != 0 {
 		t.Errorf("an unknown slug should select nothing, got %v", slugsOf(got))
@@ -111,17 +111,17 @@ func TestSelectSourcesFiltersByRequestedSlugs(t *testing.T) {
 
 func TestSelectSourcesFiltersByGrantedScopes(t *testing.T) {
 	// The reason scope filtering lives here rather than in the route table: a
-	// mail-only token searching everything must get mail rows, not a blanket
+	// gizmos-only token searching everything must get gizmos rows, not a blanket
 	// 403 that tells it nothing is searchable.
 	all := []Source{
-		fakeSource("mail", 5, "mail:read"),
-		fakeSource("drive", 12, "drive:read"),
-		fakeSource("boards", 25, "boards:read"),
+		fakeSource("gizmos", 5, "gizmos:read"),
+		fakeSource("cogs", 12, "cogs:read"),
+		fakeSource("gadgets", 25, "gadgets:read"),
 	}
 
-	got := slugsOf(selectSources(all, nil, []string{"mail:read"}))
-	if !equalSlugs(got, []string{"mail"}) {
-		t.Fatalf("mail:read token got %v, want [mail]", got)
+	got := slugsOf(selectSources(all, nil, []string{"gizmos:read"}))
+	if !equalSlugs(got, []string{"gizmos"}) {
+		t.Fatalf("gizmos:read token got %v, want [gizmos]", got)
 	}
 
 	// A session (nil scopes) has no ceiling and sees everything.
@@ -140,7 +140,7 @@ func TestSelectSourcesDeniesScopelessSourceToTokens(t *testing.T) {
 	// A source declaring no scopes is session-only. A bearer must be
 	// explicitly permitted — never permitted because nobody classified it.
 	all := []Source{fakeSource("internal", 1)}
-	if got := selectSources(all, nil, []string{"mail:read", "drive:read"}); len(got) != 0 {
+	if got := selectSources(all, nil, []string{"gizmos:read", "cogs:read"}); len(got) != 0 {
 		t.Fatalf("scopeless source reachable by token: %v", slugsOf(got))
 	}
 	if got := selectSources(all, nil, nil); len(got) != 1 {
@@ -166,10 +166,10 @@ func TestFederatedSearchScopeRuleFollowsSources(t *testing.T) {
 	noop := func(core.App, string, Query) (Result, error) { return Result{}, nil }
 	RegisterSources(
 		Source{Slug: "notes", Scopes: []string{"notes:read"}, Search: noop},
-		Source{Slug: "tasks", Scopes: []string{"tasks:read"}, Search: noop},
+		Source{Slug: "widgets", Scopes: []string{"widgets:read"}, Search: noop},
 	)
 	rule := oauth.ScopeForRoute("GET", "/api/search")
-	for _, scope := range []string{"notes:read", "tasks:read"} {
+	for _, scope := range []string{"notes:read", "widgets:read"} {
 		if !rule.SatisfiedBy([]string{scope}) {
 			t.Errorf("a token holding only %q cannot reach /api/search (rule %v)", scope, rule)
 		}

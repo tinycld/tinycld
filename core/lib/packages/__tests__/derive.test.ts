@@ -8,10 +8,10 @@ const PV = () => null
 describe('deriveSidebars / deriveProviders', () => {
     it('maps slug → component, null when absent', () => {
         const entries = [
-            { manifest: { slug: 'contacts' }, sidebar: SB },
-            { manifest: { slug: 'mail' } },
+            { manifest: { slug: 'doodads' }, sidebar: SB },
+            { manifest: { slug: 'gizmos' } },
         ]
-        expect(deriveSidebars(entries)).toEqual({ contacts: SB, mail: null })
+        expect(deriveSidebars(entries)).toEqual({ doodads: SB, gizmos: null })
         const loader = { load: async () => ({ default: PV }) }
         expect(deriveProviders([{ manifest: { slug: 'x' }, provider: loader }])).toEqual({
             x: loader,
@@ -23,12 +23,12 @@ describe('deriveSettings', () => {
     it('groups panels by package, omitting packages with none', () => {
         const panels = [{ slug: 'p', label: 'P', Component: PV }]
         const entries = [
-            { manifest: { name: 'Mail', slug: 'mail' }, settings: panels },
-            { manifest: { name: 'Contacts', slug: 'contacts' } },
+            { manifest: { name: 'Gizmos', slug: 'gizmos' }, settings: panels },
+            { manifest: { name: 'Doodads', slug: 'doodads' } },
         ]
         const groups = deriveSettings(entries)
         expect(groups).toHaveLength(1)
-        expect(groups[0]).toMatchObject({ packageName: 'Mail', pkgSlug: 'mail', panels })
+        expect(groups[0]).toMatchObject({ packageName: 'Gizmos', pkgSlug: 'gizmos', panels })
     })
 })
 
@@ -36,11 +36,11 @@ describe('deriveSeeds', () => {
     it('orders by dependency (deps first), skips entries without a seed', () => {
         const seed = async () => {}
         const entries = [
-            { manifest: { slug: 'calc', dependencies: ['drive'] }, seed },
-            { manifest: { slug: 'drive', dependencies: [] }, seed },
+            { manifest: { slug: 'trinkets', dependencies: ['cogs'] }, seed },
+            { manifest: { slug: 'cogs', dependencies: [] }, seed },
             { manifest: { slug: 'nodeps' } },
         ]
         const ordered = deriveSeeds(entries).map(s => s.slug)
-        expect(ordered).toEqual(['drive', 'calc'])
+        expect(ordered).toEqual(['cogs', 'trinkets'])
     })
 })

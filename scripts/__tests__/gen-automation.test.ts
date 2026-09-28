@@ -78,13 +78,13 @@ describe('mergeAutomationDefs', () => {
     it('puts core first and validates every package', () => {
         const merged = mergeAutomationDefs([
             {
-                slug: 'mail',
+                slug: 'gizmos',
                 defs: {
                     triggers: [
                         {
                             id: 'message-received',
                             label: 'A message arrives',
-                            collection: 'mail_messages',
+                            collection: 'gizmos_messages',
                             on: 'create',
                         },
                     ],
@@ -99,14 +99,14 @@ describe('mergeAutomationDefs', () => {
         expect(merged.packages[0].triggers.map(t => t.id)).toEqual(
             expect.arrayContaining(['schedule', 'manual'])
         )
-        expect(merged.packages[1].slug).toBe('mail')
+        expect(merged.packages[1].slug).toBe('gizmos')
     })
 
     it('throws when a feature declares a synthetic trigger', () => {
         expect(() =>
             mergeAutomationDefs([
                 {
-                    slug: 'mail',
+                    slug: 'gizmos',
                     defs: { triggers: [{ id: 'x', label: 'x', synthetic: 'schedule' }] },
                 },
             ])

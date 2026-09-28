@@ -23,9 +23,9 @@ describe('log', () => {
         configureCore({ brandName: 'T', serverShortcuts: {}, logLevel: 'warn' })
         const { log } = await import('../logger')
 
-        log.debug('mail.compose', 'draft saved', { draftId: '1' })
+        log.debug('gizmos.compose', 'draft saved', { draftId: '1' })
 
-        expect(addBreadcrumb).toHaveBeenCalledWith('mail.compose', 'debug', 'draft saved', {
+        expect(addBreadcrumb).toHaveBeenCalledWith('gizmos.compose', 'debug', 'draft saved', {
             draftId: '1',
         })
         expect(captureMessage).not.toHaveBeenCalled()
@@ -36,13 +36,13 @@ describe('log', () => {
         configureCore({ brandName: 'T', serverShortcuts: {}, logLevel: 'warn' })
         const { log } = await import('../logger')
 
-        log.warn('mail.imap', 'reconnect attempt', { attempt: 2 })
+        log.warn('gizmos.imap', 'reconnect attempt', { attempt: 2 })
 
         expect(addBreadcrumb).toHaveBeenCalledTimes(1)
-        expect(addBreadcrumb).toHaveBeenCalledWith('mail.imap', 'warn', 'reconnect attempt', {
+        expect(addBreadcrumb).toHaveBeenCalledWith('gizmos.imap', 'warn', 'reconnect attempt', {
             attempt: 2,
         })
-        expect(captureMessage).toHaveBeenCalledWith('mail.imap', 'warn', 'reconnect attempt', {
+        expect(captureMessage).toHaveBeenCalledWith('gizmos.imap', 'warn', 'reconnect attempt', {
             attempt: 2,
         })
     })
@@ -52,9 +52,9 @@ describe('log', () => {
         const { log } = await import('../logger')
         const err = new Error('boom')
 
-        log.error('mail.send', err, { messageId: 'm1' })
+        log.error('gizmos.send', err, { messageId: 'm1' })
 
-        expect(captureException).toHaveBeenCalledWith('mail.send', err, { messageId: 'm1' })
+        expect(captureException).toHaveBeenCalledWith('gizmos.send', err, { messageId: 'm1' })
         expect(addBreadcrumb).not.toHaveBeenCalled()
     })
 

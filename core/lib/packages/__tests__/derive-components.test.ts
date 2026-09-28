@@ -17,52 +17,52 @@ const C3 = () => null
 describe('derive-components', () => {
     it('maps slug -> sidebar (null when absent)', () => {
         const s = deriveSidebars([
-            { manifest: { slug: 'contacts' }, sidebar: A },
-            { manifest: { slug: 'calc' } },
+            { manifest: { slug: 'doodads' }, sidebar: A },
+            { manifest: { slug: 'trinkets' } },
         ] as never)
-        expect(s.contacts).toBe(A)
-        expect(s.calc).toBeNull()
+        expect(s.doodads).toBe(A)
+        expect(s.trinkets).toBeNull()
     })
 
     it('maps slug -> provider (null when absent)', () => {
         const p = deriveProviders([
-            { manifest: { slug: 'calc' }, provider: P },
-            { manifest: { slug: 'contacts' } },
+            { manifest: { slug: 'trinkets' }, provider: P },
+            { manifest: { slug: 'doodads' } },
         ] as never)
-        expect(p.calc).toBe(P)
-        expect(p.contacts).toBeNull()
+        expect(p.trinkets).toBe(P)
+        expect(p.doodads).toBeNull()
     })
 
     it('groups settings panels by package, skipping packages with none', () => {
         const g = deriveSettings([
             {
-                manifest: { name: 'Mail', slug: 'mail' },
+                manifest: { name: 'Gizmos', slug: 'gizmos' },
                 settings: [{ slug: 'provider', label: 'Provider', Component: A }],
             },
-            { manifest: { name: 'Calc', slug: 'calc' } },
+            { manifest: { name: 'Trinkets', slug: 'trinkets' } },
         ] as never)
         expect(g).toHaveLength(1)
-        expect(g[0].pkgSlug).toBe('mail')
-        expect(g[0].packageName).toBe('Mail')
+        expect(g[0].pkgSlug).toBe('gizmos')
+        expect(g[0].packageName).toBe('Gizmos')
         expect(g[0].panels[0].slug).toBe('provider')
     })
 
     it('groups system-settings panels by package, skipping packages with none', () => {
         const g = deriveSystemSettings([
             {
-                manifest: { name: 'Mail', slug: 'mail', nav: { icon: 'mail' } },
-                systemSettings: [{ slug: 'provider', label: 'Mail Provider', Component: A }],
+                manifest: { name: 'Gizmos', slug: 'gizmos', nav: { icon: 'mail' } },
+                systemSettings: [{ slug: 'provider', label: 'Gizmos Provider', Component: A }],
             },
-            { manifest: { name: 'Calc', slug: 'calc' } },
+            { manifest: { name: 'Trinkets', slug: 'trinkets' } },
             // settings (org-scoped) present but no systemSettings → still skipped
             {
-                manifest: { name: 'Drive', slug: 'drive' },
+                manifest: { name: 'Cogs', slug: 'cogs' },
                 settings: [{ slug: 'x', label: 'X', Component: P }],
             },
         ] as never)
         expect(g).toHaveLength(1)
-        expect(g[0].pkgSlug).toBe('mail')
-        expect(g[0].packageName).toBe('Mail')
+        expect(g[0].pkgSlug).toBe('gizmos')
+        expect(g[0].packageName).toBe('Gizmos')
         expect(g[0].icon).toBe('mail')
         expect(g[0].panels[0].slug).toBe('provider')
         expect(g[0].panels[0].Component).toBe(A)
@@ -76,10 +76,10 @@ describe('derive-components', () => {
         it('groups by target slug and slot name', () => {
             const r = deriveSidebarContributions([
                 {
-                    manifest: { slug: 'calendar-slots' },
+                    manifest: { slug: 'sprockets-slots' },
                     sidebarContributions: [
                         {
-                            target: 'calendar',
+                            target: 'sprockets',
                             slot: 'sidebar.after-calendars',
                             order: 0,
                             Component: C1,
@@ -87,10 +87,10 @@ describe('derive-components', () => {
                     ],
                 },
                 {
-                    manifest: { slug: 'drive-notes' },
+                    manifest: { slug: 'cogs-notes' },
                     sidebarContributions: [
                         {
-                            target: 'drive',
+                            target: 'cogs',
                             slot: 'sidebar.after-tree',
                             order: 0,
                             Component: C2,
@@ -98,10 +98,12 @@ describe('derive-components', () => {
                     ],
                 },
             ] as never)
-            expect(r.calendar['sidebar.after-calendars']).toHaveLength(1)
-            expect(r.calendar['sidebar.after-calendars'][0].Component).toBe(C1)
-            expect(r.calendar['sidebar.after-calendars'][0].contributorSlug).toBe('calendar-slots')
-            expect(r.drive['sidebar.after-tree'][0].Component).toBe(C2)
+            expect(r.sprockets['sidebar.after-calendars']).toHaveLength(1)
+            expect(r.sprockets['sidebar.after-calendars'][0].Component).toBe(C1)
+            expect(r.sprockets['sidebar.after-calendars'][0].contributorSlug).toBe(
+                'sprockets-slots'
+            )
+            expect(r.cogs['sidebar.after-tree'][0].Component).toBe(C2)
         })
 
         it('orders by `order` ascending, then by contributor slug as tiebreaker', () => {
@@ -109,34 +111,34 @@ describe('derive-components', () => {
                 {
                     manifest: { slug: 'zeta' },
                     sidebarContributions: [
-                        { target: 'calendar', slot: 'x', order: 0, Component: C3 },
+                        { target: 'sprockets', slot: 'x', order: 0, Component: C3 },
                     ],
                 },
                 {
                     manifest: { slug: 'alpha' },
                     sidebarContributions: [
-                        { target: 'calendar', slot: 'x', order: 0, Component: C1 },
+                        { target: 'sprockets', slot: 'x', order: 0, Component: C1 },
                     ],
                 },
                 {
                     manifest: { slug: 'beta' },
                     sidebarContributions: [
-                        { target: 'calendar', slot: 'x', order: -10, Component: C2 },
+                        { target: 'sprockets', slot: 'x', order: -10, Component: C2 },
                     ],
                 },
             ] as never)
             // -10 (beta) sorts first; then 0 ties broken alpha < zeta.
-            expect(r.calendar.x.map(e => e.contributorSlug)).toEqual(['beta', 'alpha', 'zeta'])
+            expect(r.sprockets.x.map(e => e.contributorSlug)).toEqual(['beta', 'alpha', 'zeta'])
         })
 
         it('skips entries without sidebarContributions', () => {
             const r = deriveSidebarContributions([
-                { manifest: { slug: 'calc' } },
+                { manifest: { slug: 'trinkets' } },
                 {
-                    manifest: { slug: 'calendar-slots' },
+                    manifest: { slug: 'sprockets-slots' },
                     sidebarContributions: [
                         {
-                            target: 'calendar',
+                            target: 'sprockets',
                             slot: 'sidebar.after-calendars',
                             order: 0,
                             Component: C1,
@@ -144,7 +146,7 @@ describe('derive-components', () => {
                     ],
                 },
             ] as never)
-            expect(Object.keys(r)).toEqual(['calendar'])
+            expect(Object.keys(r)).toEqual(['sprockets'])
         })
 
         it('files contributions that target core under the core slot target', () => {

@@ -39,7 +39,7 @@ describe('redirectSystemPath', () => {
     })
 
     it('leaves already-prefixed and non-app paths alone', () => {
-        expect(redirectSystemPath({ path: '/a/mail', initial: false })).toBe('/a/mail')
+        expect(redirectSystemPath({ path: '/a/gizmos', initial: false })).toBe('/a/gizmos')
         expect(redirectSystemPath({ path: '/p/demo', initial: false })).toBe('/p/demo')
     })
 

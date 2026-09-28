@@ -71,7 +71,7 @@ describe('findCollectionCached', () => {
                 name: '',
                 label: 'L1',
                 record_id: 'R1',
-                collection: 'contacts',
+                collection: 'doodads',
             },
             {
                 id: 'asg2',
@@ -79,13 +79,13 @@ describe('findCollectionCached', () => {
                 name: '',
                 label: 'L2',
                 record_id: 'R1',
-                collection: 'contacts',
+                collection: 'doodads',
             },
         ]
         const col = { toArrayWhenReady: async () => assignments }
         const hit = await findCollectionCached(
             col,
-            a => a.label === 'L2' && a.record_id === 'R1' && a.collection === 'contacts'
+            a => a.label === 'L2' && a.record_id === 'R1' && a.collection === 'doodads'
         )
         expect(hit?.id).toBe('asg2')
     })

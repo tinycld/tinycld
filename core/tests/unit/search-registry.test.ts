@@ -23,30 +23,33 @@ const entry = (
 describe('deriveSearchPackages', () => {
     it('includes only packages declaring search', () => {
         const packages = deriveSearchPackages([
-            entry('mail', 'Mail', 'mail', 5, { endpoint: '/api/mail/search' }),
-            entry('calc', 'Calc', 'table', 30),
+            entry('gizmos', 'Gizmos', 'gizmos', 5, { endpoint: '/api/gizmos/search' }),
+            entry('trinkets', 'Trinkets', 'table', 30),
         ])
-        expect(packages.map(p => p.slug)).toEqual(['mail'])
+        expect(packages.map(p => p.slug)).toEqual(['gizmos'])
     })
 
     it('sorts by nav.order', () => {
         const packages = deriveSearchPackages([
-            entry('boards', 'Boards', 'square-kanban', 25, { endpoint: '/api/boards/search' }),
-            entry('mail', 'Mail', 'mail', 5, { endpoint: '/api/mail/search' }),
+            entry('gadgets', 'Gadgets', 'square-kanban', 25, { endpoint: '/api/gadgets/search' }),
+            entry('gizmos', 'Gizmos', 'gizmos', 5, { endpoint: '/api/gizmos/search' }),
         ])
-        expect(packages.map(p => p.slug)).toEqual(['mail', 'boards'])
+        expect(packages.map(p => p.slug)).toEqual(['gizmos', 'gadgets'])
     })
 
     it('defaults the label to nav.label', () => {
         const packages = deriveSearchPackages([
-            entry('mail', 'Mail', 'mail', 5, { endpoint: '/api/mail/search' }),
+            entry('gizmos', 'Gizmos', 'gizmos', 5, { endpoint: '/api/gizmos/search' }),
         ])
-        expect(packages[0].label).toBe('Mail')
+        expect(packages[0].label).toBe('Gizmos')
     })
 
     it('prefers an explicit search label over nav.label', () => {
         const packages = deriveSearchPackages([
-            entry('mail', 'Mail', 'mail', 5, { endpoint: '/api/mail/search', label: 'Email' }),
+            entry('gizmos', 'Gizmos', 'gizmos', 5, {
+                endpoint: '/api/gizmos/search',
+                label: 'Email',
+            }),
         ])
         expect(packages[0].label).toBe('Email')
     })

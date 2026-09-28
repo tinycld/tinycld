@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest'
 
 describe('appHref', () => {
     it('prefixes a path', () => {
-        expect(appHref('mail')).toBe('/a/mail')
+        expect(appHref('gizmos')).toBe('/a/gizmos')
         expect(appHref('settings/personal')).toBe('/a/settings/personal')
     })
 
@@ -29,20 +29,20 @@ describe('useOrgHref', () => {
     const orgHref = useOrgHref()
 
     it('returns a prefixed string when there are no params', () => {
-        expect(orgHref('mail')).toBe('/a/mail')
+        expect(orgHref('gizmos')).toBe('/a/gizmos')
         expect(orgHref('')).toBe('/a')
     })
 
     it('returns a STRING, not an object, when there are no params', () => {
         // Load-bearing: an object href is a new identity every render, which
         // makes <Redirect> re-navigate forever (React #185).
-        expect(typeof orgHref('mail')).toBe('string')
-        expect(typeof orgHref('mail', {})).toBe('string')
+        expect(typeof orgHref('gizmos')).toBe('string')
+        expect(typeof orgHref('gizmos', {})).toBe('string')
     })
 
     it('returns an object with a prefixed pathname when params are present', () => {
-        expect(orgHref('mail/[id]', { id: '123' })).toEqual({
-            pathname: '/a/mail/[id]',
+        expect(orgHref('gizmos/[id]', { id: '123' })).toEqual({
+            pathname: '/a/gizmos/[id]',
             params: { id: '123' },
         })
     })
@@ -62,9 +62,9 @@ describe('normalizeLegacyAppPath', () => {
 
     it('leaves non-app paths untouched', () => {
         // A deep link can legitimately point outside the app tree.
-        expect(normalizeLegacyAppPath('/p/drive/share/tok')).toBe('/p/drive/share/tok')
+        expect(normalizeLegacyAppPath('/p/cogs/share/tok')).toBe('/p/cogs/share/tok')
         expect(normalizeLegacyAppPath('/api/health')).toBe('/api/health')
-        expect(normalizeLegacyAppPath('/dav/drive/')).toBe('/dav/drive/')
+        expect(normalizeLegacyAppPath('/dav/cogs/')).toBe('/dav/cogs/')
         expect(normalizeLegacyAppPath('https://example.com/settings')).toBe(
             'https://example.com/settings'
         )
@@ -77,13 +77,13 @@ describe('normalizeLegacyAppPath', () => {
 
 describe('activeSlugFromPathname', () => {
     it('reads the slug from the segment after the prefix', () => {
-        expect(activeSlugFromPathname('/a/mail')).toBe('mail')
-        expect(activeSlugFromPathname('/a/mail/thread-1')).toBe('mail')
-        expect(activeSlugFromPathname('/a/drive/folder/f1')).toBe('drive')
+        expect(activeSlugFromPathname('/a/gizmos')).toBe('gizmos')
+        expect(activeSlugFromPathname('/a/gizmos/thread-1')).toBe('gizmos')
+        expect(activeSlugFromPathname('/a/cogs/folder/f1')).toBe('cogs')
     })
 
     it('ignores a query string', () => {
-        expect(activeSlugFromPathname('/a/mail?folder=sent')).toBe('mail')
+        expect(activeSlugFromPathname('/a/gizmos?folder=sent')).toBe('gizmos')
     })
 
     it('returns null at the workspace root and outside the prefix', () => {
@@ -101,7 +101,7 @@ describe('activeSlugFromPathname', () => {
  * effect's dependency array, because a new identity per render re-runs the
  * effect every render — and an effect that navigates then re-runs on the render
  * its own navigation caused. React kills that as error #185 (infinite
- * setState), which is what every boards deep link crashed with.
+ * setState), which is what every gadgets deep link crashed with.
  */
 describe('useOrgHref identity', () => {
     it('returns a referentially stable builder', () => {
@@ -110,9 +110,9 @@ describe('useOrgHref identity', () => {
 
     it('still builds the same hrefs', () => {
         const orgHref = useOrgHref()
-        expect(orgHref('boards')).toBe('/a/boards')
-        expect(orgHref('boards', { focused: 'PL-1' })).toEqual({
-            pathname: '/a/boards',
+        expect(orgHref('gadgets')).toBe('/a/gadgets')
+        expect(orgHref('gadgets', { focused: 'PL-1' })).toEqual({
+            pathname: '/a/gadgets',
             params: { focused: 'PL-1' },
         })
     })
@@ -121,6 +121,6 @@ describe('useOrgHref identity', () => {
     // call site — <Redirect href={...}> with a fresh object re-navigates every
     // render.
     it('returns a plain string when there are no params', () => {
-        expect(typeof useOrgHref()('boards/PL-1')).toBe('string')
+        expect(typeof useOrgHref()('gadgets/PL-1')).toBe('string')
     })
 })

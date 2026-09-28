@@ -46,6 +46,50 @@ function host(tag) {
     return Host
 }
 
+// A TextInput answers DOM `input` events with onChangeText, so a test types
+// the way it would into a real field: fireEvent.input(el, { target: { value } }).
+// The tag is registered as a custom element with a `value` property because
+// fireEvent needs a value setter, and React then sets the controlled value as
+// that property. onChangeText is pulled out of the props for the same reason
+// as onLayout above.
+const TEXT_INPUT_TAG = 'rn-textinput'
+
+if (typeof customElements !== 'undefined' && !customElements.get(TEXT_INPUT_TAG)) {
+    customElements.define(
+        TEXT_INPUT_TAG,
+        class extends HTMLElement {
+            get value() {
+                return this._value ?? ''
+            }
+            set value(next) {
+                this._value = next
+            }
+        }
+    )
+}
+
+const TextHost = host(TEXT_INPUT_TAG)
+const TextInput = React.forwardRef(function TextInput({ onChangeText, ...props }, ref) {
+    const node = React.useRef(null)
+    const setRef = React.useCallback(
+        (el) => {
+            node.current = el
+            if (typeof ref === 'function') ref(el)
+            else if (ref) ref.current = el
+        },
+        [ref]
+    )
+    React.useLayoutEffect(() => {
+        const el = node.current
+        if (!el || !onChangeText) return
+        const handler = (e) => onChangeText(e.target.value)
+        el.addEventListener('input', handler)
+        return () => el.removeEventListener('input', handler)
+    }, [onChangeText])
+    return React.createElement(TextHost, { ...props, ref: setRef })
+})
+TextInput.displayName = TEXT_INPUT_TAG
+
 // A Pressable answers a DOM click with its onPress, so a test can drive a
 // button the way a user does. `disabled` swallows it, as on every platform.
 const Pressable = React.forwardRef(function Pressable(
@@ -84,7 +128,7 @@ module.exports = {
     Text: host('rn-text'),
     Pressable,
     ScrollView: host('rn-scrollview'),
-    TextInput: host('rn-textinput'),
+    TextInput,
     Image: 'rn-image',
     Modal: 'rn-modal',
     TouchableOpacity: 'rn-touchableopacity',
