@@ -26,3 +26,13 @@ func mustSub(dir string) fs.FS {
 func embeddedWebFS() fs.FS        { return mustSub("web") }
 func embeddedMigrationsFS() fs.FS { return mustSub("pb_migrations") }
 func embeddedHooksFS() fs.FS      { return mustSub("pb_hooks") }
+
+// The generator's bundled-packages.json, so a binary run from any cwd still
+// seeds its pkg_registry rows.
+func embeddedBundledPackagesJSON() []byte {
+	data, err := embeddedAssets.ReadFile("embedded_assets/bundled-packages.json")
+	if err != nil {
+		log.Fatalf("embedded assets: bundled-packages.json missing from the build: %v", err)
+	}
+	return data
+}

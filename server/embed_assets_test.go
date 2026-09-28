@@ -15,4 +15,7 @@ func TestEmbeddedAccessorsAreNilWithoutTag(t *testing.T) {
 	if embeddedHooksFS() != nil {
 		t.Error("expected nil hooks FS in an untagged build")
 	}
+	if embeddedBundledPackagesJSON() != nil {
+		t.Error("expected nil bundled packages JSON in an untagged build")
+	}
 }

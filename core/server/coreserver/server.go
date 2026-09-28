@@ -74,10 +74,14 @@ type Options struct {
 
 	// PublicFS / MigrationsFS / HooksFS supply embedded assets for
 	// single-binary builds. Each is nil for path-based deployments, which keeps
-	// the container and hosting paths on their existing behavior.
+	// the container and managed-deployment paths on their existing behavior.
 	PublicFS     fs.FS
 	MigrationsFS fs.FS
 	HooksFS      fs.FS
+	// BundledPackagesJSON is the single-binary build's copy of
+	// bundled-packages.json, read when no copy is found on disk. Nil for
+	// path-based deployments.
+	BundledPackagesJSON []byte
 
 	// BinaryName is the file name of the running app binary (without
 	// directory). Used by package install/upgrade flows to locate the
@@ -95,14 +99,14 @@ type Options struct {
 	// manifest `quota` block.
 	//
 	// Core binds the enforcement hooks rather than the feature, so the limit
-	// holds on every write path and in a tenant process (which links no
+	// holds on every write path and in a per-org process (which links no
 	// feature package). Empty disables enforcement.
 	QuotaSources []quota.Source
 
 	// QuotaLimits resolves the ceilings. Defaults to quota.SettingsLimits,
 	// which reads the `settings` collection — correct for a single-org
-	// deployment. A hosting tenant passes a resolver whose org ceiling comes
-	// from the router's runtime config instead, so the org cannot raise the
+	// deployment. A managed deployment passes a resolver whose org ceiling comes
+	// from its supervisor's runtime config instead, so the org cannot raise the
 	// ceiling set for it.
 	QuotaLimits quota.LimitsFunc
 }
@@ -181,6 +185,8 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// link is being used, whether or not a ceiling ever applies.
 	sharequota.BindMeters(app)
 
+	embeddedBundledPackages = opts.BundledPackagesJSON
+
 	jsvm.MustRegister(app, jsvm.Config{
 		MigrationsDir: opts.MigrationsDir,
 		HooksDir:      opts.HooksDir,
@@ -216,16 +222,16 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	RegisterSharedCore(app)
 
 	// ---- Host-only registrations ----
-	// Everything below runs ONLY in the single-org app, never in a hosting
-	// tenant. Each entry needs a reason a tenant must not have it, and a
-	// matching entry in the hostOnlyHookDiff allowlist in
-	// composition_parity_test.go — the parity test fails on an unexplained
-	// divergence between the two compositions.
+	// Everything below runs ONLY in the single-org app, never in an org's
+	// process on a managed deployment. Each entry needs a reason such a
+	// process must not have it, and a matching entry in the hostOnlyHookDiff
+	// allowlist in composition_parity_test.go — the parity test fails on an
+	// unexplained divergence between the two compositions.
 
 	// Package install/upgrade swaps the running binary and invokes the Go
-	// toolchain. In hosting the ROUTER owns deploys (re-materialize + evict);
-	// a tenant that could rebuild or restart itself would escape the router's
-	// supervision.
+	// toolchain. On a managed deployment the SUPERVISOR owns deploys
+	// (re-materialize + evict); an org process that could rebuild or restart
+	// itself would escape that supervision.
 	// A single-binary build cannot rebuild itself, so it does not expose this
 	// API at all; self-hosters upgrade by downloading a new binary.
 	if opts.supportsSelfRebuild() {
@@ -246,30 +252,34 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	} else {
 		backup.SetSource("standalone")
 	}
-	// Admin-console panel endpoint. Tenant push keys will arrive via the org's
-	// system_settings (control-plane provisioned), not a self-serve panel.
+	// Admin-console panel endpoint. On a managed deployment push keys will
+	// arrive via the org's system_settings (provisioned by the supervisor), not
+	// a self-serve panel.
 	RegisterVapidAdminEndpoints(app)
 	// OTA bundles are served from the host's build archive; an org dir has no
-	// build archive. Hosted-app OTA delivery is a separate open question.
+	// build archive. OTA delivery on a managed deployment is a separate open
+	// question.
 	RegisterAppUpdateEndpoints(app)
 	// CLI binaries are served from this deployment's own activated build dir
 	// (cli-dist/ next to the server binary). A composition booted from a build
 	// artifact serves that artifact's copy instead, via
 	// RegisterCliDownloadEndpointsWith.
 	RegisterCliDownloadEndpoints(app)
-	// First-run installer + TINYCLD_PUBLIC_URL sync. A tenant needs neither:
-	// the router provisions orgs (migrations apply inside the tenant's own
-	// first spawn), serve-org nils the installer, and tenant AppURL comes from
-	// the router-materialized .runtime/app.json.
+	// First-run installer + TINYCLD_PUBLIC_URL sync. A managed deployment
+	// needs neither: its supervisor provisions the org (migrations apply inside
+	// the org process's own first spawn), serve-org nils the installer, and
+	// AppURL is adopted from the supervisor-materialized .runtime/app.json.
 	RegisterSetupBootstrap(app)
 	// Marketing-site demo machinery (shared demo user, nightly reset cron).
-	// Demos run on the single-org deployment, never inside a hosted org.
+	// Demos run on the single-org deployment, never inside an org on a managed
+	// deployment.
 	RegisterDemoStart(app)
 	RegisterDemoLead(app)
 	RegisterDemoReset(app)
 
 	// Regenerates TypeScript schema files into the developer workspace on
-	// collection edits. A tenant has no workspace and no TypesDir.
+	// collection edits. An org process on a managed deployment has no
+	// workspace and no TypesDir.
 	registerSchemaHooks(app, opts.TypesDir)
 
 	// Feature Go (CardDAV, full-text search, audit registration) is contributed by
@@ -278,8 +288,8 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	// the RegisterJSVMBinder/$-binding seam); it links no feature package itself.
 
 	// Static/SPA serving is host-shaped (releases dir, asset pool, website).
-	// Tenant static serving is separate open work: the router materializes
-	// pb_public but nothing serves it yet.
+	// Static serving on a managed deployment is separate open work: the
+	// supervisor materializes pb_public but nothing serves it yet.
 	registerStaticServe(app, opts)
 }
 
@@ -304,8 +314,8 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 // here are what fires when a change is MADE.
 func RegisterSharedEarly(app *pocketbase.PocketBase) {
 	// Install the process-wide logger once PocketBase has bootstrapped, not
-	// here in Register/RegisterTenant. app.Logger() falls back to
-	// slog.Default() until PocketBase's own initLogger() runs during
+	// here in Register (or a composing server's own entry point). app.Logger()
+	// falls back to slog.Default() until PocketBase's own initLogger() runs during
 	// bootstrap (pocketbase/core/base.go), so resolving it any earlier would
 	// hand Install the fan-out's own future default handler — wiring the
 	// fan-out to itself and recursing on the first log call. Waiting for
@@ -313,7 +323,7 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 	// handler batches records into the _logs table, and there is no usable
 	// DB before bootstrap finishes.
 	//
-	// Anything logged between Register/RegisterTenant and this point (e.g.
+	// Anything logged between that entry point and this one (e.g.
 	// registerFlags, jsvm/migratecmd setup) falls through to Go's default
 	// slog handler (stderr) instead of the fan-out. That's deliberate, not a
 	// gap: those calls have no _logs table to reach yet regardless.
@@ -337,27 +347,28 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 	// Sentry must register first so its router middleware sees every route.
 	// Middleware bound after a route is added does not apply retroactively.
 	// The client only initializes when a DSN exists in system_settings, so in
-	// an unconfigured tenant this is an inert pass-through.
+	// an unconfigured deployment this is an inert pass-through.
 	RegisterSentry(app)
 
 	// System-wide settings (Sentry/web-push/mail creds). Loads the
 	// system_settings collection into the in-memory SystemConfig once the DB is
 	// ready and keeps it in sync on edits, so subsystems read current values
-	// without env vars and stateful ones (Sentry) re-init on change. In a
-	// tenant this reads the org's own DB, so creds are per-org — UNLESS a
-	// supervising composition claimed the syscfg seam first, in which case
-	// those values are the operator's and this deployment's writes to them
-	// are refused. Shared (not Register's tail) because the refusal matters
-	// most in the tenant: it is the composition that has an operator.
+	// without env vars and stateful ones (Sentry) re-init on change. On a
+	// managed deployment this reads the org's own DB, so creds are per-org —
+	// UNLESS a supervising composition claimed the syscfg seam first, in which
+	// case those values are the operator's and this deployment's writes to
+	// them are refused. Shared (not Register's tail) because the refusal
+	// matters most on a managed deployment: it is the composition that has an
+	// operator.
 	RegisterSystemConfig(app)
 }
 
 // RegisterSharedCore is the bulk of the shared composition: everything both
-// the single-org app and a hosting tenant register after their respective
-// engine plugins (quota, jsvm) are in place. See the contract note on
-// RegisterSharedEarly. Order within this list is preserved from the original
-// single-org composition; the users hooks in particular bind in
-// guard → demo-audit → disabled order.
+// the single-org app and an org process on a managed deployment register
+// after their respective engine plugins (quota, jsvm) are in place. See the
+// contract note on RegisterSharedEarly. Order within this list is preserved
+// from the original single-org composition; the users hooks in particular
+// bind in guard → demo-audit → disabled order.
 func RegisterSharedCore(app *pocketbase.PocketBase) {
 	RegisterPkgEnableHook(app)
 	notify.Register(app)
@@ -386,7 +397,7 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	RegisterOrgNameEndpoint(app)
 	// The org backup API. Shared for the same reason as the boot hook above.
 	RegisterBackupEndpoints(app)
-	// Per-user storage breakdown. Shared: a hosting tenant's admin has the
+	// Per-user storage breakdown. Shared: a managed deployment's admin has the
 	// same "which of my users is filling the disk" question as a self-hoster,
 	// and it reports no ceiling the org could not already read.
 	RegisterStorageUsageEndpoint(app)
@@ -405,12 +416,12 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 
 	// OAuth 2.1 authorization server: the device grant the tinycld CLI logs in
 	// with, and authorization-code + PKCE for third-party integrations. Shared
-	// (not host-only) because a hosting tenant must be able to authorize a
+	// (not host-only) because a managed deployment must be able to authorize a
 	// CLI or an integration exactly like a self-hosted deployment.
 	oauth.Register(app)
 
 	// Federated search over every installed package. Shared for the same reason
-	// as OAuth above: a tenant's packages are searchable exactly as a
+	// as OAuth above: a managed deployment's packages are searchable exactly as a
 	// self-hosted deployment's are. Sources register themselves from their own
 	// package Register, so with no packages linked this serves an empty result
 	// rather than failing.
@@ -418,9 +429,9 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 
 	// Workflow rules engine: record-hook + scheduled dispatch, manual-run and
 	// dry-run endpoints. Shared for the same reason as OAuth/search above — a
-	// tenant's rules fire exactly as a self-hosted deployment's do. Inert with
-	// no materialized defs (a workspace with no automation-contributing
-	// packages), so this is a no-op call in that case.
+	// managed deployment's rules fire exactly as a self-hosted deployment's do.
+	// Inert with no materialized defs (a workspace with no
+	// automation-contributing packages), so this is a no-op call in that case.
 	automation.Register(app, automation.Options{
 		DefsPath: filepath.Join(resolveServerDir(), "automation_defs.json"),
 	})
@@ -428,7 +439,7 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	// Keep the /carddav (and /caldav, /dav) CORS bypass here even though core no
 	// longer serves a protocol handler itself: a package's own Go server (e.g.
 	// contacts) mounts /carddav via OnServe and relies on this bypass for
-	// non-browser DAV clients. A tenant mounts the same protocols from
+	// non-browser DAV clients. A managed deployment mounts the same protocols from
 	// materialized config, so it needs the bypass for the same reason.
 	registerDavCorsBypass(app)
 }
