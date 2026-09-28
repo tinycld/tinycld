@@ -45,8 +45,10 @@ export interface CommentComposerProps {
     // Supplying it also switches mentions on, exactly as
     // `mentionSuggestions` does, and takes precedence over it for the
     // picker: the search knows the query, the static list does not.
-    // `mentionSuggestions` stays the name map's source elsewhere
-    // (CommentThread), so callers legitimately pass both.
+    // `mentionSuggestions` therefore only matters to a caller that has
+    // a static pool and no search — read-mode display names are not
+    // its job and never were: CommentThread resolves those from
+    // `useMentionNames`.
     useMentionSuggestions?: (query: string) => MentionSuggestion[]
     // submitOnEnter switches the composer into chat-style mode:
     // Enter (without Shift) submits the form; Shift+Enter inserts a

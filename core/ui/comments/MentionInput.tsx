@@ -10,7 +10,7 @@ import {
     type TextInputSelectionChangeEventData,
     View,
 } from 'react-native'
-import { detectTrigger, type MentionTrigger } from './mention-input-helpers'
+import { caretAfterEdit, detectTrigger, type MentionTrigger } from './mention-input-helpers'
 
 // A composer textarea that autocompletes @-mentions. The control is
 // react-hook-form-aware (matches TextAreaInput's shape) so it slots
@@ -97,16 +97,21 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
         [onQueryChange]
     )
 
-    // Last known (text, caret) pair. A ref, not state: nothing renders
-    // off it, and both handlers need the other's latest value to derive
-    // the trigger without being re-bound on every keystroke.
-    const lastRef = useRef({ text: value, caret: value.length })
+    // Last known (text, selection) triple. A ref, not state: nothing
+    // renders off it, and both handlers need the other's latest value to
+    // derive the trigger without being re-bound on every keystroke.
+    //
+    // Both ends of the selection are kept, not just the caret. An edit
+    // replaces the selected range, so the post-edit caret depends on how
+    // wide that range was — see `caretAfterEdit`.
+    const lastRef = useRef({ text: value, start: value.length, end: value.length })
     if (lastRef.current.text !== value) {
         // The value moved without going through onChangeText — a form
         // reset after submit, or a caller writing the field directly.
         // Resync so the next edit's caret arithmetic starts from the
-        // text actually on screen, and clamp the caret into it.
-        lastRef.current = { text: value, caret: Math.min(lastRef.current.caret, value.length) }
+        // text actually on screen, and clamp the selection into it.
+        const clamped = Math.min(lastRef.current.start, value.length)
+        lastRef.current = { text: value, start: clamped, end: clamped }
     }
 
     const onChangeText = useCallback(
@@ -114,16 +119,14 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
             field.onChange(next)
             // RN fires onSelectionChange for a text change too, but the
             // order differs per platform, so the settled caret may not
-            // have arrived yet. Carry the last known caret through the
-            // edit instead of assuming end-of-text: an insertion of
-            // (next.length - prev.length) characters at the caret moves
-            // it by exactly that much. Assuming end-of-text instead
-            // opens the popover on an unrelated `@…` further along the
-            // body — and a pick would then splice at that stale offset
-            // and silently truncate everything between.
+            // have arrived yet. Derive it from the selection the edit
+            // replaced instead of assuming end-of-text: assuming
+            // end-of-text opens the popover on an unrelated `@…` further
+            // along the body — and a pick would then splice at that stale
+            // offset and silently truncate everything between.
             const prev = lastRef.current
-            const caret = Math.min(prev.caret + (next.length - prev.text.length), next.length)
-            lastRef.current = { text: next, caret }
+            const caret = caretAfterEdit(prev, next)
+            lastRef.current = { text: next, start: caret, end: caret }
             reportTrigger(detectTrigger(next, caret))
         },
         [field, reportTrigger]
@@ -131,9 +134,14 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
 
     const onSelectionChange = useCallback(
         (e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
-            const caret = e.nativeEvent.selection.start
-            lastRef.current = { ...lastRef.current, caret }
-            reportTrigger(detectTrigger(lastRef.current.text, caret))
+            const { start, end } = e.nativeEvent.selection
+            lastRef.current = { ...lastRef.current, start, end }
+            // A range selection has no single caret to anchor a trigger
+            // on, and the `@…` the user is about to replace is not a
+            // mention they are typing. Report the trigger from the
+            // selection's start, which is where the caret sits once the
+            // range collapses.
+            reportTrigger(detectTrigger(lastRef.current.text, start))
         },
         [reportTrigger]
     )
@@ -162,7 +170,7 @@ export function MentionInput<T extends FieldValues = Record<string, unknown>>(
             // Re-focus + collapse caret just after the inserted token
             // so subsequent typing happens in the right spot.
             const nextCaret = before.length + token.length
-            lastRef.current = { text: next, caret: nextCaret }
+            lastRef.current = { text: next, start: nextCaret, end: nextCaret }
             // The token closes the trigger: no `@…` remains at the caret.
             reportTrigger(null)
             // RN TextInput doesn't honor a programmatic `selection`

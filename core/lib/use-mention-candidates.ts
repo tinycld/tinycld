@@ -36,7 +36,12 @@ export function useMentionCandidates(
     const disabled = options?.disabled === true
     const currentUserId = options?.currentUserId
     const [usersCollection] = useStore('users')
-    const term = search.trim()
+    // pbtsdb's escapeValue escapes `"` but not `\`, so a term containing `\"`
+    // compiles to `"\\""` — an unterminated filter literal PocketBase answers
+    // with a 400. Dropping backslashes is the whole guard: a backslash has no
+    // meaning to a `~` match here, so nothing searchable is lost. Same guard
+    // as the audit log's search box.
+    const term = search.trim().replace(/\\/g, '')
 
     const { data: candidates = [] } = useLiveQuery({
         query: query => {

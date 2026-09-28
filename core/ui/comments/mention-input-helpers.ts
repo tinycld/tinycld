@@ -45,3 +45,37 @@ export function renderMentionsToText(body: string, nameByUserId: Map<string, str
         return name ? `@${name}` : `@${id}`
     })
 }
+
+// The text and selection the input held before an edit.
+export interface MentionSelectionSnapshot {
+    text: string
+    // Both ends of the selection. Equal when the caret is collapsed.
+    start: number
+    end: number
+}
+
+// Where the caret lands after the input's text changes.
+//
+// An edit replaces the selected range with whatever was inserted, so the
+// caret ends up at `start + insertedLength`. The inserted length is what
+// the length delta leaves once the removed range is accounted for:
+//
+//     next.length - prev.text.length = inserted - (end - start)
+//
+// so `inserted = next.length - prev.text.length + (end - start)`, and the
+// caret is `start + inserted`.
+//
+// The collapsed case (`start === end`) reduces to the plain
+// "caret moves by the length delta" rule, which is why it went unnoticed.
+// A non-collapsed one does not: selecting five characters and pressing
+// Delete yields inserted = 0 and a caret at `start`, whereas the delta
+// alone would put it five characters EARLIER than the selection began —
+// far enough back to detect an unrelated `@…` and splice on its offsets.
+//
+// The result is clamped into the new text because a platform can deliver
+// a stale selection alongside a programmatic value change.
+export function caretAfterEdit(prev: MentionSelectionSnapshot, next: string): number {
+    const removed = Math.max(0, prev.end - prev.start)
+    const inserted = next.length - prev.text.length + removed
+    return Math.min(Math.max(prev.start + inserted, 0), next.length)
+}
