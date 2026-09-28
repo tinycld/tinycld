@@ -63,9 +63,39 @@ export async function resumeSetupFromSettings(page: Page) {
     await page.getByTestId(SETUP_RESUME_TEST_ID).click()
 }
 
-/** The workspace step's name field. */
+/** The organization step's name field. */
 export function setupWorkspaceName(page: Page): Locator {
     return setupStep(page, CORE_STEP_IDS.workspace).getByTestId(SETUP_WORKSPACE_NAME_TEST_ID)
+}
+
+/** A real 1x1 PNG: the logo cropper decodes the bytes, so they must decode. */
+export const ONE_PIXEL_PNG_BASE64 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
+/**
+ * Picks a logo on the organization step through the real file picker and
+ * saves the cropper, the same way avatar.spec.ts attaches a photo.
+ *
+ * Playwright's chooser interception suppresses the native dialog, and with it
+ * the window blur → focus round trip a real dialog causes. The picker runs
+ * inside that round trip for every real user, so the helper restores it: blur
+ * as the chooser opens, refocus as it closes, and only then deliver the file.
+ */
+export async function attachSetupLogo(
+    page: Page,
+    file: { name: string; mimeType: string; buffer: Buffer }
+) {
+    const step = setupStep(page, CORE_STEP_IDS.workspace)
+    const chooserPromise = page.waitForEvent('filechooser')
+    await step.getByTestId('avatar-upload').click()
+    const chooser = await chooserPromise
+    await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    await page.evaluate(
+        () => new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)))
+    )
+    await chooser.setFiles(file)
+    await page.getByTestId('avatar-cropper-save').click()
 }
 
 /** Sends one invite from the team step's form; email may be left out. */

@@ -1,7 +1,9 @@
-import { and, eq, inArray, not } from '@tanstack/db'
+import { inArray } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { SetupContinueButton } from '@tinycld/core/components/setup/wizard/SetupContinueButton'
+import { StepHeading } from '@tinycld/core/components/setup/wizard/StepHeading'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
+import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import { captureException, errorToString } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { notify } from '@tinycld/core/lib/notify'
@@ -13,7 +15,7 @@ import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { Check } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
-import { type AppChoice, appChoicesOf, CORE_SLUG } from './app-choices'
+import { type AppChoice, appChoicesOf } from './app-choices'
 
 // Package management and pkg_registry writes are owner-only.
 export function useIsStepVisible() {
@@ -24,20 +26,16 @@ function useAppChoices() {
     const [pkgRegistry] = useStore('pkg_registry')
     // `installed` is included because enabling writes it and the server hook
     // only then corrects a bundled slug back to `bundled`; without it the card
-    // would vanish for the length of that round trip.
+    // would vanish for the length of that round trip. The core row is dropped
+    // by appChoicesOf, which already skips it, so the query excludes nothing.
     const { data: rows = [] } = useLiveQuery(query =>
         query
             .from({ p: pkgRegistry })
-            .where(({ p }) =>
-                and(
-                    inArray(p.status, ['bundled', 'installed', 'disabled']),
-                    not(eq(p.slug, CORE_SLUG))
-                )
-            )
+            .where(({ p }) => inArray(p.status, ['bundled', 'installed', 'disabled']))
             .select(({ p }) => ({ id: p.id, slug: p.slug, status: p.status }))
     )
     // Hiding an app only flips its status; nothing is rebuilt, so the change
-    // applies at once and the preview rail follows the same live rows.
+    // applies at once.
     const toggle = useMutation({
         mutationFn: mutation(function* (choice: AppChoice) {
             yield pkgRegistry.update(choice.id, draft => {
@@ -58,13 +56,24 @@ function useAppChoices() {
 }
 
 const CARD_CLASS = {
-    on: 'flex-row items-start gap-2.5 rounded-xl border-[1.5px] border-primary bg-primary/10 p-3',
-    off: 'flex-row items-start gap-2.5 rounded-xl border-[1.5px] border-border p-3',
+    on: 'flex-row items-center gap-3 rounded-xl border-2 border-primary bg-accent p-3',
+    off: 'flex-row items-center gap-3 rounded-xl border-2 border-border bg-background p-3',
+} as const
+
+// Two columns where the card has room; one on a phone, so descriptions stay readable.
+const CARD_WIDTH_CLASS = {
+    wide: 'min-w-[200px] flex-1 basis-[46%]',
+    narrow: 'w-full',
+} as const
+
+const ICON_BOX_CLASS = {
+    on: 'size-10 items-center justify-center rounded-lg bg-primary',
+    off: 'size-10 items-center justify-center rounded-lg bg-surface-secondary',
 } as const
 
 const CHECK_CLASS = {
-    on: 'mt-0.5 size-4 items-center justify-center rounded border-[1.5px] border-primary bg-primary',
-    off: 'mt-0.5 size-4 items-center justify-center rounded border-[1.5px] border-border',
+    on: 'size-5 items-center justify-center rounded-full bg-primary',
+    off: 'size-5 items-center justify-center rounded-full border-2 border-border',
 } as const
 
 function CheckMark({ isOn }: { isOn: boolean }) {
@@ -72,12 +81,21 @@ function CheckMark({ isOn }: { isOn: boolean }) {
     if (!isOn) return <View className={CHECK_CLASS.off} />
     return (
         <View className={CHECK_CLASS.on}>
-            <Check size={11} color={onPrimary} strokeWidth={3} />
+            <Check size={12} color={onPrimary} strokeWidth={3} />
         </View>
     )
 }
 
-function AppCard({ choice, onToggle }: { choice: AppChoice; onToggle: (c: AppChoice) => void }) {
+function AppCard({
+    choice,
+    widthClass,
+    onToggle,
+}: {
+    choice: AppChoice
+    widthClass: string
+    onToggle: (c: AppChoice) => void
+}) {
+    const onPrimary = useThemeColor('primary-foreground')
     const muted = useThemeColor('muted-foreground')
     const Icon = getIcon(choice.icon)
     const state = choice.isOn ? 'on' : 'off'
@@ -88,33 +106,36 @@ function AppCard({ choice, onToggle }: { choice: AppChoice; onToggle: (c: AppCho
             accessibilityRole="checkbox"
             accessibilityState={{ checked: choice.isOn }}
             accessibilityLabel={choice.name}
-            className={`${CARD_CLASS[state]} min-w-[180px] flex-1 basis-[45%]`}
+            className={`${CARD_CLASS[state]} ${widthClass}`}
         >
-            <CheckMark isOn={choice.isOn} />
+            <View className={ICON_BOX_CLASS[state]}>
+                <Icon size={18} color={choice.isOn ? onPrimary : muted} />
+            </View>
             <View className="flex-1 gap-0.5">
-                <View className="flex-row items-center gap-1.5">
-                    <Icon size={14} color={muted} />
-                    <Text className="text-sm font-bold text-foreground">{choice.name}</Text>
-                </View>
-                <Text className="text-xs text-muted-foreground" numberOfLines={2}>
+                <Text className="text-sm font-semibold text-foreground">{choice.name}</Text>
+                <Text className="text-xs leading-4 text-muted-foreground" numberOfLines={2}>
                     {choice.description}
                 </Text>
             </View>
+            <CheckMark isOn={choice.isOn} />
         </Pressable>
     )
 }
 
 export default function AppsStep({ next }: SetupStepProps) {
     const { choices, toggle } = useAppChoices()
-    const cards = choices.map(c => <AppCard key={c.slug} choice={c} onToggle={toggle} />)
+    const widthClass =
+        useBreakpoint() === 'mobile' ? CARD_WIDTH_CLASS.narrow : CARD_WIDTH_CLASS.wide
+    const cards = choices.map(c => (
+        <AppCard key={c.slug} choice={c} widthClass={widthClass} onToggle={toggle} />
+    ))
     return (
-        <View className="max-w-[440px] gap-1">
-            <Text className="text-2xl font-bold text-foreground">Choose your apps</Text>
-            <Text className="mb-3 text-sm text-muted-foreground">
-                These apps come with your server. Clear an app to hide it from everyone. You can
-                show it again, or add more apps, at any time in Settings → Packages.
-            </Text>
-            <View className="mb-4 flex-row flex-wrap gap-2">{cards}</View>
+        <View>
+            <StepHeading
+                title="Choose your apps"
+                lead="These apps come with your server. Clear an app to hide it from everyone. You can show it again, or add more apps, at any time in Settings → Packages."
+            />
+            <View className="mb-6 flex-row flex-wrap gap-3">{cards}</View>
             <SetupContinueButton onPress={next} />
         </View>
     )

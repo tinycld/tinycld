@@ -13,8 +13,8 @@ export function doneSummaryOf(input: { appCount: number; memberCount: number }):
     return parts.join(' · ')
 }
 
-/** A skipped workspace step leaves no chosen name, so the heading stays neutral. */
+/** A skipped organization step leaves no chosen name, so the heading stays neutral. */
 export function doneHeadingOf(name: string): { heading: string; buttonLabel: string } {
-    if (!name) return { heading: 'Your workspace is ready', buttonLabel: 'Open your workspace' }
+    if (!name) return { heading: 'Your organization is ready', buttonLabel: 'Open the app' }
     return { heading: `${name} is ready`, buttonLabel: `Open ${name}` }
 }

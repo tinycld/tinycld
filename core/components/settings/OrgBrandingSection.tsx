@@ -183,31 +183,64 @@ function useOrgBrandingEditor() {
     }
 }
 
-export function OrgBrandingSection() {
-    const editor = useOrgBrandingEditor()
+const LOGO_HINT =
+    "Shown at the top of the app rail on every screen and on the sign-in screen. Falls back to your organization's initials when no logo is set."
 
+// 'section': a titled settings panel. 'field': one field among others in a
+// form, with a field label and the hint below, as the setup wizard shows it.
+type BrandingVariant = 'section' | 'field'
+
+function BrandingBody({
+    editor,
+    variant,
+}: {
+    editor: ReturnType<typeof useOrgBrandingEditor>
+    variant: BrandingVariant
+}) {
+    if (variant === 'field') {
+        return (
+            <View className="gap-2">
+                <Text className="text-sm font-semibold text-foreground">Logo</Text>
+                <BrandingPreviewRow editor={editor} size={72} />
+                <Text className="text-xs text-muted">{LOGO_HINT}</Text>
+            </View>
+        )
+    }
     return (
         <View className="gap-3">
             <Text className="text-foreground text-xl font-bold">Logo</Text>
             <View className="rounded-xl border border-border bg-surface-secondary p-4 gap-4">
-                <Text className="text-[13px] text-muted-foreground">
-                    Shown in the package rail and on the sign-in screen. Falls back to your
-                    organization's initials when no logo is set.
-                </Text>
+                <Text className="text-[13px] text-muted-foreground">{LOGO_HINT}</Text>
                 <BrandingPreviewRow editor={editor} />
             </View>
+        </View>
+    )
+}
+
+export function OrgBrandingSection({ variant = 'section' }: { variant?: BrandingVariant }) {
+    const editor = useOrgBrandingEditor()
+
+    return (
+        <View>
+            <BrandingBody editor={editor} variant={variant} />
             <CropperDialog editor={editor} />
         </View>
     )
 }
 
-function BrandingPreviewRow({ editor }: { editor: ReturnType<typeof useOrgBrandingEditor> }) {
+function BrandingPreviewRow({
+    editor,
+    size = 96,
+}: {
+    editor: ReturnType<typeof useOrgBrandingEditor>
+    size?: number
+}) {
     return (
         <View className="flex-row items-center gap-4">
             <Avatar
                 testID="avatar-preview"
                 name={editor.orgName}
-                size={96}
+                size={size}
                 avatar={editor.image}
                 shape="squircle"
             />

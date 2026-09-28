@@ -1,44 +1,46 @@
 import { useMutation } from '@tinycld/core/lib/mutations'
 import { appHref } from '@tinycld/core/lib/org-routes'
 import { SETUP_DONE_TEST_ID } from '@tinycld/core/lib/setup/step-ids'
+import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { useRouter } from 'expo-router'
+import { Check } from 'lucide-react-native'
 import { Text, View } from 'react-native'
-import { useWorkspacePreview } from '../use-workspace-preview'
-import { WorkspacePreview } from '../WorkspacePreview'
+import { useWorkspaceSummary } from '../use-workspace-summary'
 import { doneHeadingOf, doneSummaryOf } from './done-summary'
 
 function useDoneStep(complete: () => Promise<void>) {
     const router = useRouter()
-    const model = useWorkspacePreview()
+    const workspace = useWorkspaceSummary()
     const open = useMutation({
         mutationFn: complete,
         onSuccess: () => router.replace(appHref('')),
     })
     return {
-        model,
-        ...doneHeadingOf(model.name),
-        summary: doneSummaryOf({
-            appCount: model.apps.length,
-            memberCount: model.memberCount,
-        }),
+        ...doneHeadingOf(workspace.name),
+        summary: doneSummaryOf(workspace),
         onOpen: () => open.mutate(),
         isPending: open.isPending,
     }
 }
 
-/** The last screen: the finished workspace, then a button that marks setup complete and opens it. */
+/** The last screen: a summary of what was set up, then a button that marks setup complete and opens the workspace. */
 export function DoneStep({ complete }: { complete: () => Promise<void> }) {
-    const { model, heading, buttonLabel, summary, onOpen, isPending } = useDoneStep(complete)
+    const { heading, buttonLabel, summary, onOpen, isPending } = useDoneStep(complete)
+    const onPrimary = useThemeColor('primary-foreground')
     return (
-        <View testID={SETUP_DONE_TEST_ID} className="w-full items-center gap-3.5">
-            <View className="w-full max-w-[420px] items-center">
-                <WorkspacePreview model={model} isNewApps={false} />
+        <View testID={SETUP_DONE_TEST_ID} className="items-center gap-6 py-6">
+            <View className="size-16 items-center justify-center rounded-full bg-primary">
+                <Check size={30} color={onPrimary} strokeWidth={3} />
             </View>
-            <Text className="text-center text-2xl font-bold text-foreground">{heading}</Text>
-            <Text className="text-center text-sm text-muted-foreground">{summary}</Text>
-            <Button onPress={onOpen} isDisabled={isPending}>
-                <ButtonText>{buttonLabel}</ButtonText>
+            <View className="items-center gap-2">
+                <Text className="text-center text-[30px] font-bold leading-9 tracking-tight text-foreground">
+                    {heading}
+                </Text>
+                <Text className="text-center text-[15px] text-muted-foreground">{summary}</Text>
+            </View>
+            <Button size="lg" className="min-h-11" onPress={onOpen} isDisabled={isPending}>
+                <ButtonText className="text-[15px] font-semibold">{buttonLabel}</ButtonText>
             </Button>
         </View>
     )

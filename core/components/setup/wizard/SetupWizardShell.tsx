@@ -1,5 +1,5 @@
+import { useBreakpoint } from '@tinycld/core/components/workspace/useBreakpoint'
 import {
-    CORE_STEP_IDS,
     SETUP_FINISH_LATER_TEST_ID,
     SETUP_SKIP_TEST_ID,
     setupStepTestId,
@@ -7,37 +7,23 @@ import {
 import type { WizardSummary } from '@tinycld/core/lib/setup/wizard-logic'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import type { ReactNode } from 'react'
-import { ScrollView, Text, useWindowDimensions, View } from 'react-native'
-import { ProgressSegments } from './ProgressSegments'
-import { ServerLogPreview } from './ServerLogPreview'
-import { ghostPreviewModel, type PreviewModel, useWorkspacePreview } from './use-workspace-preview'
-import { WorkspacePreview } from './WorkspacePreview'
-import { WorkspacePreviewStrip } from './WorkspacePreviewStrip'
-
-// 'filled': the Done screen, where the step itself shows the workspace across
-// the whole pane, so there is no side preview or phone strip.
-type PreviewKind = 'workspace' | 'server-log' | 'ghost' | 'filled'
+import { ScrollView, Text, View } from 'react-native'
+import { StepList } from './StepList'
 
 export interface SetupWizardShellProps {
     /**
      * 'claim' is the pre-auth code + owner-account pair; its progress comes
-     * from a synthetic summary and its label is always "Claim this server".
+     * from a synthetic summary.
      */
     phase: 'claim' | 'setup'
     summary: WizardSummary | null
     currentStepId: string | null
     onFinishLater: (() => void) | null
     onSkip: (() => void) | null
-    preview: PreviewKind
-    code: string
-    /** Shown as the only avatar on the ghost preview, before any user exists. */
-    ghostInitials?: string
+    /** Opens another step from the list; absent when steps cannot be revisited. */
+    onOpenStep?: (id: string) => void
     children: ReactNode
 }
-
-// The breakpoint is read in JS, not with `md:` classes, so the phone layout is
-// chosen the same way on web and native.
-const PHONE_MAX_WIDTH = 768
 
 const EMPTY_SUMMARY: WizardSummary = {
     steps: [],
@@ -47,41 +33,30 @@ const EMPTY_SUMMARY: WizardSummary = {
     isSettled: true,
 }
 
-// Apps chosen on this step are shown as "new" so each toggle is visible on the
-// rail; on every other step they are part of the settled workspace.
-const APPS_STEP_ID = CORE_STEP_IDS.apps
+const EYEBROW_CLASS = 'text-[11px] font-semibold uppercase tracking-wider text-muted-foreground'
 
-function stepLabelOf(props: SetupWizardShellProps): string {
-    const { phase, summary, currentStepId } = props
-    if (phase === 'claim' || !summary) return 'Claim this server'
+function positionLabelOf(props: SetupWizardShellProps): string {
+    const { summary, currentStepId } = props
+    if (!summary) return ''
     const index = summary.steps.findIndex(s => s.id === currentStepId)
-    if (index === -1) return `${Math.min(summary.doneCount + 1, summary.total)} of ${summary.total}`
-    return `${summary.steps[index].label} · ${index + 1} of ${summary.total}`
+    if (index === -1) return ''
+    return `${index + 1} of ${summary.total}`
 }
 
-function formClassNameOf(isPhone: boolean, isFilled: boolean): string {
-    if (isFilled) return 'w-full bg-surface-secondary'
-    return isPhone ? 'w-full' : 'w-[52%]'
-}
-
-function useSetupWizardLayout(props: SetupWizardShellProps, model: PreviewModel) {
-    const { width } = useWindowDimensions()
-    const isPhone = width < PHONE_MAX_WIDTH
-    const isFilled = props.preview === 'filled'
+function useSetupWizardLayout(props: SetupWizardShellProps) {
+    const isPhone = useBreakpoint() === 'mobile'
     return {
-        model,
-        isNewApps: props.currentStepId === APPS_STEP_ID,
         summary: props.summary ?? EMPTY_SUMMARY,
-        stepLabel: stepLabelOf(props),
-        showStrip: isPhone && !isFilled,
-        showPane: !isPhone && !isFilled,
-        formClassName: formClassNameOf(isPhone, isFilled),
+        positionLabel: positionLabelOf(props),
+        eyebrow: props.phase === 'claim' ? 'New server' : 'Organization setup',
         // Claim and Done have no registry step, so they carry no step id.
         stepTestId: props.currentStepId ? setupStepTestId(props.currentStepId) : undefined,
-        contentClassName: isFilled
-            ? 'flex-grow items-center justify-center p-6 gap-4'
-            : 'p-6 gap-4',
-        preview: props.preview,
+        // On a phone the card is the screen; elsewhere it floats on the backdrop.
+        pageClassName: isPhone ? 'flex-grow' : 'flex-grow items-center justify-center px-6 py-10',
+        cardClassName: isPhone
+            ? 'flex-1 bg-background'
+            : 'w-full max-w-[640px] rounded-2xl border border-border bg-background shadow-lg',
+        bodyClassName: isPhone ? 'px-5 py-6 gap-6' : 'px-10 py-9 gap-7',
     }
 }
 
@@ -93,88 +68,90 @@ function FinishLaterButton({ onPress }: { onPress: (() => void) | null }) {
         <Button
             variant="link"
             size="sm"
+            className="px-0"
             onPress={onPress}
             accessibilityLabel="Finish setup later"
             testID={SETUP_FINISH_LATER_TEST_ID}
         >
-            <ButtonText>Finish later</ButtonText>
+            <ButtonText className="text-[13px]">Finish later</ButtonText>
         </Button>
+    )
+}
+
+function PositionLabel({ label }: { label: string }) {
+    if (!label) return null
+    return <Text className="text-[13px] text-muted-foreground">{label}</Text>
+}
+
+function ShellHeader({
+    layout,
+    props,
+}: {
+    layout: SetupWizardLayout
+    props: SetupWizardShellProps
+}) {
+    return (
+        <View className="gap-4">
+            <View className="flex-row items-center justify-between">
+                <Text className={EYEBROW_CLASS}>{layout.eyebrow}</Text>
+                <PositionLabel label={layout.positionLabel} />
+            </View>
+            <StepList
+                summary={layout.summary}
+                currentStepId={props.currentStepId}
+                onOpen={props.onOpenStep}
+            />
+            <View className="h-px bg-border" />
+        </View>
     )
 }
 
 function SkipButton({ onPress }: { onPress: (() => void) | null }) {
-    if (!onPress) return null
+    if (!onPress) return <View />
     return (
         <Button
             variant="link"
-            className="self-start"
+            size="sm"
+            className="px-0"
             onPress={onPress}
             accessibilityLabel="Skip this step"
             testID={SETUP_SKIP_TEST_ID}
         >
-            <ButtonText>Skip</ButtonText>
+            <ButtonText className="text-[13px] text-muted-foreground">Skip this step</ButtonText>
         </Button>
     )
 }
 
-function PreviewBody({ layout, code }: { layout: SetupWizardLayout; code: string }) {
-    if (layout.preview === 'server-log') return <ServerLogPreview code={code} />
-    return <WorkspacePreview model={layout.model} isNewApps={layout.isNewApps} />
-}
-
-function PreviewPane({ layout, code }: { layout: SetupWizardLayout; code: string }) {
-    if (!layout.showPane) return null
+/** Skip on the left, Finish later on the right; hidden when neither applies. */
+function ShellFooter({ props }: { props: SetupWizardShellProps }) {
+    if (!props.onSkip && !props.onFinishLater) return null
     return (
-        <View className="flex-1 items-center justify-center border-l border-border bg-surface-secondary p-5">
-            <PreviewBody layout={layout} code={code} />
+        <View className="flex-row items-center justify-between border-t border-border pt-4">
+            <SkipButton onPress={props.onSkip} />
+            <FinishLaterButton onPress={props.onFinishLater} />
         </View>
     )
 }
 
 /**
- * Frame for every wizard step: progress along the top, the step's form on the
- * left and a live miniature of the workspace on the right (a strip on phones).
+ * Frame for every wizard screen: one card, centred on the page, with the
+ * step list along its top, the step's form in the middle and Skip / Finish
+ * later at its foot. Package steps render inside the same card.
  */
 export function SetupWizardShell(props: SetupWizardShellProps) {
-    if (props.preview === 'workspace' || props.preview === 'filled') {
-        return <LiveShell {...props} />
-    }
-    // Pre-auth screens never show live org data (the name there is the server
-    // default), and there is nobody signed in to read it as, so they do not
-    // subscribe to it at all.
-    return <ShellFrame props={props} model={ghostPreviewModel(props.ghostInitials)} />
-}
-
-function LiveShell(props: SetupWizardShellProps) {
-    const model = useWorkspacePreview()
-    return <ShellFrame props={props} model={model} />
-}
-
-function ShellFrame({ props, model }: { props: SetupWizardShellProps; model: PreviewModel }) {
-    const layout = useSetupWizardLayout(props, model)
+    const layout = useSetupWizardLayout(props)
     return (
-        <View className="flex-1 bg-background">
-            <WorkspacePreviewStrip
-                model={layout.model}
-                isNewApps={layout.isNewApps}
-                isVisible={layout.showStrip}
-            />
-            <View className="flex-row items-center gap-3 border-b border-border px-4 py-2.5">
-                <ProgressSegments summary={layout.summary} currentStepId={props.currentStepId} />
-                <Text className="text-[11px] text-muted-foreground">{layout.stepLabel}</Text>
-                <FinishLaterButton onPress={props.onFinishLater} />
-            </View>
-            <View className="flex-1 flex-row">
-                <ScrollView
-                    testID={layout.stepTestId}
-                    className={layout.formClassName}
-                    contentContainerClassName={layout.contentClassName}
-                >
+        <ScrollView
+            className="flex-1 bg-surface-secondary"
+            contentContainerClassName={layout.pageClassName}
+        >
+            <View className={layout.cardClassName}>
+                <View testID={layout.stepTestId} className={layout.bodyClassName}>
+                    <ShellHeader layout={layout} props={props} />
                     {props.children}
-                    <SkipButton onPress={props.onSkip} />
-                </ScrollView>
-                <PreviewPane layout={layout} code={props.code} />
+                    <ShellFooter props={props} />
+                </View>
             </View>
-        </View>
+        </ScrollView>
     )
 }

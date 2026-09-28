@@ -22,8 +22,14 @@ type StepScreen =
           next: () => void
           onSkip: (() => void) | null
           onFinishLater: (() => void) | null
+          openStep: (id: string) => void
       }
-    | { kind: 'done'; summary: WizardSummary; complete: () => Promise<void> }
+    | {
+          kind: 'done'
+          summary: WizardSummary
+          complete: () => Promise<void>
+          openStep: (id: string) => void
+      }
 
 // A failed save has already been reported by its mutation (toast + log), so
 // the person simply stays on the step and can try again.
@@ -37,9 +43,12 @@ function useStepScreen(
 ): StepScreen {
     const router = useRouter()
     // Each action awaits its single write before navigating; see useWizardActions.
-    const thenGo = (write: () => Promise<void>, href: string) => () => {
-        write().then(() => router.replace(href), stayOnFailure)
+    // Steps are pushed, not replaced, so the browser's back button returns to
+    // the previous step; leaving the wizard replaces, so back does not re-enter it.
+    const thenGo = (write: () => Promise<void>, href: string, mode: 'push' | 'replace') => () => {
+        write().then(() => router[mode](href), stayOnFailure)
     }
+    const openStep = (id: string) => router.push(appHref(`setup/${stepIdToParam(id)}`))
 
     if (!actions.state) return { kind: 'redirect', href: appHref('') }
     const summary = summarizeWizard(statuses, actions.state)
@@ -52,7 +61,7 @@ function useStepScreen(
         return { kind: 'redirect', href: appHref(target) }
     }
 
-    if (param === 'done') return { kind: 'done', summary, complete: actions.complete }
+    if (param === 'done') return { kind: 'done', summary, complete: actions.complete, openStep }
 
     const id = paramToStepId(param)
     const step = steps.find(s => s.id === id)
@@ -65,9 +74,10 @@ function useStepScreen(
         summary,
         currentStepId: id,
         Component: step.Component,
-        next: thenGo(() => actions.continueStep(status), NEXT_HREF),
-        onSkip: thenGo(() => actions.skip(id), NEXT_HREF),
-        onFinishLater: thenGo(actions.finishLater, appHref('')),
+        next: thenGo(() => actions.continueStep(status), NEXT_HREF, 'push'),
+        onSkip: thenGo(() => actions.skip(id), NEXT_HREF, 'push'),
+        onFinishLater: thenGo(actions.finishLater, appHref(''), 'replace'),
+        openStep,
     }
 }
 
@@ -93,8 +103,7 @@ function StepScreenBody({
                 currentStepId={null}
                 onFinishLater={null}
                 onSkip={null}
-                preview="filled"
-                code=""
+                onOpenStep={screen.openStep}
             >
                 <DoneStep complete={screen.complete} />
             </SetupWizardShell>
@@ -108,8 +117,7 @@ function StepScreenBody({
             currentStepId={screen.currentStepId}
             onFinishLater={screen.onFinishLater}
             onSkip={screen.onSkip}
-            preview="workspace"
-            code=""
+            onOpenStep={screen.openStep}
         >
             <Component next={screen.next} />
         </SetupWizardShell>

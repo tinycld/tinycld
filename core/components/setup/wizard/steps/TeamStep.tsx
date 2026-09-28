@@ -1,6 +1,6 @@
 import { useLiveQuery } from '@tanstack/react-db'
 import { InviteLinkPanel } from '@tinycld/core/components/settings/members/InviteLinkPanel'
-import { ROLE_LABELS } from '@tinycld/core/components/settings/members/types'
+import { ROLE_DESCRIPTIONS, ROLE_LABELS } from '@tinycld/core/components/settings/members/types'
 import {
     type InviteFormValues,
     type InviteResult,
@@ -8,6 +8,7 @@ import {
     useInviteMember,
 } from '@tinycld/core/components/settings/members/use-invite-member'
 import { SetupContinueButton } from '@tinycld/core/components/setup/wizard/SetupContinueButton'
+import { StepHeading } from '@tinycld/core/components/setup/wizard/StepHeading'
 import { SidebarSlot } from '@tinycld/core/components/sidebar-primitives/SidebarSlot'
 import { useStore } from '@tinycld/core/lib/pocketbase'
 import { CORE_SLOT_TARGET } from '@tinycld/core/lib/setup/core-slots'
@@ -20,13 +21,14 @@ import type { SetupStepProps } from '@tinycld/core/lib/setup/types'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import {
     FormErrorSummary,
-    SelectInput,
+    RadioInput,
     TextInput,
     useForm,
     zodResolver,
 } from '@tinycld/core/ui/form'
 import { useState } from 'react'
 import { Text, View } from 'react-native'
+import { initialsOf } from '../use-workspace-summary'
 
 export function teamIsDone(userCount: number): boolean {
     return userCount > 1
@@ -42,8 +44,8 @@ export function useIsStepDone() {
 
 // Guests are for outside collaborators; the first team is members and admins.
 const ROLE_OPTIONS = [
-    { label: ROLE_LABELS.member, value: 'member' },
-    { label: ROLE_LABELS.admin, value: 'admin' },
+    { label: ROLE_LABELS.member, value: 'member', description: ROLE_DESCRIPTIONS.member },
+    { label: ROLE_LABELS.admin, value: 'admin', description: ROLE_DESCRIPTIONS.admin },
 ]
 
 function useTeamInvite() {
@@ -80,6 +82,7 @@ function usePeople() {
     return data.map(p => ({
         id: p.id,
         name: p.name || p.username,
+        initials: initialsOf(p.name || p.username),
         role: ROLE_LABELS[p.role] ?? p.role,
     }))
 }
@@ -87,7 +90,10 @@ function usePeople() {
 function InvitedLink({ invited }: { invited: InviteResult | null }) {
     if (!invited) return null
     return (
-        <View testID="invite-link-step" className="mb-4 gap-2">
+        <View
+            testID="invite-link-step"
+            className="mb-5 gap-2 rounded-xl border border-primary/40 bg-accent p-4"
+        >
             <Text className="text-sm font-semibold text-foreground">
                 Invite created. Share this link with your teammate.
             </Text>
@@ -101,11 +107,16 @@ function InvitedLink({ invited }: { invited: InviteResult | null }) {
     )
 }
 
-function PersonRow({ name, role }: { name: string; role: string }) {
+function PersonRow({ name, initials, role }: { name: string; initials: string; role: string }) {
     return (
-        <View className="flex-row items-center justify-between border-b border-border py-2">
-            <Text className="text-sm text-foreground">{name}</Text>
-            <Text className="text-xs text-muted-foreground">{role}</Text>
+        <View className="flex-row items-center gap-3 py-2.5">
+            <View className="size-8 items-center justify-center rounded-full bg-secondary">
+                <Text className="text-[11px] font-bold text-foreground">{initials}</Text>
+            </View>
+            <Text className="flex-1 text-sm text-foreground">{name}</Text>
+            <View className="rounded-full border border-border px-2.5 py-0.5">
+                <Text className="text-[11px] font-medium text-muted-foreground">{role}</Text>
+            </View>
         </View>
     )
 }
@@ -113,14 +124,15 @@ function PersonRow({ name, role }: { name: string; role: string }) {
 export default function TeamStep({ next }: SetupStepProps) {
     const { form, invited, onSubmit, isPending } = useTeamInvite()
     const { control, formState } = form
-    const people = usePeople().map(p => <PersonRow key={p.id} name={p.name} role={p.role} />)
+    const people = usePeople().map(p => (
+        <PersonRow key={p.id} name={p.name} initials={p.initials} role={p.role} />
+    ))
     return (
-        <View className="max-w-[440px] gap-1">
-            <Text className="text-2xl font-bold text-foreground">Your team</Text>
-            <Text className="mb-3 text-sm text-muted-foreground">
-                Invite the people who will use this workspace. Each invite makes a link that lets
-                them choose a password.
-            </Text>
+        <View>
+            <StepHeading
+                title="Your team"
+                lead="Invite the people who will join this organization. Each invite makes a link that lets them choose a password."
+            />
             <SidebarSlot target={CORE_SLOT_TARGET} slot="setup-team" />
             <FormErrorSummary errors={formState.errors} isEnabled={formState.isSubmitted} />
             <TextInput
@@ -143,16 +155,10 @@ export default function TeamStep({ next }: SetupStepProps) {
                 autoComplete="email"
                 keyboardType="email-address"
             />
-            <SelectInput
-                control={control}
-                name="role"
-                label="Role"
-                options={ROLE_OPTIONS}
-                horizontal
-            />
+            <RadioInput control={control} name="role" label="Role" options={ROLE_OPTIONS} />
             <Button
                 variant="outline"
-                className="mb-4 self-start"
+                className="mb-6 self-start"
                 onPress={onSubmit}
                 isDisabled={isPending}
                 testID={SETUP_INVITE_SEND_TEST_ID}
@@ -160,8 +166,10 @@ export default function TeamStep({ next }: SetupStepProps) {
                 <ButtonText>Send invite</ButtonText>
             </Button>
             <InvitedLink invited={invited} />
-            <Text className="text-sm font-semibold text-foreground">People in this workspace</Text>
-            <View className="mb-4">{people}</View>
+            <Text className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                People in this organization
+            </Text>
+            <View className="mb-6 mt-1">{people}</View>
             <SetupContinueButton onPress={next} />
         </View>
     )

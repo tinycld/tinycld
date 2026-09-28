@@ -119,7 +119,7 @@ test.describe('first-run install', () => {
 
         // The owner is created and signed in; the signed-in wizard opens on its
         // first step.
-        await expect(page.getByText('Your workspace')).toBeVisible()
+        await expect(page.getByText('Your organization', { exact: true })).toBeVisible()
 
         // Tests 2 and 3 sign back in and expect to land on Settings/System —
         // leaving the owner mid-wizard would redirect those navigations back
@@ -146,9 +146,9 @@ test.describe('first-run install', () => {
     })
 
     // The "superuser can create an organization" test was removed with the
-    // single-org migration: tenant provisioning belongs to the hosting
-    // router, so there is no create form left to drive. The router owns that
-    // flow and tests it in its own suite (internal/controlplane).
+    // single-org migration: org provisioning belongs to the composing server
+    // that runs many orgs, so there is no create form left to drive. That
+    // server owns the flow and tests it in its own suite.
 
     // Exercises the full system-settings chain end-to-end: save a value in the
     // /setup Settings UI → server stores it → the app server injects the

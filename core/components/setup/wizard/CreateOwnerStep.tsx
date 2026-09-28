@@ -6,21 +6,19 @@ import { getResolvedAddress } from '@tinycld/core/lib/server-address'
 import { NEEDS_SETUP_QUERY_KEY } from '@tinycld/core/lib/setup/use-needs-setup'
 import { useAuthStore } from '@tinycld/core/lib/stores/auth-store'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
-import { type Control, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
+import { TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useRouter } from 'expo-router'
-import { useState } from 'react'
-import { Platform, Pressable, Text, View } from 'react-native'
+import { Platform, Text, View } from 'react-native'
 import { claimErrorMessage, refusalBodyOf } from './ClaimServerStep'
+import { StepHeading } from './StepHeading'
 import { ownerFailureOf, postSetup } from './setup-api'
-import { initialsOf } from './use-workspace-preview'
 
 const ownerSchema = z
     .object({
         name: z.string().trim().min(1, 'Enter your name').max(255),
         email: z.string().email('Enter a valid email address'),
-        password: z.string().min(10, 'Use at least 10 characters'),
+        password: z.string().min(8, 'Use at least 8 characters'),
         confirmPassword: z.string(),
-        appUrl: z.string().url('Enter a full web address, such as https://cloud.example.com'),
     })
     .refine(data => data.password === data.confirmPassword, {
         message: 'The passwords do not match',
@@ -37,13 +35,16 @@ interface InitResult {
     userId: string
 }
 
-function defaultAppUrl(): string {
-    // On web the app is served same-origin, so window.location.origin is the app
-    // URL. On native there is no window.location (RN defines a partial `window`
+// The address invite and password-reset emails link to. It is not asked
+// for: on web it is the origin this page was opened from, which is the address
+// people will keep using, and a deployment that fronts the server with another
+// hostname sets TINYCLD_PUBLIC_URL, which overrides it on every boot.
+function appUrl(): string {
+    // On native there is no window.location (RN defines a partial `window`
     // WITHOUT `location`, so a `typeof window` check wrongly takes the web branch
     // and throws "Cannot read property 'origin' of undefined") — use the resolved
-    // server address instead. getResolvedAddress() may be null pre-connect; fall
-    // back to '' so the field is simply empty rather than crashing render.
+    // server address instead. getResolvedAddress() may be null pre-connect; an
+    // empty value leaves the server's own setting untouched.
     return Platform.OS === 'web' ? window.location.origin : (getResolvedAddress() ?? '')
 }
 
@@ -58,7 +59,6 @@ function useCreateOwner(code: string, onCodeRejected: (message: string) => void)
             email: '',
             password: '',
             confirmPassword: '',
-            appUrl: defaultAppUrl(),
         },
     })
     const reportOther = handleMutationErrorsWithForm({
@@ -74,7 +74,7 @@ function useCreateOwner(code: string, onCodeRejected: (message: string) => void)
                 name: data.name.trim(),
                 email: data.email,
                 password: data.password,
-                appUrl: data.appUrl,
+                appUrl: appUrl(),
             })
             // The owner exists from here on, whether or not the sign-in below
             // works, so the claim screens must not come back.
@@ -116,45 +116,10 @@ function useCreateOwner(code: string, onCodeRejected: (message: string) => void)
     }
 }
 
-function AdvancedToggle({ isOpen, onPress }: { isOpen: boolean; onPress: () => void }) {
-    const label = isOpen ? '▾ Advanced' : '▸ Advanced'
-    return (
-        <Pressable
-            onPress={onPress}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: isOpen }}
-            className="self-start py-1"
-        >
-            <Text className="text-xs text-muted-foreground">{label}</Text>
-        </Pressable>
-    )
-}
-
-// Unmounting the field keeps its value: react-hook-form does not unregister by default.
-function AdvancedFields({
-    control,
-    isVisible,
-}: {
-    control: Control<OwnerForm>
-    isVisible: boolean
-}) {
-    if (!isVisible) return null
-    return (
-        <TextInput
-            control={control}
-            name="appUrl"
-            label="Web address"
-            autoCapitalize="none"
-            keyboardType="url"
-            hint="The address people use to open this server."
-        />
-    )
-}
-
 function RootError({ message }: { message: string | undefined }) {
     if (!message) return null
     return (
-        <View className="rounded-lg bg-danger-soft p-2.5">
+        <View className="mb-4 rounded-lg border border-danger/30 bg-danger-soft px-3.5 py-3">
             <Text className="text-sm text-danger">{message}</Text>
         </View>
     )
@@ -163,24 +128,19 @@ function RootError({ message }: { message: string | undefined }) {
 /** Creates the owner, signs them in and hands over to the signed-in wizard. */
 export function CreateOwnerStep({
     code,
-    onNameChange,
     onCodeRejected,
 }: {
     code: string
-    onNameChange: (initials: string) => void
     onCodeRejected: (message: string) => void
 }) {
     const { form, onSubmit, isPending } = useCreateOwner(code, onCodeRejected)
-    const [isAdvancedOpen, setAdvancedOpen] = useState(false)
     const { control } = form
-    // An error in a hidden field would block the submit with no visible reason.
-    const showAdvanced = isAdvancedOpen || !!form.formState.errors.appUrl
     return (
-        <View className="max-w-[440px] gap-1">
-            <Text className="text-2xl font-bold text-foreground">Create your owner account</Text>
-            <Text className="mb-3 text-sm text-muted-foreground">
-                You manage this server and everyone on it.
-            </Text>
+        <View>
+            <StepHeading
+                title="Create your owner account"
+                lead="This account is the owner of the server. It can change every setting, manage apps and people, and hand the owner role to someone else later. Use the name and email you sign in with."
+            />
             <RootError message={form.formState.errors.root?.message} />
             <TextInput
                 control={control}
@@ -188,7 +148,6 @@ export function CreateOwnerStep({
                 label="Name"
                 autoComplete="name"
                 textContentType="name"
-                onValueChange={value => onNameChange(initialsOf(value))}
             />
             <TextInput
                 control={control}
@@ -203,7 +162,7 @@ export function CreateOwnerStep({
                 control={control}
                 name="password"
                 label="Password"
-                placeholder="At least 10 characters"
+                placeholder="At least 8 characters"
                 secureTextEntry
                 autoComplete="new-password"
                 textContentType="newPassword"
@@ -216,10 +175,13 @@ export function CreateOwnerStep({
                 autoComplete="new-password"
                 textContentType="newPassword"
             />
-            <AdvancedToggle isOpen={showAdvanced} onPress={() => setAdvancedOpen(o => !o)} />
-            <AdvancedFields control={control} isVisible={showAdvanced} />
-            <Button className="mt-2 self-start" onPress={onSubmit} isDisabled={isPending}>
-                <ButtonText>Create account</ButtonText>
+            <Button
+                size="lg"
+                className="mt-1 min-h-11 self-start"
+                onPress={onSubmit}
+                isDisabled={isPending}
+            >
+                <ButtonText className="text-[15px] font-semibold">Create account</ButtonText>
             </Button>
         </View>
     )

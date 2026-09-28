@@ -447,7 +447,7 @@ test.describe('calendar-slots install', () => {
         // first step. Dismiss it so later phases' navigations (which expect the
         // superuser recovery console / in-app dashboard) aren't redirected back
         // into the wizard.
-        await expect(page.getByText('Your workspace')).toBeVisible()
+        await expect(page.getByText('Your organization', { exact: true })).toBeVisible()
         await page.getByRole('button', { name: 'Finish later' }).click()
     })
 
