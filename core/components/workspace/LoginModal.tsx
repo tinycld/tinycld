@@ -171,6 +171,7 @@ function LoginForm({
 
             <Pressable
                 testID="login-submit"
+                accessibilityRole="button"
                 className={`rounded-lg items-center mt-4 p-3.5 bg-primary ${canSubmit ? 'opacity-100' : 'opacity-50'}`}
                 onPress={handleSubmit}
                 disabled={!canSubmit}

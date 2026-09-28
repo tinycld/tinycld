@@ -1,7 +1,7 @@
 ---
 title: Settings your provider manages
 summary: Why some system settings are missing when someone else hosts this deployment
-tags: [settings, hosting, provider, system]
+tags: [settings, "hosting provider", system]
 order: 400
 ---
 
@@ -9,8 +9,8 @@ order: 400
 
 Some settings screens are not here. Under **Settings → System** you may expect
 entries for error reporting, web push, or the mail provider and find that one or
-more of them is absent, or opens a note saying it is configured by your hosting
-provider.
+more of them is absent, or opens a note saying it is configured by your
+hosting provider.
 
 That is deliberate, and it means this deployment is run by a hosting provider
 rather than by you.

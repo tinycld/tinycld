@@ -5,15 +5,16 @@
 // materialized from each package's manifest `caldav` block).
 //
 // Why it lives in core, not per-feature: a protocol server has to be reachable
-// on a port, and the hosting router owns every listening socket — a tenant
-// serves on a unix socket handed down to it. Anything that must be *bound*
-// therefore belongs to core, where the router can open it. The rule is about
-// ports, not about Go: performance-sensitive work belongs in Go, and this
-// package is Go.
+// on a port, and on a managed deployment a reverse proxy owns every listening
+// socket — an org's process serves on a unix socket handed down to it.
+// Anything that must be *bound* therefore belongs to core, where the composing
+// server can open it. The rule is about ports, not about Go:
+// performance-sensitive work belongs in Go, and this package is Go.
 //
-// Separately, `serve-org` links no feature package today, so the Source cannot
-// be a Go literal the feature registers — it arrives as data the router
-// materialized from the manifest. Core imports no feature package.
+// Separately, an org's own process links no feature package today, so the
+// Source cannot be a Go literal the feature registers — it arrives as data the
+// composing server materialized from the manifest. Core imports no feature
+// package.
 //
 // What a package contributes:
 //
@@ -25,13 +26,13 @@
 //
 // Notably there are no Go permission callbacks. Authorization comes from the
 // collections' own PocketBase rules, evaluated via app.CanAccessRecord — see
-// backend.go. A Go closure cannot cross a process boundary, so anything a
-// tenant must enforce has to be expressible as data, and a rule is a string
-// that travels in the schema.
+// backend.go. A Go closure cannot cross a process boundary, so anything an
+// org's process must enforce has to be expressible as data, and a rule is a
+// string that travels in the schema.
 //
-// Where it runs: in the single-tenant app, in-process. Under hosting's
-// per-process tenant isolation, inside each org's own process — the router
-// materializes the Sources and reverse-proxies to that process.
+// Where it runs: in the standalone app, in-process. Under per-org process
+// isolation, inside each org's own process — the composing server materializes
+// the Sources and reverse-proxies to that process.
 package caldav
 
 import "context"
@@ -71,10 +72,10 @@ type Source struct {
 	// It exists because go-webdav's caldav.Handler turns a backend error into
 	// an http.Error response and then returns nil, so the error never reaches
 	// request middleware — this is the only seam where the real error and its
-	// stack are still available. The single-tenant app points it at Sentry.
+	// stack are still available. The standalone app points it at Sentry.
 	//
-	// Purely observational: it cannot alter the outcome. A tenant process may
-	// leave it nil, which costs reporting, not correctness.
+	// Purely observational: it cannot alter the outcome. An org's own process
+	// may leave it nil, which costs reporting, not correctness.
 	OnError func(ctx context.Context, op string, err error)
 }
 
@@ -157,8 +158,8 @@ type EventMap struct {
 	// This has to be data rather than a Go hook: a required select with no
 	// schema default (calendar's busy_status and visibility are both) rejects
 	// the save outright when a client PUTs a minimal VEVENT carrying neither
-	// TRANSP nor CLASS. A tenant process links no feature package, so a callback
-	// could not supply them there — the write would simply fail.
+	// TRANSP nor CLASS. An org's own process links no feature package, so a
+	// callback could not supply them there — the write would simply fail.
 	//
 	// Applied before the codec, so anything the VEVENT does specify wins.
 	Defaults map[string]any

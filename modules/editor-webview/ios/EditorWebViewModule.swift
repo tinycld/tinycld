@@ -26,7 +26,7 @@ public final class EditorWebViewModule: Module {
       }
     }
 
-    // Synchronous so the hosting hook keeps its `post(): boolean` contract — the
+    // Synchronous so the owning hook keeps its `post(): boolean` contract — the
     // return value is "an instance exists", and the WebKit call itself is
     // dispatched to the main thread inside.
     Function("postMessage") { (instanceKey: String, data: String) -> Bool in

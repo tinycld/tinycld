@@ -14,7 +14,7 @@ import (
 // use this binding — RegisterSync handles it. `$fts` exists only for the rare
 // package that must query the index imperatively from its TS hooks. Keeping this
 // surface tiny is deliberate: it is part of the enumerable set of capabilities
-// untrusted tenant TS can reach.
+// untrusted package TS can reach.
 //
 // configsBySlug is captured so a TS call names its own slug (a package can only
 // search the index it declared).

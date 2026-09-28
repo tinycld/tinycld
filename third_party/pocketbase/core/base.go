@@ -1184,8 +1184,8 @@ func (app *BaseApp) initDataDB() error {
 	concurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
 	// A DBConnect that restricts ATTACH (NoAttachDBConnect) primes each pooled
 	// connection and depends on the limits it set; the three lines above have
-	// just overwritten them. Re-prime, or untrusted JS regains cross-tenant
-	// file access. No-op for an unrestricted pool.
+	// just overwritten them. Re-prime, or untrusted JS regains access to
+	// other orgs' files. No-op for an unrestricted pool.
 	if err := ReapplyNoAttachLimits(concurrentDB.DB()); err != nil {
 		return err
 	}

@@ -59,9 +59,9 @@ function buildMemberDirIndex(): Map<string, string> {
         }
     }
     // A member may also be nested one level down inside a dir that is not
-    // itself a member — hosting/ui, whose parent ships Go only and stays out of
-    // the workspace. Scanned after the top level so a top-level member always
-    // wins a name collision.
+    // itself a member — a `<parent>/ui` whose parent ships Go only and stays
+    // out of the workspace. Scanned after the top level so a top-level member
+    // always wins a name collision.
     for (const entry of fs.readdirSync(WS_ROOT)) {
         const parent = path.join(WS_ROOT, entry)
         if (entry === 'node_modules' || entry.startsWith('.')) continue

@@ -9,8 +9,8 @@ import { login } from './helpers'
 //   - pkg-only mounts compose brand + org + pkg with no leaf
 //
 // The org segment comes from useOrgInfo() → GET /api/org-info →
-// Settings().Meta.AppName, which the seed sets to "Test Organization" (in a
-// router-managed tenant the same value is materialized from the org's
+// Settings().Meta.AppName, which the seed sets to "Test Organization" (on a
+// managed deployment the same value is materialized from the org's
 // display_name). Routes stay slug-free — the org appears in the TITLE, not
 // the URL.
 const ORG_NAME = 'Test Organization'

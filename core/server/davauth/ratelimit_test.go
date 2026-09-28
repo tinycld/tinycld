@@ -126,10 +126,10 @@ func TestThrottle_SweepsExpiredEntries(t *testing.T) {
 
 // The forwarded chain is honored only when the app's TrustedProxy settings
 // name the header (see ratelimit_spoof_test.go for why); a nil app or an
-// unconfigured one keys strictly on the socket peer. Under the hosting
-// router the tenant's settings always carry X-Forwarded-For (materialized
-// into app.json), so unix-socket requests — whose RemoteAddr identifies
-// nobody — still get per-client buckets.
+// unconfigured one keys strictly on the socket peer. Behind a managed
+// deployment's reverse proxy the org's settings always carry X-Forwarded-For
+// (materialized into app.json), so unix-socket requests — whose RemoteAddr
+// identifies nobody — still get per-client buckets.
 func TestClientIP_TrustSwitch(t *testing.T) {
 	trusted, err := tests.NewTestApp()
 	if err != nil {

@@ -23,7 +23,7 @@ func resetVersionCache(t *testing.T) {
 	})
 }
 
-// H3: a tenant streaming distinct specs at /v1/versions must not grow the cache
+// H3: an org streaming distinct specs at /v1/versions must not grow the cache
 // without bound. Past the cap the oldest-inserted entry is evicted.
 func TestVersionCache_BoundedBySizeCap(t *testing.T) {
 	resetVersionCache(t)

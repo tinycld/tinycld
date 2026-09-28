@@ -1,29 +1,46 @@
 import { describe, expect, it } from 'vitest'
-import { emailStepIsVisible, mailPanelsOf } from '../EmailStep'
+import { emailLeadOf, emailStepIsVisible, mailSendingAppsOf } from '../EmailStep'
 
-const P1 = () => null
-const P2 = () => null
+const P = () => null
 
-describe('mailPanelsOf', () => {
-    it('keeps only package panels that edit mail settings', () => {
-        const panels = mailPanelsOf([
-            {
-                packageName: 'Post',
-                pkgSlug: 'post',
-                icon: undefined,
-                panels: [
-                    { slug: 'provider', label: 'Provider', Component: P1, keyPrefix: 'mail.' },
-                    { slug: 'other', label: 'Other', Component: P2, keyPrefix: 'vapid.' },
-                ],
-            },
-            {
-                packageName: 'Notes',
-                pkgSlug: 'notes',
-                icon: undefined,
-                panels: [{ slug: 'plain', label: 'Plain', Component: P2 }],
-            },
-        ])
-        expect(panels).toEqual([{ key: 'post:provider', Component: P1 }])
+const groups = [
+    {
+        packageName: 'Post',
+        pkgSlug: 'post',
+        icon: undefined,
+        panels: [
+            { slug: 'provider', label: 'Provider', Component: P, keyPrefix: 'mail.' },
+            { slug: 'other', label: 'Other', Component: P, keyPrefix: 'vapid.' },
+        ],
+    },
+    {
+        packageName: 'Notes',
+        pkgSlug: 'notes',
+        icon: undefined,
+        panels: [{ slug: 'plain', label: 'Plain', Component: P }],
+    },
+]
+
+describe('mailSendingAppsOf', () => {
+    it('names the enabled packages that edit mail settings', () => {
+        const enabled = [
+            { slug: 'post', name: 'Post' },
+            { slug: 'notes', name: 'Notes' },
+        ]
+        expect(mailSendingAppsOf(groups, enabled)).toEqual(['Post'])
+    })
+    it('leaves out a mail-sending package the Apps step turned off', () => {
+        expect(mailSendingAppsOf(groups, [{ slug: 'notes', name: 'Notes' }])).toEqual([])
+    })
+})
+
+describe('emailLeadOf', () => {
+    it('says which apps send through the provider', () => {
+        expect(emailLeadOf(['Post'])).toMatch(/Post also sends every message people write/)
+        expect(emailLeadOf(['Post', 'Chat'])).toMatch(/Post and Chat also sends/)
+    })
+    it('asks only how the server sends when no app sends mail', () => {
+        expect(emailLeadOf([])).toMatch(/Choose how it sends them\.$/)
     })
 })
 

@@ -85,8 +85,8 @@ func TestCreateOwnerOperator(t *testing.T) {
 // an `admin` operator would finish the wizard unable to install anything.
 //
 // This is the standalone path only: RegisterSetupBootstrap is bound in the host
-// composition (server.go), never in a tenant, so nothing about hosted orgs
-// depends on this value.
+// composition (server.go), never on a managed deployment, so nothing about
+// managed orgs depends on this value.
 func TestCreateOwnerOperator_IsOwner(t *testing.T) {
 	app, err := tests.NewTestApp()
 	if err != nil {

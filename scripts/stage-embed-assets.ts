@@ -81,6 +81,12 @@ const migrations = copyResolvedFiles(
     join(outDir, 'pb_migrations')
 )
 const hooks = copyResolvedFiles(join(appRoot, 'server', 'pb_hooks'), join(outDir, 'pb_hooks'))
+// The binary runs from any cwd with no source tree beside it, so the seed
+// file that populates pkg_registry has to travel inside it too.
+copyFileSync(
+    join(appRoot, 'server', 'bundled-packages.json'),
+    join(outDir, 'bundled-packages.json')
+)
 
 if (migrations === 0) {
     throw new Error('staged 0 migrations — run `pnpm run packages:generate` first')

@@ -13,7 +13,8 @@ import (
 // exec_budget_test.go pins the sandbox's execution budget. Sandboxed mode
 // withholds capabilities, but withheld bindings do not bound COMPUTE: a
 // hostile package's `while(true){}` at the top of a hook or migration file
-// spins the loading goroutine forever — for a tenant, that is a boot that
+// spins the loading goroutine forever — for an org that runs in its own
+// process, that is a boot that
 // never completes and a spawn timeout burned on every retry. The budget
 // interrupts any single JS execution (load-time evaluation, migration
 // up/down runs, pooled handler invocations) so the failure is an error the
@@ -89,7 +90,7 @@ func TestSandboxBudget_RunawayMigrationTopLevelFailsLoad(t *testing.T) {
 
 // A migration whose UP function spins must be interrupted when it RUNS, not
 // only at load: registration evaluates the file's top level, but the up/down
-// callbacks execute later, against the tenant's database.
+// callbacks execute later, against the org's database.
 func TestSandboxBudget_RunawayMigrationUpIsInterrupted(t *testing.T) {
 	// Snapshot the global migrations list — same hygiene as sandbox_test.go —
 	// so this test's registration doesn't leak into other tests.
@@ -133,7 +134,7 @@ func TestSandboxBudget_RunawayMigrationUpIsInterrupted(t *testing.T) {
 			t.Fatal("the spinning up() returned nil — it must be interrupted with an error")
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("the spinning up() never returned — tenant boot would hang here forever")
+		t.Fatal("the spinning up() never returned — an org's boot would hang here forever")
 	}
 }
 

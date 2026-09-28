@@ -94,13 +94,16 @@ func main() {
 		BinaryName:   "tinycld",
 		// An embedded FS cannot be watched, and a standalone build has nowhere
 		// to write generated migrations.
-		HooksWatch:     !standalone,
-		HooksPoolSize:  15,
-		Automigrate:    !standalone,
-		PublicFS:       webFS,
-		MigrationsFS:   embeddedMigrationsFS(),
-		HooksFS:        embeddedHooksFS(),
-		RegisterExtras: registerPackageExtensions,
+		HooksWatch:    !standalone,
+		HooksPoolSize: 15,
+		Automigrate:   !standalone,
+		PublicFS:      webFS,
+		MigrationsFS:  embeddedMigrationsFS(),
+		HooksFS:       embeddedHooksFS(),
+		// Only the single-binary build carries this; elsewhere the file sits
+		// beside the binary or under server/ and is read from disk.
+		BundledPackagesJSON: embeddedBundledPackagesJSON(),
+		RegisterExtras:      registerPackageExtensions,
 	})
 
 	// `export-types` regenerates pbSchema.ts + pbZodSchema.ts and exits.

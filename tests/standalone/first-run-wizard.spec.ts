@@ -1,9 +1,11 @@
 import { expect, type Page, test } from '@playwright/test'
 import {
+    attachSetupLogo,
     CORE_STEP_IDS,
     continueSetupStep,
     expectSetupStep,
     finishSetupLater,
+    ONE_PIXEL_PNG_BASE64,
     setupWorkspaceName,
 } from '../../core/e2e-setup-helpers'
 import { bootBinary, buildBinary, setupCodeFromLog } from './boot-binary'
@@ -37,7 +39,7 @@ async function claimServer(page: Page, server: Server) {
     await page.getByRole('textbox', { name: 'Confirm password', exact: true }).fill(OWNER.password)
     await page.getByRole('button', { name: 'Create account' }).click()
     await expectSetupStep(page, CORE_STEP_IDS.workspace)
-    await expect(page.getByText('Your workspace')).toBeVisible()
+    await expect(page.getByText('Your organization', { exact: true })).toBeVisible()
 }
 
 async function signIn(page: Page, baseURL: string) {
@@ -70,7 +72,22 @@ test('a new server is claimed, set up, paused and resumed', async ({ page }) => 
         await claimServer(page, server)
 
         await setupWorkspaceName(page).fill('Harbor Dental')
+        // The first logo CREATES the branding row. The released migration kept
+        // PocketBase's 15-character id rule, so a fixed readable id was refused
+        // there and the wizard showed a validation error; this pins the fix.
+        await attachSetupLogo(page, {
+            name: 'logo.png',
+            mimeType: 'image/png',
+            buffer: Buffer.from(ONE_PIXEL_PNG_BASE64, 'base64'),
+        })
+        await expect(page.getByTestId('avatar-preview-image')).toBeVisible()
         await continueSetupStep(page, CORE_STEP_IDS.workspace)
+
+        // Read-only: the public org-info endpoint is what the sign-in screen
+        // and the rail render the logo from.
+        const orgInfo = await (await page.request.get(`${server.baseURL}/api/org-info`)).json()
+        expect(orgInfo.name).toBe('Harbor Dental')
+        expect(orgInfo.logoUrl).toMatch(/^\/api\/files\/org_branding\//)
 
         await expectSetupStep(page, CORE_STEP_IDS.apps)
         await expect(page.getByText('Choose your apps')).toBeVisible()

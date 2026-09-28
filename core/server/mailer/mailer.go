@@ -134,6 +134,30 @@ const defaultFromAddress = "noreply@tinycld.org"
 // feature package and Sentry/VAPID consume system config.
 var ConfigResolver = func(string) string { return "" }
 
+// ServerTokenResolver supplies the Postmark server token a send uses. The
+// default reads the configured setting. coreserver points it at the
+// maildomains seam, which derives the token from the account token when no
+// server token is configured, so a deployment that pasted only its account
+// token still sends.
+var ServerTokenResolver = func(context.Context) (string, error) {
+	return ConfigResolver(keyPostmarkToken), nil
+}
+
+// tokenResolveTimeout bounds the first derivation's Postmark calls; later
+// calls are answered from the resolver's cache.
+const tokenResolveTimeout = 15 * time.Second
+
+func postmarkServerToken() string {
+	ctx, cancel := context.WithTimeout(context.Background(), tokenResolveTimeout)
+	defer cancel()
+	token, err := ServerTokenResolver(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[mailer] no postmark server token: %v — mail will be logged, not delivered\n", err)
+		return ""
+	}
+	return token
+}
+
 // devAutoLog is true when this process was started with --dev (dev/test/seed).
 // Such processes log emails instead of delivering by default, regardless of
 // the mail.delivery_enabled setting, so local/CI runs never send real mail.
@@ -166,7 +190,7 @@ func buildSender() Sender {
 	case "smtp":
 		return NewSMTPSender(SMTPConfig{PublicHostname: ConfigResolver(keySMTPPublicHost)})
 	case "", "postmark":
-		token := ConfigResolver(keyPostmarkToken)
+		token := postmarkServerToken()
 		if token == "" {
 			return nil
 		}

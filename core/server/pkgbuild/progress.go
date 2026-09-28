@@ -4,9 +4,9 @@ import "time"
 
 // ProgressSink is where the pipeline reports what it is doing. It is the
 // host seam for user-facing progress: coreserver adapts it onto its SSE
-// stream + durable pkg_install_log lines; the hosting builder writes a job
-// log. Every pkgbuild step reports through the sink and NOTHING else, so the
-// library stays silent by default (NopSink) and hosts own presentation.
+// stream + durable pkg_install_log lines; a managed deployment's builder writes
+// a job log. Every pkgbuild step reports through the sink and NOTHING else, so
+// the library stays silent by default (NopSink) and hosts own presentation.
 type ProgressSink interface {
 	// Progress marks a milestone: it moves the progress bar to percent and
 	// records a headline step + message.

@@ -185,8 +185,8 @@ func (t *throttle) sweepLocked() {
 // clientIP resolves the throttle-bucket address for a request.
 //
 // Forwarded headers are honored ONLY when the app's TrustedProxy settings name
-// them — the same switch PocketBase's own RealIP() uses. The hosting router
-// materializes it for every tenant (whose requests arrive over a unix socket,
+// them — the same switch PocketBase's own RealIP() uses. A managed deployment
+// materializes it for every org (whose requests arrive over a unix socket,
 // where RemoteAddr identifies nobody), and a standalone operator sets it when
 // deploying behind a proxy. Trusting the header unconditionally handed it to
 // the CLIENT on any direct connection: rotating it minted a fresh bucket per

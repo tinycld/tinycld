@@ -20,7 +20,7 @@ import { Pressable, ScrollView, Text, View } from 'react-native'
 // the hardware, so the only storage question the app can answer for them is
 // which user is filling it — there is no plan to report against and no bytes
 // total to bill for. Anything shaped like a ceiling sold to an organization
-// belongs to whoever sells the hosting, not here.
+// belongs to whoever sells it, not here.
 //
 // Usage comes from core's /api/storage-usage, which sums every collection the
 // installed packages registered as a quota source. It names no package, so the

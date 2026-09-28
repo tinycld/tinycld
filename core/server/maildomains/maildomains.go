@@ -177,4 +177,7 @@ func ResetForTesting() {
 	mu.Lock()
 	current, claimed = unconfigured{}, false
 	mu.Unlock()
+	tokenMu.Lock()
+	tokenSource = func(context.Context) (string, error) { return "", ErrNotConfigured }
+	tokenMu.Unlock()
 }

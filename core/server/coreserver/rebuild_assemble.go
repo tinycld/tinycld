@@ -10,7 +10,7 @@ import (
 )
 
 // The assemble step itself lives in pkgbuild/assemble.go. What stays here is
-// the single-tenant host's MemberSource: fetch via npm pack, and — the part
+// the standalone host's MemberSource: fetch via npm pack, and — the part
 // only this host can do — copy unchanged members out of the currently-active
 // build.
 
@@ -21,7 +21,7 @@ func currentWorkspaceRoot() string {
 	return filepath.Dir(resolveServerDir())
 }
 
-// hostMemberSource is the single-tenant MemberSource: changed members are
+// hostMemberSource is the standalone MemberSource: changed members are
 // fetched with the standard npm-pack source, unchanged (FromCurrent) members
 // are copied from the live build.
 type hostMemberSource struct{}

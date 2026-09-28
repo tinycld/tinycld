@@ -120,7 +120,7 @@ function discoverPresentMembers(wsRoot: string): string[] {
 }
 
 // Members nested one level down inside a dir that is not itself a member —
-// hosting/ui, whose parent ships Go only and is deliberately not in the
+// a `<parent>/ui` whose parent ships Go only and is deliberately not in the
 // workspace. Returned as "parent/child" so pnpm's `packages:` entry points at
 // the real path. Mirrors the same one-level scan in tinycld.packages.ts.
 function discoverNestedMembers(wsRoot: string): string[] {

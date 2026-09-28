@@ -66,7 +66,7 @@ class AppUpdaterModule : Module() {
  * File-backed pointer store mirroring the iOS `Store`. Maintains JSON pointer
  * files in an app-private dir and drives staging / promote / crash-rollback.
  *
- * Pointer state is PER SERVER, because in a multi-org deployment every org runs
+ * Pointer state is PER SERVER, because on a managed deployment every org runs
  * a different build with a different package set. With one shared slot,
  * switching orgs made each foreground see the other org's bundle as "not
  * current" and re-download it — a thrash loop, with a full JS reload each time.

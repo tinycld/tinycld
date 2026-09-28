@@ -26,20 +26,36 @@ type bundledPackage struct {
 	Source string `json:"source"`
 }
 
-// loadBundledPackages reads bundled-packages.json. A missing file is not an
-// error: a dev tree before the first generate has none.
+// embeddedBundledPackages is the bundled-packages.json compiled into a
+// single-binary build (Options.BundledPackagesJSON). Such a binary runs from
+// any cwd with no source tree beside it, so there is no file to find on disk;
+// without this fallback it would seed no pkg_registry rows and ship with an
+// empty app rail. A file on disk still wins when one exists, because an
+// in-app install regenerates it (see findBundledPackagesJSON).
+var embeddedBundledPackages []byte
+
+// loadBundledPackages reads bundled-packages.json from disk, else from the
+// embedded copy. Neither present is not an error: a dev tree before the first
+// generate has none.
 func loadBundledPackages() ([]bundledPackage, error) {
 	jsonPath := findBundledPackagesJSON()
 	if jsonPath == "" {
-		return nil, nil
+		if len(embeddedBundledPackages) == 0 {
+			return nil, nil
+		}
+		return parseBundledPackages(embeddedBundledPackages, "embedded bundled-packages.json")
 	}
 	data, err := os.ReadFile(jsonPath)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", jsonPath, err)
 	}
+	return parseBundledPackages(data, jsonPath)
+}
+
+func parseBundledPackages(data []byte, source string) ([]bundledPackage, error) {
 	var packages []bundledPackage
 	if err := json.Unmarshal(data, &packages); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", jsonPath, err)
+		return nil, fmt.Errorf("parse %s: %w", source, err)
 	}
 	return packages, nil
 }

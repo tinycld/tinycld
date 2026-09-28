@@ -14,15 +14,15 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-// newNoAttachApp boots an app whose connections cannot ATTACH — the way a
-// HOSTED tenant is opened.
+// newNoAttachApp boots an app whose connections cannot ATTACH — the way an org
+// on a managed deployment is opened.
 //
 // core.NoAttachDBConnect sets SQLITE_LIMIT_ATTACHED to 0 on every connection in
 // the pool, because $app exposes raw SQL to sandboxed JS and an ATTACH against
-// an absolute path is a read/write primitive for every other tenant's database.
-// hosting/tenantmain passes it for both the tenant app and its aux app, so this
-// is the configuration every hosted backup actually runs under — and the one
-// the snapshot has to work under.
+// an absolute path is a read/write primitive for every other database on the
+// machine. A managed deployment passes it for both the org's app and its aux
+// app, so this is the configuration every backup there actually runs under —
+// and the one the snapshot has to work under.
 func newNoAttachApp(t *testing.T) *tests.TestApp {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "noattach")
@@ -41,14 +41,14 @@ func newNoAttachApp(t *testing.T) *tests.TestApp {
 	return app
 }
 
-// A snapshot must work on a tenant whose ATTACH is restricted.
+// A snapshot must work on an org whose ATTACH is restricted.
 //
-// This is the regression test for a bug that made EVERY hosted backup fail:
+// This is the regression test for a bug that made EVERY such backup fail:
 // SQLite implements VACUUM INTO by attaching the destination internally, so a
 // connection with SQLITE_LIMIT_ATTACHED = 0 rejects the statement with "too
 // many attached databases - max 0 (1)". The two requirements are both correct
 // and were simply never exercised together — the engine's own tests open a
-// default app, and the limit is set only by the hosted tenant.
+// default app, and the limit is set only on a managed deployment.
 func TestVacuumInto_WorksWithAttachRestricted(t *testing.T) {
 	app := newNoAttachApp(t)
 
@@ -74,7 +74,7 @@ func TestVacuumInto_WorksWithAttachRestricted(t *testing.T) {
 
 // The snapshot must LEAVE the restriction in place. Raising the limit for the
 // duration of one VACUUM INTO is the fix; leaving it raised would hand every
-// subsequent query on that connection the cross-tenant ATTACH primitive the
+// subsequent query on that connection the cross-database ATTACH primitive the
 // limit exists to remove — and a pooled connection is reused indefinitely.
 func TestVacuumInto_LeavesAttachRestricted(t *testing.T) {
 	app := newNoAttachApp(t)
@@ -91,13 +91,13 @@ func TestVacuumInto_LeavesAttachRestricted(t *testing.T) {
 	for i := 0; i < 32; i++ {
 		if _, err := app.NonconcurrentDB().NewQuery("ATTACH DATABASE ':memory:' AS probe").Execute(); err == nil {
 			_, _ = app.NonconcurrentDB().NewQuery("DETACH DATABASE probe").Execute()
-			t.Fatalf("ATTACH is permitted after a snapshot (attempt %d); untrusted JS could now read every other tenant's database", i)
+			t.Fatalf("ATTACH is permitted after a snapshot (attempt %d); untrusted JS could now read every other org's database", i)
 		}
 	}
 }
 
 // A default app has no restriction to work around, and the snapshot must still
-// work — this is the single-tenant and docker path.
+// work — this is the standalone and docker path.
 func TestVacuumInto_WorksWithoutTheRestriction(t *testing.T) {
 	app := newTestApp(t)
 
@@ -116,8 +116,8 @@ func TestVacuumInto_WorksWithoutTheRestriction(t *testing.T) {
 // it: database/sql's Conn.Close returns the driver connection to the pool rather
 // than destroying it. So if the restore fails, the connection that just ran
 // VACUUM INTO at ATTACH=1 goes straight back into circulation, and the next piece
-// of package JS to borrow it can ATTACH any file on disk — every other tenant's
-// database and the control plane's.
+// of package JS to borrow it can ATTACH any file on disk — every other org's
+// database on the machine and the supervisor's.
 //
 // This is the only test that can reach that branch: a live connection's limit
 // always sets, so the failure is injected through setAttachLimit. Without the

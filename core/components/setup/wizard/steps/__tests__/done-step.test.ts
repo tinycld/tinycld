@@ -22,8 +22,8 @@ describe('doneHeadingOf', () => {
     })
     it('is neutral when no name was chosen', () => {
         expect(doneHeadingOf('')).toEqual({
-            heading: 'Your workspace is ready',
-            buttonLabel: 'Open your workspace',
+            heading: 'Your organization is ready',
+            buttonLabel: 'Open the app',
         })
     })
 })

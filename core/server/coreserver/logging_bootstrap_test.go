@@ -20,13 +20,12 @@ import (
 // handler that resolves back into itself — and the first log call
 // (RegisterSharedCore reaches automation.Register's slog.Info) recurses
 // forever. That is exactly what happened when the install lived directly
-// in Register: go test ./coreserver/ -run
-// TestTenantCompositionMatchesHostMinusRecordedExceptions hung until its
+// in Register: a composing server's composition-parity test hung until its
 // 150s timeout.
 //
-// Registering a full app (Register/RegisterTenant) is the only way to
-// reach RegisterSharedEarly's hook binding, so this lives in coreserver
-// rather than the logging package, which can't see that wiring.
+// Registering a full app (Register, or a composing server's equivalent) is
+// the only way to reach RegisterSharedEarly's hook binding, so this lives in
+// coreserver rather than the logging package, which can't see that wiring.
 //
 // The run happens in a goroutine with a bounded timeout: if the ordering
 // regresses, the bug is a deadlock, not a returned error, so nothing short

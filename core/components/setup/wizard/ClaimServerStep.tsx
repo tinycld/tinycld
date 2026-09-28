@@ -6,6 +6,8 @@ import { Controller, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useRef } from 'react'
 import { Text, View } from 'react-native'
 import { CodeInput } from './CodeInput'
+import { ServerLogPreview } from './ServerLogPreview'
+import { StepHeading } from './StepHeading'
 import { postSetup, type SetupErrorBody, SetupRequestError } from './setup-api'
 
 export function claimErrorMessage(body: SetupErrorBody | null): string {
@@ -28,7 +30,7 @@ type CodeForm = z.infer<typeof codeSchema>
 function Notice({ message }: { message: string | undefined }) {
     if (!message) return null
     return (
-        <View className="rounded-lg bg-danger-soft p-2.5">
+        <View className="rounded-lg border border-danger/30 bg-danger-soft px-3.5 py-3">
             <Text className="text-sm text-danger">{message}</Text>
         </View>
     )
@@ -85,14 +87,13 @@ export function ClaimServerStep({
     const { form, onSubmit, isPending } = useClaimServer(initialCode, notice, onVerified)
     const codeError = form.formState.errors.code?.message
     return (
-        <View className="max-w-[440px] gap-4">
-            <Text className="text-2xl font-bold text-foreground">Claim this server</Text>
-            <Text className="text-sm text-muted-foreground">
-                Enter the setup code from the server log. Only someone with access to the server can
-                see it.
-            </Text>
+        <View className="gap-5">
+            <StepHeading
+                title="Claim this server"
+                lead="Enter the setup code from the server log. Only someone with access to the server can see it."
+            />
             <Notice message={notice} />
-            <View className="gap-1.5">
+            <View className="gap-3">
                 <Text className="text-sm font-semibold text-foreground">Setup code</Text>
                 <Controller
                     control={form.control}
@@ -103,13 +104,24 @@ export function ClaimServerStep({
                 />
                 <Notice message={codeError} />
             </View>
-            <Button className="self-start" onPress={onSubmit} isDisabled={isPending}>
-                <ButtonText>Continue</ButtonText>
+            <Button
+                size="lg"
+                className="mt-2 min-h-11 self-start"
+                onPress={onSubmit}
+                isDisabled={isPending}
+            >
+                <ButtonText className="text-[15px] font-semibold">Continue</ButtonText>
             </Button>
-            <Text className="text-xs text-muted-foreground">
-                Code not in the log? Restart the server. A new code prints each time it starts until
-                the server is claimed.
-            </Text>
+            <View className="mt-2 gap-2.5">
+                <Text className="text-[13px] text-muted-foreground">
+                    Look for this box in the server log.
+                </Text>
+                <ServerLogPreview code="" />
+                <Text className="text-[13px] leading-5 text-muted-foreground">
+                    Code not in the log? Restart the server. A new code prints each time it starts
+                    until the server is claimed.
+                </Text>
+            </View>
         </View>
     )
 }

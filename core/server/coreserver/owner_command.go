@@ -18,8 +18,9 @@ import (
 const generatedPasswordBytes = 24
 
 // GenerateOwnerPassword returns a URL-safe random password. Exported so a
-// caller that must know the password before invoking this command (the
-// hosting router returns it to the operator) generates it the same way.
+// caller that must know the password before invoking this command (a
+// supervisor that provisions the org returns it to the operator) generates it
+// the same way.
 func GenerateOwnerPassword() (string, error) {
 	b := make([]byte, generatedPasswordBytes)
 	if _, err := rand.Read(b); err != nil {
@@ -31,11 +32,11 @@ func GenerateOwnerPassword() (string, error) {
 // NewCreateOwnerCommand builds the `create-owner` subcommand: mint the app's
 // first operator against an existing pb_data, then exit.
 //
-// WHY THIS EXISTS. A single-tenant deployment gets its first accounts from the
+// WHY THIS EXISTS. A standalone deployment gets its first accounts from the
 // setup wizard, whose routes RegisterSetupBootstrap binds — in the HOST
-// composition only. A hosted org has no wizard: the hosting router
-// provisions it by building an artifact and booting a tenant, and the tenant
-// composition never binds those routes. So a freshly provisioned org served
+// composition only. An org on a managed deployment has no wizard: a supervisor
+// provisions it by building an artifact and booting the org's own process, and
+// that composition never binds those routes. So a freshly provisioned org served
 // fine but had zero users and nobody could log in.
 //
 // It creates BOTH identities the wizard does, with the same credentials:
@@ -103,8 +104,8 @@ func NewCreateOwnerCommand(app *pocketbase.PocketBase) *cobra.Command {
 
 			// Bootstrap opens the DB and applies SYSTEM migrations; the app's
 			// own collections (`users`) come from the JS
-			// migrations RunAppMigrations applies. In the router's flow the
-			// tenant has already booted and run them, so this is a no-op —
+			// migrations RunAppMigrations applies. In a supervisor's flow the
+			// org's process has already booted and run them, so this is a no-op —
 			// but running against a fresh pb_data must work rather than fail
 			// on a missing collection.
 			if err := app.Bootstrap(); err != nil {

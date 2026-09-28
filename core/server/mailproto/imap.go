@@ -24,17 +24,17 @@ type NewIMAPSession func(app core.App, conn *imapserver.Conn) imapserver.Session
 
 // ListenFunc opens the socket a mail service serves on, given the address the
 // service would otherwise bind. mailproto's default is a plain TCP bind of
-// that address; a hosting host injects its own function returning a
-// listener the ROUTER opened (or handed down over an inherited fd), so a
-// tenant process never binds a port — the prerequisite for IMAP/SMTP
-// following CardDAV into per-org tenant processes (hosting HANDOFF §6).
+// that address; a managed deployment injects its own function returning a
+// listener the reverse proxy opened (or handed down over an inherited fd), so
+// an org's process never binds a port — the prerequisite for IMAP/SMTP
+// following CardDAV into per-org processes.
 //
 // The returned listener carries raw (pre-TLS) connections: by default TLS
 // wrapping stays in mailproto, so injection changes where the socket comes
 // from, never the TLS policy around it. The one deliberate exception is
 // ExternalTLS (on IMAPOptions/SMTPOptions), where the HOST terminates TLS
-// before connections reach the injected listener — that mode exists so a
-// hosting tenant never holds the wildcard private key.
+// before connections reach the injected listener — that mode exists so an
+// org's process never holds the wildcard private key.
 type ListenFunc func(addr string) (net.Listener, error)
 
 // listenWith resolves the injected listener or falls back to a TCP bind.
@@ -70,12 +70,13 @@ type IMAPOptions struct {
 	Listen ListenFunc
 
 	// ExternalTLS declares that the host terminates TLS BEFORE connections
-	// reach the injected listener — the hosting tenant shape: the router
-	// holds the wildcard cert, handshakes on :993 to read SNI, and forwards
-	// plaintext over a private per-org unix socket, so the tenant process
-	// never sees the private key. mailproto then resolves no cert material
-	// (a tenant's allowlist env has none), serves exactly one listener,
-	// allows auth over the plaintext transport (the public hop was TLS), and
+	// reach the injected listener — the managed-deployment shape: a reverse
+	// proxy holds the wildcard cert, handshakes on :993 to read SNI, and
+	// forwards plaintext over a private per-org unix socket, so the org's
+	// process never sees the private key. mailproto then resolves no cert
+	// material (such a process's allowlist env has none), serves exactly one
+	// listener, allows auth over the plaintext transport (the public hop was
+	// TLS), and
 	// advertises no STARTTLS. Requires Listen: without an injected listener
 	// this mode would plaintext-bind a public port, so it refuses to start.
 	ExternalTLS bool

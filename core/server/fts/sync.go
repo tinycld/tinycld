@@ -14,7 +14,7 @@ var log = logging.ForPackage("fts")
 // RegisterSync binds the FTS index-sync record hooks for one collection. On
 // every create/update it does an idempotent delete-then-insert; on delete it
 // removes the row. Core registers this itself (from the manifest `fts` block) so
-// the sync never depends on tenant TS and can't be skipped.
+// the sync never depends on package TS and can't be skipped.
 func RegisterSync(app *pocketbase.PocketBase, cfg Config) {
 	app.OnRecordAfterCreateSuccess(cfg.Collection).BindFunc(func(e *core.RecordEvent) error {
 		syncRecord(app, cfg, e.Record, false)

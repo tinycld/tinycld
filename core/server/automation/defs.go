@@ -2,7 +2,7 @@
 //
 // Wire types for server/automation_defs.json, the generator's materialization
 // of every package's automation.ts (plus core's built-ins). JSON-tagged
-// mirrors, same rationale as tenantcfg's DAV mirrors: the TS side owns the
+// mirrors, same rationale as the DAV Source mirrors: the TS side owns the
 // authoring format, Go consumes a stable wire shape.
 package automation
 
@@ -115,8 +115,8 @@ type QualifiedTrigger struct {
 }
 
 // LoadDefs reads the materialized defs. A missing file is an inert engine,
-// not an error — matches tenantcfg.loadJSON: a workspace with no automation
-// packages simply has nothing to do.
+// not an error — same convention as the other materialized-config loaders: a
+// workspace with no automation packages simply has nothing to do.
 func LoadDefs(path string) (*Defs, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

@@ -102,18 +102,17 @@ const SUPERUSER_PASSWORD = process.env.ADMIN_USER_PW || 'TodoSmoke1234!'
 // Install pinned to a git TAG via the #ref suffix. validatePackageSpec accepts
 // `<git-spec>#<safe-ref>` and `npm pack` clones the repo at that tag.
 //
-// PW_TODO_SPEC_V1 overrides the default git spec: the HOSTED runner
-// (hosting/tests/install/run-hosted-install.sh, in the sibling repo) passes an
-// npm spec (`@tinycld/todo@1.0.0`, resolved against its fixture registry)
-// because hosted installs refuse git specs — a flat {name: version} org
-// lockfile has nowhere to carry git provenance (coreserver/pkg_hosted.go's
-// recorded limitation).
+// PW_TODO_SPEC_V1 overrides the default git spec: the runner for a MANAGED
+// deployment (in a sibling repo) passes an npm spec (`@tinycld/todo@1.0.0`,
+// resolved against its fixture registry) because managed installs refuse git
+// specs — a flat {name: version} org lockfile has nowhere to carry git
+// provenance (coreserver/pkg_hosted.go's recorded limitation).
 //
 // This and PW_PROGRESS_MIN_PCT below are the CROSS-REPO CONTRACT between this
 // spec and that runner: this file is the single source of truth for the phases
-// (duplicating 1,400 lines into hosting would drift), and the two env vars are
-// the only places the hosted pipeline differs. Changing either name breaks a
-// runner in another repo, so treat them as public API.
+// (duplicating 1,400 lines into that repo would drift), and the two env vars
+// are the only places the managed pipeline differs. Changing either name
+// breaks a runner in another repo, so treat them as public API.
 const TODO_SPEC_V1 = process.env.PW_TODO_SPEC_V1 || 'github:tinycld/todo#v1.0.0'
 
 // Buggy fixture tags (see FIXTURE CONTRACT above). server + migration roll back
@@ -752,16 +751,17 @@ async function waitForExpoUpdate(
 }
 
 // PW_SKIP_OTA=1 disables the per-modification OTA assertions. Both runners now
-// leave it unset: a hosted tenant serves /api/app/update from its own build
-// artifact (RegisterTenantAppUpdateEndpoints), closing design §6's "Native OTA
-// per org". Kept as an escape hatch for a build image with no RN toolchain,
+// leave it unset: an org on a managed deployment serves /api/app/update from
+// its own build artifact, closing design
+// §6's "Native OTA per org". Kept as an escape hatch for a build image with no RN toolchain,
 // where no native bundles exist to advertise in either composition.
 const SKIP_OTA = process.env.PW_SKIP_OTA === '1'
 
-// A bundle id is `<buildId>-<platform>`. The single-tenant installer mints a
-// timestamped build id; the hosting builder mints a content-addressed one
-// (recipe-<hash12>), so a hosted org's bundles are shared by every org that
-// resolves to the same package set. Accept either shape.
+// A bundle id is `<buildId>-<platform>`. The standalone installer mints a
+// timestamped build id; a managed deployment's builder mints a
+// content-addressed one (recipe-<hash12>), so a managed org's bundles are
+// shared by every org that resolves to the same package set. Accept either
+// shape.
 function bundleIdPattern(platform: 'ios' | 'android'): RegExp {
     return new RegExp(`^(build-\\d+|recipe-[a-f0-9]{12})-${platform}$`)
 }
@@ -947,7 +947,7 @@ test.describe('todo version change', () => {
         // first step. Dismiss it so later phases' navigations (which expect the
         // superuser recovery console / in-app dashboard) aren't redirected back
         // into the wizard.
-        await expect(page.getByText('Your workspace')).toBeVisible()
+        await expect(page.getByText('Your organization', { exact: true })).toBeVisible()
         await page.getByRole('button', { name: 'Finish later' }).click()
     })
 
@@ -1147,7 +1147,7 @@ test.describe('todo version change', () => {
         //
         //    Single-org: this used to create an org + owner through the
         //    Organizations console. That console is now a static empty state
-        //    (the hosting router owns provisioning), so the user is created
+        //    (a composing server owns provisioning), so the user is created
         //    through the superuser REST API instead. The user is only a
         //    fixture — everything this spec actually asserts (registry
         //    version, schema, the todo UI) still runs through the UI.

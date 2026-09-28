@@ -85,7 +85,7 @@ type Config struct {
 	// Sandboxed, when true, installs only the capability-safe JS bindings and
 	// omits the host-capability bindings ($os, $http, $filesystem, $filepath)
 	// from BOTH the hook and migration runtimes, and neuters process.env /
-	// process.argv. Intended for running untrusted (multi-tenant) code.
+	// process.argv. Intended for running untrusted code from several orgs.
 	//
 	// Default false preserves the full stock single-app API (byte-for-byte).
 	Sandboxed bool
@@ -94,8 +94,8 @@ type Config struct {
 	// hook and migration files, registered migration up/down runs, and each
 	// pooled handler invocation. Withheld bindings do not bound COMPUTE — a
 	// `while(true){}` at the top of a hostile package's hook file otherwise
-	// spins the loading goroutine forever, which for a tenant is a boot that
-	// never completes.
+	// spins the loading goroutine forever, which for an org that runs in its
+	// own process is a boot that never completes.
 	//
 	// Zero picks the default: 30s when Sandboxed, unlimited otherwise (stock
 	// behavior). Negative disables the budget explicitly.
@@ -354,7 +354,7 @@ func (p *plugin) registerMigrations() error {
 		vm.Set("__hooks", absHooksDir)
 
 		// The up/down callbacks execute LATER (RunAllMigrations, against the
-		// tenant's DB) on this same vm, so they carry the budget with them —
+		// org's DB) on this same vm, so they carry the budget with them —
 		// bounding only the file's top level would leave the actual migration
 		// run free to spin.
 		budget := p.execTimeout()
@@ -532,7 +532,7 @@ func (p *plugin) compileHookFiles(loader *sobek.Runtime, files map[string][]byte
 					case p.config.Sandboxed:
 						// Untrusted code: a load-time throw must fail this app's
 						// registration (returned to the caller), never panic the
-						// shared multi-tenant process.
+						// process that several orgs share.
 						if loadErr == nil {
 							loadErr = fmtErr
 						}

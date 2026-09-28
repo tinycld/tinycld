@@ -2,7 +2,7 @@ import type { EditorWebViewComponent, EditorWebViewState } from './src/EditorWeb
 
 // Web stub for the `editor-webview` native view. On web the shared editor is
 // Tiptap in the DOM (use-rich-editor.web.tsx); nothing renders this host or
-// calls these functions. The stub exists so the hosting hook's static import
+// calls these functions. The stub exists so the owning hook's static import
 // resolves when bundling for web — Metro picks this file over index.ts.
 export const EditorWebView: EditorWebViewComponent = () => null
 

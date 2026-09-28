@@ -13,12 +13,13 @@ interface SetupContinueButtonProps {
 export function SetupContinueButton({ onPress, isDisabled }: SetupContinueButtonProps) {
     return (
         <Button
-            className="self-start"
+            size="lg"
+            className="mt-2 min-h-11 self-start"
             onPress={onPress}
             isDisabled={isDisabled}
             testID={SETUP_CONTINUE_TEST_ID}
         >
-            <ButtonText>Continue</ButtonText>
+            <ButtonText className="text-[15px] font-semibold">Continue</ButtonText>
         </Button>
     )
 }

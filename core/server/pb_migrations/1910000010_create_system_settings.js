@@ -102,10 +102,10 @@ migrate(
         // deployment that already configured a value via /admin is a no-op, and a
         // deployment with no env vars simply starts empty.
         //
-        // $os is absent in a SANDBOXED jsvm — a hosted tenant booting a per-org
-        // build runs this same migration there, and the router hands tenants a
-        // scrubbed environment anyway, so "no env to seed from" is the correct
-        // meaning of skipping (this seed is single-tenant-legacy by design).
+        // $os is absent in a SANDBOXED jsvm — an org that runs in its own
+        // process boots this same migration there with a scrubbed environment
+        // anyway, so "no env to seed from" is the correct meaning of skipping
+        // (this seed is standalone-legacy by design).
         const seedEnv = typeof $os === 'undefined' ? [] : SEED
         for (const s of seedEnv) {
             // PocketBase's JSVM exposes env via $os.getenv (NOT Node's process.env,

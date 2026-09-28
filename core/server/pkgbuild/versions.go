@@ -11,9 +11,9 @@ import (
 	"github.com/Masterminds/semver/v3"
 )
 
-// Package version discovery (moved from coreserver/pkg_versions.go so the
-// hosting router can serve the same discovery over the per-org control
-// socket — D5's one-shared-implementation rule; the confined tenant has no
+// Package version discovery (moved from coreserver/pkg_versions.go so a
+// composing server can serve the same discovery over a per-org control
+// socket — one shared implementation; a confined org process has no
 // npm/git of its own).
 //
 // For each installed package the operator can update or downgrade to any
@@ -49,9 +49,9 @@ type versionCacheEntry struct {
 // (coreserver/pkg_hosted_channel.go), the hosted path's mirror of this cache.
 const versionCacheTTL = 5 * time.Minute
 
-// versionCacheMax caps how many spec entries the cache holds. The router serves
-// /v1/versions for tenant-supplied specs; without a bound a tenant sending an
-// unbounded stream of distinct (but individually valid) specs grows the router
+// versionCacheMax caps how many spec entries the cache holds. A composing server
+// serves /v1/versions for org-supplied specs; without a bound an org sending an
+// unbounded stream of distinct (but individually valid) specs grows that server's
 // heap forever. 1024 comfortably covers every package an org's operators browse
 // while keeping the map's worst-case footprint trivially small. On overflow the
 // oldest-inserted entry is dropped (insertion order tracked in versionCacheKeys)

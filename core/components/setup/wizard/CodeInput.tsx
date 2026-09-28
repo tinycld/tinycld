@@ -13,12 +13,15 @@ function cellsOf(value: string): { key: string; char: string }[] {
     return Array.from({ length: CELLS }, (_, i) => ({ key: `cell-${i}`, char: chars[i] ?? '' }))
 }
 
-function Cell({ char, isFilled }: { char: string; isFilled: boolean }) {
+const CELL_CLASS = {
+    filled: 'h-14 w-11 items-center justify-center rounded-lg border-2 border-primary bg-accent',
+    empty: 'h-14 w-11 items-center justify-center rounded-lg border-2 border-border bg-background',
+} as const
+
+function Cell({ char }: { char: string }) {
     return (
-        <View
-            className={`h-11 w-9 items-center justify-center rounded-lg border-[1.5px] ${isFilled ? 'border-primary bg-primary/10' : 'border-border'}`}
-        >
-            <Text className="font-mono text-xl font-bold text-foreground">{char}</Text>
+        <View className={char ? CELL_CLASS.filled : CELL_CLASS.empty}>
+            <Text className="font-mono text-2xl font-bold text-foreground">{char}</Text>
         </View>
     )
 }
@@ -35,18 +38,16 @@ export function CodeInput({
     onChangeText: (v: string) => void
 }) {
     const ref = useRef<TextInput>(null)
-    const cells = cellsOf(value).map(c => (
-        <Cell key={c.key} char={c.char} isFilled={c.char !== ''} />
-    ))
+    const cells = cellsOf(value).map(c => <Cell key={c.key} char={c.char} />)
     const first = cells.slice(0, 4)
     const second = cells.slice(4)
     return (
         <Pressable
             onPress={() => ref.current?.focus()}
-            className="relative flex-row items-center gap-1.5 self-start"
+            className="relative flex-row items-center gap-2 self-start"
         >
             {first}
-            <Text className="text-lg text-muted-foreground">–</Text>
+            <View className="mx-1 h-0.5 w-3 rounded bg-muted-foreground" />
             {second}
             <TextInput
                 ref={ref}

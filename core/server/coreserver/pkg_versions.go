@@ -10,7 +10,7 @@ import (
 
 // Package version discovery. The mechanics (spec classification, npm/git
 // listing, the discovery cache, semver sorting) moved to pkgbuild/versions.go so
-// the hosting router can serve the same discovery over the per-org control
+// a composing server can serve the same discovery over a per-org control
 // socket; this file keeps only the DB-backed endpoint.
 
 // VersionInfo is the per-package discovery result returned to the UI.
@@ -77,7 +77,8 @@ func versionInfosForRows(
 
 // versionInfoForRegistryRow builds one registry row's discovery result.
 // discover is the versions source — versionsForSpec on the host, the
-// control-socket call in a hosted tenant — so both paths share the row shape.
+// control-socket call on a managed deployment — so both paths share the row
+// shape.
 func versionInfoForRegistryRow(rec *core.Record, discover func(spec string) (pkgSource, []string, string)) VersionInfo {
 	spec := rec.GetString("npm_package")
 	current := rec.GetString("version")

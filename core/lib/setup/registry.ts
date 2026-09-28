@@ -9,7 +9,7 @@ import type { SetupStepEntry } from '@tinycld/core/lib/setup/types'
 const CORE_STEPS: SetupStepEntry[] = [
     {
         id: CORE_STEP_IDS.workspace,
-        label: 'Workspace',
+        label: 'Organization',
         order: 'a0',
         load: () => import('@tinycld/core/components/setup/wizard/steps/WorkspaceStep'),
     },

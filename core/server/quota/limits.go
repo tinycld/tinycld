@@ -15,9 +15,9 @@ const (
 // single-org deployment's source of truth. The collection has no access rules,
 // so only a superuser can change them.
 //
-// Under hosting the ORG ceiling must NOT come from here: each tenant has its
-// own superusers, so an org could raise the ceiling set for it. The router
-// supplies that value instead; see FixedLimits.
+// On a managed deployment the ORG ceiling must NOT come from here: each org
+// has its own superusers, so an org could raise the ceiling set for it. The
+// supervisor supplies that value instead; see FixedLimits.
 func SettingsLimits(app core.App) Limits {
 	return Limits{
 		PerUser: settingInt(app, userLimitKey),
@@ -26,8 +26,9 @@ func SettingsLimits(app core.App) Limits {
 }
 
 // FixedLimits returns a LimitsFunc over values resolved once at boot — the
-// tenant case, where the org ceiling arrives in the runtime config the router
-// materialized and is not readable or writable from the org's own DB.
+// managed-deployment case, where the org ceiling arrives in the runtime config
+// the supervisor materialized and is not readable or writable from the org's
+// own DB.
 //
 // The per-user ceiling still comes from settings, since that IS the org's own
 // policy to set within whatever total it was allotted.

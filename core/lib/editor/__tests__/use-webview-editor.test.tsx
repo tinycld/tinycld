@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EditorMessage } from '../message-bus/types'
 
 /**
- * The hosting hook against a mocked native module: the init handshake, the
+ * The owning hook against a mocked native module: the init handshake, the
  * lifecycle of the pooled instance, and the few things the hook does for the
  * page on its own (state, focus, editable, keyboard).
  */

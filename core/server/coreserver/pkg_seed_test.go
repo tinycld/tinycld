@@ -401,3 +401,49 @@ func TestSyncBundledPackagesKeepsOwnerDisabledRow(t *testing.T) {
 		t.Fatalf("status after re-sync = %q, want disabled", got)
 	}
 }
+
+// TestLoadBundledPackagesFallsBackToEmbedded pins the single-binary path: the
+// binary runs from any cwd with no source tree beside it, so with no file on
+// disk the seed rows must come from the copy compiled into the build.
+// Without it a standalone install seeds no pkg_registry rows at all, and the
+// setup wizard's Apps step and the app rail are both empty.
+func TestLoadBundledPackagesFallsBackToEmbedded(t *testing.T) {
+	withCwd(t, t.TempDir())
+	prev := embeddedBundledPackages
+	t.Cleanup(func() { embeddedBundledPackages = prev })
+	embeddedBundledPackages = []byte(mustJSON(t, []bundledPackage{
+		{Name: "Gizmos", Slug: "gizmos", Version: "1.0.0"},
+	}))
+
+	rows, err := loadBundledPackages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Slug != "gizmos" {
+		t.Fatalf("got %+v; want the embedded gizmos row", rows)
+	}
+}
+
+// A file on disk is the generator's fresher output (an in-app install rewrites
+// it), so it must still win over the copy baked in at build time.
+func TestLoadBundledPackagesPrefersDiskOverEmbedded(t *testing.T) {
+	dir := t.TempDir()
+	writeBundledJSON(t, dir, []bundledPackage{
+		{Name: "Gizmos", Slug: "gizmos", Version: "1.0.0"},
+		{Name: "Gadgets", Slug: "gadgets", Version: "0.3.0"},
+	})
+	withCwd(t, dir)
+	prev := embeddedBundledPackages
+	t.Cleanup(func() { embeddedBundledPackages = prev })
+	embeddedBundledPackages = []byte(mustJSON(t, []bundledPackage{
+		{Name: "Gizmos", Slug: "gizmos", Version: "1.0.0"},
+	}))
+
+	rows, err := loadBundledPackages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d row(s); want the 2-package disk copy", len(rows))
+	}
+}

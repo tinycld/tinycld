@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -161,10 +162,11 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	// treating that as unclaimed would silently restore the org's own
 	// collection — the precise fallback the supervisor exists to prevent.
 	syscfg.SetResolver(systemConfig.Get)
-	wireMailDomains()
+	wireMailDomains(func() string { return app.Settings().Meta.AppName })
 	// syscfg, not systemConfig.Get, is what keeps the mailer out of an import
 	// cycle with this package (mailer can't import coreserver).
 	mailer.ConfigResolver = syscfg.Get
+	mailer.ServerTokenResolver = maildomains.ServerToken
 
 	// Re-init Sentry whenever a sentry.* value changes. Registered before the
 	// initial load so no early change is missed. Sentry is the only stateful
@@ -219,34 +221,76 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 
 // wireMailDomains points the maildomains seam at this deployment's own
 // Postmark account — the standalone shape, where the deployment holds its own
-// account token.
+// account token — and installs the server-token source every sender asks.
 //
 // Called synchronously from RegisterSystemConfig, which runs BEFORE
 // systemConfig.load(app) (that happens later, in an OnServe hook — see the
 // comment above). So syscfg.Get("mail.postmark_account_token") returns "" at
-// the moment this function runs. That is fine ONLY because
-// NewPostmarkRegistrar is given an accessor, not a value: it re-reads
-// syscfg.Get on every AddDomain/GetDomain call, long after load() has
-// populated the map. Do not "simplify" this back to reading the token once
-// here and passing it as a string — that was exactly the bug (the registrar
+// the moment this function runs. That is fine ONLY because every consumer is
+// given an accessor, not a value: the registrar re-reads syscfg.Get on every
+// AddDomain/GetDomain call, and the token source rebuilds its resolver
+// whenever the settings it keys on change, long after load() has populated
+// the map. Do not "simplify" this back to reading the token once here and
+// passing it as a string — that was exactly the bug (the registrar
 // permanently captured "" and every call 503'd forever, including across
 // restarts, on a plain standalone Postmark deployment).
 //
-// The postmark.Client itself still needs a concrete server token at
-// construction for its auth header; that is a narrower staleness window
-// (operator-edited server token requires a restart to pick up) that this
-// fix does not attempt to close — only the account-token/ErrNotConfigured
-// trap the regression is about.
+// The postmark.Client for domain operations authenticates with the account
+// token; the server token it is also handed is unused there.
 //
-// A no-op once a supervising composition has claimed the seam. Core's wiring
-// runs after a supervisor's, and reclaiming would hand a tenant the account
-// credentials the supervisor exists to keep from it. SetResolver enforces this
-// itself; the early return is so we do not build a client we will discard.
-func wireMailDomains() {
+// The registrar part is a no-op once a supervising composition has claimed
+// the seam. Core's wiring runs after a supervisor's, and reclaiming would hand
+// the org the account credentials the supervisor exists to keep from it.
+// SetResolver enforces this itself; the early return is so we do not build a
+// client we will discard.
+func wireMailDomains(orgName func() string) {
+	// Installed whether or not the seam is claimed: every sender asks this
+	// source, and a supervising composition satisfies it by shipping the org
+	// a configured server token, which the source returns without deriving.
+	// Skipping it there would leave senders with no token at all.
+	maildomains.SetServerTokenSource(newServerTokenSource(orgName))
 	if maildomains.IsClaimed() {
 		return
 	}
 	client := postmark.NewClient(syscfg.Get("mail.postmark_server_token"), syscfg.Get("mail.postmark_account_token"))
 	accountToken := func() string { return syscfg.Get("mail.postmark_account_token") }
 	maildomains.SetResolver(maildomains.NewPostmarkRegistrar(accountToken, client))
+}
+
+// serverTokenInputs is everything the derived server token depends on. A
+// change to any of them builds a fresh resolver, which is also how a rotated
+// account token or a renamed server gets picked up without a restart.
+type serverTokenInputs struct {
+	accountToken, configuredToken, serverName, createAs string
+}
+
+// newServerTokenSource memoizes one TokenResolver per set of inputs, so the
+// derived token is fetched once and served from cache on every later send.
+// orgName is read per call: the organization is named in the setup wizard,
+// after boot, and the Postmark server takes that name when it is created.
+func newServerTokenSource(orgName func() string) func(context.Context) (string, error) {
+	var (
+		mu       sync.Mutex
+		inputs   serverTokenInputs
+		resolver *maildomains.TokenResolver
+	)
+	return func(ctx context.Context) (string, error) {
+		now := serverTokenInputs{
+			accountToken:    syscfg.Get("mail.postmark_account_token"),
+			configuredToken: syscfg.Get("mail.postmark_server_token"),
+			serverName:      syscfg.Get("mail.postmark_server_name"),
+			// The server is created under the organization's name, so it is
+			// recognizable in the Postmark account.
+			createAs: orgName(),
+		}
+		mu.Lock()
+		if resolver == nil || now != inputs {
+			client := postmark.NewClient(now.configuredToken, now.accountToken)
+			resolver = maildomains.NewTokenResolver(now.accountToken, now.configuredToken, now.serverName, now.createAs, client)
+			inputs = now
+		}
+		r := resolver
+		mu.Unlock()
+		return r.ServerToken(ctx)
+	}
 }

@@ -10,9 +10,10 @@
 // and anything a future feature adds. A check that lived in one protocol's
 // handler would leave the others open.
 //
-// It also has to be core rather than a feature's own hook because of hosting: a tenant
-// process links no feature package, so a limit enforced by a feature's own hook
-// would simply not exist there — the org could fill the host's disk. Config
+// It also has to be core rather than a feature's own hook because of managed
+// deployments: an org's own process links no feature package, so a limit
+// enforced by a feature's own hook would simply not exist there — the org
+// could fill the host's disk. Config
 // crosses a process boundary; a Go closure does not. (Same reasoning as the
 // access rules in core/webdav.)
 //
@@ -57,9 +58,9 @@ type Limits struct {
 
 	// PerOrg caps the whole deployment's bytes across every source.
 	//
-	// Under hosting this is the ceiling the ROUTER assigns, delivered in
-	// the org's runtime config — deliberately not something the org's own
-	// superuser can raise by editing a settings row.
+	// On a managed deployment this is the ceiling the SUPERVISOR assigns,
+	// delivered in the org's runtime config — deliberately not something the
+	// org's own superuser can raise by editing a settings row.
 	PerOrg int64
 }
 

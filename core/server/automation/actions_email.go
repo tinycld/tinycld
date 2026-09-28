@@ -109,10 +109,10 @@ func emailRecipient(to string) (string, error) {
 // rows such a count relies on).
 //
 // A new process starts with an empty ledger. That is acceptable because the
-// processes involved do not recycle mid-loop: a single-tenant server restarts
-// when an operator says so, and a hosting tenant is evicted only after 30
-// idle minutes with zero connections — a state an active mail loop never
-// reaches.
+// processes involved do not recycle mid-loop: the standalone server restarts
+// when an operator says so, and an org that runs in its own process under a
+// supervisor is evicted only after 30 idle minutes with zero connections — a
+// state an active mail loop never reaches.
 var emailSendLedger = struct {
 	sync.Mutex
 	sends map[string][]time.Time

@@ -44,8 +44,8 @@ import (
 //   - self-hosted: rebuildWith is backup -> syncMig -> activate -> restart, and
 //     activateBuild only renames a symlink. The old binary is still the one
 //     running when the downs execute.
-//   - hosted: the tenant runs the downs and then waits to be killed; the
-//     replacement artifact only starts afterwards.
+//   - managed deployment: the org's process runs the downs and then waits to
+//     be killed; the replacement artifact only starts afterwards.
 //
 // So a Down resolved from core.AppMigrations is the OUTGOING build's Down. When
 // a release FIXES a broken down migration, that fix can never run its own

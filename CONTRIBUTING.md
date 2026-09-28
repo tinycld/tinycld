@@ -261,7 +261,7 @@ signals it ran.
 - There's no first-run setup code locally: `db:reset` creates the superuser up front (so it can seed), so PocketBase isn't on its first run. The setup code (printed in the server log with a `/a/setup?code=…` link) is only for an empty self-hosted instance, where it claims the server and creates the owner. The superuser recovery console is at `/a/setup/recovery`.
 
 ## Users & Roles
-- **Single-org deployment: the process IS one org.** There is no `orgs` collection and no `user_org` junction — a user's role lives directly on their `users` auth record. (The hosting router hosts many deployments, each its own process and DB; none of that is visible from inside the app.)
+- **Single-org deployment: the process IS one org.** There is no `orgs` collection and no `user_org` junction — a user's role lives directly on their `users` auth record. (A managed deployment runs many orgs, each its own process and DB; none of that is visible from inside the app.)
 - Roles are `owner` / `admin` / `member` / `guest` (`users.role`). Read the current user's role with `useCurrentRole()` from `@tinycld/core/lib/use-current-role` — it returns `{ role, isOwner, isAdmin, isMember, isGuest, canManageOrg, canManageMembers }` (`isAdmin` includes owners).
 - Use `useAuth()` for the current user and `useCurrentRole()` for their role. `useOrgInfo()` is the one org-named survivor and returns deployment BRANDING only (`{ org }` — the name behind `/api/org-info`); it carries no id or slug, because there is no server-side org to identify.
 
@@ -315,9 +315,9 @@ Add a feature later with `npx @tinycld/bootstrap@latest --assemble-only --with <
 
 ### Pinning members to a branch or tag (and why CI does)
 
-`--with <name>@<ref>` pins that member's clone to a branch or tag; `tinycld` itself accepts the same form (`--with tinycld@hosting`). Without a ref, every member is cloned at its **default branch**.
+`--with <name>@<ref>` pins that member's clone to a branch or tag; `tinycld` itself accepts the same form (`--with tinycld@next`). Without a ref, every member is cloned at its **default branch**.
 
-That default is the right one for a developer and the wrong one for cross-repo work, which is worth understanding before it costs you an afternoon. **Coordinated changes span repos on the same branch name** — the single-org migration lived on `hosting` in nine repos at once. A feature repo whose CI assembles `tinycld` from `main` then typechecks the branch's code against a core that predates it: the APIs the branch depends on are simply absent, and the errors look like defects in the PR (`Property 'userId' does not exist on type 'OrgScope'`) rather than a mismatched workspace. It reads as "this PR is broken" when nothing is.
+That default is the right one for a developer and the wrong one for cross-repo work, which is worth understanding before it costs you an afternoon. **Coordinated changes span repos on the same branch name** — the single-org migration lived on one branch name in nine repos at once. A feature repo whose CI assembles `tinycld` from `main` then typechecks the branch's code against a core that predates it: the APIs the branch depends on are simply absent, and the errors look like defects in the PR (`Property 'userId' does not exist on type 'OrgScope'`) rather than a mismatched workspace. It reads as "this PR is broken" when nothing is.
 
 So each feature repo's `ci.yml` resolves sibling refs before assembling: prefer a branch matching the PR's HEAD, fall back to the default branch when none exists. Ordinary single-repo PRs are unaffected — they assemble against released siblings, which is what you want. `text` and `calc` pin `drive` the same way, since they clone it too.
 

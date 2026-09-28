@@ -1,6 +1,6 @@
 ---
 title: Setting up a new server
-summary: Claim a new server with its setup code, then set up your workspace, apps, email and team.
+summary: Claim a new server with its setup code, then set up your organization, apps, email and team.
 tags: [setup, "first run", owner]
 order: 1
 ---
@@ -9,11 +9,11 @@ To claim a new server, open it in your browser. The server prints a setup code i
 
 If the code is not in the log, restart the server. A new code prints at each start. After too many wrong codes, the server prints a new code.
 
-Next, create the owner account. The owner manages the server and everyone on it.
+Next, create the owner account. The owner can change every setting, manage apps and people, and hand the owner role to someone else later in Settings → Organization.
 
 The setup steps then help you:
 
-- **Name your workspace** and add a logo.
+- **Name your organization** and add a logo. Both appear on every screen of the app and on the sign-in screen.
 - **Choose your apps.** Clear an app to hide it from everyone. You can show it again at any time in Settings → Packages.
 - **Set up email sending,** so invites and password resets reach people.
 - **Your team.** Invite people to join.

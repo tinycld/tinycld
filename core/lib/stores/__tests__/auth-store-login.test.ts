@@ -2,8 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Mock PocketBase so login() runs without a live server. authWithPassword's
-// return shape drives the authenticated-user projection under test. Multi-org
-// is removed, so login() no longer resolves an org / primaryOrgSlug and never
+// return shape drives the authenticated-user projection under test. The process
+// is one org, so login() no longer resolves an org / primaryOrgSlug and never
 // rejects a user for "no org" — any valid credentials sign in.
 const mockAuthStoreClear = vi.fn()
 const mockAuthWithPassword = vi.fn()

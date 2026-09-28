@@ -6,11 +6,11 @@ import "testing"
 // an options change is a deliberate, reviewed event — hook files transpiled
 // earlier must keep running exactly as freshly-transpiled ones do.
 //
-// This test once had a paired twin in the hosting router (publish-time
+// This test once had a paired twin in a separate control plane (publish-time
 // transpileForStore, internal/controlplane/transpile_golden_test.go); design
-// §7 step 5 deleted the router-side member along with the package store —
-// hosted packages are now transpiled inside the builder's workspace pipeline,
-// not by the router — leaving this as the sole definition.
+// §7 step 5 deleted that twin along with the package store — packages are now
+// transpiled inside the builder's workspace pipeline — leaving this as the sole
+// definition.
 
 const goldenTSFixture = `interface Hook {
     name: string
