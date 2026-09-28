@@ -26,6 +26,10 @@ interface BuildRecord {
     created: string
 }
 
+// How much install history the timeline shows. Only recent builds are
+// revertible in practice, so the window doubles as the revertible set.
+const BUILD_WINDOW = 50
+
 function formatWhen(iso: string) {
     if (!iso) return ''
     return new Date(iso).toLocaleString(undefined, {
@@ -45,17 +49,25 @@ export function BuildHistoryTab({ isVisible, pb }: { isVisible: boolean; pb: Poc
     // pipeline, and pbtsdb's realtime subscription propagates those here — so a
     // revert or delete reflects without a manual refetch.
     const [pkgBuildCollection] = useStore('pkg_build')
+    // `pkg_build` is unbounded install history — one row per install and revert,
+    // forever — so the newest window is asked for server-side rather than
+    // fetching everything and sorting it here.
     const { data: rows = [], isLoading } = useLiveQuery({
-        query: query => query.from({ pkg_build: pkgBuildCollection }),
+        query: query =>
+            query
+                .from({ pkg_build: pkgBuildCollection })
+                .orderBy(({ pkg_build }) => pkg_build.created, 'desc')
+                .limit(BUILD_WINDOW),
     })
-    const builds = [...(rows as BuildRecord[])].sort((a, b) =>
-        (b.created ?? '').localeCompare(a.created ?? '')
-    )
+    const builds = rows as BuildRecord[]
 
     if (!isVisible) return null
 
     // The builds newer than a given one are the ones a revert to it will
     // invalidate — surfaced in the confirm dialog so the operator sees the cost.
+    // Only the loaded window is compared, which is the right scope: a build
+    // older than the window is not offered for revert, so nothing outside it can
+    // be the target.
     const newerThan = (build: BuildRecord) =>
         builds.filter(b => b.created > build.created && b.action === 'install')
 

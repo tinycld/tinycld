@@ -1,4 +1,4 @@
-import { eq, not } from '@tanstack/db'
+import { and, eq, inArray } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
 import { labelForCount, type OffboardPlan } from '@tinycld/core/lib/account'
 import { useStore } from '@tinycld/core/lib/pocketbase'
@@ -21,20 +21,37 @@ export interface Peer {
     role: string
 }
 
-// usePeers lists other non-guest users, for the reassign target. Guests are
-// excluded: they exist only to hold a share link and shouldn't inherit
-// someone's whole library.
+// usePeers lists other active, non-guest users, for the reassign target. Guests
+// are excluded: they exist only to hold a share link and shouldn't inherit
+// someone's whole library; so are disabled accounts.
+//
+// Both predicates are in the request, and both are spelled positively. pbtsdb
+// compiles a query's `where` to a PocketBase filter and `not(...)` becomes
+// `!(...)`, which PocketBase rejects — so "not a guest" is the set of roles that
+// may inherit, and "not disabled" is `disabled = false`. The leaver is the one
+// row dropped in JS: it is a single known id out of an already-narrowed set, and
+// excluding it server-side would need that same refused `not()`.
 export function usePeers(excludeUserId: string): Peer[] {
     const [usersCollection] = useStore('users')
     const { data } = useLiveQuery({
         query: query =>
             query
                 .from({ users: usersCollection })
-                .where(({ users }) => not(eq(users.id, excludeUserId))),
+                .where(({ users }) =>
+                    and(
+                        inArray(users.role, ['owner', 'admin', 'member']),
+                        eq(users.disabled, false)
+                    )
+                )
+                .orderBy(({ users }) => users.name)
+                .select(({ users }) => ({
+                    id: users.id,
+                    name: users.name,
+                    email: users.email,
+                    role: users.role,
+                })),
     })
-    return (data ?? [])
-        .filter(u => u.role !== 'guest' && !u.disabled)
-        .map(u => ({ id: u.id, name: u.name, email: u.email, role: u.role }))
+    return (data ?? []).filter(u => u.id !== excludeUserId)
 }
 
 export function ModalShell({ children }: { children: React.ReactNode }) {

@@ -41,7 +41,7 @@ const mailSchema = z.object({
 })
 
 export function MailSendingPanel() {
-    const { byKey, upsert } = useSystemSettings()
+    const { byKey, upsert } = useSystemSettings('mail')
     // Runtime registry, so a DB-installed mail package suppresses these fields
     // just as a bundled one does. Core owns the `mail.*` keys either way (the
     // transactional mailer reads them); this only decides whether the mail

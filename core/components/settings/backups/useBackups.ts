@@ -9,6 +9,7 @@ import { useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useState } from 'react'
 
 const STALE_MS = 7 * 86400 * 1000
+const HISTORY_LIMIT = 30
 
 export function useBackupRows() {
     const [backupsCollection, usersCollection] = useStore('backups', 'users')
@@ -22,6 +23,9 @@ export function useBackupRows() {
                     eq(backup.initiated_by, initiator.id)
                 )
                 .orderBy(({ backup }) => backup.started, 'desc')
+                // Backup history grows forever — a nightly schedule adds 365
+                // rows a year — and the panel only ever shows a recent list.
+                .limit(HISTORY_LIMIT)
                 .select(({ backup, initiator }) => ({ ...backup, initiatorName: initiator?.name })),
         [backupsCollection, usersCollection]
     )

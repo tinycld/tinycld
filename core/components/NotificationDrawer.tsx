@@ -10,11 +10,14 @@ import type { Notifications } from '@tinycld/core/types/pbSchema'
 import { Sheet } from '@tinycld/core/ui/sheet'
 import { useRouter } from 'expo-router'
 import { Bell, Calendar, Check, File, Mail, Shield, SquareKanban, X } from 'lucide-react-native'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { railWidth } from './workspace/rail-width'
 
 const DRAWER_WIDTH = 340
+// How many undismissed notifications the drawer holds. Bounded because the
+// query is mounted for the whole session, not because the list is paged.
+const NOTIFICATION_WINDOW = 50
 
 const PACKAGE_ICONS: Record<string, typeof Bell> = {
     calendar: Calendar,
@@ -121,15 +124,19 @@ function NotificationContent() {
     const close = useWorkspaceStore(s => s.setNotificationsOpen)
     const router = useRouter()
 
+    // The drawer mounts in WorkspaceLayout, so this query is held from login to
+    // logout. The own-row list rule bounds who the rows belong to but not how
+    // many there are, so the newest window is asked for server-side.
     const { data: rawNotifications } = useLiveQuery({
         query: query =>
-            query.from({ n: notificationsCollection }).where(({ n }) => eq(n.dismissed, false)),
+            query
+                .from({ n: notificationsCollection })
+                .where(({ n }) => eq(n.dismissed, false))
+                .orderBy(({ n }) => n.created, 'desc')
+                .limit(NOTIFICATION_WINDOW),
     })
 
-    const notifications = useMemo(
-        () => [...(rawNotifications ?? [])].sort((a, b) => (b.created > a.created ? 1 : -1)),
-        [rawNotifications]
-    )
+    const notifications = rawNotifications ?? []
 
     const markAllRead = useMutation({
         mutationFn: mutation(function* () {

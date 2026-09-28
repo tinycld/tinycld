@@ -28,7 +28,7 @@ const vapidSchema = z.object({
 // This is the only caller of /api/admin/vapid/generate anywhere in the app, so
 // while this panel was orphaned there was no way to configure web push at all.
 export function VapidPanel() {
-    const { byKey, upsert } = useSystemSettings()
+    const { byKey, upsert } = useSystemSettings('vapid')
     const publicKey = byKey.get('vapid.public_key')
     const privateKey = byKey.get('vapid.private_key')
     const subject = byKey.get('vapid.subject')
