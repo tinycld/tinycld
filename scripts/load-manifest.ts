@@ -23,6 +23,8 @@ export interface PackageManifest {
         slot: string
         component: string
         order?: number
+        // Shown where the host lays contributions out as tabs.
+        label?: string
     }[]
     seed?: { script: string }
     tests?: { directory: string }

@@ -16,6 +16,7 @@ export interface ConfigSidebarContribution {
     slot: string
     component: string // subpath e.g. 'sidebar-contributions/booking-pages'
     order: number
+    label?: string
 }
 
 export interface ConfigSearch {
@@ -137,6 +138,11 @@ function systemSettingsPanelLine(packageName: string, s: ConfigSystemSettingsPan
     return `            { slug: ${jsonLiteral(s.slug)}, label: ${jsonLiteral(s.label)}${keyPrefix}, Component: lazy(() => import('${packageName}/${s.component}')) },`
 }
 
+function sidebarContributionLine(packageName: string, c: ConfigSidebarContribution): string {
+    const label = c.label ? ` label: ${jsonLiteral(c.label)},` : ''
+    return `            { target: ${jsonLiteral(c.target)}, slot: ${jsonLiteral(c.slot)}, order: ${c.order},${label} Component: lazy(() => import('${packageName}/${c.component}')) },`
+}
+
 export function buildConfigSource(pkgs: ConfigPkg[]): string {
     for (const p of pkgs) {
         validateConfigPkg(p)
@@ -212,9 +218,7 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
         if (p.sidebarContributions.length > 0) {
             lines.push('        sidebarContributions: [')
             for (const c of p.sidebarContributions) {
-                lines.push(
-                    `            { target: ${jsonLiteral(c.target)}, slot: ${jsonLiteral(c.slot)}, order: ${c.order}, Component: lazy(() => import('${p.packageName}/${c.component}')) },`
-                )
+                lines.push(sidebarContributionLine(p.packageName, c))
             }
             lines.push('        ],')
         }

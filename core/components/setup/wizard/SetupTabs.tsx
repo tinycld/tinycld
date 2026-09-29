@@ -1,6 +1,6 @@
 import { Pressable, Text, View } from 'react-native'
 
-export interface ProviderTab<V extends string> {
+export interface SetupTab<V extends string> {
     value: V
     label: string
 }
@@ -19,13 +19,13 @@ const LABEL_CLASS = {
  * A tab bar whose panel is the fields below it, so it reads as one control
  * over one section rather than a row of unrelated buttons.
  */
-export function ProviderTabs<V extends string>({
+export function SetupTabs<V extends string>({
     tabs,
     value,
     onChange,
     testID,
 }: {
-    tabs: readonly ProviderTab<V>[]
+    tabs: readonly SetupTab<V>[]
     value: V
     onChange: (value: V) => void
     testID?: string

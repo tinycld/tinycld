@@ -61,6 +61,7 @@ export function manifestToConfigPkg(packageName: string, manifest: PackageManife
             slot: c.slot,
             component: c.component,
             order: c.order ?? 0,
+            ...(c.label ? { label: c.label } : {}),
         })),
         ...(manifest.search ? { search: manifest.search } : {}),
         ...(manifest.automation ? { automation: manifest.automation.definitions } : {}),

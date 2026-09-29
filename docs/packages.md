@@ -277,7 +277,7 @@ export default manifest
 | `sidebar` / `provider` | A package may contribute a sidebar component **or** a context provider that wraps app children. The provider is emitted as a `{ load: () => import(...) }` thunk — not `lazy()` — and core resolves every provider before the route tree mounts (`core/lib/packages/provider-loader.ts`), so the package area never suspends on it. |
 | `settings[]` | Personal Settings panel contributions (`slug`, `label`, `component`). See [Extension points](#extension-points-settings-panels-and-sidebar-slots) below. |
 | `slots[]` | Names of sidebar slots this package exposes for *other* packages to render into. Free-form strings; duplicates within one manifest are a generator error. Render with `<SidebarSlot target="<this-slug>" slot="<name>" />` from `@tinycld/core/components/sidebar-primitives`. |
-| `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order? }` is generator-validated. `target: 'core'` renders into a slot core owns (see [Setup wizard steps](#setup-wizard-steps-setupsteps)). |
+| `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order?, label? }` is generator-validated. `label` names the contribution where the host lays the slot out as tabs. `target: 'core'` renders into a slot core owns (see [Setup wizard steps](#setup-wizard-steps-setupsteps)). |
 | `setupSteps[]` | Steps this package adds to the first-run setup wizard (`id`, `label`, `module`, `order?`). See [Setup wizard steps](#setup-wizard-steps-setupsteps) below. |
 | `help.directory` | `<id>.md` topics surfaced in the in-app help hub. |
 | `seed.script` | Dev sample-data function. |
@@ -644,7 +644,7 @@ packageSettings.map(group => group.panels.map(panel => /* render link */))
 
 The `component` subpath must resolve through the package's `package.json` `exports` wildcard (e.g. `"./settings/*": "./tinycld/mail/settings/*.tsx"`). The component must default-export — the generator imports by default name. The `slug` must be unique across **all** installed packages, not just within one manifest.
 
-**Sidebar slots** (`manifest.slots: ['sidebar.<name>']` on the host + `manifest.sidebarContributions: [{ target, slot, component, order? }]` on the contributor):
+**Sidebar slots** (`manifest.slots: ['sidebar.<name>']` on the host + `manifest.sidebarContributions: [{ target, slot, component, order?, label? }]` on the contributor):
 
 ```ts
 // Host: calendar/manifest.ts
