@@ -382,11 +382,8 @@ func TestTokenExchangeThrottlesRepeatedFailures(t *testing.T) {
 	app := newSchemaApp(t)
 	seedUserAndClient(t, app)
 
-	// Point the throttle at a controllable clock and a clean map so this test
-	// cannot interfere with, or be interfered by, others sharing the package
-	// singleton.
-	restore := installTestTokenThrottle()
-	defer restore()
+	// A frozen clock, so no failure ages out of the window mid-test.
+	installTestTokenThrottle(t)
 
 	form := url.Values{}
 	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
@@ -413,8 +410,7 @@ func TestTokenExchangeAuthorizationPendingNeverThrottles(t *testing.T) {
 	// logins would start 429ing before the user finishes approving.
 	app := newSchemaApp(t)
 	deviceCode, _ := pendingDeviceGrant(t, app)
-	restore := installTestTokenThrottle()
-	defer restore()
+	installTestTokenThrottle(t)
 
 	form := url.Values{}
 	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
@@ -461,20 +457,36 @@ func pendingDeviceGrant(t *testing.T, app *tests.TestApp) (deviceCode string, us
 	return code, uid
 }
 
-// installTestTokenThrottle swaps the package-singleton throttle for a fresh
-// one with a controllable clock, and returns a func to restore the original.
-// Tests that exercise the throttle must not share state with each other or
-// with every other test in this file that calls postToken/postTokenExpectingError
-// on a rejection path — those would otherwise silently accumulate failures
-// against defaultTokenThrottle across the whole test binary run.
-func installTestTokenThrottle() func() {
+// resetTokenThrottleForTesting gives the test a throttle of its own for its
+// whole lifetime and puts the package singleton back afterwards.
+//
+// The throttle is process-wide, and every test request comes from the same
+// httptest address, so without this each rejection a test provokes is counted
+// against every later test. Under -count=N the same tests run again in one
+// process, the buckets pass tokenMaxFailures, and unrelated exchanges get
+// slow_down. newSchemaApp calls it, so a fresh app means a fresh throttle.
+func resetTokenThrottleForTesting(t testing.TB) {
+	t.Helper()
+	original := defaultTokenThrottle
+	defaultTokenThrottle = &tokenThrottle{
+		failures: map[string][]time.Time{},
+		now:      time.Now,
+	}
+	t.Cleanup(func() { defaultTokenThrottle = original })
+}
+
+// installTestTokenThrottle swaps in a fresh throttle with a frozen clock, so a
+// test that means to trip the throttle is not at the mercy of the window
+// sliding under it.
+func installTestTokenThrottle(t testing.TB) {
+	t.Helper()
 	original := defaultTokenThrottle
 	now := time.Now()
 	defaultTokenThrottle = &tokenThrottle{
 		failures: map[string][]time.Time{},
 		now:      func() time.Time { return now },
 	}
-	return func() { defaultTokenThrottle = original }
+	t.Cleanup(func() { defaultTokenThrottle = original })
 }
 
 // seedSecondClient adds a second registered public client, "tinycld-cli-2",
