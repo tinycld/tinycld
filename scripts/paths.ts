@@ -13,14 +13,17 @@ export const WS_ROOT = path.resolve(APP_DIR, '..')
 // core's go.mod: a go.work may not list an older version than a module it uses,
 // so a separate pin (the bootstrap-generated workspace `.go-version`) breaks the
 // build whenever core moves ahead of the latest bootstrap release.
-export const GO_VERSION = (() => {
+//
+// A function, not a constant: reading at import time would make every importer
+// of this module depend on a checked-out core.
+export function goVersion(): string {
     const modPath = path.join(APP_DIR, 'core', 'server', 'go.mod')
     const version = fs.readFileSync(modPath, 'utf8').match(/^go\s+(\S+)/m)?.[1]
     if (!version) {
         throw new Error(`could not read the go version from ${modPath}`)
     }
     return version
-})()
+}
 
 export const GENERATED_DIR = path.join(APP_DIR, 'lib', 'generated')
 // App routes live under the constant /a segment (APP_PREFIX in

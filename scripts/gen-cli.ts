@@ -1,5 +1,5 @@
 import * as path from 'node:path'
-import { GO_VERSION } from './paths'
+import { goVersion } from './paths'
 import { assertSafeImportField } from './validate-generated-field'
 
 export interface CliPkg {
@@ -106,7 +106,7 @@ export function buildCliGoWork(pkgs: CliPkg[]): string {
     // core is nested in this same repo, so its format module always sits at a
     // fixed path relative to cli/ — no member lookup needed.
     const lines = [
-        `go ${GO_VERSION}`,
+        `go ${goVersion()}`,
         '',
         'use (',
         '    .',
@@ -127,7 +127,7 @@ export function buildCliGoWork(pkgs: CliPkg[]): string {
 // reason documented on buildMemberGoWork.
 export function buildMemberCliGoWork(cliRelPath: string): string {
     return [
-        `go ${GO_VERSION}`,
+        `go ${goVersion()}`,
         '',
         'use .',
         '',
