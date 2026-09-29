@@ -36,7 +36,6 @@ export function PreAuthSetup({ initialCode }: { initialCode: string | undefined 
                 phase="claim"
                 summary={claimSummary(false)}
                 currentStepId="claim:code"
-                onFinishLater={null}
                 onSkip={null}
             >
                 <ClaimServerStep
@@ -52,7 +51,6 @@ export function PreAuthSetup({ initialCode }: { initialCode: string | undefined 
             phase="claim"
             summary={claimSummary(true)}
             currentStepId="claim:account"
-            onFinishLater={null}
             onSkip={null}
             onOpenStep={s.backToCode}
         >

@@ -1,4 +1,3 @@
-import { FinishSetupCard } from '@tinycld/core/components/setup/wizard/FinishSetupCard'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import {
@@ -42,8 +41,6 @@ export default function SettingsIndex() {
         <ScrollView className="flex-1 bg-background" contentContainerStyle={{ flexGrow: 1 }}>
             <View className="p-5 max-w-[600px] w-full">
                 <Text className="mb-4 text-foreground text-[28px] font-bold">Settings</Text>
-
-                <FinishSetupCard />
 
                 <SettingsGroup label="Account">
                     <SettingsLink

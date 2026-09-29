@@ -91,8 +91,7 @@ describe('shouldOpenWizard', () => {
         expect(open('guest', state())).toBe(false)
         expect(open('owner', null)).toBe(false)
     })
-    it('stays closed once dismissed or completed, or before the role settles', () => {
-        expect(open('owner', state({ dismissedAt: 'x' }))).toBe(false)
+    it('stays closed once completed, or before the role settles', () => {
         expect(open('owner', state({ completedAt: 'x' }))).toBe(false)
         expect(shouldOpenWizard({ role: 'owner', state: state(), isSettled: false })).toBe(false)
     })
