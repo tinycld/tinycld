@@ -1,9 +1,11 @@
 package jsvm
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -267,10 +269,15 @@ func TestSobekNodeCompat_EndToEnd(t *testing.T) {
 		t.Fatalf("Expected status code %d, got %d (body: %q)", 200, recorder.Code, recorder.Body.String())
 	}
 
-	body := strings.TrimSpace(recorder.Body.String())
-	want := `{"bufLen":3,"hasProcess":true,"requireWorks":true}`
-	if body != want {
-		t.Fatalf("Expected body %q, got %q", want, body)
+	// Compare decoded values: encoding/json/v2 does not sort map keys, so the
+	// key order of the body is not stable.
+	var got map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
+		t.Fatalf("Expected a JSON body, got %q: %v", recorder.Body.String(), err)
+	}
+	want := map[string]any{"bufLen": float64(3), "hasProcess": true, "requireWorks": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Expected body %v, got %v", want, got)
 	}
 }
 

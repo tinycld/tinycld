@@ -2,7 +2,7 @@ package types_test
 
 import (
 	"database/sql/driver"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"testing"
 
@@ -18,7 +18,7 @@ func TestJSONArrayMarshalJSON(t *testing.T) {
 		{types.JSONArray[any]{}, `[]`},
 		{types.JSONArray[int]{1, 2, 3}, `[1,2,3]`},
 		{types.JSONArray[string]{"test1", "test2", "test3"}, `["test1","test2","test3"]`},
-		{types.JSONArray[any]{1, "test"}, `[1,"test"]`},
+		{types.JSONArray[any]{1, "test\xc3" /* invalid utf8 char to test mangling */}, `[1,"test�"]`},
 	}
 
 	for i, s := range scenarios {
@@ -115,7 +115,7 @@ func TestJSONArrayScan(t *testing.T) {
 			continue
 		}
 
-		result, _ := arr.MarshalJSON()
+		result, _ := json.Marshal(arr, json.Deterministic(true))
 
 		if string(result) != s.expectJSON {
 			t.Errorf("(%d) Expected %s, got %v", i, s.expectJSON, string(result))

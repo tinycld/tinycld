@@ -1,7 +1,7 @@
 package core_test
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"strings"
@@ -84,7 +84,7 @@ func TestSettings_DBExport(t *testing.T) {
 				valueStr = string(export["value"].([]byte))
 			}
 
-			expected := `{"superuserIPs":[],"smtp":{"enabled":false,"port":0,"host":"smtp_host","username":"smtp_username","password":"","authMethod":"","tls":false,"localName":""},"backups":{"cron":"* * * * *","cronMaxKeep":0,"s3":{"enabled":true,"bucket":"","region":"","endpoint":"","accessKey":"","forcePathStyle":false}},"s3":{"enabled":false,"bucket":"","region":"","endpoint":"s3_endpoint","accessKey":"","secret":"s3_secret","forcePathStyle":false},"meta":{"accentColor":"","appName":"test_app_name","appURL":"","senderName":"","senderAddress":"","hideControls":false},"rateLimits":{"rules":[],"excludedIPs":[],"enabled":true},"trustedProxy":{"headers":[],"useLeftmostIP":true},"batch":{"enabled":false,"maxRequests":0,"timeout":15,"maxBodySize":0},"logs":{"maxDays":123,"minLevel":0,"logIP":false,"logAuthId":false}}`
+			expected := `{"superuserIPs":[],"smtp":{"enabled":false,"port":0,"host":"smtp_host","username":"smtp_username","password":"","authMethod":"","tls":false,"localName":""},"backups":{"cron":"* * * * *","cronMaxKeep":0,"s3":{"enabled":true,"bucket":"","region":"","endpoint":"","accessKey":"","forcePathStyle":false}},"s3":{"enabled":false,"bucket":"","region":"","endpoint":"s3_endpoint","accessKey":"","secret":"s3_secret","forcePathStyle":false},"meta":{"accentColor":"","appName":"test_app_name","appURL":"","senderName":"","senderAddress":"","hideControls":false},"rateLimits":{"rules":[],"excludedIPs":[],"enabled":true},"trustedProxy":{"headers":[],"useLeftmostIP":true},"batch":{"enabled":false,"maxRequests":0,"timeout":15,"maxBodySize":0},"logs":{"maxDataSize":0,"maxDays":123,"minLevel":0,"logIP":false,"logAuthId":false}}`
 			if valueStr != expected {
 				t.Fatalf("Expected exported settings\n%s\ngot\n%s", expected, valueStr)
 			}
@@ -112,12 +112,12 @@ func TestSettingsMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s1Encoded, err := json.Marshal(s1)
+	s1Encoded, err := json.Marshal(s1, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	s2Encoded, err := json.Marshal(s2)
+	s2Encoded, err := json.Marshal(s2, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,12 +138,12 @@ func TestSettingsClone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s1Bytes, err := json.Marshal(s1)
+	s1Bytes, err := json.Marshal(s1, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	s2Bytes, err := json.Marshal(s2)
+	s2Bytes, err := json.Marshal(s2, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,13 +174,13 @@ func TestSettingsMarshalJSON(t *testing.T) {
 	settings.S3.Secret = testSecret
 	settings.Backups.S3.Secret = testSecret
 
-	raw, err := json.Marshal(settings)
+	raw, err := json.Marshal(settings, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
 	rawStr := string(raw)
 
-	expected := `{"superuserIPs":[],"smtp":{"enabled":false,"port":0,"host":"","username":"abc","authMethod":"","tls":false,"localName":""},"backups":{"cron":"","cronMaxKeep":0,"s3":{"enabled":false,"bucket":"","region":"","endpoint":"","accessKey":"","forcePathStyle":false}},"s3":{"enabled":false,"bucket":"","region":"","endpoint":"","accessKey":"","forcePathStyle":false},"meta":{"accentColor":"","appName":"test123","appURL":"","senderName":"","senderAddress":"","hideControls":false},"rateLimits":{"rules":[],"excludedIPs":[],"enabled":false},"trustedProxy":{"headers":[],"useLeftmostIP":false},"batch":{"enabled":false,"maxRequests":0,"timeout":0,"maxBodySize":0},"logs":{"maxDays":0,"minLevel":0,"logIP":false,"logAuthId":false}}`
+	expected := `{"superuserIPs":[],"smtp":{"enabled":false,"port":0,"host":"","username":"abc","authMethod":"","tls":false,"localName":""},"backups":{"cron":"","cronMaxKeep":0,"s3":{"enabled":false,"bucket":"","region":"","endpoint":"","accessKey":"","forcePathStyle":false}},"s3":{"enabled":false,"bucket":"","region":"","endpoint":"","accessKey":"","forcePathStyle":false},"meta":{"accentColor":"","appName":"test123","appURL":"","senderName":"","senderAddress":"","hideControls":false},"rateLimits":{"rules":[],"excludedIPs":[],"enabled":false},"trustedProxy":{"headers":[],"useLeftmostIP":false},"batch":{"enabled":false,"maxRequests":0,"timeout":0,"maxBodySize":0},"logs":{"maxDataSize":0,"maxDays":0,"minLevel":0,"logIP":false,"logAuthId":false}}`
 
 	if rawStr != expected {
 		t.Fatalf("Expected\n%v\ngot\n%v", expected, rawStr)
@@ -228,7 +228,7 @@ func TestSettingsValidate(t *testing.T) {
 		`"rateLimits":{`,
 	}
 
-	errBytes, _ := json.Marshal(err)
+	errBytes, _ := json.Marshal(err, json.Deterministic(true))
 	jsonErr := string(errBytes)
 	for _, expected := range expectations {
 		if !strings.Contains(jsonErr, expected) {
@@ -309,8 +309,11 @@ func TestLogsConfigValidate(t *testing.T) {
 		},
 		{
 			"invalid data",
-			core.LogsConfig{MaxDays: -1},
-			[]string{"maxDays"},
+			core.LogsConfig{
+				MaxDays:     -1,
+				MaxDataSize: -1,
+			},
+			[]string{"maxDays", "maxDataSize"},
 		},
 		{
 			"valid data",

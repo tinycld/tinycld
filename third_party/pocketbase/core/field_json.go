@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"slices"
 	"strconv"
 	"strings"
@@ -169,6 +171,18 @@ func (f *JSONField) ValidateValue(ctx context.Context, app App, record *Record) 
 
 	if is.JSON.Validate(raw) != nil {
 		return validation.NewError("validation_invalid_json", "Must be a valid json value")
+	}
+
+	// temp extra encoding/json/v2 check since the above validator is
+	// still using the v1 semantics
+	//
+	// @todo remove after updating the string validator
+	if len(raw) > 0 {
+		var dummy any
+		err := json.Unmarshal(raw, &dummy, jsontext.AllowInvalidUTF8(true))
+		if err != nil {
+			return validation.NewError("validation_invalid_json", "Must be a valid json value")
+		}
 	}
 
 	rawStr := strings.TrimSpace(raw.String())
