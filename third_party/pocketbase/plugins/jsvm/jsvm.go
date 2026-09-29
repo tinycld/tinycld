@@ -1,8 +1,8 @@
-// Package jsvm implements pluggable utilities for binding a JS sobek runtime
+// Package jsvm implements pluggable utilities for binding a JS goja runtime
 // to the PocketBase instance (loading migrations, attaching to app hooks, etc.).
 //
 // The package also exports several reusable bindings so that users
-// can utilize them as part of their own custom sobek runtime setup.
+// can utilize them as part of their own custom goja runtime setup.
 //
 // Example:
 //
@@ -26,12 +26,11 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/fsnotify/fsnotify"
-	"github.com/grafana/sobek"
+	goja "github.com/grafana/sobek"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/jsvm/internal/nodejs/buffer"
 	"github.com/pocketbase/pocketbase/plugins/jsvm/internal/nodejs/console"
 	"github.com/pocketbase/pocketbase/plugins/jsvm/internal/nodejs/process"
-	"github.com/pocketbase/pocketbase/plugins/jsvm/internal/nodejs/require"
 	"github.com/pocketbase/pocketbase/plugins/jsvm/internal/types/generated"
 	"github.com/pocketbase/pocketbase/tools/routine"
 	"github.com/pocketbase/pocketbase/tools/template"
@@ -62,44 +61,7 @@ type Config struct {
 	// OnInit is an optional function that will be called
 	// after a JS runtime is initialized, allowing you to
 	// attach custom Go variables and functions.
-	//
-	// Note this fires on EVERY runtime — the loader and every executor in
-	// the hooks pool. Use it for stateless bindings (a namespace of native
-	// funcs). For a binding whose job is to REGISTER something, use
-	// OnLoaderInit instead, or the same handler is registered once per VM.
-	OnInit func(vm *sobek.Runtime)
-
-	// OnLoaderInit is an optional function called once, on the hooks LOADER
-	// runtime only, with a Compiler bound to that plugin's executor pool.
-	//
-	// It is the Go→JS seam: install a binding here that takes a JS handler
-	// and hands the resulting Callable to host code, so Go can invoke package
-	// TS at a defined point and use what it returns. See callable.go.
-	OnLoaderInit LoaderInit
-
-	// ProgramSource is an optional hook to supply/share compiled sobek programs
-	// across plugin instances. If nil, programs are compiled directly with sobek
-	// (the default, single-app behavior).
-	ProgramSource ProgramSource
-
-	// Sandboxed, when true, installs only the capability-safe JS bindings and
-	// omits the host-capability bindings ($os, $http, $filesystem, $filepath)
-	// from BOTH the hook and migration runtimes, and neuters process.env /
-	// process.argv. Intended for running untrusted code from several orgs.
-	//
-	// Default false preserves the full stock single-app API (byte-for-byte).
-	Sandboxed bool
-
-	// ExecTimeout bounds every single JS execution: load-time evaluation of
-	// hook and migration files, registered migration up/down runs, and each
-	// pooled handler invocation. Withheld bindings do not bound COMPUTE — a
-	// `while(true){}` at the top of a hostile package's hook file otherwise
-	// spins the loading goroutine forever, which for an org that runs in its
-	// own process is a boot that never completes.
-	//
-	// Zero picks the default: 30s when Sandboxed, unlimited otherwise (stock
-	// behavior). Negative disables the budget explicitly.
-	ExecTimeout time.Duration
+	OnInit func(vm *goja.Runtime)
 
 	// HooksWatch enables auto app restarts when a JS app hook file changes.
 	//
@@ -119,17 +81,10 @@ type Config struct {
 	// HookdsDir file ending in ".pb.js" or ".pb.ts" (the last one is to enforce IDE linters).
 	HooksFilesPattern string
 
-	// HooksFS, when non-nil, supplies the JS hook sources instead of reading
-	// HooksDir from the filesystem. Used by single-binary builds that embed
-	// hooks via go:embed. Because an embedded FS is read-only, setting this
-	// also skips the types-directive prepend (which writes to HooksDir) and
-	// the hooks watcher. When nil the loader falls back to HooksDir.
-	HooksFS fs.FS
-
-	// HooksPoolSize specifies how many sobek.Runtime instances to prewarm
+	// HooksPoolSize specifies how many goja.Runtime instances to prewarm
 	// and keep for the JS app hooks gorotines execution.
 	//
-	// Zero or negative value means that it will create a new sobek.Runtime
+	// Zero or negative value means that it will create a new goja.Runtime
 	// on every fired goroutine.
 	HooksPoolSize int
 
@@ -141,6 +96,65 @@ type Config struct {
 	// If not set it fallbacks to `^.*(\.js|\.ts)$`, aka. any MigrationDir file
 	// ending in ".js" or ".ts" (the last one is to enforce IDE linters).
 	MigrationsFilesPattern string
+
+	// TypesDir specifies the directory where to store the embedded
+	// TypeScript declarations file.
+	//
+	// If not set it fallbacks to "pb_data".
+	//
+	// Note: Avoid using the same directory as the HooksDir when HooksWatch is enabled
+	// to prevent unnecessary app restarts when the types file is initially created.
+	TypesDir string
+
+	// ---------------------------------------------------------------
+	// Fork-only options. They stay in one block at the end of the struct
+	// so upstream changes to Config merge cleanly. The behavior that reads
+	// them lives in jsvm_tinycld.go.
+	// ---------------------------------------------------------------
+
+	// OnLoaderInit is an optional function called once, on the hooks LOADER
+	// runtime only, with a Compiler bound to that plugin's executor pool.
+	//
+	// It is the Go→JS seam: install a binding here that takes a JS handler
+	// and hands the resulting Callable to host code, so Go can invoke package
+	// TS at a defined point and use what it returns. See callable.go.
+	//
+	// Use it rather than OnInit for a binding whose job is to REGISTER
+	// something: OnInit fires on every runtime (the loader and every
+	// executor), so the same handler would be registered once per VM.
+	OnLoaderInit LoaderInit
+
+	// ProgramSource is an optional hook to supply/share compiled programs
+	// across plugin instances. If nil, programs are compiled directly (the
+	// default, single-app behavior).
+	ProgramSource ProgramSource
+
+	// Sandboxed, when true, installs only the capability-safe JS bindings and
+	// omits the host-capability bindings ($os, $http, $filesystem, $filepath,
+	// $apis.static, $template file loaders) from BOTH the hook and migration
+	// runtimes, neuters process.env / process.argv and refuses file-based
+	// require(). Intended for running untrusted code from several orgs.
+	//
+	// Default false preserves the full stock single-app API (byte-for-byte).
+	Sandboxed bool
+
+	// ExecTimeout bounds every single JS execution: load-time evaluation of
+	// hook and migration files, registered migration up/down runs, and each
+	// pooled handler invocation. Withheld bindings do not bound COMPUTE — a
+	// `while(true){}` at the top of a hostile package's hook file otherwise
+	// spins the loading goroutine forever, which for an org that runs in its
+	// own process is a boot that never completes.
+	//
+	// Zero picks the default: 30s when Sandboxed, unlimited otherwise (stock
+	// behavior). Negative disables the budget explicitly.
+	ExecTimeout time.Duration
+
+	// HooksFS, when non-nil, supplies the JS hook sources instead of reading
+	// HooksDir from the filesystem. Used by single-binary builds that embed
+	// hooks via go:embed. Because an embedded FS is read-only, setting this
+	// also skips the types-directive prepend (which writes to HooksDir) and
+	// the hooks watcher. When nil the loader falls back to HooksDir.
+	HooksFS fs.FS
 
 	// MigrationsFS, when non-nil, supplies the JS migration sources instead
 	// of reading MigrationsDir from the filesystem. Used by single-binary
@@ -160,15 +174,6 @@ type Config struct {
 	//
 	// When nil the loader registers into core.AppMigrations exactly as before.
 	MigrationsList *core.MigrationsList
-
-	// TypesDir specifies the directory where to store the embedded
-	// TypeScript declarations file.
-	//
-	// If not set it fallbacks to "pb_data".
-	//
-	// Note: Avoid using the same directory as the HooksDir when HooksWatch is enabled
-	// to prevent unnecessary app restarts when the types file is initially created.
-	TypesDir string
 }
 
 // MustRegister registers the jsvm plugin in the provided app instance
@@ -177,7 +182,7 @@ type Config struct {
 // Example usage:
 //
 //	jsvm.MustRegister(app, jsvm.Config{
-//		OnInit: func(vm *sobek.Runtime) {
+//		OnInit: func(vm *goja.Runtime) {
 //			// register custom bindings
 //			vm.Set("myCustomVar", 123)
 //		},
@@ -243,77 +248,10 @@ type plugin struct {
 	config Config
 }
 
-// defaultSandboxExecTimeout is generous for real package code — hook farms
-// compile in milliseconds and migrations run in well under a second — while
-// still turning a deliberate wedge into a classifiable error.
-const defaultSandboxExecTimeout = 30 * time.Second
-
-// execTimeout resolves the effective per-execution budget from the config.
-func (p *plugin) execTimeout() time.Duration {
-	switch {
-	case p.config.ExecTimeout > 0:
-		return p.config.ExecTimeout
-	case p.config.ExecTimeout < 0:
-		return 0
-	case p.config.Sandboxed:
-		return defaultSandboxExecTimeout
-	default:
-		return 0 // stock single-app behavior: trusted code, no budget
-	}
-}
-
-// runBudgeted executes fn with a wall-clock budget on vm. The interrupt is
-// cleared afterwards either way, so a pooled VM that overran once is usable
-// for the next invocation.
-func runBudgeted(vm *sobek.Runtime, budget time.Duration, fn func() error) error {
-	if budget <= 0 {
-		return fn()
-	}
-	timer := time.AfterFunc(budget, func() {
-		vm.Interrupt(fmt.Sprintf("JS execution exceeded the %s budget", budget))
-	})
-	defer func() {
-		timer.Stop()
-		vm.ClearInterrupt()
-	}()
-	return fn()
-}
-
-// newRequireRegistry builds the require registry for a plugin's VMs. When
-// sandboxed it installs a loader that refuses every file-based require (native
-// modules like process/console/buffer bypass the loader and still work), so
-// untrusted code cannot require an arbitrary host path to read/execute a file.
-func newRequireRegistry(sandboxed bool) *require.Registry {
-	if sandboxed {
-		return require.NewRegistryWithLoader(func(string) ([]byte, error) {
-			return nil, require.ModuleFileDoesNotExistError
-		})
-	}
-	return new(require.Registry)
-}
-
-// setTemplateBinding installs $template. When sandboxed, only loadString (pure,
-// in-memory) is exposed — loadFiles/loadFS read host files and are withheld.
-func setTemplateBinding(vm *sobek.Runtime, reg *template.Registry, sandboxed bool) {
-	if !sandboxed {
-		vm.Set("$template", reg)
-		return
-	}
-	obj := vm.NewObject()
-	obj.Set("loadString", reg.LoadString)
-	vm.Set("$template", obj)
-}
-
 // registerMigrations registers the JS migrations loader.
 func (p *plugin) registerMigrations() error {
 	// fetch all js migrations sorted by their filename
-	var files map[string][]byte
-	var err error
-	if p.config.MigrationsFS != nil {
-		files, err = filesContentFS(p.config.MigrationsFS, p.config.MigrationsFilesPattern)
-	} else {
-		files, err = filesContent(p.config.MigrationsDir, p.config.MigrationsFilesPattern)
-	}
+	files, err := p.migrationFiles()
 	if err != nil {
 		return err
 	}
@@ -323,65 +261,34 @@ func (p *plugin) registerMigrations() error {
 		return err
 	}
 
-	registry := newRequireRegistry(p.config.Sandboxed) // this can be shared by multiple runtimes
+	registry := p.newRequireRegistry() // this can be shared by multiple runtimes
 	templateRegistry := template.NewRegistry()
 
 	for file, content := range files {
-		vm := sobek.New()
+		vm := goja.New()
 
 		registry.Enable(vm)
 		console.Enable(vm)
 		process.Enable(vm)
 		buffer.Enable(vm)
 
-		if p.config.Sandboxed {
-			scrubProcess(vm)
-		}
-
 		BindCore(vm)
 		BindDbx(vm)
 		BindSecurity(vm)
-		if !p.config.Sandboxed {
-			BindOS(vm)
-			BindFilepath(vm)
-			BindHTTP(vm)
-			BindFilesystem(vm)
-		}
+		p.bindHostAccess(vm)
 		BindForms(vm)
 		BindMails(vm)
 
-		setTemplateBinding(vm, templateRegistry, p.config.Sandboxed)
+		p.setTemplate(vm, templateRegistry)
 		vm.Set("__hooks", absHooksDir)
 
-		// The up/down callbacks execute LATER (RunAllMigrations, against the
-		// org's DB) on this same vm, so they carry the budget with them —
-		// bounding only the file's top level would leave the actual migration
-		// run free to spin.
-		budget := p.execTimeout()
-		wrapMigration := func(fn func(txApp core.App) error) func(core.App) error {
-			if fn == nil || budget <= 0 {
-				return fn
-			}
-			return func(txApp core.App) error {
-				return runBudgeted(vm, budget, func() error { return fn(txApp) })
-			}
-		}
-		target := p.config.MigrationsList
-		if target == nil {
-			target = &core.AppMigrations
-		}
-		vm.Set("migrate", func(up, down func(txApp core.App) error) {
-			target.Register(wrapMigration(up), wrapMigration(down), file)
-		})
+		vm.Set("migrate", p.migrateFunc(vm, file))
 
 		if p.config.OnInit != nil {
 			p.config.OnInit(vm)
 		}
 
-		err := runBudgeted(vm, budget, func() error {
-			_, rerr := vm.RunScript(defaultScriptPath, string(content))
-			return rerr
-		})
+		_, err := p.runScript(vm, string(content))
 		if err != nil {
 			return fmt.Errorf("failed to run migration %s: %w", file, err)
 		}
@@ -393,43 +300,32 @@ func (p *plugin) registerMigrations() error {
 // registerHooks registers the JS app hooks loader.
 func (p *plugin) registerHooks() error {
 	// fetch all js hooks sorted by their filename
-	var files map[string][]byte
-	var err error
-	if p.config.HooksFS != nil {
-		files, err = filesContentFS(p.config.HooksFS, p.config.HooksFilesPattern)
-	} else {
-		files, err = filesContent(p.config.HooksDir, p.config.HooksFilesPattern)
-	}
+	files, err := p.hookFiles()
 	if err != nil {
 		return err
 	}
 
-	// Both blocks below write to or watch HooksDir, so they apply to the
-	// path-based mode only. With HooksFS set HooksDir is empty, which would
-	// resolve these names against the process working directory.
-	if p.config.HooksFS == nil {
-		// prepend the types reference directive
-		//
-		// note: it is loaded during startup to handle conveniently also
-		// the case when the HooksWatch option is enabled and the application
-		// restart on newly created file
-		for name, content := range files {
-			if len(content) != 0 {
-				// skip non-empty files for now to prevent accidental overwrite
-				continue
-			}
-			path := filepath.Join(p.config.HooksDir, name)
-			directive := `/// <reference path="` + p.relativeTypesPath(p.config.HooksDir) + `" />`
-			if err := prependToEmptyFile(path, directive+"\n\n"); err != nil {
-				color.Yellow("Unable to prepend the types reference: %v", err)
-			}
+	// prepend the types reference directive
+	//
+	// note: it is loaded during startup to handle conveniently also
+	// the case when the HooksWatch option is enabled and the application
+	// restart on newly created file
+	for name, content := range p.typesDirectiveTargets(files) {
+		if len(content) != 0 {
+			// skip non-empty files for now to prevent accidental overwrite
+			continue
 		}
+		path := filepath.Join(p.config.HooksDir, name)
+		directive := `/// <reference path="` + p.relativeTypesPath(p.config.HooksDir) + `" />`
+		if err := prependToEmptyFile(path, directive+"\n\n"); err != nil {
+			color.Yellow("Unable to prepend the types reference: %v", err)
+		}
+	}
 
-		// initialize the hooks dir watcher
-		if p.config.HooksWatch {
-			if err := p.watchHooks(); err != nil {
-				color.Yellow("Unable to init hooks watcher: %v", err)
-			}
+	// initialize the hooks dir watcher
+	if p.config.HooksWatch && p.config.HooksFS == nil {
+		if err := p.watchHooks(); err != nil {
+			color.Yellow("Unable to init hooks watcher: %v", err)
 		}
 	}
 
@@ -450,38 +346,25 @@ func (p *plugin) registerHooks() error {
 	})
 
 	// safe to be shared across multiple vms
-	requireRegistry := newRequireRegistry(p.config.Sandboxed)
+	requireRegistry := p.newRequireRegistry()
 	templateRegistry := template.NewRegistry()
 
-	sharedBinds := func(vm *sobek.Runtime) {
+	sharedBinds := func(vm *goja.Runtime) {
 		requireRegistry.Enable(vm)
 		console.Enable(vm)
 		process.Enable(vm)
 		buffer.Enable(vm)
 
-		if p.config.Sandboxed {
-			scrubProcess(vm)
-		}
-
 		BindCore(vm)
 		BindDbx(vm)
 		BindSecurity(vm)
-		if !p.config.Sandboxed {
-			BindOS(vm)
-			BindFilepath(vm)
-			BindHTTP(vm)
-			BindFilesystem(vm)
-		}
+		p.bindHostAccess(vm)
 		BindForms(vm)
 		BindMails(vm)
-		if p.config.Sandboxed {
-			BindApisSandboxed(vm)
-		} else {
-			BindApis(vm)
-		}
+		p.bindApis(vm)
 
 		vm.Set("$app", p.app)
-		setTemplateBinding(vm, templateRegistry, p.config.Sandboxed)
+		p.setTemplate(vm, templateRegistry)
 		vm.Set("__hooks", absHooksDir)
 
 		if p.config.OnInit != nil {
@@ -490,83 +373,53 @@ func (p *plugin) registerHooks() error {
 	}
 
 	// initiliaze the executor vms
-	executors := newPool(p.config.HooksPoolSize, p.execTimeout(), func() *sobek.Runtime {
-		executor := sobek.New()
+	executors := newPool(p.config.HooksPoolSize, func() *goja.Runtime {
+		executor := goja.New()
 		sharedBinds(executor)
 		return executor
 	})
+	executors.tinycld = p.poolOptions()
 
 	// initialize the loader vm
-	loader := sobek.New()
+	loader := goja.New()
 	sharedBinds(loader)
-	p.hooksBinds(loader, executors)
-	p.cronBinds(loader, executors)
-	p.routerBinds(loader, executors)
+	hooksBinds(p.app, loader, executors)
+	cronBinds(p.app, loader, executors)
+	routerBinds(p.app, loader, executors)
+	p.loaderInit(loader, executors)
 
-	// Loader-only bindings. Registration must happen exactly once, so this
-	// runs here rather than in sharedBinds/OnInit (which fire per VM).
-	if p.config.OnLoaderInit != nil {
-		p.config.OnLoaderInit(loader, p.newCompiler(executors))
-	}
-
-	if err := p.compileHookFiles(loader, files); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// compileHookFiles executes each hook file's top-level code on the provided
-// loader vm, compiling via p.compile so an optional ProgramSource can share the
-// programs. Hook files compile in sloppy mode (strict=false) to match sobek's
-// RunScript semantics. The panic/recover behavior mirrors the original inline
-// loop (HooksWatch => log, else => panic).
-func (p *plugin) compileHookFiles(loader *sobek.Runtime, files map[string][]byte) error {
 	var loadErr error
 	for file, content := range files {
 		func() {
 			defer func() {
-				if r := recover(); r != nil {
-					fmtErr := fmt.Errorf("failed to execute %s:\n - %v", file, r)
-					switch {
-					case p.config.Sandboxed:
-						// Untrusted code: a load-time throw must fail this app's
-						// registration (returned to the caller), never panic the
-						// process that several orgs share.
-						if loadErr == nil {
-							loadErr = fmtErr
-						}
-					case p.config.HooksWatch:
+				if err := recover(); err != nil {
+					fmtErr := fmt.Errorf("failed to execute %s:\n - %v", file, err)
+
+					if p.config.Sandboxed {
+						loadErr = fmtErr
+					} else if p.config.HooksWatch {
 						color.Red("%v", fmtErr)
-					default:
+					} else {
 						panic(fmtErr)
 					}
 				}
 			}()
 
-			prog, cerr := p.compile(string(content), false)
-			if cerr != nil {
-				panic(cerr)
-			}
-			// Budgeted per file: a hostile hook file's top-level spin must
-			// fail THIS load, not wedge the whole app's boot.
-			rerr := runBudgeted(loader, p.execTimeout(), func() error {
-				_, err := loader.RunProgram(prog)
-				return err
-			})
-			if rerr != nil {
-				panic(rerr)
+			_, err := p.runHookFile(loader, string(content))
+			if err != nil {
+				panic(err)
 			}
 		}()
 		if loadErr != nil {
 			return loadErr
 		}
 	}
-	return loadErr
+
+	return nil
 }
 
 // normalizeExceptions registers a global error handler that
-// wraps the extracted sobek exception error value for consistency
+// wraps the extracted goja exception error value for consistency
 // when throwing or returning errors.
 func (p *plugin) normalizeServeExceptions(e *core.RequestEvent) error {
 	err := e.Next()
@@ -779,69 +632,8 @@ func filesContent(dirPath string, pattern string) (map[string][]byte, error) {
 			return nil, err
 		}
 
-		transformed, err := transformSource(f.Name(), raw)
-		if err != nil {
-			return nil, err
-		}
-		result[f.Name()] = transformed
+		result[f.Name()] = raw
 	}
 
 	return result, nil
-}
-
-// filesContentFS is filesContent over an fs.FS. It deliberately mirrors that
-// function's contract — non-recursive, pattern-filtered, esbuild-transformed,
-// keyed by base filename — so a caller can swap the source without any
-// behavioral difference. A missing or empty FS yields an empty map, matching
-// filesContent's ErrNotExist handling.
-func filesContentFS(fsys fs.FS, pattern string) (map[string][]byte, error) {
-	entries, err := fs.ReadDir(fsys, ".")
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return map[string][]byte{}, nil
-		}
-		return nil, err
-	}
-
-	var exp *regexp.Regexp
-	if pattern != "" {
-		if exp, err = regexp.Compile(pattern); err != nil {
-			return nil, err
-		}
-	}
-
-	result := map[string][]byte{}
-
-	for _, f := range entries {
-		if f.IsDir() || (exp != nil && !exp.MatchString(f.Name())) {
-			continue
-		}
-
-		raw, err := fs.ReadFile(fsys, f.Name())
-		if err != nil {
-			return nil, err
-		}
-
-		transformed, err := transformSource(f.Name(), raw)
-		if err != nil {
-			return nil, err
-		}
-		result[f.Name()] = transformed
-	}
-
-	return result, nil
-}
-
-// scrubProcess replaces the node-compat process.env / process.argv on a
-// sandboxed VM with an empty object / empty array, so untrusted code cannot read
-// host environment variables (e.g. MT_SUPERUSER_PASSWORD) or argv through the
-// process shim after $os.getenv has been withheld.
-func scrubProcess(vm *sobek.Runtime) {
-	proc := vm.Get("process")
-	obj, ok := proc.(*sobek.Object)
-	if !ok || obj == nil {
-		return // process shim absent; nothing to scrub
-	}
-	_ = obj.Set("env", vm.NewObject())
-	_ = obj.Set("argv", vm.NewArray())
 }

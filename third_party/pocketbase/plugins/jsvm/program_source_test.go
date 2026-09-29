@@ -37,8 +37,8 @@ func TestRegisterHooks_UsesProgramSourceForFiles(t *testing.T) {
 	p := &plugin{config: Config{ProgramSource: src}}
 	loader := sobek.New()
 
-	if err := p.compileHookFiles(loader, map[string][]byte{"main.pb.js": []byte("var noop = 1")}); err != nil {
-		t.Fatalf("compileHookFiles error: %v", err)
+	if _, err := p.runHookFile(loader, "var noop = 1"); err != nil {
+		t.Fatalf("runHookFile error: %v", err)
 	}
 	if src.calls["var noop = 1"] == 0 {
 		t.Fatal("expected the hook file source to be compiled via ProgramSource")
@@ -52,7 +52,7 @@ func TestCompileHookFiles_PreservesSloppyMode(t *testing.T) {
 	p := &plugin{config: Config{}} // nil ProgramSource -> direct sobek.Compile
 	loader := sobek.New()
 	// Octal literal is a SyntaxError in strict mode, legal in sloppy mode.
-	err := p.compileHookFiles(loader, map[string][]byte{"legacy.pb.js": []byte("var x = 0777")})
+	_, err := p.runHookFile(loader, "var x = 0777")
 	if err != nil {
 		t.Fatalf("expected sloppy-mode hook file to compile, got: %v", err)
 	}

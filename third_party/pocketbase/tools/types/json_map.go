@@ -29,16 +29,16 @@ func (m JSONMap[T]) String() string {
 
 // Get retrieves a single value from the current JSONMap[T].
 //
-// This helper was added primarily to assist the JS engine integration since custom map types
-// don't have direct access to the map keys (https://pkg.go.dev/github.com/grafana/sobek#hdr-Maps_with_methods).
+// This helper was added primarily to assist the goja integration since custom map types
+// don't have direct access to the map keys (https://pkg.go.dev/github.com/dop251/goja#hdr-Maps_with_methods).
 func (m JSONMap[T]) Get(key string) T {
 	return m[key]
 }
 
 // Set sets a single value in the current JSONMap[T].
 //
-// This helper was added primarily to assist the JS engine integration since custom map types
-// don't have direct access to the map keys (https://pkg.go.dev/github.com/grafana/sobek#hdr-Maps_with_methods).
+// This helper was added primarily to assist the goja integration since custom map types
+// don't have direct access to the map keys (https://pkg.go.dev/github.com/dop251/goja#hdr-Maps_with_methods).
 func (m JSONMap[T]) Set(key string, value T) {
 	m[key] = value
 }

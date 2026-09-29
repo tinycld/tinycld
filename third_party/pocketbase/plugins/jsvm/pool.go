@@ -2,34 +2,29 @@ package jsvm
 
 import (
 	"sync"
-	"time"
 
-	"github.com/grafana/sobek"
+	goja "github.com/grafana/sobek"
 )
 
 type poolItem struct {
 	mux  sync.Mutex
 	busy bool
-	vm   *sobek.Runtime
+	vm   *goja.Runtime
 }
 
 type vmsPool struct {
 	mux     sync.RWMutex
-	factory func() *sobek.Runtime
+	factory func() *goja.Runtime
 	items   []*poolItem
 
-	// budget bounds each run's execution (see Config.ExecTimeout); 0 = none.
-	// Without it a single runaway handler occupies its executor forever, and
-	// pool-size runaways wedge every hook in the app.
-	budget time.Duration
+	tinycld poolOptions // fork: see jsvm_tinycld.go
 }
 
 // newPool creates a new pool with pre-warmed vms generated from the specified factory.
-func newPool(size int, budget time.Duration, factory func() *sobek.Runtime) *vmsPool {
+func newPool(size int, factory func() *goja.Runtime) *vmsPool {
 	pool := &vmsPool{
 		factory: factory,
 		items:   make([]*poolItem, size),
-		budget:  budget,
 	}
 
 	for i := 0; i < size; i++ {
@@ -42,7 +37,7 @@ func newPool(size int, budget time.Duration, factory func() *sobek.Runtime) *vms
 
 // run executes "call" with a vm created from the pool
 // (either from the buffer or a new one if all buffered vms are busy)
-func (p *vmsPool) run(call func(vm *sobek.Runtime) error) error {
+func (p *vmsPool) run(call func(vm *goja.Runtime) error) error {
 	p.mux.RLock()
 
 	// try to find a free item
@@ -66,11 +61,10 @@ func (p *vmsPool) run(call func(vm *sobek.Runtime) error) error {
 	// note: if turned out not efficient we may change this in the future
 	// by adding the created item in the pool with some timer for removal
 	if freeItem == nil {
-		vm := p.factory()
-		return runBudgeted(vm, p.budget, func() error { return call(vm) })
+		return p.tinycld.run(p.factory(), call)
 	}
 
-	execErr := runBudgeted(freeItem.vm, p.budget, func() error { return call(freeItem.vm) })
+	execErr := p.tinycld.run(freeItem.vm, call)
 
 	// "free" the vm
 	freeItem.mux.Lock()

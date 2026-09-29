@@ -4,7 +4,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/grafana/sobek"
+	goja "github.com/grafana/sobek"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
@@ -16,8 +16,8 @@ func TestHooksAppReset(t *testing.T) {
 	testApp, _ := tests.NewTestApp()
 	defer testApp.Cleanup()
 
-	createVM := func() *sobek.Runtime {
-		vm := sobek.New()
+	createVM := func() *goja.Runtime {
+		vm := goja.New()
 		vm.SetFieldNameMapper(FieldMapper{})
 		vm.Set("$app", testApp)
 		return vm
@@ -25,9 +25,9 @@ func TestHooksAppReset(t *testing.T) {
 
 	loader := createVM()
 
-	pool := newPool(1, 0, createVM)
+	pool := newPool(1, createVM)
 
-	(&plugin{app: testApp}).hooksBinds(loader, pool)
+	hooksBinds(testApp, loader, pool)
 
 	// register any hook
 	_, err := loader.RunScript("stub", `
@@ -56,7 +56,7 @@ func TestHooksAppReset(t *testing.T) {
 	}
 
 	// check the executor state
-	pool.run(func(vm *sobek.Runtime) error {
+	pool.run(func(vm *goja.Runtime) error {
 		val, err := vm.RunScript("verify", `$app`)
 		if err != nil {
 			t.Fatal(err)
@@ -76,8 +76,8 @@ func TestRouterHandlerAppReset(t *testing.T) {
 	testApp, _ := tests.NewTestApp()
 	defer testApp.Cleanup()
 
-	createVM := func() *sobek.Runtime {
-		vm := sobek.New()
+	createVM := func() *goja.Runtime {
+		vm := goja.New()
 		vm.SetFieldNameMapper(FieldMapper{})
 		vm.Set("$app", testApp)
 		return vm
@@ -85,9 +85,9 @@ func TestRouterHandlerAppReset(t *testing.T) {
 
 	loader := createVM()
 
-	pool := newPool(1, 0, createVM)
+	pool := newPool(1, createVM)
 
-	(&plugin{app: testApp}).routerBinds(loader, pool)
+	routerBinds(testApp, loader, pool)
 
 	// register route handler hook
 	_, err := loader.RunScript("stub", `
@@ -136,7 +136,7 @@ func TestRouterHandlerAppReset(t *testing.T) {
 		})
 	}
 
-	pool.run(func(vm *sobek.Runtime) error {
+	pool.run(func(vm *goja.Runtime) error {
 		val, err := vm.RunScript("verify", `$app`)
 		if err != nil {
 			t.Fatal(err)
@@ -156,8 +156,8 @@ func TestRouterMiddlewareFuncAppReset(t *testing.T) {
 	testApp, _ := tests.NewTestApp()
 	defer testApp.Cleanup()
 
-	createVM := func() *sobek.Runtime {
-		vm := sobek.New()
+	createVM := func() *goja.Runtime {
+		vm := goja.New()
 		vm.SetFieldNameMapper(FieldMapper{})
 		vm.Set("$app", testApp)
 		return vm
@@ -165,9 +165,9 @@ func TestRouterMiddlewareFuncAppReset(t *testing.T) {
 
 	loader := createVM()
 
-	pool := newPool(1, 0, createVM)
+	pool := newPool(1, createVM)
 
-	(&plugin{app: testApp}).routerBinds(loader, pool)
+	routerBinds(testApp, loader, pool)
 
 	// register route middleware func
 	_, err := loader.RunScript("stub", `
@@ -217,7 +217,7 @@ func TestRouterMiddlewareFuncAppReset(t *testing.T) {
 		})
 	}
 
-	pool.run(func(vm *sobek.Runtime) error {
+	pool.run(func(vm *goja.Runtime) error {
 		val, err := vm.RunScript("verify", `$app`)
 		if err != nil {
 			t.Fatal(err)
@@ -237,8 +237,8 @@ func TestRouterMiddlewareClassAppReset(t *testing.T) {
 	testApp, _ := tests.NewTestApp()
 	defer testApp.Cleanup()
 
-	createVM := func() *sobek.Runtime {
-		vm := sobek.New()
+	createVM := func() *goja.Runtime {
+		vm := goja.New()
 		vm.SetFieldNameMapper(FieldMapper{})
 		vm.Set("$app", testApp)
 		BindCore(vm)
@@ -247,9 +247,9 @@ func TestRouterMiddlewareClassAppReset(t *testing.T) {
 
 	loader := createVM()
 
-	pool := newPool(1, 0, createVM)
+	pool := newPool(1, createVM)
 
-	(&plugin{app: testApp}).routerBinds(loader, pool)
+	routerBinds(testApp, loader, pool)
 
 	// register route middleware class
 	_, err := loader.RunScript("stub", `
@@ -299,7 +299,7 @@ func TestRouterMiddlewareClassAppReset(t *testing.T) {
 		})
 	}
 
-	pool.run(func(vm *sobek.Runtime) error {
+	pool.run(func(vm *goja.Runtime) error {
 		val, err := vm.RunScript("verify", `$app`)
 		if err != nil {
 			t.Fatal(err)
