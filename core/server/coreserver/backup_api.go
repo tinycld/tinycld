@@ -115,6 +115,10 @@ func RegisterBackupEndpoints(app core.App) {
 func RegisterBackupBoot(app core.App) {
 	bootedAt := time.Now()
 	probe := backup.IsBootProbe()
+	// Bound unconditionally, even for a boot probe: the hook itself is
+	// harmless if nothing ever calls app.NewFilesystem() on this app, and
+	// binding must happen before that first filesystem is created.
+	backup.BindDeleteHold(app)
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
 		if probe {
 			srvLog.Info("boot probe: restore state left untouched for the real boot")
@@ -146,6 +150,14 @@ func RegisterBackupBoot(app core.App) {
 		}
 		if err := backup.MarkInterrupted(app, bootedAt); err != nil {
 			srvLog.Warn("could not close interrupted backup rows", "err", err)
+		}
+		backup.DrainHeldDeletes(app)
+		// Add, not MustAdd: Add replaces an existing job by id rather than
+		// erroring, so a second RegisterBackupBoot call against the same app
+		// (a boot probe followed by the real boot sharing a process, or a
+		// test that calls it twice) cannot panic here.
+		if err := app.Cron().Add(backup.DrainJobID, "* * * * *", func() { backup.DrainHeldDeletes(app) }); err != nil {
+			srvLog.Error("could not schedule the backup hold drain", "err", err)
 		}
 		return nil
 	})
