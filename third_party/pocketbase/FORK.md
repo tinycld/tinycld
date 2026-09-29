@@ -54,6 +54,7 @@ The goal is that an upstream merge touches as few of our lines as possible.
 | After-success hooks run with the app that started the write, not with a finished transaction that a hook swapped into `e.App` | — | `core/db.go` (`event.App = app`, three places) |
 | `NoAttachDBConnect`: connections that cannot `ATTACH` another database file | `core/db_noattach*.go` | `core/base.go` (`ReapplyNoAttachLimits` after each pool is configured) |
 | Cross-instance notify events are not lost on kqueue (macOS/BSD) | `core/notify_watcher_tinycld.go` | `core/notify_watcher.go`; `core/notify_watcher_test.go` fixes a race in the test |
+| `core.OnFilesystemDelete`: the storage delete hook, exported so a backup can hold deletes | `core/filesystem_hooks_tinycld.go` | — |
 
 ### Why `core/db.go` sets `event.App = app`
 
