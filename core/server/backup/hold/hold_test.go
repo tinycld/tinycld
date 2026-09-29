@@ -274,4 +274,3 @@ func TestDrainCanReEntryViaDelHook(t *testing.T) {
 		t.Fatalf("re-journaled key not drained: %v", drained)
 	}
 }
-

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -477,6 +478,19 @@ func TestRestoreWaitsForSourceAndSwaps(t *testing.T) {
 		http.ServeContent(w, r, "b.age", time.Time{}, bytes.NewReader(data))
 	}))
 	t.Cleanup(good.Close)
+
+	// The test returns once data.db is staged, but the restore goroutine still
+	// saves its row after that. Waiting for it keeps that save from landing on
+	// an app whose database the cleanup already closed.
+	var running sync.WaitGroup
+	SetRestoreWatcher(func() func() {
+		running.Add(1)
+		return running.Done
+	})
+	t.Cleanup(func() {
+		running.Wait()
+		SetRestoreWatcher(nil)
+	})
 
 	src := format.NewRangeSource(context.Background(), expiring.URL)
 	src.SetExpiryWait(30 * time.Second)

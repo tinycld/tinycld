@@ -22,7 +22,10 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 	_ "modernc.org/sqlite"
 
+	"tinycld.org/core/backup/archive"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/repo"
+	"tinycld.org/core/backup/snapshot"
 	"tinycld.org/core/installjob"
 )
 
@@ -574,8 +577,8 @@ func TestManifestRoundTripsThroughTheLedgerColumn(t *testing.T) {
 func TestRunFailingInBuildManifestStoresNoManifest(t *testing.T) {
 	app := newTestApp(t)
 	makeUser(t, app, "owner@example.com", "owner")
-	// buildManifest reads pkg_registry first, so removing it fails the run
-	// before any manifest exists.
+	// The snapshot reads pkg_registry from its DB copy to build the manifest,
+	// so removing it fails the run before any manifest exists.
 	reg, err := app.FindCollectionByNameOrId("pkg_registry")
 	if err != nil {
 		t.Fatal(err)
@@ -640,8 +643,8 @@ func TestFailedRunClosesTheArchiveWriter(t *testing.T) {
 	makeUser(t, app, "owner@example.com", "owner")
 	id, _ := age.GenerateX25519Identity()
 	var closes atomic.Int64
-	writerClosedForTesting = func() { closes.Add(1) }
-	t.Cleanup(func() { writerClosedForTesting = nil })
+	archive.WriterClosedForTesting = func() { closes.Add(1) }
+	t.Cleanup(func() { archive.WriterClosedForTesting = nil })
 
 	if _, err := Run(app, Request{Kind: KindScheduled, Recipient: id.Recipient(), Sink: &failingSink{}}); err == nil {
 		t.Fatal("expected error")
@@ -794,5 +797,59 @@ func TestCallbackFailureLogsNoCredential(t *testing.T) {
 	}
 	if !strings.Contains(line, "127.0.0.1") {
 		t.Errorf("the log line should still name the host: %s", line)
+	}
+}
+
+// recordingRepo records the snapshot it was handed.
+type recordingRepo struct {
+	got  format.Manifest
+	keys []string
+}
+
+func (r *recordingRepo) Kind() string { return "recording" }
+func (r *recordingRepo) Put(_ context.Context, s *snapshot.Snapshot, progress func(int64)) (repo.PutResult, error) {
+	r.got = s.Manifest
+	for _, f := range s.Files {
+		r.keys = append(r.keys, f.Key)
+	}
+	if progress != nil {
+		progress(42)
+	}
+	return repo.PutResult{Ref: "rec/1", Bytes: 100, UploadedBytes: 7}, nil
+}
+func (r *recordingRepo) Manifest(context.Context, repo.Ref) (format.Manifest, error) {
+	return r.got, nil
+}
+func (r *recordingRepo) Fetch(context.Context, repo.Ref, string) error     { return nil }
+func (r *recordingRepo) List(context.Context) ([]repo.SnapshotInfo, error) { return nil, nil }
+
+func TestRunHandsTheSnapshotToTheRepository(t *testing.T) {
+	app := newTestApp(t)
+	r := &recordingRepo{}
+	id, err := Run(app, Request{Kind: KindScheduled, Repo: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _ := app.FindRecordById("backups", id)
+	if row.GetString("status") != "succeeded" || row.GetString("repository") != "recording" ||
+		row.GetString("ref") != "rec/1" || row.GetInt("bytes") != 100 || row.GetInt("uploaded_bytes") != 7 {
+		t.Fatalf("row = %v", row.PublicExport())
+	}
+	if len(r.keys) != 1 || r.keys[0] != "col1/rec1/hello.txt" {
+		t.Fatalf("keys = %v", r.keys)
+	}
+	if r.got.Core != "1.2.3" || r.got.Packages["widgets"] != "1.0.0" {
+		t.Fatalf("manifest = %+v", r.got)
+	}
+}
+
+func TestFailedRunRecordsAFailure(t *testing.T) {
+	app := newTestApp(t)
+	if err := FailedRun(app, KindScheduled, "pbs", errors.New("no route to host")); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := app.FindRecordsByFilter("backups", "status = 'failed'", "", 0, 0)
+	if len(rows) != 1 || rows[0].GetString("repository") != "pbs" {
+		t.Fatalf("rows = %v", rows)
 	}
 }

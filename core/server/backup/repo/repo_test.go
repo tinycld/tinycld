@@ -17,8 +17,8 @@ func (stub) Put(context.Context, *snapshot.Snapshot, func(int64)) (PutResult, er
 	return PutResult{}, nil
 }
 func (stub) Manifest(context.Context, Ref) (format.Manifest, error) { return format.Manifest{}, nil }
-func (stub) Fetch(context.Context, Ref, string) error                { return nil }
-func (stub) List(context.Context) ([]SnapshotInfo, error)            { return nil, ErrNotSupported }
+func (stub) Fetch(context.Context, Ref, string) error               { return nil }
+func (stub) List(context.Context) ([]SnapshotInfo, error)           { return nil, ErrNotSupported }
 
 func TestRegisterAndOpen(t *testing.T) {
 	t.Cleanup(ResetForTesting)

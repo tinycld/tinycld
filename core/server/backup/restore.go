@@ -18,6 +18,7 @@ import (
 	"tinycld.org/core/backup/archive"
 	"tinycld.org/core/backup/arm"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/repo"
 	"tinycld.org/core/installjob"
 	"tinycld.org/core/notify"
 )
@@ -258,7 +259,7 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 		if rerr := os.Remove(armedPath(app)); rerr != nil && !os.IsNotExist(rerr) {
 			log.Warn("could not disarm a failed restore", "id", id, "err", rerr)
 		}
-		if ferr := finishRow(app, row, "failed", 0, "", err.Error(), manifest); ferr != nil {
+		if ferr := finishRow(app, row, "failed", repo.PutResult{}, err.Error(), manifest, row.GetString("repository")); ferr != nil {
 			log.Error("could not finalize restore row", "id", id, "err", ferr)
 		}
 		// Failure is the only outcome this process can announce. Success is
