@@ -2,6 +2,7 @@ package hold
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -146,3 +147,82 @@ func TestRemoveStaleReportsAnAbandonedHold(t *testing.T) {
 		t.Fatal("stale hold still present")
 	}
 }
+
+func TestConcurrentJournalAndDrain(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	h, _ := Acquire(dir, "engine", clock(now))
+	defer h.Release()
+
+	// Journal some keys while the hold is active (Drain will return 0).
+	const numKeys = 100
+	for i := 0; i < numKeys; i++ {
+		if err := Journal(dir, fmt.Sprintf("key-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Release the hold to allow Drain to proceed, then run Journal and Drain
+	// concurrently in goroutines.
+	_ = h.Release()
+
+	journaled := make(map[string]bool)
+	for i := 0; i < numKeys; i++ {
+		journaled[fmt.Sprintf("key-%d", i)] = true
+	}
+
+	var deleted map[string]bool
+	drainErr := make(chan error, 1)
+	go func() {
+		var deltmp []string
+		_, err := Drain(dir, now, func(k string) error {
+			deltmp = append(deltmp, k)
+			return nil
+		})
+		deleted = make(map[string]bool)
+		for _, k := range deltmp {
+			deleted[k] = true
+		}
+		drainErr <- err
+	}()
+
+	journalErr := make(chan error, 1)
+	go func() {
+		for i := numKeys; i < 2*numKeys; i++ {
+			if err := Journal(dir, fmt.Sprintf("key-%d", i)); err != nil {
+				journalErr <- err
+				return
+			}
+		}
+		journalErr <- nil
+	}()
+
+	if err := <-drainErr; err != nil {
+		t.Fatalf("drain error: %v", err)
+	}
+	if err := <-journalErr; err != nil {
+		t.Fatalf("journal error: %v", err)
+	}
+
+	// After the concurrent operations, all initially journaled keys must either
+	// be deleted or not yet seen by the drain. Run a final Drain to capture
+	// any keys journaled during the first drain.
+	var finalDeleted []string
+	_, _ = Drain(dir, now, func(k string) error {
+		finalDeleted = append(finalDeleted, k)
+		return nil
+	})
+	for _, k := range finalDeleted {
+		deleted[k] = true
+	}
+
+	// Verify: every key initially journaled (0..99) appears in the deleted set.
+	// Keys 100+ may or may not be deleted (they were journaled during the drain).
+	for i := 0; i < numKeys; i++ {
+		key := fmt.Sprintf("key-%d", i)
+		if !deleted[key] {
+			t.Fatalf("key %s was journaled but never deleted", key)
+		}
+	}
+}
+

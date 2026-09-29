@@ -30,6 +30,13 @@ const (
 
 var ErrHeld = errors.New("backup: another backup holds storage deletes")
 
+// journalMu serialises Journal and Drain to prevent a race where a Journal
+// call opens JournalName for append before Drain renames it to draining,
+// then writes after the scanner reaches EOF, losing the key. Both operations
+// are always in the same process (the app that owns storage), so a mutex
+// is sufficient.
+var journalMu sync.Mutex
+
 type State struct {
 	Holder  string    `json:"holder"`
 	Expires time.Time `json:"expires"`
@@ -162,6 +169,8 @@ func Journal(dataDir, key string) error {
 	if strings.ContainsAny(key, "\n\r") {
 		return fmt.Errorf("backup: storage key contains a line break")
 	}
+	journalMu.Lock()
+	defer journalMu.Unlock()
 	f, err := os.OpenFile(filepath.Join(dataDir, JournalName), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
@@ -182,6 +191,8 @@ func Drain(dataDir string, now time.Time, del func(key string) error) (int, erro
 	if Active(dataDir, now) {
 		return 0, nil
 	}
+	journalMu.Lock()
+	defer journalMu.Unlock()
 	draining := filepath.Join(dataDir, drainName)
 	if _, err := os.Stat(draining); errors.Is(err, os.ErrNotExist) {
 		if err := os.Rename(filepath.Join(dataDir, JournalName), draining); errors.Is(err, os.ErrNotExist) {
