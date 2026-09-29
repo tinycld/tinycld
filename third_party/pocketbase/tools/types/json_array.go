@@ -2,7 +2,8 @@ package types
 
 import (
 	"database/sql/driver"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 )
 
@@ -14,12 +15,13 @@ type jsonArrayAlias[T any] JSONArray[T]
 
 // MarshalJSON implements the [json.Marshaler] interface.
 func (m JSONArray[T]) MarshalJSON() ([]byte, error) {
-	// initialize an empty map to ensure that `[]` is returned as json
-	if m == nil {
-		m = JSONArray[T]{}
-	}
-
-	return json.Marshal(jsonArrayAlias[T](m))
+	// note: forces the Deterministic and AllowInvalidUTF8 options to
+	// ensure consistent output in mixed json v1 and v2 configurations
+	return json.Marshal(
+		jsonArrayAlias[T](m),
+		json.Deterministic(true),
+		jsontext.AllowInvalidUTF8(true),
+	)
 }
 
 // String returns the string representation of the current json array.
@@ -30,8 +32,7 @@ func (m JSONArray[T]) String() string {
 
 // Value implements the [driver.Valuer] interface.
 func (m JSONArray[T]) Value() (driver.Value, error) {
-	data, err := json.Marshal(m)
-
+	data, err := m.MarshalJSON()
 	return string(data), err
 }
 
@@ -54,5 +55,12 @@ func (m *JSONArray[T]) Scan(value any) error {
 		data = []byte("[]")
 	}
 
-	return json.Unmarshal(data, m)
+	err := json.Unmarshal(data, m)
+	if err != nil {
+		// reset because jsonv2 performs streaming decoding and mutates the dst even on error
+		*m = JSONArray[T]{}
+		return err
+	}
+
+	return nil
 }

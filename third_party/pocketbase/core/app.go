@@ -54,11 +54,16 @@ type App interface {
 	// Bootstrap initializes the application
 	// (aka. create data dir, open db connections, load settings, etc.).
 	//
-	// It will call ResetBootstrapState() if the application was already bootstrapped.
+	// It calls ClearBootstrap() if the application was already bootstrapped.
 	Bootstrap() error
 
-	// ResetBootstrapState releases the initialized core app resources
+	// ClearBootstrap releases the initialized core app resources
 	// (closing db connections, stopping cron ticker, etc.).
+	//
+	// This method is no-op if the application is not bootstrapped yet.
+	ClearBootstrap() error
+
+	// Deprecated: use ClearBootstrap().
 	ResetBootstrapState() error
 
 	// DataDir returns the app data directory path.
@@ -713,6 +718,13 @@ type App interface {
 	// resources (db, app settings, etc).
 	OnBootstrap() *hook.Hook[*BootstrapEvent]
 
+	// OnBootstrapClear hook is triggered when clearing the main application
+	// resources (db connections, cron, logger, etc.)
+	//
+	// It is usually invoked automatically right before app termination
+	// or when manually calling app.ClearBootstrap().
+	OnBootstrapClear() *hook.Hook[*BootstrapEvent]
+
 	// OnServe hook is triggered when the app web server is started
 	// (after starting the TCP listener but before initializing the blocking serve task),
 	// allowing you to adjust its options and attach new routes or middlewares.
@@ -1261,6 +1273,20 @@ type App interface {
 	// then all event handlers registered via the created hook will be
 	// triggered and called only if their event data origin matches the tags.
 	OnMailerRecordOTPSend(tags ...string) *hook.TaggedHook[*MailerRecordEvent]
+
+	// ---------------------------------------------------------------
+	// Filesystem event hooks
+	// (not publicly exposed until file_field refactoring)
+	// ---------------------------------------------------------------
+
+	// onFilesystemNewWriter is an internal hook for app.NewFilesystem()
+	// instances that is triggered on every storage filesystem writer initialization
+	// (aka. whenever attempting to create a new file).
+	onFilesystemNewWriter() *hook.Hook[*FilesystemNewWriterEvent]
+
+	// onFilesystemDelete is an internal hook for app.NewFilesystem()
+	// instances that is triggered for every storage file delete call.
+	onFilesystemDelete() *hook.Hook[*FilesystemDeleteEvent]
 
 	// ---------------------------------------------------------------
 	// Realtime API event hooks

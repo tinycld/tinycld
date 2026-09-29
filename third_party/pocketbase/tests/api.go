@@ -3,7 +3,7 @@ package tests
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 	"maps"
@@ -249,6 +249,7 @@ func (scenario *ApiScenario) test(t testing.TB) {
 			t.Errorf("Expected status code %d, got %d", scenario.ExpectedStatus, res.StatusCode)
 		}
 
+		// @todo consider removing in favour of synctest.Wait()
 		if scenario.Delay > 0 {
 			time.Sleep(scenario.Delay)
 		}
@@ -259,14 +260,16 @@ func (scenario *ApiScenario) test(t testing.TB) {
 			}
 		} else {
 			// normalize json response format
-			buffer := new(bytes.Buffer)
-			err := json.Compact(buffer, recorder.Body.Bytes())
 			var normalizedBody string
+
+			buf := new(bytes.Buffer)
+			enc := jsontext.NewEncoder(buf)
+			err := enc.WriteValue(recorder.Body.Bytes())
 			if err != nil {
 				// not a json...
 				normalizedBody = recorder.Body.String()
 			} else {
-				normalizedBody = buffer.String()
+				normalizedBody = buf.String()
 			}
 
 			for _, item := range scenario.ExpectedContent {

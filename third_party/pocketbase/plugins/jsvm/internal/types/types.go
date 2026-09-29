@@ -129,7 +129,7 @@ type excludeHooks<Type> = {
 type CoreApp = excludeHooks<ORIGINAL_CORE_APP>
 
 // pocketbase.PocketBase without the on* hook methods
-type PocketBase = excludeHooks<ORIGINAL_POCKETBASE>
+interface PocketBase extends excludeHooks<ORIGINAL_POCKETBASE>{}
 
 /**
  * ` + "`$app`" + ` is the current running PocketBase instance that is globally

@@ -1,7 +1,8 @@
 package router
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"encoding/xml"
 	"errors"
 	"io"
@@ -184,24 +185,35 @@ const jsonFieldsParam = "fields"
 // It also provides a generic response data fields picker if the "fields" query parameter is set.
 // For example, if you are requesting `?fields=a,b` for `e.JSON(200, map[string]int{ "a":1, "b":2, "c":3 })`,
 // it should result in a JSON response like: `{"a":1, "b": 2}`.
+//
+// Note that invalid UTF8 characters are mangled for compatibility
+// with earlier versions and to prevent unnecessary causing a response error.
 func (e *Event) JSON(status int, data any) error {
+	// try to pick only the requested fields (currently allowed only for "success" responses)
+	rawFields := e.Request.URL.Query().Get(jsonFieldsParam)
+	if rawFields != "" && status >= 200 && status <= 299 {
+		modified, err := picker.Pick(data, rawFields)
+		if err == nil {
+			data = modified
+		} else if !errors.Is(err, picker.ErrInvalidModifierData) {
+			// @todo ignore for now modifier data errors to avoid introducing
+			// breaking changes but once the router is merged with core consider
+			// at least logging for dev purposes
+			return err
+		}
+	}
+
 	e.setResponseHeaderIfEmpty(headerContentType, "application/json")
 	e.Response.WriteHeader(status)
 
-	rawFields := e.Request.URL.Query().Get(jsonFieldsParam)
-
-	// error response or no fields to pick
-	if rawFields == "" || status < 200 || status > 299 {
-		return json.NewEncoder(e.Response).Encode(data)
-	}
-
-	// pick only the requested fields
-	modified, err := picker.Pick(data, rawFields)
-	if err != nil {
-		return err
-	}
-
-	return json.NewEncoder(e.Response).Encode(modified)
+	return json.MarshalWrite(
+		e.Response,
+		data,
+		// for compliance with old data (and slightly better performance)
+		jsontext.AllowDuplicateNames(true),
+		// preserve the old jsonv1 behavior in case of invalid data
+		jsontext.AllowInvalidUTF8(true),
+	)
 }
 
 // XML writes an XML response.
@@ -359,10 +371,23 @@ func (e *Event) BindBody(dst any) error {
 	contentType := e.Request.Header.Get(headerContentType)
 
 	if strings.HasPrefix(contentType, "application/json") {
-		dec := json.NewDecoder(e.Request.Body)
-		err := dec.Decode(dst)
+		// note: don't use json.UnmarshalRead because it perfoms an extra
+		// whitespace scanning which will trigger the auto reread and
+		// will start again from the beginning and causing an error
+		//
+		// (technically json.UnmarshalRead is the better option here but to make
+		// it work it will require extra interface or other mechanism to temp disable
+		// the auto reread functionality and this could be a footgun for middlewares
+		// that wraps the body so for now it is kept as it is and it should
+		// be similar to the old json.NewDecoder(e.Request.Body).Decode(dst))
+		dec := jsontext.NewDecoder(e.Request.Body)
+		err := json.UnmarshalDecode(dec, dst,
+			// minimize breaking changes with earlier version
+			// @todo remove with the "Stage 2" refactoring
+			json.MatchCaseInsensitiveNames(true),
+		)
 		if err == nil {
-			// manually call Reread because single call of json.Decoder.Decode()
+			// manually call Reread because single call of json.UnmarshalDecode
 			// doesn't ensure that the entire body is a valid json string
 			// and it is not guaranteed that it will reach EOF to trigger the reread reset
 			// (ex. in case of trailing spaces or invalid trailing parts like: `{"test":1},something`)

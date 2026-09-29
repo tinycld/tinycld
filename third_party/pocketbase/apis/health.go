@@ -37,7 +37,7 @@ func healthCheck(e *core.RequestEvent) error {
 		headersToCheck := append(
 			slices.Clone(e.App.Settings().TrustedProxy.Headers),
 			// common proxy headers
-			"CF-Connecting-IP", "Fly-Client-IP", "X‑Forwarded-For",
+			"CF-Connecting-IP", "Fly-Client-IP", "X-Forwarded-For",
 		)
 		for _, header := range headersToCheck {
 			if e.Request.Header.Get(header) != "" {
