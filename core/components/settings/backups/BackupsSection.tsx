@@ -4,7 +4,10 @@ import { Text, View } from 'react-native'
 import { BackupHistory } from './BackupHistory'
 import { BackupNowForm } from './BackupNowForm'
 import { CliCard } from './CliCard'
+import { RepositoryCard } from './RepositoryCard'
 import { RestoreForm } from './RestoreForm'
+import { SnapshotRestoreForm } from './SnapshotRestoreForm'
+import { useRepositoryState } from './useBackupRepository'
 import { lastBackedUp, useBackupRows } from './useBackups'
 
 export function BackupsSection() {
@@ -15,6 +18,8 @@ export function BackupsSection() {
         row => row.status === 'running' || row.status === 'waiting_for_source'
     )
     const toneClass = status.isStale ? 'text-warning' : 'text-muted-foreground'
+    const { isConfigured: isRepositoryConfigured, isManaged: isRepositoryManaged } =
+        useRepositoryState()
 
     return (
         <View className="gap-6" testID="settings-section-backups">
@@ -26,6 +31,11 @@ export function BackupsSection() {
             </View>
             <BackupNowForm isBusy={isBusy === true} />
             <RestoreForm isVisible={isOwner} isBusy={isBusy === true} />
+            <RepositoryCard isVisible={!isRepositoryManaged} isBusy={isBusy === true} />
+            <SnapshotRestoreForm
+                isVisible={isOwner && isRepositoryConfigured}
+                isBusy={isBusy === true}
+            />
             <BackupHistory rows={rows ?? []} />
             <CliCard />
         </View>

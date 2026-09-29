@@ -19,6 +19,36 @@ vi.mock('@tinycld/core/lib/pocketbase', () => ({
     useStore: () => [{}, {}],
     pb: { send: vi.fn() },
 }))
+// The repository card, its restore form, and the "is configured/managed" gate
+// all read system_settings via live queries of their own, and RepositoryCard
+// calls its hook unconditionally (isVisible only gates the render, same as
+// RestoreForm). Mocked out here for the same reason the row query above is —
+// this section only presents what the hooks hand it.
+vi.mock('../../components/settings/backups/useBackupRepository', () => ({
+    useRepositoryState: () => ({ isConfigured: false, isManaged: true }),
+    useBackupRepository: () => ({
+        form: {
+            control: {},
+            handleSubmit: () => () => {},
+            formState: { errors: {}, isSubmitted: false },
+        },
+        save: { mutate: vi.fn() },
+        test: { mutate: vi.fn(), data: undefined, error: null },
+        generateKey: { mutate: vi.fn() },
+        backupNow: { mutate: vi.fn(), isPending: false },
+        isConfigured: false,
+        isManaged: true,
+    }),
+    useSnapshots: () => ({ data: [], error: null }),
+    useSnapshotRestore: () => ({
+        form: {
+            control: {},
+            handleSubmit: () => () => {},
+            formState: { errors: {}, isSubmitted: false, isValid: false },
+        },
+        start: { mutate: vi.fn(), isPending: false },
+    }),
+}))
 
 import { BackupsSection } from '../../components/settings/backups/BackupsSection'
 import { isAwaitingRestart, lastBackedUp } from '../../components/settings/backups/useBackups'
