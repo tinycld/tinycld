@@ -6,7 +6,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
-	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/arm"
 )
 
 // A restore keeps every byte it stages outside pb_data: the live database is
@@ -44,7 +44,7 @@ func swappedPathOf(dataDir string) string { return filepath.Join(restoreDirOf(da
 // swap that staging FINISHED, which cannot be inferred from the staged members:
 // the swap moves them out of pending one at a time, so after it starts their
 // absence means the opposite of what it means before.
-const stagedSentinel = ".staged"
+const stagedSentinel = arm.StagedSentinel
 
 // rolledBack is what rollBack leaves for the serve-time finalizer. Without it a
 // rollback is silent: the data is correct, the operator is never told their
@@ -55,12 +55,6 @@ type rolledBack struct {
 	RolledAt time.Time `json:"rolled_at"`
 }
 
-// armed is the marker a restore leaves behind for the process that boots next.
-// It carries the manifest because that process finalizes the ledger row and has
-// no other way to know what it is now running.
-type armed struct {
-	ID       string          `json:"id"`
-	Pending  string          `json:"pending"`
-	Pre      string          `json:"pre"`
-	Manifest format.Manifest `json:"manifest"`
-}
+// armed is the on-disk marker; arm owns its format so a restore staged by
+// another process is read the same way.
+type armed = arm.Marker

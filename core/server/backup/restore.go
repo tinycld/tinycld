@@ -3,8 +3,6 @@ package backup
 import (
 	"archive/tar"
 	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,9 +15,9 @@ import (
 
 	"filippo.io/age"
 	"github.com/pocketbase/pocketbase/core"
-	_ "modernc.org/sqlite" // the driver the staged-database integrity check opens with
 
 	"tinycld.org/core/audit"
+	"tinycld.org/core/backup/arm"
 	"tinycld.org/core/backup/format"
 	"tinycld.org/core/installjob"
 	"tinycld.org/core/notify"
@@ -389,11 +387,7 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	if err = os.MkdirAll(pending, 0o700); err != nil {
 		return err
 	}
-	marker, err := json.Marshal(armed{ID: id, Pending: pending, Pre: prePath, Manifest: read})
-	if err != nil {
-		return err
-	}
-	if err = os.WriteFile(armedPath(app), marker, 0o600); err != nil {
+	if err = arm.WriteMarker(restoreDir(app), armed{ID: id, Pending: pending, Pre: prePath, Manifest: read}); err != nil {
 		return err
 	}
 	restoring.Store(true)
@@ -403,14 +397,13 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	if err = stage(reader, pending); err != nil {
 		return err
 	}
-	if err = integrityCheck(filepath.Join(pending, format.MemberDB)); err != nil {
-		return err
-	}
 	// The sentinel is the boot swap's only sound evidence that staging finished.
 	// It cannot infer that from the members themselves: once the swap starts
 	// moving them into pb_data, a staged member's absence from pending means the
-	// opposite of what it means before the swap starts.
-	if err = os.WriteFile(filepath.Join(pending, stagedSentinel), nil, 0o644); err != nil {
+	// opposite of what it means before the swap starts. counts is nil: the
+	// manifest's counts were read from the source archive, not this staged copy,
+	// so they cannot be compared exactly (see manifestcheck.go for that check).
+	if err = arm.MarkStaged(pending, nil); err != nil {
 		return err
 	}
 	row.Set("status", "running")
@@ -603,69 +596,11 @@ func stage(r *format.Reader, dir string) error {
 		if !strings.HasPrefix(target, dir+string(os.PathSeparator)) {
 			return fmt.Errorf("%w: member %q escapes the staging directory", format.ErrFormat, hdr.Name)
 		}
-		if err := writeMember(target, body); err != nil {
+		if err := arm.WriteMember(target, body); err != nil {
 			return err
 		}
 	}
 	return r.Verify()
-}
-
-// writeMember stages one member with the permissions PocketBase itself writes
-// under pb_data. The staged tree BECOMES pb_data, so staging it tighter would
-// leave a restored deployment with a database and a storage tree no other
-// process or user on the host could read.
-func writeMember(target string, body io.Reader) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(f, body); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
-}
-
-// integrityCheck refuses a staged database SQLite cannot read. Without it a
-// truncated or corrupt archive gets swapped in and the process restart-loops on
-// a database that will never open, with the live copy already moved aside.
-func integrityCheck(path string) error {
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
-	if err != nil {
-		return fmt.Errorf("backup: open the staged database: %w", err)
-	}
-	defer func() {
-		if cerr := db.Close(); cerr != nil {
-			log.Warn("could not close the staged database", "path", path, "err", cerr)
-		}
-	}()
-	rows, err := db.Query("PRAGMA integrity_check")
-	if err != nil {
-		return fmt.Errorf("backup: check the staged database: %w", err)
-	}
-	defer func() {
-		if cerr := rows.Close(); cerr != nil {
-			log.Warn("could not close an integrity-check result", "path", path, "err", cerr)
-		}
-	}()
-	var problems []string
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			return fmt.Errorf("backup: check the staged database: %w", err)
-		}
-		problems = append(problems, line)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("backup: check the staged database: %w", err)
-	}
-	if len(problems) == 1 && problems[0] == "ok" {
-		return nil
-	}
-	return fmt.Errorf("backup: the staged database failed its integrity check: %s", strings.Join(problems, "; "))
 }
 
 // announceRestore tells the people who can act, and records the outcome. Neither

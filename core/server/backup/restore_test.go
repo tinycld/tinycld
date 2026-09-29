@@ -22,6 +22,7 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
+	"tinycld.org/core/backup/arm"
 	"tinycld.org/core/backup/format"
 	"tinycld.org/core/installjob"
 )
@@ -659,7 +660,7 @@ func TestIntegrityCheckRejectsGarbage(t *testing.T) {
 	if err := os.WriteFile(path, []byte("this is not a database"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := integrityCheck(path); err == nil {
+	if err := arm.IntegrityCheck(path); err == nil {
 		t.Fatal("a garbage file passed the integrity check")
 	}
 }
@@ -670,7 +671,7 @@ func TestIntegrityCheckAcceptsARealSnapshot(t *testing.T) {
 	if err := vacuumInto(app, snap); err != nil {
 		t.Fatal(err)
 	}
-	if err := integrityCheck(snap); err != nil {
+	if err := arm.IntegrityCheck(snap); err != nil {
 		t.Fatalf("a real snapshot failed the integrity check: %v", err)
 	}
 }
