@@ -29,7 +29,7 @@ import (
 // portable and diff-readable when a golden test fails):
 //
 //	tinycld-recipe/v2
-//	go go1.26.3
+//	go go1.27.1
 //	node v22.12.0
 //	pnpm pnpm@11.3.0+sha512…
 //	override <name> <version>     (sorted by name; the "//" doc key never appears)
@@ -45,7 +45,7 @@ const recipeFormatVersion = "tinycld-recipe/v2"
 // are required by RecipeHash: an unknown toolchain must never alias two
 // different build environments to one cache key.
 type Toolchain struct {
-	Go   string // "go1.26.3" — the PATH toolchain that compiles the workspace
+	Go   string // "go1.27.1" — the PATH toolchain that compiles the workspace
 	Node string // "v22.12.0"
 	Pnpm string // the full PackageManagerSpec (version + integrity)
 }
@@ -66,7 +66,7 @@ func DetectToolchain(run CmdRunner) (Toolchain, error) {
 	if err != nil {
 		return Toolchain{}, fmt.Errorf("detect go version: %w", err)
 	}
-	// "go version go1.26.3 darwin/arm64" → third field.
+	// "go version go1.27.1 darwin/arm64" → third field.
 	goFields := strings.Fields(goOut)
 	if len(goFields) < 3 || !strings.HasPrefix(goFields[2], "go") {
 		return Toolchain{}, fmt.Errorf("unrecognized `go version` output: %q", strings.TrimSpace(goOut))

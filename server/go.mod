@@ -1,10 +1,10 @@
 module tinycld.org/tinycld
 
-go 1.26.3
+go 1.27.1
 
 require (
 	github.com/getsentry/sentry-go v0.44.1
-	github.com/pocketbase/pocketbase v0.39.8
+	github.com/pocketbase/pocketbase v0.40.4
 	tinycld.org/core v0.0.0
 )
 

@@ -77,7 +77,7 @@
 #
 # The go-builder stage below builds the real Linux runtime binary
 # from the full workspace; this stage is throwaway, ~50 lines of Go work.
-FROM golang:1.26-trixie AS types-binary-builder
+FROM golang:1.27-trixie AS types-binary-builder
 WORKDIR /src
 COPY tinycld/core/server/ ./core/server/
 COPY tinycld/third_party/ ./third_party/
@@ -285,7 +285,7 @@ WORKDIR /ws/tinycld
 
 
 # Build stage for Go server.
-FROM golang:1.26-trixie AS go-builder
+FROM golang:1.27-trixie AS go-builder
 
 # The build is fully CGo-free: omnidoc decodes HEIF in pure Go, which retired
 # the last cgo dependency (goheif/libde265). No C toolchain is required here.

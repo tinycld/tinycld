@@ -16,7 +16,7 @@ export const GO_VERSION = (() => {
     try {
         return fs.readFileSync(path.join(WS_ROOT, '.go-version'), 'utf8').trim()
     } catch {
-        return '1.26.3'
+        return '1.27.1'
     }
 })()
 
