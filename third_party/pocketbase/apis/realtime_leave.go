@@ -8,6 +8,7 @@ import (
 
 	"github.com/ganigeorgiev/fexpr"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/tools/routine"
 	"github.com/pocketbase/pocketbase/tools/search"
 	"github.com/pocketbase/pocketbase/tools/store"
@@ -294,4 +295,53 @@ func addExprIdentifierRoot(token fexpr.Token, into map[string]struct{}) {
 	}
 
 	into[root] = struct{}{}
+}
+
+// bindRealtimeLeaveEvents binds the hooks that record, before an update, which
+// subscriptions can see the record, so that realtimeBroadcastRecord can send a
+// delete to the subscriptions it leaves.
+func bindRealtimeLeaveEvents(app core.App) {
+	// update: remember which subscriptions see the record before it changes
+	app.OnModelUpdate().Bind(&hook.Handler[*core.ModelEvent]{
+		Func: func(e *core.ModelEvent) error {
+			record := realtimeResolveRecord(e.App, e.Model, "")
+			if record != nil {
+				// note: use the outside scoped app instance so that the checks
+				// read the committed row even when the update runs in a transaction
+				err := realtimeCacheLeaveCandidates(e.App, record, app)
+				if err != nil {
+					app.Logger().Debug(
+						"Failed to cache record leave candidates",
+						slog.String("id", record.Id),
+						slog.String("collectionName", record.Collection().Name),
+						slog.String("error", err.Error()),
+					)
+				}
+			}
+
+			return e.Next()
+		},
+		Priority: 99, // execute as later as possible
+	})
+
+	// update: failure
+	app.OnModelAfterUpdateError().Bind(&hook.Handler[*core.ModelErrorEvent]{
+		Func: func(e *core.ModelErrorEvent) error {
+			collection := realtimeResolveRecordCollection(e.App, e.Model)
+			if collection != nil {
+				err := realtimeUnsetDryCacheKey(e.App, realtimeLeaveKey(e.Model))
+				if err != nil {
+					app.Logger().Debug(
+						"Failed to cleanup record leave candidates after update failure",
+						slog.Any("id", e.Model.PK()),
+						slog.String("collectionName", collection.Name),
+						slog.String("error", err.Error()),
+					)
+				}
+			}
+
+			return e.Next()
+		},
+		Priority: -99,
+	})
 }

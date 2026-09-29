@@ -21,13 +21,9 @@ func bindUIExtensions(app core.App) {
 		return
 	}
 
-	// A fixed Id makes the binding idempotent: NewRouter runs once per router,
-	// and an app that builds more than one router (a test app reused across
-	// ApiScenarios, or repeated BuildServeMux calls) would otherwise stack one
-	// handler per build and register "/_/extensions.js" twice on the next serve.
 	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
-		Id:       "__pbUIExtensions__",
-		Priority: 9999, // execute as latest as possible
+		Id:       "__pbUIExtensions__", // fork: bind once per app, see FORK.md
+		Priority: 9999,                 // execute as latest as possible
 		Func: func(se *core.ServeEvent) error {
 			uiGroup := se.Router.Group("/_").
 				BindFunc(func(e *core.RequestEvent) error {

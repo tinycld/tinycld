@@ -1182,11 +1182,7 @@ func (app *BaseApp) initDataDB() error {
 	concurrentDB.DB().SetMaxOpenConns(app.config.DataMaxOpenConns)
 	concurrentDB.DB().SetMaxIdleConns(app.config.DataMaxIdleConns)
 	concurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
-	// A DBConnect that restricts ATTACH (NoAttachDBConnect) primes each pooled
-	// connection and depends on the limits it set; the three lines above have
-	// just overwritten them. Re-prime, or untrusted JS regains access to
-	// other orgs' files. No-op for an unrestricted pool.
-	if err := ReapplyNoAttachLimits(concurrentDB.DB()); err != nil {
+	if err := ReapplyNoAttachLimits(concurrentDB.DB()); err != nil { // fork: see db_noattach.go
 		return err
 	}
 
@@ -1197,7 +1193,7 @@ func (app *BaseApp) initDataDB() error {
 	nonconcurrentDB.DB().SetMaxOpenConns(1)
 	nonconcurrentDB.DB().SetMaxIdleConns(1)
 	nonconcurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
-	if err := ReapplyNoAttachLimits(nonconcurrentDB.DB()); err != nil {
+	if err := ReapplyNoAttachLimits(nonconcurrentDB.DB()); err != nil { // fork: see db_noattach.go
 		return err
 	}
 
@@ -1254,8 +1250,7 @@ func (app *BaseApp) initAuxDB() error {
 	concurrentDB.DB().SetMaxOpenConns(app.config.AuxMaxOpenConns)
 	concurrentDB.DB().SetMaxIdleConns(app.config.AuxMaxIdleConns)
 	concurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
-	// See initDataDB: re-prime a restricted pool after overwriting its limits.
-	if err := ReapplyNoAttachLimits(concurrentDB.DB()); err != nil {
+	if err := ReapplyNoAttachLimits(concurrentDB.DB()); err != nil { // fork: see db_noattach.go
 		return err
 	}
 
@@ -1266,7 +1261,7 @@ func (app *BaseApp) initAuxDB() error {
 	nonconcurrentDB.DB().SetMaxOpenConns(1)
 	nonconcurrentDB.DB().SetMaxIdleConns(1)
 	nonconcurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
-	if err := ReapplyNoAttachLimits(nonconcurrentDB.DB()); err != nil {
+	if err := ReapplyNoAttachLimits(nonconcurrentDB.DB()); err != nil { // fork: see db_noattach.go
 		return err
 	}
 
