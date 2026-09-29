@@ -444,6 +444,16 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 # for those builds rather than relying on Go's default, which would look for gcc.
 ENV CGO_ENABLED=0
 
+# The installer's `pnpm install` postinstall regenerates the schema and payload
+# types. Without these binaries it falls back to `go run` inside core/server,
+# which builds outside the go.work — and after the go-builder's `go work sync`
+# core's go.mod names versions its own go.sum lacks hashes for, so the build
+# fails with "missing go.sum entry". Same binaries web-builder uses.
+COPY --from=types-binary-builder /out/export-types /usr/local/bin/export-types
+COPY --from=types-binary-builder /out/export-payload-types /usr/local/bin/export-payload-types
+ENV TINYCLD_EXPORT_TYPES_BIN=/usr/local/bin/export-types
+ENV TINYCLD_EXPORT_PAYLOADS_BIN=/usr/local/bin/export-payload-types
+
 # Non-root runtime user. UID/GID 1000 matches the typical first non-root host
 # user on Linux distros, so host-side pb_data/ files on a bind-mount are owned
 # by the host user instead of root. Override at build time with
