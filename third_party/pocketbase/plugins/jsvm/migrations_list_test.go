@@ -60,6 +60,13 @@ func TestMigrationsList_LoadsPrivatelyWithoutTouchingGlobal(t *testing.T) {
 // A nil MigrationsList must keep the stock behavior: register into
 // core.AppMigrations.
 func TestMigrationsList_NilRegistersIntoGlobal(t *testing.T) {
+	// Restore the global afterwards. A JS migration left in it runs on its
+	// one loader VM from every later NewTestApp, and the parallel tests would
+	// then drive that VM from several goroutines at once and panic.
+	original := core.AppMigrations
+	core.AppMigrations = core.MigrationsList{}
+	t.Cleanup(func() { core.AppMigrations = original })
+
 	dir := t.TempDir()
 	const name = "1700000002_global.js"
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(`migrate((app) => {})`), 0o644); err != nil {

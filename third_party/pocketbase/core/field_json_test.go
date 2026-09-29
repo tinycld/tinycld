@@ -102,6 +102,16 @@ func TestJSONFieldValidateValue(t *testing.T) {
 			true,
 		},
 		{
+			"invalid raw value (v2 semantics)",
+			&core.JSONField{Name: "test"},
+			func() *core.Record {
+				record := core.NewRecord(collection)
+				record.SetRaw("test", types.JSONRaw(`{"a": 1, "a": 2}`))
+				return record
+			},
+			true,
+		},
+		{
 			"zero field value (not required)",
 			&core.JSONField{Name: "test"},
 			func() *core.Record {

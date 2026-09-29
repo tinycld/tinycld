@@ -22,8 +22,14 @@ type ProgramSource interface {
 // (strict=false, matching sobek's RunScript) while wrapped callback programs
 // compile strict (strict=true, matching the existing MustCompile(..., true) sites).
 func (p *plugin) compile(src string, strict bool) (*sobek.Program, error) {
-	if p.config.ProgramSource != nil {
-		return p.config.ProgramSource.Compile(defaultScriptPath, src, strict)
+	return compileProgram(p.config.ProgramSource, src, strict)
+}
+
+// compileProgram compiles src through programs when it is set, directly
+// otherwise.
+func compileProgram(programs ProgramSource, src string, strict bool) (*sobek.Program, error) {
+	if programs != nil {
+		return programs.Compile(defaultScriptPath, src, strict)
 	}
 	return sobek.Compile(defaultScriptPath, src, strict)
 }

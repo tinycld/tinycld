@@ -3,6 +3,7 @@ package search_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -143,7 +144,7 @@ func TestFilterDataBuildExpr(t *testing.T) {
 			"geoDistance function",
 			"geoDistance(1,2,3,4) < 567",
 			false,
-			"(6371 * acos(cos(radians({:TEST})) * cos(radians({:TEST})) * cos(radians({:TEST}) - radians({:TEST})) + sin(radians({:TEST})) * sin(radians({:TEST})))) < {:TEST}",
+			"(6371 * acos(min(1, max(-1, cos(radians({:TEST})) * cos(radians({:TEST})) * cos(radians({:TEST}) - radians({:TEST})) + sin(radians({:TEST})) * sin(radians({:TEST})))))) < {:TEST}",
 		},
 	}
 
@@ -215,7 +216,8 @@ func TestFilterDataBuildExprWithParams(t *testing.T) {
 		test9 = {:test9} ||
 		test10 = {:test10} ||
 		test11 = {:test11} ||
-		test12 = {:test12}
+		test12 = {:test12} ||
+		test13 = {:test13}
 	`)
 
 	replacements := []dbx.Params{
@@ -223,10 +225,11 @@ func TestFilterDataBuildExprWithParams(t *testing.T) {
 		{"test2": false},
 		{"test3": 123.456},
 		{"test4": nil},
-		{"test5": "", "test6": "simple", "test7": `'single_quotes'`, "test8": `"double_quotes"`, "test9": `escape\"quote`},
+		{"test5": "", "test6": "simple", "test7": `'single_quotes'`, "test8": `"double_quotes"`, "test9": "'\"quote_with_backslash\\"},
 		{"test10": date},
-		{"test11": []string{"a", "b", `"quote`}},
+		{"test11": []string{"a", "'quote", `"quote`}},
 		{"test12": map[string]any{"a": 123, "b": `quote"`}},
+		{"test13": "a\nb"},
 	}
 
 	expr, err := filter.BuildExpr(resolver, replacements...)
@@ -240,10 +243,43 @@ func TestFilterDataBuildExprWithParams(t *testing.T) {
 		t.Fatalf("Expected 1 query, got %d", len(calledQueries))
 	}
 
-	expectedQuery := `SELECT * WHERE ([[test1]] = 1 OR [[test2]] = 0 OR [[test3a]] = 123.456 OR [[test3b]] = 123.456 OR ([[test4]] = '' OR [[test4]] IS NULL) OR [[test5]] = '""' OR [[test6]] = 'simple' OR [[test7]] = '''single_quotes''' OR [[test8]] = '"double_quotes"' OR [[test9]] = 'escape\\"quote' OR [[test10]] = '2023-01-01 00:00:00 +0000 UTC' OR [[test11]] = '["a","b","\\"quote"]' OR [[test12]] = '{"a":123,"b":"quote\\""}')`
+	expectedQuery := `SELECT * WHERE ([[test1]] = 1 OR [[test2]] = 0 OR [[test3a]] = 123.456 OR [[test3b]] = 123.456 OR ([[test4]] = '' OR [[test4]] IS NULL) OR ([[test5]] = '' OR [[test5]] IS NULL) OR [[test6]] = 'simple' OR [[test7]] = '''single_quotes''' OR [[test8]] = '"double_quotes"' OR [[test9]] = '''"quote_with_backslash\' OR [[test10]] = '2023-01-01 00:00:00 +0000 UTC' OR [[test11]] = '["a","''quote","\"quote"]' OR [[test12]] = '{"a":123,"b":"quote\""}' OR [[test13]] = 'a`
+	expectedQuery += "\nb')"
 	if expectedQuery != calledQueries[0] {
 		t.Fatalf("Expected query \n%s, \ngot \n%s", expectedQuery, calledQueries[0])
 	}
+}
+
+type brokenJSON struct{}
+
+func (j brokenJSON) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("test_error")
+}
+
+func TestFilterDataBuildExprWithParamsFallbackError(t *testing.T) {
+	t.Parallel()
+
+	resolver := search.NewSimpleFieldResolver("test")
+
+	filter := search.FilterData(`test = {:test}`)
+
+	t.Run("non-string type but valid json", func(t *testing.T) {
+		_, err := filter.BuildExpr(resolver, dbx.Params{
+			"test": map[string]any{"a": "123"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("non-string type but invalid json", func(t *testing.T) {
+		_, err := filter.BuildExpr(resolver, dbx.Params{
+			"test": brokenJSON{},
+		})
+		if err == nil {
+			t.Fatal("Expected filter build error, got nil")
+		}
+	})
 }
 
 func TestFilterDataBuildExprWithLimit(t *testing.T) {
@@ -305,7 +341,8 @@ func TestLikeParamsWrapping(t *testing.T) {
 		test9 ~ {:p9} ||
 		test10 ~ {:p10} ||
 		test11 ~ {:p11} ||
-		test12 ~ {:p12}
+		test12 ~ {:p12} ||
+		test13 ~ {:p13}
 	`)
 
 	replacements := []dbx.Params{
@@ -321,6 +358,7 @@ func TestLikeParamsWrapping(t *testing.T) {
 		{"p10": `ab\c`},
 		{"p11": `_ab\c_`},
 		{"p12": `ab\c%`},
+		{"p13": "a\nb\\"},
 	}
 
 	expr, err := filter.BuildExpr(resolver, replacements...)
@@ -334,7 +372,8 @@ func TestLikeParamsWrapping(t *testing.T) {
 		t.Fatalf("Expected 1 query, got %d", len(calledQueries))
 	}
 
-	expectedQuery := `SELECT * WHERE ([[test1]] LIKE '%abc%' ESCAPE '\' OR [[test2]] LIKE 'ab%c' ESCAPE '\' OR [[test3]] LIKE 'ab\\%c' ESCAPE '\' OR [[test4]] LIKE '%ab\\%c' ESCAPE '\' OR [[test5]] LIKE 'ab\\\\%c' ESCAPE '\' OR [[test6]] LIKE 'ab\\\\\\%c' ESCAPE '\' OR [[test7]] LIKE '%ab\_c%' ESCAPE '\' OR [[test8]] LIKE '%ab\\\_c%' ESCAPE '\' OR [[test9]] LIKE '%ab_c' ESCAPE '\' OR [[test10]] LIKE '%ab\\c%' ESCAPE '\' OR [[test11]] LIKE '%\_ab\\c\_%' ESCAPE '\' OR [[test12]] LIKE 'ab\\c%' ESCAPE '\')`
+	expectedQuery := `SELECT * WHERE ([[test1]] LIKE '%abc%' ESCAPE '\' OR [[test2]] LIKE 'ab%c' ESCAPE '\' OR [[test3]] LIKE '%ab\%c%' ESCAPE '\' OR [[test4]] LIKE '%ab\%c' ESCAPE '\' OR [[test5]] LIKE 'ab\\%c' ESCAPE '\' OR [[test6]] LIKE '%ab\\\%c%' ESCAPE '\' OR [[test7]] LIKE '%ab\_c%' ESCAPE '\' OR [[test8]] LIKE '%ab\_c%' ESCAPE '\' OR [[test9]] LIKE '%ab_c' ESCAPE '\' OR [[test10]] LIKE '%ab\\c%' ESCAPE '\' OR [[test11]] LIKE '%\_ab\\c\_%' ESCAPE '\' OR [[test12]] LIKE 'ab\c%' ESCAPE '\' OR [[test13]] LIKE '%a`
+	expectedQuery += "\n" + `b\\%' ESCAPE '\')`
 	if expectedQuery != calledQueries[0] {
 		t.Fatalf("Expected query \n%s, \ngot \n%s", expectedQuery, calledQueries[0])
 	}

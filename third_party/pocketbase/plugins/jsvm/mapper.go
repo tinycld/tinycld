@@ -5,11 +5,11 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/grafana/sobek"
+	goja "github.com/grafana/sobek"
 )
 
 var (
-	_ sobek.FieldNameMapper = (*FieldMapper)(nil)
+	_ goja.FieldNameMapper = (*FieldMapper)(nil)
 )
 
 // FieldMapper provides custom mapping between Go and JavaScript property names.

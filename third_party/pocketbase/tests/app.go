@@ -37,9 +37,9 @@ func (t *TestApp) Cleanup() {
 	event.App = t
 
 	t.OnTerminate().Trigger(event, func(e *core.TerminateEvent) error {
+		t.ClearBootstrap()
 		t.TestMailer.Reset()
 		t.ResetEventCalls()
-		t.ResetBootstrapState()
 
 		return e.Next()
 	})
@@ -139,6 +139,14 @@ func NewTestAppWithConfig(config core.BaseAppConfig) (*TestApp, error) {
 	t.OnBootstrap().Bind(&hook.Handler[*core.BootstrapEvent]{
 		Func: func(e *core.BootstrapEvent) error {
 			t.registerEventCall("OnBootstrap")
+			return e.Next()
+		},
+		Priority: -99999,
+	})
+
+	t.OnBootstrapClear().Bind(&hook.Handler[*core.BootstrapEvent]{
+		Func: func(e *core.BootstrapEvent) error {
+			t.registerEventCall("OnBootstrapClear")
 			return e.Next()
 		},
 		Priority: -99999,
@@ -548,6 +556,21 @@ func NewTestAppWithConfig(config core.BaseAppConfig) (*TestApp, error) {
 		},
 		Priority: -99999,
 	})
+
+	// t.OnFilesystemDelete().Bind(&hook.Handler[*core.FilesystemDeleteEvent]{
+	// 	Func: func(e *core.FilesystemDeleteEvent) error {
+	// 		t.registerEventCall("OnFilesystemDelete")
+	// 		return e.Next()
+	// 	},
+	// 	Priority: -99999,
+	// })
+	// t.OnFilesystemNewWriter().Bind(&hook.Handler[*core.FilesystemNewWriterEvent]{
+	// 	Func: func(e *core.FilesystemNewWriterEvent) error {
+	// 		t.registerEventCall("OnFilesystemNewWriter")
+	// 		return e.Next()
+	// 	},
+	// 	Priority: -99999,
+	// })
 
 	t.OnRealtimeConnectRequest().Bind(&hook.Handler[*core.RealtimeConnectRequestEvent]{
 		Func: func(e *core.RealtimeConnectRequestEvent) error {

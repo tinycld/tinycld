@@ -1,7 +1,7 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import type { PackageManifest } from './load-manifest'
-import { GO_VERSION } from './paths'
+import { goVersion } from './paths'
 import { assertSafeImportField } from './validate-generated-field'
 
 export interface ServerPkg {
@@ -53,7 +53,7 @@ export function buildPackageExtensionsGo(pkgs: ServerPkg[]): string {
 export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
     const uses = pkgs.map(p => `    ${p.serverRelPath}`)
     return [
-        `go ${GO_VERSION}`,
+        `go ${goVersion()}`,
         '',
         'use (',
         '    .',
@@ -89,7 +89,7 @@ export function buildMemberGoWork(coreRelPath: string, forkRelPath: string): str
     // app server's go.mod carries this same replace for the assembled build. The
     // fork is vendored in the app shell, so it is always available.
     return [
-        `go ${GO_VERSION}`,
+        `go ${goVersion()}`,
         '',
         'use .',
         '',

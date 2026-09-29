@@ -2,7 +2,7 @@ package jsvm
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grafana/sobek"
+	goja "github.com/grafana/sobek"
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
@@ -28,7 +28,7 @@ import (
 	"github.com/spf13/cast"
 )
 
-func testBindsCount(vm *sobek.Runtime, namespace string, count int, t *testing.T) {
+func testBindsCount(vm *goja.Runtime, namespace string, count int, t *testing.T) {
 	v, err := vm.RunString(`Object.keys(` + namespace + `).length`)
 	if err != nil {
 		t.Fatal(err)
@@ -44,14 +44,14 @@ func testBindsCount(vm *sobek.Runtime, namespace string, count int, t *testing.T
 // note: this test is useful as a reminder to update the tests in case
 // a new base binding is added.
 func TestBindCoreCount(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	testBindsCount(vm, "this", 41, t)
 }
 
 func TestBindCoreSleep(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	vm.Set("reader", strings.NewReader("test"))
 
@@ -70,7 +70,7 @@ func TestBindCoreSleep(t *testing.T) {
 }
 
 func TestBindCoreReaderToString(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	vm.Set("reader", strings.NewReader("test"))
 
@@ -87,7 +87,7 @@ func TestBindCoreReaderToString(t *testing.T) {
 }
 
 func TestBindCoreToString(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	vm.Set("scenarios", []struct {
 		Name     string
@@ -121,7 +121,7 @@ func TestBindCoreToString(t *testing.T) {
 }
 
 func TestBindCoreToBytes(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	vm.Set("bytesEqual", bytes.Equal)
 	vm.Set("scenarios", []struct {
@@ -161,7 +161,7 @@ func TestBindCoreToBytes(t *testing.T) {
 }
 
 func TestBindCoreUnmarshal(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	vm.Set("data", &map[string]any{"a": 123})
 
@@ -182,7 +182,7 @@ func TestBindCoreUnmarshal(t *testing.T) {
 }
 
 func TestBindCoreContext(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	_, err := vm.RunString(`
@@ -206,7 +206,7 @@ func TestBindCoreContext(t *testing.T) {
 }
 
 func TestBindCoreCookie(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	_, err := vm.RunString(`
@@ -235,7 +235,7 @@ func TestBindCoreCookie(t *testing.T) {
 }
 
 func TestBindCoreSubscriptionMessage(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	vm.Set("bytesToString", func(b []byte) string {
 		return string(b)
@@ -271,7 +271,7 @@ func TestBindCoreRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	vm.Set("collection", collection)
 
@@ -309,7 +309,7 @@ func TestBindCoreRecord(t *testing.T) {
 }
 
 func TestBindCoreCollection(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	v, err := vm.RunString(`new Collection({ name: "test", createRule: "@request.auth.id != ''", fields: [{name: "title", "type": "text"}] })`)
@@ -337,7 +337,7 @@ func TestBindCoreCollection(t *testing.T) {
 }
 
 func TestBindCoreFieldsList(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	v, err := vm.RunString(`new FieldsList([{name: "title", "type": "text"}])`)
@@ -356,7 +356,7 @@ func TestBindCoreFieldsList(t *testing.T) {
 }
 
 func TestBindCoreField(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	v, err := vm.RunString(`new Field({name: "test", "type": "bool"})`)
@@ -382,7 +382,7 @@ func isType[T any](v any) bool {
 func TestBindCoreNamedFields(t *testing.T) {
 	t.Parallel()
 
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	scenarios := []struct {
@@ -471,7 +471,7 @@ func TestBindCoreNamedFields(t *testing.T) {
 }
 
 func TestBindCoreMailerMessage(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	v, err := vm.RunString(`new MailerMessage({
@@ -505,12 +505,12 @@ func TestBindCoreMailerMessage(t *testing.T) {
 		t.Fatalf("Expected mailer.Message, got %v", m)
 	}
 
-	raw, err := json.Marshal(m)
+	raw, err := json.Marshal(m, json.Deterministic(true))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	expected := `{"from":{"Name":"test_from","Address":"test_from@example.com"},"to":[{"Name":"test_to1","Address":"test_to1@example.com"},{"Name":"test_to2","Address":"test_to2@example.com"}],"bcc":[{"Name":"test_bcc1","Address":"test_bcc1@example.com"},{"Name":"test_bcc2","Address":"test_bcc2@example.com"}],"cc":[{"Name":"test_cc1","Address":"test_cc1@example.com"},{"Name":"test_cc2","Address":"test_cc2@example.com"}],"subject":"test_subject","html":"test_html","text":"test_text","headers":{"header1":"a","header2":"b"},"attachments":null,"inlineAttachments":null}`
+	expected := `{"from":{"Name":"test_from","Address":"test_from@example.com"},"to":[{"Name":"test_to1","Address":"test_to1@example.com"},{"Name":"test_to2","Address":"test_to2@example.com"}],"bcc":[{"Name":"test_bcc1","Address":"test_bcc1@example.com"},{"Name":"test_bcc2","Address":"test_bcc2@example.com"}],"cc":[{"Name":"test_cc1","Address":"test_cc1@example.com"},{"Name":"test_cc2","Address":"test_cc2@example.com"}],"subject":"test_subject","html":"test_html","text":"test_text","headers":{"header1":"a","header2":"b"},"attachments":{},"inlineAttachments":{}}`
 
 	if string(raw) != expected {
 		t.Fatalf("Expected \n%s, \ngot \n%s", expected, raw)
@@ -518,7 +518,7 @@ func TestBindCoreMailerMessage(t *testing.T) {
 }
 
 func TestBindCoreCommand(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	_, err := vm.RunString(`
@@ -547,7 +547,7 @@ func TestBindCoreCommand(t *testing.T) {
 }
 
 func TestBindCoreRequestInfo(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	_, err := vm.RunString(`
@@ -565,7 +565,7 @@ func TestBindCoreRequestInfo(t *testing.T) {
 }
 
 func TestBindCoreMiddleware(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	_, err := vm.RunString(`
@@ -585,7 +585,7 @@ func TestBindCoreMiddleware(t *testing.T) {
 }
 
 func TestBindCoreTimezone(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	_, err := vm.RunString(`
@@ -610,7 +610,7 @@ func TestBindCoreTimezone(t *testing.T) {
 }
 
 func TestBindCoreDateTime(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	_, err := vm.RunString(`
@@ -651,7 +651,7 @@ func TestBindCoreDateTime(t *testing.T) {
 }
 
 func TestBindCoreValidationError(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 
 	scenarios := []struct {
@@ -701,7 +701,7 @@ func TestBindDbx(t *testing.T) {
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
-	vm := sobek.New()
+	vm := goja.New()
 	vm.Set("db", app.DB())
 	BindCore(vm)
 	BindDbx(vm)
@@ -793,7 +793,7 @@ func TestBindDbx(t *testing.T) {
 }
 
 func TestBindMailsCount(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindMails(vm)
 
 	testBindsCount(vm, "$mails", 5, t)
@@ -808,7 +808,7 @@ func TestBindMails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	BindMails(vm)
 	vm.Set("$app", app)
@@ -846,14 +846,14 @@ func TestBindMails(t *testing.T) {
 }
 
 func TestBindSecurityCount(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindSecurity(vm)
 
 	testBindsCount(vm, "$security", 16, t)
 }
 
 func TestSecurityCryptoBinds(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	BindSecurity(vm)
 
@@ -887,7 +887,7 @@ func TestSecurityCryptoBinds(t *testing.T) {
 }
 
 func TestSecurityRandomStringBinds(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	BindSecurity(vm)
 
@@ -963,7 +963,7 @@ func TestSecurityJWTBinds(t *testing.T) {
 
 	for _, s := range sceneraios {
 		t.Run(s.name, func(t *testing.T) {
-			vm := sobek.New()
+			vm := goja.New()
 			BindCore(vm)
 			BindSecurity(vm)
 
@@ -976,7 +976,7 @@ func TestSecurityJWTBinds(t *testing.T) {
 }
 
 func TestSecurityEncryptAndDecryptBinds(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	BindSecurity(vm)
 
@@ -1015,7 +1015,7 @@ func TestBindFilesystem(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	vm := sobek.New()
+	vm := goja.New()
 	vm.Set("mh", &multipart.FileHeader{Filename: "test"})
 	vm.Set("tmpDir", tmpDir)
 	vm.Set("testFile", filepath.Join(app.DataDir(), "data.db"))
@@ -1117,14 +1117,14 @@ func TestBindFilesystem(t *testing.T) {
 }
 
 func TestBindForms(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindForms(vm)
 
 	testBindsCount(vm, "this", 4, t)
 }
 
 func TestBindApisCount(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindApis(vm)
 
 	testBindsCount(vm, "this", 8, t)
@@ -1132,7 +1132,7 @@ func TestBindApisCount(t *testing.T) {
 }
 
 func TestBindApisErrors(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindApis(vm)
 
 	scenarios := []struct {
@@ -1178,7 +1178,7 @@ func TestBindApisErrors(t *testing.T) {
 			t.Errorf("[%s] Expected Message %q, got %q", s.js, s.expectMessage, apiErr.Message)
 		}
 
-		dataRaw, _ := json.Marshal(apiErr.RawData())
+		dataRaw, _ := json.Marshal(apiErr.RawData(), json.Deterministic(true))
 		if string(dataRaw) != s.expectData {
 			t.Errorf("[%s] Expected Data %q, got %q", s.js, s.expectData, dataRaw)
 		}
@@ -1189,7 +1189,7 @@ func TestLoadingDynamicModel(t *testing.T) {
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	BindDbx(vm)
 	vm.Set("$app", app)
@@ -1290,7 +1290,7 @@ func TestDynamicModelMapFieldCaching(t *testing.T) {
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	BindDbx(vm)
 	vm.Set("$app", app)
@@ -1349,7 +1349,7 @@ func TestLoadingArrayOf(t *testing.T) {
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	BindDbx(vm)
 	vm.Set("$app", app)
@@ -1395,7 +1395,7 @@ func TestBindHTTPCount(t *testing.T) {
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
-	vm := sobek.New()
+	vm := goja.New()
 	BindHTTP(vm)
 
 	testBindsCount(vm, "this", 2, t) // + FormData
@@ -1439,14 +1439,14 @@ func TestBindHTTPSend(t *testing.T) {
 		res.Header().Add("X-Custom", "custom_header")
 		res.Header().Add("Set-Cookie", "sessionId=123456")
 
-		infoRaw, _ := json.Marshal(info)
+		infoRaw, _ := json.Marshal(info, json.Deterministic(true))
 
 		// write back the submitted request
 		res.Write(infoRaw)
 	}))
 	defer server.Close()
 
-	vm := sobek.New()
+	vm := goja.New()
 	BindCore(vm)
 	BindHTTP(vm)
 	vm.Set("testURL", server.URL)
@@ -1592,15 +1592,15 @@ func TestCronBindsCount(t *testing.T) {
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
-	vm := sobek.New()
+	vm := goja.New()
 
-	pool := newPool(1, 0, func() *sobek.Runtime { return sobek.New() })
+	pool := newPool(1, func() *goja.Runtime { return goja.New() })
 
-	(&plugin{app: app}).cronBinds(vm, pool)
+	cronBinds(app, vm, pool)
 
 	testBindsCount(vm, "this", 2, t)
 
-	pool.run(func(poolVM *sobek.Runtime) error {
+	pool.run(func(poolVM *goja.Runtime) error {
 		testBindsCount(poolVM, "this", 2, t)
 		return nil
 	})
@@ -1610,10 +1610,10 @@ func TestHooksBindsCount(t *testing.T) {
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
-	vm := sobek.New()
-	(&plugin{app: app}).hooksBinds(vm, nil)
+	vm := goja.New()
+	hooksBinds(app, vm, nil)
 
-	testBindsCount(vm, "this", 82, t)
+	testBindsCount(vm, "this", 83, t)
 }
 
 func TestHooksBinds(t *testing.T) {
@@ -1624,18 +1624,18 @@ func TestHooksBinds(t *testing.T) {
 		Called int
 	}{}
 
-	vmFactory := func() *sobek.Runtime {
-		vm := sobek.New()
+	vmFactory := func() *goja.Runtime {
+		vm := goja.New()
 		BindCore(vm)
 		vm.Set("$app", app)
 		vm.Set("result", result)
 		return vm
 	}
 
-	pool := newPool(1, 0, vmFactory)
+	pool := newPool(1, vmFactory)
 
 	vm := vmFactory()
-	(&plugin{app: app}).hooksBinds(vm, pool)
+	hooksBinds(app, vm, pool)
 
 	_, err := vm.RunString(`
 		onModelUpdate((e) => {
@@ -1710,18 +1710,18 @@ func TestHooksExceptionUnwrapping(t *testing.T) {
 
 	goErr := errors.New("test")
 
-	vmFactory := func() *sobek.Runtime {
-		vm := sobek.New()
+	vmFactory := func() *goja.Runtime {
+		vm := goja.New()
 		BindCore(vm)
 		vm.Set("$app", app)
 		vm.Set("goErr", goErr)
 		return vm
 	}
 
-	pool := newPool(1, 0, vmFactory)
+	pool := newPool(1, vmFactory)
 
 	vm := vmFactory()
-	(&plugin{app: app}).hooksBinds(vm, pool)
+	hooksBinds(app, vm, pool)
 
 	_, err := vm.RunString(`
 		onModelUpdate((e) => {
@@ -1749,8 +1749,8 @@ func TestRouterBindsCount(t *testing.T) {
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
-	vm := sobek.New()
-	(&plugin{app: app}).routerBinds(vm, nil)
+	vm := goja.New()
+	routerBinds(app, vm, nil)
 
 	testBindsCount(vm, "this", 2, t)
 }
@@ -1764,8 +1764,8 @@ func TestRouterBinds(t *testing.T) {
 		GlobalMiddlewareCalls int
 	}{}
 
-	vmFactory := func() *sobek.Runtime {
-		vm := sobek.New()
+	vmFactory := func() *goja.Runtime {
+		vm := goja.New()
 		BindCore(vm)
 		BindApis(vm)
 		vm.Set("$app", app)
@@ -1773,10 +1773,10 @@ func TestRouterBinds(t *testing.T) {
 		return vm
 	}
 
-	pool := newPool(1, 0, vmFactory)
+	pool := newPool(1, vmFactory)
 
 	vm := vmFactory()
-	(&plugin{app: app}).routerBinds(vm, pool)
+	routerBinds(app, vm, pool)
 
 	_, err := vm.RunString(`
 		routerAdd("GET", "/test", (e) => {
@@ -1856,14 +1856,14 @@ func TestRouterBinds(t *testing.T) {
 }
 
 func TestBindFilepathCount(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindFilepath(vm)
 
 	testBindsCount(vm, "$filepath", 15, t)
 }
 
 func TestBindOSCount(t *testing.T) {
-	vm := sobek.New()
+	vm := goja.New()
 	BindOS(vm)
 
 	testBindsCount(vm, "$os", 20, t)

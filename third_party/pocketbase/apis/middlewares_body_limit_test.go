@@ -1,9 +1,10 @@
 package apis_test
 
 import (
-	"bytes"
-	"fmt"
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/apis"
@@ -19,13 +20,35 @@ func TestBodyLimitMiddleware(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pbRouter.POST("/a", func(e *core.RequestEvent) error {
-		return e.String(200, "a")
-	}) // default global BodyLimit check
 
-	pbRouter.POST("/b", func(e *core.RequestEvent) error {
-		return e.String(200, "b")
-	}).Bind(apis.BodyLimit(20))
+	testHandler := func(e *core.RequestEvent) error {
+		// read the body multiple times to ensure that the limited
+		// reader guards and rereads are invoked
+		var result any
+		if err := e.BindBody(&result); err != nil {
+			return err
+		}
+
+		if err := e.BindBody(&result); err != nil {
+			return err
+		}
+
+		return e.JSON(200, result)
+	}
+
+	const customLimit = 20
+
+	pbRouter.POST("/a", testHandler) // default global BodyLimit check
+	pbRouter.POST("/b", testHandler).Bind(apis.BodyLimit(customLimit))
+	pbRouter.POST("/iof", func(e *core.RequestEvent) error {
+		// ensure that normal io methods still operate correctly
+		b, err := io.ReadAll(e.Request.Body)
+		if err != nil {
+			return err
+		}
+
+		return e.String(http.StatusOK, string(b))
+	}).Bind(apis.BodyLimit(customLimit))
 
 	mux, err := pbRouter.BuildMux()
 	if err != nil {
@@ -33,20 +56,90 @@ func TestBodyLimitMiddleware(t *testing.T) {
 	}
 
 	scenarios := []struct {
-		url            string
-		size           int64
-		expectedStatus int
+		name              string
+		url               string
+		body              string
+		lazyContentLength bool
+		expectedStatus    int
 	}{
-		{"/a", 21, 200},
-		{"/a", apis.DefaultMaxBodySize + 1, 413},
-		{"/b", 20, 200},
-		{"/b", 21, 413},
+		{
+			"(eager content-length check) with body = default limit",
+			"/a",
+			`"` + strings.Repeat("a", int(apis.DefaultMaxBodySize-2)) + `"`,
+			false,
+			http.StatusOK,
+		},
+		{
+			"(eager content-length check) with body > default limit",
+			"/a",
+			`"` + strings.Repeat("a", int(apis.DefaultMaxBodySize)) + `"`,
+			false,
+			http.StatusRequestEntityTooLarge,
+		},
+		{
+			"(lazy content-length check) with body = default limit",
+			"/a",
+			`"` + strings.Repeat("a", int(apis.DefaultMaxBodySize-2)) + `"`,
+			true,
+			http.StatusOK,
+		},
+		{
+			"(lazy content-length check) with body > default limit",
+			"/a",
+			`"` + strings.Repeat("a", int(apis.DefaultMaxBodySize)) + `"`,
+			true,
+			http.StatusRequestEntityTooLarge,
+		},
+		// ---
+		{
+			"(eager content-length check) with body = custom limit",
+			"/b",
+			`"` + strings.Repeat("a", customLimit-2) + `"`,
+			false,
+			http.StatusOK,
+		},
+		{
+			"(eager content-length check) with body > custom limit",
+			"/b",
+			`"` + strings.Repeat("a", customLimit) + `"`,
+			false,
+			http.StatusRequestEntityTooLarge,
+		},
+		{
+			"(lazy content-length check) with body = custom limit",
+			"/b",
+			`"` + strings.Repeat("a", customLimit-2) + `"`,
+			true,
+			http.StatusOK,
+		},
+		{
+			"(lazy content-length check) with body > custom limit",
+			"/b",
+			`"` + strings.Repeat("a", customLimit) + `"`,
+			true,
+			http.StatusRequestEntityTooLarge,
+		},
+		// ---
+		{
+			"io.ReadAll io.EOF exact limit check",
+			"/iof",
+			`"` + strings.Repeat("a", customLimit-2) + `"`,
+			true,
+			http.StatusOK,
+		},
 	}
 
 	for _, s := range scenarios {
-		t.Run(fmt.Sprintf("%s_%d", s.url, s.size), func(t *testing.T) {
+		t.Run(s.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest("POST", s.url, bytes.NewReader(make([]byte, s.size)))
+
+			req := httptest.NewRequest("POST", s.url, strings.NewReader(s.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			if s.lazyContentLength {
+				req.ContentLength = -1
+			}
+
 			mux.ServeHTTP(rec, req)
 
 			result := rec.Result()

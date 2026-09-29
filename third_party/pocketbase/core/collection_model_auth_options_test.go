@@ -2,7 +2,7 @@ package core_test
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
@@ -712,6 +712,76 @@ func TestPasswordAuthConfigValidate(t *testing.T) {
 	}
 }
 
+func TestOAuth2ConfigUnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	scenarios := []struct {
+		name     string
+		newJSON  string
+		expected string
+	}{
+		{
+			"missing",
+			`{
+				"enabled": true,
+				"mappedFields": {"username": "username_test"}
+			}`,
+			`{"providers":[{"pkce":null,"name":"a","clientId":"a_clientId","clientSecret":"a_clientSecret","authURL":"","tokenURL":"","userInfoURL":"","displayName":"","extra":{}},{"pkce":null,"name":"b","clientId":"b_clientId","clientSecret":"b_clientSecret","authURL":"","tokenURL":"","userInfoURL":"","displayName":"","extra":{}}],"mappedFields":{"id":"","name":"name_test","username":"username_test","avatarURL":""},"enabled":true}`,
+		},
+		{
+			"empty",
+			`{
+				"enabled": true,
+				"mappedFields": {"username": "username_test"},
+				"providers": []
+			}`,
+			`{"providers":[],"mappedFields":{"id":"","name":"name_test","username":"username_test","avatarURL":""},"enabled":true}`,
+		},
+		{
+			"non-empty",
+			`{
+				"enabled": true,
+				"mappedFields": {"username": "username_test"},
+				"providers": [
+					{"name": "c", "clientId": "c_clientId", "clientSecret": "c_clientSecret"},
+					{"name": "a", "displayName": "a_displayName"}
+				]
+			}`,
+			`{"providers":[{"pkce":null,"name":"c","clientId":"c_clientId","clientSecret":"c_clientSecret","authURL":"","tokenURL":"","userInfoURL":"","displayName":"","extra":{}},{"pkce":null,"name":"a","clientId":"a_clientId","clientSecret":"a_clientSecret","authURL":"","tokenURL":"","userInfoURL":"","displayName":"a_displayName","extra":{}}],"mappedFields":{"id":"","name":"name_test","username":"username_test","avatarURL":""},"enabled":true}`,
+		},
+	}
+
+	for _, s := range scenarios {
+		t.Run(s.name, func(t *testing.T) {
+			config := core.OAuth2Config{
+				Enabled: false,
+				MappedFields: core.OAuth2KnownFields{
+					Name: "name_test",
+				},
+				Providers: []core.OAuth2ProviderConfig{
+					{Name: "a", ClientId: "a_clientId", ClientSecret: "a_clientSecret"},
+					{Name: "b", ClientId: "b_clientId", ClientSecret: "b_clientSecret"},
+				},
+			}
+
+			err := json.Unmarshal([]byte(s.newJSON), &config)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			raw, err := json.Marshal(config, json.Deterministic(true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			rawStr := string(raw)
+
+			if rawStr != s.expected {
+				t.Fatalf("Expected OAuth2ProviderConfig\n%s\ngot\n%s", s.expected, rawStr)
+			}
+		})
+	}
+}
+
 func TestOAuth2ConfigGetProviderConfig(t *testing.T) {
 	scenarios := []struct {
 		name           string
@@ -1016,8 +1086,8 @@ func TestOAuth2ProviderConfigInitProvider(t *testing.T) {
 				t.Fatalf("Expected PKCE %v, got %v", *s.expectedConfig.PKCE, provider.PKCE())
 			}
 
-			rawMeta, _ := json.Marshal(provider.Extra())
-			expectedMeta, _ := json.Marshal(s.expectedConfig.Extra)
+			rawMeta, _ := json.Marshal(provider.Extra(), json.Deterministic(true))
+			expectedMeta, _ := json.Marshal(s.expectedConfig.Extra, json.Deterministic(true))
 			if !bytes.Equal(rawMeta, expectedMeta) {
 				t.Fatalf("Expected PKCE %v, got %v", *s.expectedConfig.PKCE, provider.PKCE())
 			}

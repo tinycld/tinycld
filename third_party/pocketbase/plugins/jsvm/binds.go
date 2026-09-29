@@ -3,7 +3,7 @@ package jsvm
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"io/fs"
@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/grafana/sobek"
+	goja "github.com/grafana/sobek"
 	"github.com/pocketbase/dbx"
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/apis"
@@ -40,11 +40,11 @@ import (
 )
 
 // hooksBinds adds wrapped "on*" hook methods by reflecting on core.App.
-func (p *plugin) hooksBinds(loader *sobek.Runtime, executors *vmsPool) {
+func hooksBinds(app core.App, loader *goja.Runtime, executors *vmsPool) {
 	fm := FieldMapper{}
 
-	appType := reflect.TypeOf(p.app)
-	appValue := reflect.ValueOf(p.app)
+	appType := reflect.TypeOf(app)
+	appValue := reflect.ValueOf(app)
 	totalMethods := appType.NumMethod()
 	excludeHooks := []string{"OnServe"}
 
@@ -60,10 +60,7 @@ func (p *plugin) hooksBinds(loader *sobek.Runtime, executors *vmsPool) {
 		loader.Set(jsName, func(callback string, tags ...string) {
 			// overwrite the global $app with the hook scoped instance
 			callback = `function(e) { $app = e.app; return (` + callback + `).call(undefined, e) }`
-			pr, err := p.compile("{("+callback+").apply(undefined, __args)}", true)
-			if err != nil {
-				panic(err)
-			}
+			pr := executors.mustCompile("{(" + callback + ").apply(undefined, __args)}")
 
 			tagsAsValues := make([]reflect.Value, len(tags))
 			for i, tag := range tags {
@@ -81,15 +78,15 @@ func (p *plugin) hooksBinds(loader *sobek.Runtime, executors *vmsPool) {
 					handlerArgs[i] = arg.Interface()
 				}
 
-				err := executors.run(func(executor *sobek.Runtime) error {
+				err := executors.run(func(executor *goja.Runtime) error {
 					oldApp := executor.Get("$app")
 					executor.Set("__args", handlerArgs)
 					res, err := executor.RunProgram(pr)
-					executor.Set("__args", sobek.Undefined())
+					executor.Set("__args", goja.Undefined())
 					executor.Set("$app", oldApp) // reset to its default for the executor
 
 					// check for returned Go error value
-					if resErr := checkGojaValueForError(p.app, res); resErr != nil {
+					if resErr := checkGojaValueForError(app, res); resErr != nil {
 						return resErr
 					}
 
@@ -105,21 +102,18 @@ func (p *plugin) hooksBinds(loader *sobek.Runtime, executors *vmsPool) {
 	}
 }
 
-func (p *plugin) cronBinds(loader *sobek.Runtime, executors *vmsPool) {
+func cronBinds(app core.App, loader *goja.Runtime, executors *vmsPool) {
 	cronAdd := func(jobId, cronExpr, handler string) {
-		pr, err := p.compile("{("+handler+").apply(undefined)}", true)
-		if err != nil {
-			panic(err)
-		}
+		pr := executors.mustCompile("{(" + handler + ").apply(undefined)}")
 
-		err = p.app.Cron().Add(jobId, cronExpr, func() {
-			err := executors.run(func(executor *sobek.Runtime) error {
+		err := app.Cron().Add(jobId, cronExpr, func() {
+			err := executors.run(func(executor *goja.Runtime) error {
 				_, err := executor.RunProgram(pr)
 				return err
 			})
 
 			if err != nil {
-				p.app.Logger().Error(
+				app.Logger().Error(
 					"[cronAdd] failed to execute cron job",
 					slog.String("jobId", jobId),
 					slog.String("error", err.Error()),
@@ -133,13 +127,13 @@ func (p *plugin) cronBinds(loader *sobek.Runtime, executors *vmsPool) {
 	loader.Set("cronAdd", cronAdd)
 
 	cronRemove := func(jobId string) {
-		p.app.Cron().Remove(jobId)
+		app.Cron().Remove(jobId)
 	}
 	loader.Set("cronRemove", cronRemove)
 
 	// register the removal helper also in the executors to allow removing cron jobs from everywhere
 	oldFactory := executors.factory
-	executors.factory = func() *sobek.Runtime {
+	executors.factory = func() *goja.Runtime {
 		vm := oldFactory()
 
 		vm.Set("cronAdd", cronAdd)
@@ -153,39 +147,39 @@ func (p *plugin) cronBinds(loader *sobek.Runtime, executors *vmsPool) {
 	}
 }
 
-func (p *plugin) routerBinds(loader *sobek.Runtime, executors *vmsPool) {
-	loader.Set("routerAdd", func(method string, path string, handler sobek.Value, middlewares ...sobek.Value) {
-		wrappedMiddlewares, err := p.wrapMiddlewares(executors, middlewares...)
+func routerBinds(app core.App, loader *goja.Runtime, executors *vmsPool) {
+	loader.Set("routerAdd", func(method string, path string, handler goja.Value, middlewares ...goja.Value) {
+		wrappedMiddlewares, err := wrapMiddlewares(executors, middlewares...)
 		if err != nil {
 			panic("[routerAdd] failed to wrap middlewares: " + err.Error())
 		}
 
-		wrappedHandler, err := p.wrapHandlerFunc(executors, handler)
+		wrappedHandler, err := wrapHandlerFunc(executors, handler)
 		if err != nil {
 			panic("[routerAdd] failed to wrap handler: " + err.Error())
 		}
 
-		p.app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 			e.Router.Route(strings.ToUpper(method), path, wrappedHandler).Bind(wrappedMiddlewares...)
 
 			return e.Next()
 		})
 	})
 
-	loader.Set("routerUse", func(middlewares ...sobek.Value) {
-		wrappedMiddlewares, err := p.wrapMiddlewares(executors, middlewares...)
+	loader.Set("routerUse", func(middlewares ...goja.Value) {
+		wrappedMiddlewares, err := wrapMiddlewares(executors, middlewares...)
 		if err != nil {
 			panic("[routerUse] failed to wrap middlewares: " + err.Error())
 		}
 
-		p.app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 			e.Router.Bind(wrappedMiddlewares...)
 			return e.Next()
 		})
 	})
 }
 
-func (p *plugin) wrapHandlerFunc(executors *vmsPool, handler sobek.Value) (func(*core.RequestEvent) error, error) {
+func wrapHandlerFunc(executors *vmsPool, handler goja.Value) (func(*core.RequestEvent) error, error) {
 	if handler == nil {
 		return nil, errors.New("handler must be non-nil")
 	}
@@ -194,19 +188,16 @@ func (p *plugin) wrapHandlerFunc(executors *vmsPool, handler sobek.Value) (func(
 	case func(*core.RequestEvent) error:
 		// "native" handler func - no need to wrap
 		return h, nil
-	case func(sobek.FunctionCall) sobek.Value, string:
-		pr, err := p.compile("{("+handler.String()+").apply(undefined, __args)}", true)
-		if err != nil {
-			panic(err)
-		}
+	case func(goja.FunctionCall) goja.Value, string:
+		pr := executors.mustCompile("{(" + handler.String() + ").apply(undefined, __args)}")
 
 		wrappedHandler := func(e *core.RequestEvent) error {
-			return executors.run(func(executor *sobek.Runtime) error {
+			return executors.run(func(executor *goja.Runtime) error {
 				oldApp := executor.Get("$app")
 				executor.Set("$app", e.App) // overwrite the global $app with the hook scoped instance
 				executor.Set("__args", []any{e})
 				res, err := executor.RunProgram(pr)
-				executor.Set("__args", sobek.Undefined())
+				executor.Set("__args", goja.Undefined())
 				executor.Set("$app", oldApp)
 
 				// check for returned Go error value
@@ -230,7 +221,7 @@ type gojaHookHandler struct {
 	priority       int
 }
 
-func (p *plugin) wrapMiddlewares(executors *vmsPool, rawMiddlewares ...sobek.Value) ([]*hook.Handler[*core.RequestEvent], error) {
+func wrapMiddlewares(executors *vmsPool, rawMiddlewares ...goja.Value) ([]*hook.Handler[*core.RequestEvent], error) {
 	wrappedMiddlewares := make([]*hook.Handler[*core.RequestEvent], len(rawMiddlewares))
 
 	for i, m := range rawMiddlewares {
@@ -252,21 +243,18 @@ func (p *plugin) wrapMiddlewares(executors *vmsPool, rawMiddlewares ...sobek.Val
 				return nil, errors.New("missing or invalid Middleware function")
 			}
 
-			pr, err := p.compile("{("+v.serializedFunc+").apply(undefined, __args)}", true)
-			if err != nil {
-				panic(err)
-			}
+			pr := executors.mustCompile("{(" + v.serializedFunc + ").apply(undefined, __args)}")
 
 			wrappedMiddlewares[i] = &hook.Handler[*core.RequestEvent]{
 				Id:       v.id,
 				Priority: v.priority,
 				Func: func(e *core.RequestEvent) error {
-					return executors.run(func(executor *sobek.Runtime) error {
+					return executors.run(func(executor *goja.Runtime) error {
 						oldApp := executor.Get("$app")
 						executor.Set("$app", e.App) // overwrite the global $app with the hook scoped instance
 						executor.Set("__args", []any{e})
 						res, err := executor.RunProgram(pr)
-						executor.Set("__args", sobek.Undefined())
+						executor.Set("__args", goja.Undefined())
 						executor.Set("$app", oldApp)
 
 						// check for returned Go error value
@@ -278,20 +266,17 @@ func (p *plugin) wrapMiddlewares(executors *vmsPool, rawMiddlewares ...sobek.Val
 					})
 				},
 			}
-		case func(sobek.FunctionCall) sobek.Value, string:
-			pr, err := p.compile("{("+m.String()+").apply(undefined, __args)}", true)
-			if err != nil {
-				panic(err)
-			}
+		case func(goja.FunctionCall) goja.Value, string:
+			pr := executors.mustCompile("{(" + m.String() + ").apply(undefined, __args)}")
 
 			wrappedMiddlewares[i] = &hook.Handler[*core.RequestEvent]{
 				Func: func(e *core.RequestEvent) error {
-					return executors.run(func(executor *sobek.Runtime) error {
+					return executors.run(func(executor *goja.Runtime) error {
 						oldApp := executor.Get("$app")
 						executor.Set("$app", e.App) // overwrite the global $app with the hook scoped instance
 						executor.Set("__args", []any{e})
 						res, err := executor.RunProgram(pr)
-						executor.Set("__args", sobek.Undefined())
+						executor.Set("__args", goja.Undefined())
 						executor.Set("$app", oldApp)
 
 						// check for returned Go error value
@@ -317,7 +302,7 @@ var cachedArrayOfTypes = store.New[reflect.Type, reflect.Type](nil)
 
 // BindCore registers common core objects and functions such as sleep,
 // toString, DynamicModel, etc. into the provided runtime.
-func BindCore(vm *sobek.Runtime) {
+func BindCore(vm *goja.Runtime) {
 	vm.SetFieldNameMapper(FieldMapper{})
 
 	// deprecated: use toString
@@ -367,7 +352,7 @@ func BindCore(vm *sobek.Runtime) {
 			}
 
 			// as a last attempt try to json encode the value
-			rawBytes, _ := json.Marshal(raw)
+			rawBytes, _ := json.Marshal(raw, json.Deterministic(true))
 
 			return rawBytes, nil
 		}
@@ -396,7 +381,7 @@ func BindCore(vm *sobek.Runtime) {
 			}
 
 			// as a last attempt try to json encode the value
-			rawBytes, _ := json.Marshal(raw)
+			rawBytes, _ := json.Marshal(raw, json.Deterministic(true))
 
 			return string(rawBytes), nil
 		}
@@ -424,7 +409,7 @@ func BindCore(vm *sobek.Runtime) {
 		return json.Unmarshal(raw, &dst)
 	})
 
-	vm.Set("Context", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("Context", func(call goja.ConstructorCall) *goja.Object {
 		var instance context.Context
 
 		oldCtx, ok := call.Argument(0).Export().(context.Context)
@@ -439,20 +424,20 @@ func BindCore(vm *sobek.Runtime) {
 			instance = context.WithValue(instance, key, call.Argument(2).Export())
 		}
 
-		instanceValue := vm.ToValue(instance).(*sobek.Object)
+		instanceValue := vm.ToValue(instance).(*goja.Object)
 		instanceValue.SetPrototype(call.This.Prototype())
 
 		return instanceValue
 	})
 
-	vm.Set("DynamicModel", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("DynamicModel", func(call goja.ConstructorCall) *goja.Object {
 		shape, ok := call.Argument(0).Export().(map[string]any)
 		if !ok || len(shape) == 0 {
 			panic("[DynamicModel] missing shape data")
 		}
 
 		instance := newDynamicModel(shape)
-		instanceValue := vm.ToValue(instance).(*sobek.Object)
+		instanceValue := vm.ToValue(instance).(*goja.Object)
 		instanceValue.SetPrototype(call.This.Prototype())
 
 		return instanceValue
@@ -484,7 +469,7 @@ func BindCore(vm *sobek.Runtime) {
 		return &v
 	})
 
-	vm.Set("Record", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("Record", func(call goja.ConstructorCall) *goja.Object {
 		var instance *core.Record
 
 		collection, ok := call.Argument(0).Export().(*core.Collection)
@@ -498,25 +483,25 @@ func BindCore(vm *sobek.Runtime) {
 			instance = &core.Record{}
 		}
 
-		instanceValue := vm.ToValue(instance).(*sobek.Object)
+		instanceValue := vm.ToValue(instance).(*goja.Object)
 		instanceValue.SetPrototype(call.This.Prototype())
 
 		return instanceValue
 	})
 
-	vm.Set("Collection", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("Collection", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.Collection{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
 
-	vm.Set("FieldsList", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("FieldsList", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.FieldsList{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
 
 	// fields
 	// ---
-	vm.Set("Field", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("Field", func(call goja.ConstructorCall) *goja.Object {
 		data, _ := call.Argument(0).Export().(map[string]any)
 		rawDataSlice, _ := json.Marshal([]any{data})
 
@@ -529,80 +514,80 @@ func BindCore(vm *sobek.Runtime) {
 
 		field := fieldsList[0]
 
-		fieldValue := vm.ToValue(field).(*sobek.Object)
+		fieldValue := vm.ToValue(field).(*goja.Object)
 		fieldValue.SetPrototype(call.This.Prototype())
 
 		return fieldValue
 	})
-	vm.Set("NumberField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("NumberField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.NumberField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("BoolField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("BoolField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.BoolField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("TextField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("TextField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.TextField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("URLField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("URLField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.URLField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("EmailField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("EmailField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.EmailField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("EditorField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("EditorField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.EditorField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("PasswordField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("PasswordField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.PasswordField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("DateField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("DateField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.DateField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("AutodateField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("AutodateField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.AutodateField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("JSONField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("JSONField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.JSONField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("RelationField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("RelationField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.RelationField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("SelectField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("SelectField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.SelectField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("FileField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("FileField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.FileField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
-	vm.Set("GeoPointField", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("GeoPointField", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.GeoPointField{}
 		return structConstructorUnmarshal(vm, call, instance)
 	})
 	// ---
 
-	vm.Set("MailerMessage", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("MailerMessage", func(call goja.ConstructorCall) *goja.Object {
 		instance := &mailer.Message{}
 		return structConstructor(vm, call, instance)
 	})
 
-	vm.Set("Command", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("Command", func(call goja.ConstructorCall) *goja.Object {
 		instance := &cobra.Command{}
 		return structConstructor(vm, call, instance)
 	})
 
-	vm.Set("RequestInfo", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("RequestInfo", func(call goja.ConstructorCall) *goja.Object {
 		instance := &core.RequestInfo{Context: core.RequestInfoContextDefault}
 		return structConstructor(vm, call, instance)
 	})
@@ -612,21 +597,21 @@ func BindCore(vm *sobek.Runtime) {
 	//    return e.next()
 	// }, 100, "example_middleware")
 	// ```
-	vm.Set("Middleware", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("Middleware", func(call goja.ConstructorCall) *goja.Object {
 		instance := &gojaHookHandler{}
 
 		instance.serializedFunc = call.Argument(0).String()
 		instance.priority = cast.ToInt(call.Argument(1).Export())
 		instance.id = cast.ToString(call.Argument(2).Export())
 
-		instanceValue := vm.ToValue(instance).(*sobek.Object)
+		instanceValue := vm.ToValue(instance).(*goja.Object)
 		instanceValue.SetPrototype(call.This.Prototype())
 
 		return instanceValue
 	})
 
 	// note: named Timezone to avoid conflicts with the JS Location interface.
-	vm.Set("Timezone", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("Timezone", func(call goja.ConstructorCall) *goja.Object {
 		name, _ := call.Argument(0).Export().(string)
 
 		instance, err := time.LoadLocation(name)
@@ -634,13 +619,13 @@ func BindCore(vm *sobek.Runtime) {
 			instance = time.UTC
 		}
 
-		instanceValue := vm.ToValue(instance).(*sobek.Object)
+		instanceValue := vm.ToValue(instance).(*goja.Object)
 		instanceValue.SetPrototype(call.This.Prototype())
 
 		return instanceValue
 	})
 
-	vm.Set("DateTime", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("DateTime", func(call goja.ConstructorCall) *goja.Object {
 		instance := types.NowDateTime()
 
 		rawDate, _ := call.Argument(0).Export().(string)
@@ -657,29 +642,29 @@ func BindCore(vm *sobek.Runtime) {
 			instance, _ = types.ParseDateTime(rawDate)
 		}
 
-		instanceValue := vm.ToValue(instance).(*sobek.Object)
+		instanceValue := vm.ToValue(instance).(*goja.Object)
 		instanceValue.SetPrototype(call.This.Prototype())
 
 		return structConstructor(vm, call, instance)
 	})
 
-	vm.Set("ValidationError", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("ValidationError", func(call goja.ConstructorCall) *goja.Object {
 		code, _ := call.Argument(0).Export().(string)
 		message, _ := call.Argument(1).Export().(string)
 
 		instance := validation.NewError(code, message)
-		instanceValue := vm.ToValue(instance).(*sobek.Object)
+		instanceValue := vm.ToValue(instance).(*goja.Object)
 		instanceValue.SetPrototype(call.This.Prototype())
 
 		return instanceValue
 	})
 
-	vm.Set("Cookie", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("Cookie", func(call goja.ConstructorCall) *goja.Object {
 		instance := &http.Cookie{}
 		return structConstructor(vm, call, instance)
 	})
 
-	vm.Set("SubscriptionMessage", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("SubscriptionMessage", func(call goja.ConstructorCall) *goja.Object {
 		instance := &subscriptions.Message{}
 		return structConstructor(vm, call, instance)
 	})
@@ -688,7 +673,7 @@ func BindCore(vm *sobek.Runtime) {
 // BindDbx registers $dbx.* namespaced object with dbx database builder related methods.
 //
 // See https://pocketbase.io/jsvm/modules/_dbx.html.
-func BindDbx(vm *sobek.Runtime) {
+func BindDbx(vm *goja.Runtime) {
 	obj := vm.NewObject()
 	vm.Set("$dbx", obj)
 
@@ -714,7 +699,7 @@ func BindDbx(vm *sobek.Runtime) {
 // BindMails registers $mail.* namespaced object with common mail related helpers.
 //
 // See https://pocketbase.io/jsvm/modules/_mails.html.
-func BindMails(vm *sobek.Runtime) {
+func BindMails(vm *goja.Runtime) {
 	obj := vm.NewObject()
 	vm.Set("$mails", obj)
 
@@ -728,7 +713,7 @@ func BindMails(vm *sobek.Runtime) {
 // BindSecurity registers $security.* namespaced object with common security related helpers.
 //
 // See https://pocketbase.io/jsvm/modules/_security.html.
-func BindSecurity(vm *sobek.Runtime) {
+func BindSecurity(vm *goja.Runtime) {
 	obj := vm.NewObject()
 	vm.Set("$security", obj)
 
@@ -775,7 +760,7 @@ func BindSecurity(vm *sobek.Runtime) {
 // common filesystem package related helpers.
 //
 // See https://pocketbase.io/jsvm/modules/_filesystem.html.
-func BindFilesystem(vm *sobek.Runtime) {
+func BindFilesystem(vm *goja.Runtime) {
 	obj := vm.NewObject()
 	vm.Set("$filesystem", obj)
 
@@ -800,7 +785,7 @@ func BindFilesystem(vm *sobek.Runtime) {
 // common std Go filepath package related exports.
 //
 // See https://pocketbase.io/jsvm/modules/_filepath.html.
-func BindFilepath(vm *sobek.Runtime) {
+func BindFilepath(vm *goja.Runtime) {
 	obj := vm.NewObject()
 	vm.Set("$filepath", obj)
 
@@ -825,7 +810,7 @@ func BindFilepath(vm *sobek.Runtime) {
 // common std Go os package related exports.
 //
 // See https://pocketbase.io/jsvm/modules/_os.html.
-func BindOS(vm *sobek.Runtime) {
+func BindOS(vm *goja.Runtime) {
 	obj := vm.NewObject()
 	vm.Set("$os", obj)
 
@@ -853,7 +838,7 @@ func BindOS(vm *sobek.Runtime) {
 
 // BindForms registers various application form constructors.
 // These bindings are mostly used internally and/or preserved for backward compatibility with earlier versions.
-func BindForms(vm *sobek.Runtime) {
+func BindForms(vm *goja.Runtime) {
 	registerFactoryAsConstructor(vm, "AppleClientSecretCreateForm", forms.NewAppleClientSecretCreate)
 	registerFactoryAsConstructor(vm, "RecordUpsertForm", forms.NewRecordUpsert)
 	registerFactoryAsConstructor(vm, "TestEmailSendForm", forms.NewTestEmailSend)
@@ -864,21 +849,20 @@ func BindForms(vm *sobek.Runtime) {
 // handlers, middlewares and other related helpers.
 //
 // See https://pocketbase.io/jsvm/modules/_apis.html.
-func BindApis(vm *sobek.Runtime) { bindApisCommon(vm, true) }
-
-// BindApisSandboxed registers the $apis helpers safe for untrusted code —
-// everything BindApis provides EXCEPT $apis.static (a raw filesystem read).
-func BindApisSandboxed(vm *sobek.Runtime) { bindApisCommon(vm, false) }
-
-// bindApisCommon installs the $apis object. When withStatic is false the raw
-// $apis.static filesystem-read helper is omitted (sandboxed orgs).
-func bindApisCommon(vm *sobek.Runtime, withStatic bool) {
+func BindApis(vm *goja.Runtime) {
 	obj := vm.NewObject()
 	vm.Set("$apis", obj)
 
-	if withStatic {
-		bindApisStatic(vm, obj)
-	}
+	obj.Set("static", func(dirOrFS any, indexFallback bool) func(*core.RequestEvent) error {
+		switch v := dirOrFS.(type) {
+		case fs.FS:
+			return apis.Static(v, indexFallback)
+		case string:
+			return apis.Static(os.DirFS(v), indexFallback)
+		default:
+			panic("$apis.static expects the first argument to be either a plain string path or fs.FS value")
+		}
+	})
 
 	// middlewares
 	obj.Set("requireGuestOnly", apis.RequireGuestOnly)
@@ -904,34 +888,18 @@ func bindApisCommon(vm *sobek.Runtime, withStatic bool) {
 	registerFactoryAsConstructor(vm, "InternalServerError", router.NewInternalServerError)
 }
 
-// bindApisStatic registers $apis.static, which serves an author-chosen host
-// directory (os.DirFS on an arbitrary path) — a raw filesystem read, installed
-// only for trusted (non-sandboxed) apps.
-func bindApisStatic(vm *sobek.Runtime, apisObj *sobek.Object) {
-	apisObj.Set("static", func(dirOrFS any, indexFallback bool) func(*core.RequestEvent) error {
-		switch v := dirOrFS.(type) {
-		case fs.FS:
-			return apis.Static(v, indexFallback)
-		case string:
-			return apis.Static(os.DirFS(v), indexFallback)
-		default:
-			panic("$apis.static expects the first argument to be either a plain string path or fs.FS value")
-		}
-	})
-}
-
 // BindHTTP registers $http.* namespaced object with common utils
 // for sending HTTP requests.
 //
 // See https://pocketbase.io/jsvm/modules/_http.html.
-func BindHTTP(vm *sobek.Runtime) {
+func BindHTTP(vm *goja.Runtime) {
 	obj := vm.NewObject()
 	vm.Set("$http", obj)
 
-	vm.Set("FormData", func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set("FormData", func(call goja.ConstructorCall) *goja.Object {
 		instance := FormData{}
 
-		instanceValue := vm.ToValue(instance).(*sobek.Object)
+		instanceValue := vm.ToValue(instance).(*goja.Object)
 		instanceValue.SetPrototype(call.This.Prototype())
 
 		return instanceValue
@@ -1080,9 +1048,9 @@ func BindHTTP(vm *sobek.Runtime) {
 
 // -------------------------------------------------------------------
 
-// checkGojaValueForError resolves the provided sobek.Value and tries
+// checkGojaValueForError resolves the provided goja.Value and tries
 // to extract its underlying error value (if any).
-func checkGojaValueForError(app core.App, value sobek.Value) error {
+func checkGojaValueForError(app core.App, value goja.Value) error {
 	if value == nil {
 		return nil
 	}
@@ -1091,7 +1059,7 @@ func checkGojaValueForError(app core.App, value sobek.Value) error {
 	switch v := exported.(type) {
 	case error:
 		return v
-	case *sobek.Promise:
+	case *goja.Promise:
 		// Promise as return result is not officially supported but try to
 		// resolve any thrown exception to avoid silently ignoring it
 		app.Logger().Warn("the handler must a non-async function and not return a Promise")
@@ -1103,16 +1071,16 @@ func checkGojaValueForError(app core.App, value sobek.Value) error {
 	return nil
 }
 
-// normalizeException checks if the provided error is a sobek.Exception
+// normalizeException checks if the provided error is a goja.Exception
 // and attempts to return its underlying Go error.
 //
-// note: using just sobek.Exception.Unwrap() is insufficient and may falsely result in nil.
+// note: using just goja.Exception.Unwrap() is insufficient and may falsely result in nil.
 func normalizeException(err error) error {
 	if err == nil {
 		return nil
 	}
 
-	jsException, ok := err.(*sobek.Exception)
+	jsException, ok := err.(*goja.Exception)
 	if !ok {
 		return err // no exception
 	}
@@ -1120,7 +1088,7 @@ func normalizeException(err error) error {
 	switch v := jsException.Value().Export().(type) {
 	case error:
 		err = v
-	case map[string]any: // sobek.GoError
+	case map[string]any: // goja.GoError
 		if vErr, ok := v["value"].(error); ok {
 			err = vErr
 		}
@@ -1134,14 +1102,14 @@ var cachedFactoryFuncTypes = store.New[string, reflect.Type](nil)
 // registerFactoryAsConstructor registers the factory function as native JS constructor.
 //
 // If there is missing or nil arguments, their type zero value is used.
-func registerFactoryAsConstructor(vm *sobek.Runtime, constructorName string, factoryFunc any) {
+func registerFactoryAsConstructor(vm *goja.Runtime, constructorName string, factoryFunc any) {
 	rv := reflect.ValueOf(factoryFunc)
 	rt := cachedFactoryFuncTypes.GetOrSet(constructorName, func() reflect.Type {
 		return reflect.TypeOf(factoryFunc)
 	})
 	totalArgs := rt.NumIn()
 
-	vm.Set(constructorName, func(call sobek.ConstructorCall) *sobek.Object {
+	vm.Set(constructorName, func(call goja.ConstructorCall) *goja.Object {
 		args := make([]reflect.Value, totalArgs)
 
 		for i := 0; i < totalArgs; i++ {
@@ -1165,7 +1133,7 @@ func registerFactoryAsConstructor(vm *sobek.Runtime, constructorName string, fac
 			panic("the factory function should return only 1 item")
 		}
 
-		value := vm.ToValue(result[0].Interface()).(*sobek.Object)
+		value := vm.ToValue(result[0].Interface()).(*goja.Object)
 		value.SetPrototype(call.This.Prototype())
 
 		return value
@@ -1174,11 +1142,11 @@ func registerFactoryAsConstructor(vm *sobek.Runtime, constructorName string, fac
 
 // structConstructor wraps the provided struct with a native JS constructor.
 //
-// If the constructor argument is a map, each entry of the map will be loaded into the wrapped sobek.Object.
-func structConstructor(vm *sobek.Runtime, call sobek.ConstructorCall, instance any) *sobek.Object {
+// If the constructor argument is a map, each entry of the map will be loaded into the wrapped goja.Object.
+func structConstructor(vm *goja.Runtime, call goja.ConstructorCall, instance any) *goja.Object {
 	data, _ := call.Argument(0).Export().(map[string]any)
 
-	instanceValue := vm.ToValue(instance).(*sobek.Object)
+	instanceValue := vm.ToValue(instance).(*goja.Object)
 	for k, v := range data {
 		instanceValue.Set(k, v)
 	}
@@ -1191,14 +1159,14 @@ func structConstructor(vm *sobek.Runtime, call sobek.ConstructorCall, instance a
 // structConstructorUnmarshal wraps the provided struct with a native JS constructor.
 //
 // The constructor first argument will be loaded via json.Unmarshal into the instance.
-func structConstructorUnmarshal(vm *sobek.Runtime, call sobek.ConstructorCall, instance any) *sobek.Object {
+func structConstructorUnmarshal(vm *goja.Runtime, call goja.ConstructorCall, instance any) *goja.Object {
 	if data := call.Argument(0).Export(); data != nil {
 		if raw, err := json.Marshal(data); err == nil {
 			_ = json.Unmarshal(raw, instance)
 		}
 	}
 
-	instanceValue := vm.ToValue(instance).(*sobek.Object)
+	instanceValue := vm.ToValue(instance).(*goja.Object)
 	instanceValue.SetPrototype(call.This.Prototype())
 
 	return instanceValue
@@ -1249,13 +1217,13 @@ func newDynamicModel(shape map[string]any) any {
 		case reflect.Map:
 			raw, _ := json.Marshal(v)
 			newV := types.JSONMap[any]{}
-			newV.Scan(raw)
+			_ = newV.Scan(raw)
 			v = newV
 			vt = reflect.TypeOf(v)
 		case reflect.Slice, reflect.Array:
 			raw, _ := json.Marshal(v)
 			newV := types.JSONArray[any]{}
-			newV.Scan(raw)
+			_ = newV.Scan(raw)
 			v = newV
 			vt = reflect.TypeOf(newV)
 		case reflect.Pointer:

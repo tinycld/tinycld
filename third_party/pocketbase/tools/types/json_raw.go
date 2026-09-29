@@ -2,9 +2,12 @@ package types
 
 import (
 	"database/sql/driver"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 )
+
+// @todo consider deprecating in favour of jsontext.Value
 
 // JSONRaw defines a json value type that is safe for db read/write.
 type JSONRaw []byte
@@ -73,7 +76,7 @@ func (j *JSONRaw) Scan(value any) error {
 			data = []byte(v)
 		}
 	default:
-		bytes, err := json.Marshal(v)
+		bytes, err := json.Marshal(v, json.Deterministic(true), jsontext.AllowInvalidUTF8(true))
 		if err != nil {
 			return err
 		}

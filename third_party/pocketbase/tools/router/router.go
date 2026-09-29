@@ -2,7 +2,8 @@ package router
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"log"
@@ -176,7 +177,14 @@ func ErrorHandler(resp http.ResponseWriter, req *http.Request, err error) {
 	resp.WriteHeader(apiErr.Status)
 
 	if req.Method != http.MethodHead {
-		if jsonErr := json.NewEncoder(resp).Encode(apiErr); jsonErr != nil {
+		jsonErr := json.MarshalWrite(
+			resp,
+			apiErr,
+			// note: deterministic because some logs may depend on the exact serialized error
+			json.Deterministic(true),
+			jsontext.AllowInvalidUTF8(false),
+		)
+		if jsonErr != nil {
 			log.Println(jsonErr) // truly rare case, log to stderr only for dev purposes
 		}
 	}
