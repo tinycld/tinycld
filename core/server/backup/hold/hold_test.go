@@ -153,14 +153,39 @@ func TestConcurrentJournalAndDrain(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
 
-	// Run N journal writers concurrently while drains happen.
-	const numWriters = 5
-	const keysPerWriter = 10
+	// No hold so Drain proceeds immediately.
+	const numWriters = 16
+	const keysPerWriter = 500
 	var wg sync.WaitGroup
-	deleted := make(map[string]bool)
-	var deletedMu sync.Mutex
 
-	// Journal writers: each writes distinct keys concurrently.
+	var mu sync.Mutex
+	deleted := make(map[string]bool)
+	del := func(k string) error {
+		mu.Lock()
+		deleted[k] = true
+		mu.Unlock()
+		return nil
+	}
+
+	// Start ONE drain goroutine in a tight loop.
+	stop := make(chan struct{})
+	drainErr := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case <-stop:
+				drainErr <- nil
+				return
+			default:
+			}
+			if _, err := Drain(dir, now, del); err != nil {
+				drainErr <- err
+				return
+			}
+		}
+	}()
+
+	// Start N writer goroutines, each writes K distinct keys in a tight loop.
 	for w := 0; w < numWriters; w++ {
 		wg.Add(1)
 		go func(writer int) {
@@ -171,15 +196,6 @@ func TestConcurrentJournalAndDrain(t *testing.T) {
 					t.Errorf("journal error: %v", err)
 					return
 				}
-				// Occasionally drain while writing to simulate concurrent operations.
-				if i%3 == 0 {
-					_, _ = Drain(dir, now, func(k string) error {
-						deletedMu.Lock()
-						deleted[k] = true
-						deletedMu.Unlock()
-						return nil
-					})
-				}
 			}
 		}(w)
 	}
@@ -187,32 +203,33 @@ func TestConcurrentJournalAndDrain(t *testing.T) {
 	// Wait for all writers to finish.
 	wg.Wait()
 
-	// Run final drains until no more keys are drained.
+	// Stop the drain goroutine.
+	close(stop)
+	if err := <-drainErr; err != nil {
+		t.Fatalf("drain error: %v", err)
+	}
+
+	// Run final drains until no more keys appear.
 	for {
-		n, _ := Drain(dir, now, func(k string) error {
-			deletedMu.Lock()
-			deleted[k] = true
-			deletedMu.Unlock()
-			return nil
-		})
+		n, _ := Drain(dir, now, del)
 		if n == 0 {
 			break
 		}
 	}
 
-	// Verify: every key journaled must appear in deleted.
-	expected := make(map[string]bool)
+	// Verify: exactly 8000 keys were deleted.
+	expectedCount := numWriters * keysPerWriter
+	if len(deleted) != expectedCount {
+		t.Fatalf("deleted %d keys, expected %d", len(deleted), expectedCount)
+	}
+
+	// Verify: every key is present in deleted.
 	for w := 0; w < numWriters; w++ {
 		for i := 0; i < keysPerWriter; i++ {
-			expected[fmt.Sprintf("writer-%d-key-%d", w, i)] = true
-		}
-	}
-	if len(deleted) != len(expected) {
-		t.Fatalf("deleted %d keys, expected %d", len(deleted), len(expected))
-	}
-	for k := range expected {
-		if !deleted[k] {
-			t.Fatalf("key %s was journaled but never deleted", k)
+			key := fmt.Sprintf("writer-%d-key-%d", w, i)
+			if !deleted[key] {
+				t.Fatalf("key %s was journaled but never deleted", key)
+			}
 		}
 	}
 }

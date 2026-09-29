@@ -185,6 +185,24 @@ func Journal(dataDir, key string) error {
 	return f.Close()
 }
 
+// rotateJournal atomically checks if a draining file exists and renames the
+// journal file if not. Returns true if the journal was rotated, false if a
+// draining file already exists. Holds journalMu for the stat+rename.
+func rotateJournal(dataDir string) (bool, error) {
+	journalMu.Lock()
+	defer journalMu.Unlock()
+	draining := filepath.Join(dataDir, drainName)
+	if _, err := os.Stat(draining); errors.Is(err, os.ErrNotExist) {
+		if err := os.Rename(filepath.Join(dataDir, JournalName), draining); errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 // Drain deletes every journaled key when no valid hold exists. The journal is
 // renamed before it is read, so deletes journaled under a hold that starts
 // during the drain go to a new journal. A drain that stops on an error keeps
@@ -195,18 +213,17 @@ func Drain(dataDir string, now time.Time, del func(key string) error) (int, erro
 	if Active(dataDir, now) {
 		return 0, nil
 	}
+	rotated, err := rotateJournal(dataDir)
+	if err != nil {
+		return 0, err
+	}
 	draining := filepath.Join(dataDir, drainName)
-	journalMu.Lock()
-	if _, err := os.Stat(draining); errors.Is(err, os.ErrNotExist) {
-		if err := os.Rename(filepath.Join(dataDir, JournalName), draining); errors.Is(err, os.ErrNotExist) {
-			journalMu.Unlock()
+	if !rotated {
+		// A draining file might already exist; check before proceeding.
+		if _, err := os.Stat(draining); errors.Is(err, os.ErrNotExist) {
 			return 0, nil
-		} else if err != nil {
-			journalMu.Unlock()
-			return 0, err
 		}
 	}
-	journalMu.Unlock()
 	f, err := os.Open(draining)
 	if err != nil {
 		return 0, err
