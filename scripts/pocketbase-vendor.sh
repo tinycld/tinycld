@@ -21,7 +21,7 @@ fi
 work="$(mktemp -d)"
 trap 'git -C "$repo" worktree remove --force "$work/wt" 2>/dev/null || true; rm -rf "$work"' EXIT
 
-git clone --quiet --depth 1 --branch "$tag" "$upstream" "$work/upstream"
+git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$tag" "$upstream" "$work/upstream"
 git worktree add --quiet "$work/wt" "$branch"
 
 rm -rf "${work:?}/wt/$prefix"
