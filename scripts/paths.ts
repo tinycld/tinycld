@@ -10,14 +10,16 @@ export const APP_DIR = process.env.TINYCLD_APP_DIR
 export const WS_ROOT = path.resolve(APP_DIR, '..')
 
 // The Go toolchain version the generated go.work files pin. Source of truth is
-// the workspace-root `.go-version` (also drives setup-go in member CI); fall
-// back to a sane default if it's absent (e.g. a partial checkout).
+// core's go.mod: a go.work may not list an older version than a module it uses,
+// so a separate pin (the bootstrap-generated workspace `.go-version`) breaks the
+// build whenever core moves ahead of the latest bootstrap release.
 export const GO_VERSION = (() => {
-    try {
-        return fs.readFileSync(path.join(WS_ROOT, '.go-version'), 'utf8').trim()
-    } catch {
-        return '1.27.1'
+    const modPath = path.join(APP_DIR, 'core', 'server', 'go.mod')
+    const version = fs.readFileSync(modPath, 'utf8').match(/^go\s+(\S+)/m)?.[1]
+    if (!version) {
+        throw new Error(`could not read the go version from ${modPath}`)
     }
+    return version
 })()
 
 export const GENERATED_DIR = path.join(APP_DIR, 'lib', 'generated')

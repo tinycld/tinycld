@@ -53,7 +53,8 @@ jobs:
       - name: Assemble workspace (app + core)
         working-directory: ws
         run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
-      # Go toolchain after assembly: .go-version is bootstrap-generated into ws/.
+      # Go toolchain after assembly, from core's go.mod: that is the version the
+      # generated go.work pins (scripts/paths.ts), so the two cannot disagree.
       #
       # cache-dependency-path matters more than it looks: the install below runs
       # a postinstall that generates the PB schema, which shells out to Go and
@@ -62,7 +63,7 @@ jobs:
       # checked-out go.sum files is what actually makes this job faster.
       - uses: actions/setup-go@v6
         with:
-          go-version-file: ws/.go-version
+          go-version-file: ws/tinycld/core/server/go.mod
           cache-dependency-path: |
             ws/tinycld/server/go.sum
             ws/tinycld/core/server/go.sum
@@ -123,7 +124,7 @@ jobs:
         run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
       - uses: actions/setup-go@v6
         with:
-          go-version-file: ws/.go-version
+          go-version-file: ws/tinycld/core/server/go.mod
           cache-dependency-path: |
             ws/tinycld/server/go.sum
             ws/tinycld/core/server/go.sum
@@ -188,7 +189,7 @@ jobs:
         run: TINYCLD_REPO_BASE=https://github.com/tinycld npx @tinycld/bootstrap@latest --assemble-only
       - uses: actions/setup-go@v6
         with:
-          go-version-file: ws/.go-version
+          go-version-file: ws/tinycld/core/server/go.mod
           cache-dependency-path: |
             ws/tinycld/server/go.sum
             ws/tinycld/core/server/go.sum
