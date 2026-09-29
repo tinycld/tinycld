@@ -34,6 +34,7 @@ require (
 	github.com/klauspost/compress v1.20.0
 	github.com/mrz1836/postmark v1.9.0
 	github.com/nathanstitt/omnidoc v1.0.0
+	github.com/osshield/gopbs v0.0.0-00010101000000-000000000000
 	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/ozzo-validation/v4 v4.3.0
 	github.com/pocketbase/pocketbase v0.40.4
@@ -88,3 +89,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.0 // indirect
 )
+
+replace github.com/osshield/gopbs => github.com/nathanstitt/gopbs v0.0.0-20260929212904-191e2150ab06

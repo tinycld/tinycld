@@ -120,6 +120,8 @@ github.com/mitchellh/reflectwalk v1.0.2 h1:G2LzWKi524PWgd3mLHV8Y5k7s6XUvT0Gef6zx
 github.com/mitchellh/reflectwalk v1.0.2/go.mod h1:mSTlrgnPZtwu0c4WaC2kGObEpuNDbx0jmZXqmk4esnw=
 github.com/mrz1836/postmark v1.9.0 h1:7MDfX+Kyy+rkWs1bfKOnIj8cULxU/txfNaRaz0uA9oY=
 github.com/mrz1836/postmark v1.9.0/go.mod h1:FGjqkTsuJsTWt8TQqjdB+H7qa31u169LFupMOxCmGrc=
+github.com/nathanstitt/gopbs v0.0.0-20260929212904-191e2150ab06 h1:SV5iI5UAnSORlLA9x5UGQK7XMD6xDQjrfO0ykf2JEY0=
+github.com/nathanstitt/gopbs v0.0.0-20260929212904-191e2150ab06/go.mod h1:8sLWqNW3jyE3t5otnzaqqP4hpI/swnYziMmoLl/7qtM=
 github.com/nathanstitt/omnidoc v1.0.0 h1:5tFVQB9q8xx0FIKHBV0GwwruYcyfkm+uPai67DedeMI=
 github.com/nathanstitt/omnidoc v1.0.0/go.mod h1:2EZ8pdv2VBcZcLRDgahNWYRkCfB299iSWJToijZAtW4=
 github.com/ncruces/go-strftime v1.0.0 h1:HMFp8mLCTPp341M/ZnA4qaf7ZlsbTc+miZjCLOFAw7w=
