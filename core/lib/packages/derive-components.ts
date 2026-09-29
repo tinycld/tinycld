@@ -101,6 +101,7 @@ export function deriveSystemSettings(
 export interface SidebarContributionEntry {
     contributorSlug: string
     order: number
+    label?: string
     Component: ComponentType | LazyExoticComponent<ComponentType>
 }
 
@@ -134,6 +135,7 @@ export function deriveSidebarContributions(
             list.push({
                 contributorSlug: e.manifest.slug,
                 order: c.order,
+                label: c.label,
                 Component: c.Component,
             })
         }

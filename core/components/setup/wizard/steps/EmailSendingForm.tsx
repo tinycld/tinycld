@@ -20,8 +20,8 @@ import {
 } from '@tinycld/core/ui/form'
 import { useWatch } from 'react-hook-form'
 import { Text, View } from 'react-native'
-import { ProviderTabs } from '../ProviderTabs'
 import { SetupContinueButton } from '../SetupContinueButton'
+import { SetupTabs } from '../SetupTabs'
 
 // The keys core's own mailer reads (core/server/mailer). A package that sends
 // mail reads the same ones, and keeps any provider option only it needs (DKIM,
@@ -247,7 +247,7 @@ function ProviderSection({
                 control={control}
                 name="provider"
                 render={({ field }) => (
-                    <ProviderTabs
+                    <SetupTabs
                         tabs={PROVIDER_TABS}
                         value={field.value}
                         onChange={field.onChange}

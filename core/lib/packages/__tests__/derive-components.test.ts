@@ -106,6 +106,24 @@ describe('derive-components', () => {
             expect(r.cogs['sidebar.after-tree'][0].Component).toBe(C2)
         })
 
+        it('carries a contribution label through', () => {
+            const r = deriveSidebarContributions([
+                {
+                    manifest: { slug: 'sprockets-slots' },
+                    sidebarContributions: [
+                        {
+                            target: 'sprockets',
+                            slot: 'setup-options',
+                            order: 0,
+                            label: 'Built-in',
+                            Component: C1,
+                        },
+                    ],
+                },
+            ] as never)
+            expect(r.sprockets['setup-options'][0].label).toBe('Built-in')
+        })
+
         it('orders by `order` ascending, then by contributor slug as tiebreaker', () => {
             const r = deriveSidebarContributions([
                 {

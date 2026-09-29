@@ -52,6 +52,8 @@ export interface SidebarContribution {
     target: string
     slot: string
     order: number
+    /** Shown where the host lays contributions out as tabs. */
+    label?: string
     Component: ComponentType | LazyExoticComponent<ComponentType>
 }
 // A read-only event feed contributed to another package's event grid. `load`
