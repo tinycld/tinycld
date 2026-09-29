@@ -44,6 +44,9 @@ func seedUserWithRole(t *testing.T, app core.App, email, role string) *core.Reco
 	}
 	u := core.NewRecord(users)
 	u.Set("email", email)
+	// An explicit username: the fixture autogenerates users[0-9]{5}, which can
+	// collide with a fixture user's and fail the save at random.
+	u.Set("username", strings.SplitN(email, "@", 2)[0])
 	u.Set("password", "s3cret-password")
 	u.Set("role", role)
 	if err := app.Save(u); err != nil {

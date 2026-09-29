@@ -40,6 +40,9 @@ func seedUserAndClient(t *testing.T, app *tests.TestApp) (userID, clientRecID st
 	}
 	u := core.NewRecord(users)
 	u.Set("email", "alice@example.com")
+	// An explicit username: the fixture autogenerates users[0-9]{5}, which can
+	// collide with a fixture user's and fail the save at random.
+	u.Set("username", "alice")
 	u.Set("password", "s3cret-password")
 	if err := app.Save(u); err != nil {
 		t.Fatalf("save user: %v", err)
