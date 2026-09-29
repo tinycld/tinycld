@@ -126,6 +126,10 @@ type RestoreRequest struct {
 	Initiator  string
 	Request    *core.RequestEvent
 	SourceHost string
+	// Repo and Ref restore a snapshot from a repository instead of reading an
+	// archive stream. Source, Ranged and Identity are then unused.
+	Repo repo.Repository
+	Ref  repo.Ref
 }
 
 var ErrNotWaiting = errors.New("backup: no restore is waiting for a source")
@@ -188,7 +192,14 @@ func beginRestore(app core.App, req RestoreRequest) (*core.Record, *installjob.J
 	if _, ok := installjob.Claim(job); !ok {
 		return nil, nil, ErrBusy
 	}
-	row := newRow(app, KindRestore, req.Initiator, req.SourceHost)
+	targetHost := req.SourceHost
+	if req.Repo != nil && targetHost == "" {
+		targetHost = req.Repo.Kind()
+	}
+	row := newRow(app, KindRestore, req.Initiator, targetHost)
+	if req.Repo != nil {
+		row.Set("repository", req.Repo.Kind())
+	}
 	if err := app.Save(row); err != nil {
 		installjob.Release(job)
 		return nil, nil, err
@@ -228,6 +239,9 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 			return
 		}
 		sourceClosed = true
+		if req.Source == nil {
+			return
+		}
 		if cerr := req.Source.Close(); cerr != nil {
 			log.Warn("could not close a restore source", "id", id, "err", cerr)
 		}
@@ -291,14 +305,23 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 
 	// Phase 1: the manifest only. Nothing is decided, and nothing is written,
 	// until this deployment knows what it is being asked to become.
-	reader, err := format.NewReader(req.Source, req.Identity)
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-	read, err := reader.ReadManifest()
-	if err != nil {
-		return err
+	var reader *format.Reader
+	var read format.Manifest
+	if req.Repo != nil {
+		read, err = req.Repo.Manifest(context.Background(), req.Ref)
+		if err != nil {
+			return err
+		}
+	} else {
+		reader, err = format.NewReader(req.Source, req.Identity)
+		if err != nil {
+			return err
+		}
+		defer reader.Close()
+		read, err = reader.ReadManifest()
+		if err != nil {
+			return err
+		}
 	}
 	manifest = &read
 	row.Set("manifest", read)
@@ -392,19 +415,32 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	}
 	restoring.Store(true)
 
-	// Phase 5: the rest of the stream, staged and verified against the archive's
-	// own checksums before anything is asked to boot on it.
-	if err = archive.Stage(reader, pending); err != nil {
-		return err
-	}
-	// The sentinel is the boot swap's only sound evidence that staging finished.
-	// It cannot infer that from the members themselves: once the swap starts
-	// moving them into pb_data, a staged member's absence from pending means the
-	// opposite of what it means before the swap starts. counts is nil: the
-	// manifest's counts were read from the source archive, not this staged copy,
-	// so they cannot be compared exactly (see manifestcheck.go for that check).
-	if err = arm.MarkStaged(pending, nil); err != nil {
-		return err
+	// Phase 5: the rest of the snapshot, staged and verified before anything is
+	// asked to boot on it.
+	if req.Repo != nil {
+		// A repository fetches its own manifest again internally and checks it
+		// against what it staged, so the row count check runs here too — the
+		// repo path has real counts to check against, unlike a live archive
+		// stream (see the comment below).
+		if err = req.Repo.Fetch(context.Background(), req.Ref, pending); err != nil {
+			return err
+		}
+		if err = arm.MarkStaged(pending, &read); err != nil {
+			return err
+		}
+	} else {
+		if err = archive.Stage(reader, pending); err != nil {
+			return err
+		}
+		// The sentinel is the boot swap's only sound evidence that staging finished.
+		// It cannot infer that from the members themselves: once the swap starts
+		// moving them into pb_data, a staged member's absence from pending means the
+		// opposite of what it means before the swap starts. counts is nil: the
+		// manifest's counts were read from the source archive, not this staged copy,
+		// so they cannot be compared exactly (see manifestcheck.go for that check).
+		if err = arm.MarkStaged(pending, nil); err != nil {
+			return err
+		}
 	}
 	row.Set("status", "running")
 	if err = app.Save(row); err != nil {

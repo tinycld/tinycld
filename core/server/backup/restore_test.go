@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,8 +24,11 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
+	"tinycld.org/core/backup/archive"
 	"tinycld.org/core/backup/arm"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/repo"
+	"tinycld.org/core/backup/snapshot"
 	"tinycld.org/core/installjob"
 )
 
@@ -1119,4 +1123,125 @@ func (c *countingSource) Read(p []byte) (int, error) { return c.r.Read(p) }
 func (c *countingSource) Close() error {
 	c.closes++
 	return nil
+}
+
+// memRepo is an archive repository kept in memory, so a restore test reads
+// back exactly what a backup wrote.
+func memRepo(t *testing.T) repo.Repository {
+	t.Helper()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs := map[repo.Ref][]byte{}
+	var mu sync.Mutex
+	return &archive.Repository{
+		Recipient: id.Recipient(), Identity: id, Level: zstd.SpeedFastest,
+		Target: func(_ context.Context, created time.Time) (io.WriteCloser, repo.Ref, error) {
+			ref := repo.Ref(created.Format(time.RFC3339Nano))
+			return &memObj{ref: ref, store: objs, mu: &mu}, ref, nil
+		},
+		Open: func(_ context.Context, ref repo.Ref) (io.ReadCloser, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return io.NopCloser(bytes.NewReader(objs[ref])), nil
+		},
+	}
+}
+
+type memObj struct {
+	bytes.Buffer
+	ref   repo.Ref
+	store map[repo.Ref][]byte
+	mu    *sync.Mutex
+}
+
+func (o *memObj) Close() error {
+	o.mu.Lock()
+	o.store[o.ref] = o.Bytes()
+	o.mu.Unlock()
+	return nil
+}
+
+func TestRestoreFromARepositoryStagesAndArms(t *testing.T) {
+	app := newTestApp(t)
+	t.Cleanup(ResetForTesting)
+	SetRestart(func() bool { return true })
+	r := memRepo(t)
+	id, err := Run(app, Request{Kind: KindScheduled, Repo: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _ := app.FindRecordById("backups", id)
+	if _, err := Restore(app, RestoreRequest{Repo: r, Ref: repo.Ref(row.GetString("ref"))}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(armedPath(app))
+	if err != nil {
+		t.Fatal("not armed")
+	}
+	var a armed
+	_ = json.Unmarshal(raw, &a)
+	if _, err := os.Stat(filepath.Join(a.Pending, stagedSentinel)); err != nil {
+		t.Fatal("no sentinel")
+	}
+	if _, err := os.Stat(filepath.Join(a.Pending, "storage", "col1", "rec1", "hello.txt")); err != nil {
+		t.Fatal("stored file not staged")
+	}
+}
+
+// failingFetchRepo's Fetch always errors, so a restore from a repository fails
+// exactly the way a bad archive stream does: no armed marker, no pending dir,
+// the row marked failed, the pre-restore copy kept.
+type failingFetchRepo struct{}
+
+func (failingFetchRepo) Kind() string { return "mem" }
+
+func (failingFetchRepo) Put(context.Context, *snapshot.Snapshot, func(int64)) (repo.PutResult, error) {
+	return repo.PutResult{}, errors.New("not implemented")
+}
+
+func (failingFetchRepo) Manifest(context.Context, repo.Ref) (format.Manifest, error) {
+	return format.Manifest{}, nil
+}
+
+func (failingFetchRepo) Fetch(context.Context, repo.Ref, string) error {
+	return errors.New("fetch failed")
+}
+
+func (failingFetchRepo) List(context.Context) ([]repo.SnapshotInfo, error) {
+	return nil, repo.ErrNotSupported
+}
+
+func TestRestoreFromARepositoryFetchFailureLeavesNoMarker(t *testing.T) {
+	app := newTestApp(t)
+	resetRestoreState(t)
+	r := failingFetchRepo{}
+
+	jobID, err := Restore(app, RestoreRequest{Repo: r, Ref: repo.Ref("whatever"), Force: true})
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if row.GetString("status") != "failed" {
+		t.Fatalf("status %q", row.GetString("status"))
+	}
+	if row.GetString("error") == "" {
+		t.Fatal("a failed restore must record why")
+	}
+	if _, err := os.Stat(pendingDir(app, jobID)); !os.IsNotExist(err) {
+		t.Fatal("pending dir left behind")
+	}
+	if _, err := os.Stat(armedPath(app)); !os.IsNotExist(err) {
+		t.Fatal("still armed")
+	}
+	if Restoring() {
+		t.Fatal("a failed restore must clear the restoring flag")
+	}
+	if _, err := os.Stat(preBackupPath(app, jobID)); err != nil {
+		t.Fatal("the pre-restore backup must be kept after a failed restore")
+	}
 }
