@@ -30,11 +30,14 @@ const (
 
 var ErrHeld = errors.New("backup: another backup holds storage deletes")
 
-// journalMu serialises Journal and Drain to prevent a race where a Journal
-// call opens JournalName for append before Drain renames it to draining,
-// then writes after the scanner reaches EOF, losing the key. Both operations
-// are always in the same process (the app that owns storage), so a mutex
-// is sufficient.
+// journalMu serialises the journal rename in Drain with Journal writes to
+// prevent a race where a Journal call opens JournalName for append before
+// Drain renames it to draining, then writes after the scanner reaches EOF,
+// losing the key. With the lock held only during the stat+rename, every
+// Journal call either completes before the rename (its key is in draining) or
+// starts after it (its key goes to a fresh journal). Scan, del calls and
+// final remove run without the lock. Both operations are always in the same
+// process (the app that owns storage).
 var journalMu sync.Mutex
 
 type State struct {
@@ -186,21 +189,24 @@ func Journal(dataDir, key string) error {
 // renamed before it is read, so deletes journaled under a hold that starts
 // during the drain go to a new journal. A drain that stops on an error keeps
 // the renamed file, and the next drain repeats it; del must treat a missing
-// key as success.
+// key as success. Note: del may call Journal (e.g. from a delete hook), which
+// will not deadlock because journalMu is released before scanning.
 func Drain(dataDir string, now time.Time, del func(key string) error) (int, error) {
 	if Active(dataDir, now) {
 		return 0, nil
 	}
-	journalMu.Lock()
-	defer journalMu.Unlock()
 	draining := filepath.Join(dataDir, drainName)
+	journalMu.Lock()
 	if _, err := os.Stat(draining); errors.Is(err, os.ErrNotExist) {
 		if err := os.Rename(filepath.Join(dataDir, JournalName), draining); errors.Is(err, os.ErrNotExist) {
+			journalMu.Unlock()
 			return 0, nil
 		} else if err != nil {
+			journalMu.Unlock()
 			return 0, err
 		}
 	}
+	journalMu.Unlock()
 	f, err := os.Open(draining)
 	if err != nil {
 		return 0, err

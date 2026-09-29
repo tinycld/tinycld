@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -151,78 +152,109 @@ func TestRemoveStaleReportsAnAbandonedHold(t *testing.T) {
 func TestConcurrentJournalAndDrain(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
-	h, _ := Acquire(dir, "engine", clock(now))
-	defer h.Release()
 
-	// Journal some keys while the hold is active (Drain will return 0).
-	const numKeys = 100
-	for i := 0; i < numKeys; i++ {
-		if err := Journal(dir, fmt.Sprintf("key-%d", i)); err != nil {
-			t.Fatal(err)
-		}
+	// Run N journal writers concurrently while drains happen.
+	const numWriters = 5
+	const keysPerWriter = 10
+	var wg sync.WaitGroup
+	deleted := make(map[string]bool)
+	var deletedMu sync.Mutex
+
+	// Journal writers: each writes distinct keys concurrently.
+	for w := 0; w < numWriters; w++ {
+		wg.Add(1)
+		go func(writer int) {
+			defer wg.Done()
+			for i := 0; i < keysPerWriter; i++ {
+				key := fmt.Sprintf("writer-%d-key-%d", writer, i)
+				if err := Journal(dir, key); err != nil {
+					t.Errorf("journal error: %v", err)
+					return
+				}
+				// Occasionally drain while writing to simulate concurrent operations.
+				if i%3 == 0 {
+					_, _ = Drain(dir, now, func(k string) error {
+						deletedMu.Lock()
+						deleted[k] = true
+						deletedMu.Unlock()
+						return nil
+					})
+				}
+			}
+		}(w)
 	}
 
-	// Release the hold to allow Drain to proceed, then run Journal and Drain
-	// concurrently in goroutines.
-	_ = h.Release()
+	// Wait for all writers to finish.
+	wg.Wait()
 
-	journaled := make(map[string]bool)
-	for i := 0; i < numKeys; i++ {
-		journaled[fmt.Sprintf("key-%d", i)] = true
-	}
-
-	var deleted map[string]bool
-	drainErr := make(chan error, 1)
-	go func() {
-		var deltmp []string
-		_, err := Drain(dir, now, func(k string) error {
-			deltmp = append(deltmp, k)
+	// Run final drains until no more keys are drained.
+	for {
+		n, _ := Drain(dir, now, func(k string) error {
+			deletedMu.Lock()
+			deleted[k] = true
+			deletedMu.Unlock()
 			return nil
 		})
-		deleted = make(map[string]bool)
-		for _, k := range deltmp {
-			deleted[k] = true
+		if n == 0 {
+			break
 		}
-		drainErr <- err
-	}()
+	}
 
-	journalErr := make(chan error, 1)
+	// Verify: every key journaled must appear in deleted.
+	expected := make(map[string]bool)
+	for w := 0; w < numWriters; w++ {
+		for i := 0; i < keysPerWriter; i++ {
+			expected[fmt.Sprintf("writer-%d-key-%d", w, i)] = true
+		}
+	}
+	if len(deleted) != len(expected) {
+		t.Fatalf("deleted %d keys, expected %d", len(deleted), len(expected))
+	}
+	for k := range expected {
+		if !deleted[k] {
+			t.Fatalf("key %s was journaled but never deleted", k)
+		}
+	}
+}
+
+func TestDrainCanReEntryViaDelHook(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+
+	// Journal a key, then drain with a del function that re-journals a key
+	// (simulating a storage delete hook calling Journal).
+	if err := Journal(dir, "key1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain with del that calls Journal for each key.
+	done := make(chan error, 1)
 	go func() {
-		for i := numKeys; i < 2*numKeys; i++ {
-			if err := Journal(dir, fmt.Sprintf("key-%d", i)); err != nil {
-				journalErr <- err
-				return
-			}
-		}
-		journalErr <- nil
+		_, err := Drain(dir, now, func(k string) error {
+			// Re-journal each key (simulating a hook re-entry).
+			return Journal(dir, k+"-rejournal")
+		})
+		done <- err
 	}()
 
-	if err := <-drainErr; err != nil {
-		t.Fatalf("drain error: %v", err)
-	}
-	if err := <-journalErr; err != nil {
-		t.Fatalf("journal error: %v", err)
+	// Wait for drain to complete with timeout.
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("drain error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("drain deadlocked (timeout)")
 	}
 
-	// After the concurrent operations, all initially journaled keys must either
-	// be deleted or not yet seen by the drain. Run a final Drain to capture
-	// any keys journaled during the first drain.
-	var finalDeleted []string
+	// Verify the re-journaled keys are drained by a second drain.
+	var drained []string
 	_, _ = Drain(dir, now, func(k string) error {
-		finalDeleted = append(finalDeleted, k)
+		drained = append(drained, k)
 		return nil
 	})
-	for _, k := range finalDeleted {
-		deleted[k] = true
-	}
-
-	// Verify: every key initially journaled (0..99) appears in the deleted set.
-	// Keys 100+ may or may not be deleted (they were journaled during the drain).
-	for i := 0; i < numKeys; i++ {
-		key := fmt.Sprintf("key-%d", i)
-		if !deleted[key] {
-			t.Fatalf("key %s was journaled but never deleted", key)
-		}
+	if len(drained) != 1 || drained[0] != "key1-rejournal" {
+		t.Fatalf("re-journaled key not drained: %v", drained)
 	}
 }
 
