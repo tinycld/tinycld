@@ -20,6 +20,7 @@ type fakeDomains struct {
 	// calls records the verify/delete endpoints hit, in order, as "name:id".
 	calls     []string
 	deleteErr error
+	createReq postmark.DomainCreateRequest
 }
 
 func (f *fakeDomains) VerifyDKIMStatus(_ context.Context, id int64) (postmark.DomainDetails, error) {
@@ -35,7 +36,8 @@ func (f *fakeDomains) DeleteDomain(_ context.Context, id int64) error {
 	return f.deleteErr
 }
 
-func (f *fakeDomains) CreateDomain(context.Context, postmark.DomainCreateRequest) (postmark.DomainDetails, error) {
+func (f *fakeDomains) CreateDomain(_ context.Context, req postmark.DomainCreateRequest) (postmark.DomainDetails, error) {
+	f.createReq = req
 	if f.createErr != nil {
 		return postmark.DomainDetails{}, f.createErr
 	}
@@ -80,6 +82,20 @@ func TestAddDomainReturnsRecords(t *testing.T) {
 	}
 	if rec.ReturnPathDomain == "" || rec.ReturnPathCNAMEValue == "" {
 		t.Error("return-path record values must survive into DomainRecords")
+	}
+}
+
+// Postmark leaves a domain without a Return-Path unless the create names one,
+// and then reports no record for it, so the request itself must carry it.
+func TestAddDomainRequestsReturnPath(t *testing.T) {
+	f := &fakeDomains{created: postmark.DomainDetails{ID: 7, Name: "acme.com"}}
+	r := NewPostmarkRegistrar(StaticToken("acct"), f)
+
+	if _, err := r.AddDomain(context.Background(), "acme.com"); err != nil {
+		t.Fatalf("AddDomain: %v", err)
+	}
+	if f.createReq.ReturnPathDomain != "pm-bounces.acme.com" {
+		t.Fatalf("ReturnPathDomain = %q, want pm-bounces.acme.com", f.createReq.ReturnPathDomain)
 	}
 }
 

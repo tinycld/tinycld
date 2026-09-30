@@ -40,6 +40,14 @@ Every member has one role on their account:
 Owners and admins set roles under **Settings → Members**. Only an owner can
 make someone else an owner.
 
+## Inviting people
+
+To invite someone, open **Settings → Members** and click **Invite**. Enter a
+username and a role. If you also enter their email address, we email them the
+invite link. The link also shows on screen, so you can copy it and share it
+another way, or email it to a different address. The person opens the link to
+set a password. The link expires after 7 days.
+
 ## Administering the organization
 
 Everything administrative lives in **Settings**, reached from the gear icon in

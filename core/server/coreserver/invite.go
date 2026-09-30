@@ -19,7 +19,7 @@ import (
 
 type inviteRequest struct {
 	Username string `json:"username"`
-	Email    string `json:"email"` // optional — recovery / notifications only
+	Email    string `json:"email"` // optional — the invite link is emailed here; also used for recovery
 	Role     string `json:"role"`
 }
 
@@ -122,6 +122,7 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 				"inviteUrl": buildInviteURL(app, token),
 				"isNew":     false,
 				"resent":    true,
+				"emailedTo": emailInvite(app, re.Auth.Id, userRecord, req.Role, token),
 			})
 		}
 		return re.BadRequestError("User is already a member", nil)
@@ -194,7 +195,8 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 	}
 
 	// Existing verified users get a "you've been added" email (skipped for
-	// demo inviters). New users are handled by the admin-delivered invite URL.
+	// demo inviters). New users get the invite link, emailed below when the
+	// admin gave an address.
 	if !isNewUser && userRecord.GetBool("verified") && !IsDemoUser(app, re.Auth.Id) {
 		go sendExistingMemberEmail(app, userRecord, req.Role)
 	}
@@ -216,8 +218,26 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 	}
 	if inviteToken != "" {
 		resp["inviteUrl"] = buildInviteURL(app, inviteToken)
+		resp["emailedTo"] = emailInvite(app, re.Auth.Id, userRecord, req.Role, inviteToken)
 	}
 	return re.JSON(http.StatusOK, resp)
+}
+
+// emailInvite sends the invite link to the invited user's email address, when
+// the admin gave one, and returns the address it went to ("" when none was
+// sent). A failed send does not fail the invite: the link is in the response
+// either way, and the admin can still copy it or send it again from the panel.
+// Demo inviters never send, as with every other invite email.
+func emailInvite(app core.App, inviterID string, user *core.Record, role, token string) string {
+	to := user.Email()
+	if to == "" || IsDemoUser(app, inviterID) {
+		return ""
+	}
+	if err := sendInviteEmailTo(app, to, user, role, token); err != nil {
+		srvLog.Error("invite: failed to email the invite link", "to", to, "err", err)
+		return ""
+	}
+	return to
 }
 
 func buildInviteURL(app core.App, token string) string {

@@ -91,7 +91,7 @@ test.describe('Invite flow', () => {
 
         // Fill username only — proves email is optional.
         await page.getByTestId('username').fill(inviteUsername)
-        await page.getByText('Send invite', { exact: true }).click()
+        await page.getByText('Add user and invite', { exact: true }).click()
 
         // --- 2. Invite link panel surfaces the accept URL directly ---
         await expect(page.getByTestId('invite-link-step')).toBeVisible({ timeout: 10_000 })
@@ -164,6 +164,33 @@ test.describe('Invite flow', () => {
         await inviteePage.close()
     })
 
+    test('an invite with an email address emails the link to it', async ({ page }) => {
+        clearEmailLog()
+        const username = `inviteemail${Date.now()}`
+        const address = `new-hire-${Date.now()}@example.com`
+
+        await login(page)
+        await openMembersSettings(page)
+        await page.getByText('Invite', { exact: true }).click()
+        await expect(page.getByText('Invite a teammate', { exact: true })).toBeVisible({
+            timeout: 10_000,
+        })
+
+        await page.getByTestId('username').fill(username)
+        await page.getByTestId('email').fill(address)
+        await page.getByText('Add user and invite', { exact: true }).click()
+
+        await expect(page.getByTestId('invite-link-emailed')).toContainText(address, {
+            timeout: 10_000,
+        })
+        const urlText = await page.getByTestId('invite-link-url').textContent()
+        const email = await waitForEmailTo(address, {
+            subjectMatch: /you've been invited/i,
+            timeoutMs: 10_000,
+        })
+        expect(email.text).toContain(urlText?.trim())
+    })
+
     test('admin sends invite link to an alternate email address', async ({ page }) => {
         clearEmailLog()
         const altInviteUsername = `inviteealt${Date.now()}`
@@ -178,7 +205,7 @@ test.describe('Invite flow', () => {
 
         // Fill username only — proves email is optional at invite creation.
         await page.getByTestId('username').fill(altInviteUsername)
-        await page.getByText('Send invite', { exact: true }).click()
+        await page.getByText('Add user and invite', { exact: true }).click()
         await expect(page.getByTestId('invite-link-step')).toBeVisible({ timeout: 10_000 })
 
         await page.getByTestId('invite-link-send-toggle').click()
@@ -206,7 +233,7 @@ test.describe('Invite flow', () => {
 
         // Fill username only — proves email is optional.
         await page.getByTestId('username').fill(rotateInviteUsername)
-        await page.getByText('Send invite', { exact: true }).click()
+        await page.getByText('Add user and invite', { exact: true }).click()
         await expect(page.getByTestId('invite-link-step')).toBeVisible({ timeout: 10_000 })
 
         const oldUrl = (await page.getByTestId('invite-link-url').textContent()) ?? ''

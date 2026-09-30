@@ -21,13 +21,13 @@ const CORE_STEPS: SetupStepEntry[] = [
     },
     {
         id: CORE_STEP_IDS.email,
-        label: 'Email sending',
+        label: 'Sending',
         order: 'a2',
         load: () => import('@tinycld/core/components/setup/wizard/steps/EmailStep'),
     },
     {
         id: CORE_STEP_IDS.team,
-        label: 'Your team',
+        label: 'Team',
         order: 'a3',
         load: () => import('@tinycld/core/components/setup/wizard/steps/TeamStep'),
     },

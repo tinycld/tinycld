@@ -112,5 +112,7 @@ export function StepList({
             onOpen={onOpen}
         />
     ))
-    return <View className="flex-row flex-wrap gap-x-5 gap-y-2.5">{items}</View>
+    // Labels are one short word each and the gap is tight so every step fits
+    // on one line at the wizard's card width; wrapping is only the fallback.
+    return <View className="flex-row flex-wrap gap-x-4 gap-y-2.5">{items}</View>
 }

@@ -8,6 +8,8 @@ import { Pressable, Text, TextInput, View } from 'react-native'
 export type InviteLinkPanelProps = {
     userId: string
     initialUrl?: string
+    /** The address the invite was just emailed to, if any. */
+    emailedTo?: string
 }
 
 type LinkState =
@@ -16,7 +18,7 @@ type LinkState =
     | { kind: 'expired' }
     | { kind: 'error'; message: string }
 
-export function InviteLinkPanel({ userId, initialUrl }: InviteLinkPanelProps) {
+export function InviteLinkPanel({ userId, initialUrl, emailedTo }: InviteLinkPanelProps) {
     // A URL from rotate() (or the initialUrl prop) short-circuits the fetch —
     // both hand us a ready link with no round-trip needed.
     const [overrideUrl, setOverrideUrl] = useState<string | undefined>(initialUrl)
@@ -61,6 +63,7 @@ export function InviteLinkPanel({ userId, initialUrl }: InviteLinkPanelProps) {
         <ReadyView
             url={state.url}
             userId={userId}
+            emailedTo={emailedTo}
             onRotate={() => rotate.mutate()}
             rotatePending={rotate.isPending}
         />
@@ -102,11 +105,12 @@ function ExpiredView({ onRotate, pending }: { onRotate: () => void; pending: boo
 type ReadyViewProps = {
     url: string
     userId: string
+    emailedTo?: string
     onRotate: () => void
     rotatePending: boolean
 }
 
-function ReadyView({ url, userId, onRotate, rotatePending }: ReadyViewProps) {
+function ReadyView({ url, userId, emailedTo, onRotate, rotatePending }: ReadyViewProps) {
     const [copied, setCopied] = useState(false)
     const [altEmail, setAltEmail] = useState('')
     const [showSend, setShowSend] = useState(false)
@@ -129,6 +133,7 @@ function ReadyView({ url, userId, onRotate, rotatePending }: ReadyViewProps) {
 
     return (
         <View testID="invite-link-panel-ready" className="gap-3">
+            <EmailedNotice emailedTo={emailedTo} />
             <Text testID="invite-link-url" className="text-foreground" selectable>
                 {url}
             </Text>
@@ -142,9 +147,7 @@ function ReadyView({ url, userId, onRotate, rotatePending }: ReadyViewProps) {
             </Pressable>
 
             <Pressable testID="invite-link-send-toggle" onPress={() => setShowSend(s => !s)}>
-                <Text className="text-foreground">
-                    {showSend ? 'Hide email send' : 'Or email this link to a different address'}
-                </Text>
+                <Text className="text-foreground">{sendToggleLabel(showSend, emailedTo)}</Text>
             </Pressable>
             <SendForm
                 isVisible={showSend}
@@ -154,6 +157,20 @@ function ReadyView({ url, userId, onRotate, rotatePending }: ReadyViewProps) {
             />
         </View>
     )
+}
+
+function EmailedNotice({ emailedTo }: { emailedTo?: string }) {
+    if (!emailedTo) return null
+    return (
+        <Text testID="invite-link-emailed" className="text-foreground">
+            We emailed this link to {emailedTo}.
+        </Text>
+    )
+}
+
+function sendToggleLabel(showSend: boolean, emailedTo: string | undefined) {
+    if (showSend) return 'Hide email send'
+    return emailedTo ? 'Email this link to another address' : 'Email this link'
 }
 
 type SendFormProps = {
