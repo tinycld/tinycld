@@ -155,10 +155,17 @@ func checkGoBuildPrereqs() error { return pkgbuild.CheckBuildPrereqs() }
 // jobLogf. A nil job degrades exactly like the underlying helpers do.
 type installJobSink struct{ job *installjob.Job }
 
-var _ pkgbuild.ProgressSink = installJobSink{}
+var (
+	_ pkgbuild.ProgressSink     = installJobSink{}
+	_ pkgbuild.StepProgressSink = installJobSink{}
+)
 
 func (s installJobSink) Progress(step string, percent int, message string) {
 	emitProgress(s.job, step, percent, message)
+}
+
+func (s installJobSink) StepProgress(step string, percent, stepPercent int, message string) {
+	emitStepProgress(s.job, step, percent, stepPercent, message)
 }
 
 func (s installJobSink) Logf(format string, args ...any) {

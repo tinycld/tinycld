@@ -104,12 +104,12 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 	jobLogf(job, "rebuild starting: %s", memberSetSummary(m))
 	jobLogf(job, "build dir: %s  (state root: %s)", buildDir, resolveStateDir())
 
-	emitProgress(job, "Assembling build", progAssembleStart, memberSetSummary(m))
+	emitProgress(job, "Gathering components", progAssembleStart, memberSetSummary(m))
 	if err := timeStep(job, "assemble", func() error { return d.assemble(m, buildDir) }); err != nil {
 		return d.fail(job, "assemble", err)
 	}
 	if d.verifyCompat != nil {
-		emitProgress(job, "Verifying compatibility", progAssembleEnd, "Checking peer versions from fetched manifests")
+		emitProgress(job, "Checking compatibility", progAssembleEnd, "Checking peer versions from fetched manifests")
 		if err := timeStep(job, "verify peer versions", func() error { return d.verifyCompat(m, buildDir) }); err != nil {
 			jobLogf(job, "peer-version verify failed — discarding build dir %s (live state untouched)", buildDir)
 			_ = os.RemoveAll(buildDir)
@@ -124,12 +124,12 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 		return d.fail(job, "build", err)
 	}
 	// From here the DB may change — back it up so we can roll back.
-	emitProgress(job, "Backing up database", progBackupDB, "Creating SQLite backup")
+	emitProgress(job, "Backing up your data", progBackupDB, "Creating SQLite backup")
 	if err := timeStep(job, "backup database", d.backupDB); err != nil {
 		_ = os.RemoveAll(buildDir)
 		return d.fail(job, "backup", err)
 	}
-	emitProgress(job, "Applying migrations", progSyncMig, "Reconciling schema to new build")
+	emitProgress(job, "Updating your data", progSyncMig, "Reconciling schema to new build")
 	if err := timeStep(job, "sync migrations", func() error {
 		res, mErr := d.syncMig(buildDir)
 		if mErr == nil {
@@ -142,7 +142,7 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 		_ = os.RemoveAll(buildDir)
 		return d.fail(job, "migrate", err)
 	}
-	emitProgress(job, "Activating build", progActivate, "Flipping current symlink")
+	emitProgress(job, "Switching to the new version", progActivate, "Flipping current symlink")
 	if err := timeStep(job, "activate build", func() error { return d.activate(m.BuildID) }); err != nil {
 		jobLogf(job, "activate failed — restoring DB backup")
 		restore(d)
@@ -171,7 +171,7 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 				m.BuildID, out.ReleaseID, len(out.Bundles))
 		}
 	}
-	emitProgress(job, "Finalizing", progCommit, "Recording build + registry")
+	emitProgress(job, "Finishing up", progCommit, "Recording build + registry")
 	if d.commitRegistry != nil {
 		if err := d.commitRegistry(); err != nil {
 			// The build is already live; a registry mirror failure is logged but
@@ -193,7 +193,7 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 	if d.finalizeLog != nil {
 		d.finalizeLog("success", "")
 	}
-	emitProgress(job, "Build complete", progRestart, "Restarting to activate build")
+	emitProgress(job, "Restarting", progRestart, "Restarting to activate build")
 	emitComplete(job, "success", "")
 	d.restart()
 	return nil
@@ -222,7 +222,13 @@ func restore(d rebuildDeps) {
 func failJob(job *installjob.Job, step string, err error) error {
 	job.Status = "failed"
 	job.Error = err.Error()
-	emitProgress(job, step, job.Progress, "FAILED: "+err.Error())
+	// Report the failure under the user-facing step the job was on; the
+	// internal step name stays in the message for the debug log.
+	shown := job.Step
+	if shown == "" {
+		shown = step
+	}
+	emitProgress(job, shown, job.Progress, "FAILED: "+step+": "+err.Error())
 	emitComplete(job, "failed", job.Error)
 	// Surface the failure to Sentry (background jobs bypass the request-scoped
 	// middleware). No-op when Sentry isn't configured.

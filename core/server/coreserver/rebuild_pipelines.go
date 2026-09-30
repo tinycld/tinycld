@@ -34,7 +34,7 @@ func resolveInstallSlugVersion(app *pocketbase.PocketBase, job *installjob.Job) 
 	// The resolve pre-flight (pack just far enough to read the manifest) occupies
 	// a tiny band below the assemble band [progAssembleStart, …) so the bar never
 	// jumps backward when assembleBuild re-fetches the member for real.
-	emitProgress(job, "Validating package", 1, "Checking "+job.NpmPkg)
+	emitProgress(job, "Checking the package", 1, "Checking "+job.NpmPkg)
 	if err := validatePackageSpec(job.NpmPkg); err != nil {
 		return "", "", err
 	}
@@ -44,7 +44,7 @@ func resolveInstallSlugVersion(app *pocketbase.PocketBase, job *installjob.Job) 
 	}
 	defer os.RemoveAll(tmp)
 
-	emitProgress(job, "Downloading package", 2, "npm pack "+job.NpmPkg)
+	emitProgress(job, "Downloading the package", 2, "npm pack "+job.NpmPkg)
 	if _, err := runCmd(tmp, "npm", "pack", job.NpmPkg, "--pack-destination", tmp); err != nil {
 		return "", "", fmt.Errorf("npm pack: %w", err)
 	}
@@ -60,7 +60,7 @@ func resolveInstallSlugVersion(app *pocketbase.PocketBase, job *installjob.Job) 
 	if err != nil {
 		return "", "", fmt.Errorf("parse manifest: %w", err)
 	}
-	emitProgress(job, "Manifest parsed", 3, fmt.Sprintf("%s (%s)", manifest.Name, manifest.Slug))
+	emitProgress(job, "Reading package details", 3, fmt.Sprintf("%s (%s)", manifest.Name, manifest.Slug))
 
 	bundledSlugs := getBundledSlugs(app)
 	hasGoPrereqs := checkGoBuildPrereqs() == nil
@@ -193,7 +193,7 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 
 	revertStart := monoNow()
 	jobLogf(job, "revert starting: reactivating retained build %s (package %s) — NO rebuild", targetID, job.Slug)
-	emitProgress(job, "Validating build", 5, "Checking "+targetID)
+	emitProgress(job, "Checking the saved version", 5, "Checking "+targetID)
 	targetDir := filepath.Join(stateBuildsDir(), targetID, "tinycld")
 	if _, err := os.Stat(targetDir); err != nil {
 		failRevert("validate", fmt.Errorf("build %s not retained on disk: %w", targetID, err))
@@ -207,7 +207,7 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 
 	// Revert has no build pipeline (the target tree already exists), so it runs
 	// its own compressed-but-monotonic scale rather than the rebuild constants.
-	emitProgress(job, "Backing up database", 25, "Creating SQLite backup")
+	emitProgress(job, "Backing up your data", 25, "Creating SQLite backup")
 	restoreDB, err := backupDatabase(filepath.Join(stateBuildsDir(), targetID, "tinycld"))
 	if err != nil {
 		failRevert("backup", err)
@@ -227,7 +227,7 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 		}
 	}
 
-	emitProgress(job, "Reconciling schema", 50, "Syncing migrations to target build")
+	emitProgress(job, "Updating your data", 50, "Syncing migrations to target build")
 	newSet, err := buildMigrationFiles(filepath.Join(stateBuildsDir(), targetID))
 	if err != nil {
 		restoreAndRecover()
@@ -259,7 +259,7 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 	}
 	logSyncResult(job, syncRes)
 
-	emitProgress(job, "Activating build", 80, "Flipping current symlink")
+	emitProgress(job, "Switching to the new version", 80, "Flipping current symlink")
 	if err := activateBuild(targetID); err != nil {
 		restoreAndRecover()
 		failRevert("activate", err)
@@ -279,7 +279,7 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 	job.Status = "success"
 	jobLogf(job, "revert succeeded in %s — restarting onto build %s", monoSince(revertStart), targetID)
 	finalizeInstallLog(app, logRecord, "success", "", job.LogLines)
-	emitProgress(job, "Build complete", progRestart, "Restarting to activate reverted build")
+	emitProgress(job, "Restarting", progRestart, "Restarting to activate reverted build")
 	emitComplete(job, "success", "")
 	// Revert is also a post-activation success path (schema synced + symlink
 	// flipped against the live DB), so arm the surviving backup the same way the

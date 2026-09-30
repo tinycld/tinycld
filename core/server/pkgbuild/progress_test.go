@@ -54,3 +54,33 @@ func TestTimeStep_TolerateNilSink(t *testing.T) {
 		t.Fatalf("nil sink should be tolerated: %v", err)
 	}
 }
+
+// stepRecordingSink also accepts per-step progress, like the install job sink.
+type stepRecordingSink struct {
+	recordingSink
+	stepPercents []int
+}
+
+func (s *stepRecordingSink) StepProgress(step string, percent, stepPercent int, message string) {
+	s.Progress(step, percent, message)
+	s.stepPercents = append(s.stepPercents, stepPercent)
+}
+
+func TestReportStepProgress_PassesStepPercentToCapableSink(t *testing.T) {
+	sink := &stepRecordingSink{}
+	ReportStepProgress(sink, "Packaging client UI", 65, 40, "40.0% (800/2000)")
+	if len(sink.stepPercents) != 1 || sink.stepPercents[0] != 40 {
+		t.Fatalf("stepPercents = %v, want [40]", sink.stepPercents)
+	}
+	if sink.lastPercent != 65 {
+		t.Fatalf("percent = %d, want 65", sink.lastPercent)
+	}
+}
+
+func TestReportStepProgress_FallsBackToProgress(t *testing.T) {
+	sink := &recordingSink{}
+	ReportStepProgress(sink, "Packaging client UI", 65, 40, "msg")
+	if len(sink.milestones) != 1 || sink.milestones[0] != "[65%] Packaging client UI: msg" {
+		t.Fatalf("milestones = %v", sink.milestones)
+	}
+}

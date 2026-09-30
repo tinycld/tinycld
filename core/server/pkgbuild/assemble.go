@@ -173,7 +173,7 @@ func AssembleBuild(sink ProgressSink, m RebuildManifest, buildDir string, src Me
 		// ProgAssembleEnd) as each member is materialized, BEFORE the work so a
 		// slow npm-pack visibly parks the bar on the member it's fetching rather
 		// than after it finishes.
-		sink.Progress("Assembling build", assembleMemberPct(i, len(m.Members)), memberAssembleMsg(ms))
+		sink.Progress("Gathering components", assembleMemberPct(i, len(m.Members)), memberAssembleMsg(ms))
 		memStart := time.Now()
 		if ms.FromCurrent {
 			integrity, err := src.CopyCurrent(ms, buildDir)
