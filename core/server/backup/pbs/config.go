@@ -35,18 +35,24 @@ func ParseConfig(raw json.RawMessage) (Config, error) {
 			return c, fmt.Errorf("backup: the PBS setting %q is required", field.name)
 		}
 	}
+	if scheme, _, found := strings.Cut(strings.TrimSpace(c.Server), "://"); found && !strings.EqualFold(scheme, "https") {
+		// The server is not quoted: a pasted URL can carry more than a host.
+		return c, errors.New("backup: the PBS server must be a host name or an https:// address")
+	}
 	if !strings.Contains(c.AuthID, "!") {
 		return c, errors.New("backup: the PBS auth ID must be an API token (user@realm!name)")
 	}
 	return c, nil
 }
 
-// baseURL accepts "host", "host:port" or a full https URL.
+// baseURL accepts "host", "host:port" or a full https URL. ParseConfig has
+// already refused any other scheme.
 func (c Config) baseURL() string {
 	s := strings.TrimSuffix(strings.TrimSpace(c.Server), "/")
-	if !strings.HasPrefix(s, "https://") {
-		s = "https://" + s
+	if _, rest, found := strings.Cut(s, "://"); found {
+		s = rest
 	}
+	s = "https://" + s
 	u, err := url.Parse(s)
 	if err != nil || u.Host == "" {
 		return s

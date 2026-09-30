@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -198,5 +199,32 @@ func TestPutEndsWhileAStoredFileIsStuckAndJoinsItsTarWriter(t *testing.T) {
 	}
 	if n := len(srv.Snapshots()); n != 0 {
 		t.Fatalf("%d snapshots kept", n)
+	}
+}
+
+// PBS speaks only https. A pasted http:// URL used to become
+// "https://http://host", which fails later with an error naming neither cause.
+func TestParseConfigRefusesASchemeOtherThanHTTPS(t *testing.T) {
+	base := `{"datastore":"s","auth_id":"a@pbs!t","secret":"x","backup_id":"acme","server":%q}`
+	for _, server := range []string{"http://pbs.example", "ftp://pbs.example:8007", "HTTP://pbs.example"} {
+		_, err := ParseConfig(json.RawMessage(fmt.Sprintf(base, server)))
+		if err == nil {
+			t.Errorf("accepted %s", server)
+			continue
+		}
+		if strings.Contains(err.Error(), "pbs.example") {
+			t.Errorf("the error quotes the server: %v", err)
+		}
+	}
+	for server, want := range map[string]string{
+		"pbs.example":             "https://pbs.example:8007",
+		"pbs.example:9000":        "https://pbs.example:9000",
+		"https://pbs.example":     "https://pbs.example:8007",
+		"HTTPS://pbs.example:443": "https://pbs.example:443",
+	} {
+		c, err := ParseConfig(json.RawMessage(fmt.Sprintf(base, server)))
+		if err != nil || c.baseURL() != want {
+			t.Errorf("%s: baseURL %q, err %v", server, c.baseURL(), err)
+		}
 	}
 }
