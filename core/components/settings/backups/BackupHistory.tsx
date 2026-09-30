@@ -42,7 +42,7 @@ function HistoryRow({ row }: { row: BackupRow }) {
     const size = row.bytes ? formatBytes(row.bytes) : '—'
     const who = row.initiatorName ?? 'System'
     const where = row.repository === 'pbs' ? 'PBS' : row.target_host || '—'
-    const dedup = formatDedup(row.bytes, row.uploaded_bytes)
+    const dedup = formatDedup(row)
     return (
         <View className="rounded-lg border border-border p-3 gap-1" testID={`backup-row-${row.id}`}>
             <View className="flex-row justify-between">

@@ -30,8 +30,25 @@ describe('repository config', () => {
         expect(parseStoredConfig(undefined, undefined, undefined).server).toBe('')
     })
 
+    const pbsRun = {
+        repository: 'pbs',
+        status: 'succeeded',
+        bytes: 1000,
+        uploaded_bytes: 100,
+    } as const
+
     it('describes what deduplication saved', () => {
-        expect(formatDedup(1000, 100)).toBe('90% deduplicated')
-        expect(formatDedup(0, 0)).toBe('')
+        expect(formatDedup(pbsRun)).toBe('90% deduplicated')
+        expect(formatDedup({ ...pbsRun, uploaded_bytes: 0 })).toBe('100% deduplicated')
+        expect(formatDedup({ ...pbsRun, bytes: 0, uploaded_bytes: 0 })).toBe('')
+    })
+
+    // uploaded_bytes is 0 on every row that never measured it, which would
+    // otherwise read as "100% deduplicated".
+    it('says nothing for a row that did not measure deduplication', () => {
+        expect(formatDedup({ ...pbsRun, repository: '', uploaded_bytes: 0 })).toBe('')
+        expect(formatDedup({ ...pbsRun, repository: 'archive', uploaded_bytes: 0 })).toBe('')
+        expect(formatDedup({ ...pbsRun, status: 'failed', uploaded_bytes: 0 })).toBe('')
+        expect(formatDedup({ ...pbsRun, status: 'running' })).toBe('')
     })
 })

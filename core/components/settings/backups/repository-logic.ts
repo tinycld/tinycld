@@ -1,4 +1,5 @@
 import { z } from '@tinycld/core/ui/form'
+import type { BackupRow } from './useBackups'
 
 // Pure helpers behind the Repository card, testable without rendering.
 
@@ -54,8 +55,12 @@ export function toStoredConfig(form: PbsForm): string {
     })
 }
 
-export function formatDedup(bytes: number, uploaded: number): string {
-    if (!bytes) return ''
-    const saved = Math.round((1 - uploaded / bytes) * 100)
+// Only a finished PBS run measures what it uploaded. Every other row has
+// uploaded_bytes 0, which would read as "100% deduplicated".
+export function formatDedup(
+    row: Pick<BackupRow, 'repository' | 'status' | 'bytes' | 'uploaded_bytes'>
+): string {
+    if (row.repository !== 'pbs' || row.status !== 'succeeded' || !row.bytes) return ''
+    const saved = Math.round((1 - row.uploaded_bytes / row.bytes) * 100)
     return `${saved}% deduplicated`
 }
