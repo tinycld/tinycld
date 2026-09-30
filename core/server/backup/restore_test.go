@@ -1245,3 +1245,70 @@ func TestRestoreFromARepositoryFetchFailureLeavesNoMarker(t *testing.T) {
 		t.Fatal("the pre-restore backup must be kept after a failed restore")
 	}
 }
+
+// A repository that goes silent mid-fetch used to leave `restoring` set, so the
+// whole deployment answered 503 with nothing coming to clear it. The fetch's
+// stall deadline belongs to the repository (only it sees bytes move); the
+// engine's part is that a shutdown reaches it.
+func TestCancelAllEndsARepositoryRestoreInFlight(t *testing.T) {
+	t.Cleanup(ResetForTesting)
+	SetShutdown(context.Background())
+
+	app := newTestApp(t)
+	resetRestoreState(t)
+	r := newBlockingRepo("fetch")
+	type result struct {
+		id  string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		id, err := Restore(app, RestoreRequest{Repo: r, Ref: "blocking/1", Force: true})
+		done <- result{id, err}
+	}()
+	for call := range r.entered {
+		if call == "fetch" {
+			break
+		}
+	}
+	CancelAll()
+	select {
+	case res := <-done:
+		if res.err == nil {
+			t.Fatal("a cancelled fetch must fail the restore")
+		}
+		assertReleased(t, app, res.id)
+		if Restoring() {
+			t.Fatal("a cancelled restore must clear the restoring flag")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("CancelAll did not end the fetch")
+	}
+}
+
+func TestCancelAllEndsARepositoryManifestReadInFlight(t *testing.T) {
+	t.Cleanup(ResetForTesting)
+	SetShutdown(context.Background())
+
+	app := newTestApp(t)
+	resetRestoreState(t)
+	r := newBlockingRepo("manifest")
+	done := make(chan error, 1)
+	go func() {
+		_, err := Restore(app, RestoreRequest{Repo: r, Ref: "blocking/1", Force: true})
+		done <- err
+	}()
+	<-r.entered
+	CancelAll()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a cancelled manifest read must fail the restore")
+		}
+		if installjob.Running() {
+			t.Fatal("the interlock is still claimed")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("CancelAll did not end the manifest read")
+	}
+}

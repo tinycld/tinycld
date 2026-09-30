@@ -415,3 +415,65 @@ func TestStallGuardReportsThatItFired(t *testing.T) {
 		t.Fatal("the guard never reported firing")
 	}
 }
+
+// A repository's client moves the bytes itself, so the only signal of progress
+// is the one the caller feeds the watchdog. None at all is a stall.
+func TestWatchGivesUpWithoutProgress(t *testing.T) {
+	shortStallDeadline(t, 50*time.Millisecond)
+	ctx, w := Watch(context.Background())
+	t.Cleanup(w.Stop)
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a transfer with no progress was never cancelled")
+	}
+	if err := w.Err(ctx.Err()); !errors.Is(err, ErrStalled) {
+		t.Fatalf("want ErrStalled, got %v", err)
+	}
+}
+
+// A slow transfer that keeps moving must never be cut off, however long it runs.
+func TestWatchKeepsAProgressingReaderAlive(t *testing.T) {
+	shortStallDeadline(t, 80*time.Millisecond)
+	ctx, w := Watch(context.Background())
+	t.Cleanup(w.Stop)
+	pr, pw := io.Pipe()
+	go func() {
+		for i := 0; i < 8; i++ {
+			time.Sleep(30 * time.Millisecond)
+			_, _ = pw.Write([]byte("x"))
+		}
+		_ = pw.Close()
+	}()
+	got, err := io.ReadAll(w.Reader(pr))
+	if err != nil || len(got) != 8 {
+		t.Fatalf("read %d bytes, err %v", len(got), err)
+	}
+	if ctx.Err() != nil {
+		t.Fatal("a transfer that kept moving was cancelled")
+	}
+	if err := w.Err(nil); err != nil {
+		t.Fatalf("Err(nil) = %v", err)
+	}
+}
+
+// A graceful stop must reach a repository transfer as well as an archive one.
+func TestCancelAllEndsAWatchedTransfer(t *testing.T) {
+	t.Cleanup(ResetShutdownForTesting)
+	SetShutdown(context.Background())
+	ctx, w := Watch(context.Background())
+	t.Cleanup(w.Stop)
+	life, cancel := Lifetime(context.Background())
+	t.Cleanup(cancel)
+	CancelAll()
+	for _, c := range []context.Context{ctx, life} {
+		select {
+		case <-c.Done():
+		case <-time.After(5 * time.Second):
+			t.Fatal("CancelAll did not cancel the transfer")
+		}
+	}
+	if err := w.Err(ctx.Err()); errors.Is(err, ErrStalled) {
+		t.Fatal("a shutdown is not a stall")
+	}
+}

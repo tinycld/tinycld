@@ -307,8 +307,14 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	// until this deployment knows what it is being asked to become.
 	var reader *format.Reader
 	var read format.Manifest
+	// A repository read has no progress this function can see, so its stall
+	// deadline is the repository's own; what the restore adds is that a shutdown
+	// reaches it, since a stuck read keeps the interlock and, from phase 4 on,
+	// keeps `restoring` set.
+	repoCtx, cancelRepo := format.Lifetime(context.Background())
+	defer cancelRepo()
 	if req.Repo != nil {
-		read, err = req.Repo.Manifest(context.Background(), req.Ref)
+		read, err = req.Repo.Manifest(repoCtx, req.Ref)
 		if err != nil {
 			return err
 		}
@@ -418,11 +424,11 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	// Phase 5: the rest of the snapshot, staged and verified before anything is
 	// asked to boot on it.
 	if req.Repo != nil {
-		// A repository fetches its own manifest again internally and checks it
-		// against what it staged, so the row count check runs here too — the
-		// repo path has real counts to check against, unlike a live archive
-		// stream (see the comment below).
-		if err = req.Repo.Fetch(context.Background(), req.Ref, pending); err != nil {
+		// MarkStaged checks the staged database's row counts against the
+		// manifest read in phase 1. Fetch does not re-read or compare the
+		// manifest itself; this check is what catches a staged copy that does
+		// not match it. An archive stream cannot do the same (see below).
+		if err = req.Repo.Fetch(repoCtx, req.Ref, pending); err != nil {
 			return err
 		}
 		if err = arm.MarkStaged(pending, &read); err != nil {

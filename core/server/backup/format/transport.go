@@ -3,6 +3,7 @@ package format
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -131,6 +132,51 @@ func (g *stallGuard) classify(err error) error {
 		return ErrStalled
 	}
 	return err
+}
+
+// Watchdog is the stall guard for a transfer whose bytes move inside another
+// client — a repository's Put, or a reader it opened — where this package owns
+// no socket and progress is only what the caller reports.
+type Watchdog struct{ g *stallGuard }
+
+// Watch derives a context that ends when parent does, at shutdown, at CancelAll,
+// or once Progressed has not been called for StallDeadline. The caller must
+// call Stop once the transfer is over.
+func Watch(parent context.Context) (context.Context, *Watchdog) {
+	ctx, g := newStallGuard(parent)
+	return ctx, &Watchdog{g: g}
+}
+
+// Progressed restarts the deadline. Call it only when bytes actually moved: a
+// callback that repeats the same count is not progress.
+func (w *Watchdog) Progressed() { w.g.progressed() }
+
+func (w *Watchdog) Stop() { w.g.stop() }
+
+// Err turns the cancellation the watchdog caused into ErrStalled, so the ledger
+// says "stalled" rather than whatever the other client wrapped the cancel in.
+func (w *Watchdog) Err(err error) error { return w.g.classify(err) }
+
+// Reader counts every read that returns bytes as progress.
+func (w *Watchdog) Reader(r io.Reader) io.Reader { return &watchedReader{r: r, w: w} }
+
+type watchedReader struct {
+	r io.Reader
+	w *Watchdog
+}
+
+func (r *watchedReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 {
+		r.w.Progressed()
+	}
+	return n, err
+}
+
+// Lifetime is a transfer's context without a stall deadline, for a call whose
+// progress the caller cannot see: it still ends at shutdown and at CancelAll.
+func Lifetime(parent context.Context) (context.Context, context.CancelFunc) {
+	return transferContext(parent)
 }
 
 // Shutdown is the process-wide parent every transfer derives from, so a graceful

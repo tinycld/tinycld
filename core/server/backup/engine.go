@@ -208,9 +208,20 @@ func run(app core.App, req Request, row *core.Record, job *installjob.Job) (err 
 	// byte count over the final one.
 	defer progress.stop()
 
+	// A repository's client owns its sockets, and one whose server goes silent
+	// blocks forever: the run would keep the interlock and keep renewing the
+	// delete hold, so every storage delete is journaled for the life of the
+	// process. The watchdog ends a Put whose count stops moving, and a shutdown
+	// ends it too.
+	ctx, watchdog := format.Watch(context.Background())
+	defer watchdog.Stop()
 	putRan = true
-	result, err = r.Put(context.Background(), snap, func(n int64) { sent.Store(n) })
-	return err
+	result, err = r.Put(ctx, snap, func(n int64) {
+		if sent.Swap(n) != n {
+			watchdog.Progressed()
+		}
+	})
+	return watchdog.Err(err)
 }
 
 // snapshotOptions takes the live app's snapshot through its own writer

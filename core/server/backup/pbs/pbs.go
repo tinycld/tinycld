@@ -105,7 +105,7 @@ func refFor(id string, t time.Time) repo.Ref {
 	return repo.Ref(backupType + "/" + id + "/" + t.UTC().Format(time.RFC3339))
 }
 
-func parseRef(ref repo.Ref) (gopbs.SnapshotRef, error) {
+func (r *Repository) parseRef(ref repo.Ref) (gopbs.SnapshotRef, error) {
 	parts := strings.SplitN(string(ref), "/", 3)
 	if len(parts) != 3 {
 		return gopbs.SnapshotRef{}, fmt.Errorf("backup: %q is not a PBS snapshot reference", ref)
@@ -196,24 +196,32 @@ func writeTar(w io.Writer, files []snapshot.StoredFile) error {
 }
 
 func (r *Repository) reader(ctx context.Context, ref repo.Ref) (*gopbs.ReaderSession, error) {
-	sref, err := parseRef(ref)
+	sref, err := r.parseRef(ref)
 	if err != nil {
 		return nil, err
 	}
 	return r.client.StartReader(ctx, sref)
 }
 
-func (r *Repository) Manifest(ctx context.Context, ref repo.Ref) (format.Manifest, error) {
+// Manifest and Fetch run under a watchdog because the PBS client has no
+// read-idle timeout: a server that goes silent would block them forever, and
+// the restore that called them would hold the interlock, and from phase 4 on
+// keep every request behind the maintenance 503.
+func (r *Repository) Manifest(ctx context.Context, ref repo.Ref) (m format.Manifest, err error) {
+	ctx, watchdog := format.Watch(ctx)
+	defer watchdog.Stop()
+	defer func() { err = watchdog.Err(err) }()
 	rs, err := r.reader(ctx, ref)
 	if err != nil {
-		return format.Manifest{}, err
+		return m, err
 	}
 	defer rs.Close()
+	// A blob comes back whole, so there is no progress to report: the
+	// deadline bounds the manifest read as a whole, which is small.
 	raw, err := rs.DownloadBlob(ctx, fileManifest)
 	if err != nil {
-		return format.Manifest{}, err
+		return m, err
 	}
-	var m format.Manifest
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return m, fmt.Errorf("%w: manifest: %v", format.ErrFormat, err)
 	}
@@ -223,7 +231,10 @@ func (r *Repository) Manifest(ctx context.Context, ref repo.Ref) (format.Manifes
 	return m, nil
 }
 
-func (r *Repository) Fetch(ctx context.Context, ref repo.Ref, dir string) error {
+func (r *Repository) Fetch(ctx context.Context, ref repo.Ref, dir string) (err error) {
+	ctx, watchdog := format.Watch(ctx)
+	defer watchdog.Stop()
+	defer func() { err = watchdog.Err(err) }()
 	rs, err := r.reader(ctx, ref)
 	if err != nil {
 		return err
@@ -236,7 +247,7 @@ func (r *Repository) Fetch(ctx context.Context, ref repo.Ref, dir string) error 
 	if err != nil {
 		return err
 	}
-	err = arm.WriteMember(filepath.Join(dir, format.MemberDB), db)
+	err = arm.WriteMember(filepath.Join(dir, format.MemberDB), watchdog.Reader(db))
 	_ = db.Close()
 	if err != nil {
 		return err
@@ -246,7 +257,7 @@ func (r *Repository) Fetch(ctx context.Context, ref repo.Ref, dir string) error 
 		return err
 	}
 	defer st.Close()
-	return arm.ExtractTar(st, filepath.Join(dir, "storage"))
+	return arm.ExtractTar(watchdog.Reader(st), filepath.Join(dir, "storage"))
 }
 
 func (r *Repository) List(ctx context.Context) ([]repo.SnapshotInfo, error) {

@@ -24,6 +24,7 @@ import (
 
 	"tinycld.org/core/backup/archive"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/hold"
 	"tinycld.org/core/backup/repo"
 	"tinycld.org/core/backup/snapshot"
 	"tinycld.org/core/installjob"
@@ -851,5 +852,136 @@ func TestFailedRunRecordsAFailure(t *testing.T) {
 	rows, _ := app.FindRecordsByFilter("backups", "status = 'failed'", "", 0, 0)
 	if len(rows) != 1 || rows[0].GetString("repository") != "pbs" {
 		t.Fatalf("rows = %v", rows)
+	}
+}
+
+// blockingRepo stands in for a repository whose server went silent: each call
+// named in blockOn waits until its context is done, as a client with no
+// read-idle timeout does, and reports that it started on entered.
+type blockingRepo struct {
+	blockOn map[string]bool
+	entered chan string
+	// ticks, when set, is how many distinct progress counts Put reports, one per
+	// tick, before it returns successfully.
+	ticks int
+	tick  time.Duration
+}
+
+func newBlockingRepo(calls ...string) *blockingRepo {
+	r := &blockingRepo{blockOn: map[string]bool{}, entered: make(chan string, 8)}
+	for _, c := range calls {
+		r.blockOn[c] = true
+	}
+	return r
+}
+
+func (r *blockingRepo) block(ctx context.Context, call string) error {
+	r.entered <- call
+	if !r.blockOn[call] {
+		return nil
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (r *blockingRepo) Kind() string { return "blocking" }
+func (r *blockingRepo) Put(ctx context.Context, _ *snapshot.Snapshot, progress func(int64)) (repo.PutResult, error) {
+	if err := r.block(ctx, "put"); err != nil {
+		return repo.PutResult{}, err
+	}
+	for i := 1; i <= r.ticks; i++ {
+		select {
+		case <-ctx.Done():
+			return repo.PutResult{}, ctx.Err()
+		case <-time.After(r.tick):
+		}
+		progress(int64(i))
+	}
+	return repo.PutResult{Ref: "blocking/1", Bytes: int64(r.ticks)}, nil
+}
+func (r *blockingRepo) Manifest(ctx context.Context, _ repo.Ref) (format.Manifest, error) {
+	return format.Manifest{Format: format.FormatV1}, r.block(ctx, "manifest")
+}
+func (r *blockingRepo) Fetch(ctx context.Context, _ repo.Ref, _ string) error {
+	return r.block(ctx, "fetch")
+}
+func (r *blockingRepo) List(context.Context) ([]repo.SnapshotInfo, error) { return nil, nil }
+
+// assertReleased checks what a stuck Put used to hold for the life of the
+// process: the installjob claim, and the delete hold that journals every
+// storage delete while it is renewed.
+func assertReleased(t *testing.T, app core.App, rowID string) {
+	t.Helper()
+	if installjob.Running() {
+		t.Fatal("the interlock is still claimed")
+	}
+	if _, held, err := hold.Read(app.DataDir()); err != nil || held {
+		t.Fatalf("the delete hold is still held (err %v)", err)
+	}
+	row, err := app.FindRecordById("backups", rowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := row.GetString("status"); got != "failed" {
+		t.Fatalf("status %q", got)
+	}
+}
+
+// A repository whose server accepts and then goes silent used to hold the claim
+// and the hold forever: the Put ran on context.Background().
+func TestRunGivesUpOnAStalledRepositoryPut(t *testing.T) {
+	prev := format.StallDeadline
+	format.StallDeadline = 150 * time.Millisecond
+	t.Cleanup(func() { format.StallDeadline = prev })
+
+	app := newTestApp(t)
+	rowID, err := Run(app, Request{Kind: KindManual, Repo: newBlockingRepo("put")})
+	if !errors.Is(err, format.ErrStalled) {
+		t.Fatalf("want ErrStalled, got %v", err)
+	}
+	assertReleased(t, app, rowID)
+}
+
+// The deadline is on progress, not on the run: a Put that keeps reporting new
+// counts must outlive it many times over.
+func TestRunKeepsAProgressingRepositoryPutAlive(t *testing.T) {
+	prev := format.StallDeadline
+	format.StallDeadline = 150 * time.Millisecond
+	t.Cleanup(func() { format.StallDeadline = prev })
+
+	app := newTestApp(t)
+	r := newBlockingRepo()
+	r.ticks, r.tick = 10, 50*time.Millisecond
+	if _, err := Run(app, Request{Kind: KindManual, Repo: r}); err != nil {
+		t.Fatalf("a Put that kept moving failed: %v", err)
+	}
+}
+
+// A graceful stop must reach a repository Put, not only an archive transfer.
+func TestCancelAllEndsARepositoryPutInFlight(t *testing.T) {
+	t.Cleanup(ResetForTesting)
+	SetShutdown(context.Background())
+
+	app := newTestApp(t)
+	r := newBlockingRepo("put")
+	type result struct {
+		id  string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		id, err := Run(app, Request{Kind: KindManual, Repo: r})
+		done <- result{id, err}
+	}()
+	<-r.entered
+	CancelAll()
+	select {
+	case res := <-done:
+		if res.err == nil {
+			t.Fatal("a cancelled Put must fail the run")
+		}
+		assertReleased(t, app, res.id)
+	case <-time.After(10 * time.Second):
+		t.Fatal("CancelAll did not end the Put")
 	}
 }
