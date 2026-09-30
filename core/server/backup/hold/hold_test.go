@@ -43,7 +43,7 @@ func TestSecondHolderIsRefusedWhileValid(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer h.Release()
-	if _, err := Acquire(dir, "router", clock(now)); !errors.Is(err, ErrHeld) {
+	if _, err := Acquire(dir, "other-process", clock(now)); !errors.Is(err, ErrHeld) {
 		t.Fatalf("err = %v, want ErrHeld", err)
 	}
 }
