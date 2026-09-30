@@ -12,7 +12,7 @@ import (
 )
 
 type Config struct {
-	Server      string `json:"server"`      // "host", "host:port" or "https://host:port"
+	Server      string `json:"server"` // "host", "host:port" or "https://host:port"
 	Fingerprint string `json:"fingerprint"`
 	Datastore   string `json:"datastore"`
 	Namespace   string `json:"namespace"`
