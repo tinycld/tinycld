@@ -12,6 +12,12 @@ import (
 
 var ErrS3Storage = errors.New("backup: storage is on S3; a snapshot from outside the app cannot read it")
 
+// ErrStorageUnknown is a snapshot from outside the app that cannot tell where
+// the stored files are, because the app's settings do not decode here (they are
+// encrypted with PB_ENCRYPTION). Assuming local storage would back up zero
+// files and call it a success.
+var ErrStorageUnknown = errors.New("backup: the app's settings cannot be read here, so it is not known whether storage is on S3; back up from inside the app")
+
 // fillManifest reads the package set and row counts from the DB COPY, so they
 // describe exactly the data the snapshot holds.
 func fillManifest(db *sql.DB, m *format.Manifest) error {
@@ -40,7 +46,10 @@ func fillManifest(db *sql.DB, m *format.Manifest) error {
 		return err
 	}
 
-	names, err := db.Query("SELECT name FROM _collections WHERE system = 0 ORDER BY name")
+	// Views are left out: they hold no rows of their own, and a count of one
+	// checks a query rather than the data the backup carries. CheckCounts walks
+	// this same list, so a restore never counts a view either.
+	names, err := db.Query("SELECT name FROM _collections WHERE system = 0 AND type != 'view' ORDER BY name")
 	if err != nil {
 		return fmt.Errorf("backup: list collections: %w", err)
 	}
@@ -67,19 +76,25 @@ func fillManifest(db *sql.DB, m *format.Manifest) error {
 		// A collection name is an identifier, not a parameter, so it is quoted
 		// rather than bound.
 		if err := db.QueryRow("SELECT count(*) FROM `" + name + "`").Scan(&n); err != nil {
-			continue // a view that fails to count is not a reason to fail a backup
+			continue // a collection whose table will not count is not a reason to fail a backup
 		}
 		m.Counts.Collections[name] = n
 	}
 	return nil
 }
 
-// usesS3 reports whether the app's settings enable S3 storage. Settings that
-// are encrypted (PB_ENCRYPTION) cannot be read here and count as local.
-func usesS3(db *sql.DB) bool {
+// usesS3 reports whether the app's settings enable S3 storage. No settings row
+// means a database that never saved any, which is local storage. Settings that
+// exist but do not decode here (PB_ENCRYPTION) say nothing either way, so that
+// is ErrStorageUnknown rather than a guess.
+func usesS3(db *sql.DB) (bool, error) {
 	var raw string
-	if err := db.QueryRow("SELECT value FROM _params WHERE id = 'settings'").Scan(&raw); err != nil {
-		return false
+	err := db.QueryRow("SELECT value FROM _params WHERE id = 'settings'").Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("%w: %v", ErrStorageUnknown, err)
 	}
 	var s struct {
 		S3 struct {
@@ -87,7 +102,7 @@ func usesS3(db *sql.DB) bool {
 		} `json:"s3"`
 	}
 	if json.Unmarshal([]byte(raw), &s) != nil {
-		return false
+		return false, ErrStorageUnknown
 	}
-	return s.S3.Enabled
+	return s.S3.Enabled, nil
 }

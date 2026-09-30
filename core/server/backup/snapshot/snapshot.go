@@ -107,7 +107,9 @@ func FromDataDir(opts Options) (snap *Snapshot, err error) {
 	if err != nil {
 		return nil, err
 	}
-	s3 := usesS3(db)
+	// Only needed when there is no lister, so an unreadable answer is not an
+	// error until then: the app's own lister knows where its files are.
+	s3, s3Err := usesS3(db)
 	err = fillManifest(db, &m)
 	if cerr := db.Close(); err == nil {
 		err = cerr
@@ -118,6 +120,9 @@ func FromDataDir(opts Options) (snap *Snapshot, err error) {
 
 	lister := opts.Files
 	if lister == nil {
+		if s3Err != nil {
+			return nil, s3Err
+		}
 		if s3 {
 			return nil, ErrS3Storage
 		}

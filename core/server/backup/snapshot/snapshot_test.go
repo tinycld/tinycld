@@ -31,11 +31,12 @@ func fixture(t *testing.T) string {
 	defer db.Close()
 	for _, q := range []string{
 		"PRAGMA journal_mode=WAL",
-		"CREATE TABLE _collections (id TEXT, name TEXT, system BOOLEAN)",
+		"CREATE TABLE _collections (id TEXT, name TEXT, system BOOLEAN, type TEXT)",
 		"CREATE TABLE _params (id TEXT, value TEXT)",
-		"INSERT INTO _collections VALUES ('1','notes',0),('2','_superusers',1),('3','pkg_registry',0)",
+		"INSERT INTO _collections VALUES ('1','notes',0,'base'),('2','_superusers',1,'auth'),('3','pkg_registry',0,'base'),('4','note_ids',0,'view')",
 		"CREATE TABLE notes (id TEXT)",
 		"INSERT INTO notes VALUES ('a'),('b'),('c')",
+		"CREATE VIEW note_ids AS SELECT id FROM notes",
 		"CREATE TABLE pkg_registry (slug TEXT, version TEXT, npm_package TEXT, status TEXT)",
 		"INSERT INTO pkg_registry VALUES ('core','1.2.3','tinycld@1.2.3','bundled'),('widgets','1.0.0','@x/widgets@1.0.0','installed'),('gone','0.1.0','@x/gone@0.1.0','available')",
 	} {
@@ -65,6 +66,11 @@ func TestFromDataDirBuildsManifestFromTheCopy(t *testing.T) {
 	}
 	if _, ok := m.Counts.Collections["_superusers"]; ok {
 		t.Fatal("system collection counted")
+	}
+	// A view has no rows of its own: a restore does not stage it as data, and
+	// counting one checks a query rather than the backup.
+	if _, ok := m.Counts.Collections["note_ids"]; ok {
+		t.Fatal("view collection counted")
 	}
 	if m.Counts.Files != 1 || m.Counts.Bytes != 5 || len(s.Files) != 1 || s.Files[0].Key != "c1/r1/a.txt" {
 		t.Fatalf("files = %+v counts = %+v", s.Files, m.Counts)
@@ -139,6 +145,30 @@ func TestFromDataDirRefusesS3StorageWithoutALister(t *testing.T) {
 	if _, ok, _ := hold.Read(dir); ok {
 		t.Fatal("a refused snapshot left its hold")
 	}
+}
+
+// Settings that exist but cannot be decoded here (PB_ENCRYPTION) do not say
+// where storage is. Treating them as local let a snapshot taken from outside
+// the app "succeed" with zero files when the files were on S3.
+func TestFromDataDirRefusesSettingsItCannotRead(t *testing.T) {
+	dir := fixture(t)
+	db, _ := sql.Open("sqlite", filepath.Join(dir, "data.db"))
+	_, _ = db.Exec(`INSERT INTO _params VALUES ('settings','bm90IGpzb24gYXQgYWxs')`)
+	db.Close()
+	if _, err := FromDataDir(Options{DataDir: dir, TmpDir: t.TempDir(), Holder: "test"}); !errors.Is(err, ErrStorageUnknown) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, ok, _ := hold.Read(dir); ok {
+		t.Fatal("a refused snapshot left its hold")
+	}
+
+	// The app's own lister knows where its files are, so it needs no answer.
+	s, err := FromDataDir(Options{DataDir: dir, TmpDir: t.TempDir(), Holder: "test",
+		Files: func() ([]StoredFile, func() error, error) { return nil, nil, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Release()
 }
 
 func TestWalkLocalWithMissingRootYieldsNoFilesAndNoError(t *testing.T) {
