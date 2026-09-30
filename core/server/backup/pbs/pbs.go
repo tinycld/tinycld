@@ -163,9 +163,16 @@ func (r *Repository) Put(ctx context.Context, s *snapshot.Snapshot, progress fun
 
 	pr, pw := io.Pipe()
 	tarDone := make(chan struct{})
+	// tarCtx is its own cancellable context so writeTar's stored-file read is
+	// unstuck as soon as this Put is done with it — on a ctx cancel, but also
+	// when UploadStream fails for a reason that never touches ctx (e.g. the
+	// connection drops). Joining on the outer ctx alone left the tar goroutine,
+	// and the stored file it holds open, running until the caller's ctx ended,
+	// which may be long after this Put has given up.
+	tarCtx, cancelTar := context.WithCancel(ctx)
 	go func() {
 		defer close(tarDone)
-		_ = pw.CloseWithError(writeTar(ctx, pw, s.Files))
+		_ = pw.CloseWithError(writeTar(tarCtx, pw, s.Files))
 	}()
 	// The upload waits for its chunker, which reads the pipe and does not watch
 	// ctx. Closing the pipe when ctx ends is what lets a cancelled Put return
@@ -174,6 +181,10 @@ func (r *Repository) Put(ctx context.Context, s *snapshot.Snapshot, progress fun
 	stStats, err := sess.UploadStream(ctx, fileStorage, pr)
 	stopClose()
 	_ = pr.Close()
+	// Cancel before joining on every path: UploadStream can fail on its own
+	// (a server error, not just ctx ending), and the tar goroutine's stored-file
+	// read only watches tarCtx, not the upload's error.
+	cancelTar()
 	// Joined before returning: the caller releases the snapshot next, which
 	// closes the file lister the tar writer may still be reading from.
 	<-tarDone

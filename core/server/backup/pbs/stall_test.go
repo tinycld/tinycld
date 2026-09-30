@@ -22,11 +22,12 @@ import (
 // that goes silent: the socket stays open and the client, which has no
 // read-idle timeout, waits on it forever.
 type stallProxy struct {
-	ln          net.Listener
-	backend     string
-	stallAfter  atomic.Int64 // < 0: never stall
-	stallUpload atomic.Int64 // < 0: never stall
-	release     chan struct{}
+	ln            net.Listener
+	backend       string
+	stallAfter    atomic.Int64 // < 0: never stall
+	stallUpload   atomic.Int64 // < 0: never stall
+	uploadedSoFar atomic.Int64 // bytes forwarded to the server so far, whether or not stalled
+	release       chan struct{}
 
 	mu    sync.Mutex
 	conns []net.Conn
@@ -56,6 +57,19 @@ func newStallProxy(t *testing.T, backend string) *stallProxy {
 
 func (p *stallProxy) addr() string { return "https://" + p.ln.Addr().String() }
 
+// severNow closes every connection the proxy is holding, right now: a server
+// that failed rather than one that went silent. Unlike the stallAfter/
+// stallUpload byte thresholds, the caller decides the moment, so a test can
+// synchronize the drop against something happening elsewhere (a chunk
+// upload it already knows is stalled) instead of guessing a byte offset.
+func (p *stallProxy) severNow() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, c := range p.conns {
+		_ = c.Close()
+	}
+}
+
 func (p *stallProxy) serve() {
 	for {
 		client, err := p.ln.Accept()
@@ -70,17 +84,24 @@ func (p *stallProxy) serve() {
 		p.mu.Lock()
 		p.conns = append(p.conns, client, server)
 		p.mu.Unlock()
-		go p.forward(server, client, &p.stallUpload)
-		go p.forward(client, server, &p.stallAfter)
+		go p.forward(server, client, &p.stallUpload, &p.uploadedSoFar)
+		go p.forward(client, server, &p.stallAfter, nil)
 	}
 }
 
-func (p *stallProxy) forward(dst, src net.Conn, stallAfter *atomic.Int64) {
+// forward relays src to dst. track, when non-nil, is bumped by every byte
+// read from src — including bytes withheld by the stall, since the client
+// already sent them into the connection; a test polls it to know precisely
+// how much has left the client, with no wall-clock guess involved.
+func (p *stallProxy) forward(dst, src net.Conn, stallAfter *atomic.Int64, track *atomic.Int64) {
 	var sent int64
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := src.Read(buf)
 		chunk := buf[:n]
+		if track != nil {
+			track.Add(int64(n))
+		}
 		if limit := stallAfter.Load(); limit >= 0 && sent+int64(n) > limit {
 			if keep := limit - sent; keep > 0 {
 				_, _ = dst.Write(chunk[:keep])
@@ -95,6 +116,21 @@ func (p *stallProxy) forward(dst, src net.Conn, stallAfter *atomic.Int64) {
 		if err != nil {
 			return
 		}
+	}
+}
+
+// waitForUploadAtLeast blocks until the client has sent at least n bytes
+// into the connection (whether or not the stall is withholding them from
+// the server), or fails the test after a generous timeout. Polling a real
+// count rather than sleeping a guessed duration.
+func (p *stallProxy) waitForUploadAtLeast(t *testing.T, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for p.uploadedSoFar.Load() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of %d bytes reached the proxy", p.uploadedSoFar.Load(), n)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

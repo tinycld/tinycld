@@ -1,12 +1,15 @@
 package pbs
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,8 +20,10 @@ import (
 	gopbs "github.com/osshield/gopbs/pbs"
 	"github.com/osshield/gopbs/pbstest"
 
+	"tinycld.org/core/backup/format"
 	"tinycld.org/core/backup/repo"
 	"tinycld.org/core/backup/repo/repotest"
+	"tinycld.org/core/backup/snapshot"
 )
 
 func configFor(t *testing.T, srv *pbstest.Server, key string) json.RawMessage {
@@ -196,6 +201,94 @@ func TestPutEndsWhileAStoredFileIsStuckAndJoinsItsTarWriter(t *testing.T) {
 	}
 	if n := open.Load(); n != 0 {
 		t.Fatalf("Put returned with %d stored files still open", n)
+	}
+	if n := len(srv.Snapshots()); n != 0 {
+		t.Fatalf("%d snapshots kept", n)
+	}
+}
+
+// A Put whose upload fails for a reason that never touches ctx — a dropped
+// connection, not a cancel — used to still join <-tarDone against the outer
+// ctx: with a stored file stuck mid-read, that join would wait on the
+// caller's ctx, which in production has no deadline of its own. Put must
+// return promptly on this path too.
+//
+// Files[0] is large enough (40 MiB, over the chunker's 16 MiB max chunk
+// size) that several chunks queue up for upload before the tar writer could
+// reach Files[1]; with every upload stalled from the start, the chunker's
+// own backpressure blocks the tar writer behind Files[0] alone, so Files[1]
+// — the one that would otherwise block forever on Read — is never opened.
+// Severing the connection here (a network failure, not a cancel) must still
+// let Put return promptly, and must never open the still-queued file.
+func TestPutEndsWhenUploadFailsWithoutCtxWhileAFileIsStillQueued(t *testing.T) {
+	srv := pbstest.NewServer(t)
+	c := srv.Config()
+	proxy := newStallProxy(t, c.BaseURL[len("https://"):])
+	// Past several chunks (the chunker's minimum is 1 MiB), so the jobs
+	// buffer backs up before the connection stalls — but stallUpload cuts
+	// the proxy's own read of the connection off at exactly this point too,
+	// so waitForUploadAtLeast below must ask for less than this.
+	proxy.stallUpload.Store(8 << 20)
+	raw, _ := json.Marshal(Config{
+		Server: proxy.addr(), Fingerprint: c.Fingerprint, Datastore: c.Datastore,
+		AuthID: "test@pbs!test", Secret: "secret", BackupID: "acme.example",
+	})
+	repository, err := Open(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "data.db")
+	if err := os.WriteFile(dbPath, []byte("SQLite format 3\x00"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	big := make([]byte, 40<<20)
+	if _, err := rand.Read(big); err != nil {
+		t.Fatal(err)
+	}
+	var open atomic.Int32
+	stuck := &stuckFile{reading: make(chan struct{}, 1), closed: make(chan struct{}), open: &open}
+	snap := &snapshot.Snapshot{
+		Manifest: format.Manifest{Format: format.FormatV1, Created: time.Now().UTC().Truncate(time.Second)},
+		DBPath:   dbPath,
+		Files: []snapshot.StoredFile{
+			{Key: "c1/r1/big.bin", Size: int64(len(big)), Open: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(big)), nil
+			}},
+			{Key: "c1/r2/queued.bin", Size: 1, Open: func() (io.ReadCloser, error) {
+				open.Add(1)
+				return stuck, nil
+			}},
+		},
+		Release: func() error { return nil },
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := repository.Put(context.Background(), snap, nil)
+		done <- err
+	}()
+	// Wait for real bytes to reach the proxy — proof the chunker has started
+	// producing and dispatching chunks against the stalled connection —
+	// before severing it. A fixed sleep here raced the chunker's own speed
+	// and could fire before it started or after it reached Files[1].
+	proxy.waitForUploadAtLeast(t, 4<<20)
+	proxy.severNow()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a put through a dropped connection succeeded")
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("want a non-ctx failure, got %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("Put never returned after its upload failed")
+	}
+	if n := open.Load(); n != 0 {
+		t.Fatalf("Put returned with %d stored files still open (the queued file must never be opened)", n)
 	}
 	if n := len(srv.Snapshots()); n != 0 {
 		t.Fatalf("%d snapshots kept", n)
