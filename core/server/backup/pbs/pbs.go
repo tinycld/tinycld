@@ -162,9 +162,21 @@ func (r *Repository) Put(ctx context.Context, s *snapshot.Snapshot, progress fun
 	}
 
 	pr, pw := io.Pipe()
-	go func() { _ = pw.CloseWithError(writeTar(pw, s.Files)) }()
+	tarDone := make(chan struct{})
+	go func() {
+		defer close(tarDone)
+		_ = pw.CloseWithError(writeTar(ctx, pw, s.Files))
+	}()
+	// The upload waits for its chunker, which reads the pipe and does not watch
+	// ctx. Closing the pipe when ctx ends is what lets a cancelled Put return
+	// while the tar writer is stuck.
+	stopClose := context.AfterFunc(ctx, func() { _ = pr.CloseWithError(ctx.Err()) })
 	stStats, err := sess.UploadStream(ctx, fileStorage, pr)
+	stopClose()
 	_ = pr.Close()
+	// Joined before returning: the caller releases the snapshot next, which
+	// closes the file lister the tar writer may still be reading from.
+	<-tarDone
 	if err != nil {
 		return res, err
 	}
@@ -182,7 +194,11 @@ func (r *Repository) Put(ctx context.Context, s *snapshot.Snapshot, progress fun
 
 // writeTar streams the stored files as a plain tar. Names are storage keys, so
 // ExtractTar puts them back under storage/.
-func writeTar(w io.Writer, files []snapshot.StoredFile) error {
+//
+// The file being read is closed when ctx ends: a read from object storage that
+// has gone silent does not watch ctx, and closing it is the only thing that
+// unsticks it, so Put can join this goroutine.
+func writeTar(ctx context.Context, w io.Writer, files []snapshot.StoredFile) error {
 	tw := tar.NewWriter(w)
 	for _, f := range files {
 		hdr := &tar.Header{Name: f.Key, Mode: 0o644, Size: f.Size, Typeflag: tar.TypeReg}
@@ -193,8 +209,14 @@ func writeTar(w io.Writer, files []snapshot.StoredFile) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", f.Key, err)
 		}
+		closeOnCancel := context.AfterFunc(ctx, func() { _ = rc.Close() })
 		n, err := io.Copy(tw, rc)
-		_ = rc.Close()
+		if closeOnCancel() {
+			_ = rc.Close()
+		}
+		if err == nil {
+			err = ctx.Err()
+		}
 		if err != nil {
 			return err
 		}

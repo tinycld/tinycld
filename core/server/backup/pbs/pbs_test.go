@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -127,5 +130,73 @@ func TestReadRefusesAnotherBackupsSnapshot(t *testing.T) {
 		if err := r.Fetch(context.Background(), ref, t.TempDir()); !errors.Is(err, errNotThisBackup) {
 			t.Errorf("Fetch(%s) = %v", ref, err)
 		}
+	}
+}
+
+// stuckFile is a stored file whose read never returns until it is closed, as a
+// read from object storage that has gone silent.
+type stuckFile struct {
+	reading chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+	open    *atomic.Int32
+}
+
+func (f *stuckFile) Read([]byte) (int, error) {
+	select {
+	case f.reading <- struct{}{}:
+	default:
+	}
+	<-f.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (f *stuckFile) Close() error {
+	f.once.Do(func() {
+		close(f.closed)
+		f.open.Add(-1)
+	})
+	return nil
+}
+
+// A stored file whose read never returns used to wedge Put past its own
+// context: the upload waits for its chunker, the chunker for the tar pipe, the
+// tar goroutine for the file. Put must return once its context ends, and only
+// after the tar goroutine is done with the file, because the caller releases
+// the snapshot — and the file lister under it — next.
+func TestPutEndsWhileAStoredFileIsStuckAndJoinsItsTarWriter(t *testing.T) {
+	srv := pbstest.NewServer(t)
+	r, _ := Open(configFor(t, srv, ""))
+	snap := repotest.Fixture(t)
+	var open atomic.Int32
+	stuck := &stuckFile{reading: make(chan struct{}, 1), closed: make(chan struct{}), open: &open}
+	snap.Files[0].Open = func() (io.ReadCloser, error) {
+		open.Add(1)
+		return stuck, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-stuck.reading
+		cancel()
+	}()
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.Put(ctx, snap, nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a cancelled Put succeeded")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("Put never returned after its context ended")
+	}
+	if n := open.Load(); n != 0 {
+		t.Fatalf("Put returned with %d stored files still open", n)
+	}
+	if n := len(srv.Snapshots()); n != 0 {
+		t.Fatalf("%d snapshots kept", n)
 	}
 }

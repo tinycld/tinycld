@@ -169,3 +169,24 @@ func TestManifestGivesUpOnAStalledServer(t *testing.T) {
 		t.Fatal("a stalled manifest read was never given up on")
 	}
 }
+
+// The engine's watchdog ends a Put by cancelling its context; against a server
+// that has gone silent during the session, that must be enough for Put to return.
+func TestPutReturnsWhenItsContextEndsOnAStalledServer(t *testing.T) {
+	_, stalled := stalledRepo(t, 4<<10)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := stalled.Put(ctx, repotest.Fixture(t), nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a Put to a silent server succeeded")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("Put never returned after its context ended")
+	}
+}
