@@ -1,7 +1,13 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Check, CircleAlert, Loader2 } from 'lucide-react-native'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
+import {
+    collapseSteps,
+    type DebugLine as DebugLineData,
+    debugLines,
+    type StepRow,
+} from './progress-view'
 import { type OperationStatus, type ProgressStep, useInstallProgress } from './use-install-progress'
 
 // The job the panel is tracking, which decides its title: a background job is
@@ -32,6 +38,10 @@ export function InstallProgressModal({
     const dangerColor = useThemeColor('danger')
 
     const { steps, status, error } = useInstallProgress(isVisible, jobId, authToken, onComplete)
+    const rows = collapseSteps(steps, status)
+    // The raw command output means nothing to most users, so it stays hidden
+    // until someone asks for it (support, or an admin who knows the build).
+    const [isDebugLogVisible, setDebugLogVisible] = useState(false)
     const scrollRef = useRef<ScrollView>(null)
 
     // Auto-scroll the step log to the bottom as new steps stream in. The effect
@@ -45,6 +55,7 @@ export function InstallProgressModal({
     if (!isVisible) return null
 
     const progress = steps[steps.length - 1]?.progress ?? 0
+    const colors = { fgColor, mutedColor, successColor, dangerColor }
 
     return (
         <View className="rounded-xl border border-border bg-surface-secondary overflow-hidden">
@@ -62,6 +73,7 @@ export function InstallProgressModal({
                 </View>
 
                 <ProgressBar
+                    testID="install-progress-fill"
                     progress={progress}
                     status={status}
                     successColor={successColor}
@@ -73,23 +85,32 @@ export function InstallProgressModal({
                     className="rounded-lg border border-border bg-surface-secondary"
                     style={{ maxHeight: 300 }}
                 >
-                    <View className="p-3 gap-1">
-                        {steps.map((step, i) => (
-                            <StepLine
-                                key={`${step.progress}-${step.step}`}
-                                step={step}
-                                isLatest={i === steps.length - 1}
-                                status={status}
-                                fgColor={fgColor}
-                                mutedColor={mutedColor}
-                                successColor={successColor}
-                                dangerColor={dangerColor}
-                            />
-                        ))}
-                    </View>
+                    <StepList
+                        isVisible={!isDebugLogVisible}
+                        rows={rows}
+                        status={status}
+                        {...colors}
+                    />
+                    <DebugLog
+                        isVisible={isDebugLogVisible}
+                        lines={debugLines(steps)}
+                        status={status}
+                        {...colors}
+                    />
                 </ScrollView>
 
-                <ErrorDisplay error={error} />
+                <FailureHint isVisible={status === 'failed' && !isDebugLogVisible} />
+                <ErrorDisplay error={isDebugLogVisible ? error : null} />
+
+                <Pressable
+                    onPress={() => setDebugLogVisible(v => !v)}
+                    className="self-start"
+                    accessibilityRole="button"
+                >
+                    <Text className="text-[13px] text-muted-foreground underline">
+                        {isDebugLogVisible ? 'Hide debug log' : 'View debug log'}
+                    </Text>
+                </Pressable>
 
                 <ProgressFooter
                     isVisible={status !== 'running'}
@@ -153,11 +174,13 @@ function StatusIcon({
 }
 
 function ProgressBar({
+    testID,
     progress,
     status,
     successColor,
     dangerColor,
 }: {
+    testID?: string
     progress: number
     status: string
     successColor: string
@@ -168,7 +191,7 @@ function ProgressBar({
     return (
         <View className="h-2 rounded-full bg-border overflow-hidden">
             <View
-                testID="install-progress-fill"
+                testID={testID}
                 // The numeric progress is exposed as ARIA value attributes so e2e can
                 // read it directly off `aria-valuenow` (the visual width is an inline %
                 // style that's awkward to assert on). Proves the SSE stream is advancing.
@@ -191,23 +214,125 @@ function ProgressBar({
     )
 }
 
-function StepLine({
-    step,
-    isLatest,
+interface LineColors {
+    fgColor: string
+    mutedColor: string
+    successColor: string
+    dangerColor: string
+}
+
+function StepList({
+    isVisible,
+    rows,
+    status,
+    ...colors
+}: LineColors & { isVisible: boolean; rows: StepRow[]; status: OperationStatus }) {
+    if (!isVisible) return null
+    return (
+        <View className="p-3 gap-2">
+            {rows.map(row => (
+                <StepRowLine key={row.id} row={row} status={status} {...colors} />
+            ))}
+        </View>
+    )
+}
+
+function StepRowLine({
+    row,
     status,
     fgColor,
     mutedColor,
     successColor,
     dangerColor,
-}: {
-    step: ProgressStep
-    isLatest: boolean
-    status: string
-    fgColor: string
-    mutedColor: string
-    successColor: string
-    dangerColor: string
-}) {
+}: LineColors & { row: StepRow; status: OperationStatus }) {
+    const color = row.isCurrent ? fgColor : row.isFailed ? dangerColor : mutedColor
+    const label = row.isFailed ? `${row.step} failed` : row.step
+    return (
+        <View className="gap-1">
+            <View className="flex-row gap-2 items-center">
+                <RowIcon
+                    row={row}
+                    fgColor={fgColor}
+                    successColor={successColor}
+                    dangerColor={dangerColor}
+                />
+                <Text className="text-[13px] flex-1" style={{ color }}>
+                    {label}
+                </Text>
+            </View>
+            <StepProgress
+                row={row}
+                status={status}
+                successColor={successColor}
+                dangerColor={dangerColor}
+            />
+        </View>
+    )
+}
+
+function RowIcon({
+    row,
+    fgColor,
+    successColor,
+    dangerColor,
+}: Omit<LineColors, 'mutedColor'> & { row: StepRow }) {
+    if (row.isFailed) return <CircleAlert size={12} color={dangerColor} />
+    if (row.isCurrent) return <Loader2 size={12} color={fgColor} />
+    return <Check size={12} color={successColor} />
+}
+
+// Bundling runs for minutes inside a few points of the overall bar; its own
+// bar shows the step is still moving.
+function StepProgress({
+    row,
+    status,
+    successColor,
+    dangerColor,
+}: Pick<LineColors, 'successColor' | 'dangerColor'> & { row: StepRow; status: OperationStatus }) {
+    if (!row.isCurrent || row.stepProgress === null) return null
+    return (
+        <View className="pl-5">
+            <ProgressBar
+                progress={row.stepProgress}
+                status={status}
+                successColor={successColor}
+                dangerColor={dangerColor}
+            />
+        </View>
+    )
+}
+
+function DebugLog({
+    isVisible,
+    lines,
+    status,
+    ...colors
+}: LineColors & { isVisible: boolean; lines: DebugLineData[]; status: OperationStatus }) {
+    if (!isVisible) return null
+    const latestId = lines[lines.length - 1]?.id
+    return (
+        <View className="p-3 gap-1">
+            {lines.map(line => (
+                <DebugLine
+                    key={line.id}
+                    step={line}
+                    isLatest={line.id === latestId}
+                    status={status}
+                    {...colors}
+                />
+            ))}
+        </View>
+    )
+}
+
+function DebugLine({
+    step,
+    isLatest,
+    status,
+    fgColor,
+    mutedColor,
+    dangerColor,
+}: LineColors & { step: ProgressStep; isLatest: boolean; status: OperationStatus }) {
     const isActive = isLatest && status === 'running'
     const isFailed = step.message.startsWith('FAILED')
     const color = isActive ? fgColor : isFailed ? dangerColor : mutedColor
@@ -220,17 +345,19 @@ function StepLine({
             >
                 {step.progress}%
             </Text>
-            <View className="mt-1.5">
-                {isActive ? (
-                    <Loader2 size={10} color={fgColor} />
-                ) : (
-                    <Check size={10} color={successColor} />
-                )}
-            </View>
-            <Text className="text-xs flex-1" style={{ color }}>
-                {step.message}
+            <Text className="text-xs flex-1" style={{ color, fontFamily: 'monospace' }}>
+                {step.step}: {step.message}
             </Text>
         </View>
+    )
+}
+
+function FailureHint({ isVisible }: { isVisible: boolean }) {
+    if (!isVisible) return null
+    return (
+        <Text className="text-[13px] text-muted-foreground">
+            Open the debug log to see what went wrong.
+        </Text>
     )
 }
 
