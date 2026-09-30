@@ -16,12 +16,14 @@ thumbnails, render, realtime, sharelink) and core's PocketBase migrations.
 
 ## Layout
 
-Core is nested inside the `tinycld` shell repo; feature packages are sibling
-repos under the same workspace root:
+Core is nested inside the `tinycld` shell repo (at `tinycld/core/`); feature
+packages are sibling repos under the same workspace root. Assemble the
+workspace with `@tinycld/bootstrap`, not by cloning repos by hand:
 
 ```sh
-git clone git@github.com:tinycld/tinycld.git    ~/code/tinycld/tinycld    # app shell — core lives at tinycld/core/ (this repo)
-git clone git@github.com:tinycld/contacts.git   ~/code/tinycld/contacts   # any feature package
+mkdir ~/code/tinycld && cd ~/code/tinycld
+npx @tinycld/bootstrap@latest --assemble-only --with contacts
+pnpm install
 ```
 
 ## Public surface

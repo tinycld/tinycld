@@ -231,8 +231,9 @@ The image bakes the Go binary, Expo web export, PocketBase server, and the
 [text](https://github.com/tinycld/text), and
 [google-takeout-import](https://github.com/tinycld/google-takeout-import)
 packages into one container (the set is fixed in `scripts/ci-assemble-workspace.sh`).
-Healthchecks and Let's Encrypt-friendly cert handling are baked in. Dokku one-liner deploys
-work via `app.json` + the `Dockerfile`.
+Let's Encrypt certificate handling is baked in (`AUTOCERT_ENABLED`). The `Dockerfile` also
+supports Dokku deploys; `deploy/render.yaml` configures Render, including its `/api/health`
+healthcheck.
 
 ## License
 
