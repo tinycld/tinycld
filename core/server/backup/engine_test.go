@@ -865,6 +865,12 @@ type blockingRepo struct {
 	// tick, before it returns successfully.
 	ticks int
 	tick  time.Duration
+	// tickGate, when set, replaces the real tick sleep: Put waits for a
+	// receive on it before each progress report, and sends on progressed
+	// right after — so a test can step through ticks deterministically and
+	// know exactly when it is safe to check the watchdog's deadline.
+	tickGate   chan struct{}
+	progressed chan struct{}
 }
 
 func newBlockingRepo(calls ...string) *blockingRepo {
@@ -890,12 +896,23 @@ func (r *blockingRepo) Put(ctx context.Context, _ *snapshot.Snapshot, progress f
 		return repo.PutResult{}, err
 	}
 	for i := 1; i <= r.ticks; i++ {
-		select {
-		case <-ctx.Done():
-			return repo.PutResult{}, ctx.Err()
-		case <-time.After(r.tick):
+		if r.tickGate != nil {
+			select {
+			case <-ctx.Done():
+				return repo.PutResult{}, ctx.Err()
+			case <-r.tickGate:
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return repo.PutResult{}, ctx.Err()
+			case <-time.After(r.tick):
+			}
 		}
 		progress(int64(i))
+		if r.progressed != nil {
+			r.progressed <- struct{}{}
+		}
 	}
 	return repo.PutResult{Ref: "blocking/1", Bytes: int64(r.ticks)}, nil
 }
@@ -943,17 +960,53 @@ func TestRunGivesUpOnAStalledRepositoryPut(t *testing.T) {
 }
 
 // The deadline is on progress, not on the run: a Put that keeps reporting new
-// counts must outlive it many times over.
+// counts must outlive it many times over. Driven by a manual watchdog timer
+// instead of real ticks racing a real deadline: the test steps through each
+// tick and checks the deadline itself, so there is no wall-clock margin to
+// lose to scheduling jitter.
 func TestRunKeepsAProgressingRepositoryPutAlive(t *testing.T) {
-	prev := format.StallDeadline
-	format.StallDeadline = 150 * time.Millisecond
-	t.Cleanup(func() { format.StallDeadline = prev })
+	t.Cleanup(resetDailyLimitForTesting)
+	resetDailyLimitForTesting()
+
+	var mt *format.ManualStallTimerForTesting
+	restore := format.InstallManualStallTimerForTesting(func(created *format.ManualStallTimerForTesting) { mt = created })
+	t.Cleanup(restore)
 
 	app := newTestApp(t)
 	r := newBlockingRepo()
-	r.ticks, r.tick = 10, 50*time.Millisecond
-	if _, err := Run(app, Request{Kind: KindManual, Repo: r}); err != nil {
-		t.Fatalf("a Put that kept moving failed: %v", err)
+	r.ticks = 10
+	r.tickGate = make(chan struct{})
+	r.progressed = make(chan struct{})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Run(app, Request{Kind: KindManual, Repo: r})
+		done <- err
+	}()
+
+	for i := 0; i < r.ticks; i++ {
+		select {
+		case r.tickGate <- struct{}{}:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("tick %d: Put never asked for its tick gate", i)
+		}
+		select {
+		case <-r.progressed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("tick %d: Put never reported progress", i)
+		}
+		// mt is set the moment Run's format.Watch call creates its timer,
+		// which happens before Put's first tick is ever asked for.
+		mt.CheckDeadline()
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a Put that kept moving failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run never returned after its last tick")
 	}
 }
 

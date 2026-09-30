@@ -54,6 +54,22 @@ func NoRedirectClient() *http.Client {
 	}
 }
 
+// stallTimer is the subset of *time.Timer the guard needs. A test substitutes
+// newStallTimer with a fake that fires only when told to, so the deadline is
+// crossed by an explicit step rather than by outrunning a real sleep — the
+// margin between a tick and the deadline is then exact, not a wall-clock bet.
+type stallTimer interface {
+	Reset(d time.Duration) bool
+	Stop() bool
+}
+
+// newStallTimer starts a real timer; tests override this package var to
+// control the guard's timer deterministically. Production behavior is
+// unchanged: it is exactly time.AfterFunc under another name.
+var newStallTimer = func(d time.Duration, f func()) stallTimer {
+	return time.AfterFunc(d, f)
+}
+
 // stallGuard cancels a transfer's context when no bytes have moved for
 // StallDeadline. Every Read or Write resets the timer, so a transfer that is
 // merely slow is never touched.
@@ -65,7 +81,7 @@ type stallGuard struct {
 	cancel context.CancelFunc
 
 	mu      sync.Mutex
-	timer   *time.Timer
+	timer   stallTimer
 	stalled bool
 	stopped bool
 }
@@ -76,7 +92,7 @@ type stallGuard struct {
 func newStallGuard(parent context.Context) (context.Context, *stallGuard) {
 	ctx, cancel := transferContext(parent)
 	g := &stallGuard{cancel: cancel}
-	g.timer = time.AfterFunc(StallDeadline, g.fire)
+	g.timer = newStallTimer(StallDeadline, g.fire)
 	return ctx, g
 }
 
@@ -218,6 +234,65 @@ func ResetShutdownForTesting() {
 	shutdownMu.Lock()
 	defer shutdownMu.Unlock()
 	shutdownCtx, shutdownAll = context.Background(), nil
+}
+
+// ManualStallTimerForTesting is a Watchdog's timer driven by explicit steps
+// instead of real time: CheckDeadline is the test's stand-in for the
+// deadline elapsing, so a test proves a repository Put (or any Watch caller)
+// survives many progress ticks without racing a real sleep against
+// StallDeadline. It fires only when nothing has reset it (via Progressed)
+// since the previous check.
+type ManualStallTimerForTesting struct {
+	mu       sync.Mutex
+	fire     func()
+	active   bool
+	touched  bool
+	fireOnce sync.Once
+}
+
+func (m *ManualStallTimerForTesting) Reset(time.Duration) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wasActive := m.active
+	m.active, m.touched = true, true
+	return wasActive
+}
+
+func (m *ManualStallTimerForTesting) Stop() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wasActive := m.active
+	m.active = false
+	return wasActive
+}
+
+// CheckDeadline fires the timer exactly when it has not been touched (armed
+// or reset) since the previous check.
+func (m *ManualStallTimerForTesting) CheckDeadline() {
+	m.mu.Lock()
+	crossed := m.active && !m.touched
+	m.touched = false
+	m.mu.Unlock()
+	if crossed {
+		m.fireOnce.Do(m.fire)
+	}
+}
+
+// InstallManualStallTimerForTesting replaces the real timer every new
+// Watch/Watchdog uses with a *ManualStallTimerForTesting, and returns a
+// restore func the caller runs via t.Cleanup. The manual timer for a
+// specific Watch call is only known once that call creates it — call Watch
+// after this, then read the timer via the callback's argument.
+func InstallManualStallTimerForTesting(onCreate func(*ManualStallTimerForTesting)) (restore func()) {
+	prev := newStallTimer
+	newStallTimer = func(_ time.Duration, fire func()) stallTimer {
+		mt := &ManualStallTimerForTesting{fire: fire, active: true, touched: true}
+		if onCreate != nil {
+			onCreate(mt)
+		}
+		return mt
+	}
+	return func() { newStallTimer = prev }
 }
 
 // transferContext merges a caller's context with the process lifetime: whichever
