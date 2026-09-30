@@ -21,13 +21,16 @@ import (
 
 	"filippo.io/age"
 	"github.com/klauspost/compress/zstd"
+	"github.com/osshield/gopbs/pbstest"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/backup/archive"
 	"tinycld.org/core/backup/arm"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/pbs"
 	"tinycld.org/core/backup/repo"
+	"tinycld.org/core/backup/repo/repotest"
 	"tinycld.org/core/backup/snapshot"
 	"tinycld.org/core/installjob"
 )
@@ -1310,5 +1313,51 @@ func TestCancelAllEndsARepositoryManifestReadInFlight(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("CancelAll did not end the manifest read")
+	}
+}
+
+func pbsRepoFor(t *testing.T, srv *pbstest.Server, backupID string) repo.Repository {
+	t.Helper()
+	c := srv.Config()
+	raw, _ := json.Marshal(pbs.Config{
+		Server: c.BaseURL, Fingerprint: c.Fingerprint, Datastore: c.Datastore,
+		AuthID: "test@pbs!test", Secret: "secret", BackupID: backupID,
+	})
+	r, err := pbs.Open(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// Two deployments sharing a datastore must not be able to restore each other's
+// snapshots. The refusal has to come before phase 3, which spends a pre-restore
+// backup and would already have staged the other organization's manifest.
+func TestRestoreRefusesAnotherBackupsSnapshotBeforePhaseThree(t *testing.T) {
+	app := newTestApp(t)
+	resetRestoreState(t)
+	srv := pbstest.NewServer(t)
+	res, err := pbsRepoFor(t, srv, "other.example").Put(context.Background(), repotest.Fixture(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jobID, err := Restore(app, RestoreRequest{Repo: pbsRepoFor(t, srv, "acme.example"), Ref: res.Ref, Force: true})
+	if err == nil {
+		t.Fatal("restored another backup's snapshot")
+	}
+	if _, serr := os.Stat(preBackupPath(app, jobID)); !os.IsNotExist(serr) {
+		t.Fatal("a pre-restore backup was taken: the refusal came after phase 3")
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if row.GetString("status") != "failed" {
+		t.Fatalf("status %q", row.GetString("status"))
+	}
+	var m map[string]any
+	if uerr := row.UnmarshalJSONField("manifest", &m); uerr == nil && len(m) > 0 {
+		t.Fatalf("the other backup's manifest reached the ledger: %v", m)
 	}
 }

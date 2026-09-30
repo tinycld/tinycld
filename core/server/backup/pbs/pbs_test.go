@@ -107,3 +107,25 @@ func TestAgainstARealServer(t *testing.T) {
 		return r
 	}, repotest.Options{Dedup: true})
 }
+
+// Deployments may share a datastore and a token, so a ref naming another
+// backup ID (or type) must be refused before anything is read: restoring it
+// would hand one organization another's data.
+func TestReadRefusesAnotherBackupsSnapshot(t *testing.T) {
+	srv := pbstest.NewServer(t)
+	r, _ := Open(configFor(t, srv, ""))
+	// Anything that reaches the server now fails with ErrAuth, so a refusal
+	// that is not ErrAuth happened before the first request.
+	srv.RejectAuth(true)
+	for _, ref := range []repo.Ref{
+		"host/other.example/2026-09-29T03:00:00Z",
+		"vm/acme.example/2026-09-29T03:00:00Z",
+	} {
+		if _, err := r.Manifest(context.Background(), ref); !errors.Is(err, errNotThisBackup) {
+			t.Errorf("Manifest(%s) = %v", ref, err)
+		}
+		if err := r.Fetch(context.Background(), ref, t.TempDir()); !errors.Is(err, errNotThisBackup) {
+			t.Errorf("Fetch(%s) = %v", ref, err)
+		}
+	}
+}

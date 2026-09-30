@@ -7,6 +7,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -105,6 +106,12 @@ func refFor(id string, t time.Time) repo.Ref {
 	return repo.Ref(backupType + "/" + id + "/" + t.UTC().Format(time.RFC3339))
 }
 
+// errNotThisBackup refuses a ref that names another backup. Deployments can
+// share a datastore and a token, so the datastore alone does not say whose
+// snapshot a ref is: restoring one of another backup ID's would hand this
+// organization someone else's data.
+var errNotThisBackup = errors.New("backup: that snapshot belongs to a different backup")
+
 func (r *Repository) parseRef(ref repo.Ref) (gopbs.SnapshotRef, error) {
 	parts := strings.SplitN(string(ref), "/", 3)
 	if len(parts) != 3 {
@@ -113,6 +120,9 @@ func (r *Repository) parseRef(ref repo.Ref) (gopbs.SnapshotRef, error) {
 	t, err := time.Parse(time.RFC3339, parts[2])
 	if err != nil {
 		return gopbs.SnapshotRef{}, fmt.Errorf("backup: %q is not a PBS snapshot reference", ref)
+	}
+	if parts[0] != backupType || parts[1] != r.cfg.BackupID {
+		return gopbs.SnapshotRef{}, fmt.Errorf("%w: %q", errNotThisBackup, ref)
 	}
 	return gopbs.SnapshotRef{Type: parts[0], ID: parts[1], Time: t}, nil
 }
