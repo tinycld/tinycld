@@ -52,11 +52,15 @@ describe('buildGoWork', () => {
     })
 })
 
+const gopbsReplaceLine =
+    'replace github.com/osshield/gopbs => github.com/nathanstitt/gopbs v0.0.0-20260929212904-191e2150ab06'
+
 describe('buildMemberGoWork', () => {
     it('replaces core so a standalone member build resolves it', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
-            '../../tinycld/third_party/pocketbase'
+            '../../tinycld/third_party/pocketbase',
+            gopbsReplaceLine
         )
         expect(work).toContain('use .')
         expect(work).toContain('replace tinycld.org/core => ../../tinycld/core/server')
@@ -67,7 +71,8 @@ describe('buildMemberGoWork', () => {
     it('replaces the archive-format module, versioned', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
-            '../../tinycld/third_party/pocketbase'
+            '../../tinycld/third_party/pocketbase',
+            gopbsReplaceLine
         )
         expect(work).toContain(
             'replace tinycld.org/core/backup/format v0.0.0 => ../../tinycld/core/server/backup/format'
@@ -79,11 +84,24 @@ describe('buildMemberGoWork', () => {
     it('always replaces the fork so a member never resolves upstream goja', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
-            '../../tinycld/third_party/pocketbase'
+            '../../tinycld/third_party/pocketbase',
+            gopbsReplaceLine
         )
         expect(work).toContain(
             'replace github.com/pocketbase/pocketbase => ../../tinycld/third_party/pocketbase'
         )
+    })
+
+    // core/server/backup/pbs imports the forked gopbs client; a member whose
+    // server imports coreserver needs the same replace or a standalone build
+    // resolves the unforked module.
+    it('carries the gopbs replace verbatim', () => {
+        const work = buildMemberGoWork(
+            '../../tinycld/core/server',
+            '../../tinycld/third_party/pocketbase',
+            gopbsReplaceLine
+        )
+        expect(work).toContain(gopbsReplaceLine)
     })
 })
 

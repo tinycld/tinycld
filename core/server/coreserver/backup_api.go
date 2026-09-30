@@ -19,6 +19,7 @@ import (
 
 	"tinycld.org/core/backup"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/repo"
 )
 
 // minPassphrase is the floor the API enforces on every archive passphrase. An
@@ -51,6 +52,7 @@ var maintenancePriority = apis.DefaultLoadAuthTokenMiddlewarePriority - 10
 type backupBody struct {
 	Target     string `json:"target"`
 	Stream     bool   `json:"stream"`
+	Repository bool   `json:"repository"`
 	Passphrase string `json:"passphrase"`
 }
 
@@ -84,6 +86,9 @@ func RegisterBackupEndpoints(app core.App) {
 		// ServeMux picks the MORE SPECIFIC pattern, not the first registered, so
 		// the literal wins wherever it sits in this list.
 		g.GET("/verify", func(re *core.RequestEvent) error { return handleBackupVerify(app, re) }).BindFunc(requireAdmin)
+		g.GET("/snapshots", func(re *core.RequestEvent) error { return handleSnapshots(app, re) }).BindFunc(requireAdmin)
+		g.POST("/repository/test", func(re *core.RequestEvent) error { return handleRepositoryTest(app, re) }).BindFunc(requireAdmin)
+		g.POST("/repository/generate-key", handleGenerateKey).BindFunc(requireAdmin)
 		g.POST("/restore", func(re *core.RequestEvent) error { return handleRestore(app, re) }).BindFunc(requireOwner)
 		g.PATCH("/restore/{id}", handleRestoreSwap).BindFunc(requireOwner)
 		g.GET("/{id}", func(re *core.RequestEvent) error { return handleBackupGet(app, re) }).BindFunc(requireAdmin)
@@ -115,6 +120,10 @@ func RegisterBackupEndpoints(app core.App) {
 func RegisterBackupBoot(app core.App) {
 	bootedAt := time.Now()
 	probe := backup.IsBootProbe()
+	// Bound unconditionally, even for a boot probe: the hook itself is
+	// harmless if nothing ever calls app.NewFilesystem() on this app, and
+	// binding must happen before that first filesystem is created.
+	backup.BindDeleteHold(app)
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
 		if probe {
 			srvLog.Info("boot probe: restore state left untouched for the real boot")
@@ -146,6 +155,14 @@ func RegisterBackupBoot(app core.App) {
 		}
 		if err := backup.MarkInterrupted(app, bootedAt); err != nil {
 			srvLog.Warn("could not close interrupted backup rows", "err", err)
+		}
+		backup.DrainHeldDeletes(app)
+		// Add, not MustAdd: Add replaces an existing job by id rather than
+		// erroring, so a second RegisterBackupBoot call against the same app
+		// (a boot probe followed by the real boot sharing a process, or a
+		// test that calls it twice) cannot panic here.
+		if err := app.Cron().Add(backup.DrainJobID, "* * * * *", func() { backup.DrainHeldDeletes(app) }); err != nil {
+			srvLog.Error("could not schedule the backup hold drain", "err", err)
 		}
 		return nil
 	})
@@ -190,6 +207,20 @@ func handleBackupCreate(app core.App, re *core.RequestEvent) error {
 	var body backupBody
 	if err := json.NewDecoder(re.Request.Body).Decode(&body); err != nil {
 		return re.BadRequestError("invalid JSON body", err)
+	}
+	// A repository backup carries no passphrase: the repository, not an age
+	// recipient, is what protects the data at rest (PBS encrypts with its own
+	// key, or not at all when the operator chose none).
+	if body.Repository {
+		r, err := openRepository(app)
+		if err != nil {
+			return re.BadRequestError(err.Error(), nil)
+		}
+		id, err := backup.Start(app, backup.Request{
+			Kind: backup.KindManual, Repo: r, Initiator: initiatorOf(re),
+			TargetHost: r.Kind(), Request: re,
+		})
+		return backupStartError(re, id, err)
 	}
 	rcpt, err := passphraseRecipient(body.Passphrase)
 	if err != nil {
@@ -292,6 +323,7 @@ func handleBackupVerify(app core.App, re *core.RequestEvent) error {
 
 type restoreBody struct {
 	Source     string `json:"source"`
+	Snapshot   string `json:"snapshot"`
 	Passphrase string `json:"passphrase"`
 	Force      bool   `json:"force"`
 }
@@ -318,10 +350,10 @@ func handleRestore(app core.App, re *core.RequestEvent) error {
 		if err := readUploadedArchive(app, re, &req); err != nil {
 			return err
 		}
-	} else if err := readRemoteArchive(re, &req); err != nil {
+	} else if err := readRemoteArchive(app, re, &req); err != nil {
 		return err
 	}
-	if req.Source == nil {
+	if req.Source == nil && req.Repo == nil {
 		return re.BadRequestError("No archive was supplied.", nil)
 	}
 
@@ -535,10 +567,24 @@ func isTruthyFormValue(v string) bool {
 	}
 }
 
-func readRemoteArchive(re *core.RequestEvent, req *backup.RestoreRequest) error {
+func readRemoteArchive(app core.App, re *core.RequestEvent, req *backup.RestoreRequest) error {
 	var body restoreBody
 	if err := json.NewDecoder(re.Request.Body).Decode(&body); err != nil {
 		return re.BadRequestError("invalid JSON body", err)
+	}
+	if body.Source != "" && body.Snapshot != "" {
+		return re.BadRequestError("Only one of source or snapshot may be given.", nil)
+	}
+	// A repository snapshot needs no passphrase: the repository is opened with
+	// this deployment's own configured credentials, not a caller-supplied one.
+	if body.Snapshot != "" {
+		r, err := openRepository(app)
+		if err != nil {
+			return re.BadRequestError(err.Error(), nil)
+		}
+		req.Repo, req.Ref, req.Force = r, repo.Ref(body.Snapshot), body.Force
+		req.SourceHost = r.Kind()
+		return nil
 	}
 	if len(body.Passphrase) < minPassphrase {
 		return re.BadRequestError(passphraseTooShort, nil)

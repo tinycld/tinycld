@@ -284,6 +284,24 @@ func shortStallDeadline(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { StallDeadline = prev })
 }
 
+// installManualTimer replaces the real stall timer for one test with a
+// *ManualStallTimerForTesting, driven by explicit checkDeadline steps
+// instead of real time. It must be called before the Watch call whose timer
+// it captures — the timer does not exist until that call creates it.
+func installManualTimer(t *testing.T) *manualTimerHandle {
+	t.Helper()
+	h := &manualTimerHandle{}
+	restore := InstallManualStallTimerForTesting(func(created *ManualStallTimerForTesting) { h.timer = created })
+	t.Cleanup(restore)
+	return h
+}
+
+// manualTimerHandle defers reading the created timer until it's used, since
+// installManualTimer must run before the Watch call that creates it.
+type manualTimerHandle struct{ timer *ManualStallTimerForTesting }
+
+func (h *manualTimerHandle) CheckDeadline() { h.timer.CheckDeadline() }
+
 // A target that accepts the connection and then never reads the body is the
 // worst case: at the socket level it is indistinguishable from a slow one, so
 // without a progress deadline the transfer goroutine parks forever and takes the
@@ -413,5 +431,91 @@ func TestStallGuardReportsThatItFired(t *testing.T) {
 	}
 	if !g.fired() {
 		t.Fatal("the guard never reported firing")
+	}
+}
+
+// A repository's client moves the bytes itself, so the only signal of progress
+// is the one the caller feeds the watchdog. None at all is a stall.
+func TestWatchGivesUpWithoutProgress(t *testing.T) {
+	shortStallDeadline(t, 50*time.Millisecond)
+	ctx, w := Watch(context.Background())
+	t.Cleanup(w.Stop)
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("a transfer with no progress was never cancelled")
+	}
+	if err := w.Err(ctx.Err()); !errors.Is(err, ErrStalled) {
+		t.Fatalf("want ErrStalled, got %v", err)
+	}
+}
+
+// A slow transfer that keeps moving must never be cut off, however long it
+// runs. Driven by a manual timer instead of real ticks against a real
+// deadline: each Progressed call resets the fake timer, and checkDeadline —
+// the test's stand-in for the deadline elapsing — must never see it still
+// armed while progress keeps arriving. No wall-clock margin is involved, so
+// this cannot flake on scheduling jitter.
+func TestWatchKeepsAProgressingReaderAlive(t *testing.T) {
+	mt := installManualTimer(t)
+	ctx, w := Watch(context.Background())
+	t.Cleanup(w.Stop)
+
+	for i := 0; i < 8; i++ {
+		w.Progressed()
+		mt.CheckDeadline()
+		if ctx.Err() != nil {
+			t.Fatalf("tick %d: a transfer that kept moving was cancelled", i)
+		}
+	}
+	if err := w.Err(nil); err != nil {
+		t.Fatalf("Err(nil) = %v", err)
+	}
+}
+
+// Once progress genuinely stops, the very next deadline check must cancel —
+// the counterpart to the "kept alive" case above, pinned on the same manual
+// timer so the two together cover both sides of the boundary exactly.
+func TestWatchEndsOnceProgressStopsAtTheDeadline(t *testing.T) {
+	mt := installManualTimer(t)
+	ctx, w := Watch(context.Background())
+	t.Cleanup(w.Stop)
+
+	for i := 0; i < 3; i++ {
+		w.Progressed()
+		mt.CheckDeadline()
+	}
+	if ctx.Err() != nil {
+		t.Fatal("cancelled before progress stopped")
+	}
+	// No further Progressed(): the deadline has now elapsed with nothing to
+	// reset it.
+	mt.CheckDeadline()
+	if ctx.Err() == nil {
+		t.Fatal("a transfer with no further progress was not cancelled at the deadline")
+	}
+	if err := w.Err(ctx.Err()); !errors.Is(err, ErrStalled) {
+		t.Fatalf("want ErrStalled, got %v", err)
+	}
+}
+
+// A graceful stop must reach a repository transfer as well as an archive one.
+func TestCancelAllEndsAWatchedTransfer(t *testing.T) {
+	t.Cleanup(ResetShutdownForTesting)
+	SetShutdown(context.Background())
+	ctx, w := Watch(context.Background())
+	t.Cleanup(w.Stop)
+	life, cancel := Lifetime(context.Background())
+	t.Cleanup(cancel)
+	CancelAll()
+	for _, c := range []context.Context{ctx, life} {
+		select {
+		case <-c.Done():
+		case <-time.After(5 * time.Second):
+			t.Fatal("CancelAll did not cancel the transfer")
+		}
+	}
+	if err := w.Err(ctx.Err()); errors.Is(err, ErrStalled) {
+		t.Fatal("a shutdown is not a stall")
 	}
 }

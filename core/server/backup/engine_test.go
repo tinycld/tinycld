@@ -22,7 +22,11 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 	_ "modernc.org/sqlite"
 
+	"tinycld.org/core/backup/archive"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/hold"
+	"tinycld.org/core/backup/repo"
+	"tinycld.org/core/backup/snapshot"
 	"tinycld.org/core/installjob"
 )
 
@@ -574,8 +578,8 @@ func TestManifestRoundTripsThroughTheLedgerColumn(t *testing.T) {
 func TestRunFailingInBuildManifestStoresNoManifest(t *testing.T) {
 	app := newTestApp(t)
 	makeUser(t, app, "owner@example.com", "owner")
-	// buildManifest reads pkg_registry first, so removing it fails the run
-	// before any manifest exists.
+	// The snapshot reads pkg_registry from its DB copy to build the manifest,
+	// so removing it fails the run before any manifest exists.
 	reg, err := app.FindCollectionByNameOrId("pkg_registry")
 	if err != nil {
 		t.Fatal(err)
@@ -640,8 +644,8 @@ func TestFailedRunClosesTheArchiveWriter(t *testing.T) {
 	makeUser(t, app, "owner@example.com", "owner")
 	id, _ := age.GenerateX25519Identity()
 	var closes atomic.Int64
-	writerClosedForTesting = func() { closes.Add(1) }
-	t.Cleanup(func() { writerClosedForTesting = nil })
+	archive.WriterClosedForTesting = func() { closes.Add(1) }
+	t.Cleanup(func() { archive.WriterClosedForTesting = nil })
 
 	if _, err := Run(app, Request{Kind: KindScheduled, Recipient: id.Recipient(), Sink: &failingSink{}}); err == nil {
 		t.Fatal("expected error")
@@ -794,5 +798,243 @@ func TestCallbackFailureLogsNoCredential(t *testing.T) {
 	}
 	if !strings.Contains(line, "127.0.0.1") {
 		t.Errorf("the log line should still name the host: %s", line)
+	}
+}
+
+// recordingRepo records the snapshot it was handed.
+type recordingRepo struct {
+	got  format.Manifest
+	keys []string
+}
+
+func (r *recordingRepo) Kind() string { return "recording" }
+func (r *recordingRepo) Put(_ context.Context, s *snapshot.Snapshot, progress func(int64)) (repo.PutResult, error) {
+	r.got = s.Manifest
+	for _, f := range s.Files {
+		r.keys = append(r.keys, f.Key)
+	}
+	if progress != nil {
+		progress(42)
+	}
+	return repo.PutResult{Ref: "rec/1", Bytes: 100, UploadedBytes: 7}, nil
+}
+func (r *recordingRepo) Manifest(context.Context, repo.Ref) (format.Manifest, error) {
+	return r.got, nil
+}
+func (r *recordingRepo) Fetch(context.Context, repo.Ref, string) error     { return nil }
+func (r *recordingRepo) List(context.Context) ([]repo.SnapshotInfo, error) { return nil, nil }
+
+func TestRunHandsTheSnapshotToTheRepository(t *testing.T) {
+	app := newTestApp(t)
+	r := &recordingRepo{}
+	id, err := Run(app, Request{Kind: KindScheduled, Repo: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _ := app.FindRecordById("backups", id)
+	if row.GetString("status") != "succeeded" || row.GetString("repository") != "recording" ||
+		row.GetString("ref") != "rec/1" || row.GetInt("bytes") != 100 || row.GetInt("uploaded_bytes") != 7 {
+		t.Fatalf("row = %v", row.PublicExport())
+	}
+	if len(r.keys) != 1 || r.keys[0] != "col1/rec1/hello.txt" {
+		t.Fatalf("keys = %v", r.keys)
+	}
+	if r.got.Core != "1.2.3" || r.got.Packages["widgets"] != "1.0.0" {
+		t.Fatalf("manifest = %+v", r.got)
+	}
+}
+
+func TestFailedRunRecordsAFailure(t *testing.T) {
+	app := newTestApp(t)
+	if err := FailedRun(app, KindScheduled, "pbs", errors.New("no route to host")); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := app.FindRecordsByFilter("backups", "status = 'failed'", "", 0, 0)
+	if len(rows) != 1 || rows[0].GetString("repository") != "pbs" {
+		t.Fatalf("rows = %v", rows)
+	}
+}
+
+// blockingRepo stands in for a repository whose server went silent: each call
+// named in blockOn waits until its context is done, as a client with no
+// read-idle timeout does, and reports that it started on entered.
+type blockingRepo struct {
+	blockOn map[string]bool
+	entered chan string
+	// ticks, when set, is how many distinct progress counts Put reports, one per
+	// tick, before it returns successfully.
+	ticks int
+	tick  time.Duration
+	// tickGate, when set, replaces the real tick sleep: Put waits for a
+	// receive on it before each progress report, and sends on progressed
+	// right after — so a test can step through ticks deterministically and
+	// know exactly when it is safe to check the watchdog's deadline.
+	tickGate   chan struct{}
+	progressed chan struct{}
+}
+
+func newBlockingRepo(calls ...string) *blockingRepo {
+	r := &blockingRepo{blockOn: map[string]bool{}, entered: make(chan string, 8)}
+	for _, c := range calls {
+		r.blockOn[c] = true
+	}
+	return r
+}
+
+func (r *blockingRepo) block(ctx context.Context, call string) error {
+	r.entered <- call
+	if !r.blockOn[call] {
+		return nil
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (r *blockingRepo) Kind() string { return "blocking" }
+func (r *blockingRepo) Put(ctx context.Context, _ *snapshot.Snapshot, progress func(int64)) (repo.PutResult, error) {
+	if err := r.block(ctx, "put"); err != nil {
+		return repo.PutResult{}, err
+	}
+	for i := 1; i <= r.ticks; i++ {
+		if r.tickGate != nil {
+			select {
+			case <-ctx.Done():
+				return repo.PutResult{}, ctx.Err()
+			case <-r.tickGate:
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return repo.PutResult{}, ctx.Err()
+			case <-time.After(r.tick):
+			}
+		}
+		progress(int64(i))
+		if r.progressed != nil {
+			r.progressed <- struct{}{}
+		}
+	}
+	return repo.PutResult{Ref: "blocking/1", Bytes: int64(r.ticks)}, nil
+}
+func (r *blockingRepo) Manifest(ctx context.Context, _ repo.Ref) (format.Manifest, error) {
+	return format.Manifest{Format: format.FormatV1}, r.block(ctx, "manifest")
+}
+func (r *blockingRepo) Fetch(ctx context.Context, _ repo.Ref, _ string) error {
+	return r.block(ctx, "fetch")
+}
+func (r *blockingRepo) List(context.Context) ([]repo.SnapshotInfo, error) { return nil, nil }
+
+// assertReleased checks what a stuck Put used to hold for the life of the
+// process: the installjob claim, and the delete hold that journals every
+// storage delete while it is renewed.
+func assertReleased(t *testing.T, app core.App, rowID string) {
+	t.Helper()
+	if installjob.Running() {
+		t.Fatal("the interlock is still claimed")
+	}
+	if _, held, err := hold.Read(app.DataDir()); err != nil || held {
+		t.Fatalf("the delete hold is still held (err %v)", err)
+	}
+	row, err := app.FindRecordById("backups", rowID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := row.GetString("status"); got != "failed" {
+		t.Fatalf("status %q", got)
+	}
+}
+
+// A repository whose server accepts and then goes silent used to hold the claim
+// and the hold forever: the Put ran on context.Background().
+func TestRunGivesUpOnAStalledRepositoryPut(t *testing.T) {
+	prev := format.StallDeadline
+	format.StallDeadline = 150 * time.Millisecond
+	t.Cleanup(func() { format.StallDeadline = prev })
+
+	app := newTestApp(t)
+	rowID, err := Run(app, Request{Kind: KindManual, Repo: newBlockingRepo("put")})
+	if !errors.Is(err, format.ErrStalled) {
+		t.Fatalf("want ErrStalled, got %v", err)
+	}
+	assertReleased(t, app, rowID)
+}
+
+// The deadline is on progress, not on the run: a Put that keeps reporting new
+// counts must outlive it many times over. Driven by a manual watchdog timer
+// instead of real ticks racing a real deadline: the test steps through each
+// tick and checks the deadline itself, so there is no wall-clock margin to
+// lose to scheduling jitter.
+func TestRunKeepsAProgressingRepositoryPutAlive(t *testing.T) {
+	t.Cleanup(resetDailyLimitForTesting)
+	resetDailyLimitForTesting()
+
+	var mt *format.ManualStallTimerForTesting
+	restore := format.InstallManualStallTimerForTesting(func(created *format.ManualStallTimerForTesting) { mt = created })
+	t.Cleanup(restore)
+
+	app := newTestApp(t)
+	r := newBlockingRepo()
+	r.ticks = 10
+	r.tickGate = make(chan struct{})
+	r.progressed = make(chan struct{})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Run(app, Request{Kind: KindManual, Repo: r})
+		done <- err
+	}()
+
+	for i := 0; i < r.ticks; i++ {
+		select {
+		case r.tickGate <- struct{}{}:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("tick %d: Put never asked for its tick gate", i)
+		}
+		select {
+		case <-r.progressed:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("tick %d: Put never reported progress", i)
+		}
+		// mt is set the moment Run's format.Watch call creates its timer,
+		// which happens before Put's first tick is ever asked for.
+		mt.CheckDeadline()
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a Put that kept moving failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run never returned after its last tick")
+	}
+}
+
+// A graceful stop must reach a repository Put, not only an archive transfer.
+func TestCancelAllEndsARepositoryPutInFlight(t *testing.T) {
+	t.Cleanup(ResetForTesting)
+	SetShutdown(context.Background())
+
+	app := newTestApp(t)
+	r := newBlockingRepo("put")
+	type result struct {
+		id  string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		id, err := Run(app, Request{Kind: KindManual, Repo: r})
+		done <- result{id, err}
+	}()
+	<-r.entered
+	CancelAll()
+	select {
+	case res := <-done:
+		if res.err == nil {
+			t.Fatal("a cancelled Put must fail the run")
+		}
+		assertReleased(t, app, res.id)
+	case <-time.After(10 * time.Second):
+		t.Fatal("CancelAll did not end the Put")
 	}
 }

@@ -21,6 +21,7 @@ func newSchemaApp(t testing.TB) *tests.TestApp {
 		t.Fatalf("NewTestApp: %v", err)
 	}
 	t.Cleanup(func() { app.Cleanup() })
+	resetTokenThrottleForTesting(t)
 
 	clients := core.NewBaseCollection(clientsCollection)
 	clients.Fields.Add(&core.TextField{Name: "client_id", Required: true})

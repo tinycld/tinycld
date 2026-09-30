@@ -1,26 +1,24 @@
 package backup
 
 import (
-	"archive/tar"
 	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"filippo.io/age"
 	"github.com/pocketbase/pocketbase/core"
-	_ "modernc.org/sqlite" // the driver the staged-database integrity check opens with
 
 	"tinycld.org/core/audit"
+	"tinycld.org/core/backup/archive"
+	"tinycld.org/core/backup/arm"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/repo"
 	"tinycld.org/core/installjob"
 	"tinycld.org/core/notify"
 )
@@ -128,6 +126,10 @@ type RestoreRequest struct {
 	Initiator  string
 	Request    *core.RequestEvent
 	SourceHost string
+	// Repo and Ref restore a snapshot from a repository instead of reading an
+	// archive stream. Source, Ranged and Identity are then unused.
+	Repo repo.Repository
+	Ref  repo.Ref
 }
 
 var ErrNotWaiting = errors.New("backup: no restore is waiting for a source")
@@ -190,7 +192,14 @@ func beginRestore(app core.App, req RestoreRequest) (*core.Record, *installjob.J
 	if _, ok := installjob.Claim(job); !ok {
 		return nil, nil, ErrBusy
 	}
-	row := newRow(app, KindRestore, req.Initiator, req.SourceHost)
+	targetHost := req.SourceHost
+	if req.Repo != nil && targetHost == "" {
+		targetHost = req.Repo.Kind()
+	}
+	row := newRow(app, KindRestore, req.Initiator, targetHost)
+	if req.Repo != nil {
+		row.Set("repository", req.Repo.Kind())
+	}
 	if err := app.Save(row); err != nil {
 		installjob.Release(job)
 		return nil, nil, err
@@ -230,6 +239,9 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 			return
 		}
 		sourceClosed = true
+		if req.Source == nil {
+			return
+		}
 		if cerr := req.Source.Close(); cerr != nil {
 			log.Warn("could not close a restore source", "id", id, "err", cerr)
 		}
@@ -261,7 +273,7 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 		if rerr := os.Remove(armedPath(app)); rerr != nil && !os.IsNotExist(rerr) {
 			log.Warn("could not disarm a failed restore", "id", id, "err", rerr)
 		}
-		if ferr := finishRow(app, row, "failed", 0, "", err.Error(), manifest); ferr != nil {
+		if ferr := finishRow(app, row, "failed", repo.PutResult{}, err.Error(), manifest, row.GetString("repository")); ferr != nil {
 			log.Error("could not finalize restore row", "id", id, "err", ferr)
 		}
 		// Failure is the only outcome this process can announce. Success is
@@ -293,14 +305,29 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 
 	// Phase 1: the manifest only. Nothing is decided, and nothing is written,
 	// until this deployment knows what it is being asked to become.
-	reader, err := format.NewReader(req.Source, req.Identity)
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-	read, err := reader.ReadManifest()
-	if err != nil {
-		return err
+	var reader *format.Reader
+	var read format.Manifest
+	// A repository read has no progress this function can see, so its stall
+	// deadline is the repository's own; what the restore adds is that a shutdown
+	// reaches it, since a stuck read keeps the interlock and, from phase 4 on,
+	// keeps `restoring` set.
+	repoCtx, cancelRepo := format.Lifetime(context.Background())
+	defer cancelRepo()
+	if req.Repo != nil {
+		read, err = req.Repo.Manifest(repoCtx, req.Ref)
+		if err != nil {
+			return err
+		}
+	} else {
+		reader, err = format.NewReader(req.Source, req.Identity)
+		if err != nil {
+			return err
+		}
+		defer reader.Close()
+		read, err = reader.ReadManifest()
+		if err != nil {
+			return err
+		}
 	}
 	manifest = &read
 	row.Set("manifest", read)
@@ -389,29 +416,37 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	if err = os.MkdirAll(pending, 0o700); err != nil {
 		return err
 	}
-	marker, err := json.Marshal(armed{ID: id, Pending: pending, Pre: prePath, Manifest: read})
-	if err != nil {
-		return err
-	}
-	if err = os.WriteFile(armedPath(app), marker, 0o600); err != nil {
+	if err = arm.WriteMarker(restoreDir(app), armed{ID: id, Pending: pending, Pre: prePath, Manifest: read}); err != nil {
 		return err
 	}
 	restoring.Store(true)
 
-	// Phase 5: the rest of the stream, staged and verified against the archive's
-	// own checksums before anything is asked to boot on it.
-	if err = stage(reader, pending); err != nil {
-		return err
-	}
-	if err = integrityCheck(filepath.Join(pending, format.MemberDB)); err != nil {
-		return err
-	}
-	// The sentinel is the boot swap's only sound evidence that staging finished.
-	// It cannot infer that from the members themselves: once the swap starts
-	// moving them into pb_data, a staged member's absence from pending means the
-	// opposite of what it means before the swap starts.
-	if err = os.WriteFile(filepath.Join(pending, stagedSentinel), nil, 0o644); err != nil {
-		return err
+	// Phase 5: the rest of the snapshot, staged and verified before anything is
+	// asked to boot on it.
+	if req.Repo != nil {
+		// MarkStaged checks the staged database's row counts against the
+		// manifest read in phase 1. Fetch does not re-read or compare the
+		// manifest itself; this check is what catches a staged copy that does
+		// not match it. An archive stream cannot do the same (see below).
+		if err = req.Repo.Fetch(repoCtx, req.Ref, pending); err != nil {
+			return err
+		}
+		if err = arm.MarkStaged(pending, &read); err != nil {
+			return err
+		}
+	} else {
+		if err = archive.Stage(reader, pending); err != nil {
+			return err
+		}
+		// The sentinel is the boot swap's only sound evidence that staging finished.
+		// It cannot infer that from the members themselves: once the swap starts
+		// moving them into pb_data, a staged member's absence from pending means the
+		// opposite of what it means before the swap starts. counts is nil: the
+		// manifest's counts were read from the source archive, not this staged copy,
+		// so they cannot be compared exactly (see manifestcheck.go for that check).
+		if err = arm.MarkStaged(pending, nil); err != nil {
+			return err
+		}
 	}
 	row.Set("status", "running")
 	if err = app.Save(row); err != nil {
@@ -574,98 +609,6 @@ func mergeMeta(row *core.Record, extra map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
-}
-
-// stage writes every member into dir. It accepts only the members a backup
-// contains: an archive naming anything else is either a different format or an
-// attempt to write outside the staging directory.
-func stage(r *format.Reader, dir string) error {
-	for {
-		hdr, body, err := r.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		// A backup writes regular files and nothing else. Refusing every other
-		// type here is the check that matters: a symlink member named
-		// storage/x pointing at /etc or at the live pb_data would otherwise be
-		// judged solely on where its own name lands, and a later write through
-		// that name would leave the staging directory entirely.
-		if hdr.Typeflag != tar.TypeReg {
-			return fmt.Errorf("%w: member %q is not a regular file", format.ErrFormat, hdr.Name)
-		}
-		if hdr.Name != format.MemberDB && !strings.HasPrefix(hdr.Name, format.StoragePrefix) {
-			return fmt.Errorf("%w: unexpected member %q", format.ErrFormat, hdr.Name)
-		}
-		target := filepath.Join(dir, filepath.FromSlash(hdr.Name))
-		if !strings.HasPrefix(target, dir+string(os.PathSeparator)) {
-			return fmt.Errorf("%w: member %q escapes the staging directory", format.ErrFormat, hdr.Name)
-		}
-		if err := writeMember(target, body); err != nil {
-			return err
-		}
-	}
-	return r.Verify()
-}
-
-// writeMember stages one member with the permissions PocketBase itself writes
-// under pb_data. The staged tree BECOMES pb_data, so staging it tighter would
-// leave a restored deployment with a database and a storage tree no other
-// process or user on the host could read.
-func writeMember(target string, body io.Reader) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(f, body); err != nil {
-		_ = f.Close()
-		return err
-	}
-	return f.Close()
-}
-
-// integrityCheck refuses a staged database SQLite cannot read. Without it a
-// truncated or corrupt archive gets swapped in and the process restart-loops on
-// a database that will never open, with the live copy already moved aside.
-func integrityCheck(path string) error {
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
-	if err != nil {
-		return fmt.Errorf("backup: open the staged database: %w", err)
-	}
-	defer func() {
-		if cerr := db.Close(); cerr != nil {
-			log.Warn("could not close the staged database", "path", path, "err", cerr)
-		}
-	}()
-	rows, err := db.Query("PRAGMA integrity_check")
-	if err != nil {
-		return fmt.Errorf("backup: check the staged database: %w", err)
-	}
-	defer func() {
-		if cerr := rows.Close(); cerr != nil {
-			log.Warn("could not close an integrity-check result", "path", path, "err", cerr)
-		}
-	}()
-	var problems []string
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			return fmt.Errorf("backup: check the staged database: %w", err)
-		}
-		problems = append(problems, line)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("backup: check the staged database: %w", err)
-	}
-	if len(problems) == 1 && problems[0] == "ok" {
-		return nil
-	}
-	return fmt.Errorf("backup: the staged database failed its integrity check: %s", strings.Join(problems, "; "))
 }
 
 // announceRestore tells the people who can act, and records the outcome. Neither

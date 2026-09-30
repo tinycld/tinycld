@@ -54,6 +54,9 @@ func newTestApp(t *testing.T) *tests.TestApp {
 		&core.TextField{Name: "target_host", Max: 253},
 		&core.TextField{Name: "error", Max: 2000},
 		&core.JSONField{Name: "metadata", MaxSize: 20000},
+		&core.TextField{Name: "repository", Max: 40},
+		&core.TextField{Name: "ref", Max: 500},
+		&core.NumberField{Name: "uploaded_bytes"},
 		&core.AutodateField{Name: "created", OnCreate: true},
 		&core.AutodateField{Name: "updated", OnCreate: true, OnUpdate: true},
 	)

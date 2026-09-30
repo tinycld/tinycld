@@ -1,5 +1,6 @@
 // Package backup runs one organization's backup: a consistent snapshot of the
-// database plus every stored file, streamed into an encrypted archive.
+// database plus every stored file, handed to a repository — by default an
+// encrypted archive streamed to a sink.
 //
 // Every run inserts its ledger row BEFORE doing any work and always ends in a
 // terminal status. "When was this last backed up" is then a read of the ledger
@@ -9,23 +10,25 @@ package backup
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"filippo.io/age"
-	"github.com/klauspost/compress/zstd"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/filesystem"
 
 	"tinycld.org/core/audit"
+	"tinycld.org/core/backup/archive"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/repo"
+	"tinycld.org/core/backup/snapshot"
 	"tinycld.org/core/installjob"
 	"tinycld.org/core/logging"
 	"tinycld.org/core/notify"
@@ -50,8 +53,13 @@ var (
 // Request is one run. Neither the recipient nor anything derived from a signed
 // target URL is ever logged or stored: TargetHost is a hostname, which is why
 // the caller passes it rather than the URL.
+//
+// Repo is where the backup goes. When it is nil the run writes an archive to
+// Sink, encrypted to Recipient — the shape every caller had before
+// repositories existed.
 type Request struct {
 	Kind       Kind
+	Repo       repo.Repository
 	Recipient  age.Recipient
 	Sink       io.WriteCloser
 	Initiator  string // users id, or "" for a run nobody asked for
@@ -125,15 +133,22 @@ func begin(app core.App, req Request) (*core.Record, *installjob.Job, error) {
 
 func run(app core.App, req Request, row *core.Record, job *installjob.Job) (err error) {
 	defer installjob.Release(job)
-	var sha string
-	var sinkClosed bool
-	// counter is nil until the pipeline exists; the terminal defer reads it for
-	// the byte count, so a failed run reports what it actually wrote.
-	var counter *countingWriter
-	// manifest is a pointer so "never built" is distinguishable from "built and
-	// empty". A zero-valued manifest in the ledger reads as a real backup of
-	// nothing, which is worse than no manifest at all.
-	var manifest *format.Manifest
+
+	r := req.Repo
+	if r == nil {
+		r = &archive.Repository{Recipient: req.Recipient, Target: archive.ToSink(req.Sink, "")}
+	}
+	var (
+		result repo.PutResult
+		// sent is what the repository reports it has sent so far; a failed run
+		// records it, so an administrator is not told nothing was written when
+		// something was.
+		sent   atomic.Int64
+		putRan bool
+		// nil until built: a zero-valued manifest in the ledger reads as a real
+		// backup of nothing, which is worse than no manifest at all.
+		manifest *format.Manifest
+	)
 	// Named-return err: this closure is the single place a run becomes
 	// terminal, whichever return below got here.
 	defer func() {
@@ -147,181 +162,104 @@ func run(app core.App, req Request, row *core.Record, job *installjob.Job) (err 
 			log.Error("backup panicked", "id", row.Id, "kind", req.Kind, "panic", p,
 				"stack", string(debug.Stack()))
 		}
-		// A failed run still owns the sink. An HTTP PUT sink holds a pipe and
-		// the goroutine reading it, so leaving it open leaks both for the life
-		// of the process.
-		if !sinkClosed {
+		// Once Put runs, the repository owns the sink and closes it on every
+		// path. Before that the run still owns a caller's sink: an HTTP PUT
+		// sink holds a pipe and the goroutine reading it, so leaving it open
+		// leaks both for the life of the process.
+		if !putRan && req.Sink != nil {
 			if cerr := req.Sink.Close(); cerr != nil && err == nil {
 				err = cerr
 			}
 		}
-		var written int64
-		if counter != nil {
-			written = counter.total()
-		}
 		status, errMsg := "succeeded", ""
 		if err != nil {
 			status, errMsg = "failed", err.Error()
+			result.Bytes = sent.Load()
 			log.Error("backup failed", "id", row.Id, "kind", req.Kind, "err", err)
 		}
-		if ferr := finishRow(app, row, status, written, sha, errMsg, manifest); ferr != nil {
+		if ferr := finishRow(app, row, status, result, errMsg, manifest, r.Kind()); ferr != nil {
 			log.Error("could not finalize backup row", "id", row.Id, "err", ferr)
 		}
 		announce(app, req, row, status, errMsg)
 		postCallback(req.Callback, row)
 	}()
 
-	built, err := buildManifest(app, req.Kind)
-	if err != nil {
-		return err
-	}
-	manifest = &built
-
+	// Refused before the snapshot: a VACUUM INTO that runs out of space leaves
+	// a truncated file and a SQLite error an operator cannot act on.
 	if err = os.MkdirAll(tmpDir(app), 0o700); err != nil {
 		return err
 	}
-	// Refused before the snapshot rather than after: a VACUUM INTO that runs out
-	// of space leaves a truncated file behind and reports a SQLite error an
-	// operator cannot act on.
 	if err = requireFreeSpace(tmpDir(app), liveDatabaseBytes(app)); err != nil {
 		return err
 	}
-	snap := filepath.Join(tmpDir(app), row.Id+".db")
-	if err = vacuumInto(app, snap); err != nil {
+	snap, err := snapshot.FromDataDir(snapshotOptions(app, req.Kind))
+	if err != nil {
 		return err
 	}
 	defer func() {
-		if rerr := os.Remove(snap); rerr != nil && !os.IsNotExist(rerr) {
-			log.Warn("could not remove a backup snapshot", "path", snap, "err", rerr)
+		if rerr := snap.Release(); rerr != nil {
+			log.Warn("could not release a backup snapshot", "id", row.Id, "err", rerr)
 		}
 	}()
+	manifest = &snap.Manifest
 
-	fs, err := app.NewFilesystem()
-	if err != nil {
-		return err
-	}
-	defer fs.Close()
-	files, err := fs.List("")
-	if err != nil {
-		return err
-	}
-	// Counts go in the manifest, so they must be known before it is written.
-	built.Counts.Files = len(files)
-	for _, f := range files {
-		built.Counts.Bytes += f.Size
-	}
-
-	counter = &countingWriter{w: req.Sink}
-	w, err := format.NewWriter(counter, req.Recipient, zstd.SpeedDefault)
-	if err != nil {
-		return err
-	}
-	// The zstd encoder owns worker goroutines until it is closed, so a run that
-	// returns early must still close the writer. Close is idempotent and
-	// returns the first error, so the success path below closes it for real and
-	// this only catches the abandoned case — and never overwrites the error
-	// that caused the run to unwind.
-	defer func() {
-		cerr := w.Close()
-		if writerClosedForTesting != nil {
-			writerClosedForTesting()
-		}
-		if cerr != nil && err == nil {
-			err = cerr
-		}
-	}()
-	progress := newProgress(app, row, counter)
-	// stop() runs before the outer defer finalizes the row, so the ticker
-	// cannot save a stale byte count over the terminal one.
+	progress := newProgress(app, row, sent.Load)
+	// stop() runs before the terminal defer, so the ticker cannot save a stale
+	// byte count over the final one.
 	defer progress.stop()
 
-	if err = w.WriteManifest(built); err != nil {
-		return err
-	}
-	if err = writeSnapshot(w, snap); err != nil {
-		return err
-	}
-	for _, f := range files {
-		if err = writeStored(w, fs, f.Key, f.Size); err != nil {
-			return err
+	// A repository's client owns its sockets, and one whose server goes silent
+	// blocks forever: the run would keep the interlock and keep renewing the
+	// delete hold, so every storage delete is journaled for the life of the
+	// process. The watchdog ends a Put whose count stops moving, and a shutdown
+	// ends it too.
+	ctx, watchdog := format.Watch(context.Background())
+	defer watchdog.Stop()
+	putRan = true
+	result, err = r.Put(ctx, snap, func(n int64) {
+		if sent.Swap(n) != n {
+			watchdog.Progressed()
 		}
-	}
-	if err = w.Close(); err != nil {
-		return err
-	}
-	err = req.Sink.Close()
-	sinkClosed = true
-	if err != nil {
-		return err
-	}
-	sha = w.Sha256()
-	return nil
+	})
+	return watchdog.Err(err)
 }
 
-func writeSnapshot(w *format.Writer, path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	return w.WriteFile(format.MemberDB, fi.Size(), f)
-}
-
-func writeStored(w *format.Writer, fs *filesystem.System, key string, size int64) error {
-	r, err := fs.GetReader(key)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", key, err)
-	}
-	defer r.Close()
-	return w.WriteFile(format.StoragePrefix+key, size, r)
-}
-
-func buildManifest(app core.App, kind Kind) (format.Manifest, error) {
-	m := format.Manifest{
-		Created:  time.Now().UTC(),
-		Instance: app.Settings().Meta.AppURL,
-		Source:   currentSource(),
+// snapshotOptions takes the live app's snapshot through its own writer
+// connection (see vacuumInto) and its own filesystem, so S3 storage works
+// in-process.
+func snapshotOptions(app core.App, kind Kind) snapshot.Options {
+	return snapshot.Options{
+		DataDir:  app.DataDir(),
+		TmpDir:   tmpDir(app),
+		Holder:   "app",
 		Kind:     string(kind),
-		Lockfile: format.Lockfile{},
-		Packages: map[string]string{},
-		Counts:   format.Counts{Collections: map[string]int{}},
+		Source:   currentSource(),
+		Instance: app.Settings().Meta.AppURL,
+		Vacuum:   func(dest string) error { return vacuumInto(app, dest) },
+		Files:    func() ([]snapshot.StoredFile, func() error, error) { return appFiles(app) },
 	}
-	regs, err := app.FindRecordsByFilter("pkg_registry", "status = 'installed' || status = 'bundled'", "slug", 0, 0)
+}
+
+func appFiles(app core.App) ([]snapshot.StoredFile, func() error, error) {
+	fs, err := app.NewFilesystem()
 	if err != nil {
-		return m, err
+		return nil, nil, err
 	}
-	for _, r := range regs {
-		slug := r.GetString("slug")
-		if slug == "core" {
-			m.Core = r.GetString("version")
-			m.Lockfile["tinycld"] = r.GetString("npm_package")
-			continue
-		}
-		m.Lockfile[slug] = r.GetString("npm_package")
-		m.Packages[slug] = r.GetString("version")
-	}
-	cols, err := app.FindAllCollections()
+	objs, err := fs.List("")
 	if err != nil {
-		return m, err
+		_ = fs.Close()
+		return nil, nil, err
 	}
-	for _, c := range cols {
-		if c.System {
-			continue
-		}
-		var n int
-		// A collection name is an identifier, not a parameter, so it is quoted
-		// rather than bound.
-		if err := app.DB().Select("count(*)").From("`" + c.Name + "`").Row(&n); err != nil {
-			log.Warn("could not count a collection for the backup manifest", "collection", c.Name, "err", err)
-			continue
-		}
-		m.Counts.Collections[c.Name] = n
+	out := make([]snapshot.StoredFile, 0, len(objs))
+	for _, o := range objs {
+		key := o.Key
+		out = append(out, snapshot.StoredFile{
+			Key:  key,
+			Size: o.Size,
+			Open: func() (io.ReadCloser, error) { return fs.GetReader(key) },
+		})
 	}
-	return m, nil
+	return out, fs.Close, nil
 }
 
 // announce tells the people who can act, and records the run in the audit log.
@@ -375,33 +313,6 @@ func postCallback(url string, row *core.Record) {
 	}
 }
 
-// countingWriter reports how many bytes reached the sink. The progress ticker
-// reads it from another goroutine, so the count is behind a mutex.
-type countingWriter struct {
-	w  io.Writer
-	mu sync.Mutex
-	n  int64
-}
-
-func (c *countingWriter) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	c.mu.Lock()
-	c.n += int64(n)
-	c.mu.Unlock()
-	return n, err
-}
-
-func (c *countingWriter) total() int64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.n
-}
-
-// writerClosedForTesting reports that the archive writer was closed. Only the
-// package's own tests set it: an abandoned zstd encoder leaks worker goroutines
-// silently, and nothing observable from the sink can show the close happened.
-var writerClosedForTesting func()
-
 // progressTickForTesting reports that the ticker fired. Only the package's own
 // tests set it: a test that means to exercise the progress writer has to know
 // whether it actually ran, or it silently proves nothing.
@@ -414,7 +325,7 @@ type progress struct {
 	done   chan struct{}
 }
 
-func newProgress(app core.App, row *core.Record, c *countingWriter) *progress {
+func newProgress(app core.App, row *core.Record, total func() int64) *progress {
 	p := &progress{stopCh: make(chan struct{}), done: make(chan struct{})}
 	go func() {
 		defer close(p.done)
@@ -428,7 +339,7 @@ func newProgress(app core.App, row *core.Record, c *countingWriter) *progress {
 				if progressTickForTesting != nil {
 					progressTickForTesting()
 				}
-				row.Set("bytes", c.total())
+				row.Set("bytes", total())
 				if err := app.Save(row); err != nil {
 					log.Warn("could not record backup progress", "id", row.Id, "err", err)
 				}

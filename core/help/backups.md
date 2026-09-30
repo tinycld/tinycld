@@ -1,7 +1,7 @@
 ---
 title: Backups & restore
 summary: Back up the whole organization to your own storage, and restore it
-tags: [backup, restore, export, disaster recovery, s3]
+tags: [backup, restore, export, disaster recovery, s3, pbs, proxmox]
 order: 56
 ---
 
@@ -31,6 +31,36 @@ To make a presigned PUT URL with the AWS CLI:
 ```
 aws s3 presign --expires-in 3600 s3://my-bucket/tinycld/backup.age --method PUT
 ```
+
+## Back up to Proxmox Backup Server
+
+A repository backs the organization up on a schedule. Each run is a full
+snapshot, but Proxmox Backup Server (PBS) stores only the parts that changed,
+so a daily backup is small.
+
+1. On PBS, make an API token (for example `tinycld@pbs!backup`) and give it
+   the **DatastoreBackup** and **DatastoreReader** roles on the datastore.
+2. Copy the server's certificate fingerprint from the PBS dashboard.
+3. Open **Settings → Backups** and fill in the **Proxmox Backup Server** card:
+   server, fingerprint, datastore, token ID and secret.
+4. Optional: choose **Generate a key** to encrypt the backups. Save a copy of
+   the key somewhere other than this server and PBS. If you lose it, nobody
+   can read the backups.
+5. Choose **Test connection**, then **Save**. Turn on **Back up on this
+   schedule** to run it every day at 03:00 (server time), or enter your own
+   cron schedule.
+
+tinycld never deletes a snapshot. Set how long PBS keeps them with a prune
+job on the datastore.
+
+To restore, owners choose a snapshot under **Restore from the repository**,
+or run `tinycld backup restore --snapshot <ref>`. `tinycld backup snapshots`
+lists them.
+
+You can also read a snapshot without tinycld:
+`proxmox-backup-client restore <snapshot> data.db -` and
+`proxmox-backup-client restore <snapshot> storage.tar -` (a normal tar file of
+the uploaded files).
 
 ## With the command line
 

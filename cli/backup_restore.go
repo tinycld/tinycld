@@ -29,11 +29,11 @@ type restoreResponse struct {
 }
 
 func newBackupRestoreCmd(d *deps) *cobra.Command {
-	var from, ppFile string
+	var from, snapshot, ppFile string
 	var force bool
 	var restartTimeout time.Duration
 	cmd := &cobra.Command{
-		Use:   "restore --from <file|url>",
+		Use:   "restore --from <file|url> | --snapshot <ref>",
 		Short: "Replace this organization's data with a backup",
 		Long: "Restores a backup into the server you are signed in to. ALL current data\n" +
 			"is replaced. The server takes a safety copy first and restarts to apply\n" +
@@ -41,26 +41,36 @@ func newBackupRestoreCmd(d *deps) *cobra.Command {
 			"outcome back from the backup ledger.\n\n" +
 			"A local file is verified here before anything is uploaded. A URL is\n" +
 			"fetched by the server, which can be handed a fresh link if the presigned\n" +
-			"one expires mid-transfer.",
+			"one expires mid-transfer. --snapshot restores by ref from the repository\n" +
+			"configured in Settings → Backups; the server already holds its\n" +
+			"credentials, so this command asks for no passphrase.\n\n" +
+			"The passphrase for --from comes from the first of these that is set:\n" +
+			"--passphrase-file, then " + ui.PassphraseEnv + ", then a prompt.",
 		Example: "  tinycld backup restore --from ./backup.age\n" +
-			"  tinycld backup restore --from 'https://…presigned GET…'",
+			"  tinycld backup restore --from 'https://…presigned GET…'\n" +
+			"  tinycld backup restore --snapshot host/acme/2026-09-29T03:00:00Z",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if from == "" {
-				return Usage(errors.New("--from is required"))
+			if (from == "") == (snapshot == "") {
+				return Usage(errors.New("pass exactly one of --from or --snapshot"))
 			}
 			o := d.out
-			pp, err := passphraseSource(d, ppFile).Read(false)
-			if err != nil {
-				return Usage(err)
-			}
-			fromURL := isHTTPURL(from)
-			if !fromURL {
-				// An upload that turns out to be corrupt costs the whole
-				// transfer and then replaces live data, so the local check
-				// happens before the request rather than on the server.
-				if err := verifyLocalArchive(d, o, from, pp); err != nil {
-					return err
+			var pp string
+			fromURL := false
+			if snapshot == "" {
+				var err error
+				pp, err = passphraseSource(d, ppFile).Read(false)
+				if err != nil {
+					return Usage(err)
+				}
+				fromURL = isHTTPURL(from)
+				if !fromURL {
+					// An upload that turns out to be corrupt costs the whole
+					// transfer and then replaces live data, so the local check
+					// happens before the request rather than on the server.
+					if err := verifyLocalArchive(d, o, from, pp); err != nil {
+						return err
+					}
 				}
 			}
 			// ONE buffered reader for every prompt this command makes.
@@ -84,10 +94,14 @@ func newBackupRestoreCmd(d *deps) *cobra.Command {
 			}
 			ctx := cmd.Context()
 			var res restoreResponse
-			if fromURL {
+			switch {
+			case snapshot != "":
+				err = c.PostJSON(ctx, backupsPath+"/restore",
+					map[string]any{"snapshot": snapshot, "force": force}, &res)
+			case fromURL:
 				err = c.PostJSON(ctx, backupsPath+"/restore",
 					map[string]any{"source": from, "passphrase": pp, "force": force}, &res)
-			} else {
+			default:
 				// Ordered, not sorted: the server reads the passphrase before
 				// it will accept the archive part, so it can stream the upload
 				// straight into the restore instead of buffering it.
@@ -123,6 +137,8 @@ func newBackupRestoreCmd(d *deps) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&from, "from", "", "archive file, or a presigned GET URL the server fetches")
+	cmd.Flags().StringVar(&snapshot, "snapshot", "",
+		"restore this snapshot ref from the repository configured in Settings → Backups")
 	cmd.Flags().StringVar(&ppFile, "passphrase-file", "", "read the passphrase from this file")
 	cmd.Flags().BoolVar(&force, "force", false, "restore the data even if the package set differs (single binary only)")
 	cmd.Flags().DurationVar(&restartTimeout, "restart-timeout", 0,

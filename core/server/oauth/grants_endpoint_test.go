@@ -120,6 +120,9 @@ func TestRevokeGrantByIDRejectsOtherUsersGrant(t *testing.T) {
 	}
 	attacker := core.NewRecord(users)
 	attacker.Set("email", "mallory@example.com")
+	// An explicit username: the fixture autogenerates users[0-9]{5}, which can
+	// collide with a fixture user's and fail the save at random.
+	attacker.Set("username", "mallory")
 	attacker.Set("password", "s3cret-password")
 	if err := app.Save(attacker); err != nil {
 		t.Fatalf("save attacker: %v", err)

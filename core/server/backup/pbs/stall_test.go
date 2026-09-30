@@ -1,0 +1,233 @@
+package pbs
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/osshield/gopbs/pbstest"
+
+	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/repo/repotest"
+)
+
+// stallProxy sits between the client and a pbstest server and, once a
+// connection has carried stallAfter bytes to the client (or stallUpload bytes
+// to the server), stops forwarding without closing anything. That is a PBS
+// that goes silent: the socket stays open and the client, which has no
+// read-idle timeout, waits on it forever.
+type stallProxy struct {
+	ln            net.Listener
+	backend       string
+	stallAfter    atomic.Int64 // < 0: never stall
+	stallUpload   atomic.Int64 // < 0: never stall
+	uploadedSoFar atomic.Int64 // bytes forwarded to the server so far, whether or not stalled
+	release       chan struct{}
+
+	mu    sync.Mutex
+	conns []net.Conn
+}
+
+func newStallProxy(t *testing.T, backend string) *stallProxy {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &stallProxy{ln: ln, backend: backend, release: make(chan struct{})}
+	p.stallAfter.Store(-1)
+	p.stallUpload.Store(-1)
+	go p.serve()
+	t.Cleanup(func() {
+		close(p.release)
+		_ = ln.Close()
+		p.mu.Lock()
+		for _, c := range p.conns {
+			_ = c.Close()
+		}
+		p.mu.Unlock()
+	})
+	return p
+}
+
+func (p *stallProxy) addr() string { return "https://" + p.ln.Addr().String() }
+
+// severNow closes every connection the proxy is holding, right now: a server
+// that failed rather than one that went silent. Unlike the stallAfter/
+// stallUpload byte thresholds, the caller decides the moment, so a test can
+// synchronize the drop against something happening elsewhere (a chunk
+// upload it already knows is stalled) instead of guessing a byte offset.
+func (p *stallProxy) severNow() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, c := range p.conns {
+		_ = c.Close()
+	}
+}
+
+func (p *stallProxy) serve() {
+	for {
+		client, err := p.ln.Accept()
+		if err != nil {
+			return
+		}
+		server, err := net.Dial("tcp", p.backend)
+		if err != nil {
+			_ = client.Close()
+			continue
+		}
+		p.mu.Lock()
+		p.conns = append(p.conns, client, server)
+		p.mu.Unlock()
+		go p.forward(server, client, &p.stallUpload, &p.uploadedSoFar)
+		go p.forward(client, server, &p.stallAfter, nil)
+	}
+}
+
+// forward relays src to dst. track, when non-nil, is bumped by every byte
+// read from src — including bytes withheld by the stall, since the client
+// already sent them into the connection; a test polls it to know precisely
+// how much has left the client, with no wall-clock guess involved.
+func (p *stallProxy) forward(dst, src net.Conn, stallAfter *atomic.Int64, track *atomic.Int64) {
+	var sent int64
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := src.Read(buf)
+		chunk := buf[:n]
+		if track != nil {
+			track.Add(int64(n))
+		}
+		if limit := stallAfter.Load(); limit >= 0 && sent+int64(n) > limit {
+			if keep := limit - sent; keep > 0 {
+				_, _ = dst.Write(chunk[:keep])
+			}
+			<-p.release
+			return
+		}
+		if _, werr := dst.Write(chunk); werr != nil {
+			return
+		}
+		sent += int64(n)
+		if err != nil {
+			return
+		}
+	}
+}
+
+// waitForUploadAtLeast blocks until the client has sent at least n bytes
+// into the connection (whether or not the stall is withholding them from
+// the server), or fails the test after a generous timeout. Polling a real
+// count rather than sleeping a guessed duration.
+func (p *stallProxy) waitForUploadAtLeast(t *testing.T, n int64) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for p.uploadedSoFar.Load() < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("only %d of %d bytes reached the proxy", p.uploadedSoFar.Load(), n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// stalledRepo returns a repository that backs up straight to srv and one
+// that talks through a proxy that goes silent after stallAfter bytes to the
+// client or stallUpload bytes to the server.
+func stalledRepo(t *testing.T, stallAfter, stallUpload int64) (direct, stalled *Repository) {
+	t.Helper()
+	srv := pbstest.NewServer(t)
+	d, err := Open(configFor(t, srv, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := srv.Config()
+	proxy := newStallProxy(t, c.BaseURL[len("https://"):])
+	proxy.stallAfter.Store(stallAfter)
+	proxy.stallUpload.Store(stallUpload)
+	raw, _ := json.Marshal(Config{
+		Server: proxy.addr(), Fingerprint: c.Fingerprint, Datastore: c.Datastore,
+		AuthID: "test@pbs!test", Secret: "secret", BackupID: "acme.example",
+	})
+	s, err := Open(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.(*Repository), s.(*Repository)
+}
+
+func shortStallDeadline(t *testing.T) {
+	prev := format.StallDeadline
+	format.StallDeadline = 300 * time.Millisecond
+	t.Cleanup(func() { format.StallDeadline = prev })
+}
+
+// A server that goes silent in the middle of the chunk stream: the reader has
+// no read-idle timeout, so only the watchdog on the stream's progress ends it.
+func TestFetchGivesUpOnAStalledServer(t *testing.T) {
+	shortStallDeadline(t)
+	direct, stalled := stalledRepo(t, 256<<10, -1)
+	res, err := direct.Put(context.Background(), repotest.Fixture(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- stalled.Fetch(context.Background(), res.Ref, t.TempDir()) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, format.ErrStalled) {
+			t.Fatalf("want ErrStalled, got %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("a stalled fetch was never given up on")
+	}
+}
+
+// A server that never answers at all, so the manifest read stalls before its
+// first byte.
+func TestManifestGivesUpOnAStalledServer(t *testing.T) {
+	shortStallDeadline(t)
+	direct, stalled := stalledRepo(t, 0, -1)
+	res, err := direct.Put(context.Background(), repotest.Fixture(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := stalled.Manifest(context.Background(), res.Ref)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, format.ErrStalled) {
+			t.Fatalf("want ErrStalled, got %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("a stalled manifest read was never given up on")
+	}
+}
+
+// The engine's watchdog ends a Put by cancelling its context; against a server
+// that stops reading mid-upload, that must be enough for Put to return.
+func TestPutReturnsWhenItsContextEndsOnAStalledServer(t *testing.T) {
+	// The fixture uploads megabytes, so the stall is always mid-upload.
+	_, stalled := stalledRepo(t, -1, 256<<10)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := stalled.Put(ctx, repotest.Fixture(t), nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a Put to a silent server succeeded")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("Put never returned after its context ended")
+	}
+}

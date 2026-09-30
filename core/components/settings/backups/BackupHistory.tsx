@@ -1,6 +1,7 @@
 import { formatBytes, formatTimeAgo } from '@tinycld/core/lib/format-utils'
 import * as Clipboard from 'expo-clipboard'
 import { Pressable, Text, View } from 'react-native'
+import { formatDedup } from './repository-logic'
 import { SwapSourceForm } from './SwapSourceForm'
 import { type BackupRow, isAwaitingRestart, useDismissPreRestoreKey } from './useBackups'
 
@@ -40,6 +41,8 @@ export function BackupHistory({ rows }: Props) {
 function HistoryRow({ row }: { row: BackupRow }) {
     const size = row.bytes ? formatBytes(row.bytes) : '—'
     const who = row.initiatorName ?? 'System'
+    const where = row.repository === 'pbs' ? 'PBS' : row.target_host || '—'
+    const dedup = formatDedup(row)
     return (
         <View className="rounded-lg border border-border p-3 gap-1" testID={`backup-row-${row.id}`}>
             <View className="flex-row justify-between">
@@ -47,14 +50,20 @@ function HistoryRow({ row }: { row: BackupRow }) {
                 <StatusBadge status={row.status} />
             </View>
             <Text className="text-xs text-muted-foreground">
-                {formatTimeAgo(row.started)} · {who} · {size}
+                {formatTimeAgo(row.started)} · {who} · {size} · {where}
             </Text>
+            <DedupLine text={dedup} />
             <ErrorLine message={row.error} />
             <AwaitingRestartLine isVisible={isAwaitingRestart(row)} />
             <SwapSourceForm isVisible={row.status === 'waiting_for_source'} jobId={row.id} />
             <PreRestoreKey row={row} />
         </View>
     )
+}
+
+function DedupLine({ text }: { text: string }) {
+    if (!text) return null
+    return <Text className="text-xs text-muted-foreground">{text}</Text>
 }
 
 // A staged restore nothing is going to restart for. The status badge already

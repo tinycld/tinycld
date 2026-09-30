@@ -8,21 +8,30 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"filippo.io/age"
 	"github.com/klauspost/compress/zstd"
+	"github.com/osshield/gopbs/pbstest"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
+	"tinycld.org/core/backup/archive"
+	"tinycld.org/core/backup/arm"
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/pbs"
+	"tinycld.org/core/backup/repo"
+	"tinycld.org/core/backup/repo/repotest"
+	"tinycld.org/core/backup/snapshot"
 	"tinycld.org/core/installjob"
 )
 
@@ -477,6 +486,19 @@ func TestRestoreWaitsForSourceAndSwaps(t *testing.T) {
 	}))
 	t.Cleanup(good.Close)
 
+	// The test returns once data.db is staged, but the restore goroutine still
+	// saves its row after that. Waiting for it keeps that save from landing on
+	// an app whose database the cleanup already closed.
+	var running sync.WaitGroup
+	SetRestoreWatcher(func() func() {
+		running.Add(1)
+		return running.Done
+	})
+	t.Cleanup(func() {
+		running.Wait()
+		SetRestoreWatcher(nil)
+	})
+
 	src := format.NewRangeSource(context.Background(), expiring.URL)
 	src.SetExpiryWait(30 * time.Second)
 	jobID, err := StartRestore(app, RestoreRequest{Source: src, Ranged: src, Identity: id, SourceHost: "x"})
@@ -659,7 +681,7 @@ func TestIntegrityCheckRejectsGarbage(t *testing.T) {
 	if err := os.WriteFile(path, []byte("this is not a database"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := integrityCheck(path); err == nil {
+	if err := arm.IntegrityCheck(path); err == nil {
 		t.Fatal("a garbage file passed the integrity check")
 	}
 }
@@ -670,7 +692,7 @@ func TestIntegrityCheckAcceptsARealSnapshot(t *testing.T) {
 	if err := vacuumInto(app, snap); err != nil {
 		t.Fatal(err)
 	}
-	if err := integrityCheck(snap); err != nil {
+	if err := arm.IntegrityCheck(snap); err != nil {
 		t.Fatalf("a real snapshot failed the integrity check: %v", err)
 	}
 }
@@ -1104,4 +1126,238 @@ func (c *countingSource) Read(p []byte) (int, error) { return c.r.Read(p) }
 func (c *countingSource) Close() error {
 	c.closes++
 	return nil
+}
+
+// memRepo is an archive repository kept in memory, so a restore test reads
+// back exactly what a backup wrote.
+func memRepo(t *testing.T) repo.Repository {
+	t.Helper()
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs := map[repo.Ref][]byte{}
+	var mu sync.Mutex
+	return &archive.Repository{
+		Recipient: id.Recipient(), Identity: id, Level: zstd.SpeedFastest,
+		Target: func(_ context.Context, created time.Time) (io.WriteCloser, repo.Ref, error) {
+			ref := repo.Ref(created.Format(time.RFC3339Nano))
+			return &memObj{ref: ref, store: objs, mu: &mu}, ref, nil
+		},
+		Open: func(_ context.Context, ref repo.Ref) (io.ReadCloser, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return io.NopCloser(bytes.NewReader(objs[ref])), nil
+		},
+	}
+}
+
+type memObj struct {
+	bytes.Buffer
+	ref   repo.Ref
+	store map[repo.Ref][]byte
+	mu    *sync.Mutex
+}
+
+func (o *memObj) Close() error {
+	o.mu.Lock()
+	o.store[o.ref] = o.Bytes()
+	o.mu.Unlock()
+	return nil
+}
+
+func TestRestoreFromARepositoryStagesAndArms(t *testing.T) {
+	app := newTestApp(t)
+	t.Cleanup(ResetForTesting)
+	SetRestart(func() bool { return true })
+	r := memRepo(t)
+	id, err := Run(app, Request{Kind: KindScheduled, Repo: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _ := app.FindRecordById("backups", id)
+	if _, err := Restore(app, RestoreRequest{Repo: r, Ref: repo.Ref(row.GetString("ref"))}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(armedPath(app))
+	if err != nil {
+		t.Fatal("not armed")
+	}
+	var a armed
+	_ = json.Unmarshal(raw, &a)
+	if _, err := os.Stat(filepath.Join(a.Pending, stagedSentinel)); err != nil {
+		t.Fatal("no sentinel")
+	}
+	if _, err := os.Stat(filepath.Join(a.Pending, "storage", "col1", "rec1", "hello.txt")); err != nil {
+		t.Fatal("stored file not staged")
+	}
+}
+
+// failingFetchRepo's Fetch always errors, so a restore from a repository fails
+// exactly the way a bad archive stream does: no armed marker, no pending dir,
+// the row marked failed, the pre-restore copy kept.
+type failingFetchRepo struct{}
+
+func (failingFetchRepo) Kind() string { return "mem" }
+
+func (failingFetchRepo) Put(context.Context, *snapshot.Snapshot, func(int64)) (repo.PutResult, error) {
+	return repo.PutResult{}, errors.New("not implemented")
+}
+
+func (failingFetchRepo) Manifest(context.Context, repo.Ref) (format.Manifest, error) {
+	return format.Manifest{}, nil
+}
+
+func (failingFetchRepo) Fetch(context.Context, repo.Ref, string) error {
+	return errors.New("fetch failed")
+}
+
+func (failingFetchRepo) List(context.Context) ([]repo.SnapshotInfo, error) {
+	return nil, repo.ErrNotSupported
+}
+
+func TestRestoreFromARepositoryFetchFailureLeavesNoMarker(t *testing.T) {
+	app := newTestApp(t)
+	resetRestoreState(t)
+	r := failingFetchRepo{}
+
+	jobID, err := Restore(app, RestoreRequest{Repo: r, Ref: repo.Ref("whatever"), Force: true})
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if row.GetString("status") != "failed" {
+		t.Fatalf("status %q", row.GetString("status"))
+	}
+	if row.GetString("error") == "" {
+		t.Fatal("a failed restore must record why")
+	}
+	if _, err := os.Stat(pendingDir(app, jobID)); !os.IsNotExist(err) {
+		t.Fatal("pending dir left behind")
+	}
+	if _, err := os.Stat(armedPath(app)); !os.IsNotExist(err) {
+		t.Fatal("still armed")
+	}
+	if Restoring() {
+		t.Fatal("a failed restore must clear the restoring flag")
+	}
+	if _, err := os.Stat(preBackupPath(app, jobID)); err != nil {
+		t.Fatal("the pre-restore backup must be kept after a failed restore")
+	}
+}
+
+// A repository that goes silent mid-fetch used to leave `restoring` set, so the
+// whole deployment answered 503 with nothing coming to clear it. The fetch's
+// stall deadline belongs to the repository (only it sees bytes move); the
+// engine's part is that a shutdown reaches it.
+func TestCancelAllEndsARepositoryRestoreInFlight(t *testing.T) {
+	t.Cleanup(ResetForTesting)
+	SetShutdown(context.Background())
+
+	app := newTestApp(t)
+	resetRestoreState(t)
+	r := newBlockingRepo("fetch")
+	type result struct {
+		id  string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		id, err := Restore(app, RestoreRequest{Repo: r, Ref: "blocking/1", Force: true})
+		done <- result{id, err}
+	}()
+	for call := range r.entered {
+		if call == "fetch" {
+			break
+		}
+	}
+	CancelAll()
+	select {
+	case res := <-done:
+		if res.err == nil {
+			t.Fatal("a cancelled fetch must fail the restore")
+		}
+		assertReleased(t, app, res.id)
+		if Restoring() {
+			t.Fatal("a cancelled restore must clear the restoring flag")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("CancelAll did not end the fetch")
+	}
+}
+
+func TestCancelAllEndsARepositoryManifestReadInFlight(t *testing.T) {
+	t.Cleanup(ResetForTesting)
+	SetShutdown(context.Background())
+
+	app := newTestApp(t)
+	resetRestoreState(t)
+	r := newBlockingRepo("manifest")
+	done := make(chan error, 1)
+	go func() {
+		_, err := Restore(app, RestoreRequest{Repo: r, Ref: "blocking/1", Force: true})
+		done <- err
+	}()
+	<-r.entered
+	CancelAll()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a cancelled manifest read must fail the restore")
+		}
+		if installjob.Running() {
+			t.Fatal("the interlock is still claimed")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("CancelAll did not end the manifest read")
+	}
+}
+
+func pbsRepoFor(t *testing.T, srv *pbstest.Server, backupID string) repo.Repository {
+	t.Helper()
+	c := srv.Config()
+	raw, _ := json.Marshal(pbs.Config{
+		Server: c.BaseURL, Fingerprint: c.Fingerprint, Datastore: c.Datastore,
+		AuthID: "test@pbs!test", Secret: "secret", BackupID: backupID,
+	})
+	r, err := pbs.Open(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// Two deployments sharing a datastore must not be able to restore each other's
+// snapshots. The refusal has to come before phase 3, which spends a pre-restore
+// backup and would already have staged the other organization's manifest.
+func TestRestoreRefusesAnotherBackupsSnapshotBeforePhaseThree(t *testing.T) {
+	app := newTestApp(t)
+	resetRestoreState(t)
+	srv := pbstest.NewServer(t)
+	res, err := pbsRepoFor(t, srv, "other.example").Put(context.Background(), repotest.Fixture(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jobID, err := Restore(app, RestoreRequest{Repo: pbsRepoFor(t, srv, "acme.example"), Ref: res.Ref, Force: true})
+	if err == nil {
+		t.Fatal("restored another backup's snapshot")
+	}
+	if _, serr := os.Stat(preBackupPath(app, jobID)); !os.IsNotExist(serr) {
+		t.Fatal("a pre-restore backup was taken: the refusal came after phase 3")
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if row.GetString("status") != "failed" {
+		t.Fatalf("status %q", row.GetString("status"))
+	}
+	var m map[string]any
+	if uerr := row.UnmarshalJSONField("manifest", &m); uerr == nil && len(m) > 0 {
+		t.Fatalf("the other backup's manifest reached the ledger: %v", m)
+	}
 }

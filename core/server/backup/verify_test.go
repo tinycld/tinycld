@@ -13,6 +13,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/snapshot"
 )
 
 func TestVerifyWithoutARestoreRow(t *testing.T) {
@@ -70,10 +71,7 @@ func TestVerifyAgreesWithTheRealCounts(t *testing.T) {
 	// and the succeeded restore row is inserted afterwards, by the finalizer.
 	// That insert lands in the ledger collection the manifest counted, so a
 	// Verify that held the ledger to EQUALITY could never agree.
-	m, err := buildManifest(app, KindManual)
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := liveManifest(t, app, KindManual)
 	m.Counts.Files = 1
 
 	row := newRow(app, KindRestore, "", "")
@@ -299,10 +297,7 @@ func TestVerifyReportsOKAfterAFinalizedRestore(t *testing.T) {
 	makeUser(t, app, "owner@example.com", "owner")
 	restoring.Store(true)
 
-	manifest, err := buildManifest(app, KindManual)
-	if err != nil {
-		t.Fatal(err)
-	}
+	manifest := liveManifest(t, app, KindManual)
 	// One file, to match what newTestApp's storage holds; the count itself is not
 	// what this test is about.
 	manifest.Counts.Files = 1
@@ -663,10 +658,7 @@ func TestVerifyReportsAShortfallInASelfWrittenCollection(t *testing.T) {
 	// A manifest claiming more audit rows than the live data will ever hold. The
 	// finalize adds one of its own, so the live count lands well under 50 — which
 	// is precisely the shortfall the bound exists to catch.
-	manifest, err := buildManifest(app, KindManual)
-	if err != nil {
-		t.Fatal(err)
-	}
+	manifest := liveManifest(t, app, KindManual)
 	manifest.Counts.Collections["audit_logs"] = 50
 	manifest.Counts.Files = 1
 
@@ -699,4 +691,18 @@ func TestVerifyReportsAShortfallInASelfWrittenCollection(t *testing.T) {
 	if got[0] != 50 || got[1] >= 50 {
 		t.Fatalf("audit_logs = %v, want [50, <50] — the shortfall is the finding", got)
 	}
+}
+
+// liveManifest is the manifest a backup of the app would carry right now,
+// taken the way the engine takes it: from a snapshot of the live database.
+func liveManifest(t *testing.T, app core.App, kind Kind) format.Manifest {
+	t.Helper()
+	snap, err := snapshot.FromDataDir(snapshotOptions(app, kind))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := snap.Release(); err != nil {
+		t.Fatal(err)
+	}
+	return snap.Manifest
 }

@@ -397,6 +397,7 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 	RegisterOrgNameEndpoint(app)
 	// The org backup API. Shared for the same reason as the boot hook above.
 	RegisterBackupEndpoints(app)
+	RegisterBackupRepository(app)
 	// Per-user storage breakdown. Shared: a managed deployment's admin has the
 	// same "which of my users is filling the disk" question as a self-hoster,
 	// and it reports no ceiling the org could not already read.

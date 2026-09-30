@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
     APP_DIR,
     GENERATED_DIR,
+    gopbsReplace,
     PUBLIC_ROUTES_BASE,
     ROUTES_BASE,
     SERVER_DIR,
@@ -40,5 +41,10 @@ describe('generator paths', () => {
     })
     it('SERVER_DIR is app/server', () => {
         expect(SERVER_DIR).toBe(path.join(APP_DIR, 'server'))
+    })
+    // Read from core's go.mod so a member's standalone build resolves the same
+    // forked gopbs client core/server/backup/pbs depends on.
+    it('gopbsReplace reads the pinned replace line from core/server/go.mod', () => {
+        expect(gopbsReplace()).toMatch(/^replace github\.com\/osshield\/gopbs => \S+ \S+$/)
     })
 })

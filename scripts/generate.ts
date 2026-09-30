@@ -36,6 +36,7 @@ import {
     APP_DIR,
     CLI_DIR,
     GENERATED_DIR,
+    gopbsReplace,
     HOOKS_DIR,
     MIGRATIONS_DIR,
     memberDir,
@@ -415,7 +416,7 @@ function emitGoWiring(features: Feature[]) {
         const forkRelFromMember = path.relative(memberServerDir, forkDir)
         fs.writeFileSync(
             path.join(memberServerDir, 'go.work'),
-            buildMemberGoWork(coreRelFromMember, forkRelFromMember)
+            buildMemberGoWork(coreRelFromMember, forkRelFromMember, gopbsReplace())
         )
     }
 }

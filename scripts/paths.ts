@@ -25,6 +25,24 @@ export function goVersion(): string {
     return version
 }
 
+// The gopbs replace line core's go.mod pins (the fork core/server/backup/pbs
+// depends on). A member server module that imports a package importing
+// coreserver needs the same replace in its own go.work, or a standalone build
+// resolves the unforked github.com/osshield/gopbs and fails to compile against
+// it. Read from core's go.mod rather than duplicated here, so bumping the pin
+// in one place (core/server/go.mod) is the whole update — same reasoning as
+// goVersion() above.
+export function gopbsReplace(): string {
+    const modPath = path.join(APP_DIR, 'core', 'server', 'go.mod')
+    const line = fs
+        .readFileSync(modPath, 'utf8')
+        .match(/^replace\s+github\.com\/osshield\/gopbs\s*=>\s*\S+\s+\S+/m)?.[0]
+    if (!line) {
+        throw new Error(`could not read the gopbs replace from ${modPath}`)
+    }
+    return line
+}
+
 export const GENERATED_DIR = path.join(APP_DIR, 'lib', 'generated')
 // App routes live under the constant /a segment (APP_PREFIX in
 // core/lib/org-routes.ts); (app) stays a group so only the workspace subtree

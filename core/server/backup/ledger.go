@@ -13,6 +13,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/types"
 
 	"tinycld.org/core/backup/format"
+	"tinycld.org/core/backup/repo"
 )
 
 const collection = "backups"
@@ -53,16 +54,31 @@ func newRow(app core.App, kind Kind, initiator, targetHost string) *core.Record 
 // finishRow writes a run's terminal state. manifest is nil for a run that
 // failed before it had one; the column is then left alone rather than filled
 // with a zero-valued manifest, which would read as a real backup of nothing.
-func finishRow(app core.App, r *core.Record, status string, written int64, sha, errMsg string, manifest *format.Manifest) error {
+func finishRow(app core.App, r *core.Record, status string, res repo.PutResult, errMsg string, manifest *format.Manifest, repository string) error {
 	r.Set("status", status)
 	r.Set("finished", types.NowDateTime())
-	r.Set("bytes", written)
-	r.Set("sha256", sha)
+	r.Set("bytes", res.Bytes)
+	r.Set("uploaded_bytes", res.UploadedBytes)
+	r.Set("sha256", res.Sha256)
+	r.Set("ref", string(res.Ref))
+	r.Set("repository", repository)
 	r.Set("error", truncate(errMsg, 2000))
 	if manifest != nil {
 		r.Set("manifest", *manifest)
 	}
 	return app.Save(r)
+}
+
+// FailedRun records a run that failed before it could start — a scheduled
+// backup whose repository could not be opened. Without a row the panel would
+// keep saying "last backed up" about an older run and nobody would be told.
+func FailedRun(app core.App, kind Kind, repository string, cause error) error {
+	row := newRow(app, kind, "", "")
+	if err := finishRow(app, row, "failed", repo.PutResult{}, cause.Error(), nil, repository); err != nil {
+		return err
+	}
+	announce(app, Request{Kind: kind}, row, "failed", cause.Error())
+	return nil
 }
 
 // truncate cuts to at most n bytes without splitting a rune. The error column

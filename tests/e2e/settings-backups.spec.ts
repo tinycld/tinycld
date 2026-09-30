@@ -81,4 +81,23 @@ test.describe('Settings · Backups', () => {
             page.getByTestId('backup-now-form').getByText('At least 12 characters')
         ).toBeVisible()
     })
+
+    // The e2e server runs with TINYCLD_BACKUP_ALLOW_LOOPBACK=1 for the PUT-sink
+    // test above, so a loopback refusal cannot be asserted here. Instead this
+    // points at a closed local port, which gopbs cannot connect to at all —
+    // the server's repositoryError falls through to its generic message. The
+    // secret must never appear in that message.
+    test('reports a closed PBS port without leaking the secret', async ({ page }) => {
+        const card = page.getByTestId('repository-card')
+        const secret = 'not-a-real-secret'
+        await card.getByTestId('server').fill('127.0.0.1:1')
+        await card.getByTestId('datastore').fill('store')
+        await card.getByTestId('authId').fill('tinycld@pbs!backup')
+        await card.getByTestId('secret').fill(secret)
+        await card.getByTestId('repository-test').click()
+
+        const result = card.getByTestId('repository-test-result')
+        await expect(result).toContainText('Could not reach the repository.')
+        expect(await result.innerText()).not.toContain(secret)
+    })
 })
