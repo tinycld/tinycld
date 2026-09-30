@@ -16,28 +16,56 @@ import (
 
 func newBackupCreateCmd(d *deps) *cobra.Command {
 	var out, to, ppFile string
+	var toRepo bool
 	var restartTimeout time.Duration
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a backup and stream it to a file, or have the server upload it to a URL",
+		Short: "Create a backup and stream it to a file, or have the server upload it",
 		Long: "Creates one encrypted archive of the whole organization.\n\n" +
 			"--out streams the archive through this machine. --to hands the server a\n" +
 			"presigned PUT URL and follows the run in the ledger, so the archive never\n" +
-			"crosses your connection.\n\n" +
-			"The passphrase comes from the first of these that is set:\n" +
-			"--passphrase-file, then " + ui.PassphraseEnv + ", then a prompt.\n" +
+			"crosses your connection. --repository backs up to the repository\n" +
+			"configured in Settings → Backups; the server already holds its\n" +
+			"credentials, so this command asks for no passphrase.\n\n" +
+			"With --out or --to, the passphrase comes from the first of these that is\n" +
+			"set: --passphrase-file, then " + ui.PassphraseEnv + ", then a prompt.\n" +
 			"There is no flag for it: a flag would be visible in `ps` and left in\n" +
 			"shell history. Without the passphrase the archive cannot be read —\n" +
 			"nobody can recover it for you.",
 		Example: "  tinycld backup create --out ./backup.age\n" +
 			"  tinycld backup create --out - | aws s3 cp - s3://bucket/backup.age\n" +
-			"  tinycld backup create --to 'https://…presigned PUT…'",
+			"  tinycld backup create --to 'https://…presigned PUT…'\n" +
+			"  tinycld backup create --repository",
 		Args: usageArgs(cobra.NoArgs),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if (out == "") == (to == "") {
-				return Usage(errors.New("pass exactly one of --out or --to"))
+			count := 0
+			for _, set := range []bool{out != "", to != "", toRepo} {
+				if set {
+					count++
+				}
+			}
+			if count != 1 {
+				return Usage(errors.New("pass exactly one of --out, --to or --repository"))
 			}
 			o := d.out
+			if toRepo {
+				c, _, err := d.apiClient()
+				if err != nil {
+					return err
+				}
+				var res struct {
+					ID string `json:"id"`
+				}
+				if err := c.PostJSON(cmd.Context(), backupsPath, map[string]any{"repository": true}, &res); err != nil {
+					return Failed(err)
+				}
+				o.Info(d.stderr, "backup %s started", res.ID)
+				row, err := pollRow(cmd.Context(), d, c, res.ID, o, pollOptions{restartTimeout: restartTimeout})
+				if err != nil {
+					return err
+				}
+				return finishExit(row, o, d.stderr)
+			}
 			// Before the client is even built: a passphrase the server would
 			// reject must not travel, and a mistyped one must not start a run.
 			pp, err := passphraseSource(d, ppFile).Read(true)
@@ -69,6 +97,8 @@ func newBackupCreateCmd(d *deps) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&out, "out", "", "write the archive to this file ('-' for stdout)")
 	cmd.Flags().StringVar(&to, "to", "", "have the server upload the archive to this presigned PUT URL")
+	cmd.Flags().BoolVar(&toRepo, "repository", false,
+		"back up to the repository configured in Settings → Backups")
 	cmd.Flags().StringVar(&ppFile, "passphrase-file", "", "read the passphrase from this file")
 	// --to polls the ledger, so it meets the same waits a restore does: a restore
 	// started elsewhere puts this server behind the maintenance 503.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -135,6 +136,10 @@ type backupServer struct {
 	// the last one carried.
 	filtered   []ledgerRow
 	listFilter string
+	// snapshots is what GET /api/org-backups/snapshots returns.
+	snapshots []snapshotRow
+	// restoreStatus, when non-zero, is returned instead of accepting the restore.
+	restoreStatus int
 	// deadPolls makes the next N ledger GETs hang up without a response, so
 	// the client sees a connection error the way it does across a restart.
 	deadPolls int
@@ -159,6 +164,7 @@ func newBackupServer(t *testing.T) *backupServer {
 	mux.HandleFunc("POST /api/org-backups", s.handleCreate)
 	mux.HandleFunc("POST /api/org-backups/restore", s.handleRestore)
 	mux.HandleFunc("PATCH /api/org-backups/restore/{id}", s.handleSwap)
+	mux.HandleFunc("GET /api/org-backups/snapshots", s.handleSnapshots)
 	mux.HandleFunc("GET /api/org-backups/{id}", s.handleGet)
 	mux.HandleFunc("GET /api/collections/backups/records", s.handleList)
 	s.srv = httptest.NewServer(mux)
@@ -265,8 +271,26 @@ func (s *backupServer) handleGet(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(seq[n])
 }
 
+func (s *backupServer) handleSnapshots(w http.ResponseWriter, r *http.Request) {
+	s.record("GET /api/org-backups/snapshots")
+	s.mu.Lock()
+	rows := s.snapshots
+	s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(rows)
+}
+
 func (s *backupServer) handleRestore(w http.ResponseWriter, r *http.Request) {
 	s.record("POST /api/org-backups/restore")
+	s.mu.Lock()
+	status := s.restoreStatus
+	s.mu.Unlock()
+	if status != 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "failed"})
+		return
+	}
 	rec := recordedRestore{}
 	ct := r.Header.Get("Content-Type")
 	if strings.HasPrefix(ct, "multipart/") {
@@ -1170,6 +1194,116 @@ func TestRestartTimeoutHelpNamesTheDefault(t *testing.T) {
 		if !strings.Contains(stdout, reconnectWindow.String()) {
 			t.Errorf("%v: help does not name the %s default:\n%s", args, reconnectWindow, stdout)
 		}
+	}
+}
+
+// --repository backs up to the repository configured in Settings → Backups,
+// so the request carries no target/passphrase — the server already holds the
+// repository's credentials.
+func TestBackupCreateRepositoryPollsTheLedger(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	// If create --repository read a passphrase it would hit this stub and fail.
+	d.readPassword = func(int) ([]byte, error) { return nil, errors.New("readPassword must not be called") }
+	s.rows["b1"] = []ledgerRow{
+		{ID: "b1", Kind: "manual", Status: "running", Bytes: 10},
+		{ID: "b1", Kind: "manual", Status: "succeeded", Bytes: 20},
+	}
+
+	_, stderr, err := runCLI(t, d, "backup", "create", "--repository")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.createBody["repository"] != true {
+		t.Errorf("create body = %+v, want repository:true", s.createBody)
+	}
+	if _, ok := s.createBody["passphrase"]; ok {
+		t.Errorf("create body = %+v, must not carry a passphrase", s.createBody)
+	}
+	if !strings.Contains(stderr, "succeeded") {
+		t.Errorf("stderr should report the terminal status, got %q", stderr)
+	}
+}
+
+func TestBackupCreateRepositoryWithOutIsAUsageError(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+
+	_, _, err := runCLI(t, d, "backup", "create", "--repository", "--out", "x")
+	wantExitCode(t, err, 2)
+	if !strings.Contains(err.Error(), "pass exactly one of --out, --to or --repository") {
+		t.Errorf("error = %v", err)
+	}
+	if seen := s.seen(); len(seen) != 0 {
+		t.Errorf("server saw %v, want no request", seen)
+	}
+}
+
+func TestBackupSnapshotsRendersTheRepository(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	s.snapshots = []snapshotRow{
+		{Ref: "host/acme/2026-09-29T03:00:00Z", Created: "2026-09-29T03:00:00Z", Bytes: 2048},
+		{Ref: "host/acme/2026-09-28T03:00:00Z", Created: "2026-09-28T03:00:00Z", Bytes: 1024},
+	}
+
+	stdout, _, err := runCLI(t, d, "backup", "snapshots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"REF", "CREATED", "SIZE", "host/acme/2026-09-29T03:00:00Z", "2.0 KB", "1.0 KB"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("snapshots output missing %q:\n%s", want, stdout)
+		}
+	}
+
+	stdout, _, err = runCLI(t, d, "backup", "snapshots", "--output", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []snapshotRow
+	if err := json.Unmarshal([]byte(stdout), &rows); err != nil {
+		t.Fatalf("snapshots --output json parse: %v\n%s", err, stdout)
+	}
+	if len(rows) != 2 || rows[0].Ref != "host/acme/2026-09-29T03:00:00Z" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+// --snapshot restores from the repository by ref, so it never reads a local
+// archive or a passphrase — the server already holds the repository's key.
+func TestBackupRestoreSnapshotSendsTheRef(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+	d.readPassword = func(int) ([]byte, error) { return nil, errors.New("readPassword must not be called") }
+	s.rows["r1"] = []ledgerRow{
+		{ID: "r1", Kind: "restore", Status: "running"},
+		{ID: "r1", Kind: "restore", Status: "succeeded", Bytes: 2048},
+	}
+
+	_, stderr, err := runCLI(t, d, "backup", "restore", "--snapshot", "host/acme/2026-09-29T03:00:00Z", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.restore.json["snapshot"] != "host/acme/2026-09-29T03:00:00Z" {
+		t.Errorf("restore body = %+v, want the snapshot ref", s.restore.json)
+	}
+	if _, ok := s.restore.json["passphrase"]; ok {
+		t.Errorf("restore body = %+v, must not carry a passphrase", s.restore.json)
+	}
+	if !strings.Contains(stderr, "succeeded") {
+		t.Errorf("stderr = %q, want the terminal status", stderr)
+	}
+}
+
+func TestBackupRestoreSnapshotWithFromIsAUsageError(t *testing.T) {
+	s := newBackupServer(t)
+	d := backupDeps(t, s)
+
+	_, _, err := runCLI(t, d, "backup", "restore", "--snapshot", "x", "--from", "y")
+	wantExitCode(t, err, 2)
+	if seen := s.seen(); len(seen) != 0 {
+		t.Errorf("server saw %v, want no request", seen)
 	}
 }
 

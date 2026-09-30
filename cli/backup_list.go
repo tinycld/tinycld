@@ -26,11 +26,11 @@ func newBackupListCmd(d *deps) *cobra.Command {
 			table := make([][]string, 0, len(rows))
 			for _, r := range rows {
 				table = append(table, []string{
-					r.ID, r.Kind, r.Status, r.Started, output.FormatBytes(r.Bytes), r.TargetHost, r.Error,
+					r.ID, r.Kind, r.Status, r.Started, output.FormatBytes(r.Bytes), r.TargetHost, r.Repository, r.Error,
 				})
 			}
 			return d.out.Write(d.stdout,
-				[]string{"ID", "KIND", "STATUS", "STARTED", "SIZE", "TARGET", "ERROR"}, table, rows)
+				[]string{"ID", "KIND", "STATUS", "STARTED", "SIZE", "TARGET", "REPO", "ERROR"}, table, rows)
 		},
 	}
 }

@@ -29,7 +29,8 @@ func newBackupCmd(d *deps) *cobra.Command {
 		Short: "Back up and restore this organization",
 		Long:  "Create an encrypted backup of the whole organization, inspect one, restore one, or list past runs.",
 	}
-	cmd.AddCommand(newBackupCreateCmd(d), newBackupInspectCmd(d), newBackupRestoreCmd(d), newBackupListCmd(d))
+	cmd.AddCommand(newBackupCreateCmd(d), newBackupInspectCmd(d), newBackupRestoreCmd(d), newBackupListCmd(d),
+		newBackupSnapshotsCmd(d))
 	return cmd
 }
 
@@ -37,17 +38,20 @@ func newBackupCmd(d *deps) *cobra.Command {
 // produce it: GET /api/org-backups/{id} (one row) and the records API (the
 // list).
 type ledgerRow struct {
-	ID         string          `json:"id"`
-	Kind       string          `json:"kind"`
-	Status     string          `json:"status"`
-	Started    string          `json:"started"`
-	Finished   string          `json:"finished"`
-	Bytes      int64           `json:"bytes"`
-	Sha256     string          `json:"sha256"`
-	TargetHost string          `json:"target_host"`
-	Error      string          `json:"error"`
-	Manifest   json.RawMessage `json:"manifest"`
-	Metadata   map[string]any  `json:"metadata"`
+	ID            string          `json:"id"`
+	Kind          string          `json:"kind"`
+	Status        string          `json:"status"`
+	Started       string          `json:"started"`
+	Finished      string          `json:"finished"`
+	Bytes         int64           `json:"bytes"`
+	Sha256        string          `json:"sha256"`
+	TargetHost    string          `json:"target_host"`
+	Error         string          `json:"error"`
+	Manifest      json.RawMessage `json:"manifest"`
+	Metadata      map[string]any  `json:"metadata"`
+	Repository    string          `json:"repository"`
+	Ref           string          `json:"ref"`
+	UploadedBytes int64           `json:"uploaded_bytes"`
 }
 
 func (r ledgerRow) terminal() bool {
