@@ -11,10 +11,10 @@
 // server can open it. The rule is about ports, not about Go:
 // performance-sensitive work belongs in Go, and this package is Go.
 //
-// Separately, an org's own process links no feature package today, so the
-// Source cannot be a Go literal the feature registers — it arrives as data the
-// composing server materialized from the manifest. Core imports no feature
-// package.
+// Separately, a managed deployment materializes the Source from each package's
+// manifest rather than taking a Go literal the feature registers, so that what
+// a tenant serves is declared by the host. Core imports no feature package
+// either way.
 //
 // What a package contributes:
 //
@@ -35,7 +35,19 @@
 // the Sources and reverse-proxies to that process.
 package caldav
 
-import "context"
+import (
+	"context"
+
+	"github.com/pocketbase/pocketbase/core"
+)
+
+// CalendarUpdate carries the calendar properties a PROPPATCH asks to change.
+// A nil field was not mentioned in the request and must be left alone; a
+// non-nil one holds the new value, empty when the property was removed.
+type CalendarUpdate struct {
+	Name  *string
+	Color *string
+}
 
 // Source describes one feature's calendar tree served over CalDAV.
 //
@@ -66,6 +78,19 @@ type Source struct {
 	// Event maps the VEVENT semantics onto EventCollection fields.
 	Event EventMap
 
+	// UpdateCalendar, when set, writes the properties a PROPPATCH carries that
+	// this Source cannot place on the calendar row itself.
+	//
+	// It exists for a value whose storage is feature-shaped: calendar's colour
+	// is per-member, so a write belongs on the caller's membership row rather
+	// than the shared calendar. Core cannot name that collection, so the
+	// feature supplies the write and core stays generic.
+	//
+	// Called with the already-authorized calendar record and the authenticated
+	// user. Returning an error fails only the properties it covers; the rest of
+	// the PROPPATCH is still applied.
+	UpdateCalendar func(ctx context.Context, app core.App, user *core.Record, calendar *core.Record, update CalendarUpdate) error
+
 	// OnError, when set, is called with every non-nil error a backend method
 	// returns, tagged with the method name.
 	//
@@ -87,6 +112,15 @@ type CalendarMap struct {
 	// Description is the field holding its description (e.g. "description").
 	// Optional: when empty, no description is advertised.
 	Description string
+
+	// Color is the field holding the calendar's colour as hex (e.g. "color").
+	// Optional: when empty, no colour is advertised and a client cannot set
+	// one.
+	//
+	// Read from the calendar row. A feature whose colour is per-member stores
+	// it elsewhere and supplies UpdateCalendar to write it; this field still
+	// names where the shared fallback lives.
+	Color string
 }
 
 // EventMap binds VEVENT semantics to event-collection field names.

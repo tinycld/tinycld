@@ -98,4 +98,4 @@ replace github.com/osshield/gopbs => github.com/nathanstitt/gopbs v1.0.0
 // the hard 501 it drops the calendar and the account shows up empty. The fork
 // answers per-property inside a 207 like carddav already does. Drop this once
 // https://github.com/emersion/go-webdav/pull/216 lands in a release.
-replace github.com/emersion/go-webdav => github.com/nathanstitt/go-webdav v0.7.1-0.20261001180321-48cedabb42cc
+replace github.com/emersion/go-webdav => github.com/nathanstitt/go-webdav v0.7.1-0.20261001184608-67abd707e045
