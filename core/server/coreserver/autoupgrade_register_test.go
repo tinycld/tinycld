@@ -38,6 +38,10 @@ func TestPolicyHookCallsDelegate(t *testing.T) {
 }
 
 func TestStatusRouteAndWriteGuard(t *testing.T) {
+	// The "no delegate" scenario depends on the process global; do not trust
+	// whatever an earlier test left installed.
+	autoupgrade.SetDelegate(nil)
+	t.Cleanup(func() { autoupgrade.SetDelegate(nil) })
 	app := adminConsoleTestApp(t)
 	registerAutoUpgradeOn(app)
 	ownerTok, err := newUser(t, app, "owner@x.test", "owner", false).NewAuthToken()
