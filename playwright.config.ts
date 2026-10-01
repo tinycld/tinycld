@@ -46,6 +46,9 @@ const SERVER_ENV: Record<string, string> = Object.fromEntries(
             // Production leaves this unset. Read by the Go side in
             // text/server/edit_event_buffer.go:configureWindowFromEnv.
             ['TINYCLD_EDIT_EVENT_WINDOW_MS', '1000'],
+            // The e2e server is a real build that can rebuild itself; without this a
+            // run inside the update window would try to update its own packages.
+            ['TINYCLD_AUTOUPGRADE_DISABLED', '1'],
         ])
 )
 

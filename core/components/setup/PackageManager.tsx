@@ -36,6 +36,7 @@ import {
     Text,
     View,
 } from 'react-native'
+import { AutoUpgradeSection } from './AutoUpgradeSection'
 import { shouldAdoptRunningJob } from './adopt-running-job'
 import { PageHeader, SectionLabel, SlugTag } from './console-ui'
 import {
@@ -209,6 +210,8 @@ export function PackageManager({ pb, isVisible = true }: PackageManagerProps) {
                     </>
                 }
             />
+
+            <AutoUpgradeSection pb={pb} isVisible={isVisible} />
 
             <InstallPackageModal
                 isOpen={showInstall}

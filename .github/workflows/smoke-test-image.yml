@@ -78,7 +78,7 @@ jobs:
           docker rm -f tinycld-smoke 2>/dev/null || true
           # Plain-HTTP mode (AUTOCERT_ENABLED unset): the container binds
           # :7090. The Playwright config below talks to localhost:7090.
-          docker run -d --name tinycld-smoke -p 7090:7090 ${{ steps.imgref.outputs.image }}
+          docker run -d --name tinycld-smoke -e TINYCLD_AUTOUPGRADE_DISABLED=1 -p 7090:7090 ${{ steps.imgref.outputs.image }}
 
       - name: Wait for /api/health
         run: |
