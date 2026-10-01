@@ -8,9 +8,27 @@ import (
 func infos(rows ...[3]string) []VersionInfo {
 	out := make([]VersionInfo, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, VersionInfo{Slug: r[0], Current: r[1], Latest: r[2], HasUpdate: r[1] != r[2]})
+		out = append(out, VersionInfo{Slug: r[0], Current: r[1], Latest: r[2], Available: []string{r[2]}, HasUpdate: r[1] != r[2]})
 	}
 	return out
+}
+
+func TestNewestTargetsSkipsPrereleases(t *testing.T) {
+	in := []VersionInfo{
+		// Latest and HasUpdate point at a prerelease; the stable 0.6.0 is the target.
+		{Slug: "mail", Current: "0.5.0", Latest: "1.0.0-rc.1", HasUpdate: true,
+			Available: []string{"1.0.0-rc.1", "0.6.0", "0.5.0"}},
+		// Only prereleases are newer than current: not targeted.
+		{Slug: "drive", Current: "0.3.0", Latest: "0.4.0-beta.2", HasUpdate: true,
+			Available: []string{"0.4.0-beta.2", "0.4.0-beta.1", "0.3.0"}},
+		// A stable older than current is not a target either.
+		{Slug: "calc", Current: "0.2.0", Latest: "0.3.0-rc.1", HasUpdate: true,
+			Available: []string{"0.3.0-rc.1", "0.1.0"}},
+	}
+	got := newestTargets(in)
+	if len(got) != 1 || got["mail"] != "0.6.0" {
+		t.Fatalf("got %v", got)
+	}
 }
 
 func TestPlanUpgradeTakesNewestIncludingMajors(t *testing.T) {
