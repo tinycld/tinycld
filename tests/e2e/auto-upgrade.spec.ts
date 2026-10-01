@@ -11,7 +11,10 @@ test.describe('automatic updates', () => {
 
         // On by default: the migration seeds the row.
         await expect(toggle).toHaveAttribute('aria-checked', 'true')
-        await expect(page.getByTestId('autoupgrade-status')).toContainText('Next check')
+        // The e2e server runs with TINYCLD_AUTOUPGRADE_DISABLED=1, so the status
+        // names that instead of a next check that would never run.
+        const status = page.getByTestId('autoupgrade-status')
+        await expect(status).toHaveText('Checks disabled: TINYCLD_AUTOUPGRADE_DISABLED is set')
 
         await toggle.click()
         await expect(toggle).toHaveAttribute('aria-checked', 'false')
