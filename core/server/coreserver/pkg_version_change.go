@@ -2,6 +2,7 @@ package coreserver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -45,6 +46,48 @@ type versionChange struct {
 
 // ---------- handler ----------
 
+var errJobBusy = errors.New("another operation is in progress")
+
+// beginVersionChange is the shared start of a version change for the HTTP
+// handler and the upgrade scheduler: validate, gate on compatibility, claim
+// the single-flight job, and run the rebuild in the background.
+func beginVersionChange(app *pocketbase.PocketBase, changes []installjob.VersionChange, trigger string) (*installjob.Job, error) {
+	if len(changes) == 0 {
+		return nil, errors.New("at least one change is required")
+	}
+	for _, c := range changes {
+		if !slugPattern.MatchString(c.Slug) {
+			return nil, fmt.Errorf("invalid package slug: %s", c.Slug)
+		}
+		if c.TargetVersion == "" {
+			return nil, fmt.Errorf("targetVersion is required for %s", c.Slug)
+		}
+		// Constrain the version charset before it is concatenated into an npm/git
+		// install spec. exec.Command uses no shell so this can't *execute*, but a
+		// loose value could smuggle an extra arg or option into npm pack / git.
+		if !versionTokenPattern.MatchString(c.TargetVersion) {
+			return nil, fmt.Errorf("invalid targetVersion for %s: %s", c.Slug, c.TargetVersion)
+		}
+	}
+	if installjob.Running() {
+		return nil, errJobBusy
+	}
+	// Pre-flight compat gate. The Versions UI runs the same solve as an
+	// advisory check; this is the authoritative refusal, so a direct POST to
+	// /versions/apply cannot install an incompatible set.
+	if err := checkVersionChangeCompat(app, changes); err != nil {
+		return nil, err
+	}
+	job := installjob.New("version_change", changes[0].Slug, "")
+	job.Changes = changes
+	job.Trigger = trigger
+	if _, ok := installjob.Claim(job); !ok {
+		return nil, errJobBusy
+	}
+	go runVersionChangeRebuild(app, job)
+	return job, nil
+}
+
 func handleVersionChange(app *pocketbase.PocketBase, re *core.RequestEvent) error {
 	var body struct {
 		Changes []installjob.VersionChange `json:"changes"`
@@ -52,42 +95,20 @@ func handleVersionChange(app *pocketbase.PocketBase, re *core.RequestEvent) erro
 	if err := json.NewDecoder(re.Request.Body).Decode(&body); err != nil {
 		return re.BadRequestError("Invalid request body", err)
 	}
-	if len(body.Changes) == 0 {
-		return re.BadRequestError("at least one change is required", nil)
-	}
-	for _, c := range body.Changes {
-		if !slugPattern.MatchString(c.Slug) {
-			return re.BadRequestError("invalid package slug: "+c.Slug, nil)
+	job, err := beginVersionChange(app, body.Changes, "manual")
+	if errors.Is(err, errJobBusy) {
+		info := map[string]any{}
+		if cur := installjob.Current(); cur != nil {
+			info = cur.Info()
 		}
-		if c.TargetVersion == "" {
-			return re.BadRequestError("targetVersion is required for "+c.Slug, nil)
-		}
-		// Constrain the version charset before it is concatenated into an npm/git
-		// install spec. exec.Command uses no shell so this can't *execute*, but a
-		// loose value could smuggle an extra arg or option into npm pack / git.
-		if !versionTokenPattern.MatchString(c.TargetVersion) {
-			return re.BadRequestError("invalid targetVersion for "+c.Slug+": "+c.TargetVersion, nil)
-		}
-	}
-
-	// Pre-flight compat gate. The Versions UI runs the same solve as an
-	// advisory check; this is the authoritative refusal, so a direct POST to
-	// /versions/apply cannot install an incompatible set.
-	if err := checkVersionChangeCompat(app, body.Changes); err != nil {
-		return re.BadRequestError(err.Error(), err)
-	}
-
-	job := installjob.New("version_change", body.Changes[0].Slug, "")
-	job.Changes = body.Changes
-	if busy, ok := installjob.Claim(job); !ok {
 		return re.JSON(http.StatusConflict, map[string]any{
 			"error":      "Another operation is in progress",
-			"currentJob": busy.Info(),
+			"currentJob": info,
 		})
 	}
-
-	go runVersionChangeRebuild(app, job)
-
+	if err != nil {
+		return re.BadRequestError(err.Error(), err)
+	}
 	return re.JSON(http.StatusAccepted, map[string]any{"jobId": job.ID})
 }
 
