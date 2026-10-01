@@ -353,8 +353,12 @@ func TestManagedKeysRefuseWrites(t *testing.T) {
 	syscfg.SetProvider(managedProvider{prefixes: []string{"mail.", "vapid.", "sentry."}})
 	t.Cleanup(syscfg.ResetForTesting)
 
-	if err := updateSetting(t, app, managed, "smtp"); err == nil {
+	err = updateSetting(t, app, managed, "smtp")
+	if err == nil {
 		t.Error("a write to a managed key was permitted; it must be refused")
+	} else if want := "This setting is managed by the server's operator and cannot be changed here."; !strings.Contains(err.Error(), want) {
+		// Core names no particular kind of operator.
+		t.Errorf("refusal %q, want %q", err, want)
 	}
 	// A key outside every managed namespace stays this deployment's own.
 	if err := updateSetting(t, app, ownKey, "200"); err != nil {
