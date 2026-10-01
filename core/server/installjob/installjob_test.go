@@ -1,6 +1,8 @@
 package installjob
 
 import (
+	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -117,6 +119,34 @@ func TestRecordProgress_UpdatesStateAndFansOut(t *testing.T) {
 	}
 	if got := job.Snapshot(); len(got) != 1 || got[0] != line {
 		t.Fatalf("snapshot = %v", got)
+	}
+}
+
+func TestRecordStepProgress_SendsStepProgressAndKeepsLineFormat(t *testing.T) {
+	job := New("install", "acme", "")
+	ch := job.Subscribe(4)
+
+	line := job.RecordStepProgress("Packaging client UI", 65, 40, "40.0% (800/2000)")
+	if line != "[65%] Packaging client UI: 40.0% (800/2000)" {
+		t.Fatalf("recorded line = %q", line)
+	}
+
+	data, ok := (<-ch).Data.(ProgressData)
+	if !ok || data.StepProgress == nil || *data.StepProgress != 40 {
+		t.Fatalf("event data = %+v", data)
+	}
+}
+
+func TestRecordProgress_OmitsStepProgress(t *testing.T) {
+	job := New("install", "acme", "")
+	ch := job.Subscribe(4)
+	job.RecordProgress("build", 40, "compiling")
+	raw, err := json.Marshal((<-ch).Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "stepProgress") {
+		t.Fatalf("plain progress must not carry stepProgress: %s", raw)
 	}
 }
 

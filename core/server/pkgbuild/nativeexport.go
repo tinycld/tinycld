@@ -19,6 +19,14 @@ const (
 	PlatformAndroid Platform = "android"
 )
 
+// label is the platform's name as a user reads it in a progress step.
+func (p Platform) label() string {
+	if p == PlatformIOS {
+		return "iOS"
+	}
+	return "Android"
+}
+
 // BundleMeta describes one exported platform bundle, persisted by the host in
 // the pkg_build `bundles` JSON field and surfaced verbatim by /api/app/update.
 // The JSON tags are a persistence contract — do not change them.
@@ -220,7 +228,7 @@ func stageNativeBundlesIntoRelease(releaseDir string, bundles []BundleMeta) erro
 func (p Pipeline) ExportNativeBundles(sink ProgressSink, appDir, buildID, runtimeVersion string) ([]BundleMeta, error) {
 	sink = sinkOrNop(sink)
 	if !nativeToolchainPresent(appDir) {
-		sink.Progress("Native export skipped", ProgNativeStart, "RN toolchain absent — mobile served embedded bundle")
+		sink.Progress("Skipping mobile app", ProgNativeStart, "RN toolchain absent — mobile served embedded bundle")
 		return nil, nil
 	}
 
@@ -245,7 +253,7 @@ func (p Pipeline) ExportNativeBundles(sink ProgressSink, appDir, buildID, runtim
 		span := ProgNativeEnd - ProgNativeStart
 		lo := ProgNativeStart + (span*i)/len(platforms)
 		hi := ProgNativeStart + (span*(i+1))/len(platforms)
-		step := "Building " + string(p2) + " bundle"
+		step := "Building mobile app (" + p2.label() + ")"
 		sink.Progress(step, lo, "Running expo export --platform "+string(p2))
 		// --source-maps external emits a <bundle>.hbc.map next to each .hbc so we can
 		// upload it to Sentry below (mirrors the web export's --source-maps external

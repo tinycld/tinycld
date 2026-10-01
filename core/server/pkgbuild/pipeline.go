@@ -171,7 +171,7 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// by sandboxing the build alone — member Go gets compiled into the server
 	// below and runs as the server at runtime regardless, so a build sandbox
 	// would buy no real isolation.
-	sink.Progress("Installing dependencies", ProgPnpmInstall, "pnpm install")
+	sink.Progress("Building client UI", ProgPnpmInstall, "pnpm install")
 	if err := TimeStep(sink, "pnpm install (+ generator postinstall)", func() error {
 		return p.runPnpmInstall(sink, buildDir)
 	}); err != nil {
@@ -188,7 +188,7 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 			return BuildOutput{}, wrapStep("prepare server", err)
 		}
 	}
-	sink.Progress("Building server", ProgGoBuild, "go build")
+	sink.Progress("Building application", ProgGoBuild, "go build")
 	if err := TimeStep(sink, "go build (server binary)", func() error {
 		args := []string{"build", "-o", filepath.Join(appDir, p.binaryName())}
 		if len(p.GoBuildTags) > 0 {
@@ -209,7 +209,7 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// Cross-compile the per-org CLI binaries. Shares the ProgGoBuild slot (the
 	// progress bands are contiguous; a new constant would renumber them) and
 	// never fails the build — see buildCLIBinaries.
-	sink.Progress("Building CLI binaries", ProgGoBuild, "go build (cli)")
+	sink.Progress("Building application tools", ProgGoBuild, "go build (cli)")
 	_ = TimeStep(sink, "cli cross-compile (best-effort)", func() error {
 		p.buildCLIBinaries(sink, appDir)
 		return nil
@@ -217,10 +217,10 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// The web bundle owns [ProgGoBuild, ProgExpoWeb): runExportWithProgress climbs
 	// the bar through it from Metro's per-module progress so a cold (multi-minute)
 	// bundle visibly advances instead of parking at one value.
-	sink.Progress("Exporting web bundle", ProgGoBuild, "expo export --platform web")
+	sink.Progress("Packaging client UI", ProgGoBuild, "expo export --platform web")
 	if err := TimeStep(sink, "expo export (web bundle)", func() error {
 		out, e := p.runExportWithProgress(sink, ProgGoBuild, ProgExpoWeb,
-			"Exporting web bundle", appDir, "--platform", "web")
+			"Packaging client UI", appDir, "--platform", "web")
 		if e != nil {
 			// Same rationale as runPnpmInstall and go build above: in a
 			// confined builder the error STRING is all that leaves the job
@@ -237,7 +237,7 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// entrypoint's promote_release (which reads /workspace/current/release-staging
 	// after the swap) finds the new bundle. Without this the server serves the old
 	// bundle or 404s ("Unmatched Route") on a newly-installed package's routes.
-	sink.Progress("Staging web bundle", ProgStageRelease, "release-staging")
+	sink.Progress("Preparing client UI", ProgStageRelease, "release-staging")
 	stageDir, err := p.stage()(appDir)
 	if err != nil {
 		return BuildOutput{}, wrapStep("stage release", err)
@@ -248,7 +248,7 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 	// Export the native iOS/Android OTA bundles and stage them into the release so
 	// /api/app/update can advertise them. nativeExport no-ops (returns nil) when the
 	// RN toolchain is absent, leaving mobile on the embedded bundle.
-	sink.Progress("Exporting native bundles", ProgNativeStart, "expo export --platform ios/android")
+	sink.Progress("Building mobile app", ProgNativeStart, "expo export --platform ios/android")
 	sink.Logf("web bundle staged: release %s (runtime version %s)", releaseID, runtimeVersion)
 	var bundles []BundleMeta
 	if err := TimeStep(sink, "native OTA export (ios/android)", func() error {
@@ -270,7 +270,7 @@ func (p Pipeline) Execute(sink ProgressSink, buildDir, buildID string) (BuildOut
 		sink.Logf("native OTA export skipped (RN toolchain absent) — mobile stays on embedded bundle")
 	}
 
-	sink.Progress("Build complete", ProgNativeEnd, "workspace built")
+	sink.Progress("Build finished", ProgNativeEnd, "workspace built")
 	return BuildOutput{
 		ReleaseID:      releaseID,
 		StageDir:       stageDir,
@@ -420,7 +420,7 @@ func (p Pipeline) reportPnpmProgress(sink ProgressSink, line string, throttle *p
 	if strings.HasPrefix(line, "Progress:") && !throttle.allow(p.now()) {
 		return // a "Progress:" line still inside the throttle window — drop it
 	}
-	sink.Progress("Installing dependencies", pct, line)
+	sink.Progress("Building client UI", pct, line)
 }
 
 // pnpmLineProgress returns the progress percentage a recognized pnpm reporter
@@ -514,10 +514,10 @@ func (p Pipeline) reportExpoProgress(sink ProgressSink, line, step string, lo, h
 		if !throttle.allow(p.now()) {
 			return // a percentage line still inside the throttle window — drop it
 		}
-		sink.Progress(step, bandPct(lo, hi, frac), line)
+		ReportStepProgress(sink, step, bandPct(lo, hi, frac), int(frac*100), line)
 	case strings.Contains(line, "Bundled "), strings.HasPrefix(line, "Exported:"):
 		// Bundle finished / written — park just below hi (staging owns hi).
-		sink.Progress(step, hi-1, line)
+		ReportStepProgress(sink, step, hi-1, 100, line)
 	default:
 		// Asset listings, the per-file output dump, warnings — keep the bar put.
 	}

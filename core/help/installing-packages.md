@@ -37,6 +37,12 @@ fails to come up healthy on restart, can't take your app down: the app aborts or
 **automatically rolls back** to the build that was running before. See *Build
 history & reverting* for what a failed or rolled-back install looks like.
 
+## Following an install
+
+When you install, update, or remove a package, a progress panel shows each step of the rebuild, for example *Building client UI* and *Building application*. Some steps, such as *Packaging client UI*, also show their own progress bar because they can take several minutes.
+
+To see the full build output, click **View debug log**. The debug log shows the commands the server ran and the messages they printed. Use it when a step fails. Click **Hide debug log** to go back to the step list.
+
 ## Installing a new package
 
 For developers, packages are linked into the app shell with:

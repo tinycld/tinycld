@@ -16,6 +16,24 @@ type ProgressSink interface {
 	Logf(format string, args ...any)
 }
 
+// StepProgressSink is an optional ProgressSink extension for a step that knows
+// its own completion (Metro's bundling percentage). The overall bar moves only
+// a few points across such a step, so without stepPercent a minutes-long bundle
+// looks stuck to the user.
+type StepProgressSink interface {
+	StepProgress(step string, percent, stepPercent int, message string)
+}
+
+// ReportStepProgress sends stepPercent when the sink accepts it, and falls back
+// to a plain Progress milestone when it does not.
+func ReportStepProgress(s ProgressSink, step string, percent, stepPercent int, message string) {
+	if sp, ok := s.(StepProgressSink); ok {
+		sp.StepProgress(step, percent, stepPercent, message)
+		return
+	}
+	s.Progress(step, percent, message)
+}
+
 type nopSink struct{}
 
 func (nopSink) Progress(string, int, string) {}

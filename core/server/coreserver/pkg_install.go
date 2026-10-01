@@ -375,6 +375,14 @@ func emitProgress(job *installjob.Job, step string, progress int, message string
 	srvLog.Info("package install progress", "jobID", job.ID, "percent", progress, "step", step, "message", message)
 }
 
+func emitStepProgress(job *installjob.Job, step string, progress, stepProgress int, message string) {
+	if job == nil {
+		return
+	}
+	job.RecordStepProgress(step, progress, stepProgress, message)
+	srvLog.Info("package install progress", "jobID", job.ID, "percent", progress, "step", step, "stepPercent", stepProgress, "message", message)
+}
+
 // parseLogLine reverses emitProgress's "[N%] Step: message" formatting back into
 // its parts, for replaying recorded history to a late-connecting SSE client.
 // Returns ok=false for any line that doesn't match the shape.

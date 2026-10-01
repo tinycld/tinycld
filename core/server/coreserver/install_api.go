@@ -90,6 +90,11 @@ func EmitProgress(job *installjob.Job, step string, progress int, message string
 	emitProgress(job, step, progress, message)
 }
 
+// EmitStepProgress is EmitProgress plus the current step's own completion.
+func EmitStepProgress(job *installjob.Job, step string, progress, stepProgress int, message string) {
+	emitStepProgress(job, step, progress, stepProgress, message)
+}
+
 // JobLogf appends a detail line to a job's recorded log.
 func JobLogf(job *installjob.Job, format string, args ...any) { jobLogf(job, format, args...) }
 

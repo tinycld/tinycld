@@ -281,13 +281,13 @@ func TestReportExpoProgress(t *testing.T) {
 	p := Pipeline{Now: func() time.Time { return now }}
 
 	lo, hi := 60, 72
-	sink := &recordingSink{}
+	sink := &stepRecordingSink{}
 	throttle := newPnpmProgressThrottle()
 
 	// A burst of percentage lines within one window — only the first forwards.
 	for range 5 {
 		now = now.Add(200 * time.Millisecond)
-		p.reportExpoProgress(sink, "Web entry.js ▓▓░░ 40.0% (800/2000)", "Exporting web bundle", lo, hi, throttle)
+		p.reportExpoProgress(sink, "Web entry.js ▓▓░░ 40.0% (800/2000)", "Packaging client UI", lo, hi, throttle)
 	}
 	if got := len(sink.milestones); got != 1 {
 		t.Fatalf("percentage burst forwarded %d updates, want 1", got)
@@ -295,18 +295,24 @@ func TestReportExpoProgress(t *testing.T) {
 	if got := sink.lastPercent; got != bandPct(lo, hi, 0.4) {
 		t.Fatalf("first percentage forwarded progress %d, want %d", got, bandPct(lo, hi, 0.4))
 	}
+	if got := sink.stepPercents[0]; got != 40 {
+		t.Fatalf("first percentage forwarded step progress %d, want 40", got)
+	}
 
 	// The "Bundled" marker is not throttled and parks at hi-1.
-	p.reportExpoProgress(sink, "Web Bundled 10768ms entry.js (4343 modules)", "Exporting web bundle", lo, hi, throttle)
+	p.reportExpoProgress(sink, "Web Bundled 10768ms entry.js (4343 modules)", "Packaging client UI", lo, hi, throttle)
 	if got := len(sink.milestones); got != 2 {
 		t.Fatalf("Bundled marker was throttled; total = %d, want 2", got)
 	}
 	if got := sink.lastPercent; got != hi-1 {
 		t.Fatalf("Bundled marker progress %d, want %d", got, hi-1)
 	}
+	if got := sink.stepPercents[1]; got != 100 {
+		t.Fatalf("Bundled marker step progress %d, want 100", got)
+	}
 
 	// Non-signal lines (the per-file dump) never forward.
-	p.reportExpoProgress(sink, "_expo/static/js/web/entry-abc.js (1.3MB)", "Exporting web bundle", lo, hi, throttle)
+	p.reportExpoProgress(sink, "_expo/static/js/web/entry-abc.js (1.3MB)", "Packaging client UI", lo, hi, throttle)
 	if got := len(sink.milestones); got != 2 {
 		t.Fatalf("asset listing line forwarded; total = %d, want 2", got)
 	}

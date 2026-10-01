@@ -31,6 +31,9 @@ type ProgressData struct {
 	Step     string `json:"step"`
 	Progress int    `json:"progress"`
 	Message  string `json:"message"`
+	// StepProgress is the current step's own completion (0-100), sent only by
+	// a step that can measure it.
+	StepProgress *int `json:"stepProgress,omitempty"`
 }
 
 // CompleteData is the payload of a "complete" Event.
@@ -180,13 +183,24 @@ func (j *Job) Unsubscribe(ch chan Event) {
 // Returns the log line it recorded so the caller can log it with its own
 // package's logger.
 func (j *Job) RecordProgress(step string, progress int, message string) string {
+	return j.record(ProgressData{Step: step, Progress: progress, Message: message})
+}
+
+// RecordStepProgress is RecordProgress plus the step's own completion. The log
+// line keeps the plain format: a replay needs only the latest step progress,
+// and the next live event carries it.
+func (j *Job) RecordStepProgress(step string, progress, stepProgress int, message string) string {
+	return j.record(ProgressData{Step: step, Progress: progress, Message: message, StepProgress: &stepProgress})
+}
+
+func (j *Job) record(pd ProgressData) string {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	j.Step = step
-	j.Progress = progress
-	line := fmt.Sprintf("[%d%%] %s: %s", progress, step, message)
+	j.Step = pd.Step
+	j.Progress = pd.Progress
+	line := fmt.Sprintf("[%d%%] %s: %s", pd.Progress, pd.Step, pd.Message)
 	j.LogLines = append(j.LogLines, line)
-	j.fanout(Event{Event: "progress", Data: ProgressData{Step: step, Progress: progress, Message: message}})
+	j.fanout(Event{Event: "progress", Data: pd})
 	return line
 }
 

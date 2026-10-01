@@ -5,6 +5,8 @@ export interface ProgressStep {
     step: string
     progress: number
     message: string
+    // The step's own completion (0-100), sent only by a step that can measure it.
+    stepProgress?: number
 }
 
 export type OperationStatus = 'running' | 'success' | 'failed'
