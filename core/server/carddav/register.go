@@ -10,6 +10,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/davauth"
+	"tinycld.org/core/davprefix"
 )
 
 const basicRealm = "TinyCld CardDAV"
@@ -19,14 +20,26 @@ const basicRealm = "TinyCld CardDAV"
 // one book of the contacts they own. A no-op when no sources are registered. Core
 // already installs the /carddav CORS bypass, so this only adds the protocol
 // handler + Basic-Auth challenge + .well-known redirect.
-func Register(app *pocketbase.PocketBase, sources []Source) {
+// carddavPrefix is where the CardDAV tree mounts. Fixed rather than per-source:
+// clients find it through /.well-known/carddav, and nothing has needed it to
+// vary. It still goes through davprefix so another package cannot claim it.
+const carddavPrefix = "/carddav"
+
+// Errors when the prefix is already claimed by another package — see
+// davprefix. CardDAV's prefix is fixed (see carddavPrefix), so it claims to
+// keep anything else from mounting there, not because it could vary.
+func Register(app *pocketbase.PocketBase, sources []Source) error {
 	if len(sources) == 0 {
-		return
+		return nil
+	}
+
+	if err := davprefix.ForApp(app).Claim(sources[0].Slug, carddavPrefix); err != nil {
+		return err
 	}
 
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		backend := &Backend{app: app, sources: sources, scope: singleOrgScope{bookSegment: "default"}}
-		handler := carddav.Handler{Backend: backend, Prefix: "/carddav"}
+		handler := carddav.Handler{Backend: backend, Prefix: carddavPrefix}
 
 		serve := func(re *core.RequestEvent) error {
 			if _, _, ok := re.Request.BasicAuth(); !ok {
@@ -64,6 +77,8 @@ func Register(app *pocketbase.PocketBase, sources []Source) {
 
 		return e.Next()
 	})
+
+	return nil
 }
 
 // HandlerFor builds a standalone CardDAV http.Handler for ONE org, backed by that
@@ -85,7 +100,7 @@ func HandlerFor(app core.App, sources []Source) http.Handler {
 		return nil
 	}
 	backend := &Backend{app: app, sources: sources, scope: singleOrgScope{bookSegment: "default"}}
-	dav := carddav.Handler{Backend: backend, Prefix: "/carddav"}
+	dav := carddav.Handler{Backend: backend, Prefix: carddavPrefix}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/carddav", func(w http.ResponseWriter, r *http.Request) {
