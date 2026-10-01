@@ -2,6 +2,9 @@ package coreserver
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"sort"
 	"sync"
@@ -67,16 +70,25 @@ func newLocalScheduler(app *pocketbase.PocketBase) *localScheduler {
 	return s
 }
 
-func readSystemSetting(app core.App, key string) string {
+// readSystemSetting returns "" without an error only when the row does not
+// exist. Any other failure is returned: a tick must not mistake an unreadable
+// switch for "off", or an unreadable window for the default one.
+func readSystemSetting(app core.App, key string) (string, error) {
 	row, err := app.FindFirstRecordByFilter("system_settings", "key = {:k}", map[string]any{"k": key})
-	if err != nil {
-		return ""
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
 	}
-	return row.GetString("value")
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", key, err)
+	}
+	return row.GetString("value"), nil
 }
 
-func (s *localScheduler) window() autoupgrade.Window {
-	raw := readSystemSetting(s.app, autoupgrade.KeyWindow)
+func (s *localScheduler) window() (autoupgrade.Window, error) {
+	raw, err := readSystemSetting(s.app, autoupgrade.KeyWindow)
+	if err != nil {
+		return autoupgrade.Window{}, err
+	}
 	if raw == "" {
 		raw = autoupgrade.DefaultWindow
 	}
@@ -85,7 +97,7 @@ func (s *localScheduler) window() autoupgrade.Window {
 		srvLog.Warn("auto-upgrade: bad window, using default", "window", raw, "err", err)
 		w, _ = autoupgrade.ParseWindow(autoupgrade.DefaultWindow)
 	}
-	return w
+	return w, nil
 }
 
 // PolicyChanged has nothing to push: every tick reads the stored flag.
@@ -101,11 +113,15 @@ func (s *localScheduler) Status(context.Context) (autoupgrade.Status, error) {
 	if lastRun.IsZero() {
 		lastRun, lastResult = lastAutoJob(s.app)
 	}
+	w, err := s.window()
+	if err != nil {
+		return autoupgrade.Status{}, err
+	}
 	return autoupgrade.Status{
 		Available:  true,
 		LastRun:    lastRun,
 		LastResult: lastResult,
-		NextCheck:  s.window().NextStart(s.now()),
+		NextCheck:  w.NextStart(s.now()),
 	}, nil
 }
 
@@ -146,11 +162,19 @@ func (s *localScheduler) tick(_ context.Context) string {
 	if s.disabled != "" {
 		return s.record(resultDisabledPrefix + s.disabled)
 	}
-	if readSystemSetting(s.app, autoupgrade.KeyEnabled) != "true" {
+	enabled, err := readSystemSetting(s.app, autoupgrade.KeyEnabled)
+	if err != nil {
+		return s.record("failed: " + err.Error())
+	}
+	if enabled != "true" {
 		return "off"
 	}
+	w, err := s.window()
+	if err != nil {
+		return s.record("failed: " + err.Error())
+	}
 	now := s.now()
-	if !s.window().Contains(now) {
+	if !w.Contains(now) {
 		return "waiting for window"
 	}
 	if installjob.Running() {

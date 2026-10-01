@@ -3,6 +3,7 @@ package coreserver
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,5 +147,44 @@ func TestTickApplyErrorIsReported(t *testing.T) {
 	mustNil(t, err)
 	if !st.Available || st.LastResult != "failed: npm down" || st.NextCheck.IsZero() {
 		t.Fatalf("status %+v", st)
+	}
+}
+
+// dropSystemSettings makes every system_settings lookup fail with an error
+// other than sql.ErrNoRows. Deleting the collection is not enough here: a
+// missing collection is itself reported as sql.ErrNoRows. Dropping the table
+// under a live collection makes the real query fail with "no such table".
+func dropSystemSettings(t *testing.T, app core.App) {
+	t.Helper()
+	_, err := app.DB().NewQuery("DROP TABLE system_settings").Execute()
+	mustNil(t, err)
+}
+
+func TestReadSystemSettingOnlyTreatsNoRowsAsMissing(t *testing.T) {
+	app := adminConsoleTestApp(t)
+	if v, err := readSystemSetting(app, "autoupgrade.nope"); err != nil || v != "" {
+		t.Fatalf("missing row: got %q, %v", v, err)
+	}
+	if v, err := readSystemSetting(app, autoupgrade.KeyEnabled); err != nil || v != "true" {
+		t.Fatalf("seeded row: got %q, %v", v, err)
+	}
+	dropSystemSettings(t, app)
+	if _, err := readSystemSetting(app, autoupgrade.KeyEnabled); err == nil {
+		t.Fatal("want an error when the lookup fails")
+	}
+}
+
+func TestTickSkipsWhenSettingsUnreadable(t *testing.T) {
+	s, applied, _ := testScheduler(t, inWindow, infos([3]string{"mail", "0.5.0", "0.6.0"}), okSolve)
+	dropSystemSettings(t, s.app)
+	got := s.tick(context.Background())
+	if !strings.HasPrefix(got, "failed: ") {
+		t.Fatalf("result %q", got)
+	}
+	if len(*applied) != 0 {
+		t.Fatal("applied although the switch could not be read")
+	}
+	if _, err := s.Status(context.Background()); err == nil {
+		t.Fatal("Status must report the read failure")
 	}
 }
