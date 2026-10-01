@@ -52,6 +52,54 @@ func TestRecordPauseGate(t *testing.T) {
 	}
 }
 
+// TestRecordPauseLookupErrorIsNotNotFound proves a lookup failure other than
+// "no rows" is returned rather than treated as "no pause row yet". A mock of
+// FindFirstRecordByFilter isn't available (and mocking our own functions is
+// banned), so the error is forced the same way record_query_test.go's "missing
+// collection" scenario does: deleting autoupgrade_state out from under the
+// lookup makes the real PocketBase query fail with a collection-lookup error,
+// never sql.ErrNoRows.
+func TestRecordPauseLookupErrorIsNotNotFound(t *testing.T) {
+	app := adminConsoleTestApp(t)
+	col, err := app.FindCollectionByNameOrId("autoupgrade_state")
+	mustNil(t, err)
+	mustNil(t, app.Delete(col))
+
+	var sent []notice
+	notify := func(n notice) { sent = append(sent, n) }
+	t0 := time.Date(2026, 10, 1, 3, 0, 0, 0, time.UTC)
+
+	if err := recordPause(app, "fp1", map[string]string{"mail": "0.6.0"}, "mail needs x", t0, notify); err == nil {
+		t.Fatal("want an error when the lookup fails, got nil")
+	}
+	if len(sent) != 0 {
+		t.Fatalf("sent %d notices, want 0", len(sent))
+	}
+}
+
+// TestRecordBlockedLookupErrorIsNotNotFound is the recordBlocked analogue of
+// the above: a lookup error other than "no rows" must be returned, not
+// treated as "no existing blocked row for this install_log" (which would
+// create a duplicate row and send a duplicate notice).
+func TestRecordBlockedLookupErrorIsNotNotFound(t *testing.T) {
+	app := adminConsoleTestApp(t)
+	logID := newInstallLogRow(t, app)
+	col, err := app.FindCollectionByNameOrId("autoupgrade_state")
+	mustNil(t, err)
+	mustNil(t, app.Delete(col))
+
+	var sent []notice
+	notify := func(n notice) { sent = append(sent, n) }
+	t0 := time.Date(2026, 10, 1, 3, 0, 0, 0, time.UTC)
+
+	if err := recordBlocked(app, "fpA", map[string]string{"mail": "0.6.0"}, "rolled back", logID, t0, notify); err == nil {
+		t.Fatal("want an error when the lookup fails, got nil")
+	}
+	if len(sent) != 0 {
+		t.Fatalf("sent %d notices, want 0", len(sent))
+	}
+}
+
 func TestRecordBlockedOncePerInstallLog(t *testing.T) {
 	app := adminConsoleTestApp(t)
 	logID := newInstallLogRow(t, app)

@@ -1,6 +1,8 @@
 package coreserver
 
 import (
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -28,6 +30,9 @@ func stateCollection(app core.App) (*core.Collection, error) {
 func recordPause(app core.App, fp string, wanted map[string]string, reason string, now time.Time, notify func(notice)) error {
 	row, err := app.FindFirstRecordByFilter("autoupgrade_state", "kind = 'pause'")
 	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		col, cErr := stateCollection(app)
 		if cErr != nil {
 			return cErr
@@ -71,9 +76,13 @@ func clearPause(app core.App) error {
 // recordBlocked writes one blocked row per rolled-back job. The install log id
 // makes it idempotent: a boot that runs the reconcile twice sends one email.
 func recordBlocked(app core.App, fp string, target map[string]string, reason, installLogID string, now time.Time, notify func(notice)) error {
-	if _, err := app.FindFirstRecordByFilter("autoupgrade_state",
-		"kind = 'blocked' && install_log = {:id}", map[string]any{"id": installLogID}); err == nil {
+	_, err := app.FindFirstRecordByFilter("autoupgrade_state",
+		"kind = 'blocked' && install_log = {:id}", map[string]any{"id": installLogID})
+	if err == nil {
 		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
 	}
 	col, err := stateCollection(app)
 	if err != nil {
