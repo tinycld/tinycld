@@ -648,17 +648,42 @@ type setDelta struct {
 // Install/version replaces (or appends) the slug's spec+version; uninstall drops
 // it. Every other member is carried through unchanged.
 func desiredSet(buildID string, current []MemberSpec, d setDelta) RebuildManifest {
-	out := make([]MemberSpec, 0, len(current)+1)
-	replaced := false
+	return desiredSetMulti(buildID, current, []setDelta{d})
+}
+
+// desiredSetMulti applies SEVERAL deltas to the current set in one pass. This is
+// not the same as folding desiredSet over the deltas: every member a delta does
+// not touch is marked FromCurrent, so a second fold would re-mark the member the
+// FIRST fold had just marked for a fresh fetch. The build would then copy that
+// member's OLD code from the live build while reporting the new version as
+// staged — and only the last delta in the list would actually take effect.
+//
+// That is how a combined "upgrade core + upgrade mail" produced a build with the
+// new mail against the OLD core, failing the peer-version check with a core
+// version the user had explicitly asked to upgrade away from.
+func desiredSetMulti(buildID string, current []MemberSpec, deltas []setDelta) RebuildManifest {
+	changed := make(map[string]setDelta, len(deltas))
+	order := make([]string, 0, len(deltas))
+	for _, d := range deltas {
+		if _, seen := changed[d.slug]; !seen {
+			order = append(order, d.slug)
+		}
+		// A later delta for the same slug wins — the caller's last word.
+		changed[d.slug] = d
+	}
+
+	out := make([]MemberSpec, 0, len(current)+len(deltas))
+	replaced := make(map[string]bool, len(deltas))
 	for _, ms := range current {
-		if ms.Slug == d.slug {
+		if d, ok := changed[ms.Slug]; ok {
 			switch d.op {
 			case "uninstall":
+				replaced[d.slug] = true
 				continue // drop it
 			case "install", "version":
 				// The changed member is fetched fresh (FromCurrent stays false).
 				out = append(out, MemberSpec{Slug: d.slug, Version: d.version, Spec: d.spec})
-				replaced = true
+				replaced[d.slug] = true
 				continue
 			}
 		}
@@ -668,8 +693,11 @@ func desiredSet(buildID string, current []MemberSpec, d setDelta) RebuildManifes
 		ms.FromCurrent = true
 		out = append(out, ms)
 	}
-	if !replaced && (d.op == "install" || d.op == "version") {
-		out = append(out, MemberSpec{Slug: d.slug, Version: d.version, Spec: d.spec})
+	for _, slug := range order {
+		d := changed[slug]
+		if !replaced[slug] && (d.op == "install" || d.op == "version") {
+			out = append(out, MemberSpec{Slug: d.slug, Version: d.version, Spec: d.spec})
+		}
 	}
 	return RebuildManifest{BuildID: buildID, Members: out}
 }

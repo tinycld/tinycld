@@ -309,7 +309,10 @@ func runVersionChangeRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 		return
 	}
 	buildID := newBuildID()
-	m := RebuildManifest{BuildID: buildID, Members: current}
+	// Collect every change first and apply them in ONE pass. Folding desiredSet
+	// per change would re-mark each already-changed member as FromCurrent, so all
+	// but the last change would be silently dropped back to its installed code.
+	deltas := make([]setDelta, 0, len(job.Changes))
 	for _, ch := range job.Changes {
 		reg, err := app.FindFirstRecordByFilter("pkg_registry", "slug = {:s}", map[string]any{"s": ch.Slug})
 		if err != nil {
@@ -323,11 +326,11 @@ func runVersionChangeRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 			_ = failJob(job, "spec", err)
 			return
 		}
-		member := registrySlugToMember(ch.Slug)
-		m = desiredSet(buildID, m.Members, setDelta{
-			op: "version", slug: member, version: ch.TargetVersion, spec: spec,
+		deltas = append(deltas, setDelta{
+			op: "version", slug: registrySlugToMember(ch.Slug), version: ch.TargetVersion, spec: spec,
 		})
 	}
+	m := desiredSetMulti(buildID, current, deltas)
 	if err := rebuild(app, job, m, logRecord); err != nil {
 		job.Status = "failed"
 		job.Error = err.Error()

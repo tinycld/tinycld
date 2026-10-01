@@ -260,6 +260,72 @@ func TestDesiredSet_Upgrade_OverridesSpec(t *testing.T) {
 	}
 }
 
+// A combined upgrade (base + a feature in one Apply) must fetch BOTH fresh.
+// Folding desiredSet per change used to re-mark the base as FromCurrent on the
+// second iteration, so the build copied the OLD base and only the last change
+// took effect — the new feature was then built against the base it had just
+// been upgraded away from, failing the peer-version check.
+func TestDesiredSetMulti_UpgradesBaseAndFeatureTogether(t *testing.T) {
+	current := []MemberSpec{
+		{Slug: "tinycld", Version: "0.6.1", Spec: "git+https://x/tinycld#v0.6.1"},
+		{Slug: "gizmos", Version: "0.6.0", Spec: "@tinycld/gizmos@0.6.0"},
+		{Slug: "sprockets", Version: "0.2.0", Spec: "@tinycld/sprockets@0.2.0"},
+	}
+	m := desiredSetMulti("build-multi", current, []setDelta{
+		{op: "version", slug: "tinycld", version: "0.6.2", spec: "git+https://x/tinycld#v0.6.2"},
+		{op: "version", slug: "gizmos", version: "0.6.1", spec: "@tinycld/gizmos@0.6.1"},
+	})
+
+	for _, want := range []struct {
+		slug, version string
+	}{{"tinycld", "0.6.2"}, {"gizmos", "0.6.1"}} {
+		ms, ok := m.MemberBySlug(want.slug)
+		if !ok {
+			t.Fatalf("%s missing from desired set", want.slug)
+		}
+		if ms.Version != want.version {
+			t.Errorf("%s version = %q, want %q", want.slug, ms.Version, want.version)
+		}
+		if ms.FromCurrent {
+			t.Errorf("%s marked FromCurrent; a changed member must be fetched fresh", want.slug)
+		}
+	}
+
+	// The member no delta touched is still carried forward from the live build.
+	untouched, ok := m.MemberBySlug("sprockets")
+	if !ok {
+		t.Fatal("sprockets dropped from desired set")
+	}
+	if !untouched.FromCurrent {
+		t.Error("sprockets should be copied from the current build, not re-fetched")
+	}
+	if len(m.Members) != 3 {
+		t.Fatalf("want 3 members, got %d", len(m.Members))
+	}
+}
+
+// An install folded alongside a version change must still be appended once.
+func TestDesiredSetMulti_InstallAndUpgradeTogether(t *testing.T) {
+	current := []MemberSpec{
+		{Slug: "tinycld", Version: "0.6.1", Spec: "git+https://x/tinycld#v0.6.1"},
+	}
+	m := desiredSetMulti("build-mixed", current, []setDelta{
+		{op: "version", slug: "tinycld", version: "0.6.2", spec: "git+https://x/tinycld#v0.6.2"},
+		{op: "install", slug: "gizmos", version: "0.1.0", spec: "@tinycld/gizmos@0.1.0"},
+	})
+	if len(m.Members) != 2 {
+		t.Fatalf("want 2 members, got %d: %+v", len(m.Members), m.Members)
+	}
+	base, _ := m.MemberBySlug("tinycld")
+	if base.Version != "0.6.2" || base.FromCurrent {
+		t.Errorf("base not upgraded+fetched: %+v", base)
+	}
+	added, ok := m.MemberBySlug("gizmos")
+	if !ok || added.Version != "0.1.0" || added.FromCurrent {
+		t.Errorf("gizmos not installed fresh: %+v (ok=%v)", added, ok)
+	}
+}
+
 func TestRebuild_HappyPath_Sequence(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("TINYCLD_STATE_DIR", state)
