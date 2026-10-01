@@ -357,7 +357,7 @@ func (b *Backend) recordToAddressObject(src Source, record *core.Record, bookPat
 		Path:          bookPath + uid + ".vcf",
 		ModTime:       modTime,
 		ContentLength: int64(buf.Len()),
-		ETag:          fmt.Sprintf(`"%s"`, record.GetString("updated")),
+		ETag:          record.GetString("updated"),
 		Card:          card,
 	}, nil
 }

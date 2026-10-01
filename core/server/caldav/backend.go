@@ -482,8 +482,14 @@ func (b *Backend) toCalendarObject(record *core.Record, calID string) (*caldav.C
 		Path:          b.calendarPath(calID) + record.GetString(b.src.Event.UID) + ".ics",
 		ModTime:       modTime,
 		ContentLength: int64(buf.Len()),
-		ETag:          fmt.Sprintf(`"%s"`, updated),
-		Data:          cal,
+		// UNQUOTED, to match what PutCalendarObject hands davcond.Check. The
+		// library quotes it on the way out (internal.ETag.String uses %q) and
+		// unquotes a client's header on the way in, so quoting here produced
+		// `"\"...\""` on the wire — which no echoed If-Match could ever match
+		// against the bare `updated` stamp the write path compares, silently
+		// disabling the lost-update guard davcond exists to provide.
+		ETag: updated,
+		Data: cal,
 	}, nil
 }
 
