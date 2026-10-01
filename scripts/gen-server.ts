@@ -85,7 +85,7 @@ export function buildGoWork(coreRelPath: string, pkgs: ServerPkg[]): string {
 export function buildMemberGoWork(
     coreRelPath: string,
     forkRelPath: string,
-    gopbsReplaceLine: string
+    forkedReplaceLines: string[]
 ): string {
     // A member that imports the sobek-forked core must resolve the same fork, or a
     // standalone `go build`/`go test` from <member>/server hits a goja↔sobek
@@ -107,11 +107,12 @@ export function buildMemberGoWork(
         '',
         `replace github.com/pocketbase/pocketbase => ${forkRelPath}`,
         '',
-        // core/server/backup/pbs imports the forked gopbs client; a member whose
-        // server imports coreserver (transitively pulling that package in) needs
-        // the same replace, or a standalone build resolves the unforked module.
-        gopbsReplaceLine,
-        '',
+        // core pins forked dependencies (the gopbs client, go-webdav's DAV
+        // servers); a member whose server imports coreserver — transitively
+        // pulling them in — needs the same replaces, or a standalone build
+        // resolves the unforked module and compiles against different code than
+        // the app ships.
+        ...forkedReplaceLines.flatMap(line => [line, '']),
     ].join('\n')
 }
 
