@@ -38,12 +38,6 @@ import (
 //
 // The DB is backed up up front and everything rolls back on any failure.
 
-// versionChange is one package's requested target version.
-type versionChange struct {
-	Slug          string `json:"slug"`
-	TargetVersion string `json:"targetVersion"`
-}
-
 // ---------- handler ----------
 
 var errJobBusy = errors.New("another operation is in progress")
