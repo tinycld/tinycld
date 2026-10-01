@@ -47,9 +47,12 @@ export function appChoicesOf(
 
 // The wizard offers automatic updates only where the server can do them; on a
 // build that cannot update itself the choice would be a promise it cannot keep.
+// Hidden until the stored value has loaded: before that, `value` is the
+// "missing row" false and a click would write the opposite of what the owner saw.
 export function autoUpdateChoiceOf(
     status: AutoUpgradeStatus | undefined,
-    value: boolean
+    value: boolean,
+    isReady: boolean
 ): { isVisible: boolean; isOn: boolean } {
-    return { isVisible: status?.available ?? false, isOn: value }
+    return { isVisible: (status?.available ?? false) && isReady, isOn: value }
 }

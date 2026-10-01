@@ -22,8 +22,14 @@ export type { SettingRow }
  *
  * `upsert` still works because `byKey` covers the whole namespace a panel
  * writes — a panel must only write keys under its own prefix.
+ *
+ * `onError` replaces useMutation's generic failure toast for a panel that
+ * can say what failed.
  */
-export function useSystemSettings(prefix: string) {
+export function useSystemSettings(
+    prefix: string,
+    options: { onError?: (err: Error) => void } = {}
+) {
     const [systemSettings] = useStore('system_settings')
 
     const { data: rows = [], isReady } = useLiveQuery(query =>
@@ -48,6 +54,7 @@ export function useSystemSettings(prefix: string) {
                 } as never)
             }
         }),
+        onError: options.onError,
     })
 
     return { byKey, upsert, isReady }

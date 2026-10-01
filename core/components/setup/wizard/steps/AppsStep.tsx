@@ -125,7 +125,7 @@ function AppCard({
 
 function AutoUpdateChoice() {
     const au = useAutoUpgrade(pb)
-    const choice = autoUpdateChoiceOf(au.status, au.isOn)
+    const choice = autoUpdateChoiceOf(au.status, au.isOn, au.isReady)
     if (!choice.isVisible) return null
     return (
         <Pressable
