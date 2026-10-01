@@ -35,16 +35,26 @@ func registerAutoUpgradeOn(app core.App) {
 		}).BindFunc(requireOwner)
 
 		if d := autoupgrade.Current(); d != nil {
-			enabled := readSystemSetting(e.App, autoupgrade.KeyEnabled) == "true"
-			if err := d.PolicyChanged(ctx, enabled); err != nil {
-				srvLog.Warn("auto-upgrade: boot policy push failed", "err", err)
-			}
+			pushBootPolicy(ctx, e.App, d)
 			if s, ok := d.(autoupgrade.Starter); ok {
 				s.Start(ctx)
 			}
 		}
 		return e.Next()
 	})
+}
+
+// pushBootPolicy tells the Delegate the stored flag once at boot. An
+// unreadable flag is not pushed as "off": the Delegate keeps what it had.
+func pushBootPolicy(ctx context.Context, app core.App, d autoupgrade.Delegate) {
+	raw, err := readSystemSetting(app, autoupgrade.KeyEnabled)
+	if err != nil {
+		srvLog.Warn("auto-upgrade: boot policy not pushed", "err", err)
+		return
+	}
+	if err := d.PolicyChanged(ctx, raw == "true"); err != nil {
+		srvLog.Warn("auto-upgrade: boot policy push failed", "err", err)
+	}
 }
 
 // guardAutoUpgradeWrite narrows the admin-wide system_settings rule: the
