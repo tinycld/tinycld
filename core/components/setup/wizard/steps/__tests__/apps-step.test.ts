@@ -50,17 +50,21 @@ describe('appChoicesOf', () => {
 })
 
 describe('autoUpdateChoiceOf', () => {
+    const status = { available: true, lastRun: '', lastResult: '', nextCheck: '' }
     it('is hidden until the server says updates are available', () => {
-        expect(autoUpdateChoiceOf(undefined, true)).toEqual({ isVisible: false, isOn: true })
+        expect(autoUpdateChoiceOf(undefined, true, true)).toEqual({ isVisible: false, isOn: true })
         expect(
             autoUpdateChoiceOf(
                 { available: false, reason: 'x', lastRun: '', lastResult: '', nextCheck: '' },
+                true,
                 true
             )
         ).toEqual({ isVisible: false, isOn: true })
     })
-    it('shows the stored value when available', () => {
-        const status = { available: true, lastRun: '', lastResult: '', nextCheck: '' }
-        expect(autoUpdateChoiceOf(status, false)).toEqual({ isVisible: true, isOn: false })
+    it('is hidden until the stored setting has loaded', () => {
+        expect(autoUpdateChoiceOf(status, false, false)).toEqual({ isVisible: false, isOn: false })
+    })
+    it('shows the stored value when available and loaded', () => {
+        expect(autoUpdateChoiceOf(status, false, true)).toEqual({ isVisible: true, isOn: false })
     })
 })
