@@ -113,10 +113,16 @@ To keep packages up to date without doing it yourself, turn on
 wizard, on the step where you choose your apps.
 
 When it is on, the server checks for new versions every hour. It installs them only
-inside the **update window** (02:00–05:00 server time unless you change it). It takes
-the newest version of each package, including major versions, when the whole set is
-compatible. If a major version does not fit, it installs the others and leaves the
-major version for later.
+inside the **update window** (02:00–05:00 server time unless you change it). The window
+must be at least 60 minutes long. It can cross midnight, for example 23:30–00:30. It
+takes the newest stable version of each package, including major versions, when the
+whole set is compatible. It never installs a prerelease (for example `1.0.0-rc.1`); to
+use one, pick it from the version list yourself. If a major version does not fit, it
+installs the others and leaves the major version for later.
+
+The status line under the switch shows the result of the last check and when the next
+check runs. When the switch is off, or the server is set up not to run checks, it shows
+that instead of a next check.
 
 **Updates paused.** If no compatible set exists, nothing is installed, and the owner
 and admins get one email that names the conflicting packages. The email is sent again
