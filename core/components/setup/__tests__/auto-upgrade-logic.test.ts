@@ -17,6 +17,14 @@ describe('windowSchema', () => {
         expect(windowSchema.safeParse('02:00-02:00').success).toBe(false)
         expect(windowSchema.safeParse('24:00-01:00').success).toBe(false)
     })
+    it('refuses a window shorter than 60 minutes, also across midnight', () => {
+        expect(windowSchema.safeParse('02:00-03:00').success).toBe(true)
+        expect(windowSchema.safeParse('23:30-00:30').success).toBe(true)
+        const short = windowSchema.safeParse('02:00-02:30')
+        expect(short.success).toBe(false)
+        expect(short.error?.issues[0]?.message).toBe('The window must be at least 60 minutes long')
+        expect(windowSchema.safeParse('23:45-00:15').success).toBe(false)
+    })
 })
 
 describe('statusLine', () => {

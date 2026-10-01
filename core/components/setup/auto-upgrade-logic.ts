@@ -22,10 +22,32 @@ export interface AutoUpgradeStatusResponse {
 
 const WINDOW_PATTERN = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/
 
+const MIN_WINDOW_MINUTES = 60
+const DAY_MINUTES = 24 * 60
+
+function clockMinutes(hhmm: string): number {
+    const [h, m] = hhmm.split(':').map(Number)
+    return h * 60 + m
+}
+
+// Matches the server's autoupgrade.Window.Length: an end before the start
+// means the window crosses midnight.
+function windowMinutes(value: string): number {
+    const start = clockMinutes(value.slice(0, 5))
+    const end = clockMinutes(value.slice(6))
+    return end > start ? end - start : DAY_MINUTES - start + end
+}
+
+function isLongEnough(value: string): boolean {
+    if (!WINDOW_PATTERN.test(value)) return true // the pattern rule reports it
+    return windowMinutes(value) >= MIN_WINDOW_MINUTES
+}
+
 export const windowSchema = z
     .string()
     .regex(WINDOW_PATTERN, 'Use HH:MM-HH:MM, for example 02:00-05:00')
     .refine(v => v.slice(0, 5) !== v.slice(6), 'Start and end must differ')
+    .refine(isLongEnough, 'The window must be at least 60 minutes long')
 
 export function isOn(value: string | undefined): boolean {
     return value === 'true'

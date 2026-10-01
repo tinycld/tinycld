@@ -7,6 +7,10 @@ import (
 	"time"
 )
 
+// MinWindow is the shortest window accepted. An upgrade rebuilds and restarts
+// the app, and an hourly tick must land inside the window at least once.
+const MinWindow = time.Hour
+
 var windowPattern = regexp.MustCompile(`^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$`)
 
 // Window is a daily span in server-local time. End before Start means the
@@ -29,7 +33,19 @@ func ParseWindow(s string) (Window, error) {
 	if w.Start == w.End {
 		return Window{}, fmt.Errorf("window %q: start and end are the same", s)
 	}
+	if w.Length() < MinWindow {
+		return Window{}, fmt.Errorf("window %q: must be at least 60 minutes long", s)
+	}
 	return w, nil
+}
+
+// Length is the span of the window, counting across midnight when End is
+// before Start.
+func (w Window) Length() time.Duration {
+	if w.End > w.Start {
+		return w.End - w.Start
+	}
+	return 24*time.Hour - w.Start + w.End
 }
 
 func sinceMidnight(t time.Time) time.Duration {

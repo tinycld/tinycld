@@ -1,6 +1,7 @@
 package autoupgrade
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -18,6 +19,24 @@ func TestParseWindow(t *testing.T) {
 	for _, bad := range []string{"", "2-5", "24:00-01:00", "02:00-02:00", "02:00_05:00", "02:60-03:00"} {
 		if _, err := ParseWindow(bad); err == nil {
 			t.Errorf("ParseWindow(%q) accepted", bad)
+		}
+	}
+}
+
+func TestParseWindowMinimumLength(t *testing.T) {
+	for _, ok := range []string{"02:00-03:00", "23:30-00:30", "23:00-22:00"} {
+		if _, err := ParseWindow(ok); err != nil {
+			t.Errorf("ParseWindow(%q) refused: %v", ok, err)
+		}
+	}
+	for _, short := range []string{"02:00-02:30", "23:45-00:15", "02:00-02:59", "23:59-00:58"} {
+		_, err := ParseWindow(short)
+		if err == nil {
+			t.Errorf("ParseWindow(%q) accepted", short)
+			continue
+		}
+		if !strings.Contains(err.Error(), "at least 60 minutes") {
+			t.Errorf("ParseWindow(%q) error %q does not name the minimum", short, err)
 		}
 	}
 }
