@@ -17,6 +17,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 
 	"tinycld.org/core/automation"
+	"tinycld.org/core/autoupgrade"
 	"tinycld.org/core/backup"
 	"tinycld.org/core/groups"
 	"tinycld.org/core/logging"
@@ -242,6 +243,10 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		// instead, which is the right answer for a binary that cannot change
 		// what it carries.
 		RegisterBackupSelfRebuild(app)
+		// A deployment that can rebuild itself also schedules its own updates.
+		// SetDelegate binds no hook, so the composition parity test is
+		// unaffected.
+		autoupgrade.SetDelegate(newLocalScheduler(app))
 	}
 
 	// Which deployment shape wrote an archive is recorded in every manifest, so
@@ -372,6 +377,9 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 // bind in guard → demo-audit → disabled order.
 func RegisterSharedCore(app *pocketbase.PocketBase) {
 	RegisterPkgEnableHook(app)
+	// Automatic package updates: the write guard, the policy hook and the
+	// status route are the same everywhere; the Delegate behind them is not.
+	RegisterAutoUpgrade(app)
 	notify.Register(app)
 	notify.RegisterCommentMentionHooks(app)
 	// Teach the realtime broker how to verify anonymous share-session
