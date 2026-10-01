@@ -49,8 +49,18 @@ func registerAutoUpgradeOn(app core.App) {
 
 // guardAutoUpgradeWrite narrows the admin-wide system_settings rule: the
 // upgrade policy is the owner's decision, as package installs are.
+//
+// Checks the ORIGINAL stored key as well as the incoming one. The fork loads
+// request data into e.Record before this hook runs (form.Load then the
+// hook), so checking only the new key lets a non-owner rename a protected row
+// out from under the guard (e.g. PATCH {"key":"x.enabled"} on the
+// autoupgrade.enabled row) and silently disable auto-upgrade. A create has no
+// original row, so Original() is a blank record there and only the new key
+// matters — which is already covered.
 func guardAutoUpgradeWrite(e *core.RecordRequestEvent) error {
-	if !strings.HasPrefix(e.Record.GetString("key"), "autoupgrade.") {
+	isProtected := strings.HasPrefix(e.Record.GetString("key"), "autoupgrade.") ||
+		strings.HasPrefix(e.Record.Original().GetString("key"), "autoupgrade.")
+	if !isProtected {
 		return e.Next()
 	}
 	if e.HasSuperuserAuth() || isOwner(e.Auth) {
