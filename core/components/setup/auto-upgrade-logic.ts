@@ -54,8 +54,17 @@ export function isOn(value: string | undefined): boolean {
 }
 
 // Go marshals a zero time.Time as year 1; treat it as "never".
-function hasRun(iso: string): boolean {
+function isSet(iso: string): boolean {
     return iso !== '' && !iso.startsWith('0001-')
+}
+
+const RESULT_OFF = 'off'
+
+// With no next check (the switch is off, or this server does not run
+// checks), the result is the whole story.
+function resultSentence(result: string): string {
+    if (result === RESULT_OFF) return 'Automatic updates are off.'
+    return result.charAt(0).toUpperCase() + result.slice(1)
 }
 
 function shortDate(iso: string): string {
@@ -64,7 +73,8 @@ function shortDate(iso: string): string {
 
 export function statusLine(s: AutoUpgradeStatus): string {
     if (!s.available) return s.reason ?? 'Automatic updates are not available on this server.'
-    const last = hasRun(s.lastRun) ? `Last check: ${s.lastResult}` : 'No check yet'
+    if (!isSet(s.nextCheck)) return resultSentence(s.lastResult)
+    const last = isSet(s.lastRun) ? `Last check: ${s.lastResult}` : 'No check yet'
     return `${last} · Next check: ${shortDate(s.nextCheck)}`
 }
 

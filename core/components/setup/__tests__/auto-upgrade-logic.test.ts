@@ -61,6 +61,28 @@ describe('statusLine', () => {
     })
 })
 
+describe('statusLine without a next check', () => {
+    const zero = '0001-01-01T00:00:00Z'
+    it('says the switch is off instead of a next check', () => {
+        const line = statusLine({
+            available: true,
+            lastRun: zero,
+            lastResult: 'off',
+            nextCheck: zero,
+        })
+        expect(line).toBe('Automatic updates are off.')
+    })
+    it('shows why checks are disabled instead of a next check', () => {
+        const line = statusLine({
+            available: true,
+            lastRun: zero,
+            lastResult: 'checks disabled: development build',
+            nextCheck: zero,
+        })
+        expect(line).toBe('Checks disabled: development build')
+    })
+})
+
 describe('formatTarget', () => {
     it('sorts by package', () => {
         expect(formatTarget({ mail: '0.6.0', core: '0.5.4' })).toBe('core 0.5.4, mail 0.6.0')

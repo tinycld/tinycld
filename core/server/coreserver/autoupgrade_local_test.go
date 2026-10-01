@@ -188,3 +188,23 @@ func TestTickSkipsWhenSettingsUnreadable(t *testing.T) {
 		t.Fatal("Status must report the read failure")
 	}
 }
+
+func TestStatusWhenChecksDisabled(t *testing.T) {
+	s, _, _ := testScheduler(t, inWindow, nil, okSolve)
+	s.disabled = "development build"
+	st, err := s.Status(context.Background())
+	mustNil(t, err)
+	if !st.Available || st.LastResult != "checks disabled: development build" || !st.NextCheck.IsZero() || !st.LastRun.IsZero() {
+		t.Fatalf("status %+v", st)
+	}
+}
+
+func TestStatusWhenSwitchOff(t *testing.T) {
+	s, _, _ := testScheduler(t, inWindow, nil, okSolve)
+	setSetting(t, autoupgrade.KeyEnabled, "false")(s)
+	st, err := s.Status(context.Background())
+	mustNil(t, err)
+	if !st.Available || st.LastResult != "off" || !st.NextCheck.IsZero() || !st.LastRun.IsZero() {
+		t.Fatalf("status %+v", st)
+	}
+}

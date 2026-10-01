@@ -19,6 +19,7 @@ import (
 const (
 	tickEvery            = time.Hour
 	resultDisabledPrefix = "checks disabled: "
+	resultOff            = "off"
 )
 
 // localScheduler is the Delegate for a deployment that can rebuild itself. It
@@ -106,7 +107,20 @@ func (s *localScheduler) PolicyChanged(_ context.Context, enabled bool) error {
 	return nil
 }
 
+// Status reports a next check only when one will run. With checks disabled
+// or the switch off, the result says so instead; Available stays true so the
+// owner can still use the switch.
 func (s *localScheduler) Status(context.Context) (autoupgrade.Status, error) {
+	if s.disabled != "" {
+		return autoupgrade.Status{Available: true, LastResult: resultDisabledPrefix + s.disabled}, nil
+	}
+	enabled, err := readSystemSetting(s.app, autoupgrade.KeyEnabled)
+	if err != nil {
+		return autoupgrade.Status{}, err
+	}
+	if enabled != "true" {
+		return autoupgrade.Status{Available: true, LastResult: resultOff}, nil
+	}
 	s.mu.Lock()
 	lastRun, lastResult := s.lastRun, s.lastResult
 	s.mu.Unlock()
@@ -167,7 +181,7 @@ func (s *localScheduler) tick(_ context.Context) string {
 		return s.record("failed: " + err.Error())
 	}
 	if enabled != "true" {
-		return "off"
+		return resultOff
 	}
 	w, err := s.window()
 	if err != nil {
