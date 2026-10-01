@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
@@ -547,6 +548,9 @@ func registerStaticServe(app *pocketbase.PocketBase, opts Options) {
 			SyncBundledPackages(e.App)
 			SeedBaseBuild(e.App)
 			ReconcileRolledBackInstall(e.App)
+			reconcileAutoUpgradeResults(e.App, time.Now(), func(n notice) {
+				notifyAdmins(e.App, func(name, email, subj, html, text string) { send(e.App, name, email, subj, html, text) }, n)
+			})
 
 			// Per-route asset handlers, registered before the catch-all so
 			// the asset prefixes win. Both paths read from the cross-release
