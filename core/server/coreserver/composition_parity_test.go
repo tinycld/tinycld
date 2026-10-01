@@ -6,6 +6,7 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 
+	"tinycld.org/core/autoupgrade"
 	"tinycld.org/core/backup"
 	"tinycld.org/core/quota"
 	"tinycld.org/core/rlstest"
@@ -92,6 +93,9 @@ func TestRegisterBindsTheRecordedHandlerCounts(t *testing.T) {
 	// in place it would kill the test binary the next time any test in this
 	// package reached a restore's phase 6.
 	t.Cleanup(backup.ResetForTesting)
+	// Register installs a self-rebuilding build's auto-upgrade Delegate, a
+	// process global; left in place it answers every later test's status route.
+	t.Cleanup(func() { autoupgrade.SetDelegate(nil) })
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
 	Register(app, Options{
