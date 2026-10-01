@@ -21,14 +21,31 @@ type upgradePlan struct {
 	DroppedMajors bool
 }
 
+// newestTargets picks, per package, the newest stable version above Current.
+// Automatic updates never take a prerelease, so Latest and HasUpdate (which
+// may point at one) are not used; the manual picker still offers them.
 func newestTargets(infos []VersionInfo) map[string]string {
 	out := map[string]string{}
 	for _, in := range infos {
-		if in.HasUpdate && in.Latest != "" {
-			out[in.Slug] = in.Latest
+		if v := newestStable(in.Available, in.Current); v != "" {
+			out[in.Slug] = v
 		}
 	}
 	return out
+}
+
+func newestStable(available []string, current string) string {
+	best := ""
+	for _, v := range available {
+		parsed, err := semver.NewVersion(v)
+		if err != nil || parsed.Prerelease() != "" || !isNewer(v, current) {
+			continue
+		}
+		if best == "" || isNewer(v, best) {
+			best = v
+		}
+	}
+	return best
 }
 
 func isMajorBump(from, to string) bool {
