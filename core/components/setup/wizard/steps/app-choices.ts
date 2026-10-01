@@ -1,3 +1,5 @@
+import type { AutoUpgradeStatus } from '@tinycld/core/components/setup/auto-upgrade-logic'
+
 // The core row is the shell itself, not an app that can be hidden.
 export const CORE_SLUG = 'core'
 
@@ -41,4 +43,13 @@ export function appChoicesOf(
             },
         ]
     })
+}
+
+// The wizard offers automatic updates only where the server can do them; on a
+// build that cannot update itself the choice would be a promise it cannot keep.
+export function autoUpdateChoiceOf(
+    status: AutoUpgradeStatus | undefined,
+    value: boolean
+): { isVisible: boolean; isOn: boolean } {
+    return { isVisible: status?.available ?? false, isOn: value }
 }
