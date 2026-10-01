@@ -23,6 +23,7 @@ func registerAutoUpgradeOn(app core.App) {
 	app.OnRecordDeleteRequest("system_settings").BindFunc(guardAutoUpgradeWrite)
 	app.OnRecordAfterCreateSuccess("system_settings").BindFunc(notifyPolicy)
 	app.OnRecordAfterUpdateSuccess("system_settings").BindFunc(notifyPolicy)
+	app.OnRecordAfterDeleteSuccess("system_settings").BindFunc(notifyPolicyDeleted)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
@@ -81,13 +82,27 @@ func guardAutoUpgradeWrite(e *core.RecordRequestEvent) error {
 
 func notifyPolicy(e *core.RecordEvent) error {
 	if e.Record.GetString("key") == autoupgrade.KeyEnabled {
-		if d := autoupgrade.Current(); d != nil {
-			if err := d.PolicyChanged(context.Background(), e.Record.GetString("value") == "true"); err != nil {
-				srvLog.Warn("auto-upgrade: policy push failed", "err", err)
-			}
-		}
+		pushPolicy(e.Record.GetString("value") == "true")
 	}
 	return e.Next()
+}
+
+// notifyPolicyDeleted: a missing flag reads as off, so the Delegate is told so.
+func notifyPolicyDeleted(e *core.RecordEvent) error {
+	if e.Record.GetString("key") == autoupgrade.KeyEnabled {
+		pushPolicy(false)
+	}
+	return e.Next()
+}
+
+func pushPolicy(enabled bool) {
+	d := autoupgrade.Current()
+	if d == nil {
+		return
+	}
+	if err := d.PolicyChanged(context.Background(), enabled); err != nil {
+		srvLog.Warn("auto-upgrade: policy push failed", "err", err)
+	}
 }
 
 func handleAutoUpgradeStatus(re *core.RequestEvent) error {

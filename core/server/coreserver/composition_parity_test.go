@@ -65,7 +65,7 @@ var hostHookCounts = map[string]int{
 	"OnRecordAfterCreateError":        1,
 	"OnRecordAfterCreateSuccess":      5,
 	"OnRecordAfterDeleteError":        1,
-	"OnRecordAfterDeleteSuccess":      2,
+	"OnRecordAfterDeleteSuccess":      3,
 	"OnRecordAfterUpdateError":        1,
 	"OnRecordAfterUpdateSuccess":      3,
 	"OnRecordAuthRequest":             1,
