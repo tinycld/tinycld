@@ -344,25 +344,27 @@ func TestStatic_NonHTMLAssetKeepsDefault(t *testing.T) {
 	})
 }
 
-func TestIsDavPath(t *testing.T) {
+func TestShouldBypassCORS(t *testing.T) {
 	for _, p := range []string{
 		"/caldav", "/caldav/u/cal/x/", "/carddav", "/dav", "/dav/x",
+		// drive's WebDAV mount, which deliberately shadows the SPA at this
+		// path: it is what a user types when mounting from Finder, and the
+		// app's own route is /a/drive.
+		"/drive", "/drive/Documents/notes.txt",
 		"/.well-known/caldav", "/.well-known/carddav", "/.well-known/webdav",
 	} {
-		if !isDavPath(p) {
-			t.Errorf("isDavPath(%q) = false, want true", p)
+		if !shouldBypassCORS(p) {
+			t.Errorf("shouldBypassCORS(%q) = false, want true", p)
 		}
 	}
 	for _, p := range []string{
-		// A package's in-app SPA route is deliberately NOT a DAV path: matching
-		// it here would route a hard load of it to Basic-Auth WebDAV instead of
-		// the app (see isDavPath's comment). Protocol mounts live under the
-		// reserved "/dav" namespace instead.
+		// A package with no protocol mount keeps its in-app route: matching it
+		// here would route a hard load to Basic-Auth DAV instead of the app.
 		"/cogs",
 		"/", "/api/health", "/settings", "/.well-known/apple-app-site-association",
 	} {
-		if isDavPath(p) {
-			t.Errorf("isDavPath(%q) = true, want false", p)
+		if shouldBypassCORS(p) {
+			t.Errorf("shouldBypassCORS(%q) = true, want false", p)
 		}
 	}
 }

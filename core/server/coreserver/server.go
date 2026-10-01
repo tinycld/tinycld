@@ -437,11 +437,11 @@ func RegisterSharedCore(app *pocketbase.PocketBase) {
 		DefsPath: filepath.Join(resolveServerDir(), "automation_defs.json"),
 	})
 
-	// Keep the /carddav (and /caldav, /dav) CORS bypass here even though core no
-	// longer serves a protocol handler itself: a package's own Go server (e.g.
-	// contacts) mounts /carddav via OnServe and relies on this bypass for
-	// non-browser DAV clients. A managed deployment mounts the same protocols from
-	// materialized config, so it needs the bypass for the same reason.
+	// Registered by core even though core serves no protocol handler itself: a
+	// package's own Go server mounts its tree via OnServe (contacts /carddav,
+	// calendar /caldav, drive /drive) and relies on this bypass for non-browser
+	// DAV clients. A hosting tenant runs the same package Go, so it needs it for
+	// the same reason. See shouldBypassCORS for the paths.
 	registerDavCorsBypass(app)
 }
 
@@ -463,7 +463,7 @@ func registerDavCorsBypass(app *pocketbase.PocketBase) {
 			}
 			original := mw.Func
 			mw.Func = func(re *core.RequestEvent) error {
-				if isDavPath(re.Request.URL.Path) {
+				if shouldBypassCORS(re.Request.URL.Path) {
 					return re.Next()
 				}
 				return original(re)
@@ -474,18 +474,29 @@ func registerDavCorsBypass(app *pocketbase.PocketBase) {
 	})
 }
 
-// isDavPath reports whether a request belongs to a DAV protocol mount rather
-// than the SPA.
+// shouldBypassCORS reports whether PocketBase's default CORS middleware must
+// be skipped for a request.
 //
-// `/dav` is the RESERVED namespace for protocol mounts; no package slug may
-// claim it. This used to list bare "/drive", which is also the in-app route:
-// once the single-org migration dropped the /a/<orgSlug> segment the two
-// collided, and since a literal route beats the SPA catch-all, a hard load of
-// /drive reached Basic-Auth WebDAV instead of the app.
-func isDavPath(path string) bool {
+// It is built for a browser talking to a JSON API: it answers OPTIONS
+// preflights itself and stamps Access-Control-* headers. A DAV client is not a
+// browser — Finder and Apple Calendar send OPTIONS as a real protocol question
+// ("which methods and DAV classes do you support?") and need the handler's
+// answer, not a preflight.
+//
+// Covers the protocol mounts and the .well-known discovery aliases that
+// redirect to them. The aliases are not DAV mounts themselves, but a client
+// hits them first and must not meet CORS there either.
+//
+// A mount shadows the SPA catch-all at its own path — a literal route wins — so
+// a mount listed here is a path the app cannot also serve. That is the
+// deliberate trade for /drive: the path someone types when mounting from
+// Finder is worth more than a browser hard-load of the same path, which the
+// app reaches at /a/drive.
+func shouldBypassCORS(path string) bool {
 	return strings.HasPrefix(path, "/caldav") ||
 		strings.HasPrefix(path, "/carddav") ||
 		strings.HasPrefix(path, "/dav") ||
+		strings.HasPrefix(path, "/drive") ||
 		strings.HasPrefix(path, "/.well-known/caldav") ||
 		strings.HasPrefix(path, "/.well-known/carddav") ||
 		strings.HasPrefix(path, "/.well-known/webdav")
