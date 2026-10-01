@@ -41,6 +41,7 @@ const CORE_COLLECTIONS = [
     'pkg_registry',
     'pkg_build',
     'system_settings',
+    'autoupgrade_state',
     'org_branding',
     'audit_logs',
     'backups',
