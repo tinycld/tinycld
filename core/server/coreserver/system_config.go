@@ -137,7 +137,7 @@ func (c *SystemConfig) set(key, value string, isSecret bool) {
 func refuseManagedWrite(e *core.RecordEvent) error {
 	if syscfg.IsManaged(e.Record.GetString("key")) {
 		return apis.NewForbiddenError(
-			"This setting is managed by your hosting provider and cannot be changed here.", nil)
+			"This setting is managed by the server's operator and cannot be changed here.", nil)
 	}
 	return e.Next()
 }
