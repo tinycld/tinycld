@@ -1,7 +1,7 @@
 ---
 title: Updating & downgrading packages
 summary: Change installed package versions from Settings → Packages, one at a time or in a group
-tags: [packages, versions, update, upgrade, downgrade, compatibility]
+tags: [packages, versions, update, upgrade, downgrade, compatibility, automatic]
 order: 56
 ---
 
@@ -104,3 +104,28 @@ To install a specific version it didn't list — or a pinned git ref — use
 **Install package** and give the full spec (for example `@tinycld/contacts@2.3.1`
 or `github:acme/pkg#v1.2.0`). See
 [Installing packages](help://core:installing-packages).
+
+## Automatic updates
+
+To keep packages up to date without doing it yourself, turn on
+**Automatically upgrade packages when new versions are available** at the top of
+**Settings → Packages**. It is on for a new server. You can also set it in the setup
+wizard, on the step where you choose your apps.
+
+When it is on, the server checks for new versions every hour. It installs them only
+inside the **update window** (02:00–05:00 server time unless you change it). It takes
+the newest version of each package, including major versions, when the whole set is
+compatible. If a major version does not fit, it installs the others and leaves the
+major version for later.
+
+**Updates paused.** If no compatible set exists, nothing is installed, and the owner
+and admins get one email that names the conflicting packages. The email is sent again
+only when the conflict changes, or as a reminder after 7 days. The pause clears itself
+when a compatible set is available.
+
+**Blocked updates.** If an update fails its health check after the restart, the server
+rolls it back to the previous version and blocks that set of versions. The owner and
+admins get one email. A blocked set is not tried again until you select **Clear** next
+to it on **Settings → Packages**.
+
+Only the owner can change these settings.
