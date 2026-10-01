@@ -91,6 +91,9 @@ func buildPostmarkEmail(req *SendRequest, defaultFrom string) postmark.Email {
 	}
 
 	var headers []postmark.Header
+	if req.MessageID != "" {
+		headers = append(headers, postmark.Header{Name: "Message-ID", Value: req.MessageID})
+	}
 	if req.InReplyTo != "" {
 		headers = append(headers, postmark.Header{Name: "In-Reply-To", Value: req.InReplyTo})
 	}
@@ -131,9 +134,15 @@ func (p *PostmarkSender) SendFull(ctx context.Context, req *SendRequest) (*SendR
 		return nil, fmt.Errorf("postmark error %d: %s", resp.ErrorCode, resp.Message)
 	}
 
+	// Postmark's MessageID is its own tracking id, not the Message-ID header
+	// recipients see; it is what delivery and bounce webhooks report back.
+	messageID := req.MessageID
+	if messageID == "" {
+		messageID = resp.MessageID
+	}
 	return &SendResult{
 		ProviderMessageID: resp.MessageID,
-		MessageID:         resp.MessageID,
+		MessageID:         messageID,
 	}, nil
 }
 

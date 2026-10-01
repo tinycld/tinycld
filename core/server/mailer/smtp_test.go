@@ -345,3 +345,65 @@ func extractAddress(s string) string {
 	}
 	return s
 }
+
+// The stored copy of a sent message must carry the Message-ID the recipients
+// see, so a caller-supplied ID is the one on the wire, and it goes out with
+// exactly one pair of angle brackets.
+func TestSMTPSenderSend_UsesCallerMessageID(t *testing.T) {
+	receiver := newFakeSMTPReceiver(t, smtpReceiverConfig{})
+	defer receiver.close()
+
+	swapMXLookup(t, map[string][]*net.MX{
+		"example.org": {{Host: "127.0.0.1", Pref: 10}},
+	})
+	swapSMTPDial(t, receiver.dialOverride)
+
+	p := NewSMTPSender(SMTPConfig{PublicHostname: "mx.tinycld.test"})
+	result, err := p.SendFull(context.Background(), &SendRequest{
+		From:      "alice@tinycld.test",
+		To:        []Recipient{{Email: "bob@example.org"}},
+		Subject:   "Hello",
+		TextBody:  "hi",
+		MessageID: "<caller-1@tinycld.test>",
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if result.MessageID != "<caller-1@tinycld.test>" {
+		t.Errorf("MessageID = %q, want <caller-1@tinycld.test>", result.MessageID)
+	}
+
+	body := receiver.firstMessage(t).body
+	if !strings.Contains(body, "Message-Id: <caller-1@tinycld.test>\r\n") {
+		t.Errorf("body missing single-bracket caller Message-Id; got: %s", body)
+	}
+}
+
+func TestSMTPSenderSend_GeneratedMessageIDHasSingleBrackets(t *testing.T) {
+	receiver := newFakeSMTPReceiver(t, smtpReceiverConfig{})
+	defer receiver.close()
+
+	swapMXLookup(t, map[string][]*net.MX{
+		"example.org": {{Host: "127.0.0.1", Pref: 10}},
+	})
+	swapSMTPDial(t, receiver.dialOverride)
+
+	p := NewSMTPSender(SMTPConfig{PublicHostname: "mx.tinycld.test"})
+	result, err := p.SendFull(context.Background(), &SendRequest{
+		From:     "alice@tinycld.test",
+		To:       []Recipient{{Email: "bob@example.org"}},
+		Subject:  "Hello",
+		TextBody: "hi",
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	body := receiver.firstMessage(t).body
+	if !strings.Contains(body, "Message-Id: "+result.MessageID+"\r\n") {
+		t.Errorf("body Message-Id does not match result %q; got: %s", result.MessageID, body)
+	}
+	if strings.Contains(body, "<<") {
+		t.Errorf("body has a double-bracketed header; got: %s", body)
+	}
+}

@@ -59,3 +59,36 @@ func TestPostmarkSender_UnsetAPIURLKeepsPostmark(t *testing.T) {
 		t.Errorf("BaseURL = %q, want the client's default", got)
 	}
 }
+
+func TestBuildPostmarkEmail_SetsMessageIDHeader(t *testing.T) {
+	email := buildPostmarkEmail(&SendRequest{From: "a@widgets.test", MessageID: "<m1@widgets.test>"}, "")
+	for _, h := range email.Headers {
+		if h.Name == "Message-ID" && h.Value == "<m1@widgets.test>" {
+			return
+		}
+	}
+	t.Fatalf("Headers = %v, want Message-ID <m1@widgets.test>", email.Headers)
+}
+
+// Postmark's response id is its tracking id, not the Message-ID header, so a
+// caller-supplied Message-ID is what the result reports as MessageID.
+func TestPostmarkSender_ResultKeepsCallerMessageID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(postmark.EmailResponse{MessageID: "stand-in-2"})
+	}))
+	t.Cleanup(srv.Close)
+	withConfig(t, map[string]string{keyPostmarkAPIURL: srv.URL + "/"})
+
+	s := NewPostmarkSender("server-tok", "", "noreply@widgets.test")
+	res, err := s.SendFull(context.Background(), &SendRequest{
+		To:        []Recipient{{Email: "a@widgets.test"}},
+		Subject:   "hi",
+		MessageID: "<m2@widgets.test>",
+	})
+	if err != nil {
+		t.Fatalf("SendFull: %v", err)
+	}
+	if res.MessageID != "<m2@widgets.test>" || res.ProviderMessageID != "stand-in-2" {
+		t.Errorf("result = %+v, want MessageID <m2@widgets.test> and ProviderMessageID stand-in-2", res)
+	}
+}

@@ -56,6 +56,13 @@ type SendRequest struct {
 	Headers     []Header     `json:"headers,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"`
 
+	// MessageID is the Message-ID header the provider sends, in "<id@host>"
+	// form (see GenerateMessageID). A caller that stores its own copy of the
+	// message sets it, so the stored copy carries the ID the recipients see and
+	// an IMAP client's copy of the same message can be matched to it. Empty
+	// lets the provider choose one.
+	MessageID string `json:"message_id,omitempty"`
+
 	// Metadata is passed to providers that echo it back on their delivery
 	// and bounce notifications. A notification is often received by
 	// something that did not send the message and must work out who did.
@@ -352,5 +359,9 @@ func (l *LogSender) SendFull(_ context.Context, req *SendRequest) (*SendResult, 
 		HTML:        req.HTMLBody,
 		Attachments: len(req.Attachments),
 	})
-	return &SendResult{MessageID: "dev-logged"}, nil
+	messageID := req.MessageID
+	if messageID == "" {
+		messageID = "dev-logged"
+	}
+	return &SendResult{MessageID: messageID}, nil
 }
