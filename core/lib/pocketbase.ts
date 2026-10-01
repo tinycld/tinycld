@@ -341,6 +341,15 @@ const system_settings = newCollection('system_settings', {
     ...indexing,
 })
 
+// Automatic-update memory: the current conflict pause and the version sets
+// that were rolled back. Owner-only; the server writes rows, the owner only
+// sets `cleared`. See the create_autoupgrade migration.
+const autoupgrade_state = newCollection('autoupgrade_state', {
+    omitOnInsert: ['created', 'updated'],
+    ...onDemand,
+    ...indexing,
+})
+
 // The deployment's uploaded logo. Public read (unlike system_settings, which is
 // admin-only) because pre-login screens render it before any auth token exists.
 // See the create_org_branding migration.
@@ -439,6 +448,7 @@ const coreStores = {
     rule_runs,
     automation_catalog,
     system_settings,
+    autoupgrade_state,
     org_branding,
     oauth_grants,
     comment_mentions,

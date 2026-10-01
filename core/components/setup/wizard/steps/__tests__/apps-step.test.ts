@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appChoicesOf } from '../app-choices'
+import { appChoicesOf, autoUpdateChoiceOf } from '../app-choices'
 
 const bundled = [
     { slug: 'alpha', name: 'Alpha', description: 'First app', nav: { icon: 'mail' } },
@@ -46,5 +46,25 @@ describe('appChoicesOf', () => {
     })
     it('leaves out a bundled app that has no registry row yet', () => {
         expect(appChoicesOf([], bundled)).toEqual([])
+    })
+})
+
+describe('autoUpdateChoiceOf', () => {
+    const status = { available: true, lastRun: '', lastResult: '', nextCheck: '' }
+    it('is hidden until the server says updates are available', () => {
+        expect(autoUpdateChoiceOf(undefined, true, true)).toEqual({ isVisible: false, isOn: true })
+        expect(
+            autoUpdateChoiceOf(
+                { available: false, reason: 'x', lastRun: '', lastResult: '', nextCheck: '' },
+                true,
+                true
+            )
+        ).toEqual({ isVisible: false, isOn: true })
+    })
+    it('is hidden until the stored setting has loaded', () => {
+        expect(autoUpdateChoiceOf(status, false, false)).toEqual({ isVisible: false, isOn: false })
+    })
+    it('shows the stored value when available and loaded', () => {
+        expect(autoUpdateChoiceOf(status, false, true)).toEqual({ isVisible: true, isOn: false })
     })
 })

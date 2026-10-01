@@ -7,6 +7,7 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 
+	"tinycld.org/core/autoupgrade"
 	"tinycld.org/core/backup"
 )
 
@@ -38,6 +39,9 @@ func TestLoggerInstallDoesNotHangDuringBootstrap(t *testing.T) {
 	// Register installs the REAL restart function; see the note in
 	// composition_parity_test.go.
 	t.Cleanup(backup.ResetForTesting)
+	// Register installs a self-rebuilding build's auto-upgrade Delegate, a
+	// process global; left in place it answers every later test's status route.
+	t.Cleanup(func() { autoupgrade.SetDelegate(nil) })
 
 	Register(app, Options{
 		HooksDir:      t.TempDir(),

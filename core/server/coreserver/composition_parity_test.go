@@ -6,6 +6,7 @@ import (
 
 	"github.com/pocketbase/pocketbase"
 
+	"tinycld.org/core/autoupgrade"
 	"tinycld.org/core/backup"
 	"tinycld.org/core/quota"
 	"tinycld.org/core/rlstest"
@@ -62,26 +63,26 @@ var hostHookCounts = map[string]int{
 	"OnModelUpdateExecute":            2,
 	"OnModelValidate":                 2,
 	"OnRecordAfterCreateError":        1,
-	"OnRecordAfterCreateSuccess":      4,
+	"OnRecordAfterCreateSuccess":      5,
 	"OnRecordAfterDeleteError":        1,
-	"OnRecordAfterDeleteSuccess":      2,
+	"OnRecordAfterDeleteSuccess":      3,
 	"OnRecordAfterUpdateError":        1,
-	"OnRecordAfterUpdateSuccess":      2,
+	"OnRecordAfterUpdateSuccess":      3,
 	"OnRecordAuthRequest":             1,
 	"OnRecordAuthWithPasswordRequest": 1,
 	"OnRecordCreate":                  3,
 	"OnRecordCreateExecute":           2,
-	"OnRecordCreateRequest":           8,
+	"OnRecordCreateRequest":           9,
 	"OnRecordDelete":                  4,
 	"OnRecordDeleteExecute":           5,
-	"OnRecordDeleteRequest":           9,
+	"OnRecordDeleteRequest":           10,
 	"OnRecordUpdate":                  6,
 	"OnRecordUpdateExecute":           4,
-	"OnRecordUpdateRequest":           11,
+	"OnRecordUpdateRequest":           12,
 	"OnRecordValidate":                6,
-	"OnServe":                         28,
+	"OnServe":                         29,
 	"OnSettingsReload":                1,
-	"OnTerminate":                     3,
+	"OnTerminate":                     4,
 }
 
 func TestRegisterBindsTheRecordedHandlerCounts(t *testing.T) {
@@ -92,6 +93,9 @@ func TestRegisterBindsTheRecordedHandlerCounts(t *testing.T) {
 	// in place it would kill the test binary the next time any test in this
 	// package reached a restore's phase 6.
 	t.Cleanup(backup.ResetForTesting)
+	// Register installs a self-rebuilding build's auto-upgrade Delegate, a
+	// process global; left in place it answers every later test's status route.
+	t.Cleanup(func() { autoupgrade.SetDelegate(nil) })
 
 	app := pocketbase.NewWithConfig(pocketbase.Config{DefaultDataDir: t.TempDir()})
 	Register(app, Options{

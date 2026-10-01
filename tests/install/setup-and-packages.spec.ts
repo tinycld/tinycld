@@ -1,5 +1,10 @@
 import { expect, type Page, test } from '@playwright/test'
-import { completeSetupBySkipping } from '../../core/e2e-setup-helpers'
+import {
+    CORE_STEP_IDS,
+    completeSetupBySkipping,
+    continueSetupSteps,
+    expectSetupStep,
+} from '../../core/e2e-setup-helpers'
 
 // Smoke-tests for the first-run wizard + /admin flow. Split into three tests
 // so most of the coverage runs without the one-time PW_SETUP_CODE:
@@ -121,6 +126,12 @@ test.describe('first-run install', () => {
         // The owner is created and signed in; the signed-in wizard opens on its
         // first step.
         await expect(page.getByText('Your organization', { exact: true })).toBeVisible()
+
+        // Continue past the organization step to reach the apps step, where
+        // automatic updates are offered and on by default.
+        await continueSetupSteps(page, [CORE_STEP_IDS.workspace])
+        await expectSetupStep(page, CORE_STEP_IDS.apps)
+        await expect(page.getByTestId('setup-autoupgrade')).toHaveAttribute('aria-checked', 'true')
 
         // Tests 2 and 3 sign back in and expect to land on Settings/System —
         // leaving the owner mid-wizard would redirect those navigations back
