@@ -1,5 +1,6 @@
 import { inArray } from '@tanstack/db'
 import { useLiveQuery } from '@tanstack/react-db'
+import { useAutoUpgrade } from '@tinycld/core/components/setup/use-auto-upgrade'
 import { SetupContinueButton } from '@tinycld/core/components/setup/wizard/SetupContinueButton'
 import { StepHeading } from '@tinycld/core/components/setup/wizard/StepHeading'
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
@@ -8,14 +9,14 @@ import { captureException, errorToString } from '@tinycld/core/lib/errors'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { notify } from '@tinycld/core/lib/notify'
 import { packageRegistry } from '@tinycld/core/lib/packages/static-registry'
-import { useStore } from '@tinycld/core/lib/pocketbase'
+import { pb, useStore } from '@tinycld/core/lib/pocketbase'
 import { enabledStatusFor } from '@tinycld/core/lib/setup/set-package-enabled'
 import type { SetupStepProps } from '@tinycld/core/lib/setup/types'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { Check } from 'lucide-react-native'
 import { Pressable, Text, View } from 'react-native'
-import { type AppChoice, appChoicesOf } from './app-choices'
+import { type AppChoice, appChoicesOf, autoUpdateChoiceOf } from './app-choices'
 
 // Package management and pkg_registry writes are owner-only.
 export function useIsStepVisible() {
@@ -122,6 +123,27 @@ function AppCard({
     )
 }
 
+function AutoUpdateChoice() {
+    const au = useAutoUpgrade(pb)
+    const choice = autoUpdateChoiceOf(au.status, au.isOn)
+    if (!choice.isVisible) return null
+    return (
+        <Pressable
+            testID="setup-autoupgrade"
+            onPress={() => au.setOn(!choice.isOn)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: choice.isOn }}
+            accessibilityLabel="Upgrade apps automatically when new versions are available"
+            className="mb-6 flex-row items-center gap-3"
+        >
+            <CheckMark isOn={choice.isOn} />
+            <Text className="flex-1 text-sm text-foreground">
+                Upgrade apps automatically when new versions are available
+            </Text>
+        </Pressable>
+    )
+}
+
 export default function AppsStep({ next }: SetupStepProps) {
     const { choices, toggle } = useAppChoices()
     const widthClass =
@@ -136,6 +158,7 @@ export default function AppsStep({ next }: SetupStepProps) {
                 lead="These apps come with your server. Clear an app to hide it from everyone. You can show it again, or add more apps, at any time in Settings → Packages."
             />
             <View className="mb-6 flex-row flex-wrap gap-3">{cards}</View>
+            <AutoUpdateChoice />
             <SetupContinueButton onPress={next} />
         </View>
     )
