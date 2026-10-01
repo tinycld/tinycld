@@ -1,7 +1,7 @@
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Check, CircleAlert, Loader2 } from 'lucide-react-native'
+import { Check, CircleAlert } from 'lucide-react-native'
 import { useEffect, useRef, useState } from 'react'
-import { Platform, Pressable, ScrollView, Text, View } from 'react-native'
+import { ActivityIndicator, Platform, Pressable, ScrollView, Text, View } from 'react-native'
 import {
     collapseSteps,
     type DebugLine as DebugLineData,
@@ -68,7 +68,6 @@ export function InstallProgressModal({
                         status={status}
                         successColor={successColor}
                         dangerColor={dangerColor}
-                        mutedColor={mutedColor}
                     />
                 </View>
 
@@ -157,20 +156,20 @@ export function titleFor(action: ProgressAction, status: OperationStatus): strin
     return TITLES[action][status]
 }
 
+// Only the terminal states get a header icon. While the job runs, the current
+// step already carries its own spinner, so a second one here is noise.
 function StatusIcon({
     status,
     successColor,
     dangerColor,
-    mutedColor,
 }: {
     status: string
     successColor: string
     dangerColor: string
-    mutedColor: string
 }) {
     if (status === 'success') return <Check size={20} color={successColor} />
     if (status === 'failed') return <CircleAlert size={20} color={dangerColor} />
-    return <Loader2 size={20} color={mutedColor} />
+    return null
 }
 
 function ProgressBar({
@@ -277,8 +276,19 @@ function RowIcon({
     dangerColor,
 }: Omit<LineColors, 'mutedColor'> & { row: StepRow }) {
     if (row.isFailed) return <CircleAlert size={12} color={dangerColor} />
-    if (row.isCurrent) return <Loader2 size={12} color={fgColor} />
+    if (row.isCurrent) return <StepSpinner color={fgColor} />
     return <Check size={12} color={successColor} />
+}
+
+// ActivityIndicator, not a lucide icon: lucide renders a static glyph, so a
+// Loader2 here sat frozen. Its smallest size is 20px, scaled down to sit on the
+// same 12px baseline as the Check and CircleAlert it alternates with.
+function StepSpinner({ color }: { color: string }) {
+    return (
+        <View className="w-3 h-3 items-center justify-center">
+            <ActivityIndicator size="small" color={color} style={{ transform: [{ scale: 0.6 }] }} />
+        </View>
+    )
 }
 
 // Bundling runs for minutes inside a few points of the overall bar; its own
