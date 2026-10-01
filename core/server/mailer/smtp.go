@@ -94,7 +94,10 @@ func (p *SMTPSender) SendFull(ctx context.Context, req *SendRequest) (*SendResul
 		return log.SendFull(ctx, req)
 	}
 
-	messageID := generateMessageID(p.cfg.PublicHostname)
+	messageID := req.MessageID
+	if messageID == "" {
+		messageID = GenerateMessageID(p.cfg.PublicHostname)
+	}
 	body, err := buildOutgoingRFC5322(req, messageID, p.cfg.PublicHostname)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build message: %w", err)
@@ -344,9 +347,10 @@ func splitAddress(email string) (localPart, domain string) {
 	return email[:at], email[at+1:]
 }
 
-// generateMessageID builds an RFC-compliant Message-ID rooted at the operator's
-// public hostname. Time + 8 random hex chars keep collision probability negligible.
-func generateMessageID(hostname string) string {
+// GenerateMessageID builds an RFC-compliant Message-ID, in "<id@host>" form,
+// rooted at hostname. Time + 8 random hex chars keep collision probability
+// negligible.
+func GenerateMessageID(hostname string) string {
 	if hostname == "" {
 		hostname = "localhost"
 	}
@@ -375,7 +379,9 @@ func buildOutgoingRFC5322(req *SendRequest, messageID, helo string) ([]byte, err
 	var h gomail.Header
 	h.SetDate(time.Now().UTC())
 	h.SetSubject(req.Subject)
-	h.SetMessageID(messageID)
+	// SetMessageID adds the angle brackets itself; passing the "<id@host>"
+	// form through unchanged emitted "<<id@host>>".
+	h.SetMessageID(strings.Trim(messageID, "<>"))
 
 	if req.From != "" {
 		fromAddrs, err := gomail.ParseAddressList(req.From)

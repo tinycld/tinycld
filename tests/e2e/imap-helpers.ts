@@ -17,6 +17,7 @@ interface ComposeOptions {
     subject: string
     body: string
     messageId?: string
+    inReplyTo?: string
 }
 
 function createImapClient(): ImapFlow {
@@ -104,7 +105,7 @@ export async function fetchMessageBySubject(
 export async function appendMessage(
     client: ImapFlow,
     folder: string,
-    { from, to, subject, body, messageId }: ComposeOptions
+    { from, to, subject, body, messageId, inReplyTo }: ComposeOptions
 ): Promise<{ uid: number }> {
     const date = new Date().toUTCString()
     const headers = [
@@ -115,6 +116,7 @@ export async function appendMessage(
         `Content-Type: text/plain; charset=utf-8`,
     ]
     if (messageId) headers.push(`Message-ID: ${messageId}`)
+    if (inReplyTo) headers.push(`In-Reply-To: ${inReplyTo}`)
     const raw = [...headers, '', body].join('\r\n')
 
     const result = await client.append(folder, Buffer.from(raw), ['\\Seen'])
