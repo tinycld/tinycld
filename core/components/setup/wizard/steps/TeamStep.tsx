@@ -94,14 +94,13 @@ function InvitedLink({ invited }: { invited: InviteResult | null }) {
             testID="invite-link-step"
             className="mb-5 gap-2 rounded-xl border border-primary/40 bg-accent p-4"
         >
-            <Text className="text-sm font-semibold text-foreground">
-                Invite created. Share this link with your teammate.
-            </Text>
+            <Text className="text-sm font-semibold text-foreground">Invite created.</Text>
             {/* Keyed so a second invite shows its own link, not the first one's. */}
             <InviteLinkPanel
                 key={invited.userId}
                 userId={invited.userId}
                 initialUrl={invited.inviteUrl}
+                emailedTo={invited.emailedTo}
             />
         </View>
     )
@@ -124,9 +123,13 @@ function PersonRow({ name, initials, role }: { name: string; initials: string; r
 export default function TeamStep({ next }: SetupStepProps) {
     const { form, invited, onSubmit, isPending } = useTeamInvite()
     const { control, formState } = form
-    const people = usePeople().map(p => (
+    const people = usePeople()
+    const rows = people.map(p => (
         <PersonRow key={p.id} name={p.name} initials={p.initials} role={p.role} />
     ))
+    // The owner is always listed; Continue waits for a second person so a
+    // press meant for "Add user and invite" cannot skip past the step.
+    const hasTeammate = people.length > 1
     return (
         <View>
             <StepHeading
@@ -149,7 +152,7 @@ export default function TeamStep({ next }: SetupStepProps) {
                 name="email"
                 label="Email (optional)"
                 testID={SETUP_INVITE_EMAIL_TEST_ID}
-                hint="Their existing address, so you can send the invite link to them."
+                hint="Their existing address. We email the invite link here."
                 placeholder="alice@company.com"
                 autoCapitalize="none"
                 autoComplete="email"
@@ -163,14 +166,14 @@ export default function TeamStep({ next }: SetupStepProps) {
                 isDisabled={isPending}
                 testID={SETUP_INVITE_SEND_TEST_ID}
             >
-                <ButtonText>Send invite</ButtonText>
+                <ButtonText>Add user and invite</ButtonText>
             </Button>
             <InvitedLink invited={invited} />
             <Text className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                 People in this organization
             </Text>
-            <View className="mb-6 mt-1">{people}</View>
-            <SetupContinueButton onPress={next} />
+            <View className="mb-6 mt-1">{rows}</View>
+            <SetupContinueButton onPress={next} isDisabled={!hasTeammate} />
         </View>
     )
 }

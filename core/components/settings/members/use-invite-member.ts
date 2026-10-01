@@ -24,6 +24,8 @@ export type InviteFormValues = z.infer<typeof inviteSchema>
 export interface InviteResult {
     userId: string
     inviteUrl: string
+    /** The address the server emailed the link to; empty when none was sent. */
+    emailedTo?: string
 }
 
 interface InviteForm {
@@ -77,7 +79,12 @@ export function useInviteMember(
                 }),
                 headers: { 'Content-Type': 'application/json' },
             }),
-        onSuccess: data => opts.onInvited({ userId: data.userId, inviteUrl: data.inviteUrl }),
+        onSuccess: data =>
+            opts.onInvited({
+                userId: data.userId,
+                inviteUrl: data.inviteUrl,
+                emailedTo: data.emailedTo,
+            }),
         onError: opts.errorsOnForm
             ? inviteErrorsOnForm(opts)
             : handleMutationErrorsWithForm({

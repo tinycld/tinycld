@@ -280,7 +280,7 @@ export async function createInvitedUser(
     })
     await page.getByTestId('username').fill(user.username)
     await page.getByTestId('email').fill(user.email)
-    await page.getByText('Send invite', { exact: true }).click()
+    await page.getByText('Add user and invite', { exact: true }).click()
 
     // The invite-link panel surfaces the accept URL directly (no auto-email).
     await expect(page.getByTestId('invite-link-step')).toBeVisible({ timeout: 10_000 })

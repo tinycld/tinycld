@@ -11,7 +11,7 @@ import (
 	"github.com/pocketbase/pocketbase/tests"
 )
 
-func TestInviteMember_NewUser_ReturnsInviteURLAndDoesNotEmail(t *testing.T) {
+func TestInviteMember_NewUser_ReturnsInviteURLAndEmailsIt(t *testing.T) {
 	read := captureMailerOutput(t)
 
 	app := setupInviteTestApp(t)
@@ -33,7 +33,7 @@ func TestInviteMember_NewUser_ReturnsInviteURLAndDoesNotEmail(t *testing.T) {
 	})
 
 	scenario := &tests.ApiScenario{
-		Name:            "new-user invite returns inviteUrl and skips email",
+		Name:            "new-user invite returns inviteUrl and emails it",
 		Method:          http.MethodPost,
 		URL:             "/api/invite-member",
 		Body:            strings.NewReader(string(bodyBytes)),
@@ -62,9 +62,21 @@ func TestInviteMember_NewUser_ReturnsInviteURLAndDoesNotEmail(t *testing.T) {
 				tt.Errorf("inviteUrl: got %q, want .../accept-invite/<64-hex>", url)
 			}
 
+			if got, _ := body["emailedTo"].(string); got != "newhire@example.com" {
+				tt.Errorf("emailedTo = %q, want newhire@example.com", got)
+			}
+
 			sends := read()
-			if len(sends) != 0 {
-				tt.Errorf("expected no emails on new-user invite, got %d: %v", len(sends), sends)
+			if len(sends) != 1 {
+				tt.Fatalf("expected one invite email, got %d: %v", len(sends), sends)
+			}
+			to, _ := sends[0]["to"].([]any)
+			first, _ := to[0].(map[string]any)
+			if first["email"] != "newhire@example.com" {
+				tt.Errorf("invite email to = %v, want newhire@example.com", sends[0]["to"])
+			}
+			if text, _ := sends[0]["text"].(string); !strings.Contains(text, url) {
+				tt.Errorf("invite email lacks the invite link %q", url)
 			}
 		},
 	}

@@ -483,6 +483,7 @@ function InviteView({ onDone }: { onDone: () => void }) {
             <InviteLinkSuccessView
                 userId={result.userId}
                 inviteUrl={result.inviteUrl}
+                emailedTo={result.emailedTo}
                 onDone={() => {
                     reset()
                     setResult(null)
@@ -543,8 +544,8 @@ function InviteView({ onDone }: { onDone: () => void }) {
                     <TextInput
                         control={control}
                         name="email"
-                        label="Recovery Email (optional)"
-                        hint="Where we reach this person — their existing address, not a mailbox we host."
+                        label="Email (optional)"
+                        hint="Their existing address, not a mailbox we host. We email the invite link here."
                         placeholder="alice@company.com"
                         autoCapitalize="none"
                         autoComplete="email"
@@ -663,7 +664,7 @@ function InviteView({ onDone }: { onDone: () => void }) {
                             className="text-primary-foreground"
                             style={{ fontSize: 13, fontWeight: '700' }}
                         >
-                            {invite.isPending ? 'Sending…' : 'Send invite'}
+                            {invite.isPending ? 'Adding…' : 'Add user and invite'}
                         </Text>
                     </Pressable>
                 </View>
@@ -675,10 +676,12 @@ function InviteView({ onDone }: { onDone: () => void }) {
 function InviteLinkSuccessView({
     userId,
     inviteUrl,
+    emailedTo,
     onDone,
 }: {
     userId: string
     inviteUrl: string
+    emailedTo?: string
     onDone: () => void
 }) {
     const mutedColor = useThemeColor('muted-foreground')
@@ -720,7 +723,7 @@ function InviteLinkSuccessView({
 
             <DrawerBody>
                 <View testID="invite-link-step" className="gap-4">
-                    <InviteLinkPanel userId={userId} initialUrl={inviteUrl} />
+                    <InviteLinkPanel userId={userId} initialUrl={inviteUrl} emailedTo={emailedTo} />
                 </View>
             </DrawerBody>
 

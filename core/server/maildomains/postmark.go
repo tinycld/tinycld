@@ -91,7 +91,10 @@ func (p *PostmarkRegistrar) AddDomain(ctx context.Context, domain string) (*Doma
 	if p.token() == "" {
 		return nil, ErrNotConfigured
 	}
-	details, err := p.client.CreateDomain(ctx, postmark.DomainCreateRequest{Name: domain})
+	details, err := p.client.CreateDomain(ctx, postmark.DomainCreateRequest{
+		Name:             domain,
+		ReturnPathDomain: returnPathDomain(domain),
+	})
 	if err != nil {
 		if isAlreadyExists(err) {
 			return nil, fmt.Errorf("%w: %s", ErrDomainAlreadyEnrolled, domain)
@@ -99,6 +102,14 @@ func (p *PostmarkRegistrar) AddDomain(ctx context.Context, domain string) (*Doma
 		return nil, fmt.Errorf("postmark create domain: %w", err)
 	}
 	return toDomainRecords(details), nil
+}
+
+// returnPathDomain is the bounce host Postmark sends from for a domain.
+// Without one, Postmark keeps its own bounce domain, so SPF never aligns with
+// the sender's domain and a DMARC-enforcing receiver can reject the mail.
+// "pm-bounces" is the name Postmark's own dashboard suggests.
+func returnPathDomain(domain string) string {
+	return "pm-bounces." + domain
 }
 
 func (p *PostmarkRegistrar) GetDomain(ctx context.Context, domain string, providerDomainID int64) (*DomainRecords, error) {
