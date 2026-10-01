@@ -441,6 +441,15 @@ func createInstallLog(app core.App, job *installjob.Job, action string) *core.Re
 	record.Set("status", "running")
 	record.Set("started_at", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
 
+	trigger := job.Trigger
+	if trigger == "" {
+		trigger = "manual"
+	}
+	record.Set("trigger", trigger)
+	if len(job.Changes) > 0 {
+		record.Set("changes", job.Changes)
+	}
+
 	if err := app.Save(record); err != nil {
 		srvLog.Error("failed to create install log", "err", err)
 		return nil

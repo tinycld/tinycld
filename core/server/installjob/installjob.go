@@ -59,7 +59,11 @@ type Job struct {
 	NpmPkg  string
 	BuildID string // revert target (action == "revert")
 	// Changes is the ordered set a version_change applies together.
-	Changes  []VersionChange
+	Changes []VersionChange
+	// Trigger says who started the job: "manual" (a person) or "auto" (the
+	// upgrade scheduler). Recorded on the install log so a boot after a
+	// rollback can tell the two apart.
+	Trigger  string
 	Progress int
 	Step     string
 	Status   string // "running", "success", "failed", "rolled_back"
