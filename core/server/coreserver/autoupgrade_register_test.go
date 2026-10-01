@@ -37,6 +37,34 @@ func TestPolicyHookCallsDelegate(t *testing.T) {
 	}
 }
 
+// Deleting the flag leaves no "true" for the next tick to read, so the
+// Delegate must hear "off" too, not keep the last value it was told.
+func TestDeletingTheFlagTellsTheDelegateOff(t *testing.T) {
+	app := adminConsoleTestApp(t)
+	d := &recordingDelegate{}
+	autoupgrade.SetDelegate(d)
+	t.Cleanup(func() { autoupgrade.SetDelegate(nil) })
+	registerAutoUpgradeOn(app)
+
+	other, err := app.FindCollectionByNameOrId("system_settings")
+	mustNil(t, err)
+	unrelated := core.NewRecord(other)
+	unrelated.Set("key", "mail.from")
+	unrelated.Set("value", "x")
+	mustNil(t, app.Save(unrelated))
+	mustNil(t, app.Delete(unrelated))
+	if len(d.calls) != 0 {
+		t.Fatalf("an unrelated delete pushed %v", d.calls)
+	}
+
+	row, err := app.FindFirstRecordByFilter("system_settings", "key = 'autoupgrade.enabled'")
+	mustNil(t, err)
+	mustNil(t, app.Delete(row))
+	if len(d.calls) != 1 || d.calls[0] != false {
+		t.Fatalf("calls %v", d.calls)
+	}
+}
+
 func TestStatusRouteAndWriteGuard(t *testing.T) {
 	// The "no delegate" scenario depends on the process global; do not trust
 	// whatever an earlier test left installed.

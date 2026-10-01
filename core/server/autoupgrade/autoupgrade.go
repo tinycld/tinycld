@@ -30,7 +30,9 @@ type Status struct {
 }
 
 type Delegate interface {
-	// PolicyChanged is called when the owner changes the flag, and once at boot.
+	// PolicyChanged is called once at boot and on every save or delete of the
+	// flag, including a save that does not change its value. It must be
+	// idempotent: the same value may arrive many times in a row.
 	PolicyChanged(ctx context.Context, enabled bool) error
 	Status(ctx context.Context) (Status, error)
 }
