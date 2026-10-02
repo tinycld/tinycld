@@ -129,17 +129,16 @@ export const pb = new PocketBase(PB_SERVER_ADDR, store)
 
 pb.autoCancellation(false)
 
+// Wraps the platform fetch per call (not captured at load) so tests and
+// polyfills that replace globalThis.fetch later are still used.
+const readOnlyRetryFetch = withReadOnlyRetry((url, config) => fetch(url, config))
+
 // A share-link visitor is unauthenticated, so every row they may read is
 // authorized by a token rather than by `@request.auth.id`. Attaching it here
 // covers every REST call the SDK makes; the realtime half rides
 // `subscribeOptions` on the collection factory below, and both arrive at the
 // rule as `@request.headers.x_share_token` because PocketBase snakecases header
 // names identically on the two paths.
-
-// Wraps the platform fetch per call (not captured at load) so tests and
-// polyfills that replace globalThis.fetch later are still used.
-const readOnlyRetryFetch = withReadOnlyRetry((url, config) => fetch(url, config))
-
 pb.beforeSend = (url, options) => {
     const headers = shareTokenHeaders()
     if (headers) {
