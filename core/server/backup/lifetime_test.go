@@ -3,6 +3,10 @@ package backup
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -138,5 +142,128 @@ func TestStopAllReportsARunItCouldNotWaitFor(t *testing.T) {
 	}
 	if installjob.Running() {
 		t.Fatal("the run returned but still holds the interlock")
+	}
+}
+
+// panickingFetchRepo stages part of a snapshot and then panics, as a repository
+// client with a nil-pointer bug would midway through a fetch. The restore is
+// armed by then: the marker names a pending dir that holds half a database.
+type panickingFetchRepo struct{ failingFetchRepo }
+
+func (panickingFetchRepo) Fetch(_ context.Context, _ repo.Ref, dir string) error {
+	if err := os.WriteFile(filepath.Join(dir, "data.db"), []byte("half"), 0o600); err != nil {
+		return err
+	}
+	panic("fetch blew up")
+}
+
+// A panic in the restore body used to escape the goroutine and end the process,
+// leaving an armed marker over a half-staged pending dir. It must instead take
+// the failure path a returned error takes: disarm, discard the staging, close
+// the row as failed, tell the administrators, and release the interlock.
+func TestARestoreThatPanicsFailsLikeAnyOtherRestore(t *testing.T) {
+	app := newTestApp(t)
+	resetRestoreState(t)
+	makeUser(t, app, "owner@example.com", "owner")
+
+	// On a goroutine of its own, as StartRestore runs it: a panic that escaped
+	// would end the test binary rather than fail one test.
+	type result struct {
+		id  string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		id, err := Restore(app, RestoreRequest{Repo: panickingFetchRepo{}, Ref: repo.Ref("whatever"), Force: true})
+		done <- result{id, err}
+	}()
+	var jobID string
+	select {
+	case res := <-done:
+		if res.err == nil {
+			t.Fatal("a restore that panicked reported success")
+		}
+		jobID = res.id
+	case <-time.After(20 * time.Second):
+		t.Fatal("the restore never finished")
+	}
+
+	row, err := app.FindRecordById("backups", jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := row.GetString("status"); got != "failed" {
+		t.Fatalf("status %q, want failed", got)
+	}
+	if !strings.Contains(row.GetString("error"), "fetch blew up") {
+		t.Errorf("the row does not say what panicked: %q", row.GetString("error"))
+	}
+	if _, err := os.Stat(armedPath(app)); !os.IsNotExist(err) {
+		t.Error("the restore is still armed over a half-staged copy")
+	}
+	if _, err := os.Stat(pendingDir(app, jobID)); !os.IsNotExist(err) {
+		t.Error("the half-staged pending dir was left behind")
+	}
+	if Restoring() {
+		t.Error("the restoring flag is still set")
+	}
+	if installjob.Running() {
+		t.Error("the interlock is still claimed")
+	}
+	notes, err := app.FindRecordsByFilter("notifications", "type = 'core.restore.failed'", "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) == 0 {
+		t.Error("nobody was told the restore failed")
+	}
+}
+
+// A callback receiver that sends its headers and then never finishes the body
+// held the run — and the job interlock behind it — until the process ended. The
+// whole request is bounded, so the run finishes.
+func TestACallbackThatStallsAfterItsHeadersIsAbandoned(t *testing.T) {
+	prev := callbackTimeout
+	callbackTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { callbackTimeout = prev })
+
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("{"))
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+
+	app := newTestApp(t)
+	done := make(chan error, 1)
+	var id string
+	go func() {
+		var err error
+		id, err = Run(app, Request{Kind: KindScheduled, Repo: &recordingRepo{}, Callback: srv.URL})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the run never finished: its callback receiver stalled after the headers")
+	}
+	row, err := app.FindRecordById("backups", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := row.GetString("status"); got != "succeeded" {
+		t.Fatalf("status %q, want succeeded", got)
+	}
+	if installjob.Running() {
+		t.Fatal("the interlock is still claimed")
 	}
 }

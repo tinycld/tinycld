@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -260,15 +261,23 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	}
 	defer closeSource()
 
-	if aerr := audit.Log(app, "restore.started", "backup", id, "restore", req.Request, nil); aerr != nil {
-		log.Warn("could not audit the start of a restore", "id", id, "err", aerr)
-	}
-
 	// manifest is a pointer so "never read" stays distinguishable from "read and
 	// empty": a zero-valued manifest in the ledger reads as a real archive of
 	// nothing.
 	var manifest *format.Manifest
+	// Named-return err: this closure is the single place a failed restore is
+	// unwound, whichever return — or panic — got here. It is deferred before any
+	// work, so nothing in the body can escape it.
 	defer func() {
+		// A panic leaves err nil, which reads as a restore that worked and left
+		// the row "running" and a marker armed over whatever was half staged.
+		// Turning it into the error routes it through the same unwind as any
+		// failure: disarm, discard the staging, close the row, announce. It is
+		// not re-panicked, because a crashed process can do none of that.
+		if p := recover(); p != nil {
+			err = fmt.Errorf("restore: panic: %v", p)
+			log.Error("restore panicked", "id", id, "panic", p, "stack", string(debug.Stack()))
+		}
 		if err == nil {
 			// The row stays "running" on purpose. Only the restored process can
 			// say the restore worked, because only it boots on the staged data.
@@ -298,6 +307,10 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 		defer cancel()
 		survive(id, "announce", func() { announceRestore(ctx, app, req, row, false, errMsg) })
 	}()
+
+	if aerr := audit.Log(app, "restore.started", "backup", id, "restore", req.Request, nil); aerr != nil {
+		log.Warn("could not audit the start of a restore", "id", id, "err", aerr)
+	}
 
 	// A remote source can expire at any point, including while phase 1 is still
 	// reading the manifest, so it is registered for a swap before the first byte
