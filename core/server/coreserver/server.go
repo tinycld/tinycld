@@ -26,6 +26,7 @@ import (
 	"tinycld.org/core/offboard"
 	"tinycld.org/core/pkgaccess"
 	"tinycld.org/core/quota"
+	"tinycld.org/core/readonly"
 	"tinycld.org/core/realtime"
 	"tinycld.org/core/search"
 	"tinycld.org/core/sharelink"
@@ -299,6 +300,15 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 	registerStaticServe(app, opts)
 }
 
+// registerSharedMiddleware binds the router middleware every composition
+// shares, in the order that matters: read-only first, so a write refused
+// during a pause never reaches Sentry's 5xx capture; then Sentry, which must
+// see every other request.
+func registerSharedMiddleware(app core.App) {
+	readonly.Register(app)
+	registerSentryMiddlewareCore(app)
+}
+
 // RegisterSharedEarly holds the registrations that must precede everything
 // else that binds OnServe, in BOTH compositions: Sentry's router middleware
 // only applies to routes registered after it, and SystemConfig must be
@@ -350,11 +360,8 @@ func RegisterSharedEarly(app *pocketbase.PocketBase) {
 		return nil
 	})
 
-	// Sentry must register first so its router middleware sees every route.
-	// Middleware bound after a route is added does not apply retroactively.
-	// The client only initializes when a DSN exists in system_settings, so in
-	// an unconfigured deployment this is an inert pass-through.
-	RegisterSentry(app)
+	// Read-only mode, then Sentry: see registerSharedMiddleware.
+	registerSharedMiddleware(app)
 
 	// System-wide settings (Sentry/web-push/mail creds). Loads the
 	// system_settings collection into the in-memory SystemConfig once the DB is
