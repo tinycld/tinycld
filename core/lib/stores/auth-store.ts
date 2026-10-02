@@ -13,6 +13,7 @@ import {
     seedUser,
 } from '@tinycld/core/lib/pocketbase'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { create } from '@tinycld/core/lib/store'
 import { useWorkspaceStore } from '@tinycld/core/lib/stores/workspace-store'
 import type { UserSession } from '@tinycld/core/lib/types'
@@ -226,7 +227,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
 
     requestShareOtp: async (slug, token, email) => {
         try {
-            const res = await fetch(shareLinkEndpoint(slug, token, 'otp-request'), {
+            const res = await serverFetch(shareLinkEndpoint(slug, token, 'otp-request'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email }),
@@ -250,7 +251,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
 
     verifyShareOtp: async (slug, token, email, code, otpId) => {
         try {
-            const res = await fetch(shareLinkEndpoint(slug, token, 'otp-verify'), {
+            const res = await serverFetch(shareLinkEndpoint(slug, token, 'otp-verify'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ email, code, otp_id: otpId }),
@@ -296,7 +297,7 @@ export const useAuthStore = create<AuthStoreState>()((set, get) => ({
         // endpoint the web CTA uses and adopt the returned PocketBase envelope.
         pb.authStore.clear()
         try {
-            const res = await fetch(`${serverAddr}/api/demo/start`, {
+            const res = await serverFetch(`${serverAddr}/api/demo/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
             })

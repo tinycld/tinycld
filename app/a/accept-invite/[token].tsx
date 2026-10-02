@@ -2,6 +2,7 @@ import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { pb } from '@tinycld/core/lib/pocketbase'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useLocalSearchParams, useRouter } from 'expo-router'
@@ -48,7 +49,7 @@ export default function AcceptInvite() {
         let cancelled = false
         ;(async () => {
             try {
-                const res = await fetch(`${PB_SERVER_ADDR}/api/accept-invite/${token}`)
+                const res = await serverFetch(`${PB_SERVER_ADDR}/api/accept-invite/${token}`)
                 if (cancelled) return
                 if (!res.ok) {
                     const body = (await res.json().catch(() => null)) as { error?: string } | null
@@ -132,7 +133,7 @@ function AcceptForm({ token, info }: { token: string; info: InviteInfo }) {
         setSubmitError(null)
         setIsSubmitting(true)
         try {
-            const res = await fetch(`${PB_SERVER_ADDR}/api/accept-invite/${token}`, {
+            const res = await serverFetch(`${PB_SERVER_ADDR}/api/accept-invite/${token}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name: data.name, password: data.password }),

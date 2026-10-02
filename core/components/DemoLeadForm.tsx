@@ -1,5 +1,6 @@
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import {
     FormErrorSummary,
     TextAreaInput,
@@ -83,7 +84,7 @@ export const DemoLeadForm = forwardRef<DemoLeadFormHandle, DemoLeadFormProps>(fu
             // SetupPage / PackageManager) — the dev / native /
             // self-hosted topologies all run PB on a different origin
             // from the client, so a relative path would 404.
-            fetch(`${PB_SERVER_ADDR}/api/demo/lead`, {
+            serverFetch(`${PB_SERVER_ADDR}/api/demo/lead`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body,

@@ -122,6 +122,14 @@
                     "options": {
                         "syntax": "shorthand"
                     }
+                },
+                "noRestrictedGlobals": {
+                    "level": "error",
+                    "options": {
+                        "deniedGlobals": {
+                            "fetch": "Use serverFetch from @tinycld/core/lib/server-fetch instead of the fetch global, so a call to our server retries a read-only pause like every other request."
+                        }
+                    }
                 }
             },
             "correctness": {
@@ -169,7 +177,18 @@
                         "noConsole": "off"
                     },
                     "style": {
-                        "noNonNullAssertion": "off"
+                        "noNonNullAssertion": "off",
+                        "noRestrictedGlobals": "off"
+                    }
+                }
+            }
+        },
+        {
+            "includes": ["**/core/lib/server-fetch.ts", "**/core/lib/avatar-upload.ts"],
+            "linter": {
+                "rules": {
+                    "style": {
+                        "noRestrictedGlobals": "off"
                     }
                 }
             }

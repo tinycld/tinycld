@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { Platform } from 'react-native'
 import { getCoreConfigOptional, registerConfigListener } from './core-config'
 
@@ -77,7 +78,7 @@ export async function probe(address: string, timeoutMs = 5000): Promise<void> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
-        const res = await fetch(`${address}/api/health`, { signal: controller.signal })
+        const res = await serverFetch(`${address}/api/health`, { signal: controller.signal })
         if (!res.ok) {
             throw new Error(`Server returned HTTP ${res.status}`)
         }
@@ -101,7 +102,7 @@ export async function probeServer(address: string, timeoutMs = 5000): Promise<vo
     let res: Response
     let body: string
     try {
-        res = await fetch(`${address}/api/org-info`, { signal: controller.signal })
+        res = await serverFetch(`${address}/api/org-info`, { signal: controller.signal })
         // Read the body before judging: a non-server host can answer 200 with
         // HTML, so status alone cannot tell the two apart.
         body = await res.text()

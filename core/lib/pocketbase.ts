@@ -4,8 +4,8 @@ import { type MergedPackageSchema, tinycldConfig } from '@tinycld/app-generated/
 import { captureException } from '@tinycld/core/lib/errors'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
 import { ACTIVE_PKG_STATUSES, isActivePkg } from '@tinycld/core/lib/packages/registry-predicates'
-import { withReadOnlyRetry } from '@tinycld/core/lib/read-only-retry'
 import { refetchLoadedStores } from '@tinycld/core/lib/refetch-loaded-stores'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import type { Schema, Users } from '@tinycld/core/types/pbSchema'
 import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
 import PocketBase, { AsyncAuthStore } from 'pocketbase'
@@ -129,10 +129,6 @@ export const pb = new PocketBase(PB_SERVER_ADDR, store)
 
 pb.autoCancellation(false)
 
-// Wraps the platform fetch per call (not captured at load) so tests and
-// polyfills that replace globalThis.fetch later are still used.
-const readOnlyRetryFetch = withReadOnlyRetry((url, config) => fetch(url, config))
-
 // A share-link visitor is unauthenticated, so every row they may read is
 // authorized by a token rather than by `@request.auth.id`. Attaching it here
 // covers every REST call the SDK makes; the realtime half rides
@@ -147,7 +143,7 @@ pb.beforeSend = (url, options) => {
     // Writes refused during a server's read-only pause are retried; see
     // read-only-retry.ts.
     if (!options.fetch) {
-        options.fetch = readOnlyRetryFetch
+        options.fetch = serverFetch
     }
     return { url, options }
 }

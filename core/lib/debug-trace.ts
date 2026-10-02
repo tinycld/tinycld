@@ -1,4 +1,5 @@
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { Platform } from 'react-native'
 
 // TEMPORARY routing/boot debug tracer. Release builds do NOT route console.* to
@@ -23,7 +24,7 @@ export function trace(message: string, extra?: Record<string, unknown>): void {
     const line = extra ? `TRACE: ${message} ${JSON.stringify(extra)}` : `TRACE: ${message}`
     console.log(`[trace] ${line}`)
     if (!serverUrl) return
-    void fetch(`${serverUrl}/api/app/boot`, {
+    void serverFetch(`${serverUrl}/api/app/boot`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

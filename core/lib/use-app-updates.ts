@@ -13,6 +13,7 @@ import {
 } from '@tinycld/core/lib/app-updater/server-key'
 import { captureException } from '@tinycld/core/lib/errors'
 import { getResolvedAddress, subscribeResolvedAddress } from '@tinycld/core/lib/server-address'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { useToastStore } from '@tinycld/core/lib/stores/toast-store'
 import AppUpdater from 'app-updater'
 import * as FileSystem from 'expo-file-system/legacy'
@@ -92,7 +93,7 @@ async function runUpdateCheck(serverUrl: string, serverKey: string): Promise<voi
             runtimeVersion: AppUpdater.getRuntimeVersion(),
             currentId: AppUpdater.getCurrentBundleId(),
             currentHash: AppUpdater.getCurrentBundleHash(),
-            fetchFn: fetch,
+            fetchFn: serverFetch,
         })
         if (!manifest) return
 
@@ -205,7 +206,7 @@ export async function reportRevertedBundle(): Promise<void> {
             id: reverted.id,
             hash: reverted.hash,
             error: detail,
-            fetchFn: fetch,
+            fetchFn: serverFetch,
         })
     } catch (error) {
         captureException('use-app-updates.report-bad', error, { id: reverted.id })

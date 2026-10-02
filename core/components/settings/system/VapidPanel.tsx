@@ -1,5 +1,6 @@
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { pb as appPb } from '@tinycld/core/lib/pocketbase'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { Button, ButtonText } from '@tinycld/core/ui/button'
 import { FormErrorSummary, TextInput, useForm, z, zodResolver } from '@tinycld/core/ui/form'
 import { useState } from 'react'
@@ -46,7 +47,7 @@ export function VapidPanel() {
         setGenerateError(null)
         setIsGenerating(true)
         try {
-            const res = await fetch(`${PB_SERVER_ADDR}/api/admin/vapid/generate`, {
+            const res = await serverFetch(`${PB_SERVER_ADDR}/api/admin/vapid/generate`, {
                 method: 'POST',
                 headers: { Authorization: appPb.authStore.token },
             })

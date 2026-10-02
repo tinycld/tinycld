@@ -1,6 +1,7 @@
 import { isUpdateTransportAllowed, postBootBeacon } from '@tinycld/core/lib/app-updater/client'
 import { captureException } from '@tinycld/core/lib/errors'
 import { getResolvedAddress } from '@tinycld/core/lib/server-address'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import AppUpdater from 'app-updater'
 import { useEffect } from 'react'
 import { Platform } from 'react-native'
@@ -30,7 +31,7 @@ export function useBundleSentinel(): void {
             platform: Platform.OS === 'ios' ? 'ios' : 'android',
             id: AppUpdater.getCurrentBundleId(),
             hash: AppUpdater.getCurrentBundleHash(),
-            fetchFn: fetch,
+            fetchFn: serverFetch,
         }).catch(err => captureException('bundle-sentinel.boot-beacon', err))
     }, [])
 }
