@@ -182,21 +182,15 @@ func RegisterBackupBoot(app core.App) {
 	})
 	// Before e.Next(): PocketBase closes the database after the last hook, and a
 	// run cancelled here still writes its ledger row, notifies administrators
-	// and posts its callback through this app. Cancelling without waiting let
-	// that work land on a closed database and crash the process on its way out.
+	// and posts its callback through this app. That work must finish while the
+	// database is open, or it panics on a closed one as the process exits.
 	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
 		ctx, cancel := context.WithTimeout(context.Background(), backupStopBound)
 		defer cancel()
 		if err := backup.StopAll(ctx, e.App); err != nil {
 			srvLog.Warn("closing the app under a backup run that did not stop in time", "bound", backupStopBound, "err", err)
 		}
-		err := e.Next()
-		// A restart that succeeds never returns here: the process is replaced.
-		// One that does return failed to re-exec and left the app running.
-		if e.IsRestart {
-			backup.Reopen(e.App)
-		}
-		return err
+		return e.Next()
 	})
 }
 

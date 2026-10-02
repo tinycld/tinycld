@@ -68,10 +68,10 @@ func (s *runSet) done() {
 // until each of app's runs has finished its terminal work — the ledger row, the
 // announcement and the callback — or ctx ends.
 //
-// Without the wait the hook returned the moment it cancelled, and the run's
-// terminal work then wrote through an app whose database was being closed. The
-// error says how many runs were still going when ctx ended; those runs are left
-// to the panic guard around their terminal work.
+// The wait is what keeps a run's terminal work off a closed database: a
+// cancelled run still writes through app on its way out. The error says how
+// many runs were still going when ctx ended; those runs are left to the panic
+// guard around their terminal work.
 //
 // The cancel is process-wide, as every transfer is bound to the process (see
 // SetShutdown); the wait is for app's own runs.
@@ -100,16 +100,6 @@ func StopAll(ctx context.Context, app core.App) error {
 		s.mu.Unlock()
 		return fmt.Errorf("backup: %d backup or restore run(s) still running: %w", n, ctx.Err())
 	}
-}
-
-// Reopen lifts StopAll's refusal. It is for a stop that did not end the app: a
-// restart whose re-exec failed leaves PocketBase running on a fresh bootstrap,
-// and without this every later backup on it would be refused as stopping.
-func Reopen(app core.App) {
-	s := runsOf(app)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.stopping = false
 }
 
 // survive runs one step of a run's terminal work and turns a panic into a log
