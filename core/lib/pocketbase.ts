@@ -4,6 +4,7 @@ import { type MergedPackageSchema, tinycldConfig } from '@tinycld/app-generated/
 import { captureException } from '@tinycld/core/lib/errors'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
 import { ACTIVE_PKG_STATUSES, isActivePkg } from '@tinycld/core/lib/packages/registry-predicates'
+import { withReadOnlyRetry } from '@tinycld/core/lib/read-only-retry'
 import { refetchLoadedStores } from '@tinycld/core/lib/refetch-loaded-stores'
 import type { Schema, Users } from '@tinycld/core/types/pbSchema'
 import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
@@ -134,10 +135,20 @@ pb.autoCancellation(false)
 // `subscribeOptions` on the collection factory below, and both arrive at the
 // rule as `@request.headers.x_share_token` because PocketBase snakecases header
 // names identically on the two paths.
+
+// Wraps the platform fetch per call (not captured at load) so tests and
+// polyfills that replace globalThis.fetch later are still used.
+const readOnlyRetryFetch = withReadOnlyRetry((url, config) => fetch(url, config))
+
 pb.beforeSend = (url, options) => {
     const headers = shareTokenHeaders()
     if (headers) {
         options.headers = { ...options.headers, ...headers }
+    }
+    // Writes refused during a server's read-only pause are retried; see
+    // read-only-retry.ts.
+    if (!options.fetch) {
+        options.fetch = readOnlyRetryFetch
     }
     return { url, options }
 }
