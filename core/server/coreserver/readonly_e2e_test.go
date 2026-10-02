@@ -55,7 +55,7 @@ func TestReadOnlyE2E(t *testing.T) {
 	// requests, and the SSE handler returns only when its request ends.
 	streamCtx, cancelStream := context.WithCancel(context.Background())
 	defer cancelStream()
-	events := openRealtime(streamCtx, t, srv.URL)
+	events := openRealtime(streamCtx, t, srv)
 
 	connect := nextSSEEvent(t, events)
 	if connect.name != "PB_CONNECT" {
@@ -70,31 +70,50 @@ func TestReadOnlyE2E(t *testing.T) {
 
 	readonly.Enter()
 
-	sub, _ := json.Marshal(map[string]any{"clientId": connectData.ClientID, "subscriptions": []string{"notes"}})
-	res, body := doRequest(t, srv.URL, http.MethodPost, "/api/realtime", string(sub))
+	sub, err := json.Marshal(map[string]any{"clientId": connectData.ClientID, "subscriptions": []string{"notes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, body := doRequest(t, srv, http.MethodPost, "/api/realtime", string(sub))
 	if res.StatusCode != http.StatusNoContent {
 		t.Fatalf("subscribe during pause: status %d, body %s", res.StatusCode, body)
 	}
 
-	res, body = doRequest(t, srv.URL, http.MethodPost, "/api/collections/notes/records", `{"body":"x"}`)
+	res, body = doRequest(t, srv, http.MethodPost, "/api/collections/notes/records", `{"body":"x"}`)
 	if res.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("create during pause: status %d, want 503, body %s", res.StatusCode, body)
 	}
 	if got := res.Header.Get("Retry-After"); got != "2" {
 		t.Fatalf("create during pause: Retry-After %q, want 2", got)
 	}
-	if !strings.Contains(body, `"code":"read_only"`) {
-		t.Fatalf("create during pause: body %s, want code read_only", body)
+	var readOnlyBody struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(body), &readOnlyBody); err != nil {
+		t.Fatalf("create during pause: body %s: %v", body, err)
+	}
+	if readOnlyBody.Code != "read_only" {
+		t.Fatalf("create during pause: code %q, want read_only", readOnlyBody.Code)
 	}
 
-	res, body = doRequest(t, srv.URL, http.MethodGet, "/api/collections/notes/records", "")
+	res, body = doRequest(t, srv, http.MethodGet, "/api/collections/notes/records", "")
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("list during pause: status %d, body %s", res.StatusCode, body)
+	}
+	var list struct {
+		TotalItems int `json:"totalItems"`
+	}
+	if err := json.Unmarshal([]byte(body), &list); err != nil {
+		t.Fatalf("list during pause: body %s: %v", body, err)
+	}
+	if list.TotalItems != 0 {
+		t.Fatalf("list during pause: totalItems %d, want 0", list.TotalItems)
 	}
 
 	readonly.Leave()
 
-	res, body = doRequest(t, srv.URL, http.MethodPost, "/api/collections/notes/records", `{"body":"x"}`)
+	res, body = doRequest(t, srv, http.MethodPost, "/api/collections/notes/records", `{"body":"x"}`)
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("create after pause: status %d, body %s", res.StatusCode, body)
 	}
@@ -150,13 +169,13 @@ func serveOnListener(t *testing.T, app *tests.TestApp) *httptest.Server {
 // openRealtime opens GET /api/realtime and parses the stream on its own
 // goroutine. The channel closes when the stream ends, so a reader never
 // blocks on a dead stream.
-func openRealtime(ctx context.Context, t *testing.T, baseURL string) <-chan sseEvent {
+func openRealtime(ctx context.Context, t *testing.T, srv *httptest.Server) <-chan sseEvent {
 	t.Helper()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/realtime", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/realtime", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,16 +224,16 @@ func nextSSEEvent(t *testing.T, events <-chan sseEvent) sseEvent {
 	return sseEvent{}
 }
 
-func doRequest(t *testing.T, baseURL, method, path, body string) (*http.Response, string) {
+func doRequest(t *testing.T, srv *httptest.Server, method, path, body string) (*http.Response, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, method, srv.URL+path, strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	res, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
