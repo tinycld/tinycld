@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -101,7 +102,7 @@ func TestSendExpoPush_DemoUserSkipsExternalCall(t *testing.T) {
 			t.Fatalf("sendExpoPush panicked for demo user: %v", r)
 		}
 	}()
-	sendExpoPush(app, u.Id, NotifyParams{
+	sendExpoPush(context.Background(), app, u.Id, NotifyParams{
 		UserID: u.Id,
 		Type:   "test",
 		Title:  "ignored",

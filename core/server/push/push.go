@@ -1,6 +1,7 @@
 package push
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -32,6 +33,14 @@ type Payload struct {
 // SendToUser sends a push notification to all subscriptions for the given user.
 // Stale subscriptions (410/404) are automatically deleted.
 func SendToUser(app core.App, userID string, payload Payload) {
+	SendToUserContext(context.Background(), app, userID, payload)
+}
+
+// SendToUserContext is SendToUser bound to ctx. Each send is a request to a
+// push service this process does not control, so a caller that must finish
+// before a deadline — a run the server waits for on its way down — passes the
+// context that ends it.
+func SendToUserContext(ctx context.Context, app core.App, userID string, payload Payload) {
 	records, err := app.FindRecordsByFilter(
 		"push_subscriptions",
 		"user = {:userId}",
@@ -102,7 +111,7 @@ func SendToUser(app core.App, userID string, payload Payload) {
 			},
 		}
 
-		resp, err := webpush.SendNotification(payloadBytes, sub, &webpush.Options{
+		resp, err := webpush.SendNotificationWithContext(ctx, payloadBytes, sub, &webpush.Options{
 			VAPIDPublicKey:  vapidPublicKey,
 			VAPIDPrivateKey: vapidPrivateKey,
 			Subscriber:      vapidSubject,

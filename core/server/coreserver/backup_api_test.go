@@ -70,9 +70,8 @@ func setupBackupCollections(t *testing.T) *tests.TestApp {
 	// Registered after app.Cleanup, so it runs before it. A run started with
 	// backup.Start outlives the ledger's "succeeded": it then notifies the
 	// administrators and posts its callback through this app. Closing the
-	// database under it panics in whichever test runs next. The run releases
-	// the interlock as its very last step, so a free interlock means it is done.
-	t.Cleanup(func() { waitForInterlock(t) })
+	// database under it panics in whichever test runs next.
+	t.Cleanup(func() { stopBackupRuns(t, app) })
 
 	// The guard for the above: if a future change makes the data dir land in a
 	// shared root again, this fails here rather than by corrupting another
@@ -199,7 +198,7 @@ func backupTestApp(t *testing.T) *tests.TestApp {
 	// exercise the refusal itself set it to something else.
 	allowLoopbackBackupTargets(t, true)
 	app := setupBackupCollections(t)
-	restoreSeams(t)
+	restoreSeams(t, app)
 	RegisterBackupEndpoints(app)
 	return app
 }
@@ -228,17 +227,11 @@ func allowLoopbackBackupTargets(t *testing.T, allow bool) {
 // Cleanup goes through backup.ResetForTesting rather than unsetting one seam,
 // because the package holds more process-wide state than the rebuilder — a left
 // restoring flag would put every later request behind the maintenance 503.
-// A restore now ALWAYS runs on a goroutine (the upload branch used to be
-// synchronous), so the seams also count restores in flight: a test that asserted
-// its 202 and returned would otherwise let app.Cleanup close the database under a
-// running restore, which panics in whichever test happens to be next.
-func restoreSeams(t *testing.T) {
+// A restore ALWAYS runs on a goroutine, so a test that asserted its 202 and
+// returned would otherwise let app.Cleanup close the database under a running
+// restore, which panics in whichever test happens to be next.
+func restoreSeams(t *testing.T, app core.App) {
 	t.Helper()
-	var done sync.WaitGroup
-	backup.SetRestoreWatcher(func() func() {
-		done.Add(1)
-		return done.Done
-	})
 	backup.RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
 		installjob.Release(job)
 		return nil
@@ -247,7 +240,7 @@ func restoreSeams(t *testing.T) {
 	// Before ResetForTesting, so the wait happens while the seams are still the
 	// ones the restore is using.
 	t.Cleanup(backup.ResetForTesting)
-	t.Cleanup(done.Wait)
+	t.Cleanup(func() { stopBackupRuns(t, app) })
 }
 
 func makeBackupUser(t *testing.T, app core.App, email, role string) *core.Record {
@@ -291,17 +284,15 @@ func waitFor(t testing.TB, cond func() bool) {
 	t.Fatal("condition was never met within 5s")
 }
 
-// waitForInterlock waits up to 5 s for the interlock to be free. It is held
-// by any job kind, not only backup/restore, so the wait must clear before
-// starting another job of any kind.
-func waitForInterlock(t testing.TB) {
+// stopBackupRuns is the stop the terminate hook makes, run at the end of a
+// test: it waits for every backup and restore the test left running on app,
+// so the test app's cleanup never closes the database under one.
+func stopBackupRuns(t testing.TB, app core.App) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for job := installjob.Current(); job != nil; job = installjob.Current() {
-		if time.Now().After(deadline) {
-			t.Fatalf("a job still holds the interlock 5s after the test: %v", job.Info())
-		}
-		time.Sleep(10 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := backup.StopAll(ctx, app); err != nil {
+		t.Fatalf("a run was still going 5s after the test: %v", err)
 	}
 }
 
@@ -793,7 +784,7 @@ func TestVerifyEndpoint(t *testing.T) {
 // other — not the sequence.
 func TestBootHookFinalizesAndMarksInterrupted(t *testing.T) {
 	app := setupBackupCollections(t)
-	restoreSeams(t)
+	restoreSeams(t, app)
 	makeBackupUser(t, app, "owner@example.com", "owner")
 
 	// A row left running by the process that armed the restore, started before
@@ -892,7 +883,7 @@ func TestBootHookFinalizesAndMarksInterrupted(t *testing.T) {
 // A row a previous process left running is still closed by the same hook.
 func TestBootHookMarksAnAbandonedRunInterrupted(t *testing.T) {
 	app := setupBackupCollections(t)
-	restoreSeams(t)
+	restoreSeams(t, app)
 
 	col, err := app.FindCollectionByNameOrId("backups")
 	if err != nil {
@@ -926,7 +917,7 @@ func TestBootHookMarksAnAbandonedRunInterrupted(t *testing.T) {
 // land in a pb_data the next process is about to replace.
 func TestMaintenanceMiddlewareBindsBeforeAuthLoading(t *testing.T) {
 	app := setupBackupCollections(t)
-	restoreSeams(t)
+	restoreSeams(t, app)
 	RegisterBackupBoot(app)
 
 	pbRouter, err := apis.NewRouter(app)
@@ -1091,7 +1082,7 @@ func TestBackupToTargetSurvivesTheRequestEnding(t *testing.T) {
 func TestBootProbeLeavesRestoreStateForTheRealBoot(t *testing.T) {
 	t.Setenv("TINYCLD_BOOT_PROBE", "1")
 	app := setupBackupCollections(t)
-	restoreSeams(t)
+	restoreSeams(t, app)
 	makeBackupUser(t, app, "owner@example.com", "owner")
 
 	col, err := app.FindCollectionByNameOrId("backups")
@@ -1181,7 +1172,7 @@ func TestBootProbeLeavesRestoreStateForTheRealBoot(t *testing.T) {
 func TestBackupRefusesAnUnroutableTarget(t *testing.T) {
 	allowLoopbackBackupTargets(t, false)
 	app := setupBackupCollections(t)
-	restoreSeams(t)
+	restoreSeams(t, app)
 	RegisterBackupEndpoints(app)
 	admin := authFor(t, app, "admin@example.com", "admin")
 	owner := authFor(t, app, "owner@example.com", "owner")
@@ -1418,7 +1409,7 @@ func TestUploadedMismatchLeavesNoSpoolFile(t *testing.T) {
 // scratch directory and for the same reason.
 func TestBootClearsAStrandedUploadSpool(t *testing.T) {
 	app := setupBackupCollections(t)
-	restoreSeams(t)
+	restoreSeams(t, app)
 
 	spoolDir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
 	if err := os.MkdirAll(spoolDir, 0o700); err != nil {
@@ -1459,7 +1450,7 @@ func TestBootClearsAStrandedUploadSpool(t *testing.T) {
 func TestBootProbeLeavesAnUploadSpoolAlone(t *testing.T) {
 	t.Setenv("TINYCLD_BOOT_PROBE", "1")
 	app := setupBackupCollections(t)
-	restoreSeams(t)
+	restoreSeams(t, app)
 
 	spoolDir := filepath.Join(backup.LedgerPath(app), "restore", "upload")
 	if err := os.MkdirAll(spoolDir, 0o700); err != nil {
