@@ -8,6 +8,5 @@ import { type Fetch, withReadOnlyRetry } from '@tinycld/core/lib/read-only-retry
 // recovered.
 //
 // `globalThis.fetch` is read per call, not captured at module load, so a test
-// or polyfill that replaces it later (as pocketbase.ts's own wrapper already
-// relied on) still takes effect.
+// or polyfill that replaces it later still takes effect.
 export const serverFetch: Fetch = withReadOnlyRetry((url, config) => fetch(url, config))
