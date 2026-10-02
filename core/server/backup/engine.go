@@ -309,6 +309,17 @@ func announce(ctx context.Context, app core.App, req Request, row *core.Record, 
 	}
 }
 
+// callbackBound caps one callback request, from dial to the last byte of the
+// response body. The transport bounds only the wait for headers, and a run is
+// still holding the job interlock while it posts, so a receiver that answers and
+// then never finishes its body would block every backup, restore and package
+// install. A receiver only has to acknowledge a small JSON row.
+const callbackBound = 30 * time.Second
+
+// callbackTimeout is callbackBound, held in a var only so a test can shorten
+// it; nothing else writes it.
+var callbackTimeout = callbackBound
+
 // postCallback hands the finished row to whoever asked to be told. The row is
 // exported publicly, so a callback never carries a passphrase or a recipient.
 func postCallback(ctx context.Context, url string, row *core.Record) {
@@ -320,6 +331,8 @@ func postCallback(ctx context.Context, url string, row *core.Record) {
 		log.Warn("could not encode a backup row for its callback", "err", err)
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, callbackTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		log.Warn("backup callback failed", "host", HostOnly(url), "err", format.RedactURLError(err))
@@ -335,8 +348,11 @@ func postCallback(ctx context.Context, url string, row *core.Record) {
 		log.Warn("backup callback failed", "host", HostOnly(url), "err", format.RedactURLError(err))
 		return
 	}
-	_, _ = io.Copy(io.Discard, res.Body)
+	_, cerr := io.Copy(io.Discard, res.Body)
 	_ = res.Body.Close()
+	if cerr != nil {
+		log.Warn("backup callback did not finish its response", "host", HostOnly(url), "err", format.RedactURLError(cerr))
+	}
 	if res.StatusCode >= 300 {
 		log.Warn("backup callback rejected", "host", HostOnly(url), "status", res.StatusCode)
 	}
