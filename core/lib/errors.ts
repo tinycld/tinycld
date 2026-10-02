@@ -2,7 +2,7 @@ import { notify } from '@tinycld/core/lib/notify/dispatcher'
 import type { FieldValues, Path, UseFormSetError } from 'react-hook-form'
 import { log } from './logger'
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
     typeof value === 'object' && value !== null
 
 function getBaseMessage(error: Record<string, unknown>): string {
