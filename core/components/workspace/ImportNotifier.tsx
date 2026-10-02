@@ -7,6 +7,7 @@ export function ImportNotifier() {
     const phase = useTakeoutImportStore(s => s.phase)
     const progress = useTakeoutImportStore(s => s.progress)
     const overallError = useTakeoutImportStore(s => s.overallError)
+    const url = useTakeoutImportStore(s => s.progressHref) ?? appHref('settings')
     const prevPhaseRef = useRef(phase)
 
     useEffect(() => {
@@ -32,7 +33,7 @@ export function ImportNotifier() {
                 event: 'import.complete',
                 title: 'Google Takeout import complete',
                 body: `${parts.join(', ')}.`,
-                url: appHref('settings/personal'),
+                url,
                 data: { source: 'google-takeout', count: totals.imported },
             })
         }
@@ -43,11 +44,11 @@ export function ImportNotifier() {
                 event: 'import.failed',
                 title: 'Google Takeout import failed',
                 body,
-                url: appHref('settings/personal'),
+                url,
                 data: { source: 'google-takeout', error: body },
             })
         }
-    }, [phase, progress, overallError])
+    }, [phase, progress, overallError, url])
 
     return null
 }

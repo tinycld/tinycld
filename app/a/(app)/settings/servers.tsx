@@ -1,4 +1,5 @@
 import { DocumentTitle } from '@tinycld/core/components/DocumentTitle'
+import { DisconnectServerSection } from '@tinycld/core/components/settings/DisconnectServerSection'
 import { ServersSection } from '@tinycld/core/components/settings/ServersSection'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
@@ -7,10 +8,10 @@ import { useSavedServers } from '@tinycld/core/lib/use-saved-servers'
 import { ArrowLeft, Server } from 'lucide-react-native'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
-// Saved servers live at the top level of Settings rather than under Personal:
-// they are device/connection scope, not a personal preference — and this is the
-// one settings screen that still means something when you are NOT signed in to
-// the server you are currently pointed at.
+// Saved servers and "Disconnect server" live under This device rather than
+// Account: they are device/connection scope, not a personal preference — and
+// this is the one settings screen that still means something when you are NOT
+// signed in to the server you are currently pointed at.
 //
 // The quick-switch affordance is in the app chrome (More drawer on phone, user
 // menu on tablet). This screen is the full management surface, and the only place
@@ -32,18 +33,18 @@ export default function ServersSettings() {
                 <Text className="text-[22px] font-bold text-foreground">Servers</Text>
             </View>
             <ScrollView className="flex-1" contentContainerStyle={{ padding: 16 }}>
-                <View className="max-w-[600px] w-full">
+                <View className="max-w-[600px] w-full gap-6">
                     <NoOtherServers isVisible={!hasOtherServers} />
                     <ServersSection isVisible={hasOtherServers} />
+                    <DisconnectServerSection />
                 </View>
             </ScrollView>
         </View>
     )
 }
 
-// ServersSection renders nothing when there is nothing to switch between, which
-// would leave this screen a bare header. The route stays reachable by URL even
-// though the nav link is gated, so say why it is empty.
+// ServersSection renders nothing when there is nothing to switch between, so
+// say why the list is missing.
 function NoOtherServers({ isVisible }: { isVisible: boolean }) {
     if (!isVisible) return null
 

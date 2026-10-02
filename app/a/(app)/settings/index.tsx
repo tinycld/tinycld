@@ -1,27 +1,31 @@
 import { getIcon } from '@tinycld/core/components/workspace/package-icon-map'
 import { useOrgHref } from '@tinycld/core/lib/org-routes'
 import {
+    packageAccountSettings,
     packageSettings,
     packageSystemSettings,
 } from '@tinycld/core/lib/packages/derive-components'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { useCurrentRole } from '@tinycld/core/lib/use-current-role'
 import { isManagedPrefix, useManagedSettingPrefixes } from '@tinycld/core/lib/use-managed-settings'
-import { useSavedServers } from '@tinycld/core/lib/use-saved-servers'
 import { useRouter } from 'expo-router'
 import {
     Bell,
     Bug,
+    Cable,
     ChevronRight,
     DatabaseBackup,
     HardDrive,
     History,
     Image,
+    Info,
     KeyRound,
     Package,
+    Palette,
     ScrollText,
     Send,
     Server,
+    ShieldAlert,
     Sliders,
     Tag,
     User,
@@ -43,51 +47,75 @@ export default function SettingsIndex() {
                 <Text className="mb-4 text-foreground text-[28px] font-bold">Settings</Text>
 
                 <SettingsGroup label="Account">
+                    {ACCOUNT_LINKS.map(({ label, route, Icon }) => (
+                        <SettingsLink
+                            key={route}
+                            label={label}
+                            onPress={() => router.push(orgHref(route))}
+                            icon={<Icon size={20} color={foregroundColor} />}
+                        />
+                    ))}
+                    <PackageAccountLinks />
+                </SettingsGroup>
+
+                <SettingsGroup label="This device">
                     <SettingsLink
-                        label="Personal"
-                        onPress={() => router.push(orgHref('settings/personal'))}
-                        icon={<User size={20} color={foregroundColor} />}
-                    />
-                    <SettingsLink
-                        label="Rules"
-                        onPress={() => router.push(orgHref('settings/rules'))}
-                        icon={<Workflow size={20} color={foregroundColor} />}
+                        label="Servers"
+                        onPress={() => router.push(orgHref('settings/servers'))}
+                        icon={<Server size={20} color={foregroundColor} />}
                     />
                 </SettingsGroup>
 
-                <DeviceSettings />
-
                 <AdminSettings isVisible={isAdmin} isOwner={isReady && isOwner} />
+
+                <SettingsGroup label="About">
+                    <SettingsLink
+                        label="About"
+                        onPress={() => router.push(orgHref('settings/about'))}
+                        icon={<Info size={20} color={foregroundColor} />}
+                    />
+                </SettingsGroup>
             </View>
         </ScrollView>
     )
 }
 
-// Saved servers are device/connection scope — not a personal preference and not
-// org administration, so neither existing group fits.
-//
-// Gated on having something to switch BETWEEN, the same rule the user menu's
-// switcher uses. The list always contains at least the current origin (on web
-// it is seeded from it), so a lone entry is just a label for where you already
-// are — and it left this link opening a titled screen with a blank body, since
-// ServersSection renders nothing for an empty list.
-function DeviceSettings() {
+// Everything here acts on the signed-in user's own account, so every role
+// sees the whole group.
+const ACCOUNT_LINKS = [
+    { label: 'Profile', route: 'settings/profile', Icon: User },
+    { label: 'Appearance', route: 'settings/appearance', Icon: Palette },
+    { label: 'Notifications', route: 'settings/notifications', Icon: Bell },
+    { label: 'Rules', route: 'settings/rules', Icon: Workflow },
+    { label: 'Connected apps', route: 'settings/connected-apps', Icon: Cable },
+    { label: 'Account access', route: 'settings/account-access', Icon: ShieldAlert },
+] as const
+
+// Per-user panels packages contribute (manifest `accountSettings`), listed
+// after core's own account links.
+function PackageAccountLinks() {
     const foregroundColor = useThemeColor('foreground')
     const orgHref = useOrgHref()
     const router = useRouter()
-    const { servers } = useSavedServers()
 
-    if (servers.length < 2) return null
-
-    return (
-        <SettingsGroup label="This device">
-            <SettingsLink
-                label="Servers"
-                onPress={() => router.push(orgHref('settings/servers'))}
-                icon={<Server size={20} color={foregroundColor} />}
-            />
-        </SettingsGroup>
+    const panels = packageAccountSettings.flatMap(group =>
+        group.panels.map(panel => ({ group, panel, Icon: getIcon(group.icon ?? '') }))
     )
+
+    return panels.map(({ group, panel, Icon }) => (
+        <SettingsLink
+            key={`${group.pkgSlug}:${panel.slug}`}
+            label={panel.label}
+            onPress={() =>
+                router.push(
+                    orgHref('settings/account/[...section]', {
+                        section: [group.pkgSlug, panel.slug],
+                    })
+                )
+            }
+            icon={<Icon size={20} color={foregroundColor} />}
+        />
+    ))
 }
 
 function AdminSettings({ isVisible, isOwner }: { isVisible: boolean; isOwner: boolean }) {

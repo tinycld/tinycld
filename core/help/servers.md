@@ -53,3 +53,10 @@ you've saved. Remove the last one and you'll be asked to connect somewhere.
 
 Removing is deliberately kept out of the quick-switch menu so it isn't a mis-tap
 away from the server you meant to switch to.
+
+## Disconnecting from this server
+
+To sign out of the server you're using now and forget it, go to **Settings →
+This device → Servers** and select **Disconnect**. This works in a web browser
+too. Your account on the server is not deleted, and any other servers you've
+added stay signed in.

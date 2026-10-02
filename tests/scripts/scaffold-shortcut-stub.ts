@@ -132,14 +132,18 @@ function patchManifest(stubDir: string): void {
         // tests/e2e/keyboard-shortcuts.spec.ts.
         shortcut: '${STUB_NAV_SHORTCUT}',
     },
-    // Two panels sharing ONE slug, on purpose. \`settings\` is org-scoped and
-    // \`systemSettings\` is deployment-wide, and the settings area addresses
-    // them through separate route trees precisely so the same slug can appear
-    // in both without one shadowing the other. Mail ships exactly this shape
+    // Three panels sharing ONE slug, on purpose. \`settings\` is org-scoped,
+    // \`accountSettings\` is per-user and \`systemSettings\` is deployment-wide,
+    // and the settings area addresses them through separate route trees
+    // precisely so the same slug can appear in each without one shadowing
+    // another. Mail ships exactly this shape
     // (its 'provider' slug is both a domains screen and the provider picker),
     // but app-shell CI installs no feature package — so the stub carries the
     // collision, and the settings e2e proves the routing against it.
     settings: [{ slug: 'panel', label: 'Stub Org Panel', component: 'settings/panel' }],
+    accountSettings: [
+        { slug: 'panel', label: 'Stub Account Panel', component: 'account-settings/panel' },
+    ],
     systemSettings: [
         { slug: 'panel', label: 'Stub System Panel', component: 'system-settings/panel' },
     ],
@@ -159,6 +163,7 @@ function patchPackageJson(stubDir: string): void {
         ...(pkg.exports ?? {}),
         './screens/*': `./tinycld/${STUB_SLUG}/screens/*.tsx`,
         './settings/*': `./tinycld/${STUB_SLUG}/settings/*.tsx`,
+        './account-settings/*': `./tinycld/${STUB_SLUG}/account-settings/*.tsx`,
         './system-settings/*': `./tinycld/${STUB_SLUG}/system-settings/*.tsx`,
     }
     writeFileSync(path, `${JSON.stringify(pkg, null, 4)}\n`)
@@ -181,11 +186,12 @@ function patchVitestConfig(stubDir: string): void {
     if (patched !== contents) writeFileSync(path, patched)
 }
 
-// The two panels the manifest declares under one shared slug. Each renders a
+// The three panels the manifest declares under one shared slug. Each renders a
 // distinct testID so the settings e2e can prove which route tree resolved it.
 function writePanels(stubDir: string): void {
     const panels = [
         { dir: 'settings', component: 'StubOrgPanel', testID: 'stub-org-panel' },
+        { dir: 'account-settings', component: 'StubAccountPanel', testID: 'stub-account-panel' },
         { dir: 'system-settings', component: 'StubSystemPanel', testID: 'stub-system-panel' },
     ]
     for (const panel of panels) {

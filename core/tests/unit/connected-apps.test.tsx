@@ -88,14 +88,14 @@ describe('ConnectedAppsSection — query states', () => {
         useMyLiveQueryMock.mockReturnValue({ data: undefined, isError: false, isLoading: true })
         const { queryByText } = renderSection()
         expect(queryByText(/couldn't load/i)).toBeNull()
-        expect(queryByText('Connected apps')).toBeNull()
+        expect(queryByText(/no apps or devices/i)).toBeNull()
     })
 
-    it('renders nothing when the query succeeds with no active grants', () => {
+    it('says so when the query succeeds with no active grants', () => {
         useMyLiveQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false })
-        const { queryByText } = renderSection()
+        const { getByText, queryByText } = renderSection()
         expect(queryByText(/couldn't load/i)).toBeNull()
-        expect(queryByText('Connected apps')).toBeNull()
+        expect(getByText(/no apps or devices/i)).toBeTruthy()
     })
 
     it('renders the grant list when the query succeeds with active grants', () => {
@@ -104,8 +104,8 @@ describe('ConnectedAppsSection — query states', () => {
             isError: false,
             isLoading: false,
         })
-        const { getByText } = renderSection()
-        expect(getByText('Connected apps')).toBeTruthy()
+        const { getByText, queryByText } = renderSection()
         expect(getByText("Nathan's laptop")).toBeTruthy()
+        expect(queryByText(/no apps or devices/i)).toBeNull()
     })
 })

@@ -135,6 +135,7 @@ export interface PackageEntry<S extends SchemaDeclaration, R> {
         | null
     provider?: PackageProviderLoader | null
     settings?: PackageSettingsPanel[]
+    accountSettings?: PackageSettingsPanel[]
     systemSettings?: PackageSystemSettingsPanel[]
     sidebarContributions?: SidebarContribution[]
     search?: {
@@ -164,6 +165,7 @@ export function definePackageEntry<S extends SchemaDeclaration>() {
         sidebar?: PackageEntry<S, R>['sidebar']
         provider?: PackageEntry<S, R>['provider']
         settings?: PackageEntry<S, R>['settings']
+        accountSettings?: PackageEntry<S, R>['accountSettings']
         systemSettings?: PackageEntry<S, R>['systemSettings']
         sidebarContributions?: PackageEntry<S, R>['sidebarContributions']
         search?: PackageEntry<S, R>['search']

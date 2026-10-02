@@ -7,12 +7,12 @@ order: 25
 
 ## Your profile
 
-Open **Settings → Personal** to update the name and email on your account. Changes
+Open **Settings → Profile** to update the name and email on your account. Changes
 save automatically when you move out of a field.
 
 ## Changing your password
 
-In **Settings → Personal**, under **Profile**, select **Change password**:
+In **Settings → Profile**, select **Change password**:
 
 1. Enter your **current password**.
 2. Enter a **new password** (at least 8 characters).
@@ -25,7 +25,7 @@ your current password, you'll see an error and your password won't be changed.
 ## Disabling your account
 
 If you want to step away but might come back, disable your account instead of
-deleting it. In **Settings → Personal**, under **Account access**, select
+deleting it. In **Settings → Account access**, select
 **Disable my account** and type your email to confirm.
 
 Disabling takes effect immediately: you're signed out everywhere, you can't sign
@@ -39,8 +39,8 @@ restored.
 
 ## Deleting your account
 
-Deleting is **permanent and cannot be undone**. In **Settings → Personal**,
-select **Delete account**. Your name, email and avatar are removed and you're
+Deleting is **permanent and cannot be undone**. In **Settings → Account access**,
+select **Delete my account**. Your name, email and avatar are removed and you're
 signed out everywhere.
 
 Before confirming, choose what happens to your files, documents and comments:

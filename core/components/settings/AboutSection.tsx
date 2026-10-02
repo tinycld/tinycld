@@ -55,7 +55,6 @@ export function AboutSection() {
 
     return (
         <View className="gap-3">
-            <Text className="text-xl font-bold text-foreground">About</Text>
             <View className="rounded-xl border border-border bg-surface-secondary p-4 gap-2">
                 <Row label="Version" value={versionValue} />
                 {bundleValue ? <Row label="Bundle" value={bundleValue} /> : null}

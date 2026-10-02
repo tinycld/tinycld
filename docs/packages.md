@@ -275,7 +275,9 @@ export default manifest
 | `hooks.directory` | PocketBase JS hooks symlinked into `server/pb_hooks/`. |
 | `collections` | `register` + `types` export subpaths; wires pbtsdb collections and the schema type. |
 | `sidebar` / `provider` | A package may contribute a sidebar component **or** a context provider that wraps app children. The provider is emitted as a `{ load: () => import(...) }` thunk — not `lazy()` — and core resolves every provider before the route tree mounts (`core/lib/packages/provider-loader.ts`), so the package area never suspends on it. |
-| `settings[]` | Personal Settings panel contributions (`slug`, `label`, `component`). See [Extension points](#extension-points-settings-panels-and-sidebar-slots) below. |
+| `settings[]` | Org-administration panels (`slug`, `label`, `component`), admin-only, at `/settings/<pkgSlug>/<slug>`. See [Extension points](#extension-points-settings-panels-and-sidebar-slots) below. |
+| `accountSettings[]` | Per-user panels, same shape as `settings`, listed in Settings' **Account** group and open to every role, at `/settings/account/<pkgSlug>/<slug>`. |
+| `systemSettings[]` | Deployment-wide panels (`slug`, `label`, `component`, optional `keyPrefix`), owner-only, at `/settings/system/<pkgSlug>/<slug>`. |
 | `slots[]` | Names of sidebar slots this package exposes for *other* packages to render into. Free-form strings; duplicates within one manifest are a generator error. Render with `<SidebarSlot target="<this-slug>" slot="<name>" />` from `@tinycld/core/components/sidebar-primitives`. |
 | `sidebarContributions[]` | Inverse of `slots`: this package's contributions into *another* package's slot. Each `{ target, slot, component, order?, label? }` is generator-validated. `label` names the contribution where the host lays the slot out as tabs. `target: 'core'` renders into a slot core owns (see [Setup wizard steps](#setup-wizard-steps-setupsteps)). |
 | `setupSteps[]` | Steps this package adds to the first-run setup wizard (`id`, `label`, `module`, `order?`). See [Setup wizard steps](#setup-wizard-steps-setupsteps) below. |
@@ -324,7 +326,8 @@ a silent hole for anything else.
 ### Manifest variation across shipped packages
 
 - **contacts / mail** use `sidebar`; **calc** uses `provider`.
-- Only **mail** declares `settings`.
+- **mail** and **hosting-ui** declare `settings`; **mail** also declares `systemSettings`.
+- **boards** (GitHub) and **google-takeout-import** declare `accountSettings`.
 - Only **calc** declares cross-package `dependencies` (`['drive']`).
 - `nav.shortcut` is optional.
 - A package with a `tests/` dir need not declare `tests` in the manifest
@@ -508,7 +511,7 @@ in the public tree stay tracked and are force-added despite the gitignore.
 
 The **single source of truth** for what's installed — a typed array, one entry
 per linked package, each built by
-`definePackageEntry<PkgSchema>()({ manifest, registerCollections, sidebar, provider, settings, sidebarContributions })`.
+`definePackageEntry<PkgSchema>()({ manifest, registerCollections, sidebar, provider, settings, accountSettings, systemSettings, sidebarContributions })`.
 It also emits `MergedPackageSchema` as a **literal** intersection of every
 package's `{Pkg}Schema` (`CalcSchema & ContactsSchema & …`); `pocketbase.ts`
 forms `type MergedSchema = Schema & MergedPackageSchema` from it. (It must be a
@@ -598,7 +601,7 @@ which replaces a file the old generator used to write:
 |---|---|---|
 | `derive-stores.ts` | `buildPackageStores` | `package-collections.ts`'s `packageStores` |
 | `static-registry.ts` | `packageRegistry`, `toStaticRegistry` | `package-registry.ts` |
-| `derive-components.ts` | `deriveSidebars` / `deriveProviders` / `deriveSettings` / `deriveSidebarContributions` + the `packageSidebars` / `packageProviders` / `packageSettings` / `packageSidebarContributions` consts | `package-sidebars.ts`, `package-providers.ts`, `package-settings.ts`, (new) `package-sidebar-contributions.ts` |
+| `derive-components.ts` | `deriveSidebars` / `deriveProviders` / `deriveSettings` / `deriveAccountSettings` / `deriveSystemSettings` / `deriveSidebarContributions` + the `packageSidebars` / `packageProviders` / `packageSettings` / `packageAccountSettings` / `packageSystemSettings` / `packageSidebarContributions` consts | `package-sidebars.ts`, `package-providers.ts`, `package-settings.ts`, (new) `package-sidebar-contributions.ts` |
 | `derive-seeds.ts` | `deriveSeeds` (ports the `dependencies` topo-sort) | `package-seeds.ts` |
 
 `usePackages()` still merges the static set (`packageRegistry`) with
@@ -620,7 +623,15 @@ It warns (but does not fail) when:
 
 The generator threads two manifest-declared extension points through the same lazy-import pipeline. (Package `provider`s are the exception: they are needed on every signed-in boot, so they are loaded up front by `core/lib/packages/provider-loader.ts` rather than `lazy()`-suspended in place.) Both share the same lifecycle: **manifest field → `gen-config.ts` emits a `lazy(() => import(...))` entry → runtime derivation in `core/lib/packages/derive-components.ts` → host UI calls a React helper that consumes the registry → component loads under `<Suspense>` on first render.**
 
-**Settings panels** (`manifest.settings: [{ slug, label, component }]`):
+**Settings panels** come in three registries. Pick by who the panel acts for:
+
+| Field | Acts on | Shown to | Route tree |
+|---|---|---|---|
+| `accountSettings` | the viewer's own data | every role, in the **Account** group | `settings/account/[...section]` |
+| `settings` | the organization | owners and admins, in a group named after the package | `settings/[...section]` |
+| `systemSettings` | the whole deployment | owners, in the **System** group | `settings/system/[...section]` |
+
+Each tree resolves against its own registry, so one package can use the same panel slug in more than one. The example below uses `settings`; the other two follow the same pipeline (`packageAccountSettings`, `packageSystemSettings`).
 
 ```ts
 // app/tinycld.config.ts (emitted)
@@ -642,7 +653,7 @@ packageSettings.map(group => group.panels.map(panel => /* render link */))
 // looks up the matching panel by [pkgSlug, panelSlug] and renders panel.Component
 ```
 
-The `component` subpath must resolve through the package's `package.json` `exports` wildcard (e.g. `"./settings/*": "./tinycld/mail/settings/*.tsx"`). The component must default-export — the generator imports by default name. The `slug` must be unique across **all** installed packages, not just within one manifest.
+The `component` subpath must resolve through the package's `package.json` `exports` wildcard (e.g. `"./settings/*": "./tinycld/mail/settings/*.tsx"`). The component must default-export — the generator imports by default name. A panel is addressed by `[pkgSlug, slug]`, so its `slug` must be unique within one registry of one manifest.
 
 **Sidebar slots** (`manifest.slots: ['sidebar.<name>']` on the host + `manifest.sidebarContributions: [{ target, slot, component, order?, label? }]` on the contributor):
 

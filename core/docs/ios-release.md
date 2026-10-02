@@ -70,7 +70,7 @@ Copy this verbatim into App Store Connect → App Review Information → Notes w
     reseeded nightly, so Mail, Calendar, Contacts, and Drive are always
     populated.
 
-    Account deletion: Settings → Personal → Delete my account. This
+    Account deletion: Settings → Account access → Delete my account. This
     anonymizes the user record and removes the user from every org.
 
     Privacy policy: https://tinycld.org/privacy
@@ -117,9 +117,9 @@ Copy this verbatim into App Store Connect → App Review Information → Notes w
 - Sign in with demo account → primary org loads.
 - Browse mail, calendar, contacts, drive — all populated.
 - Toggle system dark mode → app follows.
-- Settings → Personal → About shows version, commit, server.
-- Settings → Personal → Disconnect server → returns to `/connect`, credentials cleared.
-- Sign back in → Settings → Personal → Delete account → type email → confirm → returns to `/connect` and old email can no longer sign in.
+- Settings → About shows version, commit, server.
+- Settings → Servers → Disconnect → returns to `/connect`, credentials cleared.
+- Sign back in → Settings → Account access → Delete my account → type email → confirm → returns to `/connect` and old email can no longer sign in.
 - Force a test crash in a TestFlight build → Sentry receives the event with scrubbed PII.
 - Push notification from server → delivered to the device with production APNs cert.
 

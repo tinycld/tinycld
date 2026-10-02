@@ -41,7 +41,24 @@ export interface PackageManifest {
         component: string
     }
 
+    /**
+     * Org-administration panels. Each package that declares any gets its own
+     * group in the admin-only part of Settings, at
+     * `/settings/<pkgSlug>/<slug>`. Only owners and admins can open them.
+     */
     settings?: {
+        slug: string
+        component: string
+        label: string
+    }[]
+
+    /**
+     * Per-user panels: things a member does for their own account (import
+     * their own data, connect their own integrations). Listed in the Account
+     * group of Settings, at `/settings/account/<pkgSlug>/<slug>`, and open to
+     * every role. Same shape and lazy-component resolution as `settings`.
+     */
+    accountSettings?: {
         slug: string
         component: string
         label: string

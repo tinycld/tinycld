@@ -3,10 +3,10 @@ import { authKeyInitScript } from './auth-key-helpers'
 import { appShell } from './helpers'
 
 // The webServer started by playwright.config.ts serves the SPA and /api/*
-// from a single PocketBase listener on this port (static serve, no proxy).
+// from a single PocketBase listener on E2E_PORT (static serve, no proxy).
 // The test fires against the absolute URL because page.request runs outside
 // the page's origin; PocketBase answers /api/* directly.
-const PB_TEST_URL = 'http://127.0.0.1:7200'
+const PB_TEST_URL = `http://127.0.0.1:${process.env.E2E_PORT ?? 7200}`
 
 // AsyncAuthStore (configured in packages/@tinycld/core/lib/pocketbase.ts) persists the
 // PocketBase auth state via @react-native-async-storage/async-storage. On web, AsyncStorage

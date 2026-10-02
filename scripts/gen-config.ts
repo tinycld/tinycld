@@ -49,6 +49,7 @@ export interface ConfigPkg {
     hasProvider: boolean
     hasSeed: boolean
     settings: ConfigSettingsPanel[]
+    accountSettings: ConfigSettingsPanel[]
     systemSettings: ConfigSystemSettingsPanel[]
     slots: string[]
     sidebarContributions: ConfigSidebarContribution[]
@@ -82,6 +83,9 @@ function validateConfigPkg(p: ConfigPkg): void {
     assertSafeImportField('slug', p.slug)
     if (p.schemaType) assertSafeImportField('schemaType', p.schemaType)
     for (const s of p.settings) assertSafeImportField('settings[].component', s.component)
+    for (const s of p.accountSettings) {
+        assertSafeImportField('accountSettings[].component', s.component)
+    }
     for (const s of p.systemSettings) {
         assertSafeImportField('systemSettings[].component', s.component)
     }
@@ -129,6 +133,23 @@ function pushSetupStepLines(lines: string[], p: ConfigPkg): void {
     lines.push('        ],')
 }
 
+// Emits `<key>: [ …one line per item… ],`, or nothing for an empty list.
+function pushArrayLines<T>(
+    lines: string[],
+    key: string,
+    items: readonly T[],
+    line: (item: T) => string
+): void {
+    if (items.length === 0) return
+    lines.push(`        ${key}: [`)
+    for (const item of items) lines.push(line(item))
+    lines.push('        ],')
+}
+
+function settingsPanelLine(packageName: string, s: ConfigSettingsPanel): string {
+    return `            { slug: ${jsonLiteral(s.slug)}, label: ${jsonLiteral(s.label)}, Component: lazy(() => import('${packageName}/${s.component}')) },`
+}
+
 // One systemSettings entry. Extracted from buildConfigSource so that function
 // stays under the complexity ceiling, and so the keyPrefix rule lives in one
 // place: emitted only when the manifest declares it, leaving a panel that opts
@@ -159,6 +180,7 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
         p =>
             p.hasSidebar ||
             p.settings.length > 0 ||
+            p.accountSettings.length > 0 ||
             p.systemSettings.length > 0 ||
             p.sidebarContributions.length > 0
     )
@@ -193,28 +215,18 @@ export function buildConfigSource(pkgs: ConfigPkg[]): string {
             // route tree mounts (see PackageProviderLoader in config-types.ts).
             lines.push(`        provider: { load: () => import('${p.packageName}/provider') },`)
         }
-        if (p.settings.length > 0) {
-            lines.push('        settings: [')
-            for (const s of p.settings) {
-                // No keyPrefix here, deliberately: these panels are ORG-scoped
-                // and stay editable wherever the deployment runs. Mail declares
-                // the slug `provider` in both trees — its system panel picks the
-                // provider (the operator's), its org panel manages domains (the
-                // org's). Emitting a prefix here would hide the second with the
-                // first.
-                lines.push(
-                    `            { slug: ${jsonLiteral(s.slug)}, label: ${jsonLiteral(s.label)}, Component: lazy(() => import('${p.packageName}/${s.component}')) },`
-                )
-            }
-            lines.push('        ],')
-        }
-        if (p.systemSettings.length > 0) {
-            lines.push('        systemSettings: [')
-            for (const s of p.systemSettings) {
-                lines.push(systemSettingsPanelLine(p.packageName, s))
-            }
-            lines.push('        ],')
-        }
+        // No keyPrefix on org or account panels, deliberately: they stay
+        // editable wherever the deployment runs. Mail declares the slug
+        // `provider` in both the org and system trees — its system panel picks
+        // the provider (the operator's), its org panel manages domains (the
+        // org's). A prefix on the org panel would hide it along with the system one.
+        pushArrayLines(lines, 'settings', p.settings, s => settingsPanelLine(p.packageName, s))
+        pushArrayLines(lines, 'accountSettings', p.accountSettings, s =>
+            settingsPanelLine(p.packageName, s)
+        )
+        pushArrayLines(lines, 'systemSettings', p.systemSettings, s =>
+            systemSettingsPanelLine(p.packageName, s)
+        )
         if (p.sidebarContributions.length > 0) {
             lines.push('        sidebarContributions: [')
             for (const c of p.sidebarContributions) {

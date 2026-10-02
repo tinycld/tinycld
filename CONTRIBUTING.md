@@ -266,7 +266,7 @@ signals it ran.
 - Use `useAuth()` for the current user and `useCurrentRole()` for their role. `useOrgInfo()` is the one org-named survivor and returns deployment BRANDING only (`{ org }` — the name behind `/api/org-info`); it carries no id or slug, because there is no server-side org to identify.
 
 ## Routing & Navigation
-- **Routes are bare** — no org segment ever appears in the URL: `/a/contacts`, `/a/mail`, `/a/settings/personal` (the `/a/` prefix is the app group, added by `useOrgHref()`). The deployment IS the org, so there is nothing to put there.
+- **Routes are bare** — no org segment ever appears in the URL: `/a/contacts`, `/a/mail`, `/a/settings/profile` (the `/a/` prefix is the app group, added by `useOrgHref()`). The deployment IS the org, so there is nothing to put there.
 - Use `useOrgHref()` from `@tinycld/core/lib/org-routes` for navigation. Paths are app-root-relative; the hook is retained (rather than raw strings) so the ~200 call sites keep one shape:
   ```tsx
   const orgHref = useOrgHref()

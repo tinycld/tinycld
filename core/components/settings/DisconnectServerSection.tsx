@@ -34,7 +34,6 @@ export function DisconnectServerSection() {
 
     return (
         <View className="gap-3">
-            <Text className="text-xl font-bold text-foreground">Server</Text>
             <View className="rounded-xl border border-border bg-surface-secondary p-4 gap-2">
                 <Text className="text-base font-semibold text-foreground">Disconnect server</Text>
                 <Text className="text-[13px] text-muted-foreground">

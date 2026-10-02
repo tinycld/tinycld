@@ -94,7 +94,6 @@ export function ConnectedAppsSection() {
     if (isError) {
         return (
             <View className="gap-3">
-                <Text className="text-xl font-bold text-foreground">Connected apps</Text>
                 <Text className="text-destructive">
                     Couldn't load your connected apps. Try reloading the page.
                 </Text>
@@ -102,11 +101,17 @@ export function ConnectedAppsSection() {
         )
     }
 
-    if (isLoading || active.length === 0) return null
+    if (isLoading) return null
+    if (active.length === 0) {
+        return (
+            <Text className="text-muted-foreground">
+                No apps or devices are connected to your account.
+            </Text>
+        )
+    }
 
     return (
         <View className="gap-3">
-            <Text className="text-xl font-bold text-foreground">Connected apps</Text>
             <View className="rounded-xl border border-border bg-surface-secondary p-4 gap-2">
                 <Text className="text-[13px] text-muted-foreground">
                     Devices and integrations with access to your account. Revoke anything you don't

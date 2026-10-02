@@ -8,10 +8,10 @@ import { appShell, login } from './helpers'
 //
 // The target is a settings route because settings is committed in the app shell
 // itself, so this spec holds in any assembly — a feature-package route would
-// skip whenever that package isn't linked. /settings/personal specifically: it
+// skip whenever that package isn't linked. /settings/profile specifically: it
 // is a leaf that renders itself, where bare /a/settings redirects to a section.
 test('signing in from a deep link lands on the attempted route', async ({ page }) => {
-    await login(page, { startAt: '/a/settings/personal' })
+    await login(page, { startAt: '/a/settings/profile' })
 
     // Screen first, URL second: a URL changes when the router ACCEPTS a
     // navigation, before the target screen commits, so asserting the URL alone
@@ -19,8 +19,8 @@ test('signing in from a deep link lands on the attempted route', async ({ page }
     // The document title is stamped by the screen's own DocumentTitle, so it
     // only matches once that screen is actually mounted.
     await expect(appShell(page)).toBeVisible()
-    await expect(page).toHaveTitle(/Settings — Personal$/, { timeout: 20_000 })
-    await expect(page).toHaveURL(/\/a\/settings\/personal(?:[/?]|$)/)
+    await expect(page).toHaveTitle(/Settings — Profile$/, { timeout: 20_000 })
+    await expect(page).toHaveURL(/\/a\/settings\/profile(?:[/?]|$)/)
 })
 
 // The no-pending-route fallback. '/' is filtered out when the gate records it,
