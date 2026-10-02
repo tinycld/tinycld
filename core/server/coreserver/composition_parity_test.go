@@ -80,7 +80,7 @@ var hostHookCounts = map[string]int{
 	"OnRecordUpdateExecute":           4,
 	"OnRecordUpdateRequest":           12,
 	"OnRecordValidate":                6,
-	"OnServe":                         29,
+	"OnServe":                         30,
 	"OnSettingsReload":                1,
 	"OnTerminate":                     4,
 }
