@@ -5,8 +5,8 @@ tags: [security, cli, integrations]
 order: 40
 ---
 
-To see what has access to your account, open **Settings → Personal** and find
-**Connected apps**. Each row is one device or integration, with when it was
+To see what has access to your account, open **Settings → Connected apps**.
+Each row is one device or integration, with when it was
 last used.
 
 ## Connecting the command line tool

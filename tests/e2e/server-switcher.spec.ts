@@ -235,12 +235,9 @@ test.describe('switcher on desktop — user menu', () => {
     // list that only names where you already are.
     test('stays hidden when there is only one server to choose from', async ({ page }) => {
         await login(page)
-        await expect(page.getByTestId('nav-home')).toBeVisible()
+        await openUserMenu(page)
 
-        await page.getByLabel('User menu').click()
-        await expect(page.getByText('Settings', { exact: true })).toBeVisible()
-
-        await expect(page.getByText('Servers', { exact: true })).toHaveCount(0)
+        await expect(menuLabel(page, 'Servers')).toHaveCount(0)
     })
 
     test('lists both servers, marking only the current one', async ({ page }) => {

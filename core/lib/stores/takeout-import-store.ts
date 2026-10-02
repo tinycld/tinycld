@@ -40,6 +40,10 @@ interface TakeoutImportState {
     overallError: string | null
     activeServices: ImportService[]
     cancelRequested: boolean
+    // Where the import's own screen lives. The package sets it, so the rail
+    // indicator and the completion notice can link back without core
+    // knowing the package's route.
+    progressHref: string | null
 
     setFiles: (files: File[]) => void
     setDetection: (detection: TakeoutDetection) => void
@@ -48,6 +52,7 @@ interface TakeoutImportState {
     setPhase: (phase: OverallPhase) => void
     setOverallError: (error: string | null) => void
     setActiveServices: (services: ImportService[]) => void
+    setProgressHref: (href: string) => void
     requestCancel: () => void
     reset: () => void
 }
@@ -86,6 +91,7 @@ export const useTakeoutImportStore = create<TakeoutImportState>()(set => ({
     overallError: null,
     activeServices: [],
     cancelRequested: false,
+    progressHref: null,
 
     setFiles: files => set({ files }),
     setDetection: detection =>
@@ -128,6 +134,7 @@ export const useTakeoutImportStore = create<TakeoutImportState>()(set => ({
     setPhase: phase => set({ phase }),
     setOverallError: overallError => set({ overallError }),
     setActiveServices: activeServices => set({ activeServices }),
+    setProgressHref: progressHref => set({ progressHref }),
     requestCancel: () => set({ cancelRequested: true }),
     reset: () =>
         set({

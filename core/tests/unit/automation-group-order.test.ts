@@ -4,7 +4,7 @@ import { orderGroupsByUserPreference } from '../../lib/automation/condition-help
 // The trigger and action menus group by package. They used to come out
 // alphabetically by slug (a stability hack in use-automation-catalog), which
 // matched nothing else in the app. Now they follow the order the user dragged
-// their apps into in Settings → Personal → Navigation, so the menus read like
+// their apps into in Settings → Appearance → Navigation, so the menus read like
 // the sidebar and tab bar.
 
 function groupsOf(...slugs: string[]) {

@@ -10,7 +10,7 @@ server — the commands it offers match exactly the packages installed here.
 
 ## Downloading
 
-Open **Settings → Personal → About** and find **Command line tools**. Pick the
+Open **Settings → About** and find **Command line tools**. Pick the
 build for your computer — on a Mac, choose **Apple Silicon** for M-series
 machines and **Intel** for older ones.
 

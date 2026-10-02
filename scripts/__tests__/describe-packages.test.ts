@@ -55,6 +55,28 @@ describe('manifestToConfigPkg', () => {
         expect(cp.sidebarContributions).toEqual([])
     })
 
+    it('passes accountSettings through, defaulting to [] when omitted', () => {
+        const withAccount = manifestToConfigPkg('@tinycld/gizmo-import', {
+            name: 'T',
+            slug: 'gizmo-import',
+            version: '0.1.0',
+            description: 'd',
+            accountSettings: [{ slug: 'g', component: 'settings/takeout', label: 'Import' }],
+        })
+        expect(withAccount.accountSettings).toEqual([
+            { slug: 'g', component: 'settings/takeout', label: 'Import' },
+        ])
+        expect(withAccount.settings).toEqual([])
+
+        const without = manifestToConfigPkg('@tinycld/doodads', {
+            name: 'Doodads',
+            slug: 'doodads',
+            version: '0.1.0',
+            description: 'd',
+        })
+        expect(without.accountSettings).toEqual([])
+    })
+
     it('defaults systemSettings to [] when the manifest omits it', () => {
         const cp = manifestToConfigPkg('@tinycld/doodads', {
             name: 'Doodads',

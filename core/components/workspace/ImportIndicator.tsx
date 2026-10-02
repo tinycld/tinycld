@@ -1,21 +1,22 @@
-import { useOrgHref } from '@tinycld/core/lib/org-routes'
+import { appHref } from '@tinycld/core/lib/org-routes'
 import { useTakeoutImportStore } from '@tinycld/core/lib/stores/takeout-import-store'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
-import { Link, usePathname } from 'expo-router'
+import { type Href, Link, usePathname } from 'expo-router'
 import { ActivityIndicator } from 'react-native'
 
 export function ImportIndicator() {
     const phase = useTakeoutImportStore(s => s.phase)
+    const href = useTakeoutImportStore(s => s.progressHref) ?? appHref('settings')
     const pathname = usePathname()
-    const orgHref = useOrgHref()
     const railText = useThemeColor('rail-text')
 
     if (phase !== 'importing') return null
-    if (pathname?.endsWith('/settings/personal')) return null
+    // Already on the import screen, which shows its own progress.
+    if (pathname && href.endsWith(pathname)) return null
 
     return (
         <Link
-            href={orgHref('settings/personal')}
+            href={href as Href}
             style={{
                 width: 44,
                 height: 44,

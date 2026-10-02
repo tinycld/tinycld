@@ -31,11 +31,11 @@ test.describe('Document title', () => {
 
     test('settings child overrides the layout fallback', async ({ page }) => {
         await login(page)
-        await page.goto('/a/settings/personal')
+        await page.goto('/a/settings/profile')
         // Both the layout (pkg="Settings") and the child
-        // (pkg="Settings" title="Personal") mount; child wins per
+        // (pkg="Settings" title="Profile") mount; child wins per
         // react-helmet-async ordering, producing the more-specific title.
-        await expect(page).toHaveTitle(`TinyCld: ${ORG_NAME} — Settings — Personal`)
+        await expect(page).toHaveTitle(`TinyCld: ${ORG_NAME} — Settings — Profile`)
     })
 
     test('help hub uses pkg without a leaf', async ({ page }) => {

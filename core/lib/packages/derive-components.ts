@@ -64,6 +64,18 @@ export function deriveSettings(entries: readonly SettingsEntryLike[]): PackageSe
     return out
 }
 
+type AccountSettingsEntryLike = {
+    manifest: SettingsEntryLike['manifest']
+    accountSettings?: PackageSettingsPanel[]
+}
+
+/** Per-user settings panels grouped by package, omitting packages that contribute none. */
+export function deriveAccountSettings(
+    entries: readonly AccountSettingsEntryLike[]
+): PackageSettingsGroup[] {
+    return deriveSettings(entries.map(e => ({ manifest: e.manifest, settings: e.accountSettings })))
+}
+
 export interface PackageSystemSettingsGroup {
     packageName: string
     pkgSlug: string
@@ -154,5 +166,6 @@ export function deriveSidebarContributions(
 export const packageSidebars: Record<string, SidebarComp | null> = deriveSidebars(tinycldConfig)
 export const packageProviders = deriveProviders(tinycldConfig)
 export const packageSettings = deriveSettings(tinycldConfig)
+export const packageAccountSettings = deriveAccountSettings(tinycldConfig)
 export const packageSystemSettings = deriveSystemSettings(tinycldConfig)
 export const packageSidebarContributions = deriveSidebarContributions(tinycldConfig)

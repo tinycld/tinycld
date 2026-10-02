@@ -146,9 +146,8 @@ linked packages = the set of installed workspace members.
 `cli/` builds the user-facing `tinycld` binary — the end-user tool for scripting Drive,
 Mail, Cards, Contacts, Calendar and document/spreadsheet comments from a terminal. Each
 server cross-compiles its own copy containing exactly the command groups for the packages
-it has installed; users download it from Settings → Personal → About in the app.
-Authentication is an OAuth 2.1 device grant, revocable from Settings → Personal →
-Connected apps.
+it has installed; users download it from Settings → About in the app.
+Authentication is an OAuth 2.1 device grant, revocable from Settings → Connected apps.
 
 **This `tinycld` binary is not `tinycld-pkg`** — `tinycld-pkg` (`@tinycld/package-scripts`,
 nested at `package-scripts/`) is the per-member *developer* tool that runs biome + tsc +

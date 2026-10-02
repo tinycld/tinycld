@@ -49,6 +49,11 @@ export function manifestToConfigPkg(packageName: string, manifest: PackageManife
             label: s.label,
             component: s.component,
         })),
+        accountSettings: (manifest.accountSettings ?? []).map(s => ({
+            slug: s.slug,
+            label: s.label,
+            component: s.component,
+        })),
         systemSettings: (manifest.systemSettings ?? []).map(s => ({
             slug: s.slug,
             label: s.label,
