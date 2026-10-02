@@ -7,6 +7,7 @@ import { log } from '@tinycld/core/lib/logger'
 import { mutation, useMutation } from '@tinycld/core/lib/mutations'
 import { notify } from '@tinycld/core/lib/notify'
 import { useStore } from '@tinycld/core/lib/pocketbase'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import type PocketBase from 'pocketbase'
 import {
     type AutoUpgradeStatusResponse,
@@ -18,7 +19,7 @@ import {
 import { useSystemSettings } from './system-settings-store'
 
 async function fetchStatus(pb: PocketBase): Promise<AutoUpgradeStatusResponse> {
-    const res = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/auto-upgrade/status`, {
+    const res = await serverFetch(`${PB_SERVER_ADDR}/api/admin/packages/auto-upgrade/status`, {
         headers: { Authorization: pb.authStore.token },
     })
     if (!res.ok) throw new Error(`auto-upgrade status failed: ${res.status}`)

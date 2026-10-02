@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import type PocketBase from 'pocketbase'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
@@ -26,7 +27,7 @@ export {
 } from './version-compare'
 
 async function adminFetch<T>(pb: PocketBase, path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`${PB_SERVER_ADDR}/api/admin/packages${path}`, {
+    const res = await serverFetch(`${PB_SERVER_ADDR}/api/admin/packages${path}`, {
         ...init,
         headers: {
             'Content-Type': 'application/json',

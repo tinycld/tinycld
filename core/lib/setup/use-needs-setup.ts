@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { getResolvedAddress, subscribeResolvedAddress } from '@tinycld/core/lib/server-address'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { useSyncExternalStore } from 'react'
 
 export const NEEDS_SETUP_QUERY_KEY = ['setup-check'] as const
@@ -15,7 +16,7 @@ export function useNeedsSetup(): boolean | undefined {
     const { data } = useQuery({
         queryKey: [...NEEDS_SETUP_QUERY_KEY, addr],
         queryFn: async () => {
-            const res = await fetch(`${addr}/api/setup/check`, { cache: 'no-store' })
+            const res = await serverFetch(`${addr}/api/setup/check`, { cache: 'no-store' })
             if (!res.ok) return false
             const body = (await res.json()) as { needsSetup?: boolean }
             return body.needsSetup === true
