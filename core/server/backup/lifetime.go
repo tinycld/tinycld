@@ -102,6 +102,22 @@ func StopAll(ctx context.Context, app core.App) error {
 	}
 }
 
+// Arm gives app a fresh lifetime for its runs: a shutdown context every
+// transfer and announcement derives from, and a run set that accepts runs.
+// It is the one place both are set, and it undoes StopAll, so it belongs on the
+// app's bootstrap — the point from which the app can run backups at all, and
+// the point a failed restart returns to.
+//
+// Transfers still running on an earlier lifetime are not re-bound; StopAll has
+// already waited for them by the time a stopped app is bootstrapped again.
+func Arm(app core.App) {
+	format.SetShutdown(context.Background())
+	s := runsOf(app)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopping = false
+}
+
 // survive runs one step of a run's terminal work and turns a panic into a log
 // line. The steps run inside the run's own deferred finalizer, past the recover
 // that guards the run's body, so a panic here would otherwise end the process.

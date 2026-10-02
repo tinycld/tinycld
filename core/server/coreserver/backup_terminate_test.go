@@ -2,12 +2,14 @@ package coreserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/backup"
@@ -108,13 +110,15 @@ func terminate(t *testing.T, app core.App, rowID string) terminateSnapshot {
 	return seen
 }
 
-// terminateApp is the backup app with the boot wiring bound and the process
-// lifetime set, as OnServe sets it in production.
+// terminateApp is the backup app with the boot wiring bound and booted through
+// it, so the runs' lifetime is armed the way a real boot arms it.
 func terminateApp(t *testing.T) core.App {
 	t.Helper()
 	app := backupTestApp(t)
 	RegisterBackupBoot(app)
-	backup.SetShutdown(context.Background())
+	if err := app.Bootstrap(); err != nil {
+		t.Fatal(err)
+	}
 	return app
 }
 
@@ -171,4 +175,72 @@ func TestTerminateCancelsACallbackInFlight(t *testing.T) {
 	if seen.interlocked {
 		t.Error("the run was still in its callback when the database closed")
 	}
+}
+
+// liveRepo's Put fails when its context is already done, as any client does
+// when handed a cancelled request. A run that inherits a cancelled shutdown
+// context therefore fails here instead of passing by ignoring it.
+type liveRepo struct{ heldRepo }
+
+func (r *liveRepo) Put(ctx context.Context, _ *snapshot.Snapshot, _ func(int64)) (repo.PutResult, error) {
+	if err := ctx.Err(); err != nil {
+		return repo.PutResult{}, err
+	}
+	return repo.PutResult{Ref: "live/1"}, nil
+}
+
+// failedRestart is what PocketBase's app.Restart does when execve fails: the
+// terminate hooks run with IsRestart, the finalizer closes the app, and a
+// deferred Bootstrap brings it back in the same process.
+func failedRestart(t *testing.T, app core.App) {
+	t.Helper()
+	execFailed := errors.New("exec format error")
+	err := app.OnTerminate().Trigger(&core.TerminateEvent{App: app, IsRestart: true}, func(e *core.TerminateEvent) error {
+		_ = e.App.ClearBootstrap()
+		defer func() {
+			if err := e.App.Bootstrap(); err != nil {
+				t.Errorf("re-bootstrap after the failed restart: %v", err)
+			}
+		}()
+		return execFailed
+	})
+	if !errors.Is(err, execFailed) {
+		t.Fatalf("restart = %v, want the exec failure", err)
+	}
+}
+
+// runLiveBackup runs a backup whose repository checks its context, and fails
+// the test unless it succeeds.
+func runLiveBackup(t *testing.T, app core.App, when string) {
+	t.Helper()
+	id, err := backup.Run(app, backup.Request{Kind: backup.KindScheduled, Repo: &liveRepo{}, TargetHost: "live"})
+	if err != nil {
+		t.Fatalf("a backup %s failed: %v", when, err)
+	}
+	row, err := app.FindRecordById("backups", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := row.GetString("status"); got != "succeeded" {
+		t.Fatalf("a backup %s finished %q", when, got)
+	}
+}
+
+// A restart whose execve fails leaves this process running on a re-bootstrapped
+// app. The stop the restart began must not outlive it: backups must neither be
+// refused as stopping nor start on the cancelled shutdown context.
+func TestAFailedRestartLeavesBackupsRunnable(t *testing.T) {
+	app := terminateApp(t)
+	router, err := apis.NewRouter(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.OnServe().Trigger(&core.ServeEvent{App: app, Router: router}, func(*core.ServeEvent) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	runLiveBackup(t, app, "before the restart")
+
+	failedRestart(t, app)
+
+	runLiveBackup(t, app, "after a failed restart")
 }
