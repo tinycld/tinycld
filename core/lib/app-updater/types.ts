@@ -1,3 +1,5 @@
+import type { Fetch } from '@tinycld/core/lib/read-only-retry'
+
 export interface UpdateAsset {
     key: string
     hash: string
@@ -24,7 +26,7 @@ export interface CheckDeps {
     // equal to a server `build-<ts>-<platform>` id). Empty string when the native
     // module can't supply it — the server then falls back to the id comparison.
     currentHash: string
-    fetchFn: typeof fetch
+    fetchFn: Fetch
 }
 
 export interface StageDeps {

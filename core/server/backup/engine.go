@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"runtime/debug"
 	"sync"
@@ -90,17 +91,33 @@ func currentSource() string {
 // Start inserts the ledger row and runs the backup on a goroutine. It fails
 // fast on the interlock and the ceiling so a caller gets 409/429 instead of a
 // row that fails a moment later.
+//
+// The run is tracked against app from before it claims anything until after
+// its last write, so StopAll can hold the app open until it is done.
 func Start(app core.App, req Request) (string, error) {
-	row, job, err := begin(app, req)
+	finished, err := trackRun(app)
 	if err != nil {
 		return "", err
 	}
-	go func() { _ = run(app, req, row, job) }()
+	row, job, err := begin(app, req)
+	if err != nil {
+		finished()
+		return "", err
+	}
+	go func() {
+		defer finished()
+		_ = run(app, req, row, job)
+	}()
 	return row.Id, nil
 }
 
 // Run is Start without the goroutine: it returns when the sink is closed.
 func Run(app core.App, req Request) (string, error) {
+	finished, err := trackRun(app)
+	if err != nil {
+		return "", err
+	}
+	defer finished()
 	row, job, err := begin(app, req)
 	if err != nil {
 		return "", err
@@ -177,11 +194,17 @@ func run(app core.App, req Request, row *core.Record, job *installjob.Job) (err 
 			result.Bytes = sent.Load()
 			log.Error("backup failed", "id", row.Id, "kind", req.Kind, "err", err)
 		}
-		if ferr := finishRow(app, row, status, result, errMsg, manifest, r.Kind()); ferr != nil {
-			log.Error("could not finalize backup row", "id", row.Id, "err", ferr)
-		}
-		announce(app, req, row, status, errMsg)
-		postCallback(req.Callback, row)
+		survive(row.Id, "finalize", func() {
+			if ferr := finishRow(app, row, status, result, errMsg, manifest, r.Kind()); ferr != nil {
+				log.Error("could not finalize backup row", "id", row.Id, "err", ferr)
+			}
+		})
+		// The same lifetime as the transfer: a shutdown has to reach the
+		// network calls here too, or StopAll waits on a peer that never answers.
+		ctx, cancel := format.Lifetime(context.Background())
+		defer cancel()
+		survive(row.Id, "announce", func() { announce(ctx, app, req, row, status, errMsg) })
+		survive(row.Id, "callback", func() { postCallback(ctx, req.Callback, row) })
 	}()
 
 	// Refused before the snapshot: a VACUUM INTO that runs out of space leaves
@@ -264,7 +287,7 @@ func appFiles(app core.App) ([]snapshot.StoredFile, func() error, error) {
 
 // announce tells the people who can act, and records the run in the audit log.
 // Neither failure fails the backup: the archive is already written.
-func announce(app core.App, req Request, row *core.Record, status, errMsg string) {
+func announce(ctx context.Context, app core.App, req Request, row *core.Record, status, errMsg string) {
 	if req.Kind == KindPreRestore {
 		return // part of a restore; the restore announces itself
 	}
@@ -274,7 +297,7 @@ func announce(app core.App, req Request, row *core.Record, status, errMsg string
 		title, body, typ = "Backup failed", "A backup of this organization failed: "+errMsg, "core.backup.failed"
 		action = "backup.failed"
 	}
-	if _, err := notify.Administrators(app, notify.NotifyParams{Type: typ, Package: "core", Title: title, Body: body, URL: "/settings/backups"}); err != nil {
+	if _, err := notify.AdministratorsContext(ctx, app, notify.NotifyParams{Type: typ, Package: "core", Title: title, Body: body, URL: "/settings/backups"}); err != nil {
 		log.Warn("could not notify administrators about a backup", "err", err)
 	}
 	meta := map[string]any{"bytes": row.GetInt("bytes"), "kind": string(req.Kind)}
@@ -286,9 +309,20 @@ func announce(app core.App, req Request, row *core.Record, status, errMsg string
 	}
 }
 
+// callbackBound caps one callback request, from dial to the last byte of the
+// response body. The transport bounds only the wait for headers, and a run is
+// still holding the job interlock while it posts, so a receiver that answers and
+// then never finishes its body would block every backup, restore and package
+// install. A receiver only has to acknowledge a small JSON row.
+const callbackBound = 30 * time.Second
+
+// callbackTimeout is callbackBound, held in a var only so a test can shorten
+// it; nothing else writes it.
+var callbackTimeout = callbackBound
+
 // postCallback hands the finished row to whoever asked to be told. The row is
 // exported publicly, so a callback never carries a passphrase or a recipient.
-func postCallback(url string, row *core.Record) {
+func postCallback(ctx context.Context, url string, row *core.Record) {
 	if url == "" {
 		return
 	}
@@ -297,7 +331,15 @@ func postCallback(url string, row *core.Record) {
 		log.Warn("could not encode a backup row for its callback", "err", err)
 		return
 	}
-	res, err := format.NoRedirectClient().Post(url, "application/json", bytes.NewReader(body))
+	ctx, cancel := context.WithTimeout(ctx, callbackTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		log.Warn("backup callback failed", "host", HostOnly(url), "err", format.RedactURLError(err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := format.NoRedirectClient().Do(req)
 	if err != nil {
 		// The host attribute alone is not enough: Go's *url.Error prints the
 		// WHOLE callback URL, and a callback URL carries a token as often as a
@@ -306,8 +348,11 @@ func postCallback(url string, row *core.Record) {
 		log.Warn("backup callback failed", "host", HostOnly(url), "err", format.RedactURLError(err))
 		return
 	}
-	_, _ = io.Copy(io.Discard, res.Body)
+	_, cerr := io.Copy(io.Discard, res.Body)
 	_ = res.Body.Close()
+	if cerr != nil {
+		log.Warn("backup callback did not finish its response", "host", HostOnly(url), "err", format.RedactURLError(cerr))
+	}
 	if res.StatusCode >= 300 {
 		log.Warn("backup callback rejected", "host", HostOnly(url), "status", res.StatusCode)
 	}

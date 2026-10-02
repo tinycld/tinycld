@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { pb } from '@tinycld/core/lib/pocketbase'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { useMemo } from 'react'
 import type { FilePreviewSource } from './types'
 
@@ -112,7 +113,7 @@ export async function fetchRenderedHtml(
         headers['If-None-Match'] = opts.ifNoneMatch
     }
 
-    const response = await fetch(url, { method: 'GET', headers })
+    const response = await serverFetch(url, { method: 'GET', headers })
 
     if (response.status === 304) {
         return { html: '', etag: opts?.ifNoneMatch }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -155,12 +156,19 @@ func SwapSource(jobID, url string) error {
 
 // StartRestore inserts the ledger row and restores on a goroutine, so an HTTP
 // caller gets an id rather than holding a connection open for the transfer.
+//
+// Like Start, the restore is tracked against app so StopAll can hold the app
+// open until its last write.
 func StartRestore(app core.App, req RestoreRequest) (string, error) {
-	row, job, err := beginRestore(app, req)
+	finished, err := trackRun(app)
 	if err != nil {
 		return "", err
 	}
-	finished := watchRestore()
+	row, job, err := beginRestore(app, req)
+	if err != nil {
+		finished()
+		return "", err
+	}
 	go func() {
 		defer finished()
 		_ = runRestore(app, req, row, job)
@@ -178,6 +186,11 @@ func StartRestore(app core.App, req RestoreRequest) (string, error) {
 // package's own tests, which stub the restart seam, and an embedder driving a
 // restore from outside the HTTP surface.
 func Restore(app core.App, req RestoreRequest) (string, error) {
+	finished, err := trackRun(app)
+	if err != nil {
+		return "", err
+	}
+	defer finished()
 	row, job, err := beginRestore(app, req)
 	if err != nil {
 		return "", err
@@ -248,15 +261,23 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	}
 	defer closeSource()
 
-	if aerr := audit.Log(app, "restore.started", "backup", id, "restore", req.Request, nil); aerr != nil {
-		log.Warn("could not audit the start of a restore", "id", id, "err", aerr)
-	}
-
 	// manifest is a pointer so "never read" stays distinguishable from "read and
 	// empty": a zero-valued manifest in the ledger reads as a real archive of
 	// nothing.
 	var manifest *format.Manifest
+	// Named-return err: this closure is the single place a failed restore is
+	// unwound, whichever return — or panic — got here. It is deferred before any
+	// work, so nothing in the body can escape it.
 	defer func() {
+		// A panic leaves err nil, which reads as a restore that worked and left
+		// the row "running" and a marker armed over whatever was half staged.
+		// Turning it into the error routes it through the same unwind as any
+		// failure: disarm, discard the staging, close the row, announce. It is
+		// not re-panicked, because a crashed process can do none of that.
+		if p := recover(); p != nil {
+			err = fmt.Errorf("restore: panic: %v", p)
+			log.Error("restore panicked", "id", id, "panic", p, "stack", string(debug.Stack()))
+		}
 		if err == nil {
 			// The row stays "running" on purpose. Only the restored process can
 			// say the restore worked, because only it boots on the staged data.
@@ -273,14 +294,23 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 		if rerr := os.Remove(armedPath(app)); rerr != nil && !os.IsNotExist(rerr) {
 			log.Warn("could not disarm a failed restore", "id", id, "err", rerr)
 		}
-		if ferr := finishRow(app, row, "failed", repo.PutResult{}, err.Error(), manifest, row.GetString("repository")); ferr != nil {
-			log.Error("could not finalize restore row", "id", id, "err", ferr)
-		}
+		errMsg := err.Error()
+		survive(id, "finalize", func() {
+			if ferr := finishRow(app, row, "failed", repo.PutResult{}, errMsg, manifest, row.GetString("repository")); ferr != nil {
+				log.Error("could not finalize restore row", "id", id, "err", ferr)
+			}
+		})
 		// Failure is the only outcome this process can announce. Success is
 		// announced by the post-boot finalizer, because a restore that worked
 		// ends by replacing the process that ran it.
-		announceRestore(app, req, row, false, err.Error())
+		ctx, cancel := format.Lifetime(context.Background())
+		defer cancel()
+		survive(id, "announce", func() { announceRestore(ctx, app, req, row, false, errMsg) })
 	}()
+
+	if aerr := audit.Log(app, "restore.started", "backup", id, "restore", req.Request, nil); aerr != nil {
+		log.Warn("could not audit the start of a restore", "id", id, "err", aerr)
+	}
 
 	// A remote source can expire at any point, including while phase 1 is still
 	// reading the manifest, so it is registered for a swap before the first byte
@@ -618,14 +648,14 @@ func mergeMeta(row *core.Record, extra map[string]any) map[string]any {
 // as arming ends by replacing the process, so this process is never the one that
 // can say it worked — the post-boot finalizer calls this with ok=true once it has
 // booted on the staged data.
-func announceRestore(app core.App, req RestoreRequest, row *core.Record, ok bool, errMsg string) {
+func announceRestore(ctx context.Context, app core.App, req RestoreRequest, row *core.Record, ok bool, errMsg string) {
 	typ, title, body, action := "core.restore.succeeded", "Restore completed",
 		"This organization was restored from a backup.", "restore.succeeded"
 	if !ok {
 		typ, title, body, action = "core.restore.failed", "Restore failed",
 			"Restoring from a backup failed: "+errMsg, "restore.failed"
 	}
-	if _, err := notify.Administrators(app, notify.NotifyParams{
+	if _, err := notify.AdministratorsContext(ctx, app, notify.NotifyParams{
 		Type: typ, Package: "core", Title: title, Body: body, URL: "/settings/backups",
 	}); err != nil {
 		log.Warn("could not notify administrators about a restore", "err", err)

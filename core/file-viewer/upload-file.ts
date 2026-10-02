@@ -1,30 +1,30 @@
+import {
+    abortableWait,
+    isReadOnlyBody,
+    READ_ONLY_MAX_RETRIES,
+    retryAfterMs,
+} from '@tinycld/core/lib/read-only-retry'
 import { pb } from '../lib/pocketbase'
 import type { PickedFile } from './picked-file'
 
-/**
- * Multipart upload with progress, for callers that need a progress bar.
- *
- * This is deliberately XMLHttpRequest rather than `fetch`: only XHR exposes
- * `upload.onprogress`, and the PocketBase SDK is built on fetch — so a
- * `collection.create()` with a file field cannot report how far a large upload
- * has got. React Native's XHR polyfill supports upload progress too, so the
- * one code path serves web and native.
- *
- * Bypassing the SDK for file BYTES is the sanctioned exception to the
- * never-bypass-pbtsdb rule; every other read and write stays on pbtsdb. Drive
- * established the exception, and boards and mail now share this implementation
- * rather than each keeping a copy.
- */
-export function uploadFormDataWithProgress(params: {
+interface XHRUploadResult {
+    status: number
+    body: unknown
+    retryAfter: string | null
+}
+
+/** One upload attempt. Rejects only on transport failure or abort; an HTTP
+ * error status resolves normally so the caller can inspect it (e.g. to
+ * detect a read-only pause) before deciding whether to retry. */
+function sendFormDataOnce(params: {
     url: string
     formData: FormData
     authToken: string
-    /** Defaults to POST. PATCH is what an update-with-file needs. */
-    method?: string
+    method: string
     onProgress?: (loaded: number, total: number) => void
     signal?: AbortSignal
-}): Promise<unknown> {
-    const { url, formData, authToken, method = 'POST', onProgress, signal } = params
+}): Promise<XHRUploadResult> {
+    const { url, formData, authToken, method, onProgress, signal } = params
 
     return new Promise((resolve, reject) => {
         if (signal?.aborted) {
@@ -53,18 +53,11 @@ export function uploadFormDataWithProgress(params: {
                 // Non-JSON response — treat as an empty success body.
                 parsed = null
             }
-            if (xhr.status >= 200 && xhr.status < 300) {
-                resolve(parsed)
-            } else {
-                const message =
-                    parsed &&
-                    typeof parsed === 'object' &&
-                    'message' in parsed &&
-                    typeof parsed.message === 'string'
-                        ? parsed.message
-                        : `Upload failed (${xhr.status})`
-                reject(new Error(message))
-            }
+            resolve({
+                status: xhr.status,
+                body: parsed,
+                retryAfter: xhr.getResponseHeader('Retry-After'),
+            })
         }
         xhr.onerror = () => reject(new TypeError('Network request failed'))
         xhr.onabort = () => reject(new DOMException('Aborted', 'AbortError'))
@@ -73,6 +66,57 @@ export function uploadFormDataWithProgress(params: {
 
         xhr.send(formData)
     })
+}
+
+/**
+ * Multipart upload with progress, for callers that need a progress bar.
+ *
+ * This is deliberately XMLHttpRequest rather than `fetch`: only XHR exposes
+ * `upload.onprogress`, and the PocketBase SDK is built on fetch — so a
+ * `collection.create()` with a file field cannot report how far a large upload
+ * has got. React Native's XHR polyfill supports upload progress too, so the
+ * one code path serves web and native.
+ *
+ * Bypassing the SDK for file BYTES is the sanctioned exception to the
+ * never-bypass-pbtsdb rule; every other read and write stays on pbtsdb. Drive
+ * established the exception, and boards and mail now share this implementation
+ * rather than each keeping a copy.
+ *
+ * This path never touches `fetch`, so it sits outside `pb.beforeSend`'s retry
+ * wrapper (read-only-retry.ts) and must retry a read-only pause itself, using
+ * the same predicate and retry budget so an upload pauses and resumes the
+ * same way every other write does.
+ */
+export async function uploadFormDataWithProgress(params: {
+    url: string
+    formData: FormData
+    authToken: string
+    /** Defaults to POST. PATCH is what an update-with-file needs. */
+    method?: string
+    onProgress?: (loaded: number, total: number) => void
+    signal?: AbortSignal
+}): Promise<unknown> {
+    const { url, formData, authToken, method = 'POST', onProgress, signal } = params
+
+    let result = await sendFormDataOnce({ url, formData, authToken, method, onProgress, signal })
+    for (let attempt = 0; attempt < READ_ONLY_MAX_RETRIES; attempt++) {
+        if (signal?.aborted || !isReadOnlyBody(result.status, result.body)) break
+        await abortableWait(retryAfterMs(result.retryAfter), signal)
+        if (signal?.aborted) break
+        result = await sendFormDataOnce({ url, formData, authToken, method, onProgress, signal })
+    }
+
+    if (result.status >= 200 && result.status < 300) {
+        return result.body
+    }
+    const message =
+        result.body &&
+        typeof result.body === 'object' &&
+        'message' in result.body &&
+        typeof result.body.message === 'string'
+            ? result.body.message
+            : `Upload failed (${result.status})`
+    throw new Error(message)
 }
 
 export interface UploadRecordParams {

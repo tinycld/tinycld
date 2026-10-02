@@ -5,6 +5,7 @@ import { captureException } from '@tinycld/core/lib/errors'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
 import { ACTIVE_PKG_STATUSES, isActivePkg } from '@tinycld/core/lib/packages/registry-predicates'
 import { refetchLoadedStores } from '@tinycld/core/lib/refetch-loaded-stores'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import type { Schema, Users } from '@tinycld/core/types/pbSchema'
 import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
 import PocketBase, { AsyncAuthStore } from 'pocketbase'
@@ -138,6 +139,11 @@ pb.beforeSend = (url, options) => {
     const headers = shareTokenHeaders()
     if (headers) {
         options.headers = { ...options.headers, ...headers }
+    }
+    // Writes refused during a server's read-only pause are retried; see
+    // read-only-retry.ts.
+    if (!options.fetch) {
+        options.fetch = serverFetch
     }
     return { url, options }
 }

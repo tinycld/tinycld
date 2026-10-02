@@ -124,10 +124,25 @@ func RegisterBackupBoot(app core.App) {
 	// harmless if nothing ever calls app.NewFilesystem() on this app, and
 	// binding must happen before that first filesystem is created.
 	backup.BindDeleteHold(app)
+	// Every bootstrap, the probe's included, arms the lifetime of the app's
+	// backup and restore runs once the database is open. A transfer is started
+	// from an HTTP handler but outlives it, so its only other bound lifetime is
+	// the app's. Without one a target that accepts and never reads holds the
+	// transfer goroutine — and the installjob interlock behind it — until the
+	// process is killed, so no backup, restore or package install can run again.
+	//
+	// Every bootstrap rather than once at serve: a restart whose execve fails
+	// re-bootstraps the same app in the same process after the terminate hook
+	// has stopped it, and arming gives that app a fresh lifetime. A restart that
+	// succeeds never comes back to run it.
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
 		if probe {
 			srvLog.Info("boot probe: restore state left untouched for the real boot")
-			return e.Next()
+			if err := e.Next(); err != nil {
+				return err
+			}
+			backup.Arm(e.App)
+			return nil
 		}
 		// Before e.Next(): PocketBase opens the database inside it, and the swap
 		// renames pb_data as a whole.
@@ -137,6 +152,7 @@ func RegisterBackupBoot(app core.App) {
 		if err := e.Next(); err != nil {
 			return err
 		}
+		backup.Arm(e.App)
 		// A snapshot from a run the previous process never finished is dead
 		// weight: the archive it fed is gone with the process.
 		if err := os.RemoveAll(filepath.Join(backup.LedgerPath(app), "backup-tmp")); err != nil {
@@ -172,19 +188,30 @@ func RegisterBackupBoot(app core.App) {
 			Priority: maintenancePriority,
 			Func:     backup.MaintenanceMiddleware(),
 		})
-		// A transfer is started from an HTTP handler but outlives it, so its
-		// only other bound lifetime is the process. Without this a target that
-		// accepts and never reads holds the transfer goroutine — and the
-		// installjob interlock behind it — until the process is killed, so no
-		// backup, restore or package install can run again.
-		backup.SetShutdown(context.Background())
 		return e.Next()
 	})
+	// Before e.Next(): PocketBase closes the database after the last hook, and a
+	// run cancelled here still writes its ledger row, notifies administrators
+	// and posts its callback through this app. That work must finish while the
+	// database is open, or it panics on a closed one as the process exits.
 	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
-		backup.CancelAll()
+		ctx, cancel := context.WithTimeout(context.Background(), backupStopBound)
+		defer cancel()
+		if err := backup.StopAll(ctx, e.App); err != nil {
+			srvLog.Warn("closing the app under a backup run that did not stop in time", "bound", backupStopBound, "err", err)
+		}
 		return e.Next()
 	})
 }
+
+// backupStopBound is how long a stop waits for a cancelled run. Every transfer,
+// announcement and callback ends at the cancel, so the wait is normally the
+// time of a few database writes. What it bounds is the work cancellation cannot
+// reach — a snapshot's VACUUM INTO, a restore staging an uploaded archive — so a
+// stop is never held hostage by it. It sits under the 10 s grace a supervisor
+// commonly gives a process before it kills it, so the warning is written rather
+// than cut off.
+const backupStopBound = 8 * time.Second
 
 // passphraseRecipient refuses a short phrase before anything is attempted.
 func passphraseRecipient(p string) (age.Recipient, error) {

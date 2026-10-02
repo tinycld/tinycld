@@ -67,6 +67,17 @@ func setupBackupCollections(t *testing.T) *tests.TestApp {
 		t.Fatal(err)
 	}
 	t.Cleanup(app.Cleanup)
+	// Registered after app.Cleanup, so it runs before it. A run started with
+	// backup.Start outlives the ledger's "succeeded": it then notifies the
+	// administrators and posts its callback through this app. Closing the
+	// database under it panics in whichever test runs next.
+	//
+	// The reset comes after the wait, so a restore still running finishes on
+	// the seams restoreSeams installed rather than on the real ones.
+	t.Cleanup(func() {
+		stopBackupRuns(t, app)
+		backup.ResetForTesting()
+	})
 
 	// The guard for the above: if a future change makes the data dir land in a
 	// shared root again, this fails here rather than by corrupting another
@@ -219,29 +230,18 @@ func allowLoopbackBackupTargets(t *testing.T, allow bool) {
 // over rather than releasing it, so a rebuilder that dropped it would leave the
 // interlock held and every later test would see ErrBusy.
 //
-// Cleanup goes through backup.ResetForTesting rather than unsetting one seam,
-// because the package holds more process-wide state than the rebuilder — a left
-// restoring flag would put every later request behind the maintenance 503.
-// A restore now ALWAYS runs on a goroutine (the upload branch used to be
-// synchronous), so the seams also count restores in flight: a test that asserted
-// its 202 and returned would otherwise let app.Cleanup close the database under a
-// running restore, which panics in whichever test happens to be next.
+// The seams are removed by setupBackupCollections' cleanup, which waits for the
+// app's runs and then calls backup.ResetForTesting. Reset rather than unset one
+// seam, because the package holds more process-wide state than the rebuilder —
+// a left restoring flag would put every later request behind the maintenance
+// 503. Every caller builds its app with setupBackupCollections.
 func restoreSeams(t *testing.T) {
 	t.Helper()
-	var done sync.WaitGroup
-	backup.SetRestoreWatcher(func() func() {
-		done.Add(1)
-		return done.Done
-	})
 	backup.RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
 		installjob.Release(job)
 		return nil
 	})
 	backup.SetRestart(func() bool { return true })
-	// Before ResetForTesting, so the wait happens while the seams are still the
-	// ones the restore is using.
-	t.Cleanup(backup.ResetForTesting)
-	t.Cleanup(done.Wait)
 }
 
 func makeBackupUser(t *testing.T, app core.App, email, role string) *core.Record {
@@ -283,6 +283,18 @@ func waitFor(t testing.TB, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("condition was never met within 5s")
+}
+
+// stopBackupRuns is the stop the terminate hook makes, run at the end of a
+// test: it waits for every backup and restore the test left running on app,
+// so the test app's cleanup never closes the database under one.
+func stopBackupRuns(t testing.TB, app core.App) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := backup.StopAll(ctx, app); err != nil {
+		t.Fatalf("a run was still going 5s after the test: %v", err)
+	}
 }
 
 // closeBuffer lets a test hand backup.Run a sink it can read afterwards.

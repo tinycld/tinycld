@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -77,7 +78,9 @@ func FailedRun(app core.App, kind Kind, repository string, cause error) error {
 	if err := finishRow(app, row, "failed", repo.PutResult{}, cause.Error(), nil, repository); err != nil {
 		return err
 	}
-	announce(app, Request{Kind: kind}, row, "failed", cause.Error())
+	ctx, cancel := format.Lifetime(context.Background())
+	defer cancel()
+	announce(ctx, app, Request{Kind: kind}, row, "failed", cause.Error())
 	return nil
 }
 

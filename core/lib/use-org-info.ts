@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { getResolvedAddress } from './server-address'
 
 // Deployment branding: the server's unauthenticated /api/org-info returns
@@ -33,7 +34,7 @@ export async function fetchOrgInfo(): Promise<{
 }> {
     const addr = getResolvedAddress()
     if (!addr) return { name: '', logoUrl: '', logoCrop: '', managedSettings: [] }
-    const res = await fetch(`${addr}/api/org-info`, { cache: 'no-store' })
+    const res = await serverFetch(`${addr}/api/org-info`, { cache: 'no-store' })
     if (!res.ok) return { name: '', logoUrl: '', logoCrop: '', managedSettings: [] }
     const body = (await res.json()) as Partial<{
         name: string

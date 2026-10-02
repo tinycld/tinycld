@@ -2,6 +2,7 @@ import { useLiveQuery } from '@tanstack/react-db'
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
 import { captureException } from '@tinycld/core/lib/errors'
 import { useStore } from '@tinycld/core/lib/pocketbase'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { useThemeColor } from '@tinycld/core/lib/use-app-theme'
 import { Button, ButtonIcon, ButtonText } from '@tinycld/core/ui/button'
 import { Dialog } from '@tinycld/core/ui/dialog'
@@ -178,7 +179,7 @@ function BuildTimelineItem({
 
     const doRevert = async () => {
         setError(null)
-        const res = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/revert`, {
+        const res = await serverFetch(`${PB_SERVER_ADDR}/api/admin/packages/revert`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: pb.authStore.token },
             body: JSON.stringify({ buildId: build.build_id }),
@@ -191,7 +192,7 @@ function BuildTimelineItem({
 
     const doDelete = async () => {
         setError(null)
-        const res = await fetch(`${PB_SERVER_ADDR}/api/admin/packages/builds/delete`, {
+        const res = await serverFetch(`${PB_SERVER_ADDR}/api/admin/packages/builds/delete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: pb.authStore.token },
             body: JSON.stringify({ buildId: build.build_id }),

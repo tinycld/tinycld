@@ -181,7 +181,8 @@ func RegisterSystemConfig(app *pocketbase.PocketBase) {
 	// Load after bootstrap/migrations, before the server begins handling
 	// requests, then perform the initial Sentry init from the loaded values.
 	// OnServe fires once per boot at that point. The Sentry middleware is already
-	// bound (RegisterSentry); this supplies the client the middleware reports to.
+	// bound (registerSharedMiddleware); this supplies the client the middleware
+	// reports to.
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		systemConfig.load(app)
 		initSentryFromConfig()

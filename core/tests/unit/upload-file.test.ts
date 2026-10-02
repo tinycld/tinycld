@@ -4,6 +4,7 @@ import {
     uploadFormDataWithProgress,
     uploadRecordWithFile,
 } from '@tinycld/core/file-viewer/upload-file'
+import { READ_ONLY_MAX_RETRIES } from '@tinycld/core/lib/read-only-retry'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tinycld/core/lib/pocketbase', () => ({
@@ -20,6 +21,7 @@ vi.mock('@tinycld/core/lib/pocketbase', () => ({
  */
 class FakeXHR {
     static last: FakeXHR | null = null
+    static all: FakeXHR[] = []
 
     method = ''
     url = ''
@@ -30,6 +32,7 @@ class FakeXHR {
     status = 200
     response = ''
     responseText = ''
+    responseHeaders: Record<string, string> = {}
 
     upload: { onprogress: ((e: ProgressEventLike) => void) | null } = { onprogress: null }
     onload: (() => void) | null = null
@@ -38,6 +41,7 @@ class FakeXHR {
 
     constructor() {
         FakeXHR.last = this
+        FakeXHR.all.push(this)
     }
 
     open(method: string, url: string) {
@@ -47,6 +51,10 @@ class FakeXHR {
 
     setRequestHeader(key: string, value: string) {
         this.headers[key] = value
+    }
+
+    getResponseHeader(name: string) {
+        return this.responseHeaders[name] ?? null
     }
 
     send(body: unknown) {
@@ -59,11 +67,12 @@ class FakeXHR {
     }
 
     /** Completes the request with a JSON body. */
-    finish(status: number, payload: unknown) {
+    finish(status: number, payload: unknown, headers: Record<string, string> = {}) {
         this.status = status
         const text = typeof payload === 'string' ? payload : JSON.stringify(payload)
         this.response = text
         this.responseText = text
+        this.responseHeaders = headers
         this.onload?.()
     }
 
@@ -82,6 +91,7 @@ const originalXHR = globalThis.XMLHttpRequest
 
 beforeEach(() => {
     FakeXHR.last = null
+    FakeXHR.all = []
     globalThis.XMLHttpRequest = FakeXHR as unknown as typeof XMLHttpRequest
 })
 
@@ -230,6 +240,84 @@ describe('uploadFormDataWithProgress', () => {
 
         // Nothing should have been opened at all.
         expect(FakeXHR.last).toBeNull()
+    })
+
+    it('retries a read_only 503 and resolves with the eventual success', async () => {
+        const promise = uploadFormDataWithProgress({
+            url: 'https://example.test/api/x',
+            formData: new FormData(),
+            authToken: 'tok',
+        })
+
+        FakeXHR.all[0]?.finish(
+            503,
+            { code: 'read_only', message: 'updating' },
+            { 'Retry-After': '0.001' }
+        )
+        await vi.waitFor(() => expect(FakeXHR.all).toHaveLength(2))
+        FakeXHR.all[1]?.finish(200, { id: 'abc' })
+
+        await expect(promise).resolves.toEqual({ id: 'abc' })
+    })
+
+    it('gives up after the retry budget and rejects with the last 503', async () => {
+        const promise = uploadFormDataWithProgress({
+            url: 'https://example.test/api/x',
+            formData: new FormData(),
+            authToken: 'tok',
+        })
+
+        for (let attempt = 0; attempt < READ_ONLY_MAX_RETRIES; attempt++) {
+            await vi.waitFor(() => expect(FakeXHR.all[attempt]).toBeDefined())
+            FakeXHR.all[attempt]?.finish(
+                503,
+                { code: 'read_only', message: 'updating' },
+                { 'Retry-After': '0.001' }
+            )
+        }
+        await vi.waitFor(() => expect(FakeXHR.all).toHaveLength(1 + READ_ONLY_MAX_RETRIES))
+        FakeXHR.all[READ_ONLY_MAX_RETRIES]?.finish(
+            503,
+            { code: 'read_only', message: 'updating' },
+            { 'Retry-After': '0.001' }
+        )
+
+        await expect(promise).rejects.toThrow('updating')
+        expect(FakeXHR.all).toHaveLength(1 + READ_ONLY_MAX_RETRIES)
+    })
+
+    it('does not retry an ordinary error status', async () => {
+        const promise = uploadFormDataWithProgress({
+            url: 'https://example.test/api/x',
+            formData: new FormData(),
+            authToken: 'tok',
+        })
+        FakeXHR.last?.finish(400, { message: 'Failed to create record.' })
+        await expect(promise).rejects.toThrow('Failed to create record.')
+        expect(FakeXHR.all).toHaveLength(1)
+    })
+
+    it('stops retrying once aborted mid-wait, without sending another request', async () => {
+        const controller = new AbortController()
+        const promise = uploadFormDataWithProgress({
+            url: 'https://example.test/api/x',
+            formData: new FormData(),
+            authToken: 'tok',
+            signal: controller.signal,
+        })
+
+        FakeXHR.all[0]?.finish(
+            503,
+            { code: 'read_only', message: 'updating' },
+            { 'Retry-After': '10' }
+        )
+        controller.abort()
+
+        // The abort ends the wait early (read-only-retry.ts's abortableWait);
+        // the loop then stops instead of sending a retry the caller no longer
+        // wants, so the last 503 response is what the promise settles with.
+        await expect(promise).rejects.toThrow('updating')
+        expect(FakeXHR.all).toHaveLength(1)
     })
 })
 
