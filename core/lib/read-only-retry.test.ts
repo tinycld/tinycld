@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { READ_ONLY_MAX_RETRIES, retryAfterMs, withReadOnlyRetry } from './read-only-retry'
+import {
+    abortableWait,
+    READ_ONLY_MAX_RETRIES,
+    retryAfterMs,
+    withReadOnlyRetry,
+} from './read-only-retry'
 
 function readOnly(retryAfter = '2') {
     return new Response(JSON.stringify({ code: 'read_only', message: 'updating' }), {
@@ -22,6 +27,29 @@ describe('retryAfterMs', () => {
     it('caps a long wait at 10 s', () => expect(retryAfterMs('600')).toBe(10000))
 })
 
+describe('abortableWait', () => {
+    it('resolves without waiting out the timer when already aborted', async () => {
+        const controller = new AbortController()
+        controller.abort()
+        const start = Date.now()
+        await abortableWait(10000, controller.signal)
+        expect(Date.now() - start).toBeLessThan(100)
+    })
+
+    it('resolves as soon as the signal aborts, not after the full delay', async () => {
+        const controller = new AbortController()
+        const promise = abortableWait(10000, controller.signal)
+        setTimeout(() => controller.abort(), 5)
+        const start = Date.now()
+        await promise
+        expect(Date.now() - start).toBeLessThan(1000)
+    })
+
+    it('resolves after the delay when never aborted', async () => {
+        await expect(abortableWait(1)).resolves.toBeUndefined()
+    })
+})
+
 describe('withReadOnlyRetry', () => {
     it('retries a read_only 503 after Retry-After and returns the success', async () => {
         const fetchImpl = vi.fn().mockResolvedValueOnce(readOnly('1')).mockResolvedValueOnce(ok())
@@ -33,7 +61,7 @@ describe('withReadOnlyRetry', () => {
         expect(res.status).toBe(200)
         expect(fetchImpl).toHaveBeenCalledTimes(2)
         expect(fetchImpl.mock.calls[1]).toEqual(['/api/x', { method: 'POST', body: '{}' }])
-        expect(sleep).toHaveBeenCalledWith(1000)
+        expect(sleep).toHaveBeenCalledWith(1000, undefined)
     })
 
     it('gives up after 3 retries and returns the last 503', async () => {
@@ -74,6 +102,21 @@ describe('withReadOnlyRetry', () => {
                 signal: controller.signal,
             }
         )
+        expect(res.status).toBe(503)
+        expect(fetchImpl).toHaveBeenCalledTimes(1)
+    })
+
+    it('uses the real abortable wait by default, ending early on abort instead of refetching', async () => {
+        const controller = new AbortController()
+        const fetchImpl = vi.fn().mockResolvedValue(readOnly('10'))
+        const promise = withReadOnlyRetry(fetchImpl)('/api/x', {
+            method: 'POST',
+            signal: controller.signal,
+        })
+        setTimeout(() => controller.abort(), 5)
+        const start = Date.now()
+        const res = await promise
+        expect(Date.now() - start).toBeLessThan(1000)
         expect(res.status).toBe(503)
         expect(fetchImpl).toHaveBeenCalledTimes(1)
     })
