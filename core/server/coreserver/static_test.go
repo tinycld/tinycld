@@ -344,25 +344,30 @@ func TestStatic_NonHTMLAssetKeepsDefault(t *testing.T) {
 	})
 }
 
-func TestIsDavPath(t *testing.T) {
+func TestShouldBypassCORS(t *testing.T) {
 	for _, p := range []string{
-		"/caldav", "/caldav/u/cal/x/", "/carddav", "/dav", "/dav/x",
+		// The protocol mounts, which deliberately shadow the SPA at these
+		// paths: they are what a user types when connecting a client, and the
+		// app's own routes are /a/<slug>.
+		"/calendar", "/calendar/u/cal/x/", "/contacts", "/drive",
+		"/drive/Documents/notes.txt",
+		// /dav stays reserved even though nothing mounts there now.
+		"/dav", "/dav/x",
+		// RFC 6764 fixes these names wherever the trees mount.
 		"/.well-known/caldav", "/.well-known/carddav", "/.well-known/webdav",
 	} {
-		if !isDavPath(p) {
-			t.Errorf("isDavPath(%q) = false, want true", p)
+		if !shouldBypassCORS(p) {
+			t.Errorf("shouldBypassCORS(%q) = false, want true", p)
 		}
 	}
 	for _, p := range []string{
-		// A package's in-app SPA route is deliberately NOT a DAV path: matching
-		// it here would route a hard load of it to Basic-Auth WebDAV instead of
-		// the app (see isDavPath's comment). Protocol mounts live under the
-		// reserved "/dav" namespace instead.
+		// A package with no protocol mount keeps its in-app route: matching it
+		// here would route a hard load to Basic-Auth DAV instead of the app.
 		"/cogs",
 		"/", "/api/health", "/settings", "/.well-known/apple-app-site-association",
 	} {
-		if isDavPath(p) {
-			t.Errorf("isDavPath(%q) = true, want false", p)
+		if shouldBypassCORS(p) {
+			t.Errorf("shouldBypassCORS(%q) = true, want false", p)
 		}
 	}
 }

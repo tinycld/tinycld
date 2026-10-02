@@ -226,6 +226,51 @@ func (b *Backend) GetCalendar(ctx context.Context, path string) (*caldav.Calenda
 	return &cal, nil
 }
 
+// UpdateCalendar applies a PROPPATCH to a calendar, implementing the library's
+// optional caldav.CalendarUpdater.
+//
+// Name goes to the calendar row, gated by that collection's update rule — for
+// calendar that is owner-only, so a viewer renaming a shared calendar is
+// refused here exactly as it would be over REST. Anything whose storage is
+// feature-shaped (a per-member colour) is delegated to Source.UpdateCalendar,
+// which core cannot express itself without naming the feature's collections.
+func (b *Backend) UpdateCalendar(ctx context.Context, path string, update caldav.CalendarUpdate) error {
+	user, err := b.userFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	if err := b.requirePkgWrite(user); err != nil {
+		return err
+	}
+
+	record, err := b.calendarByPath(user, path, ruleUpdate)
+	if err != nil {
+		return err
+	}
+
+	ours := CalendarUpdate{Name: update.Name, Color: update.Color}
+
+	// The name is the only property core can place on its own: it is mapped to
+	// a field on the calendar row. Write it, then let the feature handle the
+	// rest.
+	if ours.Name != nil && b.src.Calendar.Name != "" {
+		record.Set(b.src.Calendar.Name, *ours.Name)
+		if err := b.app.Save(record); err != nil {
+			return err
+		}
+		ours.Name = nil
+	}
+
+	if ours.Name == nil && ours.Color == nil {
+		return nil
+	}
+	if b.src.UpdateCalendar == nil {
+		return webdav.NewHTTPError(http.StatusForbidden,
+			fmt.Errorf("this calendar does not accept that property"))
+	}
+	return b.src.UpdateCalendar(ctx, b.app, user, record, ours)
+}
+
 func (b *Backend) CreateCalendar(_ context.Context, _ *caldav.Calendar) error {
 	// Calendars carry feature-owned setup (an owner membership row, a color, a
 	// subscription URL) that a bare MKCALENDAR cannot express. Clients fall back
@@ -482,8 +527,14 @@ func (b *Backend) toCalendarObject(record *core.Record, calID string) (*caldav.C
 		Path:          b.calendarPath(calID) + record.GetString(b.src.Event.UID) + ".ics",
 		ModTime:       modTime,
 		ContentLength: int64(buf.Len()),
-		ETag:          fmt.Sprintf(`"%s"`, updated),
-		Data:          cal,
+		// UNQUOTED, to match what PutCalendarObject hands davcond.Check. The
+		// library quotes it on the way out (internal.ETag.String uses %q) and
+		// unquotes a client's header on the way in, so quoting here produced
+		// `"\"...\""` on the wire — which no echoed If-Match could ever match
+		// against the bare `updated` stamp the write path compares, silently
+		// disabling the lost-update guard davcond exists to provide.
+		ETag: updated,
+		Data: cal,
 	}, nil
 }
 

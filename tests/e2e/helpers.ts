@@ -292,12 +292,11 @@ export async function createInvitedUser(
     // --- Invitee accepts in a fresh context and sets its password ---
     const inviteeContext = await page.context().browser()!.newContext()
     const inviteePage = await inviteeContext.newPage()
-    // Deliberately the LEGACY unprefixed path: invite links minted before app
-    // routes moved under /a are still arriving from inboxes, so this doubles as
-    // the end-to-end proof that legacyAppRedirect (core/server/coreserver/
-    // static.go) forwards them to /a/accept-invite/<token>. invite-flow.spec.ts
-    // covers the current shape.
-    await inviteePage.goto(`/accept-invite/${tokenMatch[1]}`)
+    // The prefixed path buildInviteURL mints (approutes.Href). The server used
+    // to also forward the pre-/a shape, which this line exercised; that
+    // redirect is gone, so the legacy form now 404s like any other unknown
+    // path.
+    await inviteePage.goto(`/a/accept-invite/${tokenMatch[1]}`)
     await expect(inviteePage.getByText("You're invited", { exact: true })).toBeVisible({
         timeout: 10_000,
     })

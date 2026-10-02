@@ -10,6 +10,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/davauth"
+	"tinycld.org/core/davprefix"
 )
 
 const basicRealm = "TinyCld CalDAV"
@@ -31,15 +32,23 @@ const wellKnownPath = "/.well-known/caldav"
 // zero value to run pure Go.
 //
 // Returns the built Backends in source order.
-func Register(app *pocketbase.PocketBase, sources []Source, host HostBindings) []*Backend {
+//
+// Errors when a source's prefix is unusable or already claimed — see
+// davprefix. Failing here names the packages involved, instead of leaving a
+// mount that shadows the REST API or panics the ServeMux at boot.
+func Register(app *pocketbase.PocketBase, sources []Source, host HostBindings) ([]*Backend, error) {
 	if len(sources) == 0 {
-		return nil
+		return nil, nil
 	}
 
+	prefixes := davprefix.ForApp(app)
 	backends := make([]*Backend, 0, len(sources))
 	handlers := make([]*caldav.Handler, 0, len(sources))
 
 	for _, src := range sources {
+		if err := prefixes.Claim(src.Slug, src.Prefix); err != nil {
+			return nil, err
+		}
 		b := NewBackend(app, src)
 		if host.Point != nil {
 			b.SetTSHooks(RegisterTSHooks(host, src))
@@ -90,7 +99,7 @@ func Register(app *pocketbase.PocketBase, sources []Source, host HostBindings) [
 		return e.Next()
 	})
 
-	return backends
+	return backends, nil
 }
 
 // HandlerFor builds a standalone CalDAV http.Handler for the given sources,

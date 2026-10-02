@@ -42,7 +42,7 @@ func TestSingleOrgScope_ResolvesOwnBook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Books: %v", err)
 	}
-	if len(books) != 1 || books[0].Path != "/carddav/u/ab/default/" {
+	if len(books) != 1 || books[0].Path != "/contacts/u/ab/default/" {
 		t.Fatalf("Books = %+v, want one default book", books)
 	}
 
@@ -54,7 +54,7 @@ func TestSingleOrgScope_ResolvesOwnBook(t *testing.T) {
 	if ownerID != user.Id {
 		t.Errorf("ownerID = %q, want the user's id %q", ownerID, user.Id)
 	}
-	if bookPath != "/carddav/u/ab/default/" {
+	if bookPath != "/contacts/u/ab/default/" {
 		t.Errorf("bookPath = %q", bookPath)
 	}
 }

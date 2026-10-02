@@ -47,7 +47,9 @@ const LEGACY_APP_SEGMENTS = new Set([
  * For links minted BEFORE app routes moved under APP_PREFIX and still arriving
  * from outside the app — universal/deep links opened on a phone, notably the
  * emailed invite and password-reset links, which keep landing for days. The
- * web-side counterpart is legacyAppRedirect in core/server/coreserver/static.go.
+ * web side no longer redirects these: a server-side rewrite was an allowlist
+ * that had to be kept in step with the app's own routes, and a protocol mount
+ * at /calendar or /contacts is exactly the kind of path it must not rewrite.
  *
  * Anything not a recognizably legacy app path (already prefixed, public `/p/…`,
  * an absolute URL, a protocol mount) is returned untouched: this normalizes,
