@@ -8,12 +8,14 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tests"
 )
 
-// A caller on a deadline — a backup run the server waits for on its way down —
-// must be able to end a push it started. The push services are peers this
-// process does not control, and the default client has no timeout at all.
-func TestDeliverToUserContextEndsAPushThatNeverAnswers(t *testing.T) {
+// stuckExpo seeds owner with one Expo subscription and points the Expo API at
+// a server that takes the request and never answers. It lets go when the client
+// gives up, or when the test ends.
+func stuckExpo(t *testing.T) (*tests.TestApp, *core.Record, <-chan struct{}) {
+	t.Helper()
 	app := setupAdminApp(t)
 	owner := seedUser(t, app, "owner@example.com", "owner", false)
 
@@ -57,6 +59,14 @@ func TestDeliverToUserContextEndsAPushThatNeverAnswers(t *testing.T) {
 	prev := expoPushURL
 	expoPushURL = srv.URL
 	t.Cleanup(func() { expoPushURL = prev })
+	return app, owner, hit
+}
+
+// A caller on a deadline — a backup run the server waits for on its way down —
+// must be able to end a push it started. The push services are peers this
+// process does not control, and the default client has no timeout at all.
+func TestDeliverToUserContextEndsAPushThatNeverAnswers(t *testing.T) {
+	app, owner, hit := stuckExpo(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -80,5 +90,28 @@ func TestDeliverToUserContextEndsAPushThatNeverAnswers(t *testing.T) {
 	}
 	if n := notificationCount(t, app); n != 1 {
 		t.Fatalf("notifications = %d, want 1", n)
+	}
+}
+
+// With no deadline from the caller, a hung push service must still give up: a
+// backup announces itself before it releases the job interlock, so an unbounded
+// push would block every later backup, restore and package install.
+func TestDeliverToUserGivesUpOnAPushThatNeverAnswers(t *testing.T) {
+	app, owner, _ := stuckExpo(t)
+	prev := expoSendTimeout
+	expoSendTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { expoSendTimeout = prev })
+
+	done := make(chan error, 1)
+	go func() {
+		done <- DeliverToUser(app, NotifyParams{UserID: owner.Id, Type: "system.notice", Title: "T", Body: "B"})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a push to a service that never answers was never given up on")
 	}
 }

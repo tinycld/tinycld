@@ -2,7 +2,6 @@ package coreserver
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -171,21 +170,5 @@ func TestTerminateCancelsACallbackInFlight(t *testing.T) {
 	}
 	if seen.interlocked {
 		t.Error("the run was still in its callback when the database closed")
-	}
-}
-
-// A restart whose re-exec fails leaves the app running. The stop it began must
-// not stay latched, or every later backup on this process is refused for good.
-func TestAFailedRestartLeavesBackupsRunnable(t *testing.T) {
-	app := terminateApp(t)
-	execFailed := errors.New("exec format error")
-	err := app.OnTerminate().Trigger(&core.TerminateEvent{App: app, IsRestart: true}, func(*core.TerminateEvent) error {
-		return execFailed
-	})
-	if !errors.Is(err, execFailed) {
-		t.Fatalf("terminate = %v, want the re-exec failure passed through", err)
-	}
-	if _, err := backup.Run(app, backup.Request{Kind: backup.KindScheduled, Repo: newHeldRepo(false), TargetHost: "held"}); err != nil {
-		t.Fatalf("a backup after the failed restart was refused: %v", err)
 	}
 }

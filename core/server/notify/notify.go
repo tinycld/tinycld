@@ -185,34 +185,51 @@ func sendExpoPush(ctx context.Context, app core.App, userID string, params Notif
 			continue
 		}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, expoPushURL, bytes.NewReader(body))
+		stale, err := postExpo(ctx, body)
 		if err != nil {
 			log.Info("expo send failed for token", "token", token, "err", err)
 			continue
 		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			log.Info("expo send failed for token", "token", token, "err", err)
-			continue
-		}
-
-		var result struct {
-			Data struct {
-				Status  string `json:"status"`
-				Details struct {
-					Error string `json:"error"`
-				} `json:"details"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
-			if result.Data.Details.Error == "DeviceNotRegistered" {
-				log.Info("removing stale expo token", "token", token)
-				if err := app.Delete(record); err != nil {
-					log.Info("failed to delete stale expo token", "tokenID", record.Id, "err", err)
-				}
+		if stale {
+			log.Info("removing stale expo token", "token", token)
+			if err := app.Delete(record); err != nil {
+				log.Info("failed to delete stale expo token", "tokenID", record.Id, "err", err)
 			}
 		}
-		resp.Body.Close()
 	}
+}
+
+// expoSendTimeout is push.SendTimeout, held in a var only so a test can shorten
+// it; nothing else writes it.
+var expoSendTimeout = push.SendTimeout
+
+// postExpo sends one message to the Expo Push API and reports whether Expo says
+// the device is gone. The timeout covers the body read too, so it is cancelled
+// only once the response is consumed.
+func postExpo(ctx context.Context, body []byte) (stale bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, expoSendTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, expoPushURL, bytes.NewReader(body))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data struct {
+			Status  string `json:"status"`
+			Details struct {
+				Error string `json:"error"`
+			} `json:"details"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, nil
+	}
+	return result.Data.Details.Error == "DeviceNotRegistered", nil
 }

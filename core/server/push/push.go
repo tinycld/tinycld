@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/pocketbase/pocketbase/core"
@@ -21,6 +22,13 @@ var log = logging.ForPackage("push")
 func GenerateVAPIDKeys() (privateKey, publicKey string, err error) {
 	return webpush.GenerateVAPIDKeys()
 }
+
+// SendTimeout bounds one request to a push service. The client has no timeout
+// of its own, and a caller often cannot afford to wait on a peer it does not
+// control: a backup announces itself before it releases the job interlock, so
+// one hung push service would otherwise block every backup, restore and package
+// install. A healthy push service answers in well under a second.
+const SendTimeout = 15 * time.Second
 
 // Payload is the JSON structure sent to the browser push service.
 type Payload struct {
@@ -111,17 +119,20 @@ func SendToUserContext(ctx context.Context, app core.App, userID string, payload
 			},
 		}
 
-		resp, err := webpush.SendNotificationWithContext(ctx, payloadBytes, sub, &webpush.Options{
+		sendCtx, cancel := context.WithTimeout(ctx, SendTimeout)
+		resp, err := webpush.SendNotificationWithContext(sendCtx, payloadBytes, sub, &webpush.Options{
 			VAPIDPublicKey:  vapidPublicKey,
 			VAPIDPrivateKey: vapidPrivateKey,
 			Subscriber:      vapidSubject,
 			TTL:             86400,
 		})
 		if err != nil {
+			cancel()
 			log.Info("send failed for subscription", "subscriptionID", record.Id, "err", err)
 			continue
 		}
 		resp.Body.Close()
+		cancel()
 
 		if resp.StatusCode == http.StatusGone || resp.StatusCode == http.StatusNotFound {
 			log.Info("removing stale subscription", "subscriptionID", record.Id, "status", resp.StatusCode)
