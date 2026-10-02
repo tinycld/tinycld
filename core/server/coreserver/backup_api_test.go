@@ -291,7 +291,9 @@ func waitFor(t testing.TB, cond func() bool) {
 	t.Fatal("condition was never met within 5s")
 }
 
-// waitForInterlock waits up to 5 s for every backup or restore run to end.
+// waitForInterlock waits up to 5 s for the interlock to be free. It is held
+// by any job kind, not only backup/restore, so the wait must clear before
+// starting another job of any kind.
 func waitForInterlock(t testing.TB) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
