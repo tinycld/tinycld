@@ -489,14 +489,12 @@ func TestRestoreWaitsForSourceAndSwaps(t *testing.T) {
 	// The test returns once data.db is staged, but the restore goroutine still
 	// saves its row after that. Waiting for it keeps that save from landing on
 	// an app whose database the cleanup already closed.
-	var running sync.WaitGroup
-	SetRestoreWatcher(func() func() {
-		running.Add(1)
-		return running.Done
-	})
 	t.Cleanup(func() {
-		running.Wait()
-		SetRestoreWatcher(nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := StopAll(ctx, app); err != nil {
+			t.Error(err)
+		}
 	})
 
 	src := format.NewRangeSource(context.Background(), expiring.URL)

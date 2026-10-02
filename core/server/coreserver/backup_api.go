@@ -180,11 +180,34 @@ func RegisterBackupBoot(app core.App) {
 		backup.SetShutdown(context.Background())
 		return e.Next()
 	})
+	// Before e.Next(): PocketBase closes the database after the last hook, and a
+	// run cancelled here still writes its ledger row, notifies administrators
+	// and posts its callback through this app. Cancelling without waiting let
+	// that work land on a closed database and crash the process on its way out.
 	app.OnTerminate().BindFunc(func(e *core.TerminateEvent) error {
-		backup.CancelAll()
-		return e.Next()
+		ctx, cancel := context.WithTimeout(context.Background(), backupStopBound)
+		defer cancel()
+		if err := backup.StopAll(ctx, e.App); err != nil {
+			srvLog.Warn("closing the app under a backup run that did not stop in time", "bound", backupStopBound, "err", err)
+		}
+		err := e.Next()
+		// A restart that succeeds never returns here: the process is replaced.
+		// One that does return failed to re-exec and left the app running.
+		if e.IsRestart {
+			backup.Reopen(e.App)
+		}
+		return err
 	})
 }
+
+// backupStopBound is how long a stop waits for a cancelled run. Every transfer,
+// announcement and callback ends at the cancel, so the wait is normally the
+// time of a few database writes. What it bounds is the work cancellation cannot
+// reach — a snapshot's VACUUM INTO, a restore staging an uploaded archive — so a
+// stop is never held hostage by it. It sits under the 10 s grace a supervisor
+// commonly gives a process before it kills it, so the warning is written rather
+// than cut off.
+const backupStopBound = 8 * time.Second
 
 // passphraseRecipient refuses a short phrase before anything is attempted.
 func passphraseRecipient(p string) (age.Recipient, error) {

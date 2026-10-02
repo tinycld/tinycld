@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -25,6 +26,11 @@ import (
 // resolved at all — the difference between "nobody was told" and "we could
 // not find out who to tell".
 func Administrators(app core.App, params NotifyParams) (int, error) {
+	return AdministratorsContext(context.Background(), app, params)
+}
+
+// AdministratorsContext is Administrators with its push deliveries bound to ctx.
+func AdministratorsContext(ctx context.Context, app core.App, params NotifyParams) (int, error) {
 	admins, err := app.FindRecordsByFilter(
 		"users",
 		"(role = 'owner' || role = 'admin') && disabled != true",
@@ -37,7 +43,7 @@ func Administrators(app core.App, params NotifyParams) (int, error) {
 	delivered := 0
 	for _, admin := range admins {
 		params.UserID = admin.Id
-		if err := DeliverToUser(app, params); err != nil {
+		if err := DeliverToUserContext(ctx, app, params); err != nil {
 			log.Warn("could not notify an administrator",
 				"user", admin.Id, "type", params.Type, "err", err)
 			continue
