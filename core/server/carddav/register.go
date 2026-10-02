@@ -18,12 +18,20 @@ const basicRealm = "TinyCld CardDAV"
 // Register mounts the CardDAV routes on serve for the single-org app, backed by
 // the given sources. Uses singleOrgScope: the process is one org, each user sees
 // one book of the contacts they own. A no-op when no sources are registered. Core
-// already installs the /carddav CORS bypass, so this only adds the protocol
-// handler + Basic-Auth challenge + .well-known redirect.
-// carddavPrefix is where the CardDAV tree mounts. Fixed rather than per-source:
-// clients find it through /.well-known/carddav, and nothing has needed it to
-// vary. It still goes through davprefix so another package cannot claim it.
-const carddavPrefix = "/carddav"
+// already installs the CORS bypass for these paths, so this only adds the
+// protocol handler + Basic-Auth challenge + .well-known redirect.
+// carddavPrefix is where the CardDAV tree mounts: /contacts, the path someone
+// types when adding the account by hand. Clients that auto-discover reach it
+// through /.well-known/carddav (RFC 6764 fixes THAT path, not this one), which
+// redirects here.
+//
+// Fixed rather than per-source — nothing has needed it to vary — but it still
+// goes through davprefix so another package cannot claim it.
+const carddavPrefix = "/contacts"
+
+// wellKnownCardDAV is the RFC 6764 discovery alias. Clients probe this exact
+// path, so it is fixed no matter where the tree mounts.
+const wellKnownCardDAV = "/.well-known/carddav"
 
 // Errors when the prefix is already claimed by another package — see
 // davprefix. CardDAV's prefix is fixed (see carddavPrefix), so it claims to
@@ -68,10 +76,10 @@ func Register(app *pocketbase.PocketBase, sources []Source) error {
 			return nil
 		}
 
-		e.Router.Any("/carddav/{path...}", serve)
-		e.Router.Any("/carddav", serve)
-		e.Router.Any("/.well-known/carddav", func(re *core.RequestEvent) error {
-			http.Redirect(re.Response, re.Request, "/carddav/", http.StatusMovedPermanently)
+		e.Router.Any(carddavPrefix+"/{path...}", serve)
+		e.Router.Any(carddavPrefix, serve)
+		e.Router.Any(wellKnownCardDAV, func(re *core.RequestEvent) error {
+			http.Redirect(re.Response, re.Request, carddavPrefix+"/", http.StatusMovedPermanently)
 			return nil
 		})
 
@@ -103,8 +111,8 @@ func HandlerFor(app core.App, sources []Source) http.Handler {
 	dav := carddav.Handler{Backend: backend, Prefix: carddavPrefix}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/.well-known/carddav", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/carddav/", http.StatusMovedPermanently)
+	mux.HandleFunc(wellKnownCardDAV, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, carddavPrefix+"/", http.StatusMovedPermanently)
 	})
 	serve := func(w http.ResponseWriter, r *http.Request) {
 		if _, _, ok := r.BasicAuth(); !ok {
@@ -128,20 +136,20 @@ func HandlerFor(app core.App, sources []Source) http.Handler {
 		ctx := context.WithValue(r.Context(), httpRequestKey, r)
 		dav.ServeHTTP(w, r.WithContext(ctx))
 	}
-	mux.HandleFunc("/carddav", serve)
-	mux.HandleFunc("/carddav/", serve)
+	mux.HandleFunc(carddavPrefix, serve)
+	mux.HandleFunc(carddavPrefix+"/", serve)
 	return mux
 }
 
 // Prefixes returns the URL path prefixes HandlerFor serves, so a composing router
 // can route them to the CardDAV handler and everything else to the stock mux.
 func Prefixes() []string {
-	return []string{"/carddav", "/.well-known/carddav"}
+	return []string{carddavPrefix, wellKnownCardDAV}
 }
 
 // HasPrefix reports whether reqPath belongs to the CardDAV handler.
 func HasPrefix(reqPath string) bool {
-	return reqPath == "/carddav" ||
-		strings.HasPrefix(reqPath, "/carddav/") ||
-		reqPath == "/.well-known/carddav"
+	return reqPath == carddavPrefix ||
+		strings.HasPrefix(reqPath, carddavPrefix+"/") ||
+		reqPath == wellKnownCardDAV
 }

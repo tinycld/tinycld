@@ -61,7 +61,7 @@ type Source struct {
 	Slug string
 
 	// Prefix is the URL path the tree is mounted at, without a trailing slash
-	// (e.g. "/caldav"). Also the first path segment clients see.
+	// (e.g. "/calendar"). Also the first path segment clients see.
 	Prefix string
 
 	// CalendarCollection is the PocketBase collection holding one row per

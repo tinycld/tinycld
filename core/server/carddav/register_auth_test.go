@@ -20,7 +20,7 @@ func davRequest(handler http.Handler, email, password string) *httptest.Response
 <C:addressbook-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:carddav">
   <D:prop><D:getetag/><C:address-data/></D:prop>
 </C:addressbook-query>`
-	req := httptest.NewRequest("REPORT", "/carddav/u/ab/default/", strings.NewReader(body))
+	req := httptest.NewRequest("REPORT", "/contacts/u/ab/default/", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/xml")
 	req.Header.Set("Depth", "1")
 	if email != "" {

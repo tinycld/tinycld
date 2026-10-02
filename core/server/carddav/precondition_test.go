@@ -64,7 +64,7 @@ func TestPutAddressObject_IfNoneMatchRefusesOverwrite(t *testing.T) {
 	rec := seedContact(t, app, user.Id, "urn:uuid:pc1", "Original")
 	ctx := authedCtx(t, "alice@example.com", "Password123!")
 
-	_, err := backend.PutAddressObject(ctx, "/carddav/u/ab/default/urn:uuid:pc1.vcf",
+	_, err := backend.PutAddressObject(ctx, "/contacts/u/ab/default/urn:uuid:pc1.vcf",
 		newCard("urn:uuid:pc1", "Clobbered"),
 		&carddav.PutAddressObjectOptions{IfNoneMatch: "*"})
 	wantPrecondFailed(t, err)
@@ -80,7 +80,7 @@ func TestPutAddressObject_IfMatchStaleRefused(t *testing.T) {
 	rec := seedContact(t, app, user.Id, "urn:uuid:pc2", "Original")
 	ctx := authedCtx(t, "alice@example.com", "Password123!")
 
-	_, err := backend.PutAddressObject(ctx, "/carddav/u/ab/default/urn:uuid:pc2.vcf",
+	_, err := backend.PutAddressObject(ctx, "/contacts/u/ab/default/urn:uuid:pc2.vcf",
 		newCard("urn:uuid:pc2", "Based on stale copy"),
 		&carddav.PutAddressObjectOptions{IfMatch: `"2001-01-01 00:00:00.000Z"`})
 	wantPrecondFailed(t, err)
@@ -97,7 +97,7 @@ func TestPutAddressObject_IfMatchCurrentSucceeds(t *testing.T) {
 	ctx := authedCtx(t, "alice@example.com", "Password123!")
 
 	etag := fmt.Sprintf("%q", rec.GetString("updated"))
-	_, err := backend.PutAddressObject(ctx, "/carddav/u/ab/default/urn:uuid:pc3.vcf",
+	_, err := backend.PutAddressObject(ctx, "/contacts/u/ab/default/urn:uuid:pc3.vcf",
 		newCard("urn:uuid:pc3", "ConditionalUpdate"),
 		&carddav.PutAddressObjectOptions{IfMatch: webdav.ConditionalMatch(etag)})
 	if err != nil {
@@ -114,7 +114,7 @@ func TestPutAddressObject_IfMatchOnMissingRefused(t *testing.T) {
 	_, backend, _ := setupPrecondApp(t)
 	ctx := authedCtx(t, "alice@example.com", "Password123!")
 
-	_, err := backend.PutAddressObject(ctx, "/carddav/u/ab/default/urn:uuid:ghost.vcf",
+	_, err := backend.PutAddressObject(ctx, "/contacts/u/ab/default/urn:uuid:ghost.vcf",
 		newCard("urn:uuid:ghost", "Never created"),
 		&carddav.PutAddressObjectOptions{IfMatch: `"whatever"`})
 	wantPrecondFailed(t, err)

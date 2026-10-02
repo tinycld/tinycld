@@ -346,11 +346,14 @@ func TestStatic_NonHTMLAssetKeepsDefault(t *testing.T) {
 
 func TestShouldBypassCORS(t *testing.T) {
 	for _, p := range []string{
-		"/caldav", "/caldav/u/cal/x/", "/carddav", "/dav", "/dav/x",
-		// drive's WebDAV mount, which deliberately shadows the SPA at this
-		// path: it is what a user types when mounting from Finder, and the
-		// app's own route is /a/drive.
-		"/drive", "/drive/Documents/notes.txt",
+		// The protocol mounts, which deliberately shadow the SPA at these
+		// paths: they are what a user types when connecting a client, and the
+		// app's own routes are /a/<slug>.
+		"/calendar", "/calendar/u/cal/x/", "/contacts", "/drive",
+		"/drive/Documents/notes.txt",
+		// /dav stays reserved even though nothing mounts there now.
+		"/dav", "/dav/x",
+		// RFC 6764 fixes these names wherever the trees mount.
 		"/.well-known/caldav", "/.well-known/carddav", "/.well-known/webdav",
 	} {
 		if !shouldBypassCORS(p) {

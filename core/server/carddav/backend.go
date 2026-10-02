@@ -67,14 +67,14 @@ func (b *Backend) CurrentUserPrincipal(ctx context.Context) (string, error) {
 	if _, err := b.authFromContext(ctx); err != nil {
 		return "", err
 	}
-	return "/carddav/u/", nil
+	return carddavPrefix + "/u/", nil
 }
 
 func (b *Backend) AddressBookHomeSetPath(ctx context.Context) (string, error) {
 	if _, err := b.authFromContext(ctx); err != nil {
 		return "", err
 	}
-	return "/carddav/u/ab/", nil
+	return carddavPrefix + "/u/ab/", nil
 }
 
 func (b *Backend) ListAddressBooks(ctx context.Context) ([]carddav.AddressBook, error) {
@@ -388,7 +388,7 @@ func (b *Backend) resolveObjectByPath(ctx context.Context, src Source, path stri
 	return records[0], bookPath, nil
 }
 
-// extractVCardUID gets the vCard UID from /carddav/u/ab/{book}/{uid}.vcf
+// extractVCardUID gets the vCard UID from <prefix>/u/ab/{book}/{uid}.vcf
 func extractVCardUID(path string) string {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) >= 5 {

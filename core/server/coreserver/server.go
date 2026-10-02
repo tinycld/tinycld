@@ -484,19 +484,21 @@ func registerDavCorsBypass(app *pocketbase.PocketBase) {
 // answer, not a preflight.
 //
 // Covers the protocol mounts and the .well-known discovery aliases that
-// redirect to them. The aliases are not DAV mounts themselves, but a client
-// hits them first and must not meet CORS there either.
+// redirect to them. The aliases keep their RFC 6764 names (/.well-known/caldav,
+// /.well-known/carddav) wherever the trees mount — clients probe those exact
+// paths. They are not DAV mounts themselves, but a client hits them first and
+// must not meet CORS there either.
 //
 // A mount shadows the SPA catch-all at its own path — a literal route wins — so
 // a mount listed here is a path the app cannot also serve. That is the
-// deliberate trade for /drive: the path someone types when mounting from
-// Finder is worth more than a browser hard-load of the same path, which the
-// app reaches at /a/drive.
+// deliberate trade for /calendar, /contacts and /drive: the path someone types
+// when connecting a client is worth more than a browser hard-load of the same
+// path, which the app reaches at /a/<slug>.
 func shouldBypassCORS(path string) bool {
-	return strings.HasPrefix(path, "/caldav") ||
-		strings.HasPrefix(path, "/carddav") ||
-		strings.HasPrefix(path, "/dav") ||
+	return strings.HasPrefix(path, "/calendar") ||
+		strings.HasPrefix(path, "/contacts") ||
 		strings.HasPrefix(path, "/drive") ||
+		strings.HasPrefix(path, "/dav") ||
 		strings.HasPrefix(path, "/.well-known/caldav") ||
 		strings.HasPrefix(path, "/.well-known/carddav") ||
 		strings.HasPrefix(path, "/.well-known/webdav")
