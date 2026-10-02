@@ -67,6 +67,12 @@ func setupBackupCollections(t *testing.T) *tests.TestApp {
 		t.Fatal(err)
 	}
 	t.Cleanup(app.Cleanup)
+	// Registered after app.Cleanup, so it runs before it. A run started with
+	// backup.Start outlives the ledger's "succeeded": it then notifies the
+	// administrators and posts its callback through this app. Closing the
+	// database under it panics in whichever test runs next. The run releases
+	// the interlock as its very last step, so a free interlock means it is done.
+	t.Cleanup(func() { waitForInterlock(t) })
 
 	// The guard for the above: if a future change makes the data dir land in a
 	// shared root again, this fails here rather than by corrupting another
@@ -283,6 +289,18 @@ func waitFor(t testing.TB, cond func() bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("condition was never met within 5s")
+}
+
+// waitForInterlock waits up to 5 s for every backup or restore run to end.
+func waitForInterlock(t testing.TB) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for job := installjob.Current(); job != nil; job = installjob.Current() {
+		if time.Now().After(deadline) {
+			t.Fatalf("a job still holds the interlock 5s after the test: %v", job.Info())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // closeBuffer lets a test hand backup.Run a sink it can read afterwards.
