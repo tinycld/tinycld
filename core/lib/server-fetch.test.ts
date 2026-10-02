@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { serverFetch } from './server-fetch'
 
 function readOnly(retryAfter = '1') {
@@ -13,6 +13,16 @@ function ok() {
 }
 
 describe('serverFetch', () => {
+    beforeEach(() => {
+        vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+        vi.useRealTimers()
+        vi.restoreAllMocks()
+        vi.unstubAllGlobals()
+    })
+
     it('retries a read_only 503 and returns the eventual success', async () => {
         const responses = [readOnly(), ok()]
         const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
@@ -21,22 +31,20 @@ describe('serverFetch', () => {
             return next
         })
 
-        const res = await serverFetch('/api/x', { method: 'POST' })
+        const resPromise = serverFetch('/api/x', { method: 'POST' })
+        await vi.advanceTimersByTimeAsync(1000)
+        const res = await resPromise
 
         expect(res.status).toBe(200)
         expect(fetchSpy).toHaveBeenCalledTimes(2)
-        fetchSpy.mockRestore()
     })
 
     it('reads globalThis.fetch per call rather than capturing it at module load', async () => {
         const first = vi.fn().mockResolvedValue(ok())
-        const replaced = globalThis.fetch
-        globalThis.fetch = first as typeof fetch
-        try {
-            await serverFetch('/api/x')
-            expect(first).toHaveBeenCalledTimes(1)
-        } finally {
-            globalThis.fetch = replaced
-        }
+        vi.stubGlobal('fetch', first)
+
+        await serverFetch('/api/x')
+
+        expect(first).toHaveBeenCalledTimes(1)
     })
 })
