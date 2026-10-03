@@ -6,7 +6,9 @@ package apis
 // apis, so importing it here would be a cycle.
 
 import (
+	"bytes"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"testing"
@@ -15,21 +17,17 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
-func TestServeHTTPRedirectUsesTheInjectedListener(t *testing.T) {
-	app := core.NewBaseApp(core.BaseAppConfig{})
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	SetRedirectListener(app, l)
-	go serveHTTPRedirect(app, "203.0.113.1:80", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		io.WriteString(w, "redirect")
-	}))
+// getBody polls addr until it responds (the redirect server starts on its
+// own goroutine) and returns the response body, or fails the test after 5s.
+func getBody(t *testing.T, addr string) string {
+	t.Helper()
+
 	client := &http.Client{Timeout: 5 * time.Second}
 	var res *http.Response
+	var err error
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if res, err = client.Get("http://" + l.Addr().String() + "/"); err == nil {
+		if res, err = client.Get("http://" + addr + "/"); err == nil {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -39,7 +37,96 @@ func TestServeHTTPRedirectUsesTheInjectedListener(t *testing.T) {
 	}
 	body, _ := io.ReadAll(res.Body)
 	res.Body.Close()
-	if string(body) != "redirect" {
+	return string(body)
+}
+
+func handlerReturning(body string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, body)
+	})
+}
+
+func TestServeHTTPRedirectUsesTheInjectedListener(t *testing.T) {
+	app := core.NewBaseApp(core.BaseAppConfig{})
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetRedirectListener(app, l)
+	go serveHTTPRedirect(app, "203.0.113.1:80", handlerReturning("redirect"))
+
+	if body := getBody(t, l.Addr().String()); body != "redirect" {
 		t.Fatalf("body = %q", body)
+	}
+}
+
+// A second serveHTTPRedirect call on the same app (e.g. Serve runs again
+// after a restart) must shut the previous server down rather than leak it:
+// the first listener should stop answering once the second call's server
+// has taken over the store's "current server" slot.
+func TestServeHTTPRedirectSecondCallStopsThePreviousServer(t *testing.T) {
+	app := core.NewBaseApp(core.BaseAppConfig{})
+	l1, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetRedirectListener(app, l1)
+	go serveHTTPRedirect(app, "203.0.113.1:80", handlerReturning("first"))
+
+	if body := getBody(t, l1.Addr().String()); body != "first" {
+		t.Fatalf("first body = %q", body)
+	}
+
+	l2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetRedirectListener(app, l2)
+	go serveHTTPRedirect(app, "203.0.113.2:80", handlerReturning("second"))
+
+	if body := getBody(t, l2.Addr().String()); body != "second" {
+		t.Fatalf("second body = %q", body)
+	}
+
+	// The first server should now be shut down: give it a moment to stop,
+	// then confirm l1 no longer accepts connections.
+	deadline := time.Now().Add(5 * time.Second)
+	client := &http.Client{Timeout: 200 * time.Millisecond}
+	for time.Now().Before(deadline) {
+		if _, err := client.Get("http://" + l1.Addr().String() + "/"); err != nil {
+			return // first server is down, as expected
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("first redirect server is still serving after a second serveHTTPRedirect call")
+}
+
+// SetRedirectListener called after serveHTTPRedirect already read the store
+// (i.e. too late to take effect) must be visible, not silent.
+func TestSetRedirectListenerWarnsWhenCalledTooLate(t *testing.T) {
+	app := core.NewBaseApp(core.BaseAppConfig{})
+
+	var buf bytes.Buffer
+	prevDefault := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(prevDefault)
+
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetRedirectListener(app, l)
+	go serveHTTPRedirect(app, "203.0.113.1:80", handlerReturning("redirect"))
+	getBody(t, l.Addr().String()) // wait for serveHTTPRedirect to have read the store
+
+	l2, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l2.Close()
+	SetRedirectListener(app, l2) // too late: serveHTTPRedirect already read the store
+
+	if !bytes.Contains(buf.Bytes(), []byte("SetRedirectListener called after")) {
+		t.Fatalf("expected a late-call warning, got log output: %s", buf.String())
 	}
 }
