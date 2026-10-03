@@ -408,7 +408,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libffi8 libcap2-bin curl git sqlite3 gnupg gosu \
+    && apt-get install -y --no-install-recommends ca-certificates libffi8 libcap2-bin curl git sqlite3 gnupg gosu tini \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && apt-get autoremove -y
@@ -668,9 +668,18 @@ EXPOSE 7090 80 443 993 465
 # entrypoint.sh.
 USER root
 
-# The server process still runs as uid 1000 (tinycld) — the entrypoint drops
-# privileges with gosu before exec'ing it. The binary's cap_net_bind_service
-# file capability lets that unprivileged process bind :80/:443 when autocert is
+# tini is PID 1 (set below), not the entrypoint script or the supervisor: tini
+# reaps zombies and forwards a `docker stop`/compose-down SIGTERM to its one
+# child, neither of which a shell script at PID 1 does reliably. entrypoint.sh
+# does first-boot setup as root, then execs `tinycld supervise`, which holds
+# the public ports and runs `tinycld serve` children. The supervisor catches
+# that SIGTERM itself and drains its own running child before exiting — it
+# answers to tini like any other PID 1's child, and does not act as an init
+# for anything beyond its own children. The supervisor drops ITS children to
+# uid 1000 (tinycld) directly (not via gosu); the entrypoint script that runs
+# before it stays root only long enough to fix bind-mount ownership and write
+# the runtime user's git config. The binary's cap_net_bind_service file
+# capability lets that unprivileged child bind :80/:443 when autocert is
 # enabled; the plain-HTTP default of :7090 is unprivileged.
 #
 # Set AUTOCERT_ENABLED=true with PRIMARY_DOMAIN (and optional comma-separated
@@ -681,4 +690,4 @@ USER root
 # Otherwise serve plain HTTP on :7090 (override with HTTP_ADDR), expecting an
 # upstream reverse proxy or compose port mapping to route to it. PRIMARY_DOMAIN
 # still feeds the user-facing setup URL in plain-HTTP/proxy mode.
-ENTRYPOINT ["/opt/entrypoint.sh"]
+ENTRYPOINT ["tini", "--", "/opt/entrypoint.sh"]

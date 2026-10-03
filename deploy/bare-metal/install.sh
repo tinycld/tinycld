@@ -155,10 +155,19 @@ ${TINYCLD_FEATURES:+TINYCLD_FEATURES="$TINYCLD_FEATURES"} \
     bash "${SCRIPT_DIR}/build.sh"
 
 # ------------------------------------------------------------------------------
-# 6. systemd unit. ExecStart is the ENTRYPOINT (the supervisor), not the binary —
-#    it owns first-boot seeding, release promotion, and the in-app installer's
-#    exit-75 / health-probe / rollback loop. Starts as root so it can chown state
-#    dirs, then drops to $RUN_USER via gosu.
+# 6. systemd unit. ExecStart is the entrypoint script, not the binary directly —
+#    it does first-boot seeding and release promotion as root, then execs
+#    `tinycld supervise`, which holds the public ports, runs `tinycld serve`
+#    children, and does the install/upgrade restart + health-check + rollback
+#    cycle that used to be a shell loop here. Starts as root so the entrypoint
+#    can chown state dirs; the supervisor (not gosu) drops ITS OWN children to
+#    $RUN_USER, which is why ExecStart runs the entrypoint directly rather than
+#    through gosu.
+#
+#    KillMode=mixed sends systemd's stop signal (SIGTERM) to the supervisor
+#    only, which drains its children itself, then SIGKILLs the whole cgroup at
+#    the timeout if anything is still alive. TimeoutStopSec=45 gives the
+#    supervisor's own 30s child-drain budget a margin before systemd escalates.
 # ------------------------------------------------------------------------------
 log "writing ${UNIT}"
 cat > "$UNIT" <<EOF
@@ -182,6 +191,12 @@ Environment=PUBLIC_SCHEME=https
 Environment=CGO_ENABLED=0
 EnvironmentFile=${ENV_FILE}
 ExecStart=/opt/tinycld-entrypoint.sh
+# SIGTERM to the supervisor only (it drains its own children); SIGKILL the
+# whole cgroup if anything outlives TimeoutStopSec.
+KillMode=mixed
+# Drain budget (30s, ChildDrainTimeout in core/server/supervise) + margin,
+# matching the Docker image's recommended --stop-timeout / stop_grace_period.
+TimeoutStopSec=45
 Restart=always
 RestartSec=5
 # An in-app rebuild runs expo export + go build on the box; give it room.

@@ -68,10 +68,10 @@ under `/api/admin/packages` (all require superuser auth):
 `status` is one of `pending` · `running` · `success` · `failed` · `rolled_back`.
 `failed` is a pre-swap abort (validation/build/migration-sync) — the live build
 is untouched. `rolled_back` is a post-swap health-check failure that the
-entrypoint reverted (symlink + DB restored), surfaced by the boot reconciler
+supervisor reverted (symlink + DB restored), surfaced by the boot reconciler
 (see [Rollback](#rollback)). The status survives the relaunch because it's read
 from the durable `pkg_install_log` row, not the in-memory job (which the
-`exit(75)` restart discards).
+process replacement discards).
 
 Only **one** install/uninstall job runs at a time; a second request while one is
 in flight returns `409` with the current job's info.
@@ -124,7 +124,7 @@ stdout (visible in `docker logs`).
 | 93–94 | Building native bundles | `npx expo export --platform ios` then `--platform android`, **sequential, after web staging**. Each bundle + its assets are copied into the staged release's `native/<platform>/`. Skipped (`93`, no further work) when the RN toolchain is absent (web-only image) — mobile then stays on its embedded bundle. See [Native OTA bundles](#native-ota-bundles). |
 | 95–97 | Updating database | Upsert the `pkg_registry` record (status `installed`) |
 | 98–99 | Archiving build | Copy the now-live binary + staged bundle into `builds/<build_id>/`, write `build.json`, and record a `pkg_build` row (status `current`) capturing how many migrations this install applied (see [Build history & revert](#build-history--revert)) |
-| 99 | Requesting restart | `os.Exit(75)` — hands off to the entrypoint (see next section) |
+| 99 | Requesting restart | `requestRestart` — see [How relaunch works](#how-relaunch-works) |
 
 ### The server-package prerequisite gate
 
@@ -186,86 +186,72 @@ bundle.
 
 ## How relaunch works
 
-The installer never restarts the container from the outside. It signals the
-running server to exit with a sentinel code, and the entrypoint's supervisor
-loop does the relaunch.
+The installer never restarts the container from the outside. **Under
+`tinycld supervise`** (every Docker and bare-metal deployment — see
+[Runtime image requirements](#runtime-image-requirements)) it asks the
+supervisor to start the new build beside the old one and only tells the old
+one to drain once the new one is ready: the old build keeps answering requests,
+read-only, for the whole swap, so an upgrade never refuses a connection.
+**Without a supervisor** (a hand-run binary, dev, e2e) the server still falls
+back to exiting with a sentinel code for an external loop to catch — that path
+is covered in [Unsupervised fallback](#unsupervised-fallback) below.
 
-### 1. The server signals (exit 75)
+### 1. The server asks to be replaced
 
 `requestRestart` (`pkg_restart.go`) writes a `.restart-requested` marker in the
 state dir — beside `pb_data`, not inside it, because a restore's boot swap
-renames `pb_data` away as a whole — and calls `os.Exit(75)`. In dev mode it logs
-and returns instead (you restart manually).
+renames `pb_data` away as a whole — then, under a supervisor, enters read-only
+mode, holds the install-job system for the next process, and sends a `restart`
+message over the control socket the supervisor gave this process at startup.
+This process keeps serving, read-only, until the supervisor drains it. In dev
+mode (`go run`) it only logs; you restart manually.
 
-### The boot probe
+### 2. The supervisor starts the new build alongside the old one
 
-`probe_current_build()` in `entrypoint.sh` boots a full server on the real data
-dir to ask "does this build answer `/api/health`?", then kills it. That process
-sets `TINYCLD_BOOT_PROBE=1`.
+`tinycld supervise` (`core/server/supervise`) holds the public ports for the
+whole container/unit lifetime and starts each `tinycld serve` child with those
+ports handed down as inherited file descriptors, so starting a second child
+never contends for a port the first is still using. On a `restart` message it:
 
-The server reads the variable at registration. When it is `1` the boot does no
-restore work at all: no swap of staged data, no finalize, no `interrupted`
-sweep, no wipe of the backup scratch directory. Without it the probe performs
-the swap and the finalize that belong to the real boot, and the kill, landing
-between the two, makes the real boot roll the restore back — so an operator's
-restore silently does nothing.
+1. Starts a new child of the build `current` now points at, with the same
+   ports.
+2. Waits (up to 60s) for that child's `ready` message, sent from `OnServe`
+   once its listeners are set — the same moment `/api/health` would first
+   answer.
+3. On success: promotes the new child's web bundle, commits the database
+   backup (the migrated schema is the keeper), then tells the OLD child to
+   drain.
+4. On failure (the new child exits before `ready`, or times out): see
+   [Rollback](#rollback).
 
-Any supervisor that boots the binary only to check that it boots must set this
-variable for that process.
+A **cold** restart (the child signals `Cold: true` — currently only a backup
+restore, whose boot renames `pb_data` as a whole) drains the old child FIRST,
+then starts the new one: the two must never run on the same data directory at
+once.
 
-### 2. The entrypoint catches it
+### 3. Draining the old child
 
-`entrypoint.sh` runs the server in a supervisor loop:
+Told to drain, a child stops accepting new connections, turns off HTTP
+keep-alives so each connection closes after its current request, waits (up to
+30s, `ChildDrainTimeout`) for in-flight requests to finish, then shuts down and
+exits. A long-lived connection (a realtime subscription, IMAP IDLE) is cut at
+the end of that budget; clients reconnect against the new child.
 
-```sh
-while true; do
-    EXIT_CODE=0
-    run_tinycld serve "$@" || EXIT_CODE=$?      # gosu → unprivileged tinycld
-    if [ $EXIT_CODE -eq 75 ]; then
-        # ... health-check + restart (below) ...
-        continue
-    fi
-    exit $EXIT_CODE                              # any other code = real exit
-done
-```
+**Keep-alive edge case:** an idle keep-alive connection to the draining child
+is closed as part of turning keep-alives off, not after its next request. A
+reverse proxy (or browser) that happens to reuse that exact connection in the
+instant it closes sees one failed request and retries on a fresh connection —
+in practice a single transient `502` at the moment of a swap, never a
+sustained outage.
 
-The `|| EXIT_CODE=$?` is load-bearing: the script runs under `set -e`, so a
-bare `run_tinycld serve` would let the shell abort on the non-zero 75 *before*
-the restart logic — the container would just exit 75 instead of relaunching.
+### Unsupervised fallback
 
-### 3. Health-check the new binary
-
-Before committing to the swap, the entrypoint boots the **new** binary on a
-throwaway port (`127.0.0.1:19876`) and polls `/api/health` for up to 10s:
-
-```sh
-(
-    export IMAP_ENABLED=false SMTP_ENABLED=false
-    run_tinycld serve --http=127.0.0.1:19876
-) &
-HEALTH_PID=$!
-```
-
-`IMAP_ENABLED=false SMTP_ENABLED=false` are essential: a full `serve` also binds
-the mail package's fixed IMAP `:993` / SMTP `:465` ports. Without disabling
-them, the probe holds those ports, and after it's killed they aren't released
-before the real server restarts — the relaunch then dies with *"listen tcp
-:993: bind: address already in use."* The probe only needs the HTTP listener to
-answer the health check.
-
-### 4. Promote the web bundle and restart
-
-- **Health passes** → kill the probe and `continue` the loop. The next
-  iteration re-runs `serve` with mail enabled as normal, now executing the
-  swapped-in binary.
-- On that next boot the entrypoint's `promote_release` finds the staged
-  `release-staging/<id>/` (with its `app.html` + `release-id.txt`), merges its
-  hashed assets into the cross-release `_static/` pool, and atomically points
-  `releases/current` at the new release. The SPA fallback then serves the new
-  `app.html`.
-
-The container's uptime does **not** reset — it's the same container, the same
-PID 1 entrypoint, looping onto a new server process.
+A process with no supervisor (`listeners.Supervised()` false — a hand-run
+binary, dev, e2e) keeps the old behavior: `requestRestart` calls `os.Exit(75)`
+at once, with no read-only window and no in-process health check. Nothing in
+a supervised deployment (Docker image or the bare-metal unit) takes this path;
+it exists for the standalone binary and tooling that run `tinycld serve`
+directly.
 
 ## Rollback
 
@@ -281,32 +267,74 @@ pre-swap `VACUUM INTO` snapshot if it had already been taken, and the live
 e.g. an unresolved import in a screen — lands here: `expo export` fails, no swap.)
 
 **After activation** the swap and any DOWN migrations have already hit live
-state, and the job has `exit(75)`'d to relaunch onto the new build, so an
-in-process undo is impossible. Instead the entrypoint renders the verdict
-(`probe_current_build` → `/api/health` on a temp port, 60s budget):
+state, and the job has asked to be replaced, so an in-process undo is
+impossible. Instead the supervisor renders the verdict — a new child's `ready`
+message (or the 60s timeout) in place of the old shell loop's `/api/health`
+probe:
 
-- **Healthy** → `commit_db_backup` deletes the armed snapshot + marker; the new
-  build serves.
-- **Unhealthy** (the new binary panics at bootstrap, a pending UP migration
-  throws at `serve` boot before the HTTP listener binds, or boot hangs) →
-  `restore_db_from_backup` copies the pre-swap snapshot back over `data.db`,
-  `rollback_current_symlink` flips `current` back to the previous build dir (the
-  whole tree reverts, not just the binary), and the loop re-serves the old build.
+- **Healthy** (`ready` arrives) → the backup is committed (the armed snapshot +
+  marker are deleted); the new build serves.
+- **Unhealthy** (the new child exits before `ready`, or the 60s timeout
+  expires — the binary panics at bootstrap, a pending UP migration throws at
+  `serve` boot before the HTTP listener binds, or boot hangs) → **cold
+  rollback**: stop the new child, stop the old child, restore `data.db` from
+  the armed snapshot, flip `current` back to the previous build (the whole
+  tree reverts, not just the binary), and start that build again. Unlike a
+  healthy swap, this one has a short outage — only on a failed upgrade, never
+  on a successful one.
 
 Because the restore reverts `data.db` to a snapshot taken *before* the job wrote
 its terminal status, the rolled-back install's `pkg_install_log` row would
 otherwise be stranded at `running` forever. To surface a clean outcome, the
 rollback path writes a `pb_data/.rollback-pending` breadcrumb (the rolled-back
-build id, captured from `.db-backup-armed` before the restore clears it); on the
-next boot `ReconcileRolledBackInstall` (registered in the `registerStaticServe`
-OnServe hook) consumes it and marks that stranded row `rolled_back`. So a
-post-restart rollback shows terminal status **`rolled_back`** at
-`GET /api/admin/packages/status/{slug}`, distinct from the pre-swap **`failed`**.
+build id, captured from the armed-backup marker before the restore clears it);
+on the next boot `ReconcileRolledBackInstall` (registered in the
+`registerStaticServe` OnServe hook) consumes it and marks that stranded row
+`rolled_back`. So a post-restart rollback shows terminal status
+**`rolled_back`** at `GET /api/admin/packages/status/{slug}`, distinct from the
+pre-swap **`failed`**.
 
-The entrypoint's `recover_interrupted_rebuild` runs the identical verdict on a
-fresh start if the container is killed (OOM, `docker kill`, host reboot) between
-the `exit(75)` and the verdict — the armed marker's presence is the
-"verdict never completed" signal, and it writes the same breadcrumb on rollback.
+The supervisor renders the identical verdict on a fresh start if the whole
+process is killed (OOM, `docker kill`, host reboot) between the replace request
+and the verdict: an armed backup marker found at boot means a rebuild's health
+verdict never completed, so the supervisor checks the current build itself —
+commit on healthy, cold-rollback on unhealthy — before settling into its normal
+loop.
+
+### A build older than the supervisor cannot run under it
+
+`tinycld supervise` binds the main port itself and hands each child its
+listener as an inherited file descriptor; a build from before the supervisor
+existed binds that port itself instead, and fails at once with "address
+already in use" when started as a supervised child. Two consequences:
+
+- **Downgrading, or reverting, past the version that introduced the
+  supervisor is unsupported.** The version-change or revert pipeline starts
+  the older build as a child exactly like any other; that child fails to
+  bind, never sends `ready`, and the supervisor treats it as a normal failed
+  upgrade — cold rollback to whatever build *was* running. The downgrade
+  itself never completes.
+- **A rare double fault can strand the service on a build that cannot run.**
+  If a rebuild is interrupted on an OLD (pre-supervisor) image — the process
+  killed between activation and its health verdict — and the box then comes
+  back up on a NEW (supervisor-capable) image before that verdict is ever
+  rendered, the new image's own startup recovery (see above) checks the build
+  `current` points at. If that build predates the supervisor, it fails to
+  bind, the recovery's own rollback runs, and `current` ends up pointed at a
+  build that *also* cannot bind under the new image's supervisor — the
+  service crash-loops.
+
+  **Recovery:** boot with `TINYCLD_RESCUE=1` (Docker: `-e TINYCLD_RESCUE=1`;
+  bare metal: `Environment=TINYCLD_RESCUE=1` on the unit, or run
+  `/opt/tinycld-entrypoint.sh` by hand with it set) to get a shell as the
+  runtime user INSTEAD of handing over to the supervisor — the hatch exits
+  before the `supervise` exec, so a build that can't bind under a supervisor
+  never gets the chance to try. From that shell, point `current` at a build
+  made by the CURRENT (supervisor-capable) image: either re-run the
+  entrypoint's own first-boot seed logic by hand (remove
+  `$TINYCLD_STATE_DIR/current` and restart normally, which re-seeds from the
+  image's baked build), or symlink `$TINYCLD_STATE_DIR/current` directly at a
+  known-good `builds/<id>/tinycld` and restart.
 
 ## Build history & revert
 
@@ -341,8 +369,8 @@ per-build DB snapshot is taken — schema rollback is done with `migrate down`.
 ### How a revert works
 
 `runRevertPipeline` mirrors the install pipeline (same SSE `progress`/`complete`
-events, so the same `InstallProgressModal` drives it) and **reuses the exit-75
-relaunch**:
+events, so the same `InstallProgressModal` drives it) and **reuses the same
+restart request** ([How relaunch works](#how-relaunch-works)):
 
 1. **Validate** the target build exists, is `available`, and its archive is intact.
 2. **Migration safety gate.** Sum `migrations_applied` across every build newer
@@ -354,12 +382,12 @@ relaunch**:
    mismatch manually.
 3. **Backup the DB** (`data.db.backup`) as the revert operation's own safety net.
 4. **Swap in the archived binary** (`swapToArchivedBinary`): the live binary
-   becomes `tinycld.prev` (so the entrypoint's health-check can roll back to it),
+   becomes `tinycld.prev` (so a failed health verdict can roll back to it),
    and the archived binary is *copied* in (the archive stays intact).
 5. **`migrate down N`** runs with the **target's** binary, which understands the
    older schema. User data is preserved; only the schema is rolled back.
 6. **Re-stage** `builds/<id>/release/` into `release-staging/<release_id>/` so the
-   entrypoint's `promote_release` serves it after relaunch.
+   new child promotes it once it's ready.
 7. **Update records (one transaction):** mark the target `current`, mark every
    newer build `superseded`, reconcile `pkg_registry` (a package whose *install*
    was reverted past is set `disabled` — unless an earlier surviving build still
@@ -368,8 +396,8 @@ relaunch**:
    version. Wrapping these in `app.RunInTransaction` means an interrupted revert
    can't leave the build set with zero or multiple `current` rows. The
    `pkg_install_log` row (action `revert`) is the history trail.
-8. **`os.Exit(75)`** → the entrypoint health-checks the reverted binary and, on
-   failure, auto-restores `tinycld.prev` exactly as it does for an install.
+8. **Request a restart** → the supervisor health-checks the reverted build and, on
+   failure, cold-rolls-back exactly as it does for an install.
 
 ### Revert is one-way
 
@@ -456,8 +484,8 @@ returns a `jobId` (same SSE progress stream as install). For each change:
    upgrade → `applyNamedMigrations(target ∖ current)`;
    downgrade → `revertNamedMigrations(current ∖ target)`.
 6. `pnpm install`, rebuild the binary (if the package has a server) + web bundle,
-   archive a new build, upsert the registry version, and request the exit-75
-   relaunch.
+   archive a new build, upsert the registry version, and request the restart
+   ([How relaunch works](#how-relaunch-works)).
 
 Any failure unwinds the per-package rollback stack and restores the DB backup.
 The whole operation holds the same `installMu`/`currentJob` single-flight lock as
@@ -468,9 +496,9 @@ re-running the generator mid-pipeline rewrites the watched `pb_hooks` symlinks,
 which would otherwise make PocketBase's watcher call `app.Restart()` and tear the
 process down between steps. An `OnTerminate` guard
 (`shouldSuppressRestart`) vetoes any in-process restart (`IsRestart`) while a
-package operation holds the single-flight lock; our own intentional relaunch uses
-`os.Exit(75)` (a different path the guard never sees), so it still fires once the
-pipeline finishes.
+package operation holds the single-flight lock; our own intentional relaunch goes
+through `requestRestart` (a different path the guard never sees), so it still
+fires once the pipeline finishes.
 
 ### Discovery, compatibility, and the drop report
 
@@ -514,8 +542,8 @@ to. The runtime image (`app/Dockerfile`) provides:
 pipeline (`runUninstallPipeline`): verify the package isn't bundled (bundled
 packages can't be uninstalled), remove `/workspace/<slug>`, drop the member from
 the workspace manifests, `pnpm install`, regenerate, rebuild + stage the web
-bundle, mark the `pkg_registry` record `disabled`, and request the same exit-75
-relaunch. Uninstall does **not** rebuild the Go binary — a disabled package's
+bundle, mark the `pkg_registry` record `disabled`, and request the same
+restart. Uninstall does **not** rebuild the Go binary — a disabled package's
 server code simply stops being registered after the regenerate + restart.
 
 ## Observability & troubleshooting
@@ -535,18 +563,20 @@ The same per-stage detail streams over the SSE endpoint to the progress modal,
 and a permanent record is written to the `pkg_install_log` collection
 (`action`, `status`, `error`, `log`, timestamps).
 
-The relaunch is equally legible — look for:
+The relaunch is equally legible — the supervisor logs each step under
+`pkg=supervise` (`logging.ForPackage("supervise")`); look for:
 
 ```
-[entrypoint] Restart requested (exit code 75)
-[entrypoint] Health check passed, restarting server
-[entrypoint] promoting release <id> …
-… Server started at http://0.0.0.0:7090
+level=INFO pkg=supervise msg="the server asked to be replaced" pid=…
+level=INFO pkg=supervise msg="started a server" build=… pid=…
+level=INFO pkg=supervise msg="the server is ready" pid=…
 ```
 
-A relaunch that crashes on `:993` means the health-check probe ran without the
-mail listeners disabled; an install that hangs with an empty `pkg_install_log`
-means the POST never fired (e.g. a UI selector targeting the wrong element).
+An install that hangs with an empty `pkg_install_log` means the POST never
+fired (e.g. a UI selector targeting the wrong element). A relaunch that never
+logs "the server is ready" within ~60s and instead shows "the new build did
+not become ready; rolling back" means the new build's boot itself is failing —
+check its own log lines just above for the actual panic/migration error.
 
 ### Integration test
 

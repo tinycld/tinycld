@@ -27,6 +27,12 @@ services:
     image: ghcr.io/tinycld/tinycld:latest
     container_name: tinycld
     restart: unless-stopped
+    # Docker's default stop timeout (10s) is shorter than the supervisor's own
+    # child-drain budget (30s, ChildDrainTimeout). Without this, `docker compose
+    # stop`/`down`/a recreate can SIGKILL the supervisor mid-drain, cutting off
+    # in-flight requests that a plain SIGTERM would have let finish. 45s matches
+    # the bare-metal systemd unit's TimeoutStopSec.
+    stop_grace_period: 45s
 
     # Domain / TLS config. Set AUTOCERT_ENABLED: "true" with PRIMARY_DOMAIN to
     # enable autocert HTTPS on ports 80/443. Leave AUTOCERT_ENABLED empty/false
