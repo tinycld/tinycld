@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -19,6 +20,10 @@ func TestMain(m *testing.M) {
 	}
 	if os.Getenv("LISTENERS_TEST_EMPTY_SET") == "1" {
 		emptySetChildMain()
+		return
+	}
+	if os.Getenv("LISTENERS_TEST_CONTROL") == "1" {
+		controlChildMain()
 		return
 	}
 	os.Exit(m.Run())
@@ -54,6 +59,26 @@ func emptySetChildMain() {
 	}
 	if _, ok := Inherited("anything"); ok {
 		os.Stdout.WriteString("found\n")
+		os.Exit(2)
+	}
+	os.Stdout.WriteString("ok\n")
+}
+
+// controlChildMain gets one TCP listener and one end of a socketpair. The
+// socketpair end must come back as an extra fd: net.FileListener accepts any
+// stream socket, so a check that stops at "is it a socket" files it as a
+// listener and the control channel is lost.
+func controlChildMain() {
+	if _, ok := Inherited("acme-secure"); !ok {
+		os.Stdout.WriteString("no listener\n")
+		os.Exit(2)
+	}
+	if _, ok := Inherited("control"); ok {
+		os.Stdout.WriteString("control is a listener\n")
+		os.Exit(2)
+	}
+	if _, ok := ExtraFD("control"); !ok {
+		os.Stdout.WriteString("control is not an extra fd\n")
 		os.Exit(2)
 	}
 	os.Stdout.WriteString("ok\n")
@@ -103,6 +128,35 @@ func TestChildServesOnInheritedListenersByName(t *testing.T) {
 		if got != name+"\n" {
 			t.Fatalf("listener %s answered %q", name, got)
 		}
+	}
+}
+
+func TestSocketpairEndIsAnExtraFDNotAListener(t *testing.T) {
+	l, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childEnd := os.NewFile(uintptr(fds[0]), "control-child")
+	parentEnd := os.NewFile(uintptr(fds[1]), "control-parent")
+	t.Cleanup(func() { childEnd.Close(); parentEnd.Close() })
+
+	set := &Set{}
+	if err := set.AddListener("acme-secure", l); err != nil {
+		t.Fatal(err)
+	}
+	set.AddFile("control", childEnd)
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), "LISTENERS_TEST_CONTROL=1")
+	set.Apply(cmd)
+
+	out, err := cmd.Output()
+	if err != nil || string(out) != "ok\n" {
+		t.Fatalf("child said %q, err %v", out, err)
 	}
 }
 

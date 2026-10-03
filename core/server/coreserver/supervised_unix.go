@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"sync"
 	"syscall"
@@ -39,19 +38,19 @@ const drainShutdownPriority = -10000
 
 // drain is a supervisor's request that this process stop. Its shutdown runs
 // inside OnTerminate rather than here because PocketBase's serve command
-// returns as soon as the server stops accepting, and PocketBase then runs its
+// returns as soon as the server stops serving, and PocketBase then runs its
 // terminate path at once; shutting down from OnTerminate is what keeps that
 // path waiting for the in-flight requests.
 type drain struct {
 	mu        sync.Mutex
-	server    *http.Server
+	drainer   *supervise.Drainer
 	requested bool
 }
 
-func (d *drain) setServer(s *http.Server) {
+func (d *drain) setDrainer(dr *supervise.Drainer) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.server = s
+	d.drainer = dr
 }
 
 func (d *drain) begin() {
@@ -64,19 +63,19 @@ func (d *drain) begin() {
 	}
 }
 
-// shutdown stops accepting (Shutdown closes the listener this process
-// serves on, which is a dup: the supervisor's own copy stays open for the
-// next child) and waits for in-flight requests, within ChildDrainTimeout.
+// shutdown stops accepting (it closes the listener this process serves on,
+// which is a dup: the supervisor's own copy stays open for the next child)
+// and answers every request already accepted, within ChildDrainTimeout.
 func (d *drain) shutdown() {
 	d.mu.Lock()
-	srv, requested := d.server, d.requested
+	dr, requested := d.drainer, d.requested
 	d.mu.Unlock()
-	if !requested || srv == nil {
+	if !requested || dr == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), supervise.ChildDrainTimeout)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := dr.Drain(ctx); err != nil {
 		srvLog.Warn("drain budget ran out; cutting the connections still open", "err", err)
 	}
 }
@@ -97,10 +96,16 @@ func registerSupervised(app core.App) {
 		Priority: supervisedServePriority,
 		Func: func(e *core.ServeEvent) error {
 			useInheritedListeners(e)
+			// The drainer must see every connection from the first one, so
+			// it wraps the listener before PocketBase starts serving on it.
+			dr := supervise.NewDrainer(e.Server)
+			if e.Listener != nil {
+				e.Listener = dr.Listener(e.Listener)
+			}
 			if err := e.Next(); err != nil {
 				return err
 			}
-			d.setServer(e.Server)
+			d.setDrainer(dr)
 			if ctl == nil {
 				return nil
 			}

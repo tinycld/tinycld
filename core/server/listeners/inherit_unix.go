@@ -142,9 +142,11 @@ func parseEnvOnce() {
 				continue
 			}
 
-			if _, err := syscall.Getsockname(fd); err != nil {
-				// Not a socket: file it as a plain extra fd (e.g. a control
-				// socket candidate checked elsewhere) rather than a listener.
+			if !isTCPSocket(fd) {
+				// The control socket is a unix socketpair end, and
+				// net.FileListener would wrap any stream socket as a
+				// listener, so only TCP sockets (all a Set passes as
+				// listeners) are filed as one.
 				localFiles[name] = f
 				continue
 			}
@@ -163,6 +165,18 @@ func parseEnvOnce() {
 		supervised = len(local) > 0
 		mu.Unlock()
 	})
+}
+
+func isTCPSocket(fd int) bool {
+	sa, err := syscall.Getsockname(fd)
+	if err != nil {
+		return false
+	}
+	switch sa.(type) {
+	case *syscall.SockaddrInet4, *syscall.SockaddrInet6:
+		return true
+	}
+	return false
 }
 
 // parseEnv reads and validates the two env vars without touching any

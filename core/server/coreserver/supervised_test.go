@@ -119,8 +119,9 @@ func TestSupervisedServesOnTheInheritedListener(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if seen != l {
-		t.Fatalf("e.Listener = %v, want the inherited %v", seen, l)
+	// e.Listener wraps the inherited one so a drain can stop accepting on it.
+	if seen == nil || seen.Addr().String() != l.Addr().String() {
+		t.Fatalf("e.Listener = %v, want one on the inherited %v", seen, l.Addr())
 	}
 }
 
@@ -201,17 +202,20 @@ func TestSupervisedDrainStopsAcceptingAndFinishes(t *testing.T) {
 	if err := supervise.Send(parent, supervise.Msg{Type: supervise.MsgDrain}); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case err := <-served:
-		if !errors.Is(err, http.ErrServerClosed) {
-			t.Fatalf("Serve returned %v, want ErrServerClosed", err)
+	// The test holds the only copy of the listener, so once the drain
+	// stops accepting a connection is refused. Under a supervisor its own
+	// copy keeps the port open and the next child accepts.
+	stopped := time.Now().Add(time.Second)
+	for {
+		c, err := net.DialTimeout("tcp", addr, time.Second)
+		if err != nil {
+			break
 		}
-	case <-time.After(time.Second):
-		t.Fatal("the server still accepts 1 s after drain")
-	}
-	if c, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
 		c.Close()
-		t.Fatal("a new connection was accepted after drain")
+		if time.Now().After(stopped) {
+			t.Fatal("the server still accepts 1 s after drain")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	select {
 	case <-terminated:
@@ -227,6 +231,14 @@ func TestSupervisedDrainStopsAcceptingAndFinishes(t *testing.T) {
 	case <-terminated:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the drain did not finish after the last request")
+	}
+	select {
+	case err := <-served:
+		if !errors.Is(err, http.ErrServerClosed) {
+			t.Fatalf("Serve returned %v, want ErrServerClosed", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Serve did not return after the drain")
 	}
 }
 
