@@ -223,7 +223,9 @@ func copyMerge(src, dst string) error {
 // temp file in dst's directory, which then renames over dst in one step. A
 // dst that already holds the same bytes is left alone, so its mtime (what
 // no-cache revalidation compares) does not move. The source mtime and mode
-// carry over, as `cp -a` did.
+// carry over, as `cp -a` did. The owner is the replaced file's, or the
+// source's for a new file: the supervisor runs as root, and a root-owned
+// file in the pool is one a child's later rebuild cannot replace.
 func copyFile(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {
@@ -235,6 +237,10 @@ func copyFile(src, dst string) error {
 	}
 	if same {
 		return nil
+	}
+	owner := info
+	if dinfo, err := os.Stat(dst); err == nil {
+		owner = dinfo
 	}
 
 	in, err := os.Open(src)
@@ -261,6 +267,9 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := matchOwner(tmp.Name(), owner); err != nil {
 		return err
 	}
 	if err := os.Chtimes(tmp.Name(), info.ModTime(), info.ModTime()); err != nil {

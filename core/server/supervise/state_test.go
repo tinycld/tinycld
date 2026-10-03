@@ -318,3 +318,80 @@ func TestState_RestoreBackup_RenamesOverDataDB(t *testing.T) {
 		t.Fatalf("restore temp file should be gone, stat err = %v", err)
 	}
 }
+
+// The supervisor runs as root and its children do not, so the restored
+// data.db must keep the mode (and owner, see state_unix_test.go) of the file
+// it replaces; a fresh 0644 root file is one the next child cannot write.
+func TestState_RestoreBackup_KeepsDataDBMode(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-3", []byte("snapshot-bytes"))
+	if err := os.WriteFile(s.dbPath(), []byte("forward-migrated"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(s.dbPath(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RestoreBackup(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(s.dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("restored data.db mode = %v, want 0600 (the replaced file's)", info.Mode().Perm())
+	}
+}
+
+// With no data.db to copy from, the backup's mode is the next best guess:
+// the same process wrote it beside data.db.
+func TestState_RestoreBackup_ModeFromBackupWhenDataDBMissing(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-3", []byte("snapshot-bytes"))
+	if err := os.Chmod(s.dbBackupPath(), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(s.dbPath())
+
+	if err := s.RestoreBackup(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(s.dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("restored data.db mode = %v, want 0640 (the backup's)", info.Mode().Perm())
+	}
+}
+
+// The stale WAL must be gone before the restored file takes data.db's name:
+// a kill between the two would otherwise leave the migrated database's WAL
+// beside the restored file, and SQLite would replay it over the snapshot.
+func TestState_RestoreBackup_RemovesWALBeforeRename(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-3", []byte("snapshot-bytes"))
+	mustWrite(t, s.dbPath(), "forward-migrated")
+	mustWrite(t, s.dbPath()+"-wal", "wal")
+	mustWrite(t, s.dbPath()+"-shm", "shm")
+
+	var leftAtRename []string
+	prev := renameFile
+	renameFile = func(from, to string) error {
+		for _, p := range []string{s.dbPath() + "-wal", s.dbPath() + "-shm"} {
+			if _, err := os.Stat(p); err == nil {
+				leftAtRename = append(leftAtRename, filepath.Base(p))
+			}
+		}
+		return prev(from, to)
+	}
+	t.Cleanup(func() { renameFile = prev })
+
+	if err := s.RestoreBackup(); err != nil {
+		t.Fatal(err)
+	}
+	if len(leftAtRename) != 0 {
+		t.Fatalf("%v still existed when the restored file was renamed over data.db", leftAtRename)
+	}
+}

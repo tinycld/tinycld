@@ -113,26 +113,36 @@ func (s State) WriteRollbackPending() error {
 //   - the copy goes to a temp file that is synced and then renamed over
 //     data.db, so a kill mid-restore never leaves data.db half written; it
 //     is streamed because a database can be far larger than memory
-//   - remove any stale data.db-wal / data.db-shm (the snapshot has no WAL;
-//     SQLite would otherwise replay stale frames over the restored file)
-//   - remove the backup and its arm marker
+//   - the temp file takes the owner and mode of the data.db it replaces (or
+//     of the backup when there is none): the supervisor runs as root and its
+//     children do not, and a root-owned data.db is one they cannot write
+//   - remove any stale data.db-wal / data.db-shm before the rename (the
+//     snapshot has no WAL; SQLite would otherwise replay the migrated
+//     database's frames over the restored file, and a kill between a rename
+//     and a later removal would leave exactly that)
+//   - after the rename, remove the backup and its arm marker
 //
 // Returns an error without changing data.db when the backup is missing.
 func (s State) RestoreBackup() error {
 	backupPath := s.dbBackupPath()
-	if _, err := os.Stat(backupPath); err != nil {
+	backupInfo, err := os.Stat(backupPath)
+	if err != nil {
 		return fmt.Errorf("no armed DB backup at %s: %w", backupPath, err)
 	}
-	if err := copyToTempAndRename(backupPath, s.dbPath(), s.dbPath()+".restore-tmp"); err != nil {
+	ref := backupInfo
+	if info, err := os.Stat(s.dbPath()); err == nil {
+		ref = info
+	}
+	removeWAL := func() error {
+		if err := removeIfExists(s.dbPath() + "-wal"); err != nil {
+			return err
+		}
+		return removeIfExists(s.dbPath() + "-shm")
+	}
+	if err := copyToTempAndRename(backupPath, s.dbPath(), s.dbPath()+".restore-tmp", ref, removeWAL); err != nil {
 		return fmt.Errorf("failed to restore database from %s: %w", backupPath, err)
 	}
 
-	if err := removeIfExists(s.dbPath() + "-wal"); err != nil {
-		return err
-	}
-	if err := removeIfExists(s.dbPath() + "-shm"); err != nil {
-		return err
-	}
 	if err := removeIfExists(backupPath); err != nil {
 		return err
 	}
@@ -143,15 +153,20 @@ func (s State) RestoreBackup() error {
 	return nil
 }
 
-// copyToTempAndRename streams src into tmp, syncs it, and renames it over
-// dst. tmp is removed on any failure.
-func copyToTempAndRename(src, dst, tmp string) (err error) {
+// renameFile is os.Rename behind a seam, so a test can see what is on disk
+// at the moment of the rename.
+var renameFile = os.Rename
+
+// copyToTempAndRename streams src into tmp, syncs it, gives it ref's mode
+// and owner, runs beforeRename, and renames tmp over dst. tmp is removed on
+// any failure.
+func copyToTempAndRename(src, dst, tmp string, ref os.FileInfo, beforeRename func() error) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
@@ -164,13 +179,22 @@ func copyToTempAndRename(src, dst, tmp string) (err error) {
 	if _, err = io.Copy(out, in); err != nil {
 		return err
 	}
+	if err = out.Chmod(ref.Mode().Perm()); err != nil {
+		return err
+	}
 	if err = out.Sync(); err != nil {
 		return err
 	}
 	if err = out.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, dst)
+	if err = matchOwner(tmp, ref); err != nil {
+		return err
+	}
+	if err = beforeRename(); err != nil {
+		return err
+	}
+	return renameFile(tmp, dst)
 }
 
 // RollbackCurrent flips <Root>/current back to the build recorded in

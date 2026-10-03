@@ -435,7 +435,7 @@ func recordRebuildBuild(app core.App, m RebuildManifest, buildDir string, out bu
 // archive's release dir (buildArchiveFor(buildID).release/native/).
 //
 // This closes a gap in the install pipeline: the pipeline stages native bundles
-// into release-staging/<id>/native/ for the entrypoint's web promote_release, but
+// into release-staging/<id>/native/ for the supervisor's web promote, but
 // /api/app/bundle (serveBuildFile) and the revert/rollback path read from the
 // build archive's release/native/ — which nothing else populates for an install
 // build (only the base seed copies a release dir). Without this step the OTA
