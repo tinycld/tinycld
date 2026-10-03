@@ -34,9 +34,11 @@ func TestMain(m *testing.M) {
 	case "child":
 		os.Exit(fakeChild())
 	case "supervisor":
-		os.Exit(Run(nil, os.Getenv))
+		os.Exit(supervisorRole())
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	removeServerBuild()
+	os.Exit(code)
 }
 
 // fakeChild stands in for `tinycld serve`: it serves on every listener it
@@ -388,7 +390,11 @@ var client = &http.Client{
 }
 
 func get(addr string) (string, error) {
-	resp, err := client.Get("http://" + addr + "/")
+	return fetch("http://" + addr + "/")
+}
+
+func fetch(url string) (string, error) {
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -481,11 +487,20 @@ type load struct {
 	bodies  []string
 	refused int
 	failed  []error
-	stop    chan struct{}
-	stopped chan struct{}
+	// slowest is the longest any one request took: a request that waits in
+	// the listen backlog while nothing accepts is slow, not refused.
+	slowest time.Duration
+	// lastFailedAt is when the last refused or failed request ended.
+	lastFailedAt time.Time
+	stop         chan struct{}
+	stopped      chan struct{}
 }
 
 func startLoad(addr string) *load {
+	return startLoadAt("http://" + addr + "/")
+}
+
+func startLoadAt(url string) *load {
 	l := &load{stop: make(chan struct{}), stopped: make(chan struct{})}
 	go func() {
 		defer close(l.stopped)
@@ -497,8 +512,14 @@ func startLoad(addr string) *load {
 				return
 			case <-tick.C:
 			}
-			body, err := get(addr)
+			start := time.Now()
+			body, err := fetch(url)
+			took := time.Since(start)
 			l.mu.Lock()
+			l.slowest = max(l.slowest, took)
+			if err != nil {
+				l.lastFailedAt = time.Now()
+			}
 			switch {
 			case errors.Is(err, syscall.ECONNREFUSED):
 				l.refused++
