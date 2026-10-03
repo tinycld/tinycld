@@ -1,0 +1,243 @@
+package supervise
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// newTestState builds a Root matching the real layout:
+//
+//	pb_data/data.db
+//	pb_data/data.db.backup
+//	pb_data/.db-backup-armed
+//	builds/<id>/tinycld/tinycld
+//	current -> builds/<id>/tinycld
+func newTestState(t *testing.T) State {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "pb_data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return State{Root: root}
+}
+
+func writeBuild(t *testing.T, s State, buildID string) string {
+	t.Helper()
+	dir := filepath.Join(s.buildsDir(), buildID, "tinycld")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tinycld"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func pointCurrentAt(t *testing.T, s State, buildDir string) {
+	t.Helper()
+	if err := os.Symlink(buildDir, s.currentLinkPath()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestState_Current(t *testing.T) {
+	s := newTestState(t)
+	buildDir := writeBuild(t, s, "build-1")
+	pointCurrentAt(t, s, buildDir)
+
+	got, err := s.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != buildDir {
+		t.Fatalf("Current() = %q, want %q", got, buildDir)
+	}
+}
+
+func TestState_Current_NoSymlink(t *testing.T) {
+	s := newTestState(t)
+	if _, err := s.Current(); err == nil {
+		t.Fatal("Current() should error when current is unset")
+	}
+}
+
+func TestState_BackupArmed(t *testing.T) {
+	s := newTestState(t)
+
+	if _, armed := s.BackupArmed(); armed {
+		t.Fatal("BackupArmed() should be false with no marker")
+	}
+
+	if err := os.WriteFile(s.dbArmedMarkerPath(), []byte("build-42"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	buildID, armed := s.BackupArmed()
+	if !armed || buildID != "build-42" {
+		t.Fatalf("BackupArmed() = %q, %v; want build-42, true", buildID, armed)
+	}
+}
+
+func armBackup(t *testing.T, s State, buildID string, dbBytes []byte) {
+	t.Helper()
+	if err := os.WriteFile(s.dbBackupPath(), dbBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.dbArmedMarkerPath(), []byte(buildID), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestState_CommitBackup(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-7", []byte("snapshot"))
+	if err := os.WriteFile(s.dbPath(), []byte("live"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.CommitBackup(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(s.dbBackupPath()); !os.IsNotExist(err) {
+		t.Fatalf("backup should be gone, stat err = %v", err)
+	}
+	if _, err := os.Stat(s.dbArmedMarkerPath()); !os.IsNotExist(err) {
+		t.Fatalf("marker should be gone, stat err = %v", err)
+	}
+	data, err := os.ReadFile(s.dbPath())
+	if err != nil || string(data) != "live" {
+		t.Fatalf("data.db should be untouched: data=%q err=%v", data, err)
+	}
+}
+
+func TestState_CommitBackup_NoOpWithoutMarker(t *testing.T) {
+	s := newTestState(t)
+	if err := s.CommitBackup(); err != nil {
+		t.Fatalf("CommitBackup() on a clean state should not error: %v", err)
+	}
+}
+
+func TestState_WriteRollbackPending(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-9", []byte("snapshot"))
+
+	if err := s.WriteRollbackPending(); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(s.rollbackPendingMarkerPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "build-9" {
+		t.Fatalf("rollback-pending marker = %q, want build-9", data)
+	}
+}
+
+func TestState_WriteRollbackPending_NoOpWithoutArmedMarker(t *testing.T) {
+	s := newTestState(t)
+	if err := s.WriteRollbackPending(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(s.rollbackPendingMarkerPath()); !os.IsNotExist(err) {
+		t.Fatalf("rollback-pending marker should not be written, stat err = %v", err)
+	}
+}
+
+func TestState_RestoreBackup(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-3", []byte("snapshot-bytes"))
+	if err := os.WriteFile(s.dbPath(), []byte("forward-migrated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.dbPath()+"-wal", []byte("wal"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.dbPath()+"-shm", []byte("shm"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RestoreBackup(); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(s.dbPath())
+	if err != nil || string(data) != "snapshot-bytes" {
+		t.Fatalf("data.db should hold the backup's bytes: data=%q err=%v", data, err)
+	}
+	for _, p := range []string{s.dbPath() + "-wal", s.dbPath() + "-shm", s.dbBackupPath(), s.dbArmedMarkerPath()} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("%s should be gone, stat err = %v", p, err)
+		}
+	}
+}
+
+func TestState_RestoreBackup_MissingBackup(t *testing.T) {
+	s := newTestState(t)
+	if err := os.WriteFile(s.dbPath(), []byte("live"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RestoreBackup(); err == nil {
+		t.Fatal("RestoreBackup() should error when the backup is missing")
+	}
+
+	data, err := os.ReadFile(s.dbPath())
+	if err != nil || string(data) != "live" {
+		t.Fatalf("data.db should be untouched on a missing backup: data=%q err=%v", data, err)
+	}
+}
+
+func TestState_RollbackCurrent(t *testing.T) {
+	s := newTestState(t)
+	prevDir := writeBuild(t, s, "build-old")
+	newDir := writeBuild(t, s, "build-new")
+	pointCurrentAt(t, s, newDir)
+	if err := os.WriteFile(s.previousBuildPath(), []byte("build-old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RollbackCurrent(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != prevDir {
+		t.Fatalf("Current() after rollback = %q, want %q", got, prevDir)
+	}
+}
+
+func TestState_RollbackCurrent_NoPreviousBuildMarker(t *testing.T) {
+	s := newTestState(t)
+	newDir := writeBuild(t, s, "build-new")
+	pointCurrentAt(t, s, newDir)
+
+	if err := s.RollbackCurrent(); err == nil {
+		t.Fatal("RollbackCurrent() should error without a .previous-build marker")
+	}
+}
+
+func TestState_RollbackCurrent_PreviousBuildMissingOnDisk(t *testing.T) {
+	s := newTestState(t)
+	newDir := writeBuild(t, s, "build-new")
+	pointCurrentAt(t, s, newDir)
+	if err := os.WriteFile(s.previousBuildPath(), []byte("build-ghost"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RollbackCurrent(); err == nil {
+		t.Fatal("RollbackCurrent() should error when the previous build's binary does not exist")
+	}
+
+	got, err := s.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != newDir {
+		t.Fatalf("Current() should be unchanged on a failed rollback, got %q", got)
+	}
+}
