@@ -3,6 +3,7 @@ package coreserver
 import (
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"tinycld.org/core/listeners"
 	"tinycld.org/core/readonly"
@@ -23,6 +24,10 @@ func (c *controlChannel) send(m supervise.Msg) error {
 	defer c.mu.Unlock()
 	return supervise.Send(c.conn, m)
 }
+
+// beingReplaced is set once a supervised process has asked for its
+// replacement. It stays set: the process only waits to be drained.
+var beingReplaced atomic.Bool
 
 var (
 	controlMu sync.Mutex
@@ -65,10 +70,18 @@ func askSupervisorToRestart(cold bool) bool {
 // back, and a write after the migration sync would hit a schema this process
 // does not know. Without a supervisor this process exits before the next one
 // starts, so there is nothing to pause and resume is a no-op.
+//
+// resume also does nothing once this process has asked to be replaced: read-
+// only mode is one switch, and a late failure path must not re-open writes
+// in a process that is only waiting to be drained.
 func pauseWritesForBackup() (resume func()) {
 	if !listeners.Supervised() {
 		return func() {}
 	}
 	readonly.Enter()
-	return readonly.Leave
+	return func() {
+		if !beingReplaced.Load() {
+			readonly.Leave()
+		}
+	}
 }

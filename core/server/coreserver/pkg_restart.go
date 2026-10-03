@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"tinycld.org/core/installjob"
 	"tinycld.org/core/listeners"
 	"tinycld.org/core/readonly"
 )
@@ -51,8 +52,13 @@ func requestRestart(cold bool) (underway bool) {
 
 	if listeners.Supervised() {
 		// The next process may migrate the database while this one still
-		// serves, so this one must not write from here on.
+		// serves, so this one must not write from here on, and must start no
+		// job: an auto-upgrade tick or a scheduled backup would work on data
+		// and a build the next process already owns. Both hold until the
+		// process ends; on the exit-75 fallback below that is at once.
+		beingReplaced.Store(true)
 		readonly.Enter()
+		installjob.HoldForReplacement()
 		if askSupervisorToRestart(cold) {
 			return true
 		}

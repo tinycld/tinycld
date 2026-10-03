@@ -80,6 +80,11 @@ type Job struct {
 var (
 	mu      sync.Mutex
 	current *Job
+	// held is set once this process has asked to be replaced and keeps
+	// running until it is stopped. From then on the interlock never clears:
+	// any new job would work on data and a build that the next process
+	// already owns.
+	held bool
 )
 
 // New mints a job with a timestamp-derived id and an open Done channel. It does
@@ -127,9 +132,31 @@ func Running() bool {
 func Release(job *Job) {
 	mu.Lock()
 	defer mu.Unlock()
-	if current == job {
+	if current == job && !held {
 		current = nil
 	}
+}
+
+// HoldForReplacement keeps the interlock claimed for the rest of the process,
+// so Claim refuses every later job. The caller is normally the job that holds
+// it; when nothing does, a placeholder job takes the slot, so a busy answer
+// still has a job to describe.
+func HoldForReplacement() {
+	mu.Lock()
+	defer mu.Unlock()
+	held = true
+	if current == nil {
+		current = New("restart", "", "")
+	}
+}
+
+// ResetForTesting clears the interlock and HoldForReplacement's hold. Tests
+// only: a held interlock is meant to last until the process ends.
+func ResetForTesting() {
+	mu.Lock()
+	defer mu.Unlock()
+	held = false
+	current = nil
 }
 
 // Info is the shape the API returns for a busy interlock.

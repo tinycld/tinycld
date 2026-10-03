@@ -51,6 +51,7 @@ func supervisedFixture(t *testing.T) (net.Listener, net.Conn) {
 	t.Cleanup(listeners.SetFilesForTest(map[string]*os.File{supervise.ControlFD: childEnd}))
 	t.Cleanup(func() { setControl(nil) })
 	t.Cleanup(readonly.Leave)
+	t.Cleanup(resetReplacementForTest)
 	return l, parent
 }
 
@@ -307,6 +308,7 @@ func TestSupervisedRestartWithoutControlSocketExits75(t *testing.T) {
 	t.Cleanup(listeners.SetForTest(map[string]net.Listener{supervise.ListenerHTTP: l}))
 	t.Cleanup(func() { setControl(nil) })
 	t.Cleanup(readonly.Leave)
+	t.Cleanup(resetReplacementForTest)
 	notDevelopment(t)
 	exits := recordExit(t)
 	registerSupervised(core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()}))
@@ -378,4 +380,58 @@ func TestUnsupervisedRebuildNeverReadOnly(t *testing.T) {
 	if atBackup || readonly.Active() {
 		t.Fatal("an unsupervised rebuild entered read-only mode")
 	}
+}
+
+// After a supervised restart request this process only waits to be drained.
+// A job started in that time (an auto-upgrade tick, a scheduled backup) would
+// work on data and a build the next process already owns, and a failing one
+// would re-open writes on its way out.
+func TestSupervisedRestartHoldsTheInterlockAndReadOnly(t *testing.T) {
+	_, parent := supervisedFixture(t)
+	notDevelopment(t)
+	recordExit(t)
+	registerSupervised(core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()}))
+
+	restarting := installjob.New("install", "acme", "")
+	if _, ok := installjob.Claim(restarting); !ok {
+		t.Fatal("claim on an idle interlock lost")
+	}
+	if !requestRestart(false) {
+		t.Fatal("restart not under way")
+	}
+	recvLine(t, parent, bufio.NewReader(parent))
+	finishJob(restarting)
+
+	if _, ok := installjob.Claim(installjob.New("backup", "", "")); ok {
+		t.Fatal("a new job claimed the interlock after this process asked to be replaced")
+	}
+	if !installjob.Running() {
+		t.Fatal("the auto-upgrade tick would see an idle interlock")
+	}
+
+	pauseWritesForBackup()()
+	if !readonly.Active() {
+		t.Fatal("a failure path re-opened writes after this process asked to be replaced")
+	}
+}
+
+// Without a supervisor the process exits on a restart, so nothing is held; a
+// dev-mode restart that does nothing must not wedge the interlock either.
+func TestUnsupervisedRestartHoldsNothing(t *testing.T) {
+	t.Cleanup(resetReplacementForTest)
+	recordExit(t)
+	requestRestart(false) // dev mode: the test binary runs from the temp dir
+	notDevelopment(t)
+	requestRestart(false)
+
+	job := installjob.New("backup", "", "")
+	if _, ok := installjob.Claim(job); !ok {
+		t.Fatal("an unsupervised restart left the interlock held")
+	}
+	installjob.Release(job)
+}
+
+func resetReplacementForTest() {
+	beingReplaced.Store(false)
+	installjob.ResetForTesting()
 }
