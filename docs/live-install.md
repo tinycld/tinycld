@@ -12,7 +12,9 @@ This is the operator/agent-facing reference for the mechanics. For the package
 > **Scope.** This describes the runtime install pipeline driven from the setup
 > dashboard (`POST /api/admin/packages/install`), implemented in
 > `core/server/coreserver/pkg_install.go` + `pkg_go_build.go` +
-> `pkg_restart.go`, and the relaunch handled by `app/config/entrypoint.sh`.
+> `pkg_restart.go`. `app/config/entrypoint.sh` does first-boot environment
+> setup only; the relaunch itself is handled by `core/server/supervise`, which
+> the entrypoint hands over to.
 > It does NOT cover the build-time bundling done by `app/Dockerfile` (that
 > assembles the *initial* image; the live installer adds packages to an
 > already-running one).
@@ -44,9 +46,12 @@ in-place:
 3. If the package ships a Go server, a **new server binary is compiled** from
    the now-larger workspace and swapped in (with a DB backup first).
 4. The web bundle is rebuilt (`expo export`) and staged.
-5. The running server **exits with code 75**, and `entrypoint.sh` catches that,
-   health-checks the new binary, and **restarts the server in place** onto the
-   new binary + promoted web bundle.
+5. The running server **asks the supervisor to replace it** and stays
+   read-only. The supervisor starts the new build beside it with the same
+   ports; once the new build sends **ready**, the supervisor **promotes** its
+   web bundle, **commits** the database backup, and only then tells the OLD
+   build to drain and exit. The old build keeps answering requests the whole
+   time, so the swap never refuses a connection.
 
 The whole thing runs as the unprivileged `tinycld` user inside the container.
 The workspace root is `/workspace` (the binary lives at

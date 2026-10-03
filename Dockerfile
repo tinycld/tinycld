@@ -663,9 +663,10 @@ EXPOSE 7090 80 443 993 465
 # target doesn't exist yet, Docker creates it owned by root; the unprivileged
 # tinycld user then can't open the SQLite DB ("unable to open database file
 # (14)") and the container crash-loops. entrypoint.sh chown's those dirs to
-# tinycld and drops to uid 1000 via gosu for the server itself, so nothing
-# privileged actually runs the application. See fix_data_dir_ownership() in
-# entrypoint.sh.
+# tinycld, then execs `tinycld supervise` (still root), which drops ITS OWN
+# children to uid 1000 directly — see the comment block below for why gosu is
+# not involved. So nothing privileged actually runs the application. See
+# fix_data_dir_ownership() in entrypoint.sh.
 USER root
 
 # tini is PID 1 (set below), not the entrypoint script or the supervisor: tini

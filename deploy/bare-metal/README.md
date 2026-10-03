@@ -81,7 +81,8 @@ ENV_EXTRA=$'MAIL_PROVIDER=postmark\nPOSTMARK_SERVER_TOKEN=…' \
 ```
 /opt/tinycld-baked/        pristine workspace baked by build.sh (the binary +
                            web bundle + node_modules + feature siblings)
-/opt/tinycld-entrypoint.sh the app's own config/entrypoint.sh (the supervisor)
+/opt/tinycld-entrypoint.sh the app's own config/entrypoint.sh (setup only —
+                           it hands over to `tinycld supervise`, below)
 /workspace/                state root: pb_data/ (the SQLite DB — back this up!),
                            releases/, builds/, current -> builds/<id>/tinycld
 /etc/tinycld/tinycld.env   root-only secrets/config, read by the unit
@@ -128,8 +129,9 @@ never touched by a rebuild.
   binds `:80/:443/:465/:993`. `install.sh` sets
   `net.ipv4.ip_unprivileged_port_start=80` (what Docker effectively does with its
   default of `0`). A `CAP_NET_BIND_SERVICE` approach does **not** work here —
-  `gosu` clears the ambient set and the entrypoint's per-boot `chown` strips file
-  caps — so the sysctl is the reliable mechanism.
+  the entrypoint's per-boot `chown` strips file caps, and a dropped-privilege
+  child doesn't inherit an ambient capability either — so the sysctl is the
+  reliable mechanism.
 - **Host toolchain is required, not optional:** the in-app installer runs
   `pnpm install` + `go build` on the host, so Node, pnpm, Go, and a C toolchain
   must stay installed even after the initial build.

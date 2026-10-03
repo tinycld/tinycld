@@ -75,7 +75,10 @@ export DEBIAN_FRONTEND=noninteractive
 # runtime. This is the Dockerfile runtime-stage apt list + Node + Go.
 #   No C compiler: the build is CGo-free (omnidoc decodes HEIF in pure Go), so
 #   both the release binary and installer-built server packages use CGO_ENABLED=0
-#   sqlite3 CLI: the installer's DB backup step; gosu: privilege drop in entrypoint
+#   sqlite3 CLI: the installer's DB backup step; gosu: privilege drop for the
+#   entrypoint's own root-only steps (writing the runtime user's git config,
+#   the TINYCLD_RESCUE hatch) — NOT for the server itself, which the
+#   supervisor runs as $RUN_USER directly
 # ------------------------------------------------------------------------------
 log "installing apt packages"
 apt-get update -qq
@@ -118,13 +121,15 @@ install -d -m 0755 /etc/tinycld
 # 3. Let the unprivileged user bind low ports.
 #
 # TinyCld binds :80/:443 (autocert) and :465/:993 (mail) but drops to the
-# unprivileged $RUN_USER (gosu, in the entrypoint). Under Docker this Just Works
-# because containers default net.ipv4.ip_unprivileged_port_start=0. On bare metal
-# it defaults to 1024, AND the entrypoint chowns the build tree on every boot
-# (chown strips file capabilities) — so a CAP_NET_BIND_SERVICE approach (file cap
-# or systemd AmbientCapabilities through gosu, which clears the ambient set)
-# cannot hold. Lowering the unprivileged-port floor mirrors the Docker behavior,
-# needs no caps, and survives every rebuild.
+# unprivileged $RUN_USER — the supervisor (`tinycld supervise`, exec'd by the
+# entrypoint) does this itself for its own children, not via gosu. Under
+# Docker this Just Works because containers default
+# net.ipv4.ip_unprivileged_port_start=0. On bare metal it defaults to 1024,
+# AND the entrypoint chowns the build tree on every boot (chown strips file
+# capabilities) — so a CAP_NET_BIND_SERVICE approach (a file cap, or systemd
+# AmbientCapabilities, which a dropped-privilege child does not inherit
+# either way) cannot hold. Lowering the unprivileged-port floor mirrors the
+# Docker behavior, needs no caps, and survives every rebuild.
 # ------------------------------------------------------------------------------
 log "setting net.ipv4.ip_unprivileged_port_start=${UNPRIV_PORT_START}"
 echo "net.ipv4.ip_unprivileged_port_start=${UNPRIV_PORT_START}" > /etc/sysctl.d/60-tinycld-lowports.conf
