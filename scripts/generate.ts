@@ -6,6 +6,7 @@ import {
     manifestToConfigPkg,
     validateEventSources,
     validateNavShortcuts,
+    validatePorts,
     validateSidebarContributions,
 } from './describe-packages'
 import { emitAutomationDefs, loadAutomationDefs, mergeAutomationDefs } from './gen-automation'
@@ -27,6 +28,7 @@ import {
     buildGoWork,
     buildMemberGoWork,
     buildPackageExtensionsGo,
+    buildPortsJson,
     replaceSymlink,
     type ServerPkg,
 } from './gen-server'
@@ -518,6 +520,7 @@ async function main() {
     validateSidebarContributions(configPkgs)
     validateEventSources(configPkgs)
     validateNavShortcuts(configPkgs)
+    validatePorts(features.map(f => ({ slug: f.manifest.slug, ports: f.manifest.ports })))
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.config.ts'), buildConfigSource(configPkgs))
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.seeds.ts'), buildSeedsSource(configPkgs))
 
@@ -620,6 +623,10 @@ async function main() {
                 source: resolveGitSource(f.dir, f.manifest.slug),
             })),
         ])
+    )
+    fs.writeFileSync(
+        path.join(SERVER_DIR, 'ports.json'),
+        buildPortsJson(features.map(f => ({ slug: f.manifest.slug, ports: f.manifest.ports })))
     )
 
     writeWorkspaceRoot()

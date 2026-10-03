@@ -29,12 +29,11 @@ export interface PackageManifest {
     seed?: { script: string }
     tests?: { directory: string }
     build?: { script: string }
-    // mailListeners: this package serves mail protocols. A self-hosted
-    // deployment binds its own ports; where the process is embedded in a
-    // supervisor that owns the public ports, the supervisor injects pre-bound
-    // sockets and Register discovers them through core's embedded-context
-    // seam. Keep in step with core/lib/packages/types.ts.
-    server?: { package: string; module: string; mailListeners?: boolean }
+    server?: { package: string; module: string }
+    // Public TCP ports this package's server code listens on. A single-tenant
+    // supervisor binds them once and passes them to each server process. Keep
+    // in step with core/lib/packages/types.ts.
+    ports?: PackagePort[]
     // Go payload package (dir relative to the member root, e.g. 'server/api')
     // holding the exported HTTP request/response structs. The generator emits
     // lib/generated/<slug>-api.ts from it (see scripts/gen-payload-types.ts);
@@ -155,6 +154,14 @@ export interface PackageManifest {
      * steps are a0 (workspace), a1 (apps), a2 (email), a3 (team).
      */
     setupSteps?: { id: string; label: string; module: string; order?: string }[]
+}
+
+// Keep in step with core/lib/packages/types.ts's PackagePort.
+export interface PackagePort {
+    name: string
+    port: number
+    addrEnv?: string
+    enabled?: { env: string; default: boolean }
 }
 
 // Import a member's manifest.ts (ESM default export). This file is run via tsx,

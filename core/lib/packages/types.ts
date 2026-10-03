@@ -134,18 +134,16 @@ export interface PackageManifest {
         directory: string
     }
 
-    /**
-     * `mailListeners`: this package serves mail protocols. A self-hosted
-     * deployment binds its own ports; where the process is embedded in a
-     * supervisor that owns the public ports, the supervisor injects pre-bound
-     * sockets and the package's single Register discovers them through core's
-     * embedded-context seam instead of binding anything itself.
-     */
     server?: {
         package: string
         module: string
-        mailListeners?: boolean
     }
+
+    /**
+     * Public TCP ports this package's server code listens on. A single-tenant
+     * supervisor binds them once and passes them to each server process.
+     */
+    ports?: PackagePort[]
 
     /**
      * Go payload package (dir relative to the member root, e.g. 'server/api')
@@ -346,4 +344,17 @@ export interface PackageManifest {
      * steps are a0 (workspace), a1 (apps), a2 (email), a3 (team).
      */
     setupSteps?: { id: string; label: string; module: string; order?: string }[]
+}
+
+export interface PackagePort {
+    /** Stable name the server code asks for, e.g. 'acme-sync'. [a-z0-9-]+ */
+    name: string
+    port: number
+    /** Env var that overrides the listen address (host:port). */
+    addrEnv?: string
+    /**
+     * Env var that turns the port on or off. default true: on unless the var
+     * is 'false'; default false: on only if the var is 'true'.
+     */
+    enabled?: { env: string; default: boolean }
 }

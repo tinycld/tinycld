@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import type { PackageManifest } from './load-manifest'
+import type { PackageManifest, PackagePort } from './load-manifest'
 import { goVersion } from './paths'
 import { assertSafeImportField } from './validate-generated-field'
 
@@ -150,6 +150,30 @@ export function buildBundledPackages(features: BundledPkgInput[]): string {
         manifestJson: JSON.stringify(f.manifest),
         ...(f.source ? { source: f.source } : {}),
     }))
+    return `${JSON.stringify(rows, null, 2)}\n`
+}
+
+export interface PortsFeatureInput {
+    slug: string
+    ports?: PackagePort[]
+}
+
+export interface PortsEntry {
+    slug: string
+    name: string
+    port: number
+    addrEnv?: string
+    enabled?: { env: string; default: boolean }
+}
+
+// Emit server/ports.json — read by core's Go listeners.LoadPorts at supervisor
+// start. Sorted by slug then name so the file is stable across generator runs
+// (deterministic diffs, no reordering noise in version control of a built
+// image). [] when no installed package declares a port.
+export function buildPortsJson(features: PortsFeatureInput[]): string {
+    const rows: PortsEntry[] = features
+        .flatMap(f => (f.ports ?? []).map(p => ({ slug: f.slug, ...p })))
+        .sort((a, b) => a.slug.localeCompare(b.slug) || a.name.localeCompare(b.name))
     return `${JSON.stringify(rows, null, 2)}\n`
 }
 
