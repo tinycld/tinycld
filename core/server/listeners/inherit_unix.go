@@ -68,8 +68,8 @@ func ExtraFD(name string) (*os.File, bool) {
 	return f, ok
 }
 
-// SetForTest replaces the inherited set for the life of a test in another
-// package (mail's server tests), bypassing the env/fd machinery entirely.
+// SetForTest replaces the inherited set for the life of a test in a
+// feature package's server tests, bypassing the env/fd machinery entirely.
 // It is a test seam: production code never calls it. The returned restore
 // func puts back whatever state existed before, including "not supervised"
 // when nothing had parsed the env yet.
@@ -156,8 +156,13 @@ func parseEnv() (count int, names []string) {
 
 	log := logging.ForPackage("listeners")
 	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
+	if err != nil || n < 0 {
 		log.Warn("invalid "+EnvFDs, "value", raw)
+		return 0, nil
+	}
+	// A Set with no listeners writes EnvFDs=0; that's a valid "nothing to
+	// inherit" rather than a parse error, so it must not warn.
+	if n == 0 {
 		return 0, nil
 	}
 

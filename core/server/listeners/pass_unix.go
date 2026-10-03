@@ -22,8 +22,8 @@ type Set struct {
 
 // AddListener adds l under name. It keeps l.File(), a dup of the listening
 // socket; the dup is what a child's net.FileListener re-wraps, and what
-// PocketBase or mail ultimately closes, so the supervisor's own listener
-// is never closed by a child's shutdown.
+// the server code that accepts on it ultimately closes, so the
+// supervisor's own listener is never closed by a child's shutdown.
 func (s *Set) AddListener(name string, l *net.TCPListener) error {
 	f, err := l.File()
 	if err != nil {

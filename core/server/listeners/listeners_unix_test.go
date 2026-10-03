@@ -17,6 +17,10 @@ func TestMain(m *testing.M) {
 		childMain()
 		return
 	}
+	if os.Getenv("LISTENERS_TEST_EMPTY_SET") == "1" {
+		emptySetChildMain()
+		return
+	}
 	os.Exit(m.Run())
 }
 
@@ -38,6 +42,21 @@ func childMain() {
 	}
 	os.Stdout.WriteString("ok\n")
 	time.Sleep(5 * time.Second)
+}
+
+// emptySetChildMain runs with TINYCLD_LISTEN_FDS=0 (a Set with no
+// listeners applied it): that's a valid "nothing inherited", not a parse
+// error, so Supervised must be false and no name must resolve.
+func emptySetChildMain() {
+	if Supervised() {
+		os.Stdout.WriteString("supervised\n")
+		os.Exit(2)
+	}
+	if _, ok := Inherited("anything"); ok {
+		os.Stdout.WriteString("found\n")
+		os.Exit(2)
+	}
+	os.Stdout.WriteString("ok\n")
 }
 
 func startChild(t *testing.T, names ...string) (*exec.Cmd, *Set) {
@@ -96,8 +115,33 @@ func TestInheritedMissingNameIsFalse(t *testing.T) {
 	}
 }
 
-// SetForTest is the seam mail's server tests use in place of a real
-// supervisor. It must make Inherited return the given listeners and
+// TestEmptySetIsNotASupervisorError pins EnvFDs=0 (what an empty Set
+// applies) as a valid "nothing to inherit", not a parse error: it must
+// not warn, and Supervised() must read false in the child.
+func TestEmptySetIsNotASupervisorError(t *testing.T) {
+	set := &Set{}
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), "LISTENERS_TEST_EMPTY_SET=1")
+	set.Apply(cmd)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("child failed: %v, output %q", err, out)
+	}
+	// childMain's own stdout is just "ok\n"; the default slog handler
+	// writes any Warn to stderr, which CombinedOutput also captures, so
+	// an unexpected "invalid TINYCLD_LISTEN_FDS" warning would show up
+	// here even though it doesn't affect the child's exit code.
+	if strings.Contains(string(out), "invalid") {
+		t.Fatalf("EnvFDs=0 logged a warning: %q", out)
+	}
+	if string(out) != "ok\n" {
+		t.Fatalf("child said %q", out)
+	}
+}
+
+// SetForTest is the seam a feature package's server tests use in place of
+// a real supervisor. It must make Inherited return the given listeners and
 // Supervised() true while set, then restore prior state exactly.
 func TestSetForTestOverridesAndRestores(t *testing.T) {
 	l, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
