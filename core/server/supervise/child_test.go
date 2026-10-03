@@ -95,12 +95,38 @@ func TestChildRunsInItsOwnProcessGroup(t *testing.T) {
 	}
 }
 
-func TestChildIgnoresUnknownAndNewerMessages(t *testing.T) {
+func TestChildIgnoresUnknownMessages(t *testing.T) {
 	r := newTestRoot(t)
 	dir := r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SEND_JUNK": "1"})
 	c := startTestChild(t, r, dir, nil)
 	if m := nextMsg(t, c); m.Type != MsgReady {
 		t.Fatalf("first message passed on = %+v, want ready", m)
+	}
+}
+
+// ready is a permanent v1 message: a child newer than the supervisor states
+// a higher version, and the supervisor must still act on it.
+func TestChildActsOnNewerVersionReady(t *testing.T) {
+	r := newTestRoot(t)
+	dir := r.build("a", knobs{"FAKE_NAME": "A", "FAKE_READY_VERSION": "2"})
+	c := startTestChild(t, r, dir, nil)
+	if m := nextMsg(t, c); m.Type != MsgReady || m.Version != 2 || !c.isReady() {
+		t.Fatalf("first message = %+v, ready = %v", m, c.isReady())
+	}
+}
+
+func TestChildAcksRestart(t *testing.T) {
+	r := newTestRoot(t)
+	dir := r.build("a", knobs{"FAKE_NAME": "A", "FAKE_RESTART_BEFORE_READY": "1"})
+	c := startTestChild(t, r, dir, nil)
+	if m := nextMsg(t, c); m.Type != MsgRestart {
+		t.Fatalf("first message = %+v, want restart", m)
+	}
+	if m := nextMsg(t, c); m.Type != MsgReady {
+		t.Fatalf("second message = %+v, want ready", m)
+	}
+	if r.index("A", "restart-ack", 1) < 0 || r.index("A", "no-ack", 1) >= 0 {
+		t.Fatal("the child got no ack for its restart")
 	}
 }
 

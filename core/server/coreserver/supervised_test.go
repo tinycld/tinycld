@@ -4,6 +4,7 @@ package coreserver
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 
+	"tinycld.org/core/drainhooks"
 	"tinycld.org/core/installjob"
 	"tinycld.org/core/listeners"
 	"tinycld.org/core/readonly"
@@ -80,6 +82,46 @@ func serveSupervised(t *testing.T, app core.App, h http.Handler) (*core.ServeEve
 	served := make(chan error, 1)
 	go func() { served <- e.Server.Serve(e.Listener) }()
 	return e, served
+}
+
+// ackRestarts plays the supervisor's side of a restart: it acks every
+// restart, and passes on every line it reads.
+func ackRestarts(t *testing.T, parent net.Conn) <-chan string {
+	t.Helper()
+	lines := make(chan string, 8)
+	go func() {
+		r := bufio.NewReader(parent)
+		for {
+			m, err := supervise.Recv(r)
+			if err != nil {
+				return
+			}
+			line, _ := json.Marshal(m)
+			lines <- string(line)
+			if m.Type == supervise.MsgRestart {
+				supervise.Send(parent, supervise.Msg{Type: supervise.MsgRestartAck})
+			}
+		}
+	}()
+	return lines
+}
+
+func nextLine(t *testing.T, lines <-chan string) string {
+	t.Helper()
+	select {
+	case l := <-lines:
+		return l
+	case <-time.After(5 * time.Second):
+		t.Fatal("no control message")
+		return ""
+	}
+}
+
+func shortAckTimeout(t *testing.T) {
+	t.Helper()
+	prev := restartAckTimeout
+	restartAckTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { restartAckTimeout = prev })
 }
 
 func stubSelfTerminate(t *testing.T, fn func() error) {
@@ -248,9 +290,71 @@ func TestSupervisedControlCloseKeepsServing(t *testing.T) {
 	called := false
 	stubSelfTerminate(t, func() error { called = true; return nil })
 	d := &drain{}
-	watchControl(bufio.NewReader(strings.NewReader(`{"type":"bogus","version":1}`+"\n"+"not json\n")), d)
+	watchControl(bufio.NewReader(strings.NewReader(`{"type":"bogus","version":1}`+"\n"+"not json\n")), make(chan struct{}, 1), d)
 	if called || d.requested {
 		t.Fatal("a closed or garbled control socket started a drain")
+	}
+}
+
+// drain is a permanent v1 message: a supervisor that states a newer version
+// must still be obeyed, and an unknown type must not stop the reader.
+func TestSupervisedActsOnNewerVersionDrain(t *testing.T) {
+	called := false
+	stubSelfTerminate(t, func() error { called = true; return nil })
+	d := &drain{}
+	in := `{"type":"bogus","version":3}` + "\n" + `{"type":"drain","version":2}` + "\n"
+	watchControl(bufio.NewReader(strings.NewReader(in)), make(chan struct{}, 1), d)
+	if !called || !d.requested {
+		t.Fatal("a drain from a newer protocol version was not acted on")
+	}
+}
+
+func TestSupervisedRestartAckFromNewerVersionCounts(t *testing.T) {
+	acks := make(chan struct{}, 1)
+	watchControl(bufio.NewReader(strings.NewReader(`{"type":"restart-ack","version":2}`+"\n")), acks, &drain{})
+	select {
+	case <-acks:
+	default:
+		t.Fatal("a restart-ack from a newer protocol version was not passed on")
+	}
+}
+
+// A supervisor that does not answer would leave this process read-only for
+// good. Exit 75 is the restart every supervisor handles.
+func TestSupervisedRestartWithoutAckExits75(t *testing.T) {
+	_, parent := supervisedFixture(t)
+	notDevelopment(t)
+	shortAckTimeout(t)
+	exits := recordExit(t)
+	registerSupervised(core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()}))
+
+	requestRestart(false)
+	if got := recvLine(t, parent, bufio.NewReader(parent)); got != `{"type":"restart","version":1}` {
+		t.Fatalf("control message = %q", got)
+	}
+	if len(*exits) != 1 || (*exits)[0] != restartExitCode {
+		t.Fatalf("exits = %v, want [%d]", *exits, restartExitCode)
+	}
+}
+
+// A rebuild can ask for a restart before this process has said ready. The
+// ack must still be read, or the process would exit 75 for nothing.
+func TestSupervisedRestartBeforeReadyIsAcked(t *testing.T) {
+	_, parent := supervisedFixture(t)
+	notDevelopment(t)
+	shortAckTimeout(t)
+	exits := recordExit(t)
+	registerSupervised(core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()}))
+	lines := ackRestarts(t, parent)
+
+	if !requestRestart(false) {
+		t.Fatal("restart not under way")
+	}
+	if got := nextLine(t, lines); got != `{"type":"restart","version":1}` {
+		t.Fatalf("control message = %q", got)
+	}
+	if len(*exits) != 0 {
+		t.Fatalf("exited %v although the supervisor acked", *exits)
 	}
 }
 
@@ -259,11 +363,12 @@ func TestSupervisedRequestRestartSendsAndKeepsServing(t *testing.T) {
 	notDevelopment(t)
 	exits := recordExit(t)
 	registerSupervised(core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()}))
+	lines := ackRestarts(t, parent)
 
 	if !requestRestart(false) {
 		t.Fatal("requestRestart under a supervisor did not report the restart under way")
 	}
-	if got := recvLine(t, parent, bufio.NewReader(parent)); got != `{"type":"restart","version":1}` {
+	if got := nextLine(t, lines); got != `{"type":"restart","version":1}` {
 		t.Fatalf("control message = %q", got)
 	}
 	if len(*exits) != 0 {
@@ -284,11 +389,12 @@ func TestSupervisedBackupRestoreRestartIsCold(t *testing.T) {
 	}
 	t.Cleanup(func() { app.ResetBootstrapState() })
 	registerSupervised(app)
+	lines := ackRestarts(t, parent)
 
 	if !restartForRestore(app) {
 		t.Fatal("restartForRestore did not report the restart under way")
 	}
-	if got := recvLine(t, parent, bufio.NewReader(parent)); got != `{"type":"restart","cold":true,"version":1}` {
+	if got := nextLine(t, lines); got != `{"type":"restart","cold":true,"version":1}` {
 		t.Fatalf("control message = %q", got)
 	}
 	if len(*exits) != 0 {
@@ -403,6 +509,7 @@ func TestSupervisedRestartHoldsTheInterlockAndReadOnly(t *testing.T) {
 	notDevelopment(t)
 	recordExit(t)
 	registerSupervised(core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()}))
+	lines := ackRestarts(t, parent)
 
 	restarting := installjob.New("install", "acme", "")
 	if _, ok := installjob.Claim(restarting); !ok {
@@ -411,7 +518,7 @@ func TestSupervisedRestartHoldsTheInterlockAndReadOnly(t *testing.T) {
 	if !requestRestart(false) {
 		t.Fatal("restart not under way")
 	}
-	recvLine(t, parent, bufio.NewReader(parent))
+	nextLine(t, lines)
 	finishJob(restarting)
 
 	if _, ok := installjob.Claim(installjob.New("backup", "", "")); ok {
@@ -446,4 +553,43 @@ func TestUnsupervisedRestartHoldsNothing(t *testing.T) {
 func resetReplacementForTest() {
 	beingReplaced.Store(false)
 	installjob.ResetForTesting()
+}
+
+// A package that serves its own port must stop accepting when the drain
+// begins, not after the HTTP drain: the handler has to run while an HTTP
+// request is still in flight. Here the handler is what lets that request
+// finish, so a handler that ran after the HTTP drain would leave the drain
+// waiting out its whole budget.
+func TestSupervisedDrainRunsBeginHandlersFirst(t *testing.T) {
+	t.Cleanup(drainhooks.ResetForTest)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inFlight := make(chan struct{})
+	release := make(chan struct{})
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(inFlight)
+		<-release
+	})}
+	dr := supervise.NewDrainer(srv)
+	go srv.Serve(dr.Listener(l))
+	t.Cleanup(func() { srv.Close() })
+	go func() {
+		if resp, err := http.Get("http://" + l.Addr().String()); err == nil {
+			resp.Body.Close()
+		}
+	}()
+	<-inFlight
+
+	drainhooks.OnBegin("acme-listeners", func() { close(release) })
+	d := &drain{drainer: dr, requested: true}
+	done := make(chan struct{})
+	go func() { d.shutdown(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("the drain waited on the request before running the drain-begin handlers")
+	}
 }

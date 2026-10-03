@@ -208,8 +208,15 @@ state dir — beside `pb_data`, not inside it, because a restore's boot swap
 renames `pb_data` away as a whole — then, under a supervisor, enters read-only
 mode, holds the install-job system for the next process, and sends a `restart`
 message over the control socket the supervisor gave this process at startup.
-This process keeps serving, read-only, until the supervisor drains it. In dev
-mode (`go run`) it only logs; you restart manually.
+The supervisor answers with `restart-ack` as soon as the message arrives. This
+process then keeps serving, read-only, until the supervisor drains it. With no
+ack within 10 s it exits 75 instead, and the supervisor handles that as a cold
+restart. In dev mode (`go run`) it only logs; you restart manually.
+
+The control messages (`ready`, `restart`, `drain`, `restart-ack`) are permanent:
+both sides act on them whatever protocol version the sender states, because
+the supervisor is the image's own binary and its children can be newer. A
+message type a side does not know is logged and ignored.
 
 ### 2. The supervisor starts the new build alongside the old one
 
@@ -236,7 +243,10 @@ once.
 
 ### 3. Draining the old child
 
-Told to drain, a child stops accepting new connections, turns off HTTP
+Told to drain, a child first runs the drain-begin handlers packages register
+(`tinycld.org/core/drainhooks`), so a package serving its own port (such as
+IMAP and SMTP) stops accepting there at once. It then stops accepting new HTTP
+connections, turns off HTTP
 keep-alives so each connection closes after its current request, waits (up to
 30s, `ChildDrainTimeout`) for in-flight requests to finish, then shuts down and
 exits. A long-lived connection (a realtime subscription, IMAP IDLE) is cut at
@@ -320,14 +330,18 @@ already in use" when started as a supervised child. Two consequences:
   upgrade — cold rollback to whatever build *was* running. The downgrade
   itself never completes.
 - **A rare double fault can strand the service on a build that cannot run.**
-  If a rebuild is interrupted on an OLD (pre-supervisor) image — the process
-  killed between activation and its health verdict — and the box then comes
-  back up on a NEW (supervisor-capable) image before that verdict is ever
-  rendered, the new image's own startup recovery (see above) checks the build
-  `current` points at. If that build predates the supervisor, it fails to
-  bind, the recovery's own rollback runs, and `current` ends up pointed at a
-  build that *also* cannot bind under the new image's supervisor — the
-  service crash-loops.
+  Suppose a rebuild is interrupted on an OLD (pre-supervisor) image — the
+  process killed between activation and its health verdict — and the box then
+  comes back up on a NEW (supervisor-capable) image before that verdict is ever
+  rendered. The entrypoint's `seed_baked_build` runs first: the image's baked
+  release id is new, so it points `current` at the new image's baked build and
+  records the interrupted build in `.previous-build`. The supervisor's startup
+  recovery (see above) then checks the baked build, not the interrupted one.
+  Normally the baked build becomes ready and the backup is committed. Only if
+  the new image's baked build ALSO fails does the recovery roll back, to
+  `.previous-build` — the pre-supervisor build, which cannot bind under the
+  supervisor. The service then crash-loops: on each restart the baked id is
+  already adopted, so `current` stays on that build.
 
   **Recovery:** boot with `TINYCLD_RESCUE=1` (Docker: `-e TINYCLD_RESCUE=1`;
   bare metal: `Environment=TINYCLD_RESCUE=1` on the unit, or run
@@ -392,7 +406,7 @@ restart request** ([How relaunch works](#how-relaunch-works)):
 5. **`migrate down N`** runs with the **target's** binary, which understands the
    older schema. User data is preserved; only the schema is rolled back.
 6. **Re-stage** `builds/<id>/release/` into `release-staging/<release_id>/` so the
-   new child promotes it once it's ready.
+   supervisor promotes it once the new child is ready.
 7. **Update records (one transaction):** mark the target `current`, mark every
    newer build `superseded`, reconcile `pkg_registry` (a package whose *install*
    was reverted past is set `disabled` — unless an earlier surviving build still
@@ -536,6 +550,13 @@ to. The runtime image (`app/Dockerfile`) provides:
   break pnpm's same-filesystem linkability probe.)
 - **`pnpm` runs with `CI=true`** so `pnpm install` doesn't block on an
   interactive node_modules-purge confirmation.
+- **A stop timeout of 45 s.** On a stop, the supervisor drains its child, which
+  can take up to 30 s (`ChildDrainTimeout`) plus its shutdown hooks. Docker's
+  default stop timeout is 10 s, after which it kills the container and cuts the
+  requests still in flight. `docker-compose.yml` sets `stop_grace_period: 45s`.
+  With `docker run`, pass `--stop-timeout 45`. On Dokku, run
+  `dokku config:set <app> DOKKU_DOCKER_STOP_TIMEOUT=45`. The bare-metal unit
+  sets `TimeoutStopSec=45`.
 
 > **Note.** The runtime image ships no Go module cache, so a server-package
 > `go build` downloads its dependencies from the network. Installing a server

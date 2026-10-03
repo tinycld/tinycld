@@ -1,6 +1,7 @@
 package supervise
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -239,5 +240,81 @@ func TestState_RollbackCurrent_PreviousBuildMissingOnDisk(t *testing.T) {
 	}
 	if got != newDir {
 		t.Fatalf("Current() should be unchanged on a failed rollback, got %q", got)
+	}
+}
+
+// The rebuild writes these ids with whatever trailing newline its writer
+// left, and the shell's $(cat ...) stripped it; a raw read would look for a
+// build dir named "build-old\n".
+func TestState_RollbackCurrent_TrimsTrailingNewline(t *testing.T) {
+	s := newTestState(t)
+	prevDir := writeBuild(t, s, "build-old")
+	newDir := writeBuild(t, s, "build-new")
+	pointCurrentAt(t, s, newDir)
+	if err := os.WriteFile(s.previousBuildPath(), []byte("build-old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.RollbackCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != prevDir {
+		t.Fatalf("Current() after rollback = %q, want %q", got, prevDir)
+	}
+}
+
+func TestState_BackupArmed_TrimsTrailingNewline(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-2\n", []byte("snap"))
+
+	id, armed := s.BackupArmed()
+	if !armed || id != "build-2" {
+		t.Fatalf("BackupArmed() = (%q, %v), want (build-2, true)", id, armed)
+	}
+}
+
+// A kill during the restore must never leave data.db half written: the
+// backup goes to a temp file that renames over data.db in one step. A
+// handle on the old data.db therefore still reads the old bytes.
+func TestState_RestoreBackup_RenamesOverDataDB(t *testing.T) {
+	s := newTestState(t)
+	armBackup(t, s, "build-3", []byte("snapshot-bytes"))
+	if err := os.WriteFile(s.dbPath(), []byte("forward-migrated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(s.dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Open(s.dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Close()
+
+	if err := s.RestoreBackup(); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := os.Stat(s.dbPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Fatal("data.db was rewritten in place; the backup must rename over it")
+	}
+	oldBytes, err := io.ReadAll(old)
+	if err != nil || string(oldBytes) != "forward-migrated" {
+		t.Fatalf("a handle on the old data.db read %q (err %v)", oldBytes, err)
+	}
+	if got := mustRead(t, s.dbPath()); got != "snapshot-bytes" {
+		t.Fatalf("data.db = %q, want snapshot-bytes", got)
+	}
+	if _, err := os.Stat(s.dbPath() + ".restore-tmp"); !os.IsNotExist(err) {
+		t.Fatalf("restore temp file should be gone, stat err = %v", err)
 	}
 }

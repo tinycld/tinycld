@@ -247,9 +247,10 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 	defer release()
 
 	// The source is closed the same guarded way as the interlock, and for a
-	// harder reason: phase 6 ENDS THE PROCESS. A rebuilder that succeeds never
-	// returns, and requestRestart is an os.Exit in every real composition, so a
-	// deferred close alone never runs in production. An uploaded archive's Close
+	// harder reason: phase 6 ENDS THE PROCESS. A rebuilder that succeeds either
+	// never returns (requestRestart exits) or returns ErrRestartUnderway while a
+	// supervisor stops this process at a moment of its choosing, so a deferred
+	// close alone cannot be relied on to run. An uploaded archive's Close
 	// is what removes its spool file, so the spool leaked on every restore that
 	// worked — the whole organization, left in restore/upload, for good.
 	//

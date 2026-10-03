@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/hook"
 
+	"tinycld.org/core/drainhooks"
 	"tinycld.org/core/listeners"
 	"tinycld.org/core/supervise"
 )
@@ -66,11 +67,19 @@ func (d *drain) begin() {
 // shutdown stops accepting (it closes the listener this process serves on,
 // which is a dup: the supervisor's own copy stays open for the next child)
 // and answers every request already accepted, within ChildDrainTimeout.
+//
+// The drain-begin handlers run first: a package serving its own port stops
+// accepting on it now, as HTTP does, rather than when its terminate hook
+// runs after the HTTP drain.
 func (d *drain) shutdown() {
 	d.mu.Lock()
 	dr, requested := d.drainer, d.requested
 	d.mu.Unlock()
-	if !requested || dr == nil {
+	if !requested {
+		return
+	}
+	drainhooks.RunBegin()
+	if dr == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), supervise.ChildDrainTimeout)
@@ -90,6 +99,11 @@ func registerSupervised(app core.App) {
 	ctl := openControl()
 	setControl(ctl)
 	d := &drain{}
+	// The reader starts now, not at ready: a rebuild can ask for a restart
+	// before this process is ready, and its ack must be read.
+	if ctl != nil {
+		go watchControl(bufio.NewReader(ctl.conn), ctl.acks, d)
+	}
 
 	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
 		Id:       "tinycldSupervisedServe",
@@ -111,9 +125,7 @@ func registerSupervised(app core.App) {
 			}
 			if err := ctl.send(supervise.Msg{Type: supervise.MsgReady}); err != nil {
 				srvLog.Error("could not tell the supervisor this server is ready", "err", err)
-				return nil
 			}
-			go watchControl(bufio.NewReader(ctl.conn), d)
 			return nil
 		},
 	})
@@ -159,13 +171,17 @@ func openControl() *controlChannel {
 		srvLog.Error("the control socket the supervisor passed is not usable", "err", err)
 		return nil
 	}
-	return &controlChannel{conn: conn}
+	return &controlChannel{conn: conn, acks: make(chan struct{}, 1)}
 }
 
 // watchControl reads the supervisor's messages until the socket closes. A
 // closed socket means the supervisor is gone; this process keeps serving,
 // because exiting would take the deployment down with nothing to restart it.
-func watchControl(r *bufio.Reader, d *drain) {
+//
+// drain and restart-ack are permanent messages and are acted on whatever
+// version the supervisor states; a type this process does not know is
+// ignored.
+func watchControl(r *bufio.Reader, acks chan<- struct{}, d *drain) {
 	for {
 		m, err := supervise.Recv(r)
 		if errors.Is(err, supervise.ErrBadMessage) {
@@ -180,15 +196,17 @@ func watchControl(r *bufio.Reader, d *drain) {
 			srvLog.Error("could not read the supervisor's control socket; serving on without it", "err", err)
 			return
 		}
-		if m.Version > supervise.ProtocolVersion {
-			srvLog.Warn("ignoring a control message from a newer protocol", "type", m.Type, "version", m.Version)
-			continue
+		switch m.Type {
+		case supervise.MsgRestartAck:
+			select {
+			case acks <- struct{}{}:
+			default:
+			}
+		case supervise.MsgDrain:
+			d.begin()
+			return
+		default:
+			srvLog.Warn("ignoring an unknown control message", "type", m.Type, "version", m.Version)
 		}
-		if m.Type != supervise.MsgDrain {
-			srvLog.Warn("ignoring an unknown control message", "type", m.Type)
-			continue
-		}
-		d.begin()
-		return
 	}
 }

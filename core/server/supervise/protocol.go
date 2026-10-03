@@ -12,15 +12,19 @@ import (
 // Msg is one control message between the supervisor and a server child,
 // sent as one JSON object per line over the inherited control socket.
 type Msg struct {
-	Type string `json:"type"` // MsgReady | MsgRestart | MsgDrain
+	Type string `json:"type"` // MsgReady | MsgRestart | MsgDrain | MsgRestartAck
 	// Cold, on a restart, asks the supervisor to stop this child before it
 	// starts the next one instead of running the two side by side.
 	Cold    bool `json:"cold,omitempty"`
 	Version int  `json:"version"`
 }
 
-// ProtocolVersion lets a supervisor ignore a message from a newer child
-// rather than act on fields it does not know.
+// ProtocolVersion is the version a sender states. It is informational: the
+// supervisor is the image's baked binary and its children can be newer, so
+// ready, restart, drain and restart-ack are permanent version-1 messages
+// that both sides act on whatever version is stated. A later version may
+// add message types or optional fields, which an older side ignores; it
+// must not change what these four mean.
 const ProtocolVersion = 1
 
 // ControlFD is the inherited-fd name of the control socket.
@@ -30,6 +34,9 @@ const (
 	MsgReady   = "ready"   // child → supervisor: listeners set, routes bound
 	MsgRestart = "restart" // child → supervisor: replace me with the activated build
 	MsgDrain   = "drain"   // supervisor → child: stop accepting, finish, exit
+	// MsgRestartAck tells a child its restart arrived. A child that gets
+	// none exits 75 instead, the restart every supervisor handles.
+	MsgRestartAck = "restart-ack" // supervisor → child
 )
 
 // The names the supervisor passes its own listeners under. A package cannot

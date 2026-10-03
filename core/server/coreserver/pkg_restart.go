@@ -19,8 +19,8 @@ const restartExitCode = 75
 // It sits BESIDE pb_data, not inside it. A restore's boot swap renames pb_data
 // away as a whole, and a restart requested to apply that restore is exactly when
 // the marker is written — inside pb_data it would be carried off with the data
-// the swap sets aside. Nothing reads the marker today (the entrypoint keys on
-// exit 75 alone), so this is a record of intent rather than a protocol, but its
+// the swap sets aside. Nothing reads the marker today (the supervisor keys on
+// the restart message or exit 75), so this is a record of intent rather than a protocol, but its
 // location must not depend on which restart it is.
 func restartMarkerPath() string {
 	return filepath.Join(resolveStateDir(), ".restart-requested")
@@ -34,8 +34,9 @@ var exitProcess = os.Exit
 // activated build, and reports whether that is under way.
 //
 // Without a supervisor it exits 75 and does not return. Under a supervisor it
-// sends a restart message and returns true: this process keeps serving, read-
-// only, until the supervisor drains it. cold asks the supervisor to stop this
+// sends a restart message and returns true once the supervisor acks it: this
+// process keeps serving, read-only, until the supervisor drains it. With no
+// ack it exits 75 as well. cold asks the supervisor to stop this
 // process before it starts the next one, for a restart whose new process must
 // not run beside this one. In dev mode nothing restarts, and it returns false.
 func requestRestart(cold bool) (underway bool) {
@@ -44,7 +45,7 @@ func requestRestart(cold bool) (underway bool) {
 		return false
 	}
 
-	// Write a restart marker so the entrypoint knows this was intentional
+	// Write a restart marker as a record that this restart was intentional
 	markerPath := restartMarkerPath()
 	if err := os.WriteFile(markerPath, []byte("restart"), 0o644); err != nil {
 		srvLog.Warn("failed to write restart marker", "path", markerPath, "err", err)

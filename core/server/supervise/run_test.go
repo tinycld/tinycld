@@ -55,6 +55,8 @@ func TestMain(m *testing.M) {
 //	FAKE_IGNORE_TERM   ignore SIGTERM (only SIGKILL stops it)
 //	FAKE_BOOT_EXIT     exit with this code before ready (a failed boot)
 //	FAKE_SEND_JUNK     send messages the supervisor must ignore before ready
+//	FAKE_READY_VERSION send ready with this protocol version
+//	FAKE_RESTART_BEFORE_READY  activate FAKE_ACTIVATE and ask for a restart before ready, then wait for the ack
 //	FAKE_ACTIVATE      on SIGUSR1, arm the backup and point current at this build, as a rebuild does
 //	FAKE_EXIT_CODE     on SIGUSR1, exit with this code instead of asking for a restart
 //	FAKE_COLD          on SIGUSR1, ask for a cold restart
@@ -106,15 +108,53 @@ func fakeChild() int {
 		}
 	}
 
+	drain := make(chan struct{})
+	acked := make(chan struct{}, 1)
+	go func() {
+		r := bufio.NewReader(ctl)
+		for {
+			m, err := Recv(r)
+			if errors.Is(err, ErrBadMessage) {
+				continue
+			}
+			if err != nil {
+				return
+			}
+			switch m.Type {
+			case MsgRestartAck:
+				ev("restart-ack")
+				select {
+				case acked <- struct{}{}:
+				default:
+				}
+			case MsgDrain:
+				close(drain)
+				return
+			}
+		}
+	}()
+
 	if os.Getenv("FAKE_SEND_JUNK") == "1" {
 		io.WriteString(ctl, "not json\n")
 		Send(ctl, Msg{Type: "bogus"})
-		Send(ctl, Msg{Type: MsgRestart, Version: ProtocolVersion + 1})
+		Send(ctl, Msg{Type: "bogus", Version: ProtocolVersion + 1})
+	}
+	if os.Getenv("FAKE_RESTART_BEFORE_READY") == "1" {
+		if to := os.Getenv("FAKE_ACTIVATE"); to != "" {
+			fakeActivate(root, os.Getenv("FAKE_BUILD"), to)
+		}
+		Send(ctl, Msg{Type: MsgRestart})
+		ev("restart")
+		select {
+		case <-acked:
+		case <-time.After(5 * time.Second):
+			ev("no-ack")
+		}
 	}
 	if d := os.Getenv("FAKE_READY_DELAY"); d != "" {
 		time.Sleep(time.Duration(atoi(d)) * time.Millisecond)
 	}
-	if err := Send(ctl, Msg{Type: MsgReady}); err != nil {
+	if err := Send(ctl, Msg{Type: MsgReady, Version: atoi(os.Getenv("FAKE_READY_VERSION"))}); err != nil {
 		ev("ready-failed")
 		return 2
 	}
@@ -128,24 +168,6 @@ func fakeChild() int {
 	for _, l := range ls {
 		go srv.Serve(drainer.Listener(l))
 	}
-
-	drain := make(chan struct{})
-	go func() {
-		r := bufio.NewReader(ctl)
-		for {
-			m, err := Recv(r)
-			if errors.Is(err, ErrBadMessage) {
-				continue
-			}
-			if err != nil {
-				return
-			}
-			if m.Type == MsgDrain {
-				close(drain)
-				return
-			}
-		}
-	}()
 
 	for {
 		select {
@@ -674,6 +696,45 @@ func TestRunColdRestart(t *testing.T) {
 	if r.index("A", "drain", 1) < 0 {
 		t.Fatal("the old child was not drained")
 	}
+}
+
+// A new child can ask for its own replacement before it is ready (its boot
+// ran a rebuild). The supervisor must ack the restart and act on it once the
+// child is ready; promoting and committing the backup at that ready would
+// drop the backup the next build's rollback needs.
+func TestRunRestartBeforeReadyIsKept(t *testing.T) {
+	r := newTestRoot(t)
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_ACTIVATE": "b"})
+	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_SERVE_BODY": "B", "FAKE_ACTIVATE": "c", "FAKE_RESTART_BEFORE_READY": "1"})
+	r.build("c", knobs{"FAKE_NAME": "C", "FAKE_SERVE_BODY": "C"})
+	r.stageRelease("b", "rel-b")
+	r.stageRelease("c", "rel-c")
+	r.point("a")
+	h := r.supervise(testOptions())
+
+	r.trigger(r.waitEvent("A", "ready", 1))
+	r.waitEvent("C", "ready", 1)
+	waitBody(t, h.addr, "C")
+	r.waitEvent("B", "exit", 1)
+
+	if r.index("B", "restart-ack", 1) < 0 || r.index("B", "no-ack", 1) >= 0 {
+		t.Fatal("the restart sent before ready was not acked")
+	}
+	if r.index("A", "drain", 1) < 0 || r.index("B", "drain", 1) < 0 {
+		t.Fatal("A and B were not both drained")
+	}
+	s := r.state()
+	waitFor(t, 5*time.Second, "the backup to be committed", func() bool {
+		_, armed := s.BackupArmed()
+		return !armed
+	})
+	if got := mustRead(t, s.dbPath()); got != "migrated-by-c" {
+		t.Fatalf("data.db = %q", got)
+	}
+	if got := readLink(t, s.currentReleaseLinkPath()); got != "rel-c" {
+		t.Fatalf("releases/current -> %q, want rel-c", got)
+	}
+	assertExists(t, filepath.Join(s.releasesDir(), "rel-b"), false)
 }
 
 func TestRunOldProtocolExit75(t *testing.T) {

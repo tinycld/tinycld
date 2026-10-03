@@ -74,8 +74,10 @@ type rebuildDeps struct {
 	commitRegistry func() error
 	prune          func(keep int) error
 	// finalizeLog records the terminal state of the pkg_install_log row the UI
-	// polls (status endpoint). It MUST run before restart() — restart os.Exit's
-	// the process, so a deferred finalize would never fire. Optional (nil-safe).
+	// polls (status endpoint). It MUST run before restart(): without a
+	// supervisor restart os.Exit's the process, and under one the process may
+	// be drained at any moment after, so a deferred finalize might never fire.
+	// Optional (nil-safe).
 	finalizeLog func(status, errMsg string)
 	restart     func()
 }
@@ -195,7 +197,7 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 	}
 	job.Status = "success"
 	jobLogf(job, "rebuild succeeded in %s — restarting onto build %s", monoSince(rebuildStart), m.BuildID)
-	// Finalize the install log BEFORE restart — restart os.Exit's the process.
+	// Finalize the install log BEFORE restart: the process may end at once.
 	if d.finalizeLog != nil {
 		d.finalizeLog("success", "")
 	}
@@ -215,8 +217,9 @@ func restore(d rebuildDeps) {
 		// running live app, whose connection pool holds a now-stale mmap of the old
 		// WAL index — its next write would fail "disk image is malformed". Re-open
 		// the pools so the live process (which keeps serving after a pre-activation
-		// failure) sees the restored DB cleanly. Post-activation failures restore in
-		// the entrypoint instead (different process), so this only matters here.
+		// failure) sees the restored DB cleanly. Post-activation failures are rolled
+		// back by the supervisor once this process has stopped, so this only
+		// matters here.
 		if d.recoverDB != nil {
 			if err := d.recoverDB(); err != nil {
 				srvLog.Error("rebuild: DB reconnect after restore failed", "err", err)
@@ -357,10 +360,10 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installjob.Job, m Re
 func restartOntoBuild(app *pocketbase.PocketBase, buildID string, cold bool) (underway bool) {
 	// Arm the surviving data.db.backup as a rollback snapshot BEFORE the
 	// restart. DOWN migrations already ran against the live DB and the symlink
-	// already flipped, so if the new binary fails its health probe the
-	// entrypoint must restore the DB (not just the symlink). Arming leaves the
-	// backup file in place + drops a marker the entrypoint commits (deletes) on
-	// a healthy boot.
+	// already flipped, so if the new build never becomes ready the supervisor
+	// must restore the DB (not just the symlink). Arming leaves the backup file
+	// in place + drops a marker the supervisor commits (deletes) once the new
+	// build is ready.
 	armDatabaseBackup(buildID)
 	// Flush all pre-restart writes (install-log finalize, registry mirror)
 	// from the WAL into data.db before the restart, or the new binary reads a

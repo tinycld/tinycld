@@ -14,6 +14,7 @@ func TestProtocolRoundTripsEachType(t *testing.T) {
 		{Type: MsgRestart},
 		{Type: MsgRestart, Cold: true},
 		{Type: MsgDrain},
+		{Type: MsgRestartAck},
 	} {
 		var buf bytes.Buffer
 		if err := Send(&buf, m); err != nil {

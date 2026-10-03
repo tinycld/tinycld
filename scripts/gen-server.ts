@@ -166,7 +166,7 @@ export interface PortsEntry {
     enabled?: { env: string; default: boolean }
 }
 
-// Emit server/ports.json — read by core's Go listeners.LoadPorts at supervisor
+// Emit server/ports.json — read by core's Go listeners.ReadPorts at supervisor
 // start. Sorted by slug then name so the file is stable across generator runs
 // (deterministic diffs, no reordering noise in version control of a built
 // image). [] when no installed package declares a port.

@@ -381,9 +381,7 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 # Install runtime dependencies + Node for runtime tasks. Cron jobs in bin/
 # invoke `pnpm exec tsx scripts/<x>.ts` (reset-demo, seed-db), so Node must be on
-# PATH. libcap2-bin (setcap) is needed at image build time below; we keep it
-# available so operators on autocert who use the in-app package installer can
-# manually re-apply the cap to a freshly-rebuilt binary. git is required by the
+# PATH. libcap2-bin (setcap) is needed at image build time below. git is required by the
 # in-app package installer: `npm pack <git-spec>` (e.g. github:owner/repo) clones
 # the repo via git, so without it git-spec installs fail with `spawn git ENOENT`.
 # No C compiler is installed: the build is CGo-free (omnidoc decodes HEIF in
@@ -640,14 +638,13 @@ COPY --chown=tinycld:tinycld --chmod=0755 tinycld/config/entrypoint.sh /opt/entr
 # owned by tinycld (its COPY uses --chown), and nothing chowns it afterward, so
 # the setcap below sticks.
 
-# Grant cap_net_bind_service so the non-root user can bind :80/:443 when
-# autocert is on (AUTOCERT_ENABLED=true with PRIMARY_DOMAIN set). The plain-HTTP
-# path defaults to the unprivileged :7090 and needs no special permissions.
-#
-# Caveat: the in-app package installer rebuilds the binary with `go build` and
-# os.Renames it into place. The new binary has no caps. On autocert hosts that
-# use the installer, the operator needs to re-apply the cap manually (the image
-# ships setcap for this) or restart from the original image. Plain HTTP is fine.
+# Grant cap_net_bind_service to the baked binary, which is the one that runs
+# `tinycld supervise`. The supervisor binds every public port once (:80/:443
+# under autocert, and the mail ports) and passes them to its `serve` children,
+# so it alone needs the capability, and only when it does not run as root. A
+# binary the in-app package installer rebuilds has no capability and needs
+# none: it only ever runs as a child on ports the supervisor already holds.
+# The plain-HTTP path defaults to the unprivileged :7090.
 RUN setcap 'cap_net_bind_service=+ep' /opt/tinycld-baked/tinycld/tinycld
 
 # 7090: plain HTTP (default, when autocert is off)
@@ -679,13 +676,14 @@ USER root
 # for anything beyond its own children. The supervisor drops ITS children to
 # uid 1000 (tinycld) directly (not via gosu); the entrypoint script that runs
 # before it stays root only long enough to fix bind-mount ownership and write
-# the runtime user's git config. The binary's cap_net_bind_service file
-# capability lets that unprivileged child bind :80/:443 when autocert is
-# enabled; the plain-HTTP default of :7090 is unprivileged.
+# the runtime user's git config. The supervisor binds the public ports (as
+# root here, or through the baked binary's cap_net_bind_service capability
+# when the container runs as a non-root user) and passes them to the
+# children, so an unprivileged child never binds a port itself.
 #
 # Set AUTOCERT_ENABLED=true with PRIMARY_DOMAIN (and optional comma-separated
-# ADDITIONAL_DOMAINS) to serve with autocert (binds :80 + :443 directly,
-# terminates TLS in-process):
+# ADDITIONAL_DOMAINS) to serve with autocert (the supervisor binds :80 + :443,
+# and the server terminates TLS in-process):
 #   dokku config:set myapp AUTOCERT_ENABLED=true PRIMARY_DOMAIN=tinycld.org \
 #     ADDITIONAL_DOMAINS="tinycld.com,www.tinycld.org"
 # Otherwise serve plain HTTP on :7090 (override with HTTP_ADDR), expecting an

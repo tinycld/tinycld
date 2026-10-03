@@ -140,8 +140,9 @@ export interface PackageManifest {
     }
 
     /**
-     * Public TCP ports this package's server code listens on. A single-tenant
-     * supervisor binds them once and passes them to each server process.
+     * Public TCP ports this package's server code listens on. The supervisor
+     * that holds the public ports binds them once and passes them to each
+     * server process.
      */
     ports?: PackagePort[]
 

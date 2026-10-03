@@ -493,4 +493,4 @@ fi
 # cap_net_bind_service capability (needed to bind :80/:443 as a non-root
 # $RUN_AS), and chown strips capabilities, so a rebuilt binary never has it.
 echo "[entrypoint] handing over to the supervisor"
-exec /opt/tinycld-baked/tinycld/tinycld supervise $PB_SERVE_DIRS
+exec "$BAKED_BUILD"/tinycld/tinycld supervise $PB_SERVE_DIRS

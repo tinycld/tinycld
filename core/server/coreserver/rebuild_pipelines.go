@@ -220,7 +220,7 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 	// These pre-activation failures leave the live app serving, so after restoring
 	// data.db (which also clears its WAL) we must re-open the pools or the live
 	// connection's stale WAL mmap fails its next write. Mirrors restore()/recoverDB
-	// in rebuildWith; the post-activation path restores in the entrypoint instead.
+	// in rebuildWith; the post-activation path is rolled back by the supervisor.
 	restoreAndRecover := func() {
 		defer resumeWrites()
 		if e := restoreDB(); e != nil {
@@ -288,8 +288,8 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 	emitComplete(job, "success", "")
 	// Revert is also a post-activation success path (schema synced + symlink
 	// flipped against the live DB), so it arms the surviving backup the same way
-	// the rebuild path does — the entrypoint rolls the DB back if the reverted
-	// binary fails its health probe, commits the backup if it boots healthy.
+	// the rebuild path does — the supervisor rolls the DB back if the reverted
+	// build never becomes ready, and commits the backup once it is.
 	restartOntoBuild(app, targetID, false)
 }
 

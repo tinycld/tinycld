@@ -51,8 +51,12 @@ type child struct {
 	ports []heldPort
 	ctl   net.Conn
 	// msgs carries the ready and restart messages the child sends. Messages
-	// of an unknown type or a newer protocol never reach it.
+	// of an unknown type never reach it.
 	msgs chan Msg
+	// pendingRestart is a restart the child asked for before it was ready,
+	// kept until the supervisor can act on it. Only the supervisor's own
+	// goroutine touches it.
+	pendingRestart *Msg
 	// done is closed once the child has exited and code is set.
 	done  chan struct{}
 	code  int
@@ -173,6 +177,14 @@ func (c *child) readControl() {
 		if m.Type == MsgReady {
 			c.ready.Store(true)
 		}
+		// The ack goes out on receipt, not when the supervisor gets to the
+		// restart: a swap can keep the supervisor busy for longer than the
+		// child waits for an ack.
+		if m.Type == MsgRestart {
+			if err := c.send(Msg{Type: MsgRestartAck}); err != nil {
+				log.Warn("could not ack a server's restart; it will exit for a cold restart", "pid", c.pid, "err", err)
+			}
+		}
 		select {
 		case c.msgs <- m:
 		case <-c.done:
@@ -181,14 +193,12 @@ func (c *child) readControl() {
 	}
 }
 
-// knownMessage reports whether the supervisor acts on m. A child newer than
-// the supervisor may send messages it does not know; acting on a guess
-// would be worse than ignoring them.
+// knownMessage reports whether the supervisor acts on m. The supervisor is
+// the image's baked binary, so its children can be newer. ready and restart
+// are permanent messages and are acted on whatever version the child
+// states; a type the supervisor does not know is ignored, because acting on
+// a guess would be worse.
 func knownMessage(pid int, m Msg) bool {
-	if m.Version > ProtocolVersion {
-		log.Warn("ignoring a control message from a newer protocol", "pid", pid, "type", m.Type, "version", m.Version)
-		return false
-	}
 	switch m.Type {
 	case MsgReady, MsgRestart:
 		return true
@@ -198,6 +208,15 @@ func knownMessage(pid int, m Msg) bool {
 }
 
 func (c *child) isReady() bool { return c.ready.Load() }
+
+func (c *child) takePendingRestart() (Msg, bool) {
+	if c.pendingRestart == nil {
+		return Msg{}, false
+	}
+	m := *c.pendingRestart
+	c.pendingRestart = nil
+	return m, true
+}
 
 func (c *child) exited() bool {
 	select {

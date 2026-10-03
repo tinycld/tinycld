@@ -17,8 +17,9 @@ const (
 	autocertHTTPAddr  = "0.0.0.0:80"
 )
 
-// childRestartExitCode is what a server child too old for the control
-// protocol exits with to ask for a restart (coreserver's restartExitCode).
+// childRestartExitCode is what a server child exits with to ask for a
+// restart when it has no control socket or got no ack for its restart
+// message (coreserver's restartExitCode).
 const childRestartExitCode = 75
 
 // portWant is one listener a child should get: its inherited-fd name and

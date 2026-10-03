@@ -1,6 +1,8 @@
 package supervise
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -215,20 +217,101 @@ func copyMerge(src, dst string) error {
 	return nil
 }
 
-// copyFile copies one regular file, truncating/creating dst.
+// copyFile puts src's bytes at dst the way a reader of dst must see them.
+// Children serve the pool while the supervisor promotes, so dst is never
+// written in place: a reader would see a truncated file. The bytes go to a
+// temp file in dst's directory, which then renames over dst in one step. A
+// dst that already holds the same bytes is left alone, so its mtime (what
+// no-cache revalidation compares) does not move. The source mtime and mode
+// carry over, as `cp -a` did.
 func copyFile(src, dst string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	same, err := sameBytes(src, dst, info.Size())
+	if err != nil {
+		return err
+	}
+	if same {
+		return nil
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	tmp, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+	done := false
+	defer func() {
+		if !done {
+			os.Remove(tmp.Name())
+		}
+	}()
+	if _, err := io.Copy(tmp, in); err != nil {
+		tmp.Close()
 		return err
 	}
-	return out.Close()
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chtimes(tmp.Name(), info.ModTime(), info.ModTime()); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), dst); err != nil {
+		return err
+	}
+	done = true
+	return nil
+}
+
+// sameBytes reports whether dst exists and holds exactly src's bytes.
+func sameBytes(src, dst string, size int64) (bool, error) {
+	dinfo, err := os.Stat(dst)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !dinfo.Mode().IsRegular() || dinfo.Size() != size {
+		return false, nil
+	}
+	a, err := os.Open(src)
+	if err != nil {
+		return false, err
+	}
+	defer a.Close()
+	b, err := os.Open(dst)
+	if err != nil {
+		return false, err
+	}
+	defer b.Close()
+	bufA, bufB := make([]byte, 32*1024), make([]byte, 32*1024)
+	for {
+		na, errA := io.ReadFull(a, bufA)
+		nb, errB := io.ReadFull(b, bufB)
+		if na != nb || !bytes.Equal(bufA[:na], bufB[:nb]) {
+			return false, nil
+		}
+		endA := errors.Is(errA, io.EOF) || errors.Is(errA, io.ErrUnexpectedEOF)
+		endB := errors.Is(errB, io.EOF) || errors.Is(errB, io.ErrUnexpectedEOF)
+		if endA || endB {
+			return endA && endB, nil
+		}
+		if errA != nil {
+			return false, errA
+		}
+		if errB != nil {
+			return false, errB
+		}
+	}
 }

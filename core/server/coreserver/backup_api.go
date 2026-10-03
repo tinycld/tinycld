@@ -107,7 +107,9 @@ func RegisterBackupEndpoints(app core.App) {
 // runs on the real data directory, so without the guard it performs the swap and
 // the finalize that belong to the real boot, and a kill landing between them
 // makes the real boot roll the restore back. A supervisor that boots the binary
-// as a probe MUST set TINYCLD_BOOT_PROBE=1 for that process.
+// as a probe MUST set TINYCLD_BOOT_PROBE=1 for that process. The supervisor
+// that holds the public ports starts no probes: each child it starts is the
+// real server, and it learns a build boots from that child's ready message.
 //
 // FinalizeRestore goes FIRST, defensively. The two cannot collide as they stand
 // — the finalize inserts its row already "succeeded" with started = now, and

@@ -1,6 +1,7 @@
 package supervise
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -166,5 +167,116 @@ func TestState_PromoteRelease_AlreadyPromotedIsSkipped(t *testing.T) {
 	}
 	if got := mustRead(t, marker); got != "<html>untouched</html>" {
 		t.Fatalf("already-promoted release dir should be left alone, got %q", got)
+	}
+}
+
+// Children serve releases/_static while the supervisor promotes, so a pool
+// file whose bytes did not change must not be rewritten: a rewrite moves its
+// mtime, which breaks no-cache revalidation for every client.
+func TestState_PromoteRelease_UnchangedPoolFileKeepsInodeAndMtime(t *testing.T) {
+	s := newTestState(t)
+	buildDir := writeBuild(t, s, "build-1")
+	pointCurrentAt(t, s, buildDir)
+	stagingDir := filepath.Join(buildDir, "release-staging")
+
+	first := writeStagingRelease(t, stagingDir, "release-a", time.Now().Add(-time.Hour), false)
+	mustWrite(t, filepath.Join(first, "assets", "shared.png"), "same-bytes")
+	if err := s.PromoteRelease(); err != nil {
+		t.Fatal(err)
+	}
+	pooled := filepath.Join(s.releaseStaticPoolDir(), "assets", "shared.png")
+	before, err := os.Stat(pooled)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second := writeStagingRelease(t, stagingDir, "release-b", time.Now(), false)
+	sharedSrc := filepath.Join(second, "assets", "shared.png")
+	mustWrite(t, sharedSrc, "same-bytes")
+	later := time.Now().Add(time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(sharedSrc, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(second, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PromoteRelease(); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := os.Stat(pooled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("unchanged pool file was replaced; it must be left in place")
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("unchanged pool file mtime moved from %v to %v", before.ModTime(), after.ModTime())
+	}
+}
+
+// A changed pool file must reach readers whole: an open reader keeps the old
+// bytes and a new open sees the new bytes, never a truncated file. The
+// source mtime and mode carry over, as `cp -a` did.
+func TestState_PromoteRelease_ChangedPoolFileReplacedAtomically(t *testing.T) {
+	s := newTestState(t)
+	buildDir := writeBuild(t, s, "build-1")
+	pointCurrentAt(t, s, buildDir)
+	stagingDir := filepath.Join(buildDir, "release-staging")
+
+	writeStagingRelease(t, stagingDir, "release-a", time.Now().Add(-time.Hour), false)
+	if err := s.PromoteRelease(); err != nil {
+		t.Fatal(err)
+	}
+	pooled := filepath.Join(s.releaseStaticPoolDir(), "_expo", "static", "bundle.js")
+	before, err := os.Stat(pooled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := os.Open(pooled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+
+	second := writeStagingRelease(t, stagingDir, "release-b", time.Now(), false)
+	bundleSrc := filepath.Join(second, "_expo", "static", "bundle.js")
+	srcTime := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes(bundleSrc, srcTime, srcTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bundleSrc, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(second, time.Now(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PromoteRelease(); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := os.Stat(pooled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.SameFile(before, after) {
+		t.Fatal("changed pool file was rewritten in place; it must be renamed over")
+	}
+	if got := mustRead(t, pooled); got != "bundle-release-b" {
+		t.Fatalf("pool bundle.js = %q, want bundle-release-b", got)
+	}
+	old, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(old) != "bundle-release-a" {
+		t.Fatalf("open reader saw %q, want the old bytes bundle-release-a", old)
+	}
+	if !after.ModTime().Equal(srcTime) {
+		t.Fatalf("pool bundle.js mtime = %v, want source mtime %v", after.ModTime(), srcTime)
+	}
+	if after.Mode().Perm() != 0o640 {
+		t.Fatalf("pool bundle.js mode = %v, want 0640", after.Mode().Perm())
 	}
 }

@@ -158,8 +158,10 @@ func (s *supervisor) boot() (*child, error) {
 			log.Error("the interrupted build did not become ready; rolling back", "err", err)
 			return s.rollback(nil, c)
 		}
-		if err := s.state.CommitBackup(); err != nil {
-			log.Error("could not commit the database backup", "err", err)
+		if c.pendingRestart == nil {
+			if err := s.state.CommitBackup(); err != nil {
+				log.Error("could not commit the database backup", "err", err)
+			}
 		}
 		s.ports.retain(c.ports)
 		return c, nil
@@ -176,6 +178,14 @@ func (s *supervisor) boot() (*child, error) {
 // restart or to exit.
 func (s *supervisor) loop(cur *child) int {
 	for {
+		if m, ok := cur.takePendingRestart(); ok {
+			next, err := s.restart(cur, m)
+			if err != nil {
+				return s.exitFor(err)
+			}
+			cur = next
+			continue
+		}
 		select {
 		case sig := <-s.sigs:
 			log.Info("stopping", "signal", sig)
@@ -186,16 +196,7 @@ func (s *supervisor) loop(cur *child) int {
 				log.Info("the server is ready", "pid", cur.pid)
 				continue
 			}
-			var next *child
-			var err error
-			if m.Cold {
-				log.Info("the server asked for a cold restart", "pid", cur.pid)
-				drainChild(cur, s.opts.drainBound)
-				next, err = s.replace()
-			} else {
-				log.Info("the server asked to be replaced", "pid", cur.pid)
-				next, err = s.swap(cur)
-			}
+			next, err := s.restart(cur, m)
 			if err != nil {
 				return s.exitFor(err)
 			}
@@ -216,6 +217,18 @@ func (s *supervisor) loop(cur *child) int {
 	}
 }
 
+// restart answers cur's restart message m with a swap, or with a drain and
+// a fresh start when m asks for a cold restart.
+func (s *supervisor) restart(cur *child, m Msg) (*child, error) {
+	if m.Cold {
+		log.Info("the server asked for a cold restart", "pid", cur.pid)
+		drainChild(cur, s.opts.drainBound)
+		return s.replace()
+	}
+	log.Info("the server asked to be replaced", "pid", cur.pid)
+	return s.swap(cur)
+}
+
 // swap starts the activated build beside old, which keeps serving
 // read-only, and drains old only once the new child is ready.
 func (s *supervisor) swap(old *child) (*child, error) {
@@ -231,7 +244,7 @@ func (s *supervisor) swap(old *child) (*child, error) {
 		log.Error("the new build did not become ready; rolling back", "err", err)
 		return s.rollback(old, next)
 	}
-	s.promote()
+	s.promote(next)
 	drainChild(old, s.opts.drainBound)
 	s.ports.retain(next.ports)
 	return next, nil
@@ -252,7 +265,7 @@ func (s *supervisor) replace() (*child, error) {
 		log.Error("the new build did not become ready; rolling back", "err", err)
 		return s.rollback(nil, next)
 	}
-	s.promote()
+	s.promote(next)
 	s.ports.retain(next.ports)
 	return next, nil
 }
@@ -260,7 +273,15 @@ func (s *supervisor) replace() (*child, error) {
 // promote runs once a new build is ready. The web bundle it built is
 // promoted before the old child drains, and the database backup is no
 // longer needed because the migrated schema works.
-func (s *supervisor) promote() {
+//
+// A child that asked for its own replacement before it was ready has
+// already moved current on and armed a backup for the next build, so the
+// bundle and the backup are that build's: they wait until it is ready.
+func (s *supervisor) promote(next *child) {
+	if next.pendingRestart != nil {
+		log.Info("the new server already asked to be replaced; promoting waits for the next build", "pid", next.pid)
+		return
+	}
 	if err := s.state.PromoteRelease(); err != nil {
 		log.Error("could not promote the new build's web bundle; serving the previous one", "err", err)
 	}
@@ -349,6 +370,11 @@ func (s *supervisor) awaitReady(c *child) error {
 			if m.Type == MsgReady {
 				log.Info("the server is ready", "pid", c.pid)
 				return nil
+			}
+			if m.Type == MsgRestart {
+				log.Info("a server asked for a restart before it was ready; acting on it once it is", "pid", c.pid)
+				c.pendingRestart = &m
+				continue
 			}
 			log.Warn("ignoring a message from a server that is not ready", "pid", c.pid, "type", m.Type)
 		case <-c.done:

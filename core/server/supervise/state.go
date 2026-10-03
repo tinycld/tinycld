@@ -1,15 +1,15 @@
-// Package supervise ports the file-only steps of config/entrypoint.sh's
-// armed-backup rollback protocol and release promotion into Go, so a future
-// supervisor process (which holds the public ports and swaps server child
-// processes) can run them without shelling out. These are pure file
-// operations — no child processes, no signals.
+// Package supervise is the supervisor that holds the public ports and swaps
+// server child processes. This file holds the file-only steps of the
+// armed-backup rollback protocol that moved here from config/entrypoint.sh.
 package supervise
 
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"tinycld.org/core/logging"
 )
@@ -26,7 +26,7 @@ func (s State) pbDataDir() string { return filepath.Join(s.Root, "pb_data") }
 
 // currentLinkPath / previousBuildPath mirror coreserver's state_paths.go /
 // rebuild_activate.go: the same files, read from the other side of the
-// handoff (the entrypoint reads what the Go rebuild job wrote).
+// handoff (the supervisor reads what the Go rebuild job wrote).
 func (s State) currentLinkPath() string   { return filepath.Join(s.Root, "current") }
 func (s State) previousBuildPath() string { return filepath.Join(s.Root, ".previous-build") }
 func (s State) buildsDir() string         { return filepath.Join(s.Root, "builds") }
@@ -69,7 +69,7 @@ func (s State) BackupArmed() (buildID string, armed bool) {
 	if err != nil {
 		return "", false
 	}
-	return string(data), true
+	return strings.TrimSpace(string(data)), true
 }
 
 // CommitBackup drops the armed snapshot + marker because the new build
@@ -106,26 +106,24 @@ func (s State) WriteRollbackPending() error {
 	return nil
 }
 
-// RestoreBackup copies the armed VACUUM-INTO snapshot back over data.db and
+// RestoreBackup puts the armed VACUUM-INTO snapshot back as data.db and
 // clears the arm marker, mirroring entrypoint.sh's restore_db_from_backup:
-//   - copy (not rename) the backup over data.db, so a failed copy leaves the
-//     backup intact for a retry
+//   - copy (not rename) the backup, so a failed copy leaves the backup intact
+//     for a retry
+//   - the copy goes to a temp file that is synced and then renamed over
+//     data.db, so a kill mid-restore never leaves data.db half written; it
+//     is streamed because a database can be far larger than memory
 //   - remove any stale data.db-wal / data.db-shm (the snapshot has no WAL;
 //     SQLite would otherwise replay stale frames over the restored file)
 //   - remove the backup and its arm marker
 //
-// Returns an error without changing anything when the backup is missing.
+// Returns an error without changing data.db when the backup is missing.
 func (s State) RestoreBackup() error {
 	backupPath := s.dbBackupPath()
 	if _, err := os.Stat(backupPath); err != nil {
 		return fmt.Errorf("no armed DB backup at %s: %w", backupPath, err)
 	}
-
-	data, err := os.ReadFile(backupPath)
-	if err != nil {
-		return fmt.Errorf("failed to read DB backup %s: %w", backupPath, err)
-	}
-	if err := os.WriteFile(s.dbPath(), data, 0o644); err != nil {
+	if err := copyToTempAndRename(backupPath, s.dbPath(), s.dbPath()+".restore-tmp"); err != nil {
 		return fmt.Errorf("failed to restore database from %s: %w", backupPath, err)
 	}
 
@@ -145,6 +143,36 @@ func (s State) RestoreBackup() error {
 	return nil
 }
 
+// copyToTempAndRename streams src into tmp, syncs it, and renames it over
+// dst. tmp is removed on any failure.
+func copyToTempAndRename(src, dst, tmp string) (err error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			out.Close()
+			os.Remove(tmp)
+		}
+	}()
+	if _, err = io.Copy(out, in); err != nil {
+		return err
+	}
+	if err = out.Sync(); err != nil {
+		return err
+	}
+	if err = out.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dst)
+}
+
 // RollbackCurrent flips <Root>/current back to the build recorded in
 // <Root>/.previous-build, mirroring entrypoint.sh's rollback_current_symlink.
 // The whole build tree swaps via the symlink (current.tmp then an atomic
@@ -156,7 +184,7 @@ func (s State) RollbackCurrent() error {
 	if err != nil {
 		return fmt.Errorf("no previous build recorded: %w", err)
 	}
-	prev := string(data)
+	prev := strings.TrimSpace(string(data))
 	target := filepath.Join(s.buildsDir(), prev, "tinycld")
 	if _, err := os.Stat(target); err != nil {
 		return fmt.Errorf("previous build %s not on disk: %w", prev, err)

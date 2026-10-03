@@ -30,9 +30,9 @@ export interface PackageManifest {
     tests?: { directory: string }
     build?: { script: string }
     server?: { package: string; module: string }
-    // Public TCP ports this package's server code listens on. A single-tenant
-    // supervisor binds them once and passes them to each server process. Keep
-    // in step with core/lib/packages/types.ts.
+    // Public TCP ports this package's server code listens on. The supervisor
+    // that holds the public ports binds them once and passes them to each
+    // server process. Keep in step with core/lib/packages/types.ts.
     ports?: PackagePort[]
     // Go payload package (dir relative to the member root, e.g. 'server/api')
     // holding the exported HTTP request/response structs. The generator emits
