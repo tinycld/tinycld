@@ -4,17 +4,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"tinycld.org/core/listeners"
+	"tinycld.org/core/readonly"
 )
 
 const restartExitCode = 75
 
-// requestRestart signals the entrypoint wrapper to restart the server process.
-// In production (Docker/Dokku), the entrypoint.sh script watches for exit code 75
-// and restarts the server. In development (go run), we just log a message.
-//
-// The legacy serverDir parameter is retained for caller compatibility; the
-// restart marker now lives under the STATE dir (resolveStateDir()) so it
-// persists across the per-build symlink swap rather than in the swapped dir.
+// restartMarkerPath is where requestRestart records that a restart was asked
+// for. It lives under the STATE dir (resolveStateDir()) so it persists across
+// the per-build symlink swap rather than in the swapped dir.
 //
 // It sits BESIDE pb_data, not inside it. A restore's boot swap renames pb_data
 // away as a whole, and a restart requested to apply that restore is exactly when
@@ -26,10 +25,22 @@ func restartMarkerPath() string {
 	return filepath.Join(resolveStateDir(), ".restart-requested")
 }
 
-func requestRestart(_ string) {
+// exitProcess is os.Exit behind a seam, so a test can watch an unsupervised
+// restart without ending the test binary.
+var exitProcess = os.Exit
+
+// requestRestart asks for this process to be replaced by one running the
+// activated build, and reports whether that is under way.
+//
+// Without a supervisor it exits 75 and does not return. Under a supervisor it
+// sends a restart message and returns true: this process keeps serving, read-
+// only, until the supervisor drains it. cold asks the supervisor to stop this
+// process before it starts the next one, for a restart whose new process must
+// not run beside this one. In dev mode nothing restarts, and it returns false.
+func requestRestart(cold bool) (underway bool) {
 	if isDevelopment() {
 		srvLog.Info("restart requested (dev mode — restart manually)")
-		return
+		return false
 	}
 
 	// Write a restart marker so the entrypoint knows this was intentional
@@ -38,12 +49,24 @@ func requestRestart(_ string) {
 		srvLog.Warn("failed to write restart marker", "path", markerPath, "err", err)
 	}
 
+	if listeners.Supervised() {
+		// The next process may migrate the database while this one still
+		// serves, so this one must not write from here on.
+		readonly.Enter()
+		if askSupervisorToRestart(cold) {
+			return true
+		}
+	}
+
 	srvLog.Info("requesting restart via exit code 75")
-	os.Exit(restartExitCode)
+	exitProcess(restartExitCode)
+	return true
 }
 
 // isDevelopment returns true when running via `go run` (temp dir binary).
-func isDevelopment() bool {
+// It is a variable so a test, whose binary also runs from the temp dir, can
+// reach the restart paths a production binary takes.
+var isDevelopment = func() bool {
 	ex, err := os.Executable()
 	if err != nil {
 		return false

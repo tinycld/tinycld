@@ -36,7 +36,17 @@ import (
 // all of that away. From the call onward the rebuilder OWNS the job and is
 // responsible for releasing it — on success it never returns (the process ends),
 // and on error it must release before returning.
+//
+// A rebuilder whose restart is asynchronous (it asked a supervisor, which
+// stops this process later) returns ErrRestartUnderway instead of never
+// returning, and has released the job like any rebuilder that returns.
 type Rebuilder func(ctx context.Context, job *installjob.Job, lockfile format.Lockfile) error
+
+// ErrRestartUnderway is what a Rebuilder returns when it succeeded and the
+// process will be stopped and replaced later rather than ending now. It is
+// not a failure: the restore stays behind the maintenance 503 until this
+// process is gone, as it does while any restart is on its way.
+var ErrRestartUnderway = errors.New("backup: restart under way")
 
 var (
 	rebuilderMu sync.RWMutex
@@ -500,6 +510,9 @@ func runRestore(app core.App, req RestoreRequest, row *core.Record, job *install
 		// claim back from it.
 		released = true
 		rerr := fn(context.Background(), job, read.Lockfile)
+		if errors.Is(rerr, ErrRestartUnderway) {
+			return nil
+		}
 		if rerr != nil {
 			// A rebuilder that failed is expected to have released the job, but
 			// the interlock is process-wide: if it did not, nothing else could

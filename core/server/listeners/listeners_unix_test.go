@@ -170,3 +170,24 @@ func TestSetForTestOverridesAndRestores(t *testing.T) {
 		t.Fatal("Inherited still sees listener after restore")
 	}
 }
+
+func TestSetFilesForTestOverridesAndRestores(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	restore := SetFilesForTest(map[string]*os.File{"control": f})
+	if got, ok := ExtraFD("control"); !ok || got != f {
+		t.Fatalf("ExtraFD(control) = %v %v, want %v true", got, ok, f)
+	}
+	if Supervised() {
+		t.Fatal("SetFilesForTest alone must not make the process supervised")
+	}
+	restore()
+
+	if _, ok := ExtraFD("control"); ok {
+		t.Fatal("ExtraFD still sees the file after restore")
+	}
+}

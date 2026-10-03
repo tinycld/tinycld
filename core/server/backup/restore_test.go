@@ -975,6 +975,44 @@ func TestRestoreRebuilderFailureIsNotAnAwaitedRestart(t *testing.T) {
 	}
 }
 
+// A rebuilder whose restart is asynchronous (it asked a supervisor, which
+// stops this process later) returns ErrRestartUnderway. That is a restart on
+// its way, not one that nothing will perform: the restore must stay behind the
+// maintenance 503 and must not record that a restart is still owed.
+func TestRestoreRebuilderWithRestartUnderwayStaysInMaintenanceMode(t *testing.T) {
+	data, identity := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		installjob.Release(job)
+		return ErrRestartUnderway
+	})
+
+	jobID, err := Restore(app, RestoreRequest{
+		Source: readCloser{bytes.NewReader(data)}, Identity: identity,
+	})
+	if err != nil {
+		t.Fatalf("a restart under way failed the restore: %v", err)
+	}
+	if !Restoring() {
+		t.Fatal("a restore whose restart is under way must keep serving 503")
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if got := row.GetString("status"); got == "failed" {
+		t.Fatal("a restart under way is not a failed restore")
+	}
+	var meta map[string]any
+	if err := row.UnmarshalJSONField("metadata", &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["awaiting_restart"] == true {
+		t.Fatal("a restart under way is not a restart that is still owed")
+	}
+}
+
 // A rebuilder that ends the process never returns, so the restore stays in
 // maintenance mode: the staged copy is what boots next and a write landing here
 // would be discarded. Modelled by a rebuilder that blocks rather than returning,

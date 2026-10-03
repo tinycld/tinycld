@@ -19,3 +19,8 @@ func ExtraFD(name string) (*os.File, bool) { return nil, false }
 func SetForTest(ls map[string]net.Listener) (restore func()) {
 	return func() {}
 }
+
+// SetFilesForTest is a no-op restore on this platform; nothing to override.
+func SetFilesForTest(fs map[string]*os.File) (restore func()) {
+	return func() {}
+}

@@ -125,8 +125,12 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 	}
 	// From here the DB may change — back it up so we can roll back.
 	emitProgress(job, "Backing up your data", progBackupDB, "Creating SQLite backup")
+	// Every failure from here until activation leaves this process serving, so
+	// each one resumes writes after it has put the database back.
+	resumeWrites := pauseWritesForBackup()
 	if err := timeStep(job, "backup database", d.backupDB); err != nil {
 		_ = os.RemoveAll(buildDir)
+		resumeWrites()
 		return d.fail(job, "backup", err)
 	}
 	emitProgress(job, "Updating your data", progSyncMig, "Reconciling schema to new build")
@@ -140,12 +144,14 @@ func rebuildWith(job *installjob.Job, m RebuildManifest, d rebuildDeps) error {
 		jobLogf(job, "migration sync failed — restoring DB backup + discarding build")
 		restore(d)
 		_ = os.RemoveAll(buildDir)
+		resumeWrites()
 		return d.fail(job, "migrate", err)
 	}
 	emitProgress(job, "Switching to the new version", progActivate, "Flipping current symlink")
 	if err := timeStep(job, "activate build", func() error { return d.activate(m.BuildID) }); err != nil {
 		jobLogf(job, "activate failed — restoring DB backup")
 		restore(d)
+		resumeWrites()
 		return d.fail(job, "activate", err)
 	}
 	jobLogf(job, "current symlink now points at build %s", m.BuildID)
@@ -342,21 +348,25 @@ func productionRebuildDeps(app *pocketbase.PocketBase, job *installjob.Job, m Re
 		finalizeLog: func(status, errMsg string) {
 			finalizeInstallLog(app, logRecord, status, errMsg, job.LogLines)
 		},
-		restart: func() {
-			// Arm the surviving data.db.backup as a rollback snapshot BEFORE the
-			// restart. This is the post-activation success path: DOWN migrations
-			// already ran against the live DB and the symlink already flipped, so if
-			// the new binary fails its health probe the entrypoint must restore the
-			// DB (not just the symlink). Arming leaves the backup file in place +
-			// drops a marker the entrypoint commits (deletes) on a healthy boot.
-			armDatabaseBackup(m.BuildID)
-			// Flush all pre-restart writes (install-log finalize, registry mirror)
-			// from the WAL into data.db before the hard os.Exit, or the new binary
-			// reads a data.db missing them.
-			checkpointWAL(app)
-			requestRestart("")
-		},
+		restart: func() { restartOntoBuild(app, m.BuildID, false) },
 	}
+}
+
+// restartOntoBuild is the post-activation success path's restart, and
+// reports whether the restart is under way (see requestRestart).
+func restartOntoBuild(app *pocketbase.PocketBase, buildID string, cold bool) (underway bool) {
+	// Arm the surviving data.db.backup as a rollback snapshot BEFORE the
+	// restart. DOWN migrations already ran against the live DB and the symlink
+	// already flipped, so if the new binary fails its health probe the
+	// entrypoint must restore the DB (not just the symlink). Arming leaves the
+	// backup file in place + drops a marker the entrypoint commits (deletes) on
+	// a healthy boot.
+	armDatabaseBackup(buildID)
+	// Flush all pre-restart writes (install-log finalize, registry mirror)
+	// from the WAL into data.db before the restart, or the new binary reads a
+	// data.db missing them.
+	checkpointWAL(app)
+	return requestRestart(cold)
 }
 
 // logRecipeHashBreadcrumb best-effort computes and logs the build's recipe

@@ -18,6 +18,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 
 	"tinycld.org/core/coreserver"
+	"tinycld.org/core/listeners"
 )
 
 // defaultHTTPAddr is the loopback address tinycld serves on in dev when no
@@ -93,8 +94,11 @@ func main() {
 		TypesDir:     coreserver.DefaultTypesDir(),
 		BinaryName:   "tinycld",
 		// An embedded FS cannot be watched, and a standalone build has nowhere
-		// to write generated migrations.
-		HooksWatch:    !standalone,
+		// to write generated migrations. Under a supervisor the watcher's
+		// app.Restart() would exec a new process image in place of this one,
+		// which leaves the supervisor's protocol (ready, restart, drain), and
+		// hook files only change through a rebuild, which restarts anyway.
+		HooksWatch:    !standalone && !listeners.Supervised(),
 		HooksPoolSize: 15,
 		Automigrate:   !standalone,
 		PublicFS:      webFS,

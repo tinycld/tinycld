@@ -250,6 +250,12 @@ func Register(app *pocketbase.PocketBase, opts Options) {
 		autoupgrade.SetDelegate(newLocalScheduler(app))
 	}
 
+	// Serving on a supervisor's listeners, reporting ready and draining on
+	// request. A composition layered on top owns its own process lifecycle and
+	// listeners, so this is not shared. Binds nothing unless a supervisor
+	// started this process, so it changes no hook count.
+	registerSupervised(app)
+
 	// Which deployment shape wrote an archive is recorded in every manifest, so
 	// a restore can tell what it is reading before it starts. Set in Register
 	// rather than the shared pair: it names the shape of THIS composition, and a

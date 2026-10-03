@@ -90,6 +90,26 @@ func SetForTest(ls map[string]net.Listener) (restore func()) {
 	}
 }
 
+// SetFilesForTest replaces the inherited non-listener fds (what ExtraFD
+// returns) for the life of a test, the way SetForTest does for listeners. It
+// changes neither the listeners nor Supervised(), so a test pairs it with
+// SetForTest to stand in for a supervisor that also passes a control socket.
+// Test seam only; production code never calls it.
+func SetFilesForTest(fs map[string]*os.File) (restore func()) {
+	parseEnvOnce()
+
+	mu.Lock()
+	prevFiles := filesBy
+	filesBy = fs
+	mu.Unlock()
+
+	return func() {
+		mu.Lock()
+		filesBy = prevFiles
+		mu.Unlock()
+	}
+}
+
 // parseEnvOnce reads TINYCLD_LISTEN_FDS/TINYCLD_LISTEN_FDNAMES exactly once
 // per process and files each fd as a listener or an extra file.
 func parseEnvOnce() {

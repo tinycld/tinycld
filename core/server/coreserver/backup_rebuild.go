@@ -66,8 +66,15 @@ func RegisterBackupSelfRebuild(app *pocketbase.PocketBase) {
 		// would migrate a database that is on its way out — and the staged one
 		// already carries the schema its own packages wrote.
 		deps.syncMig = func(string) (SyncResult, error) { return SyncResult{}, nil }
+		// Cold: the new process's boot sets this pb_data aside for the staged
+		// one, so it must not start while this process still serves from it.
+		underway := false
+		deps.restart = func() { underway = restartOntoBuild(app, m.BuildID, true) }
 		if err := rebuildWith(job, m, deps); err != nil {
 			return fmt.Errorf("rebuild for restore: %w", err)
+		}
+		if underway {
+			return backup.ErrRestartUnderway
 		}
 		return nil
 	})
@@ -80,13 +87,17 @@ func RegisterBackupSelfRebuild(app *pocketbase.PocketBase) {
 	// deployment behind the maintenance 503 for good. Say so instead: the restore
 	// then goes back to serving the current data and its row records that a
 	// restart is still owed.
-	backup.SetRestart(func() bool {
-		if isDevelopment() {
-			srvLog.Error("restart skipped in dev mode — restart the server manually to apply the restore")
-			return false
-		}
-		checkpointWAL(app)
-		requestRestart("")
-		return true
-	})
+	backup.SetRestart(func() bool { return restartForRestore(app) })
+}
+
+// restartForRestore restarts onto staged restore data. The restart is cold
+// for the same reason as the rebuild's above: the new process's boot sets
+// this pb_data aside.
+func restartForRestore(app *pocketbase.PocketBase) bool {
+	if isDevelopment() {
+		srvLog.Error("restart skipped in dev mode — restart the server manually to apply the restore")
+		return false
+	}
+	checkpointWAL(app)
+	return requestRestart(true)
 }
