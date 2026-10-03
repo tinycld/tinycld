@@ -489,6 +489,20 @@ func (p *supervisorProc) revertLog(token string) installLogRow {
 	return list.Items[0]
 }
 
+// sqlite runs one statement list on the database with the sqlite3 command,
+// beside the running servers (it waits on their locks), and returns its
+// trimmed output.
+func sqlite(t *testing.T, db, sql string) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sqlite3", "-cmd", ".timeout 10000", db, sql).CombinedOutput()
+	if err != nil {
+		t.Fatalf("sqlite3 %q: %v\n%s", sql, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func waitURLBody(t *testing.T, limit time.Duration, url, want string) {
 	t.Helper()
 	waitFor(t, limit, fmt.Sprintf("%s to answer %q", url, want), func() bool {
@@ -571,9 +585,13 @@ func TestE2EBrokenBuildRollsBack(t *testing.T) {
 	bin := serverBinary(t)
 	r := newServerRoot(t)
 	r.serverBuild(e2eBuildA, bin, markHook("A"))
-	r.serverBuild(e2eBuildB, bin, "throw new Error('this build does not start')\n")
+	// B fails only after a while, which leaves the test time to change the
+	// database once the backup is armed and before the rollback starts.
+	r.serverBuild(e2eBuildB, bin, "sleep(3000)\nthrow new Error('this build does not start')\n")
 	r.point(e2eBuildA)
 	r.createSuperuser(e2eBuildA)
+	db := r.state().dbPath()
+	sqlite(t, db, "CREATE TABLE e2e_marks (name TEXT); INSERT INTO e2e_marks VALUES ('before-backup');")
 	readyTimeout := 20 * time.Second
 	env := append(r.serverEnv(), "SUPERVISE_TEST_READY_TIMEOUT="+readyTimeout.String())
 	p := r.startSupervisor(env, r.serveArgs())
@@ -587,6 +605,23 @@ func TestE2EBrokenBuildRollsBack(t *testing.T) {
 	token := p.superuserToken()
 	revertAt := time.Now()
 	p.revert(token, e2eBuildB)
+	// The armed marker is written after the backup and before the restart;
+	// B then boots for 3 s before it fails, so this write lands in data.db
+	// after the backup and before the rollback.
+	waitFor(t, 30*time.Second, "the backup to be armed", func() bool {
+		_, armed := r.state().BackupArmed()
+		return armed
+	})
+	sqlite(t, db, "INSERT INTO e2e_marks VALUES ('after-backup');")
+	// The rollback starts only once B has exited, so B still running after
+	// the write means the write came before it.
+	waitFor(t, 10*time.Second, "B to start", func() bool {
+		_, ok := p.child(e2eBuildB, 1)
+		return ok
+	})
+	if b := p.mustChild(e2eBuildB, 1); !alive(b.pid) {
+		t.Fatal("B was not running when the test wrote after the backup; the write may have missed the window")
+	}
 	// The rollback is cold: the old server stops before the previous build
 	// starts again, so a short outage is allowed. It must end within the
 	// ready timeout plus a boot.
@@ -621,6 +656,11 @@ func TestE2EBrokenBuildRollsBack(t *testing.T) {
 	s := r.state()
 	if got, want := readLink(t, s.currentLinkPath()), filepath.Join(s.buildsDir(), e2eBuildA, "tinycld"); got != want {
 		t.Fatalf("current -> %q, want %q", got, want)
+	}
+	// The row written before the backup survives and the row written after
+	// it is gone: data.db is the backup.
+	if got := sqlite(t, db, "SELECT group_concat(name, ',') FROM e2e_marks;"); got != "before-backup" {
+		t.Fatalf("e2e_marks after the rollback = %q, want only before-backup", got)
 	}
 	assertExists(t, s.dbArmedMarkerPath(), false)
 	assertExists(t, s.dbBackupPath(), false)
