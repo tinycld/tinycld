@@ -145,6 +145,61 @@ func TestReadOnlyE2E(t *testing.T) {
 	}
 }
 
+// A DAV write (PUT under /caldav, as calendar's CalDAV handler would mount)
+// must be refused the same as an /api/ write: the middleware is bound on the
+// shared router, so it sees every path, not only /api/.
+func TestReadOnlyRefusesDAVWriteThroughRealServer(t *testing.T) {
+	t.Cleanup(readonly.Leave)
+
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Cleanup()
+	registerSharedMiddleware(app)
+	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		e.Router.Any("/caldav/{path...}", func(re *core.RequestEvent) error {
+			return re.NoContent(http.StatusNoContent)
+		})
+		return e.Next()
+	})
+
+	srv := serveOnListener(t, app)
+	defer srv.Close()
+
+	readonly.Enter()
+
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/caldav/cal/x.ics", strings.NewReader("BEGIN:VCALENDAR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("DAV PUT during pause: status %d, want 503", res.StatusCode)
+	}
+	if got := res.Header.Get("Retry-After"); got != "2" {
+		t.Fatalf("DAV PUT during pause: Retry-After %q, want 2", got)
+	}
+
+	readonly.Leave()
+	req, err = http.NewRequest(http.MethodPut, srv.URL+"/caldav/cal/x.ics", strings.NewReader("BEGIN:VCALENDAR"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("DAV PUT after pause: status %d, want 204", res.StatusCode)
+	}
+}
+
 // serveOnListener serves app's full router, with every OnServe hook applied, on a
 // real local listener.
 func serveOnListener(t *testing.T, app *tests.TestApp) *httptest.Server {

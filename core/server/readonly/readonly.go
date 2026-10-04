@@ -12,9 +12,9 @@ import (
 	"context"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/cron"
@@ -27,15 +27,23 @@ const (
 	Code              = "read_only"
 	RetryAfterSeconds = 2
 	message           = "The server is updating. Try again in a moment."
+
+	// TailWait bounds how long a write that follows a request already
+	// accepted may wait in WhenWritable for the mode to turn off: longer
+	// than a normal swap, short enough that a stuck mode cannot pile up
+	// goroutines for ever.
+	TailWait = 2 * time.Minute
 )
 
 var (
 	active atomic.Bool
 
-	// mu orders Enter and Leave with the channel that WaitInactive blocks on.
+	// mu orders Enter and Leave with the channel that WaitInactive blocks on,
+	// and guards onEnterFns.
 	// left is closed when the mode is left; Enter makes a new one.
-	mu   sync.Mutex
-	left = closedChan()
+	mu         sync.Mutex
+	left       = closedChan()
+	onEnterFns []func()
 )
 
 func closedChan() chan struct{} {
@@ -46,11 +54,38 @@ func closedChan() chan struct{} {
 
 func Enter() {
 	mu.Lock()
-	defer mu.Unlock()
-	if active.CompareAndSwap(false, true) {
-		left = make(chan struct{})
-		log.Info("read-only mode on: writes are refused until the mode is left")
+	if !active.CompareAndSwap(false, true) {
+		mu.Unlock()
+		return
 	}
+	left = make(chan struct{})
+	fns := append([]func(){}, onEnterFns...)
+	mu.Unlock()
+
+	log.Info("read-only mode on: writes are refused until the mode is left")
+	for _, fn := range fns {
+		go fn()
+	}
+}
+
+// OnEnter registers fn to run, in its own goroutine, each time read-only mode
+// starts (a false->true transition) — not on a repeated Enter while already
+// active. For a writer that holds a long-lived connection and needs to react
+// (pause, flush, disconnect) as soon as the mode turns on, rather than poll
+// Active or block in WhenWritable. Never blocks Enter.
+func OnEnter(fn func()) {
+	mu.Lock()
+	defer mu.Unlock()
+	onEnterFns = append(onEnterFns, fn)
+}
+
+// resetOnEnterForTest clears every registration. OnEnter is process-wide like
+// the rest of this package's state, so a test that registers one must call
+// this in t.Cleanup to avoid leaking it into later tests.
+func resetOnEnterForTest() {
+	mu.Lock()
+	defer mu.Unlock()
+	onEnterFns = nil
 }
 
 func Leave() {
@@ -86,6 +121,17 @@ func WaitInactive(ctx context.Context) error {
 	}
 }
 
+// WhenWritable waits until read-only mode is off (or ctx ends), then runs fn.
+// For a write that follows a request already accepted (a tail effect such as
+// a notification or audit row) rather than one the middleware could refuse
+// outright. Returns ctx's error without running fn if ctx ends first.
+func WhenWritable(ctx context.Context, fn func() error) error {
+	if err := WaitInactive(ctx); err != nil {
+		return err
+	}
+	return fn()
+}
+
 // Register binds the middleware, the cron guard and the SIGUSR2 trigger. Bind
 // it before any middleware that reports 5xx responses: a refused write is
 // expected during a pause and must not reach error reporting.
@@ -98,24 +144,32 @@ func Register(app core.App) {
 	watchSignal()
 }
 
-// Middleware refuses every unsafe request to /api/ while the mode is on.
-// POST /api/realtime is let through: it only sets which topics an open SSE
-// stream carries and writes no record, and a client that reconnects during
-// the pause needs it to subscribe again.
+// Middleware refuses every unsafe request on every path while the mode is on:
+// the API, and also DAV writes (/caldav, /carddav, /dav/drive, a package's own
+// DAV prefix), which do not go through /api/ but still write. POST
+// /api/realtime is let through: it only sets which topics an open SSE stream
+// carries and writes no record, and a client that reconnects during the pause
+// needs it to subscribe again.
 func Middleware(re *core.RequestEvent) error {
 	if !active.Load() || safe(re.Request.Method) {
 		return re.Next()
 	}
-	path := re.Request.URL.Path
-	if !strings.HasPrefix(path, "/api/") || path == "/api/realtime" {
+	if re.Request.URL.Path == "/api/realtime" {
 		return re.Next()
 	}
 	re.Response.Header().Set("Retry-After", strconv.Itoa(RetryAfterSeconds))
 	return re.JSON(http.StatusServiceUnavailable, map[string]string{"code": Code, "message": message})
 }
 
+// safe reports a method that never writes: GET, HEAD, OPTIONS, and the DAV
+// read methods PROPFIND and REPORT.
 func safe(method string) bool {
-	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, "PROPFIND", "REPORT":
+		return true
+	default:
+		return false
+	}
 }
 
 // guardCron makes the scheduler skip every due job while the mode is on: a
