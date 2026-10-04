@@ -260,6 +260,24 @@ describe('uploadFormDataWithProgress', () => {
         await expect(promise).resolves.toEqual({ id: 'abc' })
     })
 
+    it('retries a retry_later 503 and resolves with the eventual success', async () => {
+        const promise = uploadFormDataWithProgress({
+            url: 'https://example.test/api/x',
+            formData: new FormData(),
+            authToken: 'tok',
+        })
+
+        FakeXHR.all[0]?.finish(
+            503,
+            { code: 'retry_later', message: 'starting up' },
+            { 'Retry-After': '0.001' }
+        )
+        await vi.waitFor(() => expect(FakeXHR.all).toHaveLength(2))
+        FakeXHR.all[1]?.finish(200, { id: 'abc' })
+
+        await expect(promise).resolves.toEqual({ id: 'abc' })
+    })
+
     it('gives up after the retry budget and rejects with the last 503', async () => {
         const promise = uploadFormDataWithProgress({
             url: 'https://example.test/api/x',

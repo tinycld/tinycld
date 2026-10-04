@@ -1,6 +1,6 @@
 import {
     abortableWait,
-    isReadOnlyBody,
+    isRetryableBody,
     READ_ONLY_MAX_RETRIES,
     retryAfterMs,
 } from '@tinycld/core/lib/read-only-retry'
@@ -83,9 +83,9 @@ function sendFormDataOnce(params: {
  * rather than each keeping a copy.
  *
  * This path never touches `fetch`, so it sits outside `pb.beforeSend`'s retry
- * wrapper (read-only-retry.ts) and must retry a read-only pause itself, using
- * the same predicate and retry budget so an upload pauses and resumes the
- * same way every other write does.
+ * wrapper (read-only-retry.ts) and must retry a briefly-unavailable server
+ * itself, using the same predicate and retry budget so an upload pauses and
+ * resumes the same way every other write does.
  */
 export async function uploadFormDataWithProgress(params: {
     url: string
@@ -100,7 +100,7 @@ export async function uploadFormDataWithProgress(params: {
 
     let result = await sendFormDataOnce({ url, formData, authToken, method, onProgress, signal })
     for (let attempt = 0; attempt < READ_ONLY_MAX_RETRIES; attempt++) {
-        if (signal?.aborted || !isReadOnlyBody(result.status, result.body)) break
+        if (signal?.aborted || !isRetryableBody(result.status, result.body)) break
         await abortableWait(retryAfterMs(result.retryAfter), signal)
         if (signal?.aborted) break
         result = await sendFormDataOnce({ url, formData, authToken, method, onProgress, signal })

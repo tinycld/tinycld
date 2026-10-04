@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
     abortableWait,
+    isRetryableBody,
     READ_ONLY_MAX_RETRIES,
     retryAfterMs,
     withReadOnlyRetry,
@@ -8,6 +9,13 @@ import {
 
 function readOnly(retryAfter = '2') {
     return new Response(JSON.stringify({ code: 'read_only', message: 'updating' }), {
+        status: 503,
+        headers: { 'Retry-After': retryAfter, 'Content-Type': 'application/json' },
+    })
+}
+
+function retryLater(retryAfter = '2') {
+    return new Response(JSON.stringify({ code: 'retry_later', message: 'starting up' }), {
         status: 503,
         headers: { 'Retry-After': retryAfter, 'Content-Type': 'application/json' },
     })
@@ -50,6 +58,21 @@ describe('abortableWait', () => {
     })
 })
 
+describe('isRetryableBody', () => {
+    it('matches read_only', () => {
+        expect(isRetryableBody(503, { code: 'read_only' })).toBe(true)
+    })
+    it('matches retry_later', () => {
+        expect(isRetryableBody(503, { code: 'retry_later' })).toBe(true)
+    })
+    it('rejects other codes', () => {
+        expect(isRetryableBody(503, { code: 'other' })).toBe(false)
+    })
+    it('rejects a non-503 status', () => {
+        expect(isRetryableBody(500, { code: 'read_only' })).toBe(false)
+    })
+})
+
 describe('withReadOnlyRetry', () => {
     it('retries a read_only 503 after Retry-After and returns the success', async () => {
         const fetchImpl = vi.fn().mockResolvedValueOnce(readOnly('1')).mockResolvedValueOnce(ok())
@@ -61,6 +84,18 @@ describe('withReadOnlyRetry', () => {
         expect(res.status).toBe(200)
         expect(fetchImpl).toHaveBeenCalledTimes(2)
         expect(fetchImpl.mock.calls[1]).toEqual(['/api/x', { method: 'POST', body: '{}' }])
+        expect(sleep).toHaveBeenCalledWith(1000, undefined)
+    })
+
+    it('retries a retry_later 503 after Retry-After and returns the success', async () => {
+        const fetchImpl = vi.fn().mockResolvedValueOnce(retryLater('1')).mockResolvedValueOnce(ok())
+        const sleep = vi.fn().mockResolvedValue(undefined)
+        const res = await withReadOnlyRetry(fetchImpl, sleep)('/api/x', {
+            method: 'POST',
+            body: '{}',
+        })
+        expect(res.status).toBe(200)
+        expect(fetchImpl).toHaveBeenCalledTimes(2)
         expect(sleep).toHaveBeenCalledWith(1000, undefined)
     })
 

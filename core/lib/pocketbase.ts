@@ -140,8 +140,8 @@ pb.beforeSend = (url, options) => {
     if (headers) {
         options.headers = { ...options.headers, ...headers }
     }
-    // Writes refused during a server's read-only pause are retried; see
-    // read-only-retry.ts.
+    // Requests refused while the server is briefly unable to serve them are
+    // retried; see read-only-retry.ts.
     if (!options.fetch) {
         options.fetch = serverFetch
     }
