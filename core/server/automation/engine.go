@@ -231,6 +231,8 @@ func (e *Engine) worker(ctx context.Context) {
 			// later events wait in the queue meanwhile, and a full queue drops
 			// them in enqueue as it always has. ctx ends at OnTerminate.
 			if err := e.waitWritable(ctx); err != nil {
+				log.Warn("shutting down while read-only: dropping held events",
+					"dropped", 1+len(e.queue))
 				return
 			}
 			e.dispatchSafely(ev)

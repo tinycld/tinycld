@@ -67,9 +67,9 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 		if err := e.Next(); err != nil {
 			return err
 		}
-		record, re := e.Record, e.RequestEvent
-		go logWhenWritable(collectionName, record.Id, func() {
-			logCreate(app, record, re, collectionName, extractLabel)
+		record, info := e.Record, requestInfoOf(e.RequestEvent)
+		logWhenWritable(app, collectionName, record.Id, func() {
+			logCreate(app, record, info, collectionName, extractLabel)
 		})
 		return nil
 	})
@@ -79,9 +79,9 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 		if err := e.Next(); err != nil {
 			return err
 		}
-		record, re := e.Record, e.RequestEvent
-		go logWhenWritable(collectionName, record.Id, func() {
-			logUpdate(app, record, original, re, collectionName, extractLabel)
+		record, info := e.Record, requestInfoOf(e.RequestEvent)
+		logWhenWritable(app, collectionName, record.Id, func() {
+			logUpdate(app, record, original, info, collectionName, extractLabel)
 		})
 		return nil
 	})
@@ -93,21 +93,24 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 		if err := e.Next(); err != nil {
 			return err
 		}
-		re := e.RequestEvent
-		go logWhenWritable(collectionName, recordID, func() {
-			logDelete(app, recordID, label, snapshot, re, collectionName)
+		info := requestInfoOf(e.RequestEvent)
+		logWhenWritable(app, collectionName, recordID, func() {
+			logDelete(app, recordID, label, snapshot, info, collectionName)
 		})
 		return nil
 	})
 }
 
-// logWhenWritable writes the audit row of a request already accepted. The
-// request may have been accepted just before the server went read-only; the
-// row then waits for the mode to end, bounded by readonly.TailWait.
-func logWhenWritable(collectionName, recordID string, write func()) {
-	ctx, cancel := context.WithTimeout(context.Background(), readonly.TailWait)
-	defer cancel()
-	writeWhenWritable(ctx, collectionName, recordID, write)
+// logWhenWritable writes the audit row of a request already accepted, off
+// the request goroutine. The request may have been accepted just before the
+// server went read-only; the row then waits for the mode to end, bounded by
+// readonly.TailContext (TailWait, or the app's terminate).
+func logWhenWritable(app core.App, collectionName, recordID string, write func()) {
+	ctx, release := readonly.TailContext(app)
+	go func() {
+		defer release()
+		writeWhenWritable(ctx, collectionName, recordID, write)
+	}()
 }
 
 // writeWhenWritable logs a dropped row at Error, not Warn: a missing audit
@@ -130,24 +133,24 @@ func RegisterCollections(app *pocketbase.PocketBase, names []string, config *Col
 	}
 }
 
-func logCreate(app core.App, record *core.Record, re *core.RequestEvent, collectionName string, extractLabel LabelExtractor) {
+func logCreate(app core.App, record *core.Record, info requestInfo, collectionName string, extractLabel LabelExtractor) {
 	auditRecord := newAuditRecord(app, "created", collectionName, record.Id, extractLabel(record))
 	if auditRecord == nil {
 		return
 	}
-	setRequestInfo(auditRecord, re)
+	info.apply(auditRecord)
 
 	if err := app.Save(auditRecord); err != nil {
 		log.Error("failed to save audit log", "collection", collectionName, "recordID", record.Id, "err", err)
 	}
 }
 
-func logUpdate(app core.App, record *core.Record, original *core.Record, re *core.RequestEvent, collectionName string, extractLabel LabelExtractor) {
+func logUpdate(app core.App, record *core.Record, original *core.Record, info requestInfo, collectionName string, extractLabel LabelExtractor) {
 	auditRecord := newAuditRecord(app, "updated", collectionName, record.Id, extractLabel(record))
 	if auditRecord == nil {
 		return
 	}
-	setRequestInfo(auditRecord, re)
+	info.apply(auditRecord)
 
 	if original != nil {
 		diff := ComputeDiff(original, record)
@@ -161,13 +164,13 @@ func logUpdate(app core.App, record *core.Record, original *core.Record, re *cor
 	}
 }
 
-func logDelete(app core.App, recordID string, label string, snapshot map[string]any, re *core.RequestEvent, collectionName string) {
+func logDelete(app core.App, recordID string, label string, snapshot map[string]any, info requestInfo, collectionName string) {
 	auditRecord := newAuditRecord(app, "deleted", collectionName, recordID, label)
 	if auditRecord == nil {
 		return
 	}
 	auditRecord.Set("snapshot", snapshot)
-	setRequestInfo(auditRecord, re)
+	info.apply(auditRecord)
 
 	if err := app.Save(auditRecord); err != nil {
 		log.Error("failed to save audit log", "collection", collectionName, "recordID", recordID, "err", err)
@@ -190,15 +193,40 @@ func newAuditRecord(app core.App, action string, resourceType string, resourceID
 }
 
 func setRequestInfo(auditRecord *core.Record, re *core.RequestEvent) {
+	requestInfoOf(re).apply(auditRecord)
+}
+
+// requestInfo is what an audit row records of the request behind it. It is
+// read in the request hook, so a tail that waits out read-only mode does not
+// hold on to the request.
+type requestInfo struct {
+	system    bool
+	actor     string
+	ip        string
+	userAgent string
+}
+
+func requestInfoOf(re *core.RequestEvent) requestInfo {
 	if re == nil {
+		return requestInfo{system: true}
+	}
+	info := requestInfo{ip: re.RealIP(), userAgent: re.Request.UserAgent()}
+	if re.Auth != nil && re.Auth.Collection().Name == "users" {
+		info.actor = re.Auth.Id
+	}
+	return info
+}
+
+func (info requestInfo) apply(auditRecord *core.Record) {
+	if info.system {
 		auditRecord.Set("metadata", map[string]any{"source": "system"})
 		return
 	}
-	if re.Auth != nil && re.Auth.Collection().Name == "users" {
-		auditRecord.Set("actor", re.Auth.Id)
+	if info.actor != "" {
+		auditRecord.Set("actor", info.actor)
 	}
-	auditRecord.Set("ip_address", re.RealIP())
-	auditRecord.Set("user_agent", re.Request.UserAgent())
+	auditRecord.Set("ip_address", info.ip)
+	auditRecord.Set("user_agent", info.userAgent)
 }
 
 // --- Label extractors ---

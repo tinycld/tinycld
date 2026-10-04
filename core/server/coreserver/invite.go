@@ -203,9 +203,9 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 		go sendExistingMemberEmail(app, userRecord, req.Role)
 	}
 
+	ctx, release := readonly.TailContext(app)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), readonly.TailWait)
-		defer cancel()
+		defer release()
 		notifyInvitedWhenWritable(ctx, app, userRecord.Id, req.Role)
 	}()
 
@@ -224,7 +224,8 @@ const inviteNotifyDroppedMsg = "invite notification dropped: the server stayed r
 
 // notifyInvitedWhenWritable writes the invited user's notification for an
 // invite already accepted, possibly just before the server went read-only;
-// the row then waits for the mode to end, bounded by ctx. The emails need no
+// the row then waits for the mode to end, bounded by ctx (from
+// readonly.TailContext: TailWait, or the app's terminate). The emails need no
 // wait: sending one writes nothing to the database.
 func notifyInvitedWhenWritable(ctx context.Context, app core.App, userID, role string) {
 	err := readonly.WhenWritable(ctx, func() error {

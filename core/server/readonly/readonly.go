@@ -156,11 +156,13 @@ func WhenWritable(ctx context.Context, fn func() error) error {
 	return fn()
 }
 
-// Register binds the middleware, the cron guard and the SIGUSR2 trigger. Bind
+// Register binds the middleware, the cron guard, the end of tail waits at
+// terminate (see TailContext) and the SIGUSR2 trigger. Bind
 // it before any middleware that reports 5xx responses: a refused write is
 // expected during a pause and must not reach error reporting.
 func Register(app core.App) {
 	guardCron(app.Cron())
+	bindTails(app)
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.BindFunc(Middleware)
 		return e.Next()

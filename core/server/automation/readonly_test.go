@@ -2,12 +2,14 @@ package automation
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/readonly"
+	"tinycld.org/core/readonly/readonlytest"
 )
 
 // readOnlyWorker builds a second, unstarted engine over engineApp's app and
@@ -21,6 +23,16 @@ func readOnlyWorker(t *testing.T) (w *Engine, ev event, waiting <-chan struct{},
 	app, eng, u := engineApp(t)
 
 	ranCh := make(chan bool, 1)
+	prev, hadPrev := actionHandler("tickets:boom")
+	t.Cleanup(func() {
+		if hadPrev {
+			RegisterAction("tickets:boom", prev)
+			return
+		}
+		registryMu.Lock()
+		delete(actionHandlers, "tickets:boom")
+		registryMu.Unlock()
+	})
 	RegisterAction("tickets:boom", func(core.App, ActionRequest) error {
 		ranCh <- readonly.Active()
 		return nil
@@ -39,7 +51,9 @@ func readOnlyWorker(t *testing.T) (w *Engine, ev event, waiting <-chan struct{},
 	}
 	trigger, _, _ := eng.defs.Trigger("tickets:ticket-created")
 
-	waitingCh := make(chan struct{})
+	// Buffered: the worker's send must not be lost if the test is not yet
+	// receiving.
+	waitingCh := make(chan struct{}, 1)
 	w = NewEngine(app, eng.defs)
 	w.waitWritable = func(ctx context.Context) error {
 		if readonly.Active() {
@@ -94,6 +108,7 @@ func TestWorkerStopsOnShutdownWhileReadOnly(t *testing.T) {
 	readonly.Enter()
 	t.Cleanup(readonly.Leave)
 	w, ev, waiting, ran, cancel := readOnlyWorker(t)
+	logs := readonlytest.CaptureLogs(t)
 
 	w.enqueue(ev)
 	select {
@@ -111,5 +126,9 @@ func TestWorkerStopsOnShutdownWhileReadOnly(t *testing.T) {
 	case <-ran:
 		t.Fatal("a worker stopped by shutdown must not dispatch the event it held")
 	default:
+	}
+	r, ok := readonlytest.Find(logs(), "shutting down while read-only: dropping held events")
+	if !ok || r.Level != slog.LevelWarn || r.Attrs["dropped"] != "1" {
+		t.Fatalf("want one Warn naming 1 dropped event, got %+v (found %v)", r, ok)
 	}
 }

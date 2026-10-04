@@ -15,11 +15,19 @@ import (
 
 func auditTestApp(t *testing.T) (*tests.TestApp, *core.Record) {
 	t.Helper()
+	app, rec := auditTestAppNoCleanup(t)
+	t.Cleanup(app.Cleanup)
+	return app, rec
+}
+
+// auditTestAppNoCleanup leaves app.Cleanup, which runs the terminate, to the
+// test.
+func auditTestAppNoCleanup(t *testing.T) (*tests.TestApp, *core.Record) {
+	t.Helper()
 	app, err := tests.NewTestApp()
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(app.Cleanup)
 	createAuditLogsCollection(t, app)
 	col := core.NewBaseCollection("widgets")
 	col.Fields.Add(&core.TextField{Name: "name"})
@@ -53,7 +61,7 @@ func TestAuditRowWaitsForReadOnlyToEnd(t *testing.T) {
 	go func() {
 		defer close(done)
 		writeWhenWritable(probe, "widgets", rec.Id, func() {
-			logCreate(app, rec, nil, "widgets", DefaultLabelExtractor)
+			logCreate(app, rec, requestInfoOf(nil), "widgets", DefaultLabelExtractor)
 		})
 	}()
 	select {
@@ -87,7 +95,7 @@ func TestAuditRowDroppedAndLoggedWhenReadOnlyOutlastsTheWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	writeWhenWritable(ctx, "widgets", rec.Id, func() {
-		logCreate(app, rec, nil, "widgets", DefaultLabelExtractor)
+		logCreate(app, rec, requestInfoOf(nil), "widgets", DefaultLabelExtractor)
 	})
 
 	if n := auditRows(t, app, rec.Id); n != 0 {
@@ -101,6 +109,39 @@ func TestAuditRowDroppedAndLoggedWhenReadOnlyOutlastsTheWait(t *testing.T) {
 		t.Fatalf("a dropped audit row is a compliance gap and must log at Error, got %v", r.Level)
 	}
 	if r.Attrs["recordID"] != rec.Id || r.Attrs["collection"] != "widgets" {
+		t.Fatalf("the log must name the record, got %v", r.Attrs)
+	}
+}
+
+// A supervised upgrade keeps the mode on until the process exits. The
+// terminate must end a parked audit write, which then logs the drop at Error
+// and never writes.
+func TestAuditRowParkedInReadOnlyIsDroppedAndLoggedAtTerminate(t *testing.T) {
+	app, rec := auditTestAppNoCleanup(t)
+	readonly.Register(app)
+	logs := readonlytest.CaptureLogs(t)
+	readonly.Enter()
+	t.Cleanup(readonly.Leave)
+
+	ran := make(chan struct{}, 1)
+	logWhenWritable(app, "widgets", rec.Id, func() { ran <- struct{}{} })
+	// The terminate waits for the tail to return, so its log is written by
+	// the time Cleanup returns.
+	app.Cleanup()
+
+	select {
+	case <-ran:
+		t.Fatal("an audit write ended by terminate must not run")
+	default:
+	}
+	r, ok := readonlytest.Find(logs(), auditDroppedMsg)
+	if !ok {
+		t.Fatalf("no %q log for the audit row dropped at terminate", auditDroppedMsg)
+	}
+	if r.Level != slog.LevelError {
+		t.Fatalf("want Error, got %v", r.Level)
+	}
+	if r.Attrs["recordID"] != rec.Id {
 		t.Fatalf("the log must name the record, got %v", r.Attrs)
 	}
 }
