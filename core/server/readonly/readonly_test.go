@@ -3,8 +3,11 @@ package readonly
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -232,8 +235,66 @@ func TestOnEnterDoesNotBlockEnter(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Enter blocked on a slow OnEnter fn")
 	}
-	<-started
+	waitOrFatal(t, started, "OnEnter fn never started")
 	close(release)
+}
+
+// A panicking OnEnter fn must not crash the process — this happens exactly
+// while an upgrade has the server read-only — and must not stop other
+// registered fns from running. It must still be logged, so the panic is not
+// silently swallowed.
+func TestOnEnterPanicIsRecoveredAndLogged(t *testing.T) {
+	t.Cleanup(resetOnEnterForTest)
+	t.Cleanup(Leave)
+	Leave()
+
+	logged := logSeen(t, "an OnEnter fn panicked")
+	otherRan := make(chan struct{})
+	OnEnter(func() { panic("boom") })
+	OnEnter(func() { close(otherRan) })
+
+	Enter()
+	waitOrFatal(t, otherRan, "the other OnEnter fn did not run after a sibling panicked")
+	waitOrFatal(t, logged, "the panic was not logged")
+}
+
+// logSeen returns a channel that closes once a record with message msg is
+// logged. It swaps the global default logger, so it relies on this package's
+// tests not running in parallel (already required: readonly state is
+// process-wide); the previous logger is restored at cleanup.
+func logSeen(t *testing.T, msg string) <-chan struct{} {
+	t.Helper()
+	seen := make(chan struct{})
+	var once sync.Once
+	prev := slog.Default()
+	// Not prev's handler: wrapping slog's built-in default handler in a new
+	// default deadlocks, because that handler writes through the log package,
+	// which SetDefault points back at the new default.
+	inner := slog.NewTextHandler(io.Discard, nil)
+	slog.SetDefault(slog.New(&matchHandler{Handler: inner, msg: msg, hit: func() { once.Do(func() { close(seen) }) }}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return seen
+}
+
+type matchHandler struct {
+	slog.Handler
+	msg string
+	hit func()
+}
+
+func (h *matchHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == h.msg {
+		h.hit()
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h *matchHandler) WithAttrs(as []slog.Attr) slog.Handler {
+	return &matchHandler{Handler: h.Handler.WithAttrs(as), msg: h.msg, hit: h.hit}
+}
+
+func (h *matchHandler) WithGroup(name string) slog.Handler {
+	return &matchHandler{Handler: h.Handler.WithGroup(name), msg: h.msg, hit: h.hit}
 }
 
 func waitOrFatal(t *testing.T, ch <-chan struct{}, msg string) {
@@ -288,6 +349,11 @@ func TestWhenWritableWaitsAndRunsAfterLeave(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("WhenWritable still waits after Leave")
+	}
+	select {
+	case <-ran:
+	case <-time.After(time.Second):
+		t.Fatal("fn did not run after WhenWritable returned")
 	}
 }
 

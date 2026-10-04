@@ -64,8 +64,21 @@ func Enter() {
 
 	log.Info("read-only mode on: writes are refused until the mode is left")
 	for _, fn := range fns {
-		go fn()
+		go runOnEnter(fn)
 	}
+}
+
+// runOnEnter runs fn, recovering a panic rather than letting it crash the
+// process: this happens exactly while an upgrade has the server read-only, so
+// a panicking writer must not take the whole process down with it, and other
+// registered fns must still run.
+func runOnEnter(fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("an OnEnter fn panicked", "panic", r)
+		}
+	}()
+	fn()
 }
 
 // OnEnter registers fn to run, in its own goroutine, each time read-only mode
@@ -73,6 +86,13 @@ func Enter() {
 // active. For a writer that holds a long-lived connection and needs to react
 // (pause, flush, disconnect) as soon as the mode turns on, rather than poll
 // Active or block in WhenWritable. Never blocks Enter.
+//
+// A fn registered while the mode is already active runs only at the next
+// transition, not immediately. Because fn runs in its own goroutine, it may
+// start after a later Leave has already turned the mode back off, and a fast
+// Enter/Leave/Enter can start two runs that overlap — fn must re-check
+// Active() itself and be safe to run more than once or concurrently with
+// itself.
 func OnEnter(fn func()) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -125,6 +145,10 @@ func WaitInactive(ctx context.Context) error {
 // For a write that follows a request already accepted (a tail effect such as
 // a notification or audit row) rather than one the middleware could refuse
 // outright. Returns ctx's error without running fn if ctx ends first.
+//
+// The wait and the run of fn are not atomic: the mode can be entered again in
+// the window between the wait returning and fn running, so fn itself is not
+// guaranteed to run only while the mode is off.
 func WhenWritable(ctx context.Context, fn func() error) error {
 	if err := WaitInactive(ctx); err != nil {
 		return err

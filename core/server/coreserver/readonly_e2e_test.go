@@ -147,7 +147,7 @@ func TestReadOnlyE2E(t *testing.T) {
 
 // A DAV write (PUT under /caldav, as calendar's CalDAV handler would mount)
 // must be refused the same as an /api/ write: the middleware is bound on the
-// shared router, so it sees every path, not only /api/.
+// shared mux, so it sees every path, not only /api/.
 func TestReadOnlyRefusesDAVWriteThroughRealServer(t *testing.T) {
 	t.Cleanup(readonly.Leave)
 
