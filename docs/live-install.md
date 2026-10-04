@@ -213,27 +213,28 @@ process then keeps serving, read-only, until the supervisor drains it. With no
 ack within 10 s it exits 75 instead, and the supervisor handles that as a cold
 restart. In dev mode (`go run`) it only logs; you restart manually.
 
-Read-only mode (`core/server/readonly`) refuses unsafe requests to `/api/`
-with `503` and `Retry-After`. It stops only some of the writes that do not
+Read-only mode (`core/server/readonly`) refuses unsafe requests on every path
+with `503` and `Retry-After`. It also stops most of the writes that do not
 come from a request:
 
 - The cron scheduler skips every due job while the mode is on (core's,
   PocketBase's, a package's and a JS hook's alike). A skipped run is not made
   up.
 - The auto-upgrade tick (`coreserver/autoupgrade_local.go`) does nothing.
+- The automation engine's worker waits for the mode to end before its next
+  cycle (`core/server/automation`).
+- The audit, comment-mention, and invite tails wait for the mode to end
+  before writing (`core/server/audit`, `core/server/notify`,
+  `core/server/coreserver/invite.go`).
+- A backup or restore job that is already running skips its progress updates
+  while the mode is on, catching up on the next tick (`core/server/backup`).
 - A package's background workers check `readonly.Active()` or call
   `readonly.WaitInactive(ctx)` before each write cycle.
 
-These core writers run in their own goroutines and do **not** stop in
-read-only mode yet:
-
-- a backup or restore job that is already running, and its progress updates
-  (`core/server/backup`)
-- the automation engine's worker and the notifications it sends
-  (`core/server/automation`)
-- collaborative-document (Yjs) saves of the realtime save coordinator
-  (`core/server/realtime`, `core/server/yjsdoc`)
-- comment-mention notifications (`core/server/notify`)
+Collaborative-document (Yjs) journal appends and saves of the realtime save
+coordinator (`core/server/realtime`, `core/server/yjsdoc`) are **not** paused
+yet: they keep writing through a read-only window. This is a known gap,
+tracked for a follow-up.
 
 Writes that arrive over a protocol other than the HTTP API (DAV, a package's
 own client protocol) are not covered either.
