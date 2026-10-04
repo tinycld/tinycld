@@ -236,8 +236,11 @@ coordinator (`core/server/realtime`, `core/server/yjsdoc`) are **not** paused
 yet: they keep writing through a read-only window. This is a known gap,
 tracked for a follow-up.
 
-Writes that arrive over a protocol other than the HTTP API (DAV, a package's
-own client protocol) are not covered either.
+Writes that do not arrive as an HTTP request are not covered either: a
+package's own client protocol, and websocket messages (the
+collaborative-document saves above). DAV requests are HTTP requests to the
+same server, so read-only mode refuses their unsafe methods like any other
+request.
 
 The control messages (`ready`, `restart`, `drain`, `restart-ack`) are permanent:
 both sides act on them whatever protocol version the sender states, because
@@ -381,8 +384,8 @@ rollback never touches `unrestored/`.
   `ReconcileRolledBackInstall`, together with the emails of
   `reconcileAutoUpgradeResults`: a mail server or push service that does not
   answer must not delay `ready` past the supervisor's 60 s. Terminating the
-  app cancels the goroutine and waits up to 2 s for it, so it never writes
-  to a closed database.
+  app cancels the goroutine and waits up to 2 s for it to stop; if it has
+  not stopped by then, the app logs a warning and closes the database.
 - Automatic upgrades wait until `unrestored/` is empty: the tick does nothing
   and the status line shows "paused: a database backup needs attention".
   Manual version changes are not blocked.
