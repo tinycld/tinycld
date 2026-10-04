@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"tinycld.org/core/readonly"
 )
 
 const (
@@ -43,10 +45,17 @@ type Engine struct {
 	cancel  context.CancelFunc
 	done    chan struct{}
 	started bool
+	// waitWritable is readonly.WaitInactive; a test swaps it before starting
+	// a worker to learn that the worker has reached the wait.
+	waitWritable func(context.Context) error
 }
 
 func NewEngine(app core.App, defs *Defs) *Engine {
-	return &Engine{app: app, defs: defs, queue: make(chan event, dispatchQueueLen), done: make(chan struct{})}
+	return &Engine{
+		app: app, defs: defs,
+		queue: make(chan event, dispatchQueueLen), done: make(chan struct{}),
+		waitWritable: readonly.WaitInactive,
+	}
 }
 
 // Start binds one hook per distinct (collection, op) named by the defs, plus
@@ -215,6 +224,13 @@ func (e *Engine) worker(ctx context.Context) {
 			return
 		case ev := <-e.queue:
 			if !appIsLive(e.app) {
+				return
+			}
+			// A dispatch writes records outside any request, so the read-only
+			// middleware cannot refuse it. Hold the event until the mode ends;
+			// later events wait in the queue meanwhile, and a full queue drops
+			// them in enqueue as it always has. ctx ends at OnTerminate.
+			if err := e.waitWritable(ctx); err != nil {
 				return
 			}
 			e.dispatchSafely(ev)

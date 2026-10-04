@@ -1,6 +1,7 @@
 package coreserver
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/notify"
+	"tinycld.org/core/readonly"
 )
 
 type inviteRequest struct {
@@ -202,14 +204,9 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 	}
 
 	go func() {
-		notify.NotifyUser(app, notify.NotifyParams{
-			UserID:  userRecord.Id,
-			Type:    "org_invite",
-			Package: "core",
-			Title:   "You were invited",
-			Body:    fmt.Sprintf("You've been added as %s", req.Role),
-			URL:     "/",
-		})
+		ctx, cancel := context.WithTimeout(context.Background(), readonly.TailWait)
+		defer cancel()
+		notifyInvitedWhenWritable(ctx, app, userRecord.Id, req.Role)
 	}()
 
 	resp := map[string]any{
@@ -221,6 +218,29 @@ func handleInviteMember(app core.App, re *core.RequestEvent) error {
 		resp["emailedTo"] = emailInvite(app, re.Auth.Id, userRecord, req.Role, inviteToken)
 	}
 	return re.JSON(http.StatusOK, resp)
+}
+
+const inviteNotifyDroppedMsg = "invite notification dropped: the server stayed read-only past the wait"
+
+// notifyInvitedWhenWritable writes the invited user's notification for an
+// invite already accepted, possibly just before the server went read-only;
+// the row then waits for the mode to end, bounded by ctx. The emails need no
+// wait: sending one writes nothing to the database.
+func notifyInvitedWhenWritable(ctx context.Context, app core.App, userID, role string) {
+	err := readonly.WhenWritable(ctx, func() error {
+		notify.NotifyUser(app, notify.NotifyParams{
+			UserID:  userID,
+			Type:    "org_invite",
+			Package: "core",
+			Title:   "You were invited",
+			Body:    fmt.Sprintf("You've been added as %s", role),
+			URL:     "/",
+		})
+		return nil
+	})
+	if err != nil {
+		srvLog.Warn(inviteNotifyDroppedMsg, "userID", userID, "err", err)
+	}
 }
 
 // emailInvite sends the invite link to the invited user's email address, when

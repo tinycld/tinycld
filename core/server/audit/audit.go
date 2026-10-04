@@ -9,6 +9,7 @@
 package audit
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -16,9 +17,12 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 
 	"tinycld.org/core/logging"
+	"tinycld.org/core/readonly"
 )
 
 var log = logging.ForPackage("audit")
+
+const auditDroppedMsg = "audit row dropped: the server stayed read-only past the wait"
 
 // LabelExtractor returns a human-readable label for a record.
 type LabelExtractor func(record *core.Record) string
@@ -63,7 +67,10 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 		if err := e.Next(); err != nil {
 			return err
 		}
-		go logCreate(app, e.Record, e.RequestEvent, collectionName, extractLabel)
+		record, re := e.Record, e.RequestEvent
+		go logWhenWritable(collectionName, record.Id, func() {
+			logCreate(app, record, re, collectionName, extractLabel)
+		})
 		return nil
 	})
 
@@ -72,7 +79,10 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 		if err := e.Next(); err != nil {
 			return err
 		}
-		go logUpdate(app, e.Record, original, e.RequestEvent, collectionName, extractLabel)
+		record, re := e.Record, e.RequestEvent
+		go logWhenWritable(collectionName, record.Id, func() {
+			logUpdate(app, record, original, re, collectionName, extractLabel)
+		})
 		return nil
 	})
 
@@ -83,9 +93,33 @@ func RegisterCollection(app *pocketbase.PocketBase, collectionName string, confi
 		if err := e.Next(); err != nil {
 			return err
 		}
-		go logDelete(app, recordID, label, snapshot, e.RequestEvent, collectionName)
+		re := e.RequestEvent
+		go logWhenWritable(collectionName, recordID, func() {
+			logDelete(app, recordID, label, snapshot, re, collectionName)
+		})
 		return nil
 	})
+}
+
+// logWhenWritable writes the audit row of a request already accepted. The
+// request may have been accepted just before the server went read-only; the
+// row then waits for the mode to end, bounded by readonly.TailWait.
+func logWhenWritable(collectionName, recordID string, write func()) {
+	ctx, cancel := context.WithTimeout(context.Background(), readonly.TailWait)
+	defer cancel()
+	writeWhenWritable(ctx, collectionName, recordID, write)
+}
+
+// writeWhenWritable logs a dropped row at Error, not Warn: a missing audit
+// row is a compliance gap, not a lost courtesy.
+func writeWhenWritable(ctx context.Context, collectionName, recordID string, write func()) {
+	err := readonly.WhenWritable(ctx, func() error {
+		write()
+		return nil
+	})
+	if err != nil {
+		log.Error(auditDroppedMsg, "collection", collectionName, "recordID", recordID, "err", err)
+	}
 }
 
 // RegisterCollections is a convenience for registering multiple collections

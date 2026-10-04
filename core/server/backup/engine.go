@@ -33,6 +33,7 @@ import (
 	"tinycld.org/core/installjob"
 	"tinycld.org/core/logging"
 	"tinycld.org/core/notify"
+	"tinycld.org/core/readonly"
 )
 
 var log = logging.ForPackage("backup")
@@ -383,6 +384,11 @@ func newProgress(app core.App, row *core.Record, total func() int64) *progress {
 			case <-t.C:
 				if progressTickForTesting != nil {
 					progressTickForTesting()
+				}
+				// Skipped, not waited for: the next tick writes the count
+				// as it is then, so a skipped one loses nothing.
+				if readonly.Active() {
+					continue
 				}
 				row.Set("bytes", total())
 				if err := app.Save(row); err != nil {

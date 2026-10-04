@@ -22,6 +22,7 @@ import (
 	"tinycld.org/core/backup/repo"
 	"tinycld.org/core/installjob"
 	"tinycld.org/core/notify"
+	"tinycld.org/core/readonly"
 )
 
 // Rebuilder turns an archive's lockfile into a binary that carries exactly that
@@ -581,7 +582,17 @@ const (
 	expiryStallPolls = 4
 )
 
-func newExpiryWatcher(app core.App, row *core.Record, src *format.RangeSource) *expiryWatcher {
+// stallSource is what the watcher reads of a restore's ranged source.
+type stallSource interface {
+	Offset() int64
+	Blocked() bool
+}
+
+// expiryTickForTesting reports that the watcher's ticker fired. Only the
+// package's own tests set it, before the watcher starts.
+var expiryTickForTesting func()
+
+func newExpiryWatcher(app core.App, row *core.Record, src stallSource) *expiryWatcher {
 	w := &expiryWatcher{stopCh: make(chan struct{}), done: make(chan struct{})}
 	// The watcher never touches row: saving it from here would race the restore
 	// goroutine's own saves. It writes through a fresh read of the same id.
@@ -592,27 +603,39 @@ func newExpiryWatcher(app core.App, row *core.Record, src *format.RangeSource) *
 		defer t.Stop()
 		last := src.Offset()
 		stalled := 0
-		blocked := false
+		// waiting is the state the source is in; shown is the state last
+		// written to the row.
+		waiting, shown := false, false
 		for {
 			select {
 			case <-w.stopCh:
 				return
 			case <-t.C:
 			}
+			if expiryTickForTesting != nil {
+				expiryTickForTesting()
+			}
 			cur := src.Offset()
 			if cur != last {
 				stalled = 0
-				if blocked {
-					blocked = false
-					setRestoreStatus(app, id, "running", nil)
-				}
+				waiting = false
 			} else {
 				stalled++
 			}
 			last = cur
-			if !blocked && stalled >= expiryStallPolls && src.Blocked() {
-				blocked = true
+			if !waiting && stalled >= expiryStallPolls && src.Blocked() {
+				waiting = true
+			}
+			// While read-only the write is skipped and shown stays behind,
+			// so the first tick after the mode ends writes the state then.
+			if waiting == shown || readonly.Active() {
+				continue
+			}
+			shown = waiting
+			if waiting {
 				setRestoreStatus(app, id, "waiting_for_source", map[string]any{"resume_offset": cur})
+			} else {
+				setRestoreStatus(app, id, "running", nil)
 			}
 		}
 	}()

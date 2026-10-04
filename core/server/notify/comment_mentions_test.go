@@ -161,8 +161,9 @@ func seedMentionFixture(t *testing.T) *mentionFixture {
 
 // runHookSync invokes handleCommentMention directly (bypassing the
 // goroutine in the registered hook) so tests don't have to race on a
-// time.Sleep. The hook itself is just `go handleCommentMention(...)`
-// so this preserves the same code path.
+// time.Sleep. The hook's goroutine only adds the read-only wait in front
+// of handleCommentMention (covered in readonly_test.go), so this preserves
+// the same code path.
 func runHookSync(t *testing.T, app core.App, mention *core.Record) {
 	t.Helper()
 	handleCommentMention(app, mention)
