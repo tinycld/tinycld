@@ -38,7 +38,27 @@ func nameRestoreJob(job *installjob.Job) {
 // phase 2), which is the correct outcome there — restoring rows that belong to
 // packages the binary does not carry leaves data no screen can reach.
 func RegisterBackupSelfRebuild(app *pocketbase.PocketBase) {
-	backup.RegisterRebuilder(func(_ context.Context, job *installjob.Job, lf format.Lockfile) error {
+	backup.RegisterRebuilder(restoreRebuilder(app))
+	// A restore that needs no rebuild still has to end the process: the staged
+	// data is what the next one boots on. The WAL checkpoint first, or the new
+	// process reads a data.db missing this one's last writes.
+	//
+	// In dev mode there is no supervisor to relaunch anything, so requestRestart
+	// is a no-op — and a restore that believed it had been honoured left the
+	// deployment behind the maintenance 503 for good. Say so instead: the restore
+	// then goes back to serving the current data and its row records that a
+	// restart is still owed.
+	backup.SetRestart(func() bool { return restartForRestore(app) })
+}
+
+// restoreRebuildDeps builds the rebuild's dependencies for a restore. It is
+// a variable so a test can run the restore's rebuilder without a toolchain.
+var restoreRebuildDeps = productionRebuildDeps
+
+// restoreRebuilder is the restore's rebuilder: a build carrying exactly the
+// archive's lockfile, activated and restarted onto cold.
+func restoreRebuilder(app *pocketbase.PocketBase) backup.Rebuilder {
+	return func(_ context.Context, job *installjob.Job, lf format.Lockfile) error {
 		// The restore hands its own claim over rather than releasing it, so there
 		// is nothing to claim here: an install slipping into a release/re-claim
 		// window would have wasted a pre-restore backup and a fully staged
@@ -60,7 +80,7 @@ func RegisterBackupSelfRebuild(app *pocketbase.PocketBase) {
 		// its log line, so the member order must not change run to run.
 		sort.Slice(m.Members, func(i, j int) bool { return m.Members[i].Slug < m.Members[j].Slug })
 		logRecord := createInstallLog(app, job, "install")
-		deps := productionRebuildDeps(app, job, m, logRecord)
+		deps := restoreRebuildDeps(app, job, m, logRecord)
 		// No migration sync. The live database is about to be replaced by the
 		// archive's, so reconciling THIS database's schema to the new build
 		// would migrate a database that is on its way out — and the staged one
@@ -77,17 +97,7 @@ func RegisterBackupSelfRebuild(app *pocketbase.PocketBase) {
 			return backup.ErrRestartUnderway
 		}
 		return nil
-	})
-	// A restore that needs no rebuild still has to end the process: the staged
-	// data is what the next one boots on. The WAL checkpoint first, or the new
-	// process reads a data.db missing this one's last writes.
-	//
-	// In dev mode there is no supervisor to relaunch anything, so requestRestart
-	// is a no-op — and a restore that believed it had been honoured left the
-	// deployment behind the maintenance 503 for good. Say so instead: the restore
-	// then goes back to serving the current data and its row records that a
-	// restart is still owed.
-	backup.SetRestart(func() bool { return restartForRestore(app) })
+	}
 }
 
 // restartForRestore restarts onto staged restore data. The restart is cold

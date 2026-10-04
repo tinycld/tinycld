@@ -20,10 +20,14 @@ import (
 
 // getBody polls addr until it responds (the redirect server starts on its
 // own goroutine) and returns the response body, or fails the test after 5s.
+//
+// Each attempt gets a fraction of the 5s, so one that hangs (a connection
+// made before the server serves, then lost) leaves time for the next; with
+// the whole 5s per attempt, the first hung one would fail the test.
 func getBody(t *testing.T, addr string) string {
 	t.Helper()
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: time.Second}
 	var res *http.Response
 	var err error
 	deadline := time.Now().Add(5 * time.Second)

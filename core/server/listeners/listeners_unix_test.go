@@ -26,6 +26,10 @@ func TestMain(m *testing.M) {
 		controlChildMain()
 		return
 	}
+	if os.Getenv("LISTENERS_TEST_EXTRA") == "1" {
+		extraChildMain()
+		return
+	}
 	os.Exit(m.Run())
 }
 
@@ -79,6 +83,30 @@ func controlChildMain() {
 	}
 	if _, ok := ExtraFD("control"); !ok {
 		os.Stdout.WriteString("control is not an extra fd\n")
+		os.Exit(2)
+	}
+	os.Stdout.WriteString("ok\n")
+}
+
+// extraChildMain writes through the extra fd named "control", so the parent
+// can tell it is the very socket it passed under that name, not merely an fd
+// filed under it.
+func extraChildMain() {
+	f, ok := ExtraFD("control")
+	if !ok {
+		os.Stdout.WriteString("no control\n")
+		os.Exit(2)
+	}
+	if again, _ := ExtraFD("control"); again != f {
+		os.Stdout.WriteString("a second lookup returned another file\n")
+		os.Exit(2)
+	}
+	if _, ok := ExtraFD("acme-secure"); ok {
+		os.Stdout.WriteString("the listener is an extra fd\n")
+		os.Exit(2)
+	}
+	if _, err := f.WriteString("hello over control\n"); err != nil {
+		os.Stdout.WriteString("write: " + err.Error() + "\n")
 		os.Exit(2)
 	}
 	os.Stdout.WriteString("ok\n")
@@ -243,5 +271,86 @@ func TestSetFilesForTestOverridesAndRestores(t *testing.T) {
 
 	if _, ok := ExtraFD("control"); ok {
 		t.Fatal("ExtraFD still sees the file after restore")
+	}
+}
+
+// Apply must hand the files over in the order they were added, with each
+// name at the same position, whatever mix of listeners and plain files.
+func TestSetApplyKeepsFilesAndNamesInOrder(t *testing.T) {
+	l, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	first, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { first.Close() })
+	last, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { last.Close() })
+
+	set := &Set{}
+	set.AddFile("control", first)
+	if err := set.AddListener("acme-secure", l); err != nil {
+		t.Fatal(err)
+	}
+	set.AddFile("acme-spare", last)
+	t.Cleanup(func() { set.files[1].Close() })
+	cmd := exec.Command("true")
+	cmd.Env = []string{"KEEP=1"}
+	set.Apply(cmd)
+
+	if len(cmd.ExtraFiles) != 3 || cmd.ExtraFiles[0] != first || cmd.ExtraFiles[2] != last {
+		t.Fatalf("ExtraFiles = %v, want control, the listener's dup, acme-spare", cmd.ExtraFiles)
+	}
+	want := []string{"KEEP=1", EnvFDs + "=3", EnvFDNames + "=control:acme-secure:acme-spare"}
+	if strings.Join(cmd.Env, " ") != strings.Join(want, " ") {
+		t.Fatalf("Env = %q, want %q", cmd.Env, want)
+	}
+	if set.Addr("control") != nil {
+		t.Fatal("a plain file has an address")
+	}
+}
+
+// A file added with AddFile must reach the child as the same open file,
+// under its name, beside a listener.
+func TestExtraFDCarriesTheFileItWasGiven(t *testing.T) {
+	l, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	fds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	childEnd := os.NewFile(uintptr(fds[0]), "control-child")
+	parentEnd := os.NewFile(uintptr(fds[1]), "control-parent")
+	t.Cleanup(func() { childEnd.Close(); parentEnd.Close() })
+
+	set := &Set{}
+	if err := set.AddListener("acme-secure", l); err != nil {
+		t.Fatal(err)
+	}
+	set.AddFile("control", childEnd)
+	cmd := exec.Command(os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), "LISTENERS_TEST_EXTRA=1")
+	set.Apply(cmd)
+
+	out, err := cmd.Output()
+	if err != nil || string(out) != "ok\n" {
+		t.Fatalf("child said %q, err %v", out, err)
+	}
+	// With the child gone and this copy closed, a read that finds nothing
+	// ends at EOF rather than waiting.
+	childEnd.Close()
+	parentEnd.SetReadDeadline(time.Now().Add(5 * time.Second))
+	got, err := bufio.NewReader(parentEnd).ReadString('\n')
+	if err != nil || got != "hello over control\n" {
+		t.Fatalf("read %q, err %v from the parent's end", got, err)
 	}
 }

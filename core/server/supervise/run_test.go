@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"tinycld.org/core/backup"
+	"tinycld.org/core/backup/arm"
 	"tinycld.org/core/listeners"
 )
 
@@ -54,6 +56,8 @@ func TestMain(m *testing.M) {
 //	FAKE_NAME          name used in the events log
 //	FAKE_BUILD         this build's id
 //	FAKE_SERVE_BODY    what its HTTP handler answers
+//	FAKE_SERVE_DB      answer with pb_data/data.db's bytes instead: the data it serves
+//	FAKE_APPLY_RESTORE at start, apply a staged restore as the server's boot does, and log "data <bytes of data.db>"
 //	FAKE_READY_DELAY   ms to wait before ready (a slow boot)
 //	FAKE_NEVER_READY   never send ready and never serve (a hung boot)
 //	FAKE_IGNORE_TERM   ignore SIGTERM (only SIGKILL stops it)
@@ -62,6 +66,7 @@ func TestMain(m *testing.M) {
 //	FAKE_READY_VERSION send ready with this protocol version
 //	FAKE_RESTART_BEFORE_READY  on this build's first start only (a boot-time rebuild runs once), activate FAKE_ACTIVATE and ask for a restart before ready, then wait for the ack
 //	FAKE_ACTIVATE      on SIGUSR1, arm the backup and point current at this build, as a rebuild does
+//	FAKE_KEEP_DB       with FAKE_ACTIVATE, leave data.db as it is: a restore's rebuild runs no migration
 //	FAKE_EXIT_CODE     on SIGUSR1, exit with this code instead of asking for a restart
 //	FAKE_COLD          on SIGUSR1, ask for a cold restart
 func fakeChild() int {
@@ -70,6 +75,15 @@ func fakeChild() int {
 		appendEvent(root, fmt.Sprintf("%s %d %s", os.Getenv("FAKE_NAME"), os.Getpid(), what))
 	}
 	ev("start")
+	if os.Getenv("FAKE_APPLY_RESTORE") == "1" {
+		pbData := State{Root: root}.pbDataDir()
+		if err := backup.ApplyPendingRestore(pbData); err != nil {
+			ev("restore-failed")
+			return 2
+		}
+		data, _ := os.ReadFile(State{Root: root}.dbPath())
+		ev("data " + string(data))
+	}
 
 	trigger := make(chan os.Signal, 1)
 	signal.Notify(trigger, syscall.SIGUSR1)
@@ -145,7 +159,7 @@ func fakeChild() int {
 	}
 	if os.Getenv("FAKE_RESTART_BEFORE_READY") == "1" && startCount(root, os.Getenv("FAKE_NAME")) == 1 {
 		if to := os.Getenv("FAKE_ACTIVATE"); to != "" {
-			fakeActivate(root, os.Getenv("FAKE_BUILD"), to)
+			fakeActivate(root, os.Getenv("FAKE_BUILD"), to, os.Getenv("FAKE_KEEP_DB") == "1")
 		}
 		Send(ctl, Msg{Type: MsgRestart})
 		ev("restart")
@@ -166,6 +180,11 @@ func fakeChild() int {
 
 	body := os.Getenv("FAKE_SERVE_BODY")
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if os.Getenv("FAKE_SERVE_DB") == "1" {
+			data, _ := os.ReadFile(State{Root: root}.dbPath())
+			w.Write(data)
+			return
+		}
 		io.WriteString(w, body)
 	})}
 	drainer := NewDrainer(srv)
@@ -177,7 +196,7 @@ func fakeChild() int {
 		select {
 		case <-trigger:
 			if to := os.Getenv("FAKE_ACTIVATE"); to != "" {
-				fakeActivate(root, os.Getenv("FAKE_BUILD"), to)
+				fakeActivate(root, os.Getenv("FAKE_BUILD"), to, os.Getenv("FAKE_KEEP_DB") == "1")
 			}
 			if code := os.Getenv("FAKE_EXIT_CODE"); code != "" {
 				ev("exit")
@@ -206,14 +225,16 @@ func fakeChild() int {
 
 // fakeActivate does what a rebuild leaves behind before it asks for a
 // restart: a backup of the database, the armed marker, the previous build,
-// a migrated database and current pointing at the new build.
-func fakeActivate(root, from, to string) {
+// a migrated database (unless keepDB) and current pointing at the new build.
+func fakeActivate(root, from, to string, keepDB bool) {
 	s := State{Root: root}
 	data, _ := os.ReadFile(s.dbPath())
 	os.WriteFile(s.dbBackupPath(), data, 0o644)
 	os.WriteFile(s.dbArmedMarkerPath(), []byte(to), 0o644)
 	os.WriteFile(s.previousBuildPath(), []byte(from), 0o644)
-	os.WriteFile(s.dbPath(), []byte("migrated-by-"+to), 0o644)
+	if !keepDB {
+		os.WriteFile(s.dbPath(), []byte("migrated-by-"+to), 0o644)
+	}
 	tmp := s.currentLinkPath() + ".tmp"
 	os.Remove(tmp)
 	os.Symlink(filepath.Join(s.buildsDir(), to, "tinycld"), tmp)
@@ -891,6 +912,62 @@ func TestRunColdRestart(t *testing.T) {
 	}
 }
 
+// stageRestore leaves what a restore stages for the next boot: the archive's
+// data.db in a pending dir marked complete, and the armed restore marker.
+func (r *testRoot) stageRestore(id, data string) {
+	r.t.Helper()
+	dir := arm.Dir(r.state().pbDataDir())
+	pending := arm.PendingDir(dir, id)
+	if err := os.MkdirAll(pending, 0o700); err != nil {
+		r.t.Fatal(err)
+	}
+	mustWrite(r.t, filepath.Join(pending, "data.db"), data)
+	mustWrite(r.t, filepath.Join(pending, arm.StagedSentinel), "")
+	if err := arm.WriteMarker(dir, arm.Marker{ID: id, Pending: pending}); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+// A restore whose archive needs another build is a cold restart onto that
+// build, and the new build's boot swaps the staged data into pb_data before
+// it can fail. The rollback must bring the previous build back on the data
+// it had. The swap carried the armed database backup aside with pb_data, so
+// the supervisor's restore step finds none, and the previous build's boot
+// brings it back when it undoes the swap: the rollback must not leave it
+// armed, or a later rollback would restore it over everything written since.
+func TestRunColdRestoreFailingAfterTheSwapRollsBack(t *testing.T) {
+	r := newTestRoot(t)
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_DB": "1", "FAKE_APPLY_RESTORE": "1", "FAKE_ACTIVATE": "b", "FAKE_KEEP_DB": "1", "FAKE_COLD": "1"})
+	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_APPLY_RESTORE": "1", "FAKE_BOOT_EXIT": "1"})
+	r.point("a")
+	h := r.supervise(testOptions())
+
+	a := r.waitEvent("A", "ready", 1)
+	waitBody(t, h.addr, "live")
+	r.stageRestore("restore-1", "restored")
+	r.trigger(a)
+
+	r.waitEvent("B", "data restored", 1)
+	r.waitEvent("A", "ready", 2)
+	waitBody(t, h.addr, "live")
+	if r.index("A", "data live", 2) < 0 {
+		t.Fatalf("the previous build did not boot on the data it had: %v", r.events())
+	}
+	s := r.state()
+	if got := readLink(t, s.currentLinkPath()); got != filepath.Join(s.buildsDir(), "a", "tinycld") {
+		t.Fatalf("current -> %q, want the previous build", got)
+	}
+	failed := filepath.Join(arm.Dir(s.pbDataDir()), "failed", "restore-1", "data.db")
+	if got := mustRead(t, failed); got != "restored" {
+		t.Fatalf("the restored data kept for inspection = %q", got)
+	}
+	waitFor(t, 5*time.Second, "the stale backup to be dropped", func() bool {
+		_, armed := s.BackupArmed()
+		return !armed
+	})
+	assertExists(t, s.dbBackupPath(), false)
+}
+
 // A new child can ask for its own replacement before it is ready (its boot
 // ran a rebuild). The supervisor must ack the restart and act on it once the
 // child is ready; promoting and committing the backup at that ready would
@@ -1106,7 +1183,7 @@ func TestRunStartupRecoveryCommits(t *testing.T) {
 	r := newTestRoot(t)
 	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A"})
 	r.point("a")
-	fakeActivate(r.dir, "a", "a")
+	fakeActivate(r.dir, "a", "a", false)
 	r.supervise(testOptions())
 
 	r.waitEvent("A", "ready", 1)
@@ -1125,7 +1202,7 @@ func TestRunStartupRecoveryRollsBack(t *testing.T) {
 	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A"})
 	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_BOOT_EXIT": "1"})
 	r.point("a")
-	fakeActivate(r.dir, "a", "b")
+	fakeActivate(r.dir, "a", "b", false)
 	h := r.supervise(testOptions())
 
 	r.waitEvent("A", "ready", 1)
@@ -1369,7 +1446,7 @@ func TestRunNoHealthyBuildReachesSentry(t *testing.T) {
 	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_BOOT_EXIT": "1"})
 	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_BOOT_EXIT": "1"})
 	r.point("a")
-	fakeActivate(r.dir, "a", "b")
+	fakeActivate(r.dir, "a", "b", false)
 	sink := newSentrySink(t)
 	p := r.startFakeSupervisor(freeAddr(t), "SENTRY_DSN="+sink.dsn())
 

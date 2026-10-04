@@ -154,6 +154,41 @@ func registerPackageExtensions(_ *pocketbase.PocketBase) {}
 	return bin, nil
 }
 
+// linkFile is os.Link behind a seam, so a test can make a link fail.
+var linkFile = os.Link
+
+// linkOrCopy hard-links src at dst, or copies it, mode and all, when no link
+// can be made: the server binary is built in one temp dir and each test's
+// root is another, and a link needs both on one filesystem.
+func linkOrCopy(src, dst string) error {
+	if err := linkFile(src, dst); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	// Chmod, because the mode OpenFile gives is cut by the umask.
+	if err := out.Chmod(info.Mode().Perm()); err != nil {
+		out.Close()
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
+}
+
 func removeServerBuild() {
 	if serverBuild.dir != "" {
 		os.RemoveAll(serverBuild.dir)
@@ -186,7 +221,7 @@ func (r *testRoot) serverBuild(id, bin, hook string) {
 			r.t.Fatal(err)
 		}
 	}
-	if err := os.Link(bin, filepath.Join(dir, "tinycld")); err != nil {
+	if err := linkOrCopy(bin, filepath.Join(dir, "tinycld")); err != nil {
 		r.t.Fatal(err)
 	}
 	src, err := filepath.Glob(filepath.Join("..", "pb_migrations", "*.js"))
@@ -702,5 +737,34 @@ func TestE2EPackagePortAcrossSwap(t *testing.T) {
 	assertSwitched(t, ld, atExit, "A", "B")
 	if got := r.eventWith("B", "listeners", 1); got != "listeners http,acme-extra" {
 		t.Fatalf("B got %q", got)
+	}
+}
+
+// The server binary and a test's root can sit on two filesystems, where a
+// hard link fails; the binary must then be copied, still executable.
+func TestLinkOrCopyCopiesWhenALinkFails(t *testing.T) {
+	prev := linkFile
+	linkFile = func(old, new string) error {
+		return &os.LinkError{Op: "link", Old: old, New: new, Err: syscall.EXDEV}
+	}
+	t.Cleanup(func() { linkFile = prev })
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "built"), filepath.Join(dir, "tinycld")
+	if err := os.WriteFile(src, []byte("#!/bin/sh\necho built\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := linkOrCopy(src, dst); err != nil {
+		t.Fatalf("linkOrCopy: %v", err)
+	}
+	if got := mustRead(t, dst); got != "#!/bin/sh\necho built\n" {
+		t.Fatalf("copy = %q", got)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("copy mode = %v, want 0755", info.Mode().Perm())
 	}
 }

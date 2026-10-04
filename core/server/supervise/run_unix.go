@@ -332,6 +332,7 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 	if old != nil {
 		drainChild(old, s.opts.drainBound)
 	}
+	failedBuild := s.currentBuildID()
 	// The rollback record is only a note for the next boot's install log;
 	// failing to write it must not stop the rollback.
 	if err := s.state.WriteRollbackPending(); err != nil {
@@ -361,8 +362,40 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 	if err := s.state.PromoteReleaseIfNewer(c.dir); err != nil {
 		log.Error("could not promote the rolled-back build's web bundle; serving the previous one", "err", err)
 	}
+	s.dropStaleBackup(failedBuild, c)
 	s.ports.retain(c.ports)
 	return c, nil
+}
+
+// dropStaleBackup removes a backup armed for the build just rolled back
+// from, once the build rolled back to is ready. Such a backup can only have
+// come back with the data that child's boot put back: a restore swapped in
+// by the failed build's boot moves pb_data aside with the armed backup in
+// it, so RestoreBackup found nothing, and undoing the swap returns both.
+// The child serves that data now. Left armed, the backup would be restored
+// over every write since by the next rollback or interrupted-rebuild check.
+//
+// A child that asked for its own replacement before it was ready armed a
+// backup for its next build, which is not stale.
+func (s *supervisor) dropStaleBackup(failedBuild string, c *child) {
+	armedFor, armed := s.state.BackupArmed()
+	if !armed || failedBuild == "" || armedFor != failedBuild || c.pendingRestart != nil {
+		return
+	}
+	log.Warn("the rolled-back build's boot brought back a database backup armed for the failed build; dropping it", "build", failedBuild)
+	if err := s.state.CommitBackup(); err != nil {
+		log.Error("could not drop the stale database backup", "err", err)
+	}
+}
+
+// currentBuildID is the id of the build current points at, or "" when
+// current does not resolve.
+func (s *supervisor) currentBuildID() string {
+	cur, err := s.state.Current()
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(filepath.Dir(cur))
 }
 
 // launch starts a child of the build current points at now. Ports the

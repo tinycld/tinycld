@@ -147,6 +147,13 @@ func waitServed(t *testing.T, served <-chan error) {
 
 // waitRefused waits for a connect to addr to be refused. The test holds the
 // only copy of the listener, so a server that stopped accepting refuses.
+// Under a supervisor its own copy keeps the port open and the next child
+// accepts.
+//
+// The 5 s bound is not a measure of the drain: stopping to accept takes a
+// few scheduler turns after the drain message, and a loaded CI runner can
+// delay those by seconds. A drain that never stops accepting still fails
+// here, and the caller bounds how long the drain itself takes.
 func waitRefused(t *testing.T, addr, what string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -248,6 +255,13 @@ func TestSupervisedDrainEndsRealtimeStreamsAtOnce(t *testing.T) {
 	waitServed(t, served)
 }
 
+// pocketBaseShutdownWindow is longer than PocketBase's own one-second
+// graceful shutdown of a server. A drain that does not wait for a request in
+// flight has ended within it, so a test that holds a request sees such a
+// drain end inside this window; a check made only once, at once, would run
+// before it ended.
+const pocketBaseShutdownWindow = 2 * time.Second
+
 // The :80 redirect server must drain like the main server: stop accepting
 // when the drain begins, and answer a request it already accepted. Shut
 // down with the main server's terminate path instead, it keeps accepting
@@ -281,10 +295,12 @@ func TestSupervisedDrainFinishesAnInFlightRedirect(t *testing.T) {
 	waitClosed(t, begun, 5*time.Second, "the drain to begin")
 	waitRefused(t, redirect.Addr().String(), "the redirect server")
 	release()
+	// With its begin handlers done, the drain has nothing left to wait for
+	// but the redirect request, which stays in flight here.
 	select {
 	case <-terminated:
 		t.Fatal("the drain finished with a redirect request in flight")
-	default:
+	case <-time.After(pocketBaseShutdownWindow):
 	}
 
 	io.WriteString(inFlight, "Host: example.test\r\n\r\n")

@@ -4,13 +4,17 @@ package coreserver
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -63,11 +67,22 @@ func supervisedFixtureWith(t *testing.T, ls map[string]net.Listener) net.Conn {
 
 	t.Cleanup(listeners.SetForTest(ls))
 	t.Cleanup(listeners.SetFilesForTest(map[string]*os.File{supervise.ControlFD: childEnd}))
-	t.Cleanup(func() { setControl(nil) })
+	t.Cleanup(closeControl)
 	t.Cleanup(readonly.Leave)
 	t.Cleanup(resetReplacementForTest)
 	t.Cleanup(drainhooks.ResetForTest)
 	return parent
+}
+
+// closeControl closes the connection registerSupervised opened on the
+// control fd (a dup the fixture's own close does not reach) and forgets it.
+func closeControl() {
+	if c := currentControl(); c != nil {
+		if conn, ok := c.conn.(net.Conn); ok {
+			conn.Close()
+		}
+	}
+	setControl(nil)
 }
 
 // recvLine reads one raw control line from the supervisor's end, bounded.
@@ -228,13 +243,18 @@ func TestSupervisedDrainStopsAcceptingAndFinishes(t *testing.T) {
 	registerSupervised(app)
 
 	inFlight := make(chan struct{})
-	release := make(chan struct{})
+	hold := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(hold) }) }
 	e, served := serveSupervised(t, app, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		close(inFlight)
-		<-release
+		<-hold
 		w.WriteHeader(http.StatusOK)
 	}))
 	t.Cleanup(func() { e.Server.Close() })
+	// Runs first: Close waits for the handler, so a test that fails while
+	// the request is held must let it go.
+	t.Cleanup(release)
 
 	reader := bufio.NewReader(parent)
 	if got := recvLine(t, parent, reader); got != `{"type":"ready","version":1}` {
@@ -257,49 +277,72 @@ func TestSupervisedDrainStopsAcceptingAndFinishes(t *testing.T) {
 	if err := supervise.Send(parent, supervise.Msg{Type: supervise.MsgDrain}); err != nil {
 		t.Fatal(err)
 	}
-	// The test holds the only copy of the listener, so once the drain
-	// stops accepting a connection is refused. Under a supervisor its own
-	// copy keeps the port open and the next child accepts.
-	stopped := time.Now().Add(time.Second)
-	for {
-		c, err := net.DialTimeout("tcp", addr, time.Second)
-		if err != nil {
-			break
-		}
-		c.Close()
-		if time.Now().After(stopped) {
-			t.Fatal("the server still accepts 1 s after drain")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitRefused(t, addr, "the server")
 	select {
 	case <-terminated:
 		t.Fatal("the drain finished with a request still in flight")
 	default:
 	}
 
-	close(release)
+	release()
 	if err := <-slow; err != nil {
 		t.Fatalf("the in-flight request was cut: %v", err)
 	}
-	select {
-	case <-terminated:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the drain did not finish after the last request")
-	}
-	select {
-	case err := <-served:
-		if !errors.Is(err, http.ErrServerClosed) {
-			t.Fatalf("Serve returned %v, want ErrServerClosed", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Serve did not return after the drain")
-	}
+	// The wait above for accepting to stop is generous so a loaded runner
+	// passes; this bound keeps a slow drain from hiding behind it. With its
+	// last request answered, the drain has nothing left to wait for, so it
+	// must end far inside its budget.
+	waitClosed(t, terminated, supervise.ChildDrainTimeout/3, "the drain to finish after its last request")
+	waitServed(t, served)
 }
 
 // A supervisor that dies closes its end; the child must keep serving rather
 // than take the deployment down with it.
 func TestSupervisedControlCloseKeepsServing(t *testing.T) {
+	l, parent := supervisedFixture(t)
+	addr := l.Addr().String()
+	app := core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()})
+	// A drain started by the close would stop the server, as the real one
+	// does, so the requests below would fail.
+	terminated := terminateOnDrain(t, app)
+	closed := logSeen(t, "the supervisor closed the control socket; serving on without it")
+	registerSupervised(app)
+	e, served := serveSupervised(t, app, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "serving")
+	}))
+	t.Cleanup(func() { e.Server.Close(); <-served })
+	if got := recvLine(t, parent, bufio.NewReader(parent)); got != `{"type":"ready","version":1}` {
+		t.Fatalf("control message = %q", got)
+	}
+
+	parent.Close()
+	waitClosed(t, closed, 5*time.Second, "the server to read the closed control socket")
+	// A fresh connection per request: one kept alive from before the close
+	// would not show that the server still accepts.
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	for range 3 {
+		resp, err := client.Get("http://" + addr + "/")
+		if err != nil {
+			t.Fatalf("the server stopped serving after the control socket closed: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(body) != "serving" {
+			t.Fatalf("body = %q", body)
+		}
+	}
+	select {
+	case <-terminated:
+		t.Fatal("the closed control socket started a drain")
+	default:
+	}
+	if readonly.Active() {
+		t.Fatal("the closed control socket made the server read-only")
+	}
+}
+
+// A garbled message must not stop the reader or start a drain.
+func TestSupervisedGarbledControlStartsNoDrain(t *testing.T) {
 	called := false
 	stubSelfTerminate(t, func() error { called = true; return nil })
 	d := &drain{}
@@ -307,6 +350,63 @@ func TestSupervisedControlCloseKeepsServing(t *testing.T) {
 	if called || d.requested {
 		t.Fatal("a closed or garbled control socket started a drain")
 	}
+}
+
+// registerSupervised opens its own connection on the control fd, which the
+// fixture's close of the fd does not reach. The fixture must close it, or
+// every supervised test leaks one.
+func TestSupervisedFixtureClosesTheControlConn(t *testing.T) {
+	var conn net.Conn
+	t.Run("supervised", func(t *testing.T) {
+		supervisedFixture(t)
+		registerSupervised(core.NewBaseApp(core.BaseAppConfig{DataDir: t.TempDir()}))
+		if c := currentControl(); c != nil {
+			conn, _ = c.conn.(net.Conn)
+		}
+	})
+	if conn == nil {
+		t.Fatal("registerSupervised opened no control connection")
+	}
+	if _, err := conn.Write([]byte("\n")); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("the control connection outlived its test: write err = %v", err)
+	}
+}
+
+// logSeen returns a channel that closes once a record with message msg is
+// logged.
+func logSeen(t *testing.T, msg string) <-chan struct{} {
+	t.Helper()
+	seen := make(chan struct{})
+	var once sync.Once
+	prev := slog.Default()
+	// Not prev's handler: wrapping slog's built-in default handler in a new
+	// default deadlocks, because that handler writes through the log package,
+	// which SetDefault points back at the new default.
+	inner := slog.NewTextHandler(os.Stderr, nil)
+	slog.SetDefault(slog.New(&matchHandler{Handler: inner, msg: msg, hit: func() { once.Do(func() { close(seen) }) }}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return seen
+}
+
+type matchHandler struct {
+	slog.Handler
+	msg string
+	hit func()
+}
+
+func (h *matchHandler) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == h.msg {
+		h.hit()
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
+func (h *matchHandler) WithAttrs(as []slog.Attr) slog.Handler {
+	return &matchHandler{Handler: h.Handler.WithAttrs(as), msg: h.msg, hit: h.hit}
+}
+
+func (h *matchHandler) WithGroup(name string) slog.Handler {
+	return &matchHandler{Handler: h.Handler.WithGroup(name), msg: h.msg, hit: h.hit}
 }
 
 // drain is a permanent v1 message: a supervisor that states a newer version
