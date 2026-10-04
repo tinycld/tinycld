@@ -24,6 +24,13 @@ directory that holds `pb_data` (in the standard container, `/workspace`). The
 file `unrestored.json` beside the backup tells when this happened and why the
 backup could not be put back.
 
+The server also keeps a backup in this folder when it does not put it back on
+purpose. This occurs when an update worked but the server could not delete its
+backup, and later the same version fails to start again. The server then starts
+that version again on the current data, because putting the backup back would
+delete all changes made after the update. In this case, `build` and `rolled_to`
+in `unrestored.json` show the same build.
+
 The server never deletes or restores this backup itself. It tells all owners
 and admins once, in the app and by email.
 

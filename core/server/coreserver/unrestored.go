@@ -116,7 +116,7 @@ func hasUnrestored() bool {
 
 // unrestoredNotice is the text administrators get, in the app and by email.
 func unrestoredNotice(n unrestoredNote) notice {
-	body := fmt.Sprintf("A database backup could not be restored after a failed update. "+
+	body := fmt.Sprintf("A database backup from before an update was not restored. "+
 		"The server is running on data migrated by build %s. "+
 		"The backup from before that update is kept in %s. "+
 		"See Help → After a failed update.\n\n"+

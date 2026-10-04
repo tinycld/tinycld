@@ -375,6 +375,15 @@ logs at Error on every start while it is there. `<build>` is the failed build.
 Nothing removes or restores it automatically: a later rebuild, commit or
 rollback never touches `unrestored/`.
 
+A backup can also be set aside without a failed restore. When the build that
+serves fails to restart (a cold restart with no rebuild) and a backup is still
+armed, that backup is the copy from before an update that succeeded: its
+commit failed, and the build served writes after it was taken. The supervisor
+does not restore it over those writes and does not leave it armed, where the
+next start's check of an interrupted rebuild could restore it. It moves it to
+`unrestored/<build>/` the same way; `build` and `rolled_to` are then the same
+build, and `restore_error` says why the backup was not restored.
+
 - On boot, `reportUnrestored` tells every owner and admin once, in the app
   and by email, and writes an empty marker per channel beside the note
   (`notified-app`, `notified-email`). A channel that fails gets no marker,

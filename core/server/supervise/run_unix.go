@@ -357,15 +357,11 @@ func (s *supervisor) rollback(old, failed *child) (*child, error) {
 	if !sameBuildFailed && failedBuild != "" {
 		s.recordRollback(failedBuild, rolledTo, prevErr)
 	}
-	restoreErr := s.state.RestoreBackup()
 	if sameBuildFailed {
-		// No rebuild armed a backup, so a missing one is the expected case.
-		if restoreErr != nil && !errors.Is(restoreErr, os.ErrNotExist) {
-			log.Warn("could not restore the database backup; starting the serving build again on the data it has", "err", restoreErr)
-		}
+		s.setAsideServedBackup(failedBuild)
 		log.Error("the serving build failed to restart; starting it again", "build", failedBuild)
 	} else {
-		if restoreErr != nil {
+		if restoreErr := s.state.RestoreBackup(); restoreErr != nil {
 			s.setAsideUnrestored(rolledTo, restoreErr)
 		}
 		if err := s.state.RollbackCurrent(); err != nil {
@@ -435,6 +431,28 @@ func (s *supervisor) setAsideUnrestored(rolledTo string, restoreErr error) {
 	// The build and dir are in the message: it is what an operator reads,
 	// and the event is rare enough that a Sentry issue per build is wanted.
 	log.Error(fmt.Sprintf("the database backup from before build %s could not be restored; it is kept in %s — the data now served was migrated by the failed build", build, dir), "build", build, "rolledTo", rolledTo, "err", restoreErr)
+}
+
+// setAsideServedBackup moves a backup still armed when the build that served
+// fails to restart out of every armed path. No rebuild armed it: it is the
+// copy from before an update that succeeded, left only because its commit
+// failed, and the build served writes after it was taken. Restoring it
+// would drop every one of them, and left armed, the next start's
+// interrupted-rebuild check would restore it on a failure. Set aside, only
+// an operator removes it.
+func (s *supervisor) setAsideServedBackup(build string) {
+	armedFor, armed := s.state.BackupArmed()
+	if !armed {
+		return
+	}
+	reason := fmt.Sprintf("not restored: build %s served writes after this backup was taken, and restoring it would drop them", build)
+	note := UnrestoredNote{Build: armedFor, RolledTo: build, At: time.Now().UTC(), RestoreError: reason}
+	if err := s.state.SetAsideUnrestored(note); err != nil {
+		log.Error("could not set aside a stale database backup; it stays armed, and a failed check of this build on the next start would restore it over the data written since", "build", armedFor, "err", err)
+		return
+	}
+	dir := filepath.Join(s.state.unrestoredDir(), armedFor)
+	log.Error(fmt.Sprintf("the database backup from before build %s was not restored because that build served writes after it; it is kept in %s", armedFor, dir), "build", armedFor)
 }
 
 // unrestoredReminder is the message each supervisor start logs while a

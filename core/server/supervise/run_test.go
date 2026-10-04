@@ -1032,6 +1032,93 @@ func TestRunColdRestoreWithoutARebuildFailingStartsTheSameBuild(t *testing.T) {
 	assertExists(t, s.rollbackRecordPath(), false)
 }
 
+// promoteBThenColdRestartFailing swaps a to b, waits for the swap's backup
+// to be committed, runs stale (when not nil) with b serving, and then asks b
+// for a cold restart whose start fails once. It returns once b serves again.
+func (r *testRoot) promoteBThenColdRestartFailing(stale func(s State)) *harness {
+	t := r.t
+	t.Helper()
+	r.build("a", knobs{"FAKE_NAME": "A", "FAKE_SERVE_BODY": "A", "FAKE_ACTIVATE": "b"})
+	r.build("b", knobs{"FAKE_NAME": "B", "FAKE_SERVE_BODY": "B", "FAKE_COLD": "1", "FAKE_BOOT_EXIT_START": "2"})
+	r.point("a")
+	h := r.supervise(testOptions())
+	s := r.state()
+
+	r.trigger(r.waitEvent("A", "ready", 1))
+	b := r.waitEvent("B", "ready", 1)
+	waitBody(t, h.addr, "B")
+	waitFor(t, 5*time.Second, "the swap's backup to be committed", func() bool {
+		_, armed := s.BackupArmed()
+		return !armed
+	})
+	if stale != nil {
+		stale(s)
+	}
+	r.trigger(b)
+	r.waitEvent("B", "ready", 2)
+	waitBody(t, h.addr, "B")
+	return h
+}
+
+// A build that was promoted is the one that serves: when a later cold
+// restart of it fails, no newer build exists to leave, so the same build
+// starts again and current stays on it.
+func TestRunPromotedBuildFailingAColdRestartStartsItAgain(t *testing.T) {
+	r := newTestRoot(t)
+	r.promoteBThenColdRestartFailing(nil)
+
+	if r.index("B", "start", 3) < 0 {
+		t.Fatalf("the serving build was not started again: %v", r.events())
+	}
+	if r.index("A", "start", 2) >= 0 {
+		t.Fatalf("the previous build started on the promoted build's data: %v", r.events())
+	}
+	s := r.state()
+	if got := readLink(t, s.currentLinkPath()); got != filepath.Join(s.buildsDir(), "b", "tinycld") {
+		t.Fatalf("current -> %q, want the promoted build", got)
+	}
+	if got := mustRead(t, s.dbPath()); got != "migrated-by-b" {
+		t.Fatalf("data.db = %q, want the promoted build's data", got)
+	}
+	assertExists(t, s.rollbackRecordPath(), false)
+}
+
+// A backup the promote could not commit stays armed after the build served
+// live writes. A later failed restart of that same build must not restore
+// it over them: the backup is set aside, and the data stays.
+func TestRunServingBuildFailingKeepsLiveDataOverAStaleBackup(t *testing.T) {
+	r := newTestRoot(t)
+	r.promoteBThenColdRestartFailing(func(s State) {
+		// What a failed CommitBackup in promote leaves, then a write.
+		mustWrite(t, s.dbBackupPath(), "live")
+		mustWrite(t, s.dbArmedMarkerPath(), "b")
+		mustWrite(t, s.dbPath(), "written-since")
+	})
+
+	s := r.state()
+	if got := mustRead(t, s.dbPath()); got != "written-since" {
+		t.Fatalf("data.db = %q, want the data written since the backup", got)
+	}
+	if got, armed := s.BackupArmed(); armed {
+		t.Fatalf("the stale backup is still armed for %q", got)
+	}
+	assertExists(t, s.dbBackupPath(), false)
+	if got := mustRead(t, filepath.Join(s.unrestoredDir(), "b", "data.db")); got != "live" {
+		t.Fatalf("unrestored/b/data.db = %q, want the stale backup", got)
+	}
+	notes, err := s.Unrestored()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 || notes[0].Build != "b" || notes[0].RolledTo != "b" || !strings.Contains(notes[0].RestoreError, "served") {
+		t.Fatalf("unrestored notes = %+v, want one for b, still on b, saying b served", notes)
+	}
+	if got := readLink(t, s.currentLinkPath()); got != filepath.Join(s.buildsDir(), "b", "tinycld") {
+		t.Fatalf("current -> %q, want the build that served", got)
+	}
+	assertExists(t, s.rollbackRecordPath(), false)
+}
+
 // A current that no longer resolves names no failed build, so nothing is
 // recorded, but the previous build is the only one that can start: the
 // rollback still flips current back to it.
