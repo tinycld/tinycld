@@ -1,3 +1,4 @@
+import type { Fetch } from '@tinycld/core/lib/read-only-retry'
 import type { CheckDeps, StageDeps, UpdateManifest } from './types'
 
 // Set this env var truthy to let a knowing self-hoster run OTA updates over
@@ -76,7 +77,7 @@ export async function reportBadBundle(deps: {
     id: string
     hash: string
     error?: string
-    fetchFn: typeof fetch
+    fetchFn: Fetch
 }): Promise<void> {
     const { serverUrl, platform, id, hash, error, fetchFn } = deps
     await fetchFn(`${serverUrl}/api/app/update/report-bad`, {
@@ -96,7 +97,7 @@ export async function postBootBeacon(deps: {
     platform: 'ios' | 'android'
     id: string
     hash: string
-    fetchFn: typeof fetch
+    fetchFn: Fetch
 }): Promise<void> {
     const { serverUrl, platform, id, hash, fetchFn } = deps
     const res = await fetchFn(`${serverUrl}/api/app/boot`, {

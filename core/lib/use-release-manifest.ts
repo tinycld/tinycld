@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { PB_SERVER_ADDR } from './config'
 
 /** One bundled package, pinned at a tagged release. Mirrors the PinnedMember
@@ -23,7 +24,7 @@ export interface ReleaseManifest {
 
 // Exported for unit testing; prefer useReleaseManifest in components.
 export async function fetchReleaseManifest(): Promise<ReleaseManifest> {
-    const res = await fetch(`${PB_SERVER_ADDR}/api/release`, { cache: 'no-store' })
+    const res = await serverFetch(`${PB_SERVER_ADDR}/api/release`, { cache: 'no-store' })
     if (!res.ok) return { members: [] }
     const body = (await res.json()) as Partial<ReleaseManifest>
     return { ...body, members: body.members ?? [] }

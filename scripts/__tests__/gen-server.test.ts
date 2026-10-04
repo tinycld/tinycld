@@ -7,6 +7,7 @@ import {
     buildGoWork,
     buildMemberGoWork,
     buildPackageExtensionsGo,
+    buildPortsJson,
     replaceSymlink,
     type ServerPkg,
 } from '../gen-server'
@@ -236,5 +237,47 @@ describe('buildBundledPackages', () => {
             hasServer: true,
             source: 'github:tinycld/tinycld',
         })
+    })
+})
+
+describe('buildPortsJson', () => {
+    it('emits [] when no package declares ports', () => {
+        const json = buildPortsJson([
+            { slug: 'acme', ports: undefined },
+            { slug: 'zeta', ports: [] },
+        ])
+        expect(JSON.parse(json)).toEqual([])
+    })
+
+    it('emits one entry per declared port, sorted by slug then name, omitting unset optional keys', () => {
+        const json = buildPortsJson([
+            {
+                slug: 'zeta',
+                ports: [{ name: 'zeta-sync', port: 2525 }],
+            },
+            {
+                slug: 'acme',
+                ports: [
+                    {
+                        name: 'acme-imap',
+                        port: 993,
+                        addrEnv: 'ACME_IMAP_ADDR',
+                        enabled: { env: 'ACME_IMAP_ENABLED', default: true },
+                    },
+                    { name: 'acme-smtp', port: 465 },
+                ],
+            },
+        ])
+        expect(JSON.parse(json)).toEqual([
+            {
+                slug: 'acme',
+                name: 'acme-imap',
+                port: 993,
+                addrEnv: 'ACME_IMAP_ADDR',
+                enabled: { env: 'ACME_IMAP_ENABLED', default: true },
+            },
+            { slug: 'acme', name: 'acme-smtp', port: 465 },
+            { slug: 'zeta', name: 'zeta-sync', port: 2525 },
+        ])
     })
 })

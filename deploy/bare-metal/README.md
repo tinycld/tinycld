@@ -64,7 +64,7 @@ All via environment variables passed to `install.sh`:
 | `ADDITIONAL_DOMAINS` | — | Comma-separated extra cert domains. |
 | `TINYCLD_VERSION` | `main` | Git ref/tag to build (the shell + every feature). |
 | `TINYCLD_FEATURES` | full set | Space-separated feature members to include. |
-| `SENTRY_DSN` | — | Enables Sentry on **both** the Go server (runtime) and the web bundle (inlined at build time). |
+| `SENTRY_DSN` | — | Enables Sentry on the Go server (runtime), its update supervisor, and the web bundle (inlined at build time). The supervisor reads only this variable, never the DSN in the settings screen, so keep it set. |
 | `ENV_EXTRA` | — | Newline-separated `KEY=VALUE` lines appended to the service env file — e.g. `MAIL_PROVIDER`, `POSTMARK_SERVER_TOKEN`. |
 
 Example with mail + Sentry:
@@ -81,18 +81,29 @@ ENV_EXTRA=$'MAIL_PROVIDER=postmark\nPOSTMARK_SERVER_TOKEN=…' \
 ```
 /opt/tinycld-baked/        pristine workspace baked by build.sh (the binary +
                            web bundle + node_modules + feature siblings)
-/opt/tinycld-entrypoint.sh the app's own config/entrypoint.sh (the supervisor)
+/opt/tinycld-entrypoint.sh the app's own config/entrypoint.sh (setup only —
+                           it hands over to `tinycld supervise`, below)
 /workspace/                state root: pb_data/ (the SQLite DB — back this up!),
                            releases/, builds/, current -> builds/<id>/tinycld
 /etc/tinycld/tinycld.env   root-only secrets/config, read by the unit
 /etc/systemd/system/tinycld.service
 ```
 
-The systemd unit runs **`/opt/tinycld-entrypoint.sh`**, not the binary directly —
-the entrypoint is the supervisor (first-boot seed, web-release promotion, and the
-in-app package installer's exit-75 → health-probe → rollback loop). systemd just
-keeps it alive. It starts as root to fix state-dir ownership, then drops to the
-unprivileged `tinycld` user via `gosu`.
+The systemd unit runs **`/opt/tinycld-entrypoint.sh`**, not the binary directly.
+The entrypoint does first-boot seeding and web-release promotion as root, then
+hands over (`exec`) to **`tinycld supervise`**, which holds the public ports,
+runs `tinycld serve` as a child, and does the in-app package installer's
+restart → health-check → rollback cycle itself. The supervisor drops its own
+children to the unprivileged `tinycld` user directly — it does not run under
+`gosu`, so the unit's `ExecStart` is the entrypoint script, not a `gosu`
+wrapper. systemd just keeps the whole thing alive (`Restart=always`).
+
+The unit sets `KillMode=mixed` and `TimeoutStopSec=45`: `systemctl stop`
+sends SIGTERM to the supervisor only, which drains its running child for up to
+30s before exiting; systemd escalates to SIGKILL across the whole cgroup only
+if something is still alive after the 45s margin. During that drain, an idle
+keep-alive connection to the old child can be closed mid-request; a client or
+reverse proxy that reused it sees one failed request and retries.
 
 ## Updating
 
@@ -118,10 +129,18 @@ never touched by a rebuild.
   binds `:80/:443/:465/:993`. `install.sh` sets
   `net.ipv4.ip_unprivileged_port_start=80` (what Docker effectively does with its
   default of `0`). A `CAP_NET_BIND_SERVICE` approach does **not** work here —
-  `gosu` clears the ambient set and the entrypoint's per-boot `chown` strips file
-  caps — so the sysctl is the reliable mechanism.
+  the entrypoint's per-boot `chown` strips file caps, and a dropped-privilege
+  child doesn't inherit an ambient capability either — so the sysctl is the
+  reliable mechanism.
 - **Host toolchain is required, not optional:** the in-app installer runs
   `pnpm install` + `go build` on the host, so Node, pnpm, Go, and a C toolchain
   must stay installed even after the initial build.
 - **Back up `/workspace/pb_data`** — it holds the SQLite DB, uploads, and the
   server's private keys.
+- **Don't point `TINYCLD_VERSION` at a build older than the supervisor.** A
+  pre-supervisor build binds its own main port directly; run under
+  `tinycld supervise` (which already holds that port) it fails immediately
+  with "address already in use". See `docs/live-install.md`'s
+  Rollback section for the same limit on the in-app installer's version
+  changes, and how to recover if it strands the service on a build that can't
+  bind.

@@ -489,14 +489,12 @@ func TestRestoreWaitsForSourceAndSwaps(t *testing.T) {
 	// The test returns once data.db is staged, but the restore goroutine still
 	// saves its row after that. Waiting for it keeps that save from landing on
 	// an app whose database the cleanup already closed.
-	var running sync.WaitGroup
-	SetRestoreWatcher(func() func() {
-		running.Add(1)
-		return running.Done
-	})
 	t.Cleanup(func() {
-		running.Wait()
-		SetRestoreWatcher(nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := StopAll(ctx, app); err != nil {
+			t.Error(err)
+		}
 	})
 
 	src := format.NewRangeSource(context.Background(), expiring.URL)
@@ -974,6 +972,44 @@ func TestRestoreRebuilderFailureIsNotAnAwaitedRestart(t *testing.T) {
 	}
 	if meta["awaiting_restart"] == true {
 		t.Fatal("a failed rebuild is not a restore awaiting a restart")
+	}
+}
+
+// A rebuilder whose restart is asynchronous (it asked a supervisor, which
+// stops this process later) returns ErrRestartUnderway. That is a restart on
+// its way, not one that nothing will perform: the restore must stay behind the
+// maintenance 503 and must not record that a restart is still owed.
+func TestRestoreRebuilderWithRestartUnderwayStaysInMaintenanceMode(t *testing.T) {
+	data, identity := archiveFor(t)
+	app := newTestApp(t)
+	resetRestoreState(t)
+	RegisterRebuilder(func(_ context.Context, job *installjob.Job, _ format.Lockfile) error {
+		installjob.Release(job)
+		return ErrRestartUnderway
+	})
+
+	jobID, err := Restore(app, RestoreRequest{
+		Source: readCloser{bytes.NewReader(data)}, Identity: identity,
+	})
+	if err != nil {
+		t.Fatalf("a restart under way failed the restore: %v", err)
+	}
+	if !Restoring() {
+		t.Fatal("a restore whose restart is under way must keep serving 503")
+	}
+	row, rerr := app.FindRecordById("backups", jobID)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if got := row.GetString("status"); got == "failed" {
+		t.Fatal("a restart under way is not a failed restore")
+	}
+	var meta map[string]any
+	if err := row.UnmarshalJSONField("metadata", &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["awaiting_restart"] == true {
+		t.Fatal("a restart under way is not a restart that is still owed")
 	}
 }
 

@@ -75,7 +75,10 @@ export DEBIAN_FRONTEND=noninteractive
 # runtime. This is the Dockerfile runtime-stage apt list + Node + Go.
 #   No C compiler: the build is CGo-free (omnidoc decodes HEIF in pure Go), so
 #   both the release binary and installer-built server packages use CGO_ENABLED=0
-#   sqlite3 CLI: the installer's DB backup step; gosu: privilege drop in entrypoint
+#   sqlite3 CLI: the installer's DB backup step; gosu: privilege drop for the
+#   entrypoint's own root-only steps (writing the runtime user's git config,
+#   the TINYCLD_RESCUE hatch) — NOT for the server itself, which the
+#   supervisor runs as $RUN_USER directly
 # ------------------------------------------------------------------------------
 log "installing apt packages"
 apt-get update -qq
@@ -118,13 +121,15 @@ install -d -m 0755 /etc/tinycld
 # 3. Let the unprivileged user bind low ports.
 #
 # TinyCld binds :80/:443 (autocert) and :465/:993 (mail) but drops to the
-# unprivileged $RUN_USER (gosu, in the entrypoint). Under Docker this Just Works
-# because containers default net.ipv4.ip_unprivileged_port_start=0. On bare metal
-# it defaults to 1024, AND the entrypoint chowns the build tree on every boot
-# (chown strips file capabilities) — so a CAP_NET_BIND_SERVICE approach (file cap
-# or systemd AmbientCapabilities through gosu, which clears the ambient set)
-# cannot hold. Lowering the unprivileged-port floor mirrors the Docker behavior,
-# needs no caps, and survives every rebuild.
+# unprivileged $RUN_USER — the supervisor (`tinycld supervise`, exec'd by the
+# entrypoint) does this itself for its own children, not via gosu. Under
+# Docker this Just Works because containers default
+# net.ipv4.ip_unprivileged_port_start=0. On bare metal it defaults to 1024,
+# AND the entrypoint chowns the build tree on every boot (chown strips file
+# capabilities) — so a CAP_NET_BIND_SERVICE approach (a file cap, or systemd
+# AmbientCapabilities, which a dropped-privilege child does not inherit
+# either way) cannot hold. Lowering the unprivileged-port floor mirrors the
+# Docker behavior, needs no caps, and survives every rebuild.
 # ------------------------------------------------------------------------------
 log "setting net.ipv4.ip_unprivileged_port_start=${UNPRIV_PORT_START}"
 echo "net.ipv4.ip_unprivileged_port_start=${UNPRIV_PORT_START}" > /etc/sysctl.d/60-tinycld-lowports.conf
@@ -155,10 +160,19 @@ ${TINYCLD_FEATURES:+TINYCLD_FEATURES="$TINYCLD_FEATURES"} \
     bash "${SCRIPT_DIR}/build.sh"
 
 # ------------------------------------------------------------------------------
-# 6. systemd unit. ExecStart is the ENTRYPOINT (the supervisor), not the binary —
-#    it owns first-boot seeding, release promotion, and the in-app installer's
-#    exit-75 / health-probe / rollback loop. Starts as root so it can chown state
-#    dirs, then drops to $RUN_USER via gosu.
+# 6. systemd unit. ExecStart is the entrypoint script, not the binary directly —
+#    it does first-boot seeding and release promotion as root, then execs
+#    `tinycld supervise`, which holds the public ports, runs `tinycld serve`
+#    children, and does the install/upgrade restart + health-check + rollback
+#    cycle that used to be a shell loop here. Starts as root so the entrypoint
+#    can chown state dirs; the supervisor (not gosu) drops ITS OWN children to
+#    $RUN_USER, which is why ExecStart runs the entrypoint directly rather than
+#    through gosu.
+#
+#    KillMode=mixed sends systemd's stop signal (SIGTERM) to the supervisor
+#    only, which drains its children itself, then SIGKILLs the whole cgroup at
+#    the timeout if anything is still alive. TimeoutStopSec=45 gives the
+#    supervisor's own 30s child-drain budget a margin before systemd escalates.
 # ------------------------------------------------------------------------------
 log "writing ${UNIT}"
 cat > "$UNIT" <<EOF
@@ -182,6 +196,12 @@ Environment=PUBLIC_SCHEME=https
 Environment=CGO_ENABLED=0
 EnvironmentFile=${ENV_FILE}
 ExecStart=/opt/tinycld-entrypoint.sh
+# SIGTERM to the supervisor only (it drains its own children); SIGKILL the
+# whole cgroup if anything outlives TimeoutStopSec.
+KillMode=mixed
+# Drain budget (30s, ChildDrainTimeout in core/server/supervise) + margin,
+# matching the Docker image's recommended --stop-timeout / stop_grace_period.
+TimeoutStopSec=45
 Restart=always
 RestartSec=5
 # An in-app rebuild runs expo export + go build on the box; give it room.

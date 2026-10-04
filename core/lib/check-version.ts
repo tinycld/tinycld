@@ -1,7 +1,10 @@
+import type { Fetch } from '@tinycld/core/lib/read-only-retry'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
+
 interface CheckVersionOpts {
     bootReleaseId: string
     setNewVersionAvailable: (v: boolean) => void
-    fetch?: typeof fetch
+    fetch?: Fetch
 }
 
 // checkVersion polls /api/version and sets newVersionAvailable=true if the
@@ -11,7 +14,7 @@ interface CheckVersionOpts {
 export async function checkVersion({
     bootReleaseId,
     setNewVersionAvailable,
-    fetch: fetchFn = fetch,
+    fetch: fetchFn = serverFetch,
 }: CheckVersionOpts): Promise<void> {
     try {
         const res = await fetchFn('/api/version', { cache: 'no-store' })

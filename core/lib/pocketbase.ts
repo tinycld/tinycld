@@ -5,6 +5,7 @@ import { captureException } from '@tinycld/core/lib/errors'
 import { buildPackageStores } from '@tinycld/core/lib/packages/derive-stores'
 import { ACTIVE_PKG_STATUSES, isActivePkg } from '@tinycld/core/lib/packages/registry-predicates'
 import { refetchLoadedStores } from '@tinycld/core/lib/refetch-loaded-stores'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import type { Schema, Users } from '@tinycld/core/types/pbSchema'
 import { BasicIndex, createCollection, createReactProvider, setLogger } from 'pbtsdb'
 import PocketBase, { AsyncAuthStore } from 'pocketbase'
@@ -138,6 +139,11 @@ pb.beforeSend = (url, options) => {
     const headers = shareTokenHeaders()
     if (headers) {
         options.headers = { ...options.headers, ...headers }
+    }
+    // Requests refused while the server is briefly unable to serve them are
+    // retried; see read-only-retry.ts.
+    if (!options.fetch) {
+        options.fetch = serverFetch
     }
     return { url, options }
 }
@@ -341,6 +347,15 @@ const system_settings = newCollection('system_settings', {
     ...indexing,
 })
 
+// Automatic-update memory: the current conflict pause and the version sets
+// that were rolled back. Owner-only; the server writes rows, the owner only
+// sets `cleared`. See the create_autoupgrade migration.
+const autoupgrade_state = newCollection('autoupgrade_state', {
+    omitOnInsert: ['created', 'updated'],
+    ...onDemand,
+    ...indexing,
+})
+
 // The deployment's uploaded logo. Public read (unlike system_settings, which is
 // admin-only) because pre-login screens render it before any auth token exists.
 // See the create_org_branding migration.
@@ -439,6 +454,7 @@ const coreStores = {
     rule_runs,
     automation_catalog,
     system_settings,
+    autoupgrade_state,
     org_branding,
     oauth_grants,
     comment_mentions,

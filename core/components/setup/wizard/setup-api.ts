@@ -1,4 +1,5 @@
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 
 export interface SetupErrorBody {
     error?: string
@@ -23,12 +24,13 @@ async function readBody(res: Response): Promise<SetupErrorBody | null> {
     }
 }
 
-// These endpoints run before any account exists, so they are plain fetches:
-// there is no PocketBase auth or record to go through.
+// These endpoints run before any account exists, so they bypass PocketBase
+// (no auth or record to go through) — but still hit our server, so they go
+// through serverFetch for the same read-only retry every other call gets.
 export async function postSetup<T>(path: 'verify' | 'init', payload: object): Promise<T> {
     let res: Response
     try {
-        res = await fetch(`${PB_SERVER_ADDR}/api/setup/${path}`, {
+        res = await serverFetch(`${PB_SERVER_ADDR}/api/setup/${path}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),

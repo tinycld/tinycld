@@ -27,6 +27,7 @@ type Cron struct {
 	jobs       []*Job
 	interval   time.Duration
 	mux        sync.RWMutex
+	skip       func(jobId string) bool // fork: see cron_tinycld.go
 }
 
 // New create a new Cron struct with default tick interval of 1 minute
@@ -223,7 +224,7 @@ func (c *Cron) runDue(t time.Time) {
 	moment := NewMoment(t.In(c.timezone))
 
 	for _, j := range c.jobs {
-		if j.schedule.IsDue(moment) {
+		if j.schedule.IsDue(moment) && !c.skipped(j) { // fork: a skip function can hold a due job back (cron_tinycld.go)
 			routine.FireAndForget(j.Run)
 		}
 	}

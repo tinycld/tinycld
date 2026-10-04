@@ -1,4 +1,5 @@
 import { PB_SERVER_ADDR } from '@tinycld/core/lib/config'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { useEffect, useRef, useState } from 'react'
 
 export interface ProgressStep {
@@ -185,7 +186,7 @@ function pollJobOutcome(
     async function readOnce(): Promise<boolean> {
         let res: Response
         try {
-            res = await fetch(url, { headers: { Authorization: authToken } })
+            res = await serverFetch(url, { headers: { Authorization: authToken } })
         } catch {
             return false // server mid-restart — retry
         }

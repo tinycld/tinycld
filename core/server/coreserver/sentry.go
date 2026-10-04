@@ -4,37 +4,18 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/getsentry/sentry-go"
-	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/pocketbase/pocketbase/tools/router"
+	"tinycld.org/core/logging"
 	"tinycld.org/core/syscfg"
 )
-
-// RegisterSentry binds the router middleware that captures returned handler
-// errors, panics, and any 5xx response that reaches the client without producing
-// an error value (e.g. handlers that write directly to ResponseWriter, like the
-// go-webdav CalDAV library).
-//
-// Must run before any OnServe handlers register routes — middleware bound after a
-// route is added does not apply to it. Register() calls this first.
-//
-// The Sentry CLIENT itself is initialized later, by RegisterSystemConfig, once
-// the system_settings collection is loaded — the DSN comes from there, not an env
-// var. Until then (and whenever the DSN is empty) the SDK is a no-op: events drop,
-// the middleware still runs, and panic recovery still re-panics so PB's normal 500
-// path is unaffected. initSentryFromConfig performs the actual Init and is reused
-// for live re-init when the DSN changes.
-func RegisterSentry(app *pocketbase.PocketBase) {
-	registerSentryMiddlewareCore(app)
-}
 
 // initSentryFromConfig (re)initializes the global Sentry client from the current
 // system settings. Safe to call repeatedly: sentry.Init swaps the active client,
@@ -44,25 +25,23 @@ func RegisterSentry(app *pocketbase.PocketBase) {
 // operator owns error reporting, the DSN is theirs and never reaches this
 // deployment's own collection.
 func initSentryFromConfig() {
-	if err := sentry.Init(sentry.ClientOptions{
-		Dsn:              syscfg.Get("sentry.dsn"),
-		Environment:      GetEnvironment(),
-		TracesSampleRate: 0.2,
-		AttachStacktrace: true,
-	}); err != nil {
-		// Deliberately stdlib log, not srvLog: this reports that Sentry
-		// itself failed to initialize, and srvLog's warn+ path publishes to
-		// Sentry. Routing this failure through that path is circular — if
-		// Sentry is broken, the report that Sentry is broken can never
-		// arrive. Mirrors the console.* exemption in the client's sentry.ts
-		// for the same reason.
-		log.Printf("Sentry initialization failed: %v", err)
-	}
+	logging.InitSentry(syscfg.Get("sentry.dsn"))
 }
 
-// registerSentryMiddlewareCore binds the per-request capture logic. Split
-// from RegisterSentry so tests can drive it against tests.TestApp (core.App)
-// without invoking the global Init.
+// registerSentryMiddlewareCore binds the per-request capture logic. Takes
+// core.App (not *pocketbase.PocketBase) so tests can drive it against
+// tests.TestApp without invoking the global Init. registerSharedMiddleware
+// calls this after readonly.Register, so Sentry's middleware sees every
+// route added after shared registration; must still run before any OnServe
+// handlers register routes of their own — middleware bound after a route is
+// added does not apply to it.
+//
+// The Sentry CLIENT itself is initialized later, by RegisterSystemConfig, once
+// the system_settings collection is loaded — the DSN comes from there, not an env
+// var. Until then (and whenever the DSN is empty) the SDK is a no-op: events drop,
+// the middleware still runs, and panic recovery still re-panics so PB's normal 500
+// path is unaffected. initSentryFromConfig performs the actual Init and is reused
+// for live re-init when the DSN changes.
 func registerSentryMiddlewareCore(app core.App) {
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.BindFunc(sentryMiddleware)

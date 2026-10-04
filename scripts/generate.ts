@@ -4,8 +4,10 @@ import * as path from 'node:path'
 import { getPackages } from '../../tinycld.packages'
 import {
     manifestToConfigPkg,
+    type PortsFeature,
     validateEventSources,
     validateNavShortcuts,
+    validatePorts,
     validateSidebarContributions,
 } from './describe-packages'
 import { emitAutomationDefs, loadAutomationDefs, mergeAutomationDefs } from './gen-automation'
@@ -27,6 +29,7 @@ import {
     buildGoWork,
     buildMemberGoWork,
     buildPackageExtensionsGo,
+    buildPortsJson,
     replaceSymlink,
     type ServerPkg,
 } from './gen-server'
@@ -518,6 +521,11 @@ async function main() {
     validateSidebarContributions(configPkgs)
     validateEventSources(configPkgs)
     validateNavShortcuts(configPkgs)
+    const portsFeatures: PortsFeature[] = features.map(f => ({
+        slug: f.manifest.slug,
+        ports: f.manifest.ports,
+    }))
+    validatePorts(portsFeatures)
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.config.ts'), buildConfigSource(configPkgs))
     fs.writeFileSync(path.join(APP_DIR, 'tinycld.seeds.ts'), buildSeedsSource(configPkgs))
 
@@ -621,6 +629,7 @@ async function main() {
             })),
         ])
     )
+    fs.writeFileSync(path.join(SERVER_DIR, 'ports.json'), buildPortsJson(portsFeatures))
 
     writeWorkspaceRoot()
 

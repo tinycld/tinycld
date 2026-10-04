@@ -150,6 +150,15 @@ jobs:
       - name: Go test
         working-directory: ws/tinycld/server
         run: go test -tags no_ui ./...
+      # core/server is its own Go module, so the step above (run from
+      # server/) never reaches its tests. The supervisor's end-to-end tests
+      # build and run the real server, which backs its database up with the
+      # sqlite3 command.
+      - name: Install sqlite3
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+      - name: Go test (core)
+        working-directory: ws/tinycld/core/server
+        run: go test ./...
       # The CLI is a second Go module, and its go.work + cli_extensions.go are
       # emitted by the generator during the install above. With no --with
       # features in this assembly the generated extension file is the valid

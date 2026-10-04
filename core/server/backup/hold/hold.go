@@ -28,6 +28,11 @@ const (
 	RenewEvery  = 20 * time.Minute
 )
 
+// renewInterval is RenewEvery; a test shortens it before Acquire. Acquire
+// reads it, not the renew goroutine, so a hold another test left running
+// never races the change.
+var renewInterval = RenewEvery
+
 var ErrHeld = errors.New("backup: another backup holds storage deletes")
 
 // journalMu serialises the journal rename in Drain with Journal writes to
@@ -72,6 +77,7 @@ func Active(dataDir string, now time.Time) bool {
 type Hold struct {
 	dataDir, holder string
 	now             func() time.Time
+	every           time.Duration
 	stop            chan struct{}
 	done            chan struct{}
 	once            sync.Once
@@ -92,7 +98,7 @@ func Acquire(dataDir, holder string, now func() time.Time) (*Hold, error) {
 				_ = os.Remove(path)
 				return nil, werr
 			}
-			h := &Hold{dataDir: dataDir, holder: holder, now: now, stop: make(chan struct{}), done: make(chan struct{})}
+			h := &Hold{dataDir: dataDir, holder: holder, now: now, every: renewInterval, stop: make(chan struct{}), done: make(chan struct{})}
 			go h.renew()
 			return h, nil
 		}
@@ -126,9 +132,12 @@ func writeState(f *os.File, st State) error {
 	return f.Close()
 }
 
+// renew is never gated on read-only mode: the hold file is not a database
+// write, and a lease that lapsed during a pause would let deletes through
+// under a backup that is still reading the files.
 func (h *Hold) renew() {
 	defer close(h.done)
-	t := time.NewTicker(RenewEvery)
+	t := time.NewTicker(h.every)
 	defer t.Stop()
 	for {
 		select {

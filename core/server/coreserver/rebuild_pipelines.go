@@ -205,19 +205,29 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 		return
 	}
 
+	// Tag before the backup, as rebuildWith does: if the reverted-to build is
+	// rolled back, the boot reconciler finds this row by its build id.
+	if err := tagInstallLog(app, logRecord, targetID); err != nil {
+		jobLogf(job, "WARNING: could not save the build id on the install log (a rollback may not mark it): %v", err)
+	}
 	// Revert has no build pipeline (the target tree already exists), so it runs
 	// its own compressed-but-monotonic scale rather than the rebuild constants.
 	emitProgress(job, "Backing up your data", 25, "Creating SQLite backup")
+	// Every failure from here until activation leaves this process serving, so
+	// each one resumes writes after it has put the database back.
+	resumeWrites := pauseWritesForBackup()
 	restoreDB, err := backupDatabase(filepath.Join(stateBuildsDir(), targetID, "tinycld"))
 	if err != nil {
+		resumeWrites()
 		failRevert("backup", err)
 		return
 	}
 	// These pre-activation failures leave the live app serving, so after restoring
 	// data.db (which also clears its WAL) we must re-open the pools or the live
 	// connection's stale WAL mmap fails its next write. Mirrors restore()/recoverDB
-	// in rebuildWith; the post-activation path restores in the entrypoint instead.
+	// in rebuildWith; the post-activation path is rolled back by the supervisor.
 	restoreAndRecover := func() {
+		defer resumeWrites()
 		if e := restoreDB(); e != nil {
 			jobLogf(job, "WARNING: revert DB restore failed: %v", e)
 			return
@@ -282,12 +292,10 @@ func runRevertRebuild(app *pocketbase.PocketBase, job *installjob.Job) {
 	emitProgress(job, "Restarting", progRestart, "Restarting to activate reverted build")
 	emitComplete(job, "success", "")
 	// Revert is also a post-activation success path (schema synced + symlink
-	// flipped against the live DB), so arm the surviving backup the same way the
-	// rebuild path does — the entrypoint rolls the DB back if the reverted binary
-	// fails its health probe, commits the backup if it boots healthy.
-	armDatabaseBackup(targetID)
-	checkpointWAL(app) // flush WAL→data.db before the hard os.Exit
-	requestRestart("")
+	// flipped against the live DB), so it arms the surviving backup the same way
+	// the rebuild path does — the supervisor rolls the DB back if the reverted
+	// build never becomes ready, and commits the backup once it is.
+	restartOntoBuild(app, targetID, false)
 }
 
 // runVersionChangeRebuild applies one or more version changes (upgrades or

@@ -3,6 +3,8 @@ package coreserver
 import (
 	"os"
 	"strings"
+
+	"tinycld.org/core/logging"
 )
 
 // LoadEnvFile reads a .env file from the working directory (or parent) and
@@ -43,17 +45,7 @@ func LoadEnvFile() {
 
 // GetEnvironment returns the runtime environment name ("development" or
 // "production") derived from the ENVIRONMENT env var or the --dev flag.
-func GetEnvironment() string {
-	if env := os.Getenv("ENVIRONMENT"); env != "" {
-		return env
-	}
-	for _, arg := range os.Args {
-		if arg == "--dev" {
-			return "development"
-		}
-	}
-	return "production"
-}
+func GetEnvironment() string { return logging.Environment() }
 
 // HasFlag returns true when an arg like --name or --name=value is present.
 func HasFlag(name string) bool {

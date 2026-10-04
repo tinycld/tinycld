@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { Platform } from 'react-native'
 import { PB_SERVER_ADDR } from './config'
 
@@ -15,7 +16,7 @@ export interface CliDownload {
 
 // Exported for unit testing; prefer useCliDownloads in components.
 export async function fetchCliDownloads(): Promise<CliDownload[]> {
-    const res = await fetch(`${PB_SERVER_ADDR}/api/cli/downloads`, { cache: 'no-store' })
+    const res = await serverFetch(`${PB_SERVER_ADDR}/api/cli/downloads`, { cache: 'no-store' })
     if (!res.ok) return []
     const body = (await res.json()) as { downloads?: CliDownload[] }
     return body.downloads ?? []

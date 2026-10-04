@@ -31,6 +31,10 @@ on its own. That attempt is recorded as **rolled back** in the install history, 
 no new build is kept. You don't need to do anything — but the package didn't
 install, so check its source before trying again.
 
+If the app cannot put the database backup back, it keeps the backup aside, tells
+all owners and admins, and pauses automatic updates. See
+[After a failed update](help://core:after-a-failed-update) for what to do.
+
 This automatic rollback is the app protecting itself on restart; the manual
 **Revert** below is for deliberately going back to an earlier *working* build.
 

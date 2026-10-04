@@ -18,6 +18,8 @@ import (
 	"github.com/pocketbase/pocketbase"
 
 	"tinycld.org/core/coreserver"
+	"tinycld.org/core/listeners"
+	"tinycld.org/core/supervise"
 )
 
 // defaultHTTPAddr is the loopback address tinycld serves on in dev when no
@@ -41,6 +43,14 @@ const defaultStandaloneDataDir = "./tinycld-data/pb_data"
 // generated-import dance.
 func main() {
 	coreserver.LoadEnvFile()
+
+	// `supervise` holds the public ports and runs `serve` children; it must
+	// never open the database, so it branches off before PocketBase exists.
+	// Only the first argument selects it: HasSubcommand would also match a
+	// later positional argument such as a domain list entry.
+	if len(os.Args) > 1 && os.Args[1] == "supervise" {
+		os.Exit(supervise.Run(os.Args[2:], os.Getenv))
+	}
 
 	// Embedded assets are present only in the single-binary build (the
 	// `embedassets` build tag). When absent every accessor returns nil and the
@@ -93,8 +103,11 @@ func main() {
 		TypesDir:     coreserver.DefaultTypesDir(),
 		BinaryName:   "tinycld",
 		// An embedded FS cannot be watched, and a standalone build has nowhere
-		// to write generated migrations.
-		HooksWatch:    !standalone,
+		// to write generated migrations. Under a supervisor the watcher's
+		// app.Restart() would exec a new process image in place of this one,
+		// which leaves the supervisor's protocol (ready, restart, drain), and
+		// hook files only change through a rebuild, which restarts anyway.
+		HooksWatch:    !standalone && !listeners.Supervised(),
 		HooksPoolSize: 15,
 		Automigrate:   !standalone,
 		PublicFS:      webFS,

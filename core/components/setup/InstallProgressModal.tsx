@@ -9,6 +9,7 @@ import {
     type StepRow,
 } from './progress-view'
 import { type OperationStatus, type ProgressStep, useInstallProgress } from './use-install-progress'
+import { type ServerSwitch, useServerSwitch } from './use-server-switch'
 
 // The job the panel is tracking, which decides its title: a background job is
 // the same shape whichever way it was started, and the progress stream does not
@@ -39,6 +40,7 @@ export function InstallProgressModal({
 
     const { steps, status, error } = useInstallProgress(isVisible, jobId, authToken, onComplete)
     const rows = collapseSteps(steps, status)
+    const serverSwitch = useServerSwitch(isVisible, jobId, status)
     // The raw command output means nothing to most users, so it stays hidden
     // until someone asks for it (support, or an admin who knows the build).
     const [isDebugLogVisible, setDebugLogVisible] = useState(false)
@@ -114,6 +116,7 @@ export function InstallProgressModal({
                 <ProgressFooter
                     isVisible={status !== 'running'}
                     needsReload={status === 'success'}
+                    serverSwitch={serverSwitch}
                     onClose={onClose}
                 />
             </View>
@@ -399,39 +402,61 @@ function ErrorDisplay({ error }: { error: string | null }) {
 // NOT reloadJsContext(): that helper restarts the NATIVE JS context for a
 // server switch and throws on web ("web has no JS context to restart"), which
 // is the only platform with a button here. The two are complements.
+//
+// Either way the hint waits for useServerSwitch: the job succeeds before the
+// new server answers, and a reload or reopen before then loads the previous
+// build again.
 function ProgressFooter({
     isVisible,
     needsReload,
+    serverSwitch,
     onClose,
 }: {
     isVisible: boolean
     needsReload: boolean
+    serverSwitch: ServerSwitch
     onClose: () => void
 }) {
     if (!isVisible) return null
     const isWeb = Platform.OS === 'web' && typeof window !== 'undefined'
+    const canReload = needsReload && isWeb && serverSwitch !== 'waiting'
     return (
         <View className="gap-2">
-            <NewBuildHint isVisible={needsReload} isWeb={isWeb} />
+            <NewBuildHint isVisible={needsReload} text={newBuildHint(isWeb, serverSwitch)} />
             <View className="flex-row justify-end gap-2">
                 <Pressable onPress={onClose} className="px-3 py-2 rounded-lg bg-border">
                     <Text className="text-[13px] font-semibold text-muted-foreground">Close</Text>
                 </Pressable>
-                <ReloadButton isVisible={needsReload && isWeb} />
+                <ReloadButton isVisible={canReload} />
             </View>
         </View>
     )
 }
 
-function NewBuildHint({ isVisible, isWeb }: { isVisible: boolean; isWeb: boolean }) {
+const WAITING_HINT = 'Waiting for the server to start the new build…'
+
+const NEW_BUILD_HINTS: Record<'web' | 'native', Record<ServerSwitch, string>> = {
+    web: {
+        waiting: WAITING_HINT,
+        ready: 'Reload to finish — this tab is still running the previous build.',
+        unconfirmed:
+            'The server is still switching to the new build. Reload to finish; if the previous build loads, wait a minute and reload again.',
+    },
+    native: {
+        waiting: WAITING_HINT,
+        ready: 'The new build is applied the next time you reopen the app.',
+        unconfirmed:
+            'The server is still switching to the new build. It is applied the next time you reopen the app after the switch.',
+    },
+}
+
+function newBuildHint(isWeb: boolean, serverSwitch: ServerSwitch): string {
+    return NEW_BUILD_HINTS[isWeb ? 'web' : 'native'][serverSwitch]
+}
+
+function NewBuildHint({ isVisible, text }: { isVisible: boolean; text: string }) {
     if (!isVisible) return null
-    return (
-        <Text className="text-[13px] text-muted-foreground">
-            {isWeb
-                ? 'Reload to finish — this tab is still running the previous build.'
-                : 'The new build is applied the next time you reopen the app.'}
-        </Text>
-    )
+    return <Text className="text-[13px] text-muted-foreground">{text}</Text>
 }
 
 function ReloadButton({ isVisible }: { isVisible: boolean }) {

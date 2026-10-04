@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useQuery } from '@tanstack/react-query'
+import { serverFetch } from '@tinycld/core/lib/server-fetch'
 import { PB_SERVER_ADDR } from './config'
 
 // The anon_id is the visitor's long-lived, stable identity for public
@@ -46,7 +47,7 @@ interface SessionResponse {
 // back so the identity sticks.
 async function mintShareSession(token: string): Promise<ShareSession> {
     const cachedAnonId = await readAnonId()
-    const resp = await fetch(`${PB_SERVER_ADDR}/api/drive/share-link/${token}/session`, {
+    const resp = await serverFetch(`${PB_SERVER_ADDR}/api/drive/share-link/${token}/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cachedAnonId ? { anon_id: cachedAnonId } : {}),

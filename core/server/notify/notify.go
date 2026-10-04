@@ -2,6 +2,7 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -40,6 +41,13 @@ func NotifyUser(app core.App, params NotifyParams) {
 // best-effort (an unreachable device is not a rule failure), so they stay
 // non-fatal. A muted type is a success: the user asked not to be told.
 func DeliverToUser(app core.App, params NotifyParams) error {
+	return DeliverToUserContext(context.Background(), app, params)
+}
+
+// DeliverToUserContext is DeliverToUser with its push dispatches bound to ctx.
+// The row is written regardless; ctx ends only the requests to push services,
+// which a caller on a deadline cannot afford to wait on.
+func DeliverToUserContext(ctx context.Context, app core.App, params NotifyParams) error {
 	// Check user preferences — skip if this notification type is muted
 	if isNotificationMuted(app, params.UserID, params.Type) {
 		return nil
@@ -69,7 +77,7 @@ func DeliverToUser(app core.App, params NotifyParams) error {
 	}
 
 	// Dispatch web push
-	push.SendToUser(app, params.UserID, push.Payload{
+	push.SendToUserContext(ctx, app, params.UserID, push.Payload{
 		Title: params.Title,
 		Body:  params.Body,
 		Tag:   fmt.Sprintf("%s-%s", params.Type, record.Id),
@@ -77,7 +85,7 @@ func DeliverToUser(app core.App, params NotifyParams) error {
 	})
 
 	// Dispatch Expo push
-	sendExpoPush(app, params.UserID, params)
+	sendExpoPush(ctx, app, params.UserID, params)
 	return nil
 }
 
@@ -129,8 +137,12 @@ func isDemoUser(app core.App, userID string) bool {
 	return rec.GetBool("is_demo")
 }
 
+// expoPushURL is the Expo Push API endpoint. A package var only so a test can
+// point it at a local server; nothing else writes it.
+var expoPushURL = "https://exp.host/--/api/v2/push/send"
+
 // sendExpoPush sends push notifications to all Expo push subscriptions for the user.
-func sendExpoPush(app core.App, userID string, params NotifyParams) {
+func sendExpoPush(ctx context.Context, app core.App, userID string, params NotifyParams) {
 	// Demo users: skip the external Expo Push API hop. The notification
 	// record is already saved and the in-app web push has fired, so the user
 	// still sees the notification in the app — we just don't wake an actual
@@ -173,32 +185,51 @@ func sendExpoPush(app core.App, userID string, params NotifyParams) {
 			continue
 		}
 
-		resp, err := http.Post(
-			"https://exp.host/--/api/v2/push/send",
-			"application/json",
-			bytes.NewReader(body),
-		)
+		stale, err := postExpo(ctx, body)
 		if err != nil {
 			log.Info("expo send failed for token", "token", token, "err", err)
 			continue
 		}
-
-		var result struct {
-			Data struct {
-				Status  string `json:"status"`
-				Details struct {
-					Error string `json:"error"`
-				} `json:"details"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
-			if result.Data.Details.Error == "DeviceNotRegistered" {
-				log.Info("removing stale expo token", "token", token)
-				if err := app.Delete(record); err != nil {
-					log.Info("failed to delete stale expo token", "tokenID", record.Id, "err", err)
-				}
+		if stale {
+			log.Info("removing stale expo token", "token", token)
+			if err := app.Delete(record); err != nil {
+				log.Info("failed to delete stale expo token", "tokenID", record.Id, "err", err)
 			}
 		}
-		resp.Body.Close()
 	}
+}
+
+// expoSendTimeout is push.SendTimeout, held in a var only so a test can shorten
+// it; nothing else writes it.
+var expoSendTimeout = push.SendTimeout
+
+// postExpo sends one message to the Expo Push API and reports whether Expo says
+// the device is gone. The timeout covers the body read too, so it is cancelled
+// only once the response is consumed.
+func postExpo(ctx context.Context, body []byte) (stale bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, expoSendTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, expoPushURL, bytes.NewReader(body))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data struct {
+			Status  string `json:"status"`
+			Details struct {
+				Error string `json:"error"`
+			} `json:"details"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, nil
+	}
+	return result.Data.Details.Error == "DeviceNotRegistered", nil
 }

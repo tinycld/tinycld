@@ -86,6 +86,7 @@ server/pb_test_releases*/
 /server/go.work
 /server/go.work.sum
 /server/bundled-packages.json
+/server/ports.json
 /server/pb_migrations_owner.json
 /server/pb_migrations/
 /server/automation_defs.json

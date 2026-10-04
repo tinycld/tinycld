@@ -1,10 +1,12 @@
 package notify
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	"tinycld.org/core/approutes"
+	"tinycld.org/core/readonly"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
@@ -56,9 +58,29 @@ func registerCommentMentionHooksCore(app core.App) {
 		// Run notify off the request goroutine: external pushes can
 		// stall, and a slow notify path shouldn't delay the insert
 		// success response to the client.
-		go handleCommentMention(app, mention)
+		ctx, release := readonly.TailContext(app)
+		go func() {
+			defer release()
+			handleCommentMentionWhenWritable(ctx, app, mention)
+		}()
 		return e.Next()
 	})
+}
+
+const mentionDroppedMsg = "comment mention notification dropped: the server stayed read-only past the wait"
+
+// handleCommentMentionWhenWritable notifies for a mention whose row a request
+// already wrote, possibly just before the server went read-only; the
+// notification then waits for the mode to end, bounded by ctx (from
+// readonly.TailContext: TailWait, or the app's terminate).
+func handleCommentMentionWhenWritable(ctx context.Context, app core.App, mention *core.Record) {
+	err := readonly.WhenWritable(ctx, func() error {
+		handleCommentMention(app, mention)
+		return nil
+	})
+	if err != nil {
+		log.Warn(mentionDroppedMsg, "mentionID", mention.Id, "err", err)
+	}
 }
 
 func handleCommentMention(app core.App, mention *core.Record) {

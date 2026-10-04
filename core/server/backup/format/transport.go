@@ -305,6 +305,13 @@ func transferContext(parent context.Context) (context.Context, context.CancelFun
 	if shutdown.Done() == nil {
 		return ctx, cancel
 	}
+	// AfterFunc runs cancel on its own goroutine even when shutdown has already
+	// ended, so a transfer begun after a stop would start on a live context and
+	// race its own cancellation. It must not start at all.
+	if shutdown.Err() != nil {
+		cancel()
+		return ctx, cancel
+	}
 	stop := context.AfterFunc(shutdown, cancel)
 	return ctx, func() {
 		stop()

@@ -40,11 +40,14 @@ func recoverLiveDBAfterExternalWrite(app *pocketbase.PocketBase) error {
 }
 
 // checkpointWAL flushes the write-ahead log into the main data.db file. The
-// rebuild restart path os.Exit(75)'s the process immediately after the final
-// DB writes (install-log finalize, registry mirror). In WAL mode a committed
-// transaction lives in the -wal file until a checkpoint folds it into data.db;
-// a hard os.Exit before that checkpoint leaves the new binary reading a data.db
-// that's missing those writes (observed: pkg_install_log stuck at "running").
+// rebuild restart path asks for this process to be replaced immediately after
+// the final DB writes (install-log finalize, registry mirror). In WAL mode a
+// committed transaction lives in the -wal file until a checkpoint folds it into
+// data.db; the next process can open the database before this one closes it
+// (an unsupervised restart exits at once, and a supervised one starts the new
+// build while this one still runs), so without the checkpoint the new binary
+// reads a data.db that's missing those writes (observed: pkg_install_log stuck
+// at "running").
 // TRUNCATE forces a full checkpoint and resets the WAL so the next process sees
 // every committed write. Best-effort: a checkpoint failure is logged, not fatal.
 func checkpointWAL(app *pocketbase.PocketBase) {
@@ -54,26 +57,26 @@ func checkpointWAL(app *pocketbase.PocketBase) {
 }
 
 // dbBackupPath / dbArmedMarkerPath are the deterministic locations the armed-
-// backup rollback protocol shares with the entrypoint (config/entrypoint.sh).
+// backup rollback protocol shares with the supervisor (supervise/state.go).
 // Both live under statePbDataDir() so they survive the per-build symlink swap.
-// The entrypoint hard-codes the same paths as $PB_DATA_DIR/data.db.backup and
-// $PB_DATA_DIR/.db-backup-armed — keep the two in sync.
+// The supervisor builds the same paths under its own pb_data dir — keep the
+// two in sync.
 func dbBackupPath() string      { return filepath.Join(statePbDataDir(), "data.db.backup") }
 func dbArmedMarkerPath() string { return filepath.Join(statePbDataDir(), ".db-backup-armed") }
 
 // armDatabaseBackup records the build id that owns the surviving data.db.backup
-// just before the rebuild success path exits 75. The backup itself is left in
-// place (NOT deleted) so it survives the restart as a rollback snapshot; the
-// marker tells the entrypoint two things it can't otherwise know: (1) the backup
+// just before the rebuild success path asks to be replaced. The backup itself is
+// left in place (NOT deleted) so it survives the restart as a rollback snapshot;
+// the marker tells the supervisor two things it can't otherwise know: (1) the backup
 // is intentionally armed (awaiting a post-boot health verdict), not a stale
 // leftover, and (2) which build it predates — so a SIGKILL mid-rebuild leaves an
 // unambiguous "restore me if `current` already points past this build" signal.
 //
 // Why marker-gated rather than just "leave the file": the file alone can't tell
-// the entrypoint whether the new binary already booted healthy (commit) or never
-// did (rollback). The entrypoint deletes BOTH file and marker on a confirmed-
-// healthy boot ("commit"); restores from the file and clears the marker on a
-// failed probe ("rollback"). Best-effort: a marker write failure is logged, not
+// the supervisor whether the new binary already became ready (commit) or never
+// did (rollback). The supervisor deletes BOTH file and marker once the new
+// build reports ready ("commit"); restores from the file and clears the marker
+// when it never does ("rollback"). Best-effort: a marker write failure is logged, not
 // fatal — the rollback restore still works, only the SIGKILL-recovery heuristic
 // degrades.
 func armDatabaseBackup(buildID string) {
@@ -123,9 +126,9 @@ func backupDatabase(_ string) (rollbackFn func() error, err error) {
 	// the backup file and any arm marker — because the live `current` never moved,
 	// so there is no post-restart rollback to keep the backup for. The success
 	// path deliberately does NOT call this: it leaves the backup ARMED (via
-	// armDatabaseBackup) so the entrypoint can roll the DB back if the new binary
-	// fails its post-restart health probe (the failure happens in a different
-	// process, so it can't be handled here). See entrypoint.sh's rollback branch.
+	// armDatabaseBackup) so the supervisor can roll the DB back if the new binary
+	// never reports ready (the failure happens in a different process, so it
+	// can't be handled here). See supervisor.rollback in supervise/run_unix.go.
 	rollbackFn = func() error {
 		srvLog.Info("restoring database from backup")
 		// Use cp for streaming copy to avoid loading entire DB into memory
@@ -138,7 +141,7 @@ func backupDatabase(_ string) (rollbackFn func() error, err error) {
 		// left, SQLite would replay those frames over the restored snapshot and
 		// silently undo the restore (or trip "disk image is malformed"). Drop them
 		// — the caller re-bootstraps the pools (recoverDB) so no live connection is
-		// mid-checkpoint against them. Mirrors entrypoint.sh's restore_db_from_backup.
+		// mid-checkpoint against them. Mirrors the supervisor's State.RestoreBackup.
 		dbWAL := dbPath + "-wal"
 		dbSHM := dbPath + "-shm"
 		if err := os.Remove(dbWAL); err != nil && !os.IsNotExist(err) {
@@ -154,15 +157,3 @@ func backupDatabase(_ string) (rollbackFn func() error, err error) {
 
 	return rollbackFn, nil
 }
-
-// swapBinary atomically swaps the current binary with the new one.
-// Returns a rollback function that reverses the swap. Uses the configured
-// `binaryName` (set via Options.BinaryName at Register time) to locate
-// the binary; the new and previous copies have `.new` and `.prev`
-// suffixes.
-
-// swapToArchivedBinary installs an archived build's binary as the live one,
-// keeping the current binary as <binary>.prev so the entrypoint's health-check
-// can roll back to it if the reverted binary fails to boot. The archived binary
-// is copied (not moved) so the build archive stays intact and re-revertible.
-// Returns a rollback function that reverses the swap.
