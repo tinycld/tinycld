@@ -64,7 +64,7 @@ func Enter() {
 
 	log.Info("read-only mode on: writes are refused until the mode is left")
 	for _, fn := range fns {
-		go runOnEnter(fn)
+		runOnEnter(fn)
 	}
 }
 
@@ -81,21 +81,21 @@ func runOnEnter(fn func()) {
 	fn()
 }
 
-// OnEnter registers fn to run, in its own goroutine, each time read-only mode
-// starts (a false->true transition) — not on a repeated Enter while already
-// active. For a writer that holds a long-lived connection and needs to react
-// (pause, flush, disconnect) as soon as the mode turns on, rather than poll
-// Active or block in WhenWritable. Never blocks Enter.
+// OnEnter registers fn to run each time read-only mode starts (a false->true
+// transition) — not on a repeated Enter while already active. For a writer
+// that holds a long-lived connection and needs to react (pause, flush,
+// disconnect) as soon as the mode turns on, rather than poll Active or block
+// in WhenWritable.
+//
+// fn runs synchronously, before Enter returns and before the caller's own
+// next step: a caller that enters the mode to take a backup starts the backup
+// as soon as Enter returns, so a writer that must land its last state ahead
+// of the backup has only this window. fn bounds its own wait. The
+// collaborative-document broker uses it to flush and store every document.
 //
 // A fn registered while the mode is already active runs only at the next
-// transition, not immediately. Because fn runs in its own goroutine, it may
-// start after a later Leave has already turned the mode back off, and a fast
-// Enter/Leave/Enter can start two runs that overlap — fn must re-check
-// Active() itself and be safe to run more than once or concurrently with
-// itself.
-//
-// No writer calls it yet: it is kept for the collaborative-document writers,
-// which hold long-lived connections that the request middleware never sees.
+// transition, not immediately. The mode's mutex is NOT held while fn runs,
+// so fn may call Active and WaitInactive.
 func OnEnter(fn func()) {
 	mu.Lock()
 	defer mu.Unlock()
