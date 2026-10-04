@@ -102,15 +102,6 @@ func RegisterBackupEndpoints(app core.App) {
 // restart. After bootstrap, in ONE hook: finalize a swapped-in restore, then
 // close rows a dead process left running.
 //
-// A process started ONLY as a boot probe — a full server a supervisor launches
-// to ask "does this build boot?" and then kills — does none of it. Such a probe
-// runs on the real data directory, so without the guard it performs the swap and
-// the finalize that belong to the real boot, and a kill landing between them
-// makes the real boot roll the restore back. A supervisor that boots the binary
-// as a probe MUST set TINYCLD_BOOT_PROBE=1 for that process. The supervisor
-// that holds the public ports starts no probes: each child it starts is the
-// real server, and it learns a build boots from that child's ready message.
-//
 // FinalizeRestore goes FIRST, defensively. The two cannot collide as they stand
 // — the finalize inserts its row already "succeeded" with started = now, and
 // MarkInterrupted only rewrites "running" rows started before bootedAt — so the
@@ -121,31 +112,22 @@ func RegisterBackupEndpoints(app core.App) {
 // interrupted. Keep them adjacent and in this order so that change stays safe.
 func RegisterBackupBoot(app core.App) {
 	bootedAt := time.Now()
-	probe := backup.IsBootProbe()
-	// Bound unconditionally, even for a boot probe: the hook itself is
-	// harmless if nothing ever calls app.NewFilesystem() on this app, and
-	// binding must happen before that first filesystem is created.
+	// Bound unconditionally: the hook itself is harmless if nothing ever calls
+	// app.NewFilesystem() on this app, and binding must happen before that
+	// first filesystem is created.
 	backup.BindDeleteHold(app)
-	// Every bootstrap, the probe's included, arms the lifetime of the app's
-	// backup and restore runs once the database is open. A transfer is started
-	// from an HTTP handler but outlives it, so its only other bound lifetime is
-	// the app's. Without one a target that accepts and never reads holds the
-	// transfer goroutine — and the installjob interlock behind it — until the
-	// process is killed, so no backup, restore or package install can run again.
+	// Every bootstrap arms the lifetime of the app's backup and restore runs
+	// once the database is open. A transfer is started from an HTTP handler
+	// but outlives it, so its only other bound lifetime is the app's. Without
+	// one a target that accepts and never reads holds the transfer goroutine
+	// — and the installjob interlock behind it — until the process is killed,
+	// so no backup, restore or package install can run again.
 	//
 	// Every bootstrap rather than once at serve: a restart whose execve fails
 	// re-bootstraps the same app in the same process after the terminate hook
 	// has stopped it, and arming gives that app a fresh lifetime. A restart that
 	// succeeds never comes back to run it.
 	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
-		if probe {
-			srvLog.Info("boot probe: restore state left untouched for the real boot")
-			if err := e.Next(); err != nil {
-				return err
-			}
-			backup.Arm(e.App)
-			return nil
-		}
 		// Before e.Next(): PocketBase opens the database inside it, and the swap
 		// renames pb_data as a whole.
 		if err := backup.ApplyPendingRestore(app.DataDir()); err != nil {
@@ -177,8 +159,7 @@ func RegisterBackupBoot(app core.App) {
 		backup.DrainHeldDeletes(app)
 		// Add, not MustAdd: Add replaces an existing job by id rather than
 		// erroring, so a second RegisterBackupBoot call against the same app
-		// (a boot probe followed by the real boot sharing a process, or a
-		// test that calls it twice) cannot panic here.
+		// (a test that calls it twice) cannot panic here.
 		if err := app.Cron().Add(backup.DrainJobID, "* * * * *", func() { backup.DrainHeldDeletes(app) }); err != nil {
 			srvLog.Error("could not schedule the backup hold drain", "err", err)
 		}

@@ -24,7 +24,7 @@ func (stoppingError) Is(target error) bool { return target == ErrBusy }
 // runsKey files an app's runSet in the app's own store. The set belongs to the
 // app rather than to the process because what it guards is the app: a run's
 // terminal work writes through that app, so it is that app's close that must
-// wait. Two apps in one process (tests, a boot probe) must not latch each other.
+// wait. Two apps in one process (as in tests) must not latch each other.
 const runsKey = "tinycld.backup.runs"
 
 // runSet counts the backup and restore runs an app has in flight, and latches

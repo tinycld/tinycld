@@ -84,7 +84,7 @@ func TestStopAllRefusesEveryLaterRunOnThatApp(t *testing.T) {
 }
 
 // The latch belongs to the app that is stopping. Another app in the same
-// process — a second test app, a boot probe — must still run.
+// process (a second test app) must still run.
 func TestStopAllLeavesAnotherAppRunning(t *testing.T) {
 	stopped := newTestApp(t)
 	if err := StopAll(context.Background(), stopped); err != nil {
