@@ -111,16 +111,19 @@ func TestReportUnrestoredRetriesOnlyTheChannelThatFailed(t *testing.T) {
 	}
 }
 
-// With no administrator to tell, no in-app marker is written, so the first
-// owner created later is still told.
+// With no administrator to tell, no marker is written on either channel, so
+// the first owner created later is still told.
 func TestReportUnrestoredWithoutAdministratorsRetries(t *testing.T) {
 	t.Setenv("TINYCLD_STATE_DIR", t.TempDir())
 	app := adminConsoleTestApp(t)
 	dir := keepUnrestored(t, "build-9", true)
 
-	reportUnrestored(context.Background(), app, func(context.Context, core.App, notice) error { return nil })
+	reportUnrestored(context.Background(), app, mailAdmins)
 	if exists(filepath.Join(dir, "notified-app")) {
 		t.Fatal("in-app marker written although no administrator exists")
+	}
+	if exists(filepath.Join(dir, "notified-email")) {
+		t.Fatal("email marker written although no administrator exists")
 	}
 }
 

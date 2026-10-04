@@ -34,12 +34,18 @@ func blockedNotice(target map[string]string, reason string, reminder bool) notic
 
 // notifyAdmins emails n to every owner and admin. The error joins the
 // failures; a caller that only informs may drop it, since send logs each one.
+// No recipient is an error too: a caller that records delivery (a notice
+// sent once) must not count a boot before the first owner as having told
+// anyone.
 func notifyAdmins(app core.App, send mailFn, n notice) error {
 	users, err := app.FindRecordsByFilter("users",
 		"(role = 'owner' || role = 'admin') && disabled != true", "", 0, 0)
 	if err != nil {
 		srvLog.Warn("auto-upgrade: cannot list recipients", "err", err)
 		return fmt.Errorf("coreserver: list the administrators: %w", err)
+	}
+	if len(users) == 0 {
+		return errors.New("coreserver: email the administrators: no enabled owner or admin to email")
 	}
 	ctaLabel, ctaPath := n.CTALabel, n.CTAPath
 	if ctaLabel == "" {
