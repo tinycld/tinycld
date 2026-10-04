@@ -10,6 +10,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/autoupgrade"
 	"tinycld.org/core/installjob"
+	"tinycld.org/core/readonly"
 )
 
 func setSetting(t *testing.T, key, value string) func(*localScheduler) {
@@ -54,6 +55,27 @@ func TestTickAppliesNewestInWindow(t *testing.T) {
 	}
 	if len(*applied) != 1 || (*applied)[0][0].TargetVersion != "0.6.0" {
 		t.Fatalf("applied %+v", *applied)
+	}
+}
+
+// A tick starts a version change and may write reminders and pause rows. In
+// read-only mode another process is about to migrate the database, so the
+// tick must write nothing.
+func TestTickDoesNothingInReadOnlyMode(t *testing.T) {
+	s, applied, sent := testScheduler(t, inWindow, infos([3]string{"mail", "0.5.0", "0.6.0"}), okSolve)
+	readonly.Enter()
+	t.Cleanup(readonly.Leave)
+
+	if got := s.tick(context.Background()); got != resultReadOnly {
+		t.Fatalf("result %q, want %q", got, resultReadOnly)
+	}
+	if len(*applied) != 0 || len(*sent) != 0 {
+		t.Fatalf("read-only tick applied %+v and sent %+v", *applied, *sent)
+	}
+
+	readonly.Leave()
+	if got := s.tick(context.Background()); got != "upgrading" {
+		t.Fatalf("after read-only mode: result %q", got)
 	}
 }
 

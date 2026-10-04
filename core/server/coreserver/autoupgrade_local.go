@@ -14,12 +14,14 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"tinycld.org/core/autoupgrade"
 	"tinycld.org/core/installjob"
+	"tinycld.org/core/readonly"
 )
 
 const (
 	tickEvery            = time.Hour
 	resultDisabledPrefix = "checks disabled: "
 	resultOff            = "off"
+	resultReadOnly       = "read-only"
 )
 
 // localScheduler is the Delegate for a deployment that can rebuild itself. It
@@ -175,6 +177,14 @@ func (s *localScheduler) record(result string) string {
 func (s *localScheduler) tick(_ context.Context) string {
 	if s.disabled != "" {
 		return s.record(resultDisabledPrefix + s.disabled)
+	}
+	// Read-only mode means a second process is about to migrate this
+	// database. The tick is not a cron job, so the cron guard does not skip
+	// it, and a version change or a reminder row written now would be written
+	// against a schema this process may not know. A skipped tick is not made
+	// up; the next one runs an hour later.
+	if readonly.Active() {
+		return resultReadOnly
 	}
 	enabled, err := readSystemSetting(s.app, autoupgrade.KeyEnabled)
 	if err != nil {
