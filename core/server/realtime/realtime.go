@@ -373,3 +373,28 @@ func (b *Broker) JoinForTest(kind, roomID string, c *Client) *Room {
 	b.join(kind, roomID, c)
 	return b.lookupRoomForTest(kind, roomID)
 }
+
+// LeaveForTest removes c from its room the way a closed connection does,
+// so a consumer package's test can drive the empty-room path (the final
+// flush, the park). Production code must not call this.
+func (b *Broker) LeaveForTest(c *Client) {
+	if room := c.room; room != nil {
+		room.remove(c)
+	}
+}
+
+// EvictIdleForTest runs the parking janitor's pass as of now. Production
+// code must not call this.
+func (b *Broker) EvictIdleForTest(now time.Time) {
+	b.evictIdle(now)
+}
+
+// OpenedFromForTest reports where the room's document came from
+// ("parked", "checkpoint", "seed", "relay"), or "" for no such room.
+func (b *Broker) OpenedFromForTest(kind, id string) string {
+	room := b.lookupRoomForTest(kind, id)
+	if room == nil {
+		return ""
+	}
+	return room.openedFrom
+}
