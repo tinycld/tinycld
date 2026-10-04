@@ -436,19 +436,22 @@ export async function realtimeOutage(page: Page): Promise<{
     end: () => Promise<void>
 }> {
     let blocked = false
-    let server: WebSocketRoute | null = null
+    let live: { page: WebSocketRoute; server: WebSocketRoute } | null = null
     await page.routeWebSocket(/\/api\/realtime\//, ws => {
         if (blocked) {
             ws.close({ code: 1001, reason: 'outage' })
             return
         }
-        server = ws.connectToServer()
+        live = { page: ws, server: ws.connectToServer() }
     })
     return {
         async begin() {
             blocked = true
-            server?.close({ code: 1001, reason: 'outage' })
-            server = null
+            // Both sides: an explicit close of the server route alone does not
+            // reach the page's WebSocket.
+            live?.server.close({ code: 1001, reason: 'outage' })
+            live?.page.close({ code: 1001, reason: 'outage' })
+            live = null
         },
         async end() {
             blocked = false
