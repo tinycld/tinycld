@@ -55,13 +55,16 @@ describe('buildGoWork', () => {
 
 const gopbsReplaceLine =
     'replace github.com/osshield/gopbs => github.com/nathanstitt/gopbs v0.0.0-20260929212904-191e2150ab06'
+const webdavReplaceLine =
+    'replace github.com/emersion/go-webdav => github.com/nathanstitt/go-webdav v0.7.1-0.20261001184608-67abd707e045'
+const forkedReplaceLines = [gopbsReplaceLine, webdavReplaceLine]
 
 describe('buildMemberGoWork', () => {
     it('replaces core so a standalone member build resolves it', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
             '../../tinycld/third_party/pocketbase',
-            gopbsReplaceLine
+            forkedReplaceLines
         )
         expect(work).toContain('use .')
         expect(work).toContain('replace tinycld.org/core => ../../tinycld/core/server')
@@ -73,7 +76,7 @@ describe('buildMemberGoWork', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
             '../../tinycld/third_party/pocketbase',
-            gopbsReplaceLine
+            forkedReplaceLines
         )
         expect(work).toContain(
             'replace tinycld.org/core/backup/format v0.0.0 => ../../tinycld/core/server/backup/format'
@@ -86,7 +89,7 @@ describe('buildMemberGoWork', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
             '../../tinycld/third_party/pocketbase',
-            gopbsReplaceLine
+            forkedReplaceLines
         )
         expect(work).toContain(
             'replace github.com/pocketbase/pocketbase => ../../tinycld/third_party/pocketbase'
@@ -100,9 +103,23 @@ describe('buildMemberGoWork', () => {
         const work = buildMemberGoWork(
             '../../tinycld/core/server',
             '../../tinycld/third_party/pocketbase',
-            gopbsReplaceLine
+            forkedReplaceLines
         )
         expect(work).toContain(gopbsReplaceLine)
+    })
+
+    // go-webdav is forked for its CalDAV PROPPATCH handling. Unlike gopbs the
+    // unforked module still COMPILES, so a member missing this replace builds
+    // and tests green against a different server than the app ships — the
+    // failure is silent, which is why every forked pin is carried, not just the
+    // ones that break the build.
+    it('carries every forked replace, not only the first', () => {
+        const work = buildMemberGoWork(
+            '../../tinycld/core/server',
+            '../../tinycld/third_party/pocketbase',
+            forkedReplaceLines
+        )
+        expect(work).toContain(webdavReplaceLine)
     })
 })
 

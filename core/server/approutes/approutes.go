@@ -9,8 +9,8 @@ package approutes
 //
 // NOT an org slug: single-org deployments give each org its own host, so this
 // is one fixed segment and nothing interpolates into it. Public share routes
-// (/p/...), protocol mounts (/dav, /caldav, /carddav) and the API (/api) sit
-// OUTSIDE this prefix and must never be rewritten with it.
+// (/p/...), protocol mounts (/calendar, /contacts, /drive, /dav) and the API
+// (/api) sit OUTSIDE this prefix and must never be rewritten with it.
 const Prefix = "/a"
 
 // Href returns an app path for a root-relative route, e.g. Href("boards") is

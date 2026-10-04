@@ -3,8 +3,8 @@ import * as path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
     APP_DIR,
+    forkedReplaces,
     GENERATED_DIR,
-    gopbsReplace,
     PUBLIC_ROUTES_BASE,
     ROUTES_BASE,
     SERVER_DIR,
@@ -43,8 +43,13 @@ describe('generator paths', () => {
         expect(SERVER_DIR).toBe(path.join(APP_DIR, 'server'))
     })
     // Read from core's go.mod so a member's standalone build resolves the same
-    // forked gopbs client core/server/backup/pbs depends on.
-    it('gopbsReplace reads the pinned replace line from core/server/go.mod', () => {
-        expect(gopbsReplace()).toMatch(/^replace github\.com\/osshield\/gopbs => \S+ \S+$/)
+    // forks core does — the gopbs client core/server/backup/pbs depends on, and
+    // go-webdav, whose unforked CalDAV server still COMPILES but behaves
+    // differently, so a missing pin fails silently rather than at build time.
+    it('forkedReplaces reads every pinned replace line from core/server/go.mod', () => {
+        const lines = forkedReplaces()
+        expect(lines).toHaveLength(2)
+        expect(lines[0]).toMatch(/^replace github\.com\/osshield\/gopbs => \S+ \S+$/)
+        expect(lines[1]).toMatch(/^replace github\.com\/emersion\/go-webdav => \S+ \S+$/)
     })
 })

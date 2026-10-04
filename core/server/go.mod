@@ -20,7 +20,7 @@ require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/coder/websocket v1.8.14
 	github.com/disintegration/imaging v1.6.2
-	github.com/emersion/go-ical v0.0.0-20240127095438-fc1c9d8fb2b6
+	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
@@ -91,3 +91,11 @@ require (
 )
 
 replace github.com/osshield/gopbs => github.com/nathanstitt/gopbs v1.0.0
+
+// go-webdav's CalDAV PropPatch fails the whole request with 501, which macOS
+// Calendar reads as the collection not supporting PROPPATCH — it writes
+// displayname/calendar-color/calendar-order while adopting a calendar, so on
+// the hard 501 it drops the calendar and the account shows up empty. The fork
+// answers per-property inside a 207 like carddav already does. Drop this once
+// https://github.com/emersion/go-webdav/pull/216 lands in a release.
+replace github.com/emersion/go-webdav => github.com/nathanstitt/go-webdav v0.7.1-0.20261001184608-67abd707e045

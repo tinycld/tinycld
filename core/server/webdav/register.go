@@ -10,6 +10,7 @@ import (
 	"golang.org/x/net/webdav"
 
 	"tinycld.org/core/davauth"
+	"tinycld.org/core/davprefix"
 )
 
 const basicRealm = "TinyCld WebDAV"
@@ -30,10 +31,14 @@ func Register(app *pocketbase.PocketBase, sources []Source, host HostBindings) (
 		return nil, nil
 	}
 
+	prefixes := davprefix.ForApp(app)
 	filesystems := make([]*FileSystem, 0, len(sources))
 	handlers := make([]*webdav.Handler, 0, len(sources))
 
 	for _, src := range sources {
+		if err := prefixes.Claim(src.Slug, src.Prefix); err != nil {
+			return nil, err
+		}
 		fs, err := NewFileSystem(app, src)
 		if err != nil {
 			return nil, err

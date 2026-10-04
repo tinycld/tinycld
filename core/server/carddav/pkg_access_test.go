@@ -44,7 +44,7 @@ func TestPutAddressObject_ReadonlyGrantRefused(t *testing.T) {
 	giveReadonly(t, app, user, "contacts")
 	ctx := authedCtx(t, "alice@example.com", "Password123!")
 
-	_, err := backend.PutAddressObject(ctx, "/carddav/u/ab/default/urn:uuid:ro.vcf",
+	_, err := backend.PutAddressObject(ctx, "/contacts/u/ab/default/urn:uuid:ro.vcf",
 		newCard("urn:uuid:ro", "Refused"), nil)
 	if err == nil {
 		t.Fatal("readonly user's PUT succeeded")
@@ -61,7 +61,7 @@ func TestDeleteAddressObject_ReadonlyGrantRefused(t *testing.T) {
 	giveReadonly(t, app, user, "contacts")
 	ctx := authedCtx(t, "alice@example.com", "Password123!")
 
-	if err := backend.DeleteAddressObject(ctx, "/carddav/u/ab/default/urn:uuid:keep.vcf"); err == nil {
+	if err := backend.DeleteAddressObject(ctx, "/contacts/u/ab/default/urn:uuid:keep.vcf"); err == nil {
 		t.Fatal("readonly user's DELETE succeeded")
 	}
 	if _, err := app.FindRecordById("contacts", rec.Id); err != nil {

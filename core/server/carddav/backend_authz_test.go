@@ -97,7 +97,7 @@ func setContactRules(t *testing.T, app *tests.TestApp, create, update string) {
 // authedCtx builds the context the backend reads credentials from.
 func authedCtx(t *testing.T, email, password string) context.Context {
 	t.Helper()
-	r, err := http.NewRequest(http.MethodPut, "/carddav/u/ab/default/x.vcf", nil)
+	r, err := http.NewRequest(http.MethodPut, "/contacts/u/ab/default/x.vcf", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestPutAddressObject_CreateDeniedByCreateRule(t *testing.T) {
 	setContactRules(t, app, `owner = "nobody"`, `owner = @request.auth.id`)
 
 	ctx := authedCtx(t, "alice@example.com", "Password123!")
-	_, err := backend.PutAddressObject(ctx, "/carddav/u/ab/default/urn:uuid:new.vcf",
+	_, err := backend.PutAddressObject(ctx, "/contacts/u/ab/default/urn:uuid:new.vcf",
 		newCard("urn:uuid:new", "Blocked"), nil)
 	if err == nil {
 		t.Fatal("a create the CreateRule forbids was accepted")
@@ -155,7 +155,7 @@ func TestPutAddressObject_UpdateDeniedByUpdateRule(t *testing.T) {
 	setContactRules(t, app, `@request.auth.id != ""`, `owner = "nobody"`)
 
 	ctx := authedCtx(t, "alice@example.com", "Password123!")
-	_, err = backend.PutAddressObject(ctx, "/carddav/u/ab/default/urn:uuid:existing.vcf",
+	_, err = backend.PutAddressObject(ctx, "/contacts/u/ab/default/urn:uuid:existing.vcf",
 		newCard("urn:uuid:existing", "Overwritten"), nil)
 	if err == nil {
 		t.Fatal("an update the UpdateRule forbids was accepted")
@@ -181,7 +181,7 @@ func TestPutAddressObject_AllowedWritesStillSucceed(t *testing.T) {
 
 	ctx := authedCtx(t, "alice@example.com", "Password123!")
 
-	if _, err := backend.PutAddressObject(ctx, "/carddav/u/ab/default/urn:uuid:ok.vcf",
+	if _, err := backend.PutAddressObject(ctx, "/contacts/u/ab/default/urn:uuid:ok.vcf",
 		newCard("urn:uuid:ok", "Created"), nil); err != nil {
 		t.Fatalf("an allowed create was refused: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestPutAddressObject_AllowedWritesStillSucceed(t *testing.T) {
 		t.Fatal("owner not stamped from the authenticated user")
 	}
 
-	if _, err := backend.PutAddressObject(ctx, "/carddav/u/ab/default/urn:uuid:ok.vcf",
+	if _, err := backend.PutAddressObject(ctx, "/contacts/u/ab/default/urn:uuid:ok.vcf",
 		newCard("urn:uuid:ok", "Updated"), nil); err != nil {
 		t.Fatalf("an allowed update was refused: %v", err)
 	}
